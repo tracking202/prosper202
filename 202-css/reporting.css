@@ -1,0 +1,219 @@
+/*******************\
+*  REPORTING STYLES *
+\*******************/
+.result_report_data {
+	margin-top:10px;
+}
+.report_overflow {
+	border:solid 1px #505050;
+}
+.result_report_table {
+	font-size: 7pt;
+	text-align:center;
+	width:100%;
+	border-collapse:collapse;
+	font-weight: bold;
+}
+.result_report_table th, .result_report_table td {
+	font-size: 7pt;
+}
+.result_report_table a, .result_report_table a:hover {
+	font-size: 7pt;
+}
+.result_report_table thead {
+	background-color:#d5dcd0;
+}
+.result_report_table thead tr th {
+	text-align:center;
+	font-weight:bold;
+	padding:2px;
+	height:20px;
+	background-color:#eee;
+}
+.result_report_table thead tr td {
+	text-align:left;
+	font-weight:bold;
+	padding:2px;
+	background-image:none;
+	background-color:#d5dcd0;
+}
+.result_report_table thead tr.sub th,
+.result_report_table thead tr.sub td {
+	text-align:center;
+	font-weight:bold;
+	padding:2px;
+	background-image:none;
+	background-color:#d5dcd0;
+}
+.result_report_table thead tr.sub2 th,
+.result_report_table thead tr.sub2 td {
+	text-align:center;
+	font-weight:bold;
+	padding:2px;
+	background-image:none;
+	background-color:#505050;
+}
+.result_report_table thead tr.sub th a,
+.result_report_table thead tr.sub td a,
+.result_report_table thead tr.sub2 th a,
+.result_report_table thead tr.sub2 td a {
+	font-weight:bold;
+}
+.result_report_table thead tr td,
+.result_report_table thead tr th {
+	border-left:dotted 1px #fff;
+}
+.result_report_table thead tr th.result_main_column_level_0,
+.result_report_table thead tr td.result_main_column_level_0,
+.result_report_table thead tr th.result_main_column_level_1,
+.result_report_table thead tr td.result_main_column_level_1 {
+	border-left:0;
+}
+.result_report_table thead.group,
+.result_report_table tbody.group,
+.result_report_table tfoot.group {
+	border: 1px solid #505050;
+}
+.result_report_table tbody.group_spacing tr, 
+.result_report_table tbody.group_spacing t, 
+.result_report_table tbody.group_spacing td {
+	background-color: transparent;
+	border: 0;
+}
+.result_report_table tbody.group_spacing td {
+	height: 2.5em;
+}
+.result_report_table tbody tr td,
+.result_report_table tbody tr th {
+	border-left:dotted 1px #fff;
+}
+.result_report_table tbody tr th.result_main_column_level_0,
+.result_report_table tbody tr td.result_main_column_level_0,
+.result_report_table tbody tr th.result_main_column_level_1,
+.result_report_table tbody tr td.result_main_column_level_1,
+.result_report_table tbody tr td.result_main_column_level_2,
+.result_report_table tbody tr td.result_main_column_level_3,
+.result_report_table tbody tr td.result_main_column_level_4,
+.result_report_table tbody tr td.result_main_column_level_5,
+.result_report_table tbody tr td.result_main_column_level_6 {
+	border-left:0;
+	text-align:left;
+}
+.result_report_table tbody tr td.result_main_column_level_2 {
+	padding-left:10px;
+	width:150px;
+}
+.result_report_table tbody tr td.result_main_column_level_3 {
+	padding-left:20px;
+}
+.result_report_table tbody tr td.result_main_column_level_4 {
+	padding-left:30px;
+}
+.result_report_table tbody tr td.result_main_column_level_5 {
+	padding-left:40px;
+}
+.result_report_table tbody tr td.result_main_column_level_6 {
+	padding-left:50px;
+}
+.result_report_table tbody tr.sub th,
+.result_report_table tbody tr.sub td {
+	font-weight:bold;
+	padding:2px;
+	background-image:none;
+	background-color:#d5dcd0;
+	border-top: 1px dashed #505050;
+	border-bottom: 1px dashed #505050;
+}
+.result_report_table tbody tr.sub2 th,
+.result_report_table tbody tr.sub2 td {
+	font-weight:bold;
+	padding:2px;
+	background-image:none;
+	background-color:#505050;
+}
+.result_report_table tbody tr.sub th a,
+.result_report_table tbody tr.sub td a {
+	font-weight:bold;
+}
+.result_report_table tbody tr.sub2 th a,
+.result_report_table tbody tr.sub2 td a {
+	font-weight:bold;
+	color:#fff;
+}
+.result_report_table tfoot {
+	font-weight:bold;
+	height:20px;
+	background-color:#eee;
+}
+.result_report_table tfoot tr th a,
+.result_report_table tfoot tr td a {
+	font-weight:bold;
+}
+.result_report_table tfoot tr.sub th,
+.result_report_table tfoot tr.sub td {
+	text-align:center;
+	font-weight:bold;
+	padding:2px;
+	background-image:none;
+	background-color:#d5dcd0;
+}
+.result_report_table tfoot tr.sub2 th,
+.result_report_table tfoot tr.sub2 td {
+	text-align:center;
+	font-weight:bold;
+	padding:2px;
+	background-image:none;
+	background-color:#505050;
+}
+.result_report_table tfoot tr.sub th a,
+.result_report_table tfoot tr.sub td a {
+	font-weight:bold;
+}
+.result_report_table tfoot tr.sub2 th a,
+.result_report_table tfoot tr.sub2 td a {
+	font-weight:bold;
+	color:#fff;
+}
+.result_report_table tfoot tr td,
+.result_report_table tfoot tr th {
+	border-left:dotted 1px #fff;
+}
+.result_report_table tfoot tr th.result_main_column_level_0,
+.result_report_table tfoot tr td.result_main_column_level_0,
+.result_report_table tfoot tr th.result_main_column_level_1,
+.result_report_table tfoot tr td.result_main_column_level_1 {
+	border-left:0;
+	text-align:left;
+}
+.missing_info {
+	font-style:italic;
+}
+.report_empty_msg {
+	text-align:center;
+	font-weight:bold;
+}
+.positive_trend {
+	background: url(/202-img/m-row-pos.gif) repeat-x;
+}
+.negative_trend {
+	background: url(/202-img/m-row-neg.gif) repeat-x;
+}
+.no_trend {
+	background: url(/202-img/m-row-zero.gif) repeat-x;
+}
+.cool_trend {
+	background: url(/202-img/m-row-neutral.gif) repeat-x; 
+}
+.attention{
+	color: #f00;
+}
+
+/*==================== */
+/* Icon Classes        */
+/*==================== */
+
+img.icon16 {
+	height:16px;
+	width:16px;
+	vertical-align:middle;
+}

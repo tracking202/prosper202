@@ -1,0 +1,21 @@
+body { font-size: 14px; color:#333333; font-family:arial,helvetica,sans-serif; line-height: 1.4em; background: black url(/202-img/202-bg.png) repeat-x; }
+
+.center {margin: 160px auto; width: 650px; background: white; padding: 10px 30px 20px 30px; border-color: rgb(100,100,100); border-style: double; border-width:3px; color:#333333; background: #e8e8e8 url(../../202-img/center_bg.png) repeat-x scroll 0 0}
+
+img{ border: 0px; }
+input, select { font-size: 14px; padding: 3px; background:#F4F4F4 none repeat scroll 0%; border:1px solid #B2B2B2;}
+
+
+#user_name { width: 300px; }
+#user_pass { width: 140px; }
+#submit { border-color:#CCCCCC rgb(153, 153, 153) rgb(153, 153, 153) rgb(204, 204, 204); border-style:double; border-width:3px; color:#333333; }
+
+#forgot_pass { font-size: 11px; padding-left: 5px; color:#CCCCCC;}
+
+
+.config th { white-space: nowrap; text-align: left; }
+
+
+.error { color: #900; font-size: 12px; }
+
+p, li, dt { line-height: 140%; padding-bottom: 2px; }

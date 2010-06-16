@@ -1,0 +1,53 @@
+<form>
+	<p>
+		This program lets to find out what <b style="color:black;background-color:#a0ffff">mysql</b> <b style="color:black;background-color:#99ff99">version</b> your current hosting is running on. 
+		You need to enter correct databaes parameters in order to get desired info.
+	</p>
+	<b>db host: <b/>
+	<input type="text" name="db_host" value="localhost">
+	<hr size=1 width="25%" align=left>
+	<b>db username: <b/>
+	<input type="text" name="db_user" value="">
+	<hr size=1 width="25%" align=left>
+	<b>db password: <b/>
+	<input type="text" name="db_pass" value="">
+	<hr size=1 width="25%" align=left>
+	<hr size=1 width="25%" align=left>
+	<input type="submit" name="submit" value="submit">
+</form>
+<?php
+/*
+	1) enter db user/pass: host = localhost
+	2) view results
+	scenario:
+		1) show form
+		2) try to login
+		3) if OK -> show <b style="color:black;background-color:#99ff99">version</b>
+		4) otherwise tell incorrect db user/pass combination
+	Freeware for comercial or non-commercial use.
+	no warranties!
+*/
+$submit = empty($_REQUEST['submit']) ? 0:1;
+if ($submit) {
+	$db_host = empty($_REQUEST['db_host']) ? "localhost" : $_REQUEST['db_host'];
+	$db_user = empty($_REQUEST['db_user']) ? "" : $_REQUEST['db_user'];
+	$db_pass = empty($_REQUEST['db_pass']) ? "" : $_REQUEST['db_pass'];;
+	if ( 		empty($db_host)
+			|| empty($db_host)
+			|| empty($db_host) ) {
+		die("<font color='red'>Missing fields.</font>");
+	}
+	$link = @mysql_connect($db_host, $db_user, $db_pass);
+	if (!$link)
+		die("<font color='red'>Can't connect. 
+Please check your data.</font>");
+	$qry = "SELECT <b style="color:black;background-color:#99ff99">VERSION</b>()";
+	$result = @mysql_query($qry);
+	if (!$result) {
+	   die("<font color='red'>Query error: " . mysql_error() . "</font>");
+	}
+	$ver = @mysql_result($result, 0);
+	print "<font color='green'><b style="color:black;background-color:#a0ffff">MySQL</b> <b style="color:black;background-color:#99ff99">version</b>: <b>$ver</b></font>";
+	@mysql_free_result($result);
+}
+?>

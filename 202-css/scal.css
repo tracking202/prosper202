@@ -1,0 +1,615 @@
+/*
+scal.css - The style sheet for the scal calendar control.
+
+Everything style-wise in scal is controlled through the use of css classes.  You begin by defining your
+base element (i.e. the div that will hold the calendar) with a style class as defined in this file.  From there,
+all elements of the calendar will automatically be assigned their style as a subset of the class.
+
+To make a new style, just copy the scal classes paste at the bottom of the file.  Change the
+css class name to a unique name (ex. .scal to .mycalendar) and then you will have your own unique class for scal.
+Once the css is in place, update your HTML to use the new class name in the base element definition:
+
+<div id="calendar_holder" class="scal"></div>
+
+That's all you need to do to create your own style for scal.  Of course, you can also derive your own classes from
+the scal class itself.  Just override the element you want to change and then append your new class name to the 
+class element of the base element:
+
+.mycal{background-color:red;}
+
+<div id="calendar_holder" class="scal mycal"></div>
+
+Now, you'll have a sweet red background for your scal.
+
+P.S. Try out the included versions to see how they work and have fun! 
+*/
+
+.scal{
+	background-color: white;
+	margin:3px;
+	border:1px solid rgb(154,154,154);
+	font-size:24pt;
+	width:436px;
+	min-height:300px;
+	display:block;
+	padding:10px;
+	font-size:24pt;
+	font-family:'Lucida Grande',Verdana,Arial,Sans-Serif;
+	line-height:normal;
+}
+.scal:hover{
+	cursor:pointer;
+	/*cursor:hand; /* If you're worried about old IE versions, turn this on.  I have it off because I hate seeing css exceptions in my debug window. ;) */
+}
+.scal .calwrapper{
+}
+.scal .calweekswrapper{
+	display:block;
+}
+.scal .calheader{
+	display: block;
+	width:100%;
+	text-align:center;
+	margin-bottom:2px;
+}
+.scal .caltitle{
+	width:60%;
+	margin-left:auto;
+	margin-right:auto;
+	text-align:center;
+}
+.scal .calcontrol{
+	margin: 2px;
+	padding: 2px;
+	font-size:12pt;
+	font-weight: bold;
+}
+.scal .calcontrol:hover{
+	background-color:#096D9F;
+	color:white;
+}
+.scal .calclose{
+	border: 1px solid black;
+	float:right;
+}
+.scal .calprevmonth{
+	float:left;
+}
+.scal .calnextmonth{
+	float:right;
+}
+.scal .calnextyear{
+	display:none;
+}
+.scal .calprevyear{
+	display:none;
+}
+.scal .daybox{
+	float:left;
+	border:1px solid black;
+	width: 60px;
+	color:black;
+	text-align:center;	
+}
+.scal .dayboxvalue{
+    display: none;
+}
+.scal .dayboxname{
+	background-color: black;
+	color:white;
+	font-size:16pt;
+}
+.scal .dayboxsunday{
+	background-color: lightgray;
+}
+.scal .dayboxsaturday{
+	background-color: lightgray;
+}
+.scal .daybox:hover{
+	border:1px solid red;
+}
+.scal .dayboxname:hover{
+	border:1px solid black;
+}
+.scal .dayinmonth{
+	color: black;
+}
+.scal .dayoutmonth{
+	color:gray;
+}
+.scal .dayselected{
+	background-color: #096D9F;
+	color: white;
+}
+.scal .daycurrent{
+	border:1px solid #096D9F;
+}
+.scal .weekbox{
+	width:100%;
+	display:block;
+}
+.scal .endweek{
+	float:left;
+}
+.scal .weekboxname{
+}
+
+
+/* 
+tinyscal - a mini version of the calendar type.  useful in tight spaces. 
+ usage: define class of base element as "scal tinyscal" as tinyscal is 
+        dependent on scal.
+*/
+.tinyscal{
+	font-size:8pt;
+	width:154px;
+	min-height:140px;
+}
+.tinyscal .calcontrol{
+	font-size:8pt;
+}
+.tinyscal .caltitle{
+	padding:3px;
+}
+.tinyscal .daybox{
+	width: 20px;
+}
+.tinyscal .dayboxname{
+	font-size: 8pt;
+}
+.tinyscal .weekboxname{
+	margin-top:5px;
+}
+
+/*
+iscal - based on apple's ical default design
+*/
+.iscal{
+	background-color: #dd0000;
+	margin:1px;
+	border:3px solid #cccccc;
+	font-size:10pt;
+	width:540px; /* cellwidth * 7 + cellpadding * 14 + cellborder * 14 */
+	display:block;
+	padding:3px;
+	min-height:540px;
+}
+.iscal:hover{
+	cursor:pointer;
+	/*cursor:hand; /* If you're worried about old IE versions, turn this on.  I have it off because I hate seeing css exceptions in my debug window. ;) */
+}
+.iscal .calwrapper{
+	display:block;
+	background-color:#ffffff;
+}
+.iscal .calweekswrapper{
+	display:block;
+	border-right:1px solid #cccccc;
+}
+.iscal .calheader{
+	display: block;
+	width:100%;
+	text-align:center;
+	color:#ffffff;
+	font-size:18pt;
+	font-weight:bold;
+	margin-bottom:2px;
+}
+.iscal .caltitle{
+	width:70%;
+	height:40px;
+	margin-top:10px;
+	margin-left:auto;
+	margin-right:auto;
+	text-align:center;
+}
+.iscal .calcontrol{
+	font-weight: bold;
+	width:25px;
+}
+.iscal .calcontrol:hover{
+}
+.iscal .calclose{
+	float:right;
+	display:none;
+}
+.iscal .calprevmonth{
+	float:left;
+}
+.iscal .calnextmonth{
+	float:right;
+}
+.iscal .calnextyear{
+	display:none;
+}
+.iscal .calprevyear{
+	display:none;
+}
+.iscal .daybox{
+	float:left;
+	background-color: white;
+	border-left:1px solid #cccccc;
+	border-bottom: 1px solid #cccccc;
+	width:70px;
+	height:70px;
+	padding:3px;
+	color:black;
+	text-align:right;
+    overflow: auto;
+}
+.iscal .dayboxname{
+	background-color: #ffffff;
+	border-left: 1px solid #ffffff;
+	height:auto;
+	width:70px;
+	text-align: center;
+	color:#000000;
+}
+.iscal .dayboxvalue{
+	text-align:left;
+	overflow: auto;
+}
+.iscal .daybox:hover{
+}
+.iscal .dayboxname:hover{
+}
+.iscal .dayinmonth{
+	color: black;
+}
+.iscal .dayoutmonth{
+	color:gray;
+}
+.iscal .dayselected{
+	background-color: #eeeeff;
+}
+.iscal .daycurrent{
+	border:1px solid #e8eef7;
+}
+.iscal .weekbox{
+	width:100%;
+	display:block;
+}
+.iscal .endweek{
+	float:left;
+}
+.iscal .weekboxname{
+}
+.iscal .dayboxdate{
+    width: 15px;
+    text-align: center;
+    float: right;
+}
+.iscal .dayboxvalue p {
+    margin: 0px;
+    padding: 0px;
+    display: block;
+    clear: both;
+    border-bottom: 1px solid #ccc;
+}
+.iscal .dayselected{
+}
+
+/*
+googleblue - inspired by google's default calendar widget on iGoogle
+*/
+.googleblue{
+	background-color: #c3d9ff;
+	margin:1px;
+	border:1px solid #c3d9ff;
+	font-size:10pt;
+	width:219px; /* cellwidth * 7 + cellpadding * 14 + cellborder * 14 */
+	display:block;
+	padding:3px;
+	min-height:175px;
+}
+.googleblue:hover{
+	cursor:pointer;
+	/*cursor:hand; /* If you're worried about old IE versions, turn this on.  I have it off because I hate seeing css exceptions in my debug window. ;) */
+}
+.googleblue .calwrapper{
+	display:block;
+}
+.googleblue .calweekswrapper{
+	display:block;
+	border: 1px solid gray;	
+}
+.googleblue .calheader{
+	display: block;
+	width:100%;
+	text-align:center;
+	color:#112aab;
+	font-size:11pt;
+	font-weight: bold;
+	margin-bottom:2px;
+}
+.googleblue .caltitle{
+	width:auto;
+	margin-left:auto;
+	margin-right:auto;
+	text-align:center;
+}
+.googleblue .calcontrol{
+	font-weight: bold;
+	width:25px;
+}
+.googleblue .calcontrol:hover{
+}
+.googleblue .calclose{
+	float:right;
+	display:none;
+}
+.googleblue .calprevmonth{
+	float:left;
+}
+.googleblue .calnextmonth{
+	float:right;
+}
+.googleblue .calnextyear{
+	display:none;
+}
+.googleblue .calprevyear{
+	display:none;
+}
+.googleblue .daybox{
+	float:left;
+	background-color: white;
+	border:1px solid white;
+	width:25px;
+	padding:2px;
+	color:black;
+	text-align:center;	
+}
+.googleblue .dayboxvalue{
+    display: none;
+}
+.googleblue .dayboxname{
+	border: 1px solid #c3d9ff;
+	background-color: #c3d9ff;
+	color:black;
+}
+.googleblue .dayboxsunday{
+	background-color: #e8eef7;
+	border: 1px solid #e8eef7;
+}
+.googleblue .dayboxsaturday{
+	background-color: #e8eef7;
+	border: 1px solid #e8eef7;
+}
+.googleblue .daybox:hover{
+}
+.googleblue .dayboxname:hover{
+}
+.googleblue .dayinmonth{
+	color: black;
+}
+.googleblue .dayoutmonth{
+	color:gray;
+}
+.googleblue .dayselected{
+	background-color: #aaccee;
+	color: black;
+}
+.googleblue .daycurrent{
+	border:1px solid #e8eef7;
+}
+.googleblue .weekbox{
+	width:100%;
+	min-height:21px;
+	display:block;
+}
+.googleblue .endweek{
+	float:left;
+}
+.googleblue .weekboxname{
+}
+
+/*
+dashblack - inspired by apple's default calendar widget in Dashboard
+*/
+.dashblack{
+	background-color: #000000;
+	margin:1px;
+	border:3px solid silver;
+	font-size:10pt;
+	width:204px; /* cellwidth * 7 + cellpadding * 14 + cellborder * 14 */
+	display:block;
+	padding:3px;
+	min-height:145px;
+}
+.dashblack:hover{
+	cursor:pointer;
+	/*cursor:hand; /* If you're worried about old IE versions, turn this on.  I have it off because I hate seeing css exceptions in my debug window. ;) */
+}
+.dashblack .calwrapper{
+	display:block;
+}
+.dashblack .calweekswrapper{
+	display:block;
+}
+.dashblack .calheader{
+	display: block;
+	width:100%;
+	text-align:center;
+	color:#88dd22;
+	font-size:10pt;
+	font-weight: bold;
+	margin-bottom:2px;
+}
+.dashblack .caltitle{
+	width:auto;
+	margin-left:auto;
+	margin-right:auto;
+	text-align:center;
+}
+.dashblack .calcontrol{
+	font-weight: bold;
+	color: #ffffff;
+	width:25px;
+}
+.dashblack .calcontrol:hover{
+}
+.dashblack .calclose{
+	float:right;
+	display:none;
+}
+.dashblack .calprevmonth{
+	float:left;
+}
+.dashblack .calnextmonth{
+	float:right;
+}
+.dashblack .calnextyear{
+	display:none;
+}
+.dashblack .calprevyear{
+	display:none;
+}
+.dashblack .daybox{
+	float:left;
+	background-color: #000000;
+	border-right: 1px solid #666666;
+	border-left: 1px solid #000000;
+	width:25px;
+	padding:1px;
+	color:#ffffff;
+	font-weight: bold;
+	text-align:center;	
+}
+.dashblack .dayboxname{
+	border-right: 1px solid #666666;
+	border-left: 1px solid #000000;
+	background-color: #000000;
+	color:#666666;
+}
+.dashblack .dayboxvalue{
+	display:none;
+}
+.dashblack .daybox:hover{
+}
+.dashblack .dayboxname:hover{
+}
+.dashblack .dayinmonth{
+}
+.dashblack .dayoutmonth{
+	color:#666666;
+}
+.dashblack .dayselected{
+	color: #88dd22;
+}
+.dashblack .dayselected .dayboxdate{
+	text-decoration: underline;
+}
+.dashblack .daycurrent{
+}
+.dashblack .weekbox{
+	width:100%;
+	display:block;
+}
+.dashblack .endweek{
+	float:left;
+	border-right: 1px solid #000000;
+	border-left: 1px solid #000000;
+}
+.dashblack .weekboxname{
+}
+
+/*
+iphonic - inspired by apple's default calendar widget in Dashboard
+Contributed by Andrew Reutter
+*/
+.iphonic{
+	background-color: rgb( 230, 230, 230 );
+	color: rgb( 46, 63, 81 );
+	font-size:22px;
+	width:320px; /* cellwidth * 7 + cellborder * 14 */
+	display:block;
+	min-height:322px;
+	font-family: Helvetica;
+	letter-spacing: 1px;
+	-webkit-box-shadow: 0px 15px 15px #888;
+}
+.iphonic:hover{ cursor:pointer; }
+.iphonic .calwrapper{ display:block; }
+.iphonic .calweekswrapper{ display:block; }
+
+.iphonic .calheader{
+	display: block;
+	width:100%;
+	text-align:center;
+	font-size:22px; font-weight: bold;
+}
+.iphonic .caltitle{
+	width:auto;
+	margin-left:auto;
+	margin-right:auto;
+	text-align:center;
+	height:23px;
+	padding-top: 6px;
+	vertical-align: bottom;
+}
+.iphonic .calcontrol{
+	font-weight: bold;
+	width:44px;
+	padding-top: 6px;
+	height:23px;
+}
+.iphonic .calprevmonth{ float:left; }
+.iphonic .calnextmonth{ float:right; }
+.iphonic .calnextyear{
+	display:none;
+}
+.iphonic .calprevyear{
+	display:none;
+}
+.iphonic .calclose{ float:right; display:none; }
+
+.iphonic .daybox{
+	float:left;
+	border-top: 2px solid rgb( 210, 210, 210 );
+	border-right: 2px solid rgb( 210, 210, 210 );
+	width:44px;
+	height:35px;
+	font-weight: bold;
+	text-align:center;	
+	padding-top: 9px;
+}
+.iphonic .dayboxname{
+	border-right: 2px solid rgb( 201, 199, 204 );
+	border-top: none;
+	background-color: rgb( 201, 199, 204 );
+	font-size: 10px;
+	height: 14px;
+	color:#666666;
+	padding-top: 3px;
+}
+.iphonic .dayboxvalue{
+	display:none;
+}
+.iphonic .daybox:hover{
+}
+.iphonic .dayboxname:hover{
+}
+.iphonic .dayinmonth{
+}
+.iphonic .dayoutmonth{
+	color: rgb( 150, 150, 150 );
+}
+.iphonic .dayselected{
+	color: #ffffff;
+	background-color: rgb( 12, 96, 194 );
+}
+.iphonic .dayselected .dayboxdate{
+	text-decoration: none;
+}
+.iphonic .daycurrent{
+}
+.iphonic .weekbox{
+	width:100%;
+	display:block;
+}
+.iphonic .endweek{
+	float:left;
+	border-right: none;
+}
+.iphonic .weekboxname{
+}
