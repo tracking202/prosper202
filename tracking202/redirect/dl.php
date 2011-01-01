@@ -308,9 +308,7 @@ $click_outbound_site_url_id = INDEXES::get_site_url_id($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = mysql_real_escape_string($click_outbound_site_url_id); 
 
 if ($cloaking_on == true) {
-	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
-	$click_cloaking_site_url_id = INDEXES::get_site_url_id($cloaking_site_url); 
-	$mysql['click_cloaking_site_url_id'] = mysql_real_escape_string($click_cloaking_site_url_id);         
+	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;      
 }
 
 
@@ -328,7 +326,6 @@ $click_sql = "INSERT INTO   202_clicks_site
 			  SET           click_id='".$mysql['click_id']."',
 							click_referer_site_url_id='".$mysql['click_referer_site_url_id']."',
 							click_outbound_site_url_id='".$mysql['click_outbound_site_url_id']."',
-							click_cloaking_site_url_id='".$mysql['click_cloaking_site_url_id']."',
 							click_redirect_site_url_id='".$mysql['click_redirect_site_url_id']."'";
 $click_result = mysql_query($click_sql) or record_mysql_error($click_sql);   
 

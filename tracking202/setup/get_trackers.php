@@ -98,8 +98,13 @@ template_top($server_row,'Get Trackers',NULL,NULL,NULL);  ?>
 				</td>
 			</tr>
 			<tr>
+				<td></td>
+			<tr>
 				<td class="left_caption">Tracking ID c1</td>
-				<td valign="center"><input type="text" name="c1" /></td>
+				<td valign="center">
+					<input type="text" name="c1" />
+					<span style="font-size: 11px; padding-left: 10px;">c1-c4 variables must be less than 50 characters long.</span>
+				</td>
 			</tr>
 			<tr>
 				<td class="left_caption">Tracking ID c2</td>

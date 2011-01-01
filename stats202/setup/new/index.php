@@ -80,7 +80,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					'statAccountNickName' => $_POST['statAccountNickName'],
 					'statAccountUser' => $_POST['statAccountUser'],
 					'statAccountPass' => $_POST['statAccountPass'],
-					'statAccountAffId' => $_POST['statAccountAffId']  );
+					'statAccountAffId' => $_POST['statAccountAffId'],
+					'statAccountApiKey' => $_POST['statAccountApiKey'],
+					'statAccountApiId' => $_POST['statAccountApiId']  );
 	
 	if ($editing) 	$url = TRACKING202_API_URL . '/stats202/editStatAccount?' . http_build_query($get);
 	else 			$url = TRACKING202_API_URL . '/stats202/addStatAccount?' . http_build_query($get);
@@ -185,21 +187,41 @@ checkForApiErrors($getStatAccount);    ?>
 							
 								function showAffStatsFields(networkId) { 
 									
+									//WHEN THE NETWORK DROP DOWN IS SELECTED, THIS DETERMINES WHETHER OR NOT TO SHOW THE AFFILIATE ID FIELD
 									var require_aff_id;
-									
+									var require_api_key;
 									<? for ($x = 0; $x < count($networks); $x++) { 
 									
 										if ($networks[$x]['networkRequireAffId'] == 'true') 	$networks[$x]['networkRequireAffId'] = 1;
 										else 												$networks[$x]['networkRequireAffId'] = 0;
 										
+										if ($networks[$x]['networkRequireApiKey'] == 'true') 	$networks[$x]['networkRequireApiKey'] = 1;
+										else 												$networks[$x]['networkRequireApiKey'] = 0;
+										
+										if ($networks[$x]['networkRequireApiId'] == 'true') 	$networks[$x]['networkRequireApiId'] = 1;
+										else 												$networks[$x]['networkRequireApiId'] = 0;
+										
 										$html2 = array_map('htmlentities', $networks[$x]);
 										echo ' if (networkId == '.$html2['networkId'].') { require_aff_id = '.$html2['networkRequireAffId'].'; }' . "\n";
+										echo ' if (networkId == '.$html2['networkId'].') { require_api_key = '.$html2['networkRequireApiKey'].'; }' . "\n";
+										echo ' if (networkId == '.$html2['networkId'].') { require_api_id = '.$html2['networkRequireApiId'].'; }' . "\n";
 									}  ?>
 									
 									if (require_aff_id == 0) 	{ 	document.getElementById('stat_network_require_aff_id').value = 0;
 																	document.getElementById('stat_account_aff_id').style.display = 'none'; }
 									else			{ 					document.getElementById('stat_network_require_aff_id').value = 1;
 																	document.getElementById('stat_account_aff_id').style.display = 'table-row'; }
+
+						
+									if (require_api_key == 0) 	{ 	document.getElementById('stat_network_require_api_key').value = 0;
+																	document.getElementById('stat_account_api_key').style.display = 'none'; }
+									else			{ 					document.getElementById('stat_network_require_api_key').value = 1;
+																	document.getElementById('stat_account_api_key').style.display = 'table-row'; }
+
+									if (require_api_id == 0) 	{ 	document.getElementById('stat_network_require_api_id').value = 0;
+																	document.getElementById('stat_account_api_id').style.display = 'none'; }
+									else			{ 					document.getElementById('stat_network_require_api_id').value = 1;
+																	document.getElementById('stat_account_api_id').style.display = 'table-row'; }
 									
 								}
 							
@@ -217,6 +239,16 @@ checkForApiErrors($getStatAccount);    ?>
 					<tr>
 						<td class="left_caption">Password</td>
 						<td><input type="password" name="statAccountPass" style="display: inline;"/></td>
+					</tr>
+					<input type="hidden" id="stat_network_require_api_id" name="stat_network_require_api_id" value="<? echo $html['stat_network_require_api_id']; ?>"/>
+					<tr id="stat_account_api_id" <? if (!$html['statAccountApiId']) { echo 'style="display: none;"'; } ?>>
+						<td class="left_caption">API ID</td>
+						<td><input type="text" name="statAccountApiId" style="display: inline;" value="<? echo $html['statAccountApiId']; ?>"/></td>
+					</tr>
+					<input type="hidden" id="stat_network_require_api_key" name="stat_network_require_api_key" value="<? echo $html['stat_network_require_api_key']; ?>"/>
+					<tr id="stat_account_api_key" <? if (!$html['statAccountApiKey']) { echo 'style="display: none;"'; } ?>>
+						<td class="left_caption">API Key</td>
+						<td><input type="text" name="statAccountApiKey" style="display: inline;" value="<? echo $html['statAccountApiKey']; ?>"/></td>
 					</tr>
 					<input type="hidden" id="stat_network_require_aff_id" name="stat_network_require_aff_id" value="<? echo $html['stat_network_require_aff_id']; ?>"/>
 					<tr id="stat_account_aff_id" <? if (!$html['statAccountAffId']) { echo 'style="display: none;"'; } ?>>

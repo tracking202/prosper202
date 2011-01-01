@@ -23,10 +23,10 @@ class AUTH {
 	}
 
 	function require_user() {
-		
 		if (AUTH::logged_in() == false) {
 			 die(include_once($_SERVER['DOCUMENT_ROOT']. '/202-access-denied.php'));
 		}
+		AUTH::set_timezone($_SESSION['user_timezone']);  
 	}
 	
 	function require_valid_api_key() { 

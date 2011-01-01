@@ -273,11 +273,7 @@ $click_outbound_site_url_id = INDEXES::get_site_url_id($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = mysql_real_escape_string($click_outbound_site_url_id); 
 
 if ($cloaking_on == true) {
-
 	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-	$click_cloaking_site_url_id = INDEXES::get_site_url_id($cloaking_site_url); 
-	$mysql['click_cloaking_site_url_id'] = mysql_real_escape_string($click_cloaking_site_url_id);         
-	
 }
 
 
@@ -293,7 +289,6 @@ $update_sql = "
 		202_clicks_site
 	SET
 		click_outbound_site_url_id='".$mysql['click_outbound_site_url_id']."',
-		click_cloaking_site_url_id='".$mysql['click_cloaking_site_url_id']."',
 		click_redirect_site_url_id='".$mysql['click_redirect_site_url_id']."'
 	WHERE
 		click_id='".$mysql['click_id']."'
@@ -310,7 +305,7 @@ delay_sql($update_sql);
 //ADD TO CLICK SUMMARY TABLE?
 
 //update the click summary table if this is a 'real click'
-if ($info_row['click_filtered'] == 0) {
+#if ($info_row['click_filtered'] == 0) {
 	
 	$mysql['landing_page_id'] = mysql_real_escape_string($info_row['landing_page_id']);
 	$mysql['user_id'] = mysql_real_escape_string($info_row['user_id']);
@@ -351,7 +346,7 @@ if ($info_row['click_filtered'] == 0) {
 								   click_time='".$mysql['click_time']."'";
 		$insert_result = mysql_query($insert_sql);
 	}  
-}
+#}
 
 //set the cookie
 setClickIdCookie($mysql['click_id'],$mysql['aff_campaign_id']);

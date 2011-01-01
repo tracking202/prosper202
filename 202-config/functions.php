@@ -161,14 +161,15 @@ return $text;
 function update_needed () { 
 	
 	global $version;
-	
+
 	 $rss = fetch_rss('http://prosper202.com/apps/currentversion/');
 	 if ( isset($rss->items) && 0 != count($rss->items) ) {
-			 	
+			 
 		$rss->items = array_slice($rss->items, 0, 1) ;
 		foreach ($rss->items as $item ) {
 			$latest_version = $item['title'];
-			if (version_compare($latest_version,$version)==1) {
+			//if current version, is older than the latest version, return true for an update is now needed.
+			if (version_compare($version, $latest_version) == '-1') {
 				return true;
 			} else {
 				return false;
@@ -221,12 +222,8 @@ function getLocationDatabasedOn() {
 	
 }
 
-
+ 
 function iphone() {
 	if ($_GET['iphone']) { return true; }
 	if(preg_match("/iphone/i",$_SERVER["HTTP_USER_AGENT"])) { return true; } else { return false; }
 }
-
-
-
-

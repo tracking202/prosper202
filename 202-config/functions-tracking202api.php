@@ -17,10 +17,13 @@ function getUrl($url, $requestType = 'GET', $timeout = 30) {
 	   $curl->setopt( CURLOPT_POSTFIELDS, $postString );
 	}
 	
+	$curl->setopt( CURLOPT_FRESH_CONNECT, TRUE );
 	$curl->setopt( CURLOPT_SSL_VERIFYPEER, FALSE );
 	$curl->setopt( CURLOPT_USERAGENT, MAGPIE_USER_AGENT );
 	$curl->setopt( CURLOPT_FOLLOWLOCATION, 1 );// allow redirects
 	$curl->setopt( CURLOPT_RETURNTRANSFER, 1 ); // return into a variable
+	$curl->setopt( CURLOPT_FORBID_REUSE, 1 ); 
+	
 	$curl->setopt( CURLOPT_TIMEOUT, $timeout ); // times out after x seconds
 	
 	$result = $curl->exec(); // run the whole process

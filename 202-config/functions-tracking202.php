@@ -382,34 +382,34 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 										<span>Group By </span>
 										<select name="details[]">
 											<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
-												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_1']==$detail_item ? 'selected="selected"' : '' ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item) ?></option>
+												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_1']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
 											<?php } ?>
 										</select>
 									</td>
 									<td>
 										<span>Then Group By</span>
 										<select name="details[]">
-											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : '' ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE) ?></option>
+											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
 											<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
-												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_2']==$detail_item ? 'selected="selected"' : '' ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item) ?></option>
+												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_2']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
 											<?php } ?>
 										</select>
 									</td>
 									<td>
 										<span>Then Group By</span>
 										<select name="details[]">
-											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : '' ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE) ?></option>
+											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
 											<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
-												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_3']==$detail_item ? 'selected="selected"' : '' ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item) ?></option>
+												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_3']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
 											<?php } ?>
 										</select>
 									</td>
 									<td>
 										<span>Then Group By</span>
 										<select name="details[]">
-											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : '' ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE) ?></option>
+											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
 											<?php foreach(ReportBasicForm::getDetailArray() AS $detail_item) { ?>
-												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_4']==$detail_item ? 'selected="selected"' : '' ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item) ?></option>
+												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_4']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
 											<?php } ?>
 										</select>
 									</td>
@@ -851,6 +851,62 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 	$user_row = mysql_fetch_assoc($user_result);
 	
 	
+	//do extra joins if advance selector is enabled
+	if ($pref_adv == true) {
+		
+		
+		//if ppc network lookup with no individual ppc network account loookup do this
+		if ($user_row['user_pref_ppc_network_id'] and !($user_row['user_pref_ppc_account_id'])) { 
+			
+			if (!preg_match('/202_ppc_accounts/', $command)) {
+				$command .= " LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id) ";
+			}
+			
+			if (!preg_match('/202_ppc_networks/', $command)) {
+				$command .= " LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id) ";
+			}
+		}
+		
+		//if aff network lookup with no individual aff campaign loookup do this
+		if ($user_row['user_pref_aff_network_id'] and !($user_row['user_pref_aff_campaign_id'])) { 
+			
+			if (!preg_match('/202_aff_campaigns/', $command)) {
+				$command .= " LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id) ";
+			}
+			
+			if (!preg_match('/202_aff_networks/', $command)) {
+				$command .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id) ";
+			}
+		}
+		
+		
+		//if domain lookup
+		if ($user_row['user_pref_referer'] and !preg_match('/202_site_domains/', $command)) { 
+			
+			if (!preg_match('/202_clicks_site/', $command)) {
+				$command .= " LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) ";
+			}
+			
+			if (!preg_match('/202_site_urls/', $command)) {
+				$command .= " LEFT JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id = 2su.site_url_id) ";
+			}
+			$command .= " LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id) ";
+		}
+		
+		
+		//if there is a keyword lookup, and we have not joined the 202 keywords table. do so now
+		if ($user_row['user_pref_keyword'] and !preg_match('/202_keywords/', $command)) { 
+			$command .= " LEFT JOIN 202_keywords AS 2k ON (2ca.keyword_id = 2k.keyword_id) ";
+		}
+		
+		//if there is a ip lookup, and we have not joined the 202 ip table. do so now
+		if ($user_row['user_pref_ip'] and !preg_match('/202_ips/', $command)) { 
+			$command .= " LEFT JOIN 202_ips AS 2i ON (2ca.ip_id = 2i.ip_id) ";
+		}
+	}
+	
+	
+	
 	$click_sql = $command . " WHERE $db_table.user_id='".$mysql['user_id']."' ";
 	
 
@@ -868,175 +924,66 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 	//set advanced preferences                    
 	if ($pref_adv == true) {
 		if ($user_row['user_pref_ppc_network_id'] and !($user_row['user_pref_ppc_account_id'])) { 
-
 			$mysql['user_pref_ppc_network_id'] = mysql_real_escape_string($user_row['user_pref_ppc_network_id']);
-			$ppc_account_sql = "SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_network_id='".$mysql['user_pref_ppc_network_id']."' AND ppc_account_deleted=0";
-			$ppc_account_result = _mysql_query($ppc_account_sql) ; //($ppc_account_sql);
-			$ppc_account_count = mysql_num_rows($ppc_account_result);
-			
-			if ($ppc_account_count > 0) { 
-				$click_sql .=   " AND ( ";
-				$counter = 0;
-				while ($ppc_account_row = mysql_fetch_array($ppc_account_result, MYSQL_ASSOC)) { 
-					$counter++;
-					$mysql['ppc_account_id'] = mysql_real_escape_string($ppc_account_row['ppc_account_id']);
-					$click_sql .=   " $db_table.ppc_account_id='".$mysql['ppc_account_id']."'";
-					if ($counter < $ppc_account_count) { 
-						$click_sql .=   " OR ";    
-					}        
-				}
-				$click_sql .=   " ) "; 
-			}
-
+			$click_sql .=   "  AND      2pn.ppc_network_id='".$mysql['user_pref_ppc_network_id']."'";
 		}
+		
+
 		if ($user_row['user_pref_ppc_account_id']) { 
 			$mysql['user_pref_ppc_account_id'] = mysql_real_escape_string($user_row['user_pref_ppc_account_id']);
-			$click_sql .=   " AND      $db_table.ppc_account_id='".$mysql['user_pref_ppc_account_id']."'";
+			$click_sql .=   " AND      2c.ppc_account_id='".$mysql['user_pref_ppc_account_id']."'";
 		}
 		 
 	   if ($user_row['user_pref_aff_network_id'] and !$user_row['user_pref_aff_campaign_id']) { 
 
 			$mysql['user_pref_aff_network_id'] = mysql_real_escape_string($user_row['user_pref_aff_network_id']);
-			$aff_campaign_sql = "
-				SELECT
-					aff_campaign_id
-				FROM
-					202_aff_campaigns
-				WHERE
-					aff_network_id='".$mysql['user_pref_aff_network_id']."'
-					AND aff_campaign_deleted=0";
-			$aff_campaign_result = _mysql_query($aff_campaign_sql) ; //($aff_campaign_sql);
-			$aff_campaign_count = mysql_num_rows($aff_campaign_result);
-			
-			if ($aff_campaign_count > 0) { 
-				$click_sql .=   " AND ( ";
-				$counter = 0;
-				while ($aff_campaign_row = mysql_fetch_array($aff_campaign_result, MYSQL_ASSOC)) { 
-					$counter++;
-					$mysql['aff_campaign_id'] = mysql_real_escape_string($aff_campaign_row['aff_campaign_id']);
-					$click_sql .=   " $db_table.aff_campaign_id='".$mysql['aff_campaign_id']."'";
-					if ($counter < $aff_campaign_count) { 
-						$click_sql .=   " OR ";    
-					}        
-				}
-				$click_sql .=   " ) "; 
-			}
-
+			$click_sql .=   "  AND      2an.aff_network_id='".$mysql['user_pref_aff_network_id']."'";
 		}
 		
 		if ($user_row['user_pref_aff_campaign_id']) { 
 			$mysql['user_pref_aff_campaign_id'] = mysql_real_escape_string($user_row['user_pref_aff_campaign_id']);
-			$click_sql .=   " AND      $db_table.aff_campaign_id='".$mysql['user_pref_aff_campaign_id']."'";
+			$click_sql .=   " AND      2c.aff_campaign_id='".$mysql['user_pref_aff_campaign_id']."'";
 		}
 		if ($user_row['user_pref_text_ad_id']) { 
 			$mysql['user_pref_text_ad_id'] = mysql_real_escape_string($user_row['user_pref_text_ad_id']);
-			$click_sql .=   " AND      text_ad_id='".$mysql['user_pref_text_ad_id']."'";
+			$click_sql .=   " AND      2ca.text_ad_id='".$mysql['user_pref_text_ad_id']."'";
 		} 
 		if ($user_row['user_pref_method_of_promotion'] != '0') { 
 			if ($user_row['user_pref_method_of_promotion'] == 'directlink') { 
-				$click_sql .=   " AND      $db_table.landing_page_id=''";       
+				$click_sql .=   " AND      2c.landing_page_id=''";       
 			} elseif ($user_row['user_pref_method_of_promotion'] == 'landingpage') {  
-				$click_sql .=   " AND      $db_table.landing_page_id!=''";     
+				$click_sql .=   " AND      2c.landing_page_id!=''";     
 			} 
 		}
 		
 
 		if ($user_row['user_pref_landing_page_id']) { 
 			$mysql['user_landing_page_id'] = mysql_real_escape_string($user_row['user_pref_landing_page_id']);
-			$click_sql .=   " AND      $db_table.landing_page_id='".$mysql['user_landing_page_id']."'";
+			$click_sql .=   " AND      2c.landing_page_id='".$mysql['user_landing_page_id']."'";
 		}   
-		if ($user_row['pref_country_id']) { 
+		
+		/*if ($user_row['pref_country_id']) { 
 			$mysql['user_pref_country_id'] = mysql_real_escape_string($user_row['pref_country_id']);
 			$click_sql .=   " AND      pref_country_id=".$mysql['user_pref_country_id'];
-		} 
-
+		}*/
+		
 		if ($user_row['user_pref_referer']) { 
 			$mysql['user_pref_referer'] = mysql_real_escape_string($user_row['user_pref_referer']);
-			$site_url_sql = "
-				SELECT
-					site_url_id 
-				FROM
-					202_site_domains LEFT JOIN 202_site_urls USING (site_domain_id)
-				WHERE
-					site_domain_host LIKE CONVERT( _utf8 '".$mysql['user_pref_referer']."%' USING latin1 )
-					COLLATE latin1_swedish_ci
-			";
-			$site_url_result = _mysql_query($site_url_sql) ; //($site_url_sql);
-			$site_url_count = mysql_num_rows($site_url_result);
-			if ($site_url_count > 0) { 
-				$click_sql .=   " AND ( ";
-				$counter = 0;
-				while ($site_url_row = mysql_fetch_array($site_url_result, MYSQL_ASSOC)) { 
-					$counter++;
-					$mysql['site_url_id'] = mysql_real_escape_string($site_url_row['site_url_id']);
-					$click_sql .=   " click_referer_site_url_id='".$mysql['site_url_id']."'";
-					if ($counter < $site_url_count) { 
-						$click_sql .=   " OR ";    
-					}        
-				}
-				$click_sql .=   " ) "; 
-			} else {
-				$click_sql .=   " AND keyword_id = NULL";    
-			}
+			$click_sql .=   " AND 2sd.site_domain_host LIKE CONVERT( _utf8 '%".$mysql['user_pref_referer']."%' USING latin1 )
+							COLLATE latin1_swedish_ci ";    
 		}
 		
 		if ($user_row['user_pref_keyword']) { 
 			$mysql['user_pref_keyword'] = mysql_real_escape_string($user_row['user_pref_keyword']);
-			$keyword_sql = "
-				SELECT keyword_id
-				FROM 202_keywords
-				WHERE keyword LIKE CONVERT( _utf8 '%".$mysql['user_pref_keyword']."%' USING latin1 )
-				COLLATE latin1_swedish_ci
-			";
-			$keyword_result = _mysql_query($keyword_sql) ; //($keyword_sql);
-			$keyword_count = mysql_num_rows($keyword_result);
-			if ($keyword_count > 0) { 
-				$click_sql .=   " AND ( ";
-				$counter = 0;
-				while ($keyword_row = mysql_fetch_array($keyword_result, MYSQL_ASSOC)) { 
-					$counter++;
-					$mysql['keyword_id'] = mysql_real_escape_string($keyword_row['keyword_id']);
-		
-					$click_sql .=   " 202_clicks_advance.keyword_id='".$mysql['keyword_id']."'";
-					if ($counter < $keyword_count) { 
-						$click_sql .=   " OR ";    
-					}        
-				}
-				$click_sql .=   " ) "; 
-			} else {
-				$click_sql .=   " AND 202_clicks_advance.keyword_id = NULL";    
-			}
+			$click_sql .=   " AND 2k.keyword LIKE CONVERT( _utf8 '%".$mysql['user_pref_keyword']."%' USING latin1 )
+							COLLATE latin1_swedish_ci ";    
 		}
 		
 		if ($user_row['user_pref_ip']) { 
 			$mysql['user_pref_ip'] = mysql_real_escape_string($user_row['user_pref_ip']);
-			$ip_sql = "
-				SELECT ip_id
-				FROM 202_ips
-				WHERE ip_address LIKE CONVERT( _utf8 '".$mysql['user_pref_ip']."%' USING latin1 )
-				COLLATE latin1_swedish_ci
-			";
-			$ip_result = _mysql_query($ip_sql) ; //($ip_sql);
-			$ip_count = mysql_num_rows($ip_result);
-			
-			if ($ip_count > 0) { 
-				$click_sql .=   " AND ( ";
-				$counter = 0;
-				while ($ip_row = mysql_fetch_array($ip_result, MYSQL_ASSOC)) { 
-					$counter++;
-					$mysql['ip_id'] = mysql_real_escape_string($ip_row['ip_id']);
-					$click_sql .=   " 202_clicks_advance.ip_id='".$mysql['ip_id']."'";
-					if ($counter < $ip_count) { 
-						$click_sql .=   " OR ";    
-					}        
-				}
-				$click_sql .=   " ) "; 
-			} else {
-				$click_sql .=   " AND ip_id = NULL";    
-			}
-		}
-			
-				
+			$click_sql .=   " AND 2i.ip_address LIKE CONVERT( _utf8 '%".$mysql['user_pref_ip']."%' USING latin1 )
+							COLLATE latin1_swedish_ci ";    
+		}	
 	}
 	
 	//set time preferences
@@ -1119,7 +1066,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 	}
 		   
 	$query['click_sql'] = $click_sql;
-	//echo  $click_sql . '<br/><br/>';
+	#echo  $click_sql . '<br/><br/>';
 	
 	return $query;
 	
@@ -1246,128 +1193,287 @@ function pcc_network_icon($ppc_network_name,$ppc_account_name) {
 	if ((preg_match("/7search/i", $ppc_network_name)) or (preg_match("/7 search/i", $ppc_network_name))) {
 		$ppc_network_icon = '7search.ico';    
 	}
-	
+
 	//adbrite
 	if (preg_match("/adbrite/i", $ppc_network_name)) {
 		$ppc_network_icon = 'adbrite.ico';    
 	}
-	
+
+	//adoori
+	if (preg_match("/adoori/i", $ppc_network_name)) {
+		$ppc_network_icon = 'adoori.ico';    
+	}	
+
 	//adTegrity
 	if ((preg_match("/adtegrity/i", $ppc_network_name)) or (preg_match("/ad tegrity/i", $ppc_network_name))) {
 		$ppc_network_icon = 'adtegrity.png';    
 	}
-	
+
 	//ask
 	if (preg_match("/ask/i", $ppc_network_name)) {
 		$ppc_network_icon = 'ask.ico';    
 	}
+
+	//adblade
+	if ((preg_match("/adblade/i", $ppc_network_name)) or (preg_match("/ad blade/i", $ppc_network_name))) {
+		$ppc_network_icon = 'adblade.ico';    
+	}
 	
 	//adsonar
-	if ((preg_match("/adsonar/i", $ppc_network_name)) or (preg_match("/ad sonar/i", $ppc_network_name))) {
+	if ((preg_match("/adsonar/i", $ppc_network_name)) or (preg_match("/ad sonar/i", $ppc_network_name))
+	    or (preg_match("/quigo/i", $ppc_network_name))) {
 		$ppc_network_icon = 'adsonar.png';    
 	}
 	
+	//marchex
+	if ((preg_match("/marchex/i", $ppc_network_name)) or (preg_match("/goclick/i", $ppc_network_name))) {
+		$ppc_network_icon = 'marchex.png';    
+	}
+
 	//bidvertiser
 	if (preg_match("/bidvertiser/i", $ppc_network_name)) {
 		$ppc_network_icon = 'bidvertiser.gif';    
 	}
-	
+
 	//enhance
 	if (preg_match("/enhance/i", $ppc_network_name)) {
 		$ppc_network_icon = 'enhance.ico';    
 	}
 
 	//facebook
-	if (preg_match("/facebook/i", $ppc_network_name)) {
+	if ((preg_match("/facebook/i", $ppc_network_name)) or (preg_match("/fb/i", $ppc_network_name))) {
 		$ppc_network_icon = 'facebook.ico';    
 	}
+	
+	//findology
+	if (preg_match("/findology/i", $ppc_network_name)) {
+		$ppc_network_icon = 'findology.png';    
+	}
+	
 	//google
 	if ((preg_match("/google/i", $ppc_network_name)) or (preg_match("/adwords/i", $ppc_network_name))) {
 		$ppc_network_icon = 'google.ico';    
 	}
-	
+
 	//kanoodle
 	if (preg_match("/kanoodle/i", $ppc_network_name)) {
 		$ppc_network_icon = 'kanoodle.ico';    
 	}
-	
+
 	//looksmart
 	if (preg_match("/looksmart/i", $ppc_network_name)) {
 		$ppc_network_icon = 'looksmart.gif';    
 	}
 	
+	//hi5
+	if ( (preg_match("/hi5/i", $ppc_network_name)) or (preg_match("/hi 5/i", $ppc_network_name))) {
+		$ppc_network_icon = 'hi5.ico';    
+	}
+
 	//miva
-	if (preg_match("/miva/i", $ppc_network_name)) {
+	if ((preg_match("/miva/i", $ppc_network_name)) or (preg_match("/searchfeed/i", $ppc_network_name))) {
 		$ppc_network_icon = 'miva.ico';    
 	}
-	
+
 	//msn
-	if ((preg_match("/microsoft/i", $ppc_network_name)) or (preg_match("/MSN/i", $ppc_network_name))) {
+	if ((preg_match("/microsoft/i", $ppc_network_name)) or (preg_match("/MSN/i", $ppc_network_name)) 
+	    or (preg_match("/bing/i", $ppc_network_name)) or (preg_match("/adcenter/i", $ppc_network_name))  ) {
 		$ppc_network_icon = 'msn.ico';    
 	}
-	
+
 	//pulse360
 	if ((preg_match("/pulse360/i", $ppc_network_name)) or (preg_match("/pulse 360/i", $ppc_network_name))) {
 		$ppc_network_icon = 'pulse360.ico';    
 	}
-	
+
 	//search123
 	if ((preg_match("/search123/i", $ppc_network_name)) or (preg_match("/search 123/i", $ppc_network_name))) {
 		$ppc_network_icon = 'google.ico';    
 	}
-	
+
 	//searchfeed
 	if (preg_match("/searchfeed/i", $ppc_network_name)) {
 		$ppc_network_icon = 'searchfeed.gif';    
 	} 
-	
+
 	//yahoo
 	if ((preg_match("/yahoo/i", $ppc_network_name)) or (preg_match("/YSM/i", $ppc_network_name))) {
 		$ppc_network_icon = 'yahoo.ico';    
 	}
-	
-	
+
+
 	//mediatraffic
 	if ((preg_match("/mediatraffic/i", $ppc_network_name)) or (preg_match("/media traffic/i", $ppc_network_name))) {
 		$ppc_network_icon = 'mediatraffic.png';    
 	}
+
+	//mochi
+	if ((preg_match("/mochi/i", $ppc_network_name)) or (preg_match("/mochimedia/i", $ppc_network_name))
+	    or (preg_match("/mochi media/i", $ppc_network_name))) {
+		$ppc_network_icon = 'mochi.ico';    
+	}	
+
+	//myspace
+	if ((preg_match("/myspace/i", $ppc_network_name)) or (preg_match("/my space/i", $ppc_network_name))
+	    or (preg_match("/myads/i", $ppc_network_name)) or (preg_match("/my ads/i", $ppc_network_name))) {
+		$ppc_network_icon = 'myspace.ico';    
+	}
 	
+	//fox audience network
+	if (preg_match("/fox/i", $ppc_network_name)) {
+		$ppc_network_icon = 'foxnetwork.ico';    
+	}
+	
+	//adsdaq
+	if (preg_match("/adsdaq/i", $ppc_network_name)) {
+		$ppc_network_icon = 'adsdaq.png';    
+	}
+	
+	//twitter
+	if (preg_match("/twitter/i", $ppc_network_name)) {
+		$ppc_network_icon = 'twitter.ico';    
+	}
+	
+		
+	//amazon
+	if (preg_match("/amazon/i", $ppc_network_name)) {
+		$ppc_network_icon = 'amazon.ico';    
+	}
+	
+	//adengage
+	if ((preg_match("/adengage/i", $ppc_network_name)) or (preg_match("/ad engage/i", $ppc_network_name))) {
+		$ppc_network_icon = 'adengage.ico';    
+	}
+	
+	//adtoll
+	if ((preg_match("/adtoll/i", $ppc_network_name)) or (preg_match("/ad toll/i", $ppc_network_name))) {
+		$ppc_network_icon = 'adtoll.ico';    
+	}
+	
+	//ezanga
+	if ((preg_match("/ezangag/i", $ppc_network_name)) or (preg_match("/e zanga/i", $ppc_network_name))) {
+		$ppc_network_icon = 'ezanga.ico';    
+	}
+	
+	//aol
+	if ((preg_match("/aol/i", $ppc_network_name)) or (preg_match("/quigo/i", $ppc_network_name))) {
+		$ppc_network_icon = 'aol.ico';    
+	}
+	
+	//aol
+	if ((preg_match("/revtwt/i", $ppc_network_name)) or (preg_match("/rev twt/i", $ppc_network_name))) {
+		$ppc_network_icon = 'revtwt.ico';    
+	}
+	
+	//advertising.com
+	if (preg_match("/advertising.com/i", $ppc_network_name)) {
+		$ppc_network_icon = 'advertising.com.ico';    
+	}
+	
+	//advertise.com
+	if (preg_match("/advertise.com/i", $ppc_network_name)) {
+		$ppc_network_icon = 'advertise.com.gif';    
+	}
+	
+	//adready
+	if ((preg_match("/adready/i", $ppc_network_name)) or (preg_match("/ad ready/i", $ppc_network_name))) {
+		$ppc_network_icon = 'adready.ico';    
+	}
+	
+	//abc search
+	if ((preg_match("/abcsearch/i", $ppc_network_name)) or (preg_match("/abc search/i", $ppc_network_name))) {
+		$ppc_network_icon = 'abcsearch.png';    
+	}
+	
+	//abc search
+	if ((preg_match("/megaclick/i", $ppc_network_name)) or (preg_match("/mega click/i", $ppc_network_name))) {
+		$ppc_network_icon = 'megaclick.ico';    
+	}
+	
+	//etology
+	if (preg_match("/etology/i", $ppc_network_name)) {
+		$ppc_network_icon = 'etology.ico';    
+	}
+	
+	
+	//youtube
+	if ((preg_match("/youtube/i", $ppc_network_name)) or (preg_match("/you tube/i", $ppc_network_name))) {
+		$ppc_network_icon = 'youtube.ico';    
+	}
+
 	//social media
 	if ((preg_match("/socialmedia/i", $ppc_network_name)) or (preg_match("/social media/i", $ppc_network_name))) {
 		$ppc_network_icon = 'socialmedia.ico';    
 	}
-	
+
 	//zango
-	if (preg_match("/zango/i", $ppc_network_name)) {
+	if ((preg_match("/zango/i", $ppc_network_name)) or (preg_match("/leadimpact/i", $ppc_network_name))
+	     or (preg_match("/lead impact/i", $ppc_network_name))) {
 		$ppc_network_icon = 'zango.ico';    
 	} 
 	
+	//jema media
+	if ((preg_match("/jema media/i", $ppc_network_name)) or (preg_match("/jemamedia/i", $ppc_network_name))) {
+		$ppc_network_icon = 'jemamedia.png';    
+	} 
+	
+	//direct cpv
+	if ((preg_match("/directcpv/i", $ppc_network_name)) or (preg_match("/direct cpv/i", $ppc_network_name))) {
+		$ppc_network_icon = 'directcpv.png';    
+	} 
+	
+	//linksador
+	if ((preg_match("/linksador/i", $ppc_network_name))) {
+		$ppc_network_icon = 'linksador.png';    
+	} 
+	
 	//adon network
-	if ((preg_match("/adonnetwork/i", $ppc_network_name)) or (preg_match("/adon network/i", $ppc_network_name))) {
+	if ((preg_match("/adonnetwork/i", $ppc_network_name)) or (preg_match("/adon network/i", $ppc_network_name)) 
+	     or (preg_match("/Adon/i", $ppc_network_name)) or (preg_match("/ad-on/i", $ppc_network_name)) ) {
 		$ppc_network_icon = 'adonnetwork.ico';     
 	}
 	
+	//plenty of fish
+	if ((preg_match("/plentyoffish/i", $ppc_network_name)) or (preg_match("/plenty of fish/i", $ppc_network_name)) 
+	     or (preg_match("/pof/i", $ppc_network_name)) ) {
+		$ppc_network_icon = 'plentyoffish.ico';     
+	}
+
 	//clicksor
 	if (preg_match("/clicksor/i", $ppc_network_name)) {
 		$ppc_network_icon = 'clicksor.ico';    
 	} 
-	
+
 	//traffic vance
 	if ((preg_match("/trafficvance/i", $ppc_network_name)) or (preg_match("/traffic vance/i", $ppc_network_name))) {
 		$ppc_network_icon = 'trafficvance.ico';    
 	}
 	
+	//adknowledge
+	if ((preg_match("/adknowledge/i", $ppc_network_name)) or (preg_match("/bidsystem/i", $ppc_network_name))
+		or (preg_match("/bid system/i", $ppc_network_name)) or (preg_match("/cubics/i", $ppc_network_name))) {
+		$ppc_network_icon = 'adknowledge.ico';    
+	}
 	
+	if ((preg_match("/admob/i", $ppc_network_name)) or (preg_match("/ad mob/i", $ppc_network_name))) {
+		$ppc_network_icon = 'admob.ico';    
+	}
+	
+	if ((preg_match("/adside/i", $ppc_network_name)) or (preg_match("/ad side/i", $ppc_network_name))) {
+		$ppc_network_icon = 'adside.ico';    
+	}
+
+
 	//unknown
 	if (!isset($ppc_network_icon)) {
 		$ppc_network_icon = 'unknown.gif'; 
 	} 
-	
+
 	$html['ppc_network_icon'] = '<img src="/202-img/icons/ppc/'.$ppc_network_icon.'" width="16" height="16" alt="'.$ppc_network_name.'" title="'.$ppc_network_name.': '.$ppc_account_name.'"/>';
-	
+
 
 	return $html['ppc_network_icon'];
-}   
+} 
 
 
 
@@ -1865,24 +1971,12 @@ class INDEXES {
 	function get_site_url_id($site_url_address) { 
 	
 		$mysql['site_url_address'] = mysql_real_escape_string($site_url_address);
-		
-		$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."'";  
-		$site_url_result = _mysql_query($site_url_sql);
-		$site_url_row = mysql_fetch_assoc($site_url_result); 
-		if ($site_url_row) {
-			//if this site_url_address already exists, return the site_url_id for it.
-			$site_url_id = $site_url_row['site_url_id'];
-			return $site_url_id;    
-		} else {
-			//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
-			//but before we do this, we need to grab the site_domain_id
-			$site_domain_id = INDEXES::get_site_domain_id($site_url_address); 
-			$mysql['site_domain_id'] = mysql_real_escape_string($site_domain_id);    
-			$site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='".$mysql['site_domain_id']."', site_url_address='".$mysql['site_url_address']."'"; 
-			$site_url_result = _mysql_query($site_url_sql) ; //($site_url_sql);
-			$site_url_id = mysql_insert_id();
-			return $site_url_id;    
-		}    
+		$site_domain_id = INDEXES::get_site_domain_id($site_url_address); 
+		$mysql['site_domain_id'] = mysql_real_escape_string($site_domain_id);    
+		$site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='".$mysql['site_domain_id']."', site_url_address='".$mysql['site_url_address']."'"; 
+		$site_url_result = _mysql_query($site_url_sql) ; //($site_url_sql);
+		$site_url_id = mysql_insert_id();
+		return $site_url_id;
 	}    
 	
 	//this returns the site_domain_id, when a site_url_address is given
@@ -1912,6 +2006,8 @@ class INDEXES {
 	//this returns the keyword_id
 	function get_keyword_id($keyword) {
 		
+		//only grab the first 255 charactesr of keyword
+		$keyword = substr($keyword, 0, 255);
 		$mysql['keyword'] = mysql_real_escape_string($keyword);
 		
 		$keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='".$mysql['keyword']."'";
@@ -1933,6 +2029,8 @@ class INDEXES {
 	//this returns the c1 id
 	function get_c1_id($c1) {
 		
+		//only grab the first 50 charactesr of c1
+		$c1 = substr($c1, 0, 50);
 		$mysql['c1'] = mysql_real_escape_string($c1);
 		
 		$c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='".$mysql['c1']."'";
@@ -1947,13 +2045,15 @@ class INDEXES {
 			$c1_sql = "INSERT INTO 202_tracking_c1 SET c1='".$mysql['c1']."'";
 			$c1_result = _mysql_query($c1_sql) ; //($c1_sql);
 			$c1_id = mysql_insert_id();
-			return $c1_id;    
+			return $c1_id;     
 		}
 	}
 	
 	//this returns the c2 id
 	function get_c2_id($c2) {
 		
+		//only grab the first 50 charactesr of c2
+		$c2 = substr($c2, 0, 50);
 		$mysql['c2'] = mysql_real_escape_string($c2);
 		
 		$c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='".$mysql['c2']."'";
@@ -1975,6 +2075,8 @@ class INDEXES {
 	//this returns the c3 id
 	function get_c3_id($c3) {
 		
+		//only grab the first 50 charactesr of c3
+		$c3 = substr($c3, 0, 50);
 		$mysql['c3'] = mysql_real_escape_string($c3);
 		
 		$c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='".$mysql['c3']."'";
@@ -1996,6 +2098,8 @@ class INDEXES {
 	//this returns the c4 id
 	function get_c4_id($c4) {
 		
+		//only grab the first 50 charactesr of c4
+		$c4 = substr($c4, 0, 50);
 		$mysql['c4'] = mysql_real_escape_string($c4);
 		
 		$c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='".$mysql['c4']."'";

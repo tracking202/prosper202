@@ -7,13 +7,13 @@ AUTH::require_user();
 //if spy is enabled, run the query in a certain way.
 	if ($_GET['spy'] == 1) {
 		//$from = time() - 5;
-		$command = "SELECT * FROM 202_clicks_spy LEFT JOIN 202_clicks_advance USING (click_id) LEFT JOIN 202_clicks_site USING (click_id)";
-		$db_table = "202_clicks_spy";
-		$query = query($command, $db_table, false, true, true, ' ORDER BY 202_clicks_spy.click_id DESC ', false, 30, true);
+		$command = "SELECT * FROM 202_clicks_spy AS 2c LEFT JOIN 202_clicks_advance AS 2ca USING (click_id) LEFT JOIN 202_clicks_site AS 2cs USING (click_id)";
+		$db_table = "2c";
+		$query = query($command, $db_table, false, true, true, ' ORDER BY 2c.click_id DESC ', false, 30, true);
 	} else {
-		$command = "SELECT * FROM 202_clicks LEFT JOIN 202_clicks_advance USING (click_id) LEFT JOIN 202_clicks_site USING (click_id)";
-		$db_table = "202_clicks";
-		$query = query($command, $db_table, true, true, true, '  ORDER BY 202_clicks.click_id DESC ', $_POST['offset'], true, true);
+		$command = "SELECT * FROM 202_clicks AS 2c LEFT JOIN 202_clicks_advance AS 2ca USING (click_id) LEFT JOIN 202_clicks_site AS 2cs USING (click_id)";
+		$db_table = "2c";
+		$query = query($command, $db_table, true, true, true, '  ORDER BY 2c.click_id DESC ', $_POST['offset'], true, true);
 	}  
 
 //run query
@@ -104,10 +104,11 @@ AUTH::require_user();
 			$clicks_tbl  = "202_clicks";
 		}
 		
-		$click_sql2 = "SELECT  $clicks_tbl.click_id,
+		$click_sql2 = "SELECT  2c.click_id,
 								click_alp,
 								text_ad_name,
 								aff_campaign_name,
+								aff_campaign_id_public,
 								landing_page_nickname,
 								ppc_network_name,
 								ppc_account_name,
@@ -116,6 +117,8 @@ AUTH::require_user();
 								click_out,
 								click_lead,
 								click_filtered,
+								click_id_public,
+								click_cloaking,
 								click_referer_site_url_id,
 								click_landing_site_url_id,
 								click_outbound_site_url_id,
@@ -133,14 +136,14 @@ AUTH::require_user();
 								202_browsers.browser_name,
 								202_platforms.platform_id,
 								202_platforms.platform_name
-					  FROM      $clicks_tbl     
+					  FROM      $clicks_tbl  AS 2c  
 					  					LEFT JOIN 202_clicks_advance USING (click_id)
 										LEFT JOIN 202_clicks_record USING (click_id)
 										LEFT JOIN 202_clicks_site USING (click_id)
-										LEFT JOIN 202_aff_campaigns ON (202_aff_campaigns.aff_campaign_id = $clicks_tbl.aff_campaign_id)
-										LEFT JOIN 202_ppc_accounts ON (202_ppc_accounts.ppc_account_id = $clicks_tbl.ppc_account_id)
+										LEFT JOIN 202_aff_campaigns ON (202_aff_campaigns.aff_campaign_id = 2c.aff_campaign_id)
+										LEFT JOIN 202_ppc_accounts ON (202_ppc_accounts.ppc_account_id = 2c.ppc_account_id)
 										LEFT JOIN 202_ppc_networks USING (ppc_network_id)
-										LEFT JOIN 202_landing_pages ON (202_landing_pages.landing_page_id = $clicks_tbl.landing_page_id)
+										LEFT JOIN 202_landing_pages ON (202_landing_pages.landing_page_id = 2c.landing_page_id)
 										LEFT JOIN 202_text_ads ON (202_text_ads.text_ad_id = 202_clicks_advance.text_ad_id)
 										LEFT JOIN 202_ips ON (202_ips.ip_id = 202_clicks_advance.ip_id)
 										LEFT JOIN 202_keywords ON (202_keywords.keyword_id = 202_clicks_advance.keyword_id)
@@ -153,7 +156,7 @@ AUTH::require_user();
 										LEFT JOIN 202_locations_region ON (202_locations.location_region_id = 202_locations_region.location_region_id)";
 		}
 
-		$click_sql2 .= "	  WHERE     $clicks_tbl.click_id='".$mysql['click_id']."'";
+		$click_sql2 .= "	  WHERE  2c.click_id='".$mysql['click_id']."'";
 		$click_row2 = memcache_mysql_fetch_assoc($click_sql2);
 		$click_row = array_merge($click_row, $click_row2);
 		
@@ -181,13 +184,22 @@ AUTH::require_user();
 		$html['outbound'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
 		$html['outbound_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');   
 
-		$mysql['click_cloaking_site_url_id'] = mysql_real_escape_string($click_row['click_cloaking_site_url_id']);
-		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
-						 WHERE  202_site_urls.site_url_id = '".$mysql['click_cloaking_site_url_id']."'
-						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
-		$site_url_row = memcache_mysql_fetch_assoc($site_url_sql);
-		$html['cloaking'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
-		$html['cloaking_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');   
+		//this is alittle different
+		if ($click_row['click_cloaking']) {
+			
+			//if not a landing page
+			if (!$click_row['click_alp']) { 
+				$html['cloaking'] = htmlentities( 'http://' .$_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_row['click_id_public'] );
+				$html['cloaking_host'] = htmlentities( $_SERVER['SERVER_NAME'] );   
+			} else { 
+				//advanced lander
+				$html['cloaking'] = htmlentities( 'http://' .$_SERVER['SERVER_NAME'] . '/tracking202/redirect/off.php?acip='. $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public'] );
+				$html['cloaking_host'] = htmlentities( $_SERVER['SERVER_NAME'] );   
+			}
+		} else {
+			$html['cloaking'] = '';
+			$html['cloaking_host'] = '';	
+		}
 
 		$mysql['click_redirect_site_url_id'] = mysql_real_escape_string($click_row['click_redirect_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 

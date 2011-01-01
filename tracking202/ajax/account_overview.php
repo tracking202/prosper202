@@ -144,7 +144,6 @@ for($x = 0; $x < 2; $x++) {
 					AND 2c.click_alp=1
 			";
 		}
-		
 		$click_result = _mysql_query($click_sql) ; //($click_sql);
 		$click_row = mysql_fetch_assoc($click_result);
 
@@ -303,7 +302,6 @@ for($x = 0; $x < 2; $x++) {
 						AND click_time > ".$mysql['from'] ."
 						AND click_time <= ".$mysql['to']."
 						AND 2c.click_alp=1
-						GROUP BY 2c.click_id
 				";
 				$click_result = _mysql_query($click_sql);
 				$click_row = mysql_fetch_assoc($click_result);
@@ -376,7 +374,7 @@ for($x = 0; $x < 2; $x++) {
 				if (strlen($html['landing_page_nickname']) > 20) {
 					$html['landing_page_nickname'] = substr($html['landing_page_nickname'],0,20) . '...';   
 				}
-					
+				
 				?><tr>
 					<td class="m-row2" style="padding-left: 20px;"> - <? echo $html['aff_network_name']; ?></td>
 					<td class="m-row2 m-row2-fade"  style="padding-left: 20px;"> - <? echo $html['aff_campaign_name']; ?></td>
@@ -486,6 +484,7 @@ for($x = 0; $x < 2; $x++) {
 				 ORDER BY  202_landing_pages.landing_page_nickname ASC"; 
 	} 
 
+	
 	$info_result = _mysql_query($info_sql) ; //($info_sql);  
 	while ($info_row = mysql_fetch_array($info_result, MYSQL_ASSOC)) {
 		
@@ -506,8 +505,8 @@ for($x = 0; $x < 2; $x++) {
 		$html['landing_page_id'] = htmlentities($info_row['landing_page_id'], ENT_QUOTES, 'UTF-8');
 		$html['landing_page_nickname'] = htmlentities($info_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');  ?>
 	
-	<? if ($x==0) { ?><h3 class="green overview-spacer" id="aff_<? echo $html['aff_campaign_id']; ?>"><? echo $html['aff_campaign_name']; ?> </h3>
-	<? } else { ?><h3 class="green overview-spacer" id="lp_<? echo $html['landing_page_id']; ?>"><? echo $html['landing_page_nickname']; ?> </h3><? } ?>
+	<? if ($x==0) { ?><h3 class="green overview-spacer" id="aff_<? echo $html['aff_campaign_id']; ?>"><? echo $html['aff_campaign_name']; ?> <span style="font-size: 65%; color: grey; font-weight: normal;">[direct link &amp; simple lp]</span></h3>
+	<? } else { ?><h3 class="green overview-spacer" id="lp_<? echo $html['landing_page_id']; ?>"><? echo $html['landing_page_nickname']; ?> <span style="font-size: 65%; color: grey; font-weight: normal;">[adv lp]</span></h3><? } ?>
 	<table cellpadding="0" cellspacing="1" class="m-stats"> 
 		<tr class="stats-grey">   
 			<th colspan="2">PPC Account</th>
@@ -546,7 +545,6 @@ for($x = 0; $x < 2; $x++) {
 						AND click_time > ".$mysql['from'] ."
 						AND click_time <= ".$mysql['to']."
 						AND 2c.click_alp=0
-						GROUP BY 2c.click_id
 				";
 			} else {
 				$click_sql = "
@@ -560,12 +558,11 @@ for($x = 0; $x < 2; $x++) {
 					WHERE
 						2c.user_id='".$mysql['user_id']."'
 						$click_filtered
-						AND aff_campaign_id='".$mysql['aff_campaign_id']."'
+						AND landing_page_id='".$mysql['landing_page_id']."'
 						AND ppc_account_id='0'
 						AND click_time > ".$mysql['from'] ."
 						AND click_time <= ".$mysql['to']."
 						AND 2c.click_alp=1
-						GROUP BY 2c.click_id
 				";
 			}
 			$click_result = _mysql_query($click_sql) ; //($click_sql);
@@ -766,7 +763,7 @@ for($x = 0; $x < 2; $x++) {
 						AND 2c.click_alp=1
 				";
 			}
-			$click_result = _mysql_query($click_sql) ; //($click_sql);
+			$click_result = _mysql_query($click_sql) ; 
 			$click_row = mysql_fetch_assoc($click_result);
 			
 		//get the stats

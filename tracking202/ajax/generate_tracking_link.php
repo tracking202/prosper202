@@ -22,6 +22,11 @@ AUTH::require_user();
 //but we'll allow them to choose the following options, can make a tracker link without but they will be notified
 	if($_POST['text_ad_id'] == '') { $error['text_ad_id'] = '<div class="error">WARNING: This tracking link is not attached to any text ad, are you sure you want to do this?</div>'; }
 	if($_POST['click_cloaking'] == '') { $error['click_cloaking'] = '<div class="error">WARNING: This tracking link is not attached to any cloaking preference, are you sure you want to do this?</div>'; }
+	
+	
+	if ($_POST['ppc_network_id'] and !$_POST['ppc_account_id']) { 
+		die('<div class="error">ERROR: You have a traffic source selected, but YOU DO NOT HAVE A PPC ACCOUNT SELECTED.  In order to track your traffic-sources you must select a ppc-account. If you have not created one, go back to step #1 to add it now.</div>');
+	}
 	if($_POST['ppc_network_id'] == '') { $error['ppc_network_id'] = '<div class="error">WARNING: This tracking link is not attached to any PPC network, are you sure you want to do this?</div>'; }
 	if($_POST['ppc_account_id'] == '') { $error['ppc_account_id'] = '<div class="error">WARNING: This tracking link is not attached to any PPC account, are you sure you want to do this?</div>'; }
 	if((!is_numeric($_POST['cpc_dollars'])) or (!is_numeric($_POST['cpc_cents']))) { $error['cpc'] = '<div class="error">WARNING: This tracking link does not have it\'s CPC set, are you sure you want to do this?</div>'; }

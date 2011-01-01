@@ -1,5 +1,3 @@
-
-
 html { }
 html, body { color:#333333; font-family:arial,helvetica,sans-serif; font-size:12px; background: white; height: 100%;    }
 body { margin: 0px auto;  padding: 0px; min-width: 1015px; max-width: 1330px; background: url(/202-img/bg-l.png) repeat-y 0% 0%; }
@@ -16,7 +14,6 @@ a:hover, a.onclick_color:hover    {
 	text-decoration: underline; /*color : #DD6900;*/
 }
 
-
 .shrink-width{ width: 1%; }
 
 .body { background: url(/202-img/bg-r.png) repeat-y 100% 100%; min-width: 1015px; max-width: 1330px; margin: 0px auto; 	 height:auto !important; /* real browsers */ height:100%; /* IE6: treaded as min-height*/ min-height:100%; /* real browsers */ }
@@ -31,8 +28,17 @@ a:hover, a.onclick_color:hover    {
 .headline td a { color:#333333;  text-decoration: none; }
 .headline td a:hover { text-decoration: underline; }
 
-.alert { width: 100%; background: #FFFFD5; border: #FFDDAA solid; border-width: 0px 1px 1px; padding: 2px; }
+#new_offers { color: red; font-weight: bold; }
+
+.alert { width: 100%; background: #FFFFD5; border: #FFDDAA solid; border-width: 0px 1px 1px; padding: 2px; -moz-border-radius:5px 5px 5px 5px;}
 .alert td {  font-size: 12px; text-align: center; }
+
+.alert2 { width: 85%; background: #FFD1D3; border: #FBA4A4 solid; border-width: 1px; padding: 10px; margin: 15px auto 0px; -moz-border-radius:5px 5px 5px 5px; }
+.alert2 td {  font-size: 12px; text-align: left; }
+.alert2 td h2 { margin: 0px 0px 7px; float: right; }
+.alert2 td div { padding-top: 2px;  }
+.alert2 ul { margin: 0px; padding: 0px 0px 0px 20px; }
+.alert2 ul li { padding-top: 5px; padding-bottom: 5px; margin: 0px; }
 
 .footer { border-top:1px solid #CCCCCC; margin:40px 0pt; padding:20px 0pt 0pt; text-align: center; font-size: 11px; }
 .outofdate { font-weight: bold; }
@@ -42,7 +48,7 @@ a:hover, a.onclick_color:hover    {
 .welcome {width: 52%; float: left;  }
 .products { width: 40%; float: right; }
 
-.advertise { height: 140px; width: 100%; border: 0px; scroll: none; }
+.advertise { height: 150px; width: 100%; border: 0px; scroll: none; }
 .advertise-top-left { height: 60px; width: 225px; border: 0px; scroll: none; margin-right: 10px;}
  
 
@@ -56,7 +62,9 @@ h1,h2,h3,h4,h5 { margin-bottom: 5px; padding: 0px;  }
 
 h1,h2 { font-size: 18px; }
 h3 { font-size: 14px; } 
-h4 { font-size: 12px; } 
+h4 { font-size: 12px; }
+
+.news_icon { margin-right: 5px; margin-bottom: -3px; }
 
 /*input, select, textarea {  padding: 3px; background:#F4F4F4 none repeat scroll 0%; border:1px solid #B2B2B2;}*/
 .submit { background: #DFDFDF; border-color:#CCCCCC rgb(153, 153, 153) rgb(153, 153, 153) rgb(204, 204, 204); border-style:solid; border-width:1px; color:#333333;  }

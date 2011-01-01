@@ -2,7 +2,7 @@
 
 
 //heres the psuedo cronjobs
-if (Run1MinCronjob() == true) { 
+if (RunSecondsCronjob() == true) { 
 	if (RunHourlyCronJob() == true) { 
 		RunDailyCronjob();	
 	}
@@ -111,37 +111,37 @@ function RunHourlyCronJob() {
 }
 
 
-function Run1MinCronjob() { 
+function RunSecondsCronjob() { 
 	
 //check to run the 1minute cronjob, change this to every minute
 	$now = time();
 
+	$everySeconds = 20;
+
+//check to run the 1minute cronjob, change this to every minute
+	$now = time();
+
+	$today_second = date('s', time());
 	$today_minute = date('i', time());
 	$today_hour = date('G', time());
 	$today_day = date('j', time());
 	$today_month = date('n', time());
 	$today_year = date('Y', time());
 	
-	$today_minute = ceil($today_minute / 1);
-	$today_minute = $today_minute * 1;
+	$today_second = ceil($today_second / $everySeconds);
+	if ($today_second == 0) $today_second++;
 	
-	if ($today_minute == 60) { 
-		$today_minute = 0; 
-		$today_hour++;
-		if ($today_hour == 24) { 
-			$today_hour = 0; 
-		}
-	}
-		
 	//the click_time is recorded in the middle of the day
-	$cronjob_time = mktime($today_hour,$today_minute,0,$today_month,$today_day,$today_year);
+	$cronjob_time = mktime($today_hour,$today_minute,$today_second,$today_month,$today_day,$today_year);
+	
 	$mysql['cronjob_time'] = mysql_real_escape_string($cronjob_time);
-	$mysql['cronjob_type'] = mysql_real_escape_string('1min');
+	$mysql['cronjob_type'] = mysql_real_escape_string('secon');
 	
 	//check to make sure this click_summary doesn't already exist
 	$check_sql = "SELECT  COUNT(*)  FROM 202_cronjobs WHERE cronjob_type='".$mysql['cronjob_type']."' AND cronjob_time='".$mysql['cronjob_time']."'";
 	$check_result = mysql_query($check_sql) or record_mysql_error($check_sql);
-	$check_count = mysql_result($check_result,0,0);      
+	$check_count = mysql_result($check_result,0,0);  
+	   
 	
 	if ($check_count == 0 ) {
 		

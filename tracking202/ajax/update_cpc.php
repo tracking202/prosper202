@@ -142,7 +142,7 @@ AUTH::require_user();
 		$error['cpc'] = '<div class="error">You did not input a numeric max CPC.</div>'; 
 	} else {
 		$click_cpc = $_POST['cpc_dollars'] . '.' . $_POST['cpc_cents'];
-		$html['click_cpc'] = htmlentities(dollar_format($click_cpc), ENT_QUOTES, 'UTF-8');
+		$html['click_cpc'] = htmlentities('$'.$click_cpc, ENT_QUOTES, 'UTF-8');
 		$mysql['click_cpc'] = mysql_real_escape_string($click_cpc);
 	}
 	
@@ -221,6 +221,6 @@ AUTH::require_user();
 	<tr valign="middle">
 		<td colspan="2" style="text-align: center;"><button onclick="update_cpc2();">Update My CPC</button> <img id="update_cpc2_loading" style="display: none;" src="/202-img/loader-small.gif"/></td>
 	</tr>
-</table
+</table>
 
 <div id="update_cpc2" style="width: 500px; margin: 0px auto;"></div>

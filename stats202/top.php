@@ -1,4 +1,4 @@
-<? if ($_SESSION['stats202_enabled']) { ?>
+<?/* if ($_SESSION['stats202_enabled']) { ?>
 	<div id="stats202-download-status"></div>
 	<script type="text/javascript">
 		downloadStatus();
@@ -6,7 +6,7 @@
 	</script>
 <? } else { ?>
 	<div style="padding: 10px 0px;"></div>
-<? } ?>
+<? } */?>
 
 
 

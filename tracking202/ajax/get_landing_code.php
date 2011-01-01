@@ -73,7 +73,7 @@ AUTH::require_user();
   
 ?>';
 	$html['outbound_php'] = htmlentities($outbound_php);
-	printf('<p><b>Landing Page: Outbound PHP Redirect Code:</b>
+	printf('<p><b>Option 1: Landing Page: Outbound PHP Redirect Code:</b>
 			This is the php code  so you can <u>cloak your affiliate link</u>.
             Instead of having your affiliate link be seen on your outgoing links on your landing page,
 			you can have your outgoing links just goto another page on your site, 
@@ -85,6 +85,37 @@ AUTH::require_user();
             You must have PHP installed on your server for this to work! </p>
             <p><textarea class="code_snippet large">%s</textarea></p>', $html['outbound_php']);
 
+
+	$outbound_javascript = '<!-- PLACE OTHER LANDING PAGE CLICK THROUGH CONVERSION TRACKING PIXELS HERE -->
+	
+<!-- NOW THE TRACKING202 REDIRECTS OUT -->
+<script type="text/javascript">
+if (readCookie(\'tracking202outbound\') != \'\') {
+	window.location=readCookie(\'tracking202outbound\');
+} else {
+	window.location=\'http://mydomain.com/tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'] .'\';
+}
+	
+function readCookie(name) {
+	var nameEQ = name + "=";
+	var ca = document.cookie.split(\';\');
+	for(var i=0;i < ca.length;i++) {
+		var c = ca;
+		while (c.charAt(0)==\' \') c = c.substring(1,c.length);
+		if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length,c.length);
+	}
+	return null;
+}
+</script>';
+	
+	$html['outbound_javascript'] = htmlentities($outbound_javascript);
+	printf('<p><b>Option 2: Landing Page: Outbound Javascript Redirect Code:</b>
+			This allows you to generate a javascript redirect instead of a PHP redirect. 
+			This is useful when you want to use other services like google website optimizers
+			 to track the click-through ratios on your landing pages. With the normal PHP redirect
+			 you previously could not do this.  With the new Javascript Redirect, you can place
+			 other javascript tags to fire before processing the javascript redirect.</p>
+            <p><textarea class="code_snippet large">%s</textarea></p>', $html['outbound_javascript']);
 
 } 
   ?>

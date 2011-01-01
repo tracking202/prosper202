@@ -248,19 +248,19 @@ template_top('Affiliate Campaigns Setup',NULL,NULL,NULL); ?>
 					</tr>
 					<tr id="rotateUrl2" <? if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
 						<td class="left_caption" >Rotate Url #2</td>
-						<td><input type="text" name="aff_campaign_url_2" value="<? echo $html['aff_campaign_url_2']; ?>" style="width: 200px; display: inline;"/> [subid]</td>
+						<td><input type="text" name="aff_campaign_url_2" value="<? echo $html['aff_campaign_url_2']; ?>" style="width: 200px; display: inline;"/></td>
 					</tr>
 					<tr id="rotateUrl3" <? if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
 						<td class="left_caption" >Rotate Url #3</td>
-						<td><input type="text" name="aff_campaign_url_3" value="<? echo $html['aff_campaign_url_3']; ?>" style="width: 200px; display: inline;"/> [subid]</td>
+						<td><input type="text" name="aff_campaign_url_3" value="<? echo $html['aff_campaign_url_3']; ?>" style="width: 200px; display: inline;"/></td>
 					</tr>
 					<tr id="rotateUrl4" <? if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
 						<td class="left_caption" >Rotate Url #4</td>
-						<td><input type="text" name="aff_campaign_url_4" value="<? echo $html['aff_campaign_url_4']; ?>" style="width: 200px; display: inline;"/> [subid]</td>
+						<td><input type="text" name="aff_campaign_url_4" value="<? echo $html['aff_campaign_url_4']; ?>" style="width: 200px; display: inline;"/></td>
 					</tr>
 					<tr id="rotateUrl5" <? if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
 						<td class="left_caption" >Rotate Url #5</td>
-						<td><input type="text" name="aff_campaign_url_5" value="<? echo $html['aff_campaign_url_5']; ?>" style="width: 200px; display: inline;"/> [subid]</td>
+						<td><input type="text" name="aff_campaign_url_5" value="<? echo $html['aff_campaign_url_5']; ?>" style="width: 200px; display: inline;"/></td>
 					</tr>
 	
 					<tr>

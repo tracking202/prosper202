@@ -1,6 +1,6 @@
 <?php
 
-$version = '1.5.1';
+$version = '1.6.1';
 
 DEFINE('TRACKING202_API_URL', 'http://api.tracking202.com');
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
@@ -96,7 +96,9 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 	
 	//we can initalize the session managers 
 	if (!$stopSessions) { 
-		$sess = new SessionManager(); 
+		
+		//disable mysql sessions because they are slow
+		//$sess = new SessionManager(); 
 		session_start();    
 	} 
 	

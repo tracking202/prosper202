@@ -370,6 +370,38 @@ class UPGRADE {
 			$mysql_version = '1.5.1';
 		}
 		
+		
+		//upgrade from 1.5.1 to 1.6
+		if ($mysql_version == '1.5.1') {
+			
+			$result = _mysql_query("CREATE TABLE IF NOT EXISTS `202_alerts` (
+			  `prosper_alert_id` int(11) NOT NULL,
+			  `prosper_alert_seen` tinyint(1) NOT NULL,
+			  UNIQUE KEY `prosper_alert_id` (`prosper_alert_id`)
+			) ENGINE=MyISAM DEFAULT CHARSET=latin1;");
+			
+			$result = _mysql_query("CREATE TABLE IF NOT EXISTS `202_offers` (
+				  `user_id` mediumint(8) unsigned NOT NULL,
+				  `offer_id` mediumint(10) unsigned NOT NULL,
+				  `offer_seen` tinyint(1) NOT NULL DEFAULT '1',
+				  UNIQUE KEY `user_id` (`user_id`,`offer_id`)
+				) ENGINE=MyISAM DEFAULT CHARSET=latin1;");
+			
+			$result = _mysql_query("ALTER TABLE  `202_cronjobs` ENGINE = MYISAM;");
+			
+			$sql = "UPDATE 202_version SET version='1.6'; ";
+			$result = _mysql_query($sql);
+			$mysql_version = '1.6';
+		}
+		
+		//upgrade from 1.6 beta to 1.6.1 stable
+		if ($mysql_version == '1.6') {
+			
+			$sql = "UPDATE 202_version SET version='1.6.1'; ";
+			$result = _mysql_query($sql);
+			$mysql_version = '1.6.1';
+		}
+		
 		return true;
 	}
 }
