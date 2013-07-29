@@ -65,9 +65,9 @@ include_once('../top.php');
 checkForApiErrors($getPostBacks);  ?>
 
 
-<? if ($_GET['delete']) echo "<div class='success'><div><h3>Your submission was successful</h3>You have deleted a postback url.</div></div>"; ?>
-<? if ($success) echo "<div class='success'><div><h3>Your submission was successful</h3>You have modified or created a new postback url</div></div>"; ?>
-<? if ($errors) { 
+<?php if ($_GET['delete']) echo "<div class='success'><div><h3>Your submission was successful</h3>You have deleted a postback url.</div></div>"; ?>
+<?php if ($success) echo "<div class='success'><div><h3>Your submission was successful</h3>You have modified or created a new postback url</div></div>"; ?>
+<?php if ($errors) { 
 	echo "<div class='warning'><div><h3>There were errors with your submission</h3>Please look at the errors below</div></div>";
 	for ($x = 0; $x < count($errors); $x++) { 
 		$html = array_merge($html, array_map('htmlentities', $errors[$x]) );
@@ -104,7 +104,7 @@ checkForApiErrors($getPostBacks);  ?>
 					</tr>
 					<tr>
 					     <td><strong>Postback URL</strong></td>
-					     <td><input type="text" style="width:400px" name="postBackUrl" value="<? echo $html['postBackUrl']; ?>"/></td>
+					     <td><input type="text" style="width:400px" name="postBackUrl" value="<?php echo$html['postBackUrl']; ?>"/></td>
 					</tr>
 					<tr>
 						<td/>
@@ -117,8 +117,8 @@ checkForApiErrors($getPostBacks);  ?>
 	<tr>
 		<td  style="padding-top: 30px">
 		
-			<? if ($_GET['deleteSuccess']) echo "<div class='success'><div><h3>Your have successfully deleted a postback url.</h3></div></div>"; ?>
-			<? if ($_GET['addSuccess']) echo "<div class='success'><div><h3>Your have successfully created a postback url.</h3></div></div>"; ?>
+			<?php if ($_GET['deleteSuccess']) echo "<div class='success'><div><h3>Your have successfully deleted a postback url.</h3></div></div>"; ?>
+			<?php if ($_GET['addSuccess']) echo "<div class='success'><div><h3>Your have successfully created a postback url.</h3></div></div>"; ?>
 				
 			<h3 class="green">My Postback URLs</h3>
 			<p style="margin: 8px 0px;">Here are all of your postback urls.</p>

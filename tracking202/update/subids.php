@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -76,9 +76,9 @@ template_top('Update Subids'); ?>
 		<img src="/202-img/icons/16x16/new.png" style="margin: 0px 6px -4px 0px;" title="new" alt="new"/>You can now automatically update your subids by setting up your <a href="/stats202/postback/">Stats202</a> Postback URL.
 	</div>	
     
-    <? if ($success == true) { ?>
+    <?php if ($success == true) { ?>
         <div class="success"><div><h3>Your submission was successful</h3>Your account income now reflects the subids from the commisisons you just uploaded.</div></div>
-    <? } ?>
+    <?php } ?>
 	<div id="m-content">
 	<form method="post" action="">
 		<table cellpadding="0" cellspacing="1" class="m-stats">    
@@ -86,7 +86,7 @@ template_top('Update Subids'); ?>
 				<th>Subids</th>
 			</tr>
             	<tr valign="top">
-				<td><textarea name="subids" style="height: 200px; width: 100%; margin: 0px auto;"><? echo $_POST['subids']; ?></textarea></td>
+				<td><textarea name="subids" style="height: 200px; width: 100%; margin: 0px auto;"><?php echo$_POST['subids']; ?></textarea></td>
 			</tr>
 			<tr>
 				<td class="m-row-bottom">
@@ -96,4 +96,4 @@ template_top('Update Subids'); ?>
 		</table>
 	</form> 
    </div>     
-<? template_bottom();
+<?php template_bottom();

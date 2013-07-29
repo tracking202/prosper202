@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -68,7 +68,7 @@ template_top('Offer Alerts');  ?>
 			<td></td>
 			<td align="right">
 			
-				<? if ($errors) { 
+				<?php if ($errors) { 
 					echo "<div class='warning'><div><h3>There were errors with your submission</h3>Please look at the errors below</div></div>";
 					for ($x = 0; $x < count($errors); $x++) { 
 						$html = array_merge($html, array_map('htmlentities', $errors[$x]) );
@@ -119,8 +119,8 @@ template_top('Offer Alerts');  ?>
 		<tr>
 			<td colspan="3" style="padding-top: 30px;">
 			
-				<? if ($_GET['deleteSuccess']) echo "<div class='success'><div><h3>Your have successfully deleted an alert.</h3></div></div>"; ?>
-				<? if ($_GET['addSuccess']) echo "<div class='success'><div><h3>Your have successfully created an alert.</h3></div></div>"; ?>
+				<?php if ($_GET['deleteSuccess']) echo "<div class='success'><div><h3>Your have successfully deleted an alert.</h3></div></div>"; ?>
+				<?php if ($_GET['addSuccess']) echo "<div class='success'><div><h3>Your have successfully created an alert.</h3></div></div>"; ?>
 				
 				<table width="320" cellspacing="0" cellpadding="5" border="0"  class="setup-table" style="width: 100%;">
 					<tbody>
@@ -163,4 +163,4 @@ template_top('Offer Alerts');  ?>
 	</tbody>
 </table>
 
-<? template_bottom();
+<?php template_bottom();

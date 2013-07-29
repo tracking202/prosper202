@@ -4,7 +4,7 @@
 	<table class="offers_form_table" cellspacing='0' cellpadding='5'>
 		<tr>
 			<th>Search:</th>
-			<td><input class="query" type="text" name="query" value="<? echo htmlentities($_SESSION['offers202_query']); ?>" ></td>
+			<td><input class="query" type="text" name="query" value="<?php echohtmlentities($_SESSION['offers202_query']); ?>" ></td>
             
 			<td><? include_once('ajax/getNetworks.php'); ?></td>
 		

@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -30,15 +30,15 @@ include_once('../top.php'); ?>
 				</tr>
 				<tr>
 					<td>All Offers, All Networks</th>
-					<td><? echo "<a href='".TRACKING202_RSS_URL."/offers202'>".TRACKING202_RSS_URL."/offers202</a>"; ?></td>
+					<td><?php echo"<a href='".TRACKING202_RSS_URL."/offers202'>".TRACKING202_RSS_URL."/offers202</a>"; ?></td>
 				</tr>
 				<tr>
 					<td>Ringtones Offers, All Networks</th>
-					<td><? echo "<a href='".TRACKING202_RSS_URL."/offers202?q=ringtones'>".TRACKING202_RSS_URL."/offers202?q=ringtones</a>"; ?></td>
+					<td><?php echo"<a href='".TRACKING202_RSS_URL."/offers202?q=ringtones'>".TRACKING202_RSS_URL."/offers202?q=ringtones</a>"; ?></td>
 				</tr>
 				<tr>
 					<td>Credit Report Offers, All Networks</th>
-					<td><? echo "<a href='".TRACKING202_RSS_URL."/offers202?q=credit+report'>".TRACKING202_RSS_URL."/offers202?q=credit+report</a>"; ?></td>
+					<td><?php echo"<a href='".TRACKING202_RSS_URL."/offers202?q=credit+report'>".TRACKING202_RSS_URL."/offers202?q=credit+report</a>"; ?></td>
 				</tr>
 			</table>
 		</td>
@@ -82,4 +82,4 @@ include_once('../top.php'); ?>
 </table>
 
 
-<? template_bottom();
+<?php template_bottom();

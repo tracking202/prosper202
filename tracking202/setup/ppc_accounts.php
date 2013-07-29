@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -156,18 +156,18 @@ template_top('Pay Per Click Accounts',NULL,NULL,NULL); ?>
 <table cellspacing="0" cellpadding="0" class="setup">
 	<tr valign="top">
 		<td>  
-			<? if ($error) { ?>
+			<?php if ($error) { ?>
 				<div class="warning"><div><h3>There were errors with your submission.</h3></div></div>
-			<? } echo $error['token']; ?>
+			<?php } echo $error['token']; ?>
 
-			<? if ($add_success == true) { ?>
+			<?php if ($add_success == true) { ?>
 				<div class="success"><div><h3>Your submission was successful</h3></div></div>
-			<? } ?>
+			<?php } ?>
 
-			<? if ($delete_success == true) { ?>
+			<?php if ($delete_success == true) { ?>
 				<div class="success"><div><h3>You deletion was successful</h3>You have succesfully removed an account.</div></div>
-			<? } ?>
-			<form method="post" action="<? echo $_SERVER['REDIRECT_URL']; ?>">
+			<?php } ?>
+			<form method="post" action="<?php echo$_SERVER['REDIRECT_URL']; ?>">
 				<table style="margin: 0px auto;">    
 					<tr>
 						<td colspan="2" style="width: 400px;">
@@ -184,10 +184,10 @@ template_top('Pay Per Click Accounts',NULL,NULL,NULL); ?>
 						</td>
 					</tr>
 				</table>
-				<? echo $error['ppc_network_name']; ?>
+				<?php echo$error['ppc_network_name']; ?>
 			</form>
 
-			<form method="post" action="<? if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
+			<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
 				<table style="margin-top: 35px;">
 					<tr>
 						<td colspan="2" style="width: 400px;">
@@ -226,17 +226,17 @@ template_top('Pay Per Click Accounts',NULL,NULL,NULL); ?>
 					<tr>
 						<td class="left_caption">Account Username</td>
 						<td>
-							<input type="text" name="ppc_account_name" style="display: inline;" value="<? echo $html['ppc_account_name']; ?>"/>
-							<input type="submit" value="<? if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>" style="display: inline; margin-left: 10px;"/>
-							<? if ($editing == true) { ?>
+							<input type="text" name="ppc_account_name" style="display: inline;" value="<?php echo$html['ppc_account_name']; ?>"/>
+							<input type="submit" value="<?php if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>" style="display: inline; margin-left: 10px;"/>
+							<?php if ($editing == true) { ?>
 								<input type="submit" value="Cancel" style="display: inline; margin-left: 10px;" onclick="window.location='/tracking202/setup/ppc_accounts.php'; return false; "/>   
-							<? } ?>
+							<?php } ?>
 						</td>
 					</tr>
 				</table>
-				<? echo $error['ppc_network_id']; ?> 
-				<? echo $error['ppc_account_name']; ?>
-				<? echo $error['wrong_user']; ?>   
+				<?php echo$error['ppc_network_id']; ?> 
+				<?php echo$error['ppc_account_name']; ?>
+				<?php echo$error['wrong_user']; ?>   
 			</form>
 			
 			
@@ -286,4 +286,4 @@ template_top('Pay Per Click Accounts',NULL,NULL,NULL); ?>
 
 
 
-<? template_bottom();
+<?php template_bottom();

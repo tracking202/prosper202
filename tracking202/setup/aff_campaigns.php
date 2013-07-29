@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -152,19 +152,19 @@ template_top('Affiliate Campaigns Setup',NULL,NULL,NULL); ?>
 <table cellspacing="3" cellpadding="3" class="setup">
 	<tr valign="top">
         <td>  
-			<? if ($error) { ?>
+			<?php if ($error) { ?>
 				<div class="warning"><div><h3>There were errors with your submission.</h3></div></div>
-			<? } echo $error['token']; ?>
+			<?php } echo $error['token']; ?>
 
-			<? if ($add_success == true) { ?>
+			<?php if ($add_success == true) { ?>
 				<div class="success"><div><h3>Your submission was successful</h3>Your changes were made succesfully.</div></div>
-			<? } ?>
+			<?php } ?>
 
-			<? if ($delete_success == true) { ?>
+			<?php if ($delete_success == true) { ?>
 				<div class="success"><div><h3>You deletion was successful</h3>You have succesfully removed a campaign.</div></div>
-			<? } ?>
-			<form method="post" action="<? if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
-				<input name="aff_campaign_id" type="hidden" value="<? echo $html['aff_campaign_id']; ?>"/>	
+			<?php } ?>
+			<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
+				<input name="aff_campaign_id" type="hidden" value="<?php echo$html['aff_campaign_id']; ?>"/>	
 				<table>
 					<tr>
 						<td colspan="2">
@@ -200,20 +200,20 @@ template_top('Affiliate Campaigns Setup',NULL,NULL,NULL); ?>
 										}
 									} ?>
 							</select>
-							<? echo $error['pcc_network_id']; ?>
+							<?php echo$error['pcc_network_id']; ?>
 						</td>
 					</tr>
 					<tr>
 						<td class="left_caption">Campaign Name</td>
 						<td>
-							<input type="text" name="aff_campaign_name" value="<? echo $html['aff_campaign_name']; ?>" style="display: inline;"/>
+							<input type="text" name="aff_campaign_name" value="<?php echo$html['aff_campaign_name']; ?>" style="display: inline;"/>
 						</td>
 					</tr>
 					<tr>
 						<td class="left_caption">Rotate Urls</td>
 						<td>
-							<input type="radio" name="aff_campaign_rotate" value="0" onClick="showAllRotatingUrls('false');" <? if ($html['aff_campaign_rotate'] == 0) echo ' CHECKED '; ?>> No
-							<span style="padding-left: 10px;"><input type="radio" name="aff_campaign_rotate" value="1" onClick="showAllRotatingUrls('true');" <? if ($html['aff_campaign_rotate'] == 1) echo ' CHECKED '; ?>> Yes</span>
+							<input type="radio" name="aff_campaign_rotate" value="0" onClick="showAllRotatingUrls('false');" <?php if ($html['aff_campaign_rotate'] == 0) echo ' CHECKED '; ?>> No
+							<span style="padding-left: 10px;"><input type="radio" name="aff_campaign_rotate" value="1" onClick="showAllRotatingUrls('true');" <?php if ($html['aff_campaign_rotate'] == 1) echo ' CHECKED '; ?>> Yes</span>
 							
 							<script type="text/javascript">
 								function showAllRotatingUrls( bool ) { 
@@ -239,61 +239,61 @@ template_top('Affiliate Campaigns Setup',NULL,NULL,NULL); ?>
 					<tr>
 						<td class="left_caption" style="vertical-align:top">Affiliate URL <a class="onclick_color" onclick="alert('This your affiliate link for the campaign. If you do not know how to track subids or what a subid is, ask your affiliate manager before moving forward. If you do not set up subids properly, your campaigns will not track!');"> [?] </a></td>
 						<td style="white-space: nowrap;">
-							<input type="text" name="aff_campaign_url" value="<? echo $html['aff_campaign_url']; ?>" style="width: 200px; display: inline;"/>
+							<input type="text" name="aff_campaign_url" value="<?php echo$html['aff_campaign_url']; ?>" style="width: 200px; display: inline;"/>
 							<div>
 								The following tracking placeholders can be used:<br/>
 								[[subid]], [[c1]], [[c2]], [[c3]], [[c4]]
 							</div>
 						</td>
 					</tr>
-					<tr id="rotateUrl2" <? if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
+					<tr id="rotateUrl2" <?php if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
 						<td class="left_caption" >Rotate Url #2</td>
-						<td><input type="text" name="aff_campaign_url_2" value="<? echo $html['aff_campaign_url_2']; ?>" style="width: 200px; display: inline;"/></td>
+						<td><input type="text" name="aff_campaign_url_2" value="<?php echo$html['aff_campaign_url_2']; ?>" style="width: 200px; display: inline;"/></td>
 					</tr>
-					<tr id="rotateUrl3" <? if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
+					<tr id="rotateUrl3" <?php if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
 						<td class="left_caption" >Rotate Url #3</td>
-						<td><input type="text" name="aff_campaign_url_3" value="<? echo $html['aff_campaign_url_3']; ?>" style="width: 200px; display: inline;"/></td>
+						<td><input type="text" name="aff_campaign_url_3" value="<?php echo$html['aff_campaign_url_3']; ?>" style="width: 200px; display: inline;"/></td>
 					</tr>
-					<tr id="rotateUrl4" <? if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
+					<tr id="rotateUrl4" <?php if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
 						<td class="left_caption" >Rotate Url #4</td>
-						<td><input type="text" name="aff_campaign_url_4" value="<? echo $html['aff_campaign_url_4']; ?>" style="width: 200px; display: inline;"/></td>
+						<td><input type="text" name="aff_campaign_url_4" value="<?php echo$html['aff_campaign_url_4']; ?>" style="width: 200px; display: inline;"/></td>
 					</tr>
-					<tr id="rotateUrl5" <? if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
+					<tr id="rotateUrl5" <?php if ($html['aff_campaign_rotate'] == 0) echo ' style="display:none;" '; ?>>
 						<td class="left_caption" >Rotate Url #5</td>
-						<td><input type="text" name="aff_campaign_url_5" value="<? echo $html['aff_campaign_url_5']; ?>" style="width: 200px; display: inline;"/></td>
+						<td><input type="text" name="aff_campaign_url_5" value="<?php echo$html['aff_campaign_url_5']; ?>" style="width: 200px; display: inline;"/></td>
 					</tr>
 	
 					<tr>
 						<td class="left_caption">Payout $ </td>
 						<td>
-							<input type="text" name="aff_campaign_payout" size="4" value="<? echo $html['aff_campaign_payout']; ?>" style="display: inline;"/>
+							<input type="text" name="aff_campaign_payout" size="4" value="<?php echo$html['aff_campaign_payout']; ?>" style="display: inline;"/>
 						</td>
 					</tr>
 					<tr>
                         <td class="left_caption">Cloaking</td>
 						<td style="white-space: nowrap;">
 							<select name="aff_campaign_cloaking">
-								<option <? if ($html['aff_campaign_cloaking'] == '0') { echo 'selected=""'; } ?> value="0">Off by default</option>
-								<option <? if ($html['aff_campaign_cloaking'] == '1') { echo 'selected=""'; } ?> value="1">On by default</option>
+								<option <?php if ($html['aff_campaign_cloaking'] == '0') { echo 'selected=""'; } ?> value="0">Off by default</option>
+								<option <?php if ($html['aff_campaign_cloaking'] == '1') { echo 'selected=""'; } ?> value="1">On by default</option>
 							</select>
 						</td>
 					</tr>
 					<tr>
 						<td/>
 						<td>
-							<input type="submit" value="<? if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>" style="display: inline;"/>
-							<? if ($editing == true) { ?>
+							<input type="submit" value="<?php if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>" style="display: inline;"/>
+							<?php if ($editing == true) { ?>
 								<input type="submit" value="Cancel" style="display: inline; margin-left: 10px;" onclick="window.location='/tracking202/setup/aff_campaigns.php'; return false; "/>   
-							<? } ?>
+							<?php } ?>
 						</td>
 					</tr>
 				</table>
-				<? echo $error['aff_network_id']; ?>
-				<? echo $error['aff_campaign_name']; ?>
-				<? echo $error['aff_campaign_url']; ?>
-				<? echo $error['aff_campaign_payout']; ?>
-				<? echo $error['wrong_user']; ?>
-				<? echo $error['cloaking_url']; ?>  
+				<?php echo$error['aff_network_id']; ?>
+				<?php echo$error['aff_campaign_name']; ?>
+				<?php echo$error['aff_campaign_url']; ?>
+				<?php echo$error['aff_campaign_payout']; ?>
+				<?php echo$error['wrong_user']; ?>
+				<?php echo$error['cloaking_url']; ?>  
 			</form>
 			
 			
@@ -341,4 +341,4 @@ template_top('Affiliate Campaigns Setup',NULL,NULL,NULL); ?>
 	</tr>
 </table>
 		
-<? template_bottom();
+<?php template_bottom();

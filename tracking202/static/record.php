@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
  
 //lets find out if this is an advance or simple landing page, so we can include the appropriate script for each
 $landing_page_id_public = $_GET['lpip'];
