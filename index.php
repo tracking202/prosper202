@@ -1,5 +1,7 @@
 <?php
 
+require_once('yiibootstrap.php');
+
 //if the 202-config.php doesn't exist, we need to build one
 if (!file_exists(__DIR__ . '/202-config.php')) {
 
@@ -13,7 +15,7 @@ if (!file_exists(__DIR__ . '/202-config.php')) {
     }
 
     //require the 202-config.php file
-    _die("There doesn't seem to be a <code>202-config.php</code> file. I need this before we can get started. Need more help? <a href=\"http://prosper202.com/apps/about/contact/\">Contact Us</a>. You can <a href='/202-config/setup-config.php'>create a <code>202-config.php</code> file through a web interface</a>, but this doesn't work for all server setups. The safest way is to manually create the file.", "202 &rsaquo; Error");
+    _die("There doesn't seem to be a <code>202-config.php</code> file. I need this before we can get started. Need more help? <a href=\"http://prosper202.com/apps/about/contact/\">Contact Us</a>. You can " . CHtml::link('create a <code>202-config.php</code> file through a web interface', array('/202-config/setup-config.php')) . ", but this doesn't work for all server setups. The safest way is to manually create the file.", "202 &rsaquo; Error");
 } else {
 
     require_once(__DIR__ . '/202-config/connect.php');
