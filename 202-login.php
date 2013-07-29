@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
@@ -89,14 +89,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 info_top(); ?>
 	<form method="post" action="">
-		<input type="hidden" name="token" value="<? echo $_SESSION['token']; ?>"/>
+		<input type="hidden" name="token" value="<?php echo$_SESSION['token']; ?>"/>
 		<table cellspacing="0" cellpadding="5" style="margin: 0px auto;" >
-			<? if ($error['token']) { printf('<tr><td colspan="2">%s</td></tr>', $error['token']); } ?>
+			<?php if ($error['token']) { printf('<tr><td colspan="2">%s</td></tr>', $error['token']); } ?>
 			<tr>
 				<td>Username:</td>
-				<td><input id="user_name" type="text" name="user_name" value="<? echo $html['user_name']; ?>"/></td>
+				<td><input id="user_name" type="text" name="user_name" value="<?php echo$html['user_name']; ?>"/></td>
 			</tr>
-			<? if ($error['user']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user']); } ?>
+			<?php if ($error['user']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user']); } ?>
 			<tr>
 				<td>Password:</td>
 				<td>
@@ -110,4 +110,4 @@ info_top(); ?>
 			</tr>
 		</table>
 	</form>
-<? info_bottom(); ?>
+<?php info_bottom(); ?>

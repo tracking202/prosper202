@@ -32,5 +32,5 @@ display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limit, $show_
 
 
 
-<? template_bottom(); 
+<?php template_bottom(); 
 

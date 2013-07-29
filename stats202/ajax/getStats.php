@@ -106,7 +106,7 @@ echo $results;
 //create the navigation bar
 $navBar = "<div class='offers-nav'>";
 $navBar .= "<strong>Page {$html['page']} of {$html['pages']}</strong>  "; ?>
-<? if ($pages > 1) { $navBar .= " <span style='padding: 0px 10px'>&mdash;</span> ";
+<?php if ($pages > 1) { $navBar .= " <span style='padding: 0px 10px'>&mdash;</span> ";
 	if ($page > 1) {
 		$navBar .= ' <a class="pointer"  onclick="getStats('.htmlentities($i).')">First</a> ';
 		$navBar .= ' <a class="pointer"  onclick="getStats('.htmlentities($page - 1).')">Prev</a> ';
@@ -182,15 +182,15 @@ switch ($_SESSION['stats202_order']) {
 
 <table cellpadding="0" cellspacing="0" class="offers-table">
 	<tr>
-		<th class='nowrap left'><a class="pointer" onclick="getStats('', 'statAccountNickName', '<? echo $statAccountNickNameBy; ?>');">Account <? echo $statAccountNickNameArrow; ?></a></th>
-		<? if (iphone() == false) { ?><th class='nowrap right'><a class="pointer" onclick="getStats('', 'statImpressions', '<? echo $statImpressionsBy; ?>');">Impr. <? echo $statImpressionsArrow; ?></a></th><? } ?>
-		<th class='nowrap right'><a class="pointer" onclick="getStats('', 'statClicks', '<? echo $statClicksBy; ?>');">Clicks <? echo $statClicksArrow; ?></a></th>
-		<th class='nowrap right'><a class="pointer" onclick="getStats('', 'statActions', '<? echo $statActionsBy; ?>');">Actions <? echo $statActionsArrow; ?></a></th>
-		<? if (iphone() == false) { ?><th class='nowrap right'><a class="pointer" onclick="getStats('', 'statEpc', '<? echo $statEpcBy; ?>');">EPC<? echo $statEpcArrow; ?></a></th><? } ?>
-		<th class='nowrap right'><a class="pointer" onclick="getStats('', 'statTotal', '<? echo $statTotalBy; ?>');">Total <? echo $statTotalArrow; ?></a></th>
+		<th class='nowrap left'><a class="pointer" onclick="getStats('', 'statAccountNickName', '<?php echo$statAccountNickNameBy; ?>');">Account <?php echo$statAccountNickNameArrow; ?></a></th>
+		<?php if (iphone() == false) { ?><th class='nowrap right'><a class="pointer" onclick="getStats('', 'statImpressions', '<?php echo$statImpressionsBy; ?>');">Impr. <?php echo$statImpressionsArrow; ?></a></th><?php } ?>
+		<th class='nowrap right'><a class="pointer" onclick="getStats('', 'statClicks', '<?php echo$statClicksBy; ?>');">Clicks <?php echo$statClicksArrow; ?></a></th>
+		<th class='nowrap right'><a class="pointer" onclick="getStats('', 'statActions', '<?php echo$statActionsBy; ?>');">Actions <?php echo$statActionsArrow; ?></a></th>
+		<?php if (iphone() == false) { ?><th class='nowrap right'><a class="pointer" onclick="getStats('', 'statEpc', '<?php echo$statEpcBy; ?>');">EPC<?php echo$statEpcArrow; ?></a></th><?php } ?>
+		<th class='nowrap right'><a class="pointer" onclick="getStats('', 'statTotal', '<?php echo$statTotalBy; ?>');">Total <?php echo$statTotalArrow; ?></a></th>
 	</tr>
 
-	<? if ($getStats['stats'])	$stats = $getStats['stats'][0]['stat'];
+	<?php if ($getStats['stats'])	$stats = $getStats['stats'][0]['stat'];
 	for ($x = 0; $x < count($stats); $x++) { 
 		
 		#print_r_html($stats[$x]);
@@ -223,16 +223,16 @@ switch ($_SESSION['stats202_order']) {
 			if (strlen($html['statAccountNickName']) > 30) { $html['statAccountNickName'] = substr($html['statAccountNickName'],0,30).'...'; }  
 		}  ?>
 	
-		<tr class="<? echo $html['row_class']; ?>">
-			<td class="left"><? echo $html['statAccountNickName']; ?></td>
-			<? if (iphone() == false) { ?><td class="right"><? echo $html['statImpressions']; ?></td><? } ?>
-			<td class="right"><? echo $html['statClicks']; ?></td>  
-			<td class="right"><? echo $html['statActions']; ?></td>
-			<? if (iphone() == false) { ?><td class="right"><? echo $html['statEpc']; ?></td><? } ?>
-			<td class="right"><? echo $html['statTotal']; ?></td>
+		<tr class="<?php echo$html['row_class']; ?>">
+			<td class="left"><?php echo$html['statAccountNickName']; ?></td>
+			<?php if (iphone() == false) { ?><td class="right"><?php echo$html['statImpressions']; ?></td><?php } ?>
+			<td class="right"><?php echo$html['statClicks']; ?></td>  
+			<td class="right"><?php echo$html['statActions']; ?></td>
+			<?php if (iphone() == false) { ?><td class="right"><?php echo$html['statEpc']; ?></td><?php } ?>
+			<td class="right"><?php echo$html['statTotal']; ?></td>
 		</tr>		
 
-	<? }
+	<?php }
 
 	$html['totalStatImpressions'] = htmlentities(number_format($totalStatImpressions));
 	$html['totalStatClicks'] = htmlentities(number_format($totalStatClicks));
@@ -242,12 +242,12 @@ switch ($_SESSION['stats202_order']) {
 	
 	<tr class="bottom">
 		<td class="left"><strong>Totals</strong></td>
-		<td class="right"><strong><? echo $html['totalStatImpressions']; ?></strong></td>  
-		<td class="right"><strong><? echo $html['totalStatClicks']; ?></strong></td>
-		<td class="right"><strong><? echo $html['totalStatActions']; ?></strong></td>
-		<td class="right"><strong><? echo $html['totalStatEpc']; ?></strong></td>
-		<td class="right"><strong><? echo $html['totalStatTotal']; ?></strong></td>
+		<td class="right"><strong><?php echo$html['totalStatImpressions']; ?></strong></td>  
+		<td class="right"><strong><?php echo$html['totalStatClicks']; ?></strong></td>
+		<td class="right"><strong><?php echo$html['totalStatActions']; ?></strong></td>
+		<td class="right"><strong><?php echo$html['totalStatEpc']; ?></strong></td>
+		<td class="right"><strong><?php echo$html['totalStatTotal']; ?></strong></td>
 	</tr>
 </table>
 
-<? echo $navBar; ?>
+<?php echo$navBar; ?>

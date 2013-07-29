@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -53,19 +53,19 @@ template_top('Affiliate Networks Setup',NULL,NULL,NULL); ?>
 <table cellspacing="0" cellpadding="0" class="setup">
 	<tr valign="top">
 		<td>
-			<? if ($error) { ?>
+			<?php if ($error) { ?>
 				<div class="warning"><div><h3>There were errors with your submission.</h3></div></div>
-			<? } echo $error['token']; ?>
+			<?php } echo $error['token']; ?>
 
-			<? if ($add_success == true) { ?>
+			<?php if ($add_success == true) { ?>
 				<div class="success"><div><h3>Your submission was successful</h3>You have succesfully added an affiliate network to your account.</div></div>
-			<? } ?>
+			<?php } ?>
 
-			<? if ($delete_success == true) { ?>
+			<?php if ($delete_success == true) { ?>
 				<div class="success"><div><h3>You deletion was successful</h3>You have succesfully deleted an affiliate network from your account.</div></div>
-			<? } ?>
+			<?php } ?>
 
-			<form method="post" action="<? echo $_SERVER['REDIRECT_URL']; ?>">
+			<form method="post" action="<?php echo$_SERVER['REDIRECT_URL']; ?>">
 				<table style="margin: 0px auto;">    
 					<tr>
 						<td colspan="2" style="width: 400px;">
@@ -82,7 +82,7 @@ template_top('Affiliate Networks Setup',NULL,NULL,NULL); ?>
 						</td>
 					</tr>
 				</table>
-				<? echo $error['aff_network_name']; ?> 
+				<?php echo$error['aff_network_name']; ?> 
 			</form>
 		</td>
 		<td class="setup-right">   
@@ -110,4 +110,4 @@ template_top('Affiliate Networks Setup',NULL,NULL,NULL); ?>
 		
 
 
-<? template_bottom();
+<?php template_bottom();

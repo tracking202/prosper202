@@ -95,14 +95,14 @@ $stats202PostBackUrl = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.
 		</tr>
 	</thead>
 	<tbody id="advanced_pixel_type_tbody" style="display:none;">
-		<tr id="lp_aff_network" <? if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
+		<tr id="lp_aff_network" <?php if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
 			<td class="left_caption">Aff Network:</td>
 			<td>
 				<img id="aff_network_id_div_loading" src="/202-img/loader-small.gif"/>
 				<div id="aff_network_id_div" style="display: inline;"></div>
 			</td>
 		</tr>
-		<tr id="lp_aff_campaign" <? if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
+		<tr id="lp_aff_campaign" <?php if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
 			<td class="left_caption">Aff Campaign:</td>
 			<td>
 				<img id="aff_campaign_id_div_loading" src="/202-img/loader-small.gif" style="display: none;"/>

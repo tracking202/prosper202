@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;

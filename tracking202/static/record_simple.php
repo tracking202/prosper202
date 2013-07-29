@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
  
 $landing_page_id_public = $_GET['lpip'];
 $mysql['landing_page_id_public'] = mysql_real_escape_string($landing_page_id_public);
@@ -327,13 +327,13 @@ setClickIdCookie($mysql['click_id'],$mysql['aff_campaign_id']);
  ?> 
 function t202initB() { 
 
-	var subid ='<? echo $click_id; ?>';
+	var subid ='<?php echo$click_id; ?>';
 	createCookie('tracking202subid',subid,0);
 
-	var outbound = '<? echo $outbound_site_url; ?>';
+	var outbound = '<?php echo$outbound_site_url; ?>';
 	createCookie('tracking202outbound',outbound,0);
 	
-	var replaceVar = new RegExp('<? echo $old_lp_site_url; ?>',"gi");
+	var replaceVar = new RegExp('<?php echo$old_lp_site_url; ?>',"gi");
 	var oldBody = document.body.innerHTML;
 	var newBody = oldBody.replace(replaceVar,outbound); 
 	

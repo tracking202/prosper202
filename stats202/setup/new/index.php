@@ -139,12 +139,12 @@ checkForApiErrors($getNetworks);
 checkForApiErrors($getStatAccount);    ?>
 
 
-<form method="post" action="<? if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
+<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
 
 	<table style="margin: 0px auto;">
 		<tr>
 			<td style="padding: 0px 0px 20px;">
-				<? if ($errors) { 
+				<?php if ($errors) { 
 					echo "<div class='warning'><div><h3>There were errors with your submission</h3>Please look at the errors below</div></div>";
 					for ($x = 0; $x < count($errors); $x++) { 
 						$html = array_merge($html, array_map('htmlentities', $errors[$x]) );
@@ -230,39 +230,39 @@ checkForApiErrors($getStatAccount);    ?>
 					</tr>
 					<tr>
 						<td class="left_caption">Nickname <a href="#" onclick="alert('This is the name your account will be referenced by, this is for your own naming use only.');">[?]</a></td>
-						<td><input type="text" name="statAccountNickName" style="display: inline;" value="<? echo $html['statAccountNickName']; ?>"/></td>
+						<td><input type="text" name="statAccountNickName" style="display: inline;" value="<?php echo$html['statAccountNickName']; ?>"/></td>
 					</tr>
 					<tr>
 						<td class="left_caption">Username</td>
-						<td><input type="text" name="statAccountUser" style="display: inline;" value="<? echo $html['statAccountUser']; ?>"/></td>
+						<td><input type="text" name="statAccountUser" style="display: inline;" value="<?php echo$html['statAccountUser']; ?>"/></td>
 					</tr>
 					<tr>
 						<td class="left_caption">Password</td>
 						<td><input type="password" name="statAccountPass" style="display: inline;"/></td>
 					</tr>
-					<input type="hidden" id="stat_network_require_api_id" name="stat_network_require_api_id" value="<? echo $html['stat_network_require_api_id']; ?>"/>
-					<tr id="stat_account_api_id" <? if (!$html['statAccountApiId']) { echo 'style="display: none;"'; } ?>>
+					<input type="hidden" id="stat_network_require_api_id" name="stat_network_require_api_id" value="<?php echo$html['stat_network_require_api_id']; ?>"/>
+					<tr id="stat_account_api_id" <?php if (!$html['statAccountApiId']) { echo 'style="display: none;"'; } ?>>
 						<td class="left_caption">API ID</td>
-						<td><input type="text" name="statAccountApiId" style="display: inline;" value="<? echo $html['statAccountApiId']; ?>"/></td>
+						<td><input type="text" name="statAccountApiId" style="display: inline;" value="<?php echo$html['statAccountApiId']; ?>"/></td>
 					</tr>
-					<input type="hidden" id="stat_network_require_api_key" name="stat_network_require_api_key" value="<? echo $html['stat_network_require_api_key']; ?>"/>
-					<tr id="stat_account_api_key" <? if (!$html['statAccountApiKey']) { echo 'style="display: none;"'; } ?>>
+					<input type="hidden" id="stat_network_require_api_key" name="stat_network_require_api_key" value="<?php echo$html['stat_network_require_api_key']; ?>"/>
+					<tr id="stat_account_api_key" <?php if (!$html['statAccountApiKey']) { echo 'style="display: none;"'; } ?>>
 						<td class="left_caption">API Key</td>
-						<td><input type="text" name="statAccountApiKey" style="display: inline;" value="<? echo $html['statAccountApiKey']; ?>"/></td>
+						<td><input type="text" name="statAccountApiKey" style="display: inline;" value="<?php echo$html['statAccountApiKey']; ?>"/></td>
 					</tr>
-					<input type="hidden" id="stat_network_require_aff_id" name="stat_network_require_aff_id" value="<? echo $html['stat_network_require_aff_id']; ?>"/>
-					<tr id="stat_account_aff_id" <? if (!$html['statAccountAffId']) { echo 'style="display: none;"'; } ?>>
+					<input type="hidden" id="stat_network_require_aff_id" name="stat_network_require_aff_id" value="<?php echo$html['stat_network_require_aff_id']; ?>"/>
+					<tr id="stat_account_aff_id" <?php if (!$html['statAccountAffId']) { echo 'style="display: none;"'; } ?>>
 						<td class="left_caption" >Affiliate #</td>
-						<td><input type="text" name="statAccountAffId" style="display: inline;" value="<? echo $html['statAccountAffId']; ?>"/></td>
+						<td><input type="text" name="statAccountAffId" style="display: inline;" value="<?php echo$html['statAccountAffId']; ?>"/></td>
 					</tr>
 					<!-- as it is showing the drop-downs, check to see if the affiliate account id is required -->
 					<script type="text/javascript"> showAffStatsFields($('networkId').options[$('networkId').selectedIndex].value); </script>
 					<tr>
 						<td/>
-						<td><input type="submit" value="<? if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>" class="submit" style="display: inline; margin-left: 10px;"/> 
-							<? if ($editing == true) { ?>
+						<td><input type="submit" value="<?php if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>" class="submit" style="display: inline; margin-left: 10px;"/> 
+							<?php if ($editing == true) { ?>
 								<input type="submit" value="Cancel" style="display: inline; margin-left: 10px;" class="submit" onclick="window.location='/stats202/setup/'; return false; "/>
-							<? } ?>
+							<?php } ?>
 						</td>
 					</tr>
 				</table>
@@ -271,4 +271,4 @@ checkForApiErrors($getStatAccount);    ?>
 	</table>
 </form>
 
-<? template_bottom();
+<?php template_bottom();

@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 $landing_page_id_public = $_GET['lpip'];
 $mysql['landing_page_id_public'] = mysql_real_escape_string($landing_page_id_public);

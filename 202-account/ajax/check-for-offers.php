@@ -1,6 +1,8 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php
 
-AUTH::require_user(); 
+include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+
+AUTH::require_user();
 
 //get the new offer count
 
@@ -15,17 +17,17 @@ $new_offers = 0;
 
 //now go through the offers if they exist
 if ($offers) {
-	foreach ($offers as $offer) { 
-		
+	foreach ($offers as $offer) {
+
 		//now check to see if they are recent or not
 		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 		$mysql['offer_id'] = mysql_real_escape_string($offer['id']);
 		$sql = "SELECT * FROM 202_offers WHERE user_id='".$mysql['user_id']."' AND offer_id='".$mysql['offer_id']."'";
 		$result = _mysql_query($sql);
 		$row = mysql_fetch_assoc($result);
-		
+
 		if (!$row) {
-			$new_offers++;	
+			$new_offers++;
 		}
 	}
 }

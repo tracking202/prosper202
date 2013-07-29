@@ -104,7 +104,7 @@ echo $results;
 //create the navigation bar
 $navBar = "<div class='offers-nav'>";
 $navBar .= "<strong>Page {$html['page']} of {$html['pages']}</strong>  "; ?>
-<? if ($pages > 1) { $navBar .= " <span style='padding: 0px 10px'>&mdash;</span> ";
+<?php if ($pages > 1) { $navBar .= " <span style='padding: 0px 10px'>&mdash;</span> ";
 	if ($page > 1) {
 		$navBar .= ' <a  class="pointer" onclick="getOfferStats('.htmlentities($i).')">First</a> ';
 		$navBar .= ' <a class="pointer"  onclick="getOfferStats('.htmlentities($page - 1).')">Prev</a> ';
@@ -187,16 +187,16 @@ switch ($_SESSION['stats202_order']) {
 
 <table cellpadding="0" cellspacing="0" class="offers-table">
 	<tr>
-		<th class='nowrap left'><a class="pointer" onclick="getOfferStats('', 'statAccountNickName', '<? echo $statAccountNickNameBy; ?>');">Account <? echo $statAccountNickNameArrow; ?></a></th>
-		<th class='nowrap left'><a class="pointer" onclick="getOfferStats('', 'offerName', '<? echo $offerNameBy; ?>');">Offer <? echo $offerNameArrow; ?></a></th>
-		<? if (iphone() == false) { ?><th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statImpressions', '<? echo $statImpressionsBy; ?>');">Impr. <? echo $statImpressionsArrow; ?></a></th><? } ?>
-		<th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statClicks', '<? echo $statClicksBy; ?>');">Clicks <? echo $statClicksArrow; ?></a></th>
-		<th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statActions', '<? echo $statActionsBy; ?>');">Actions <? echo $statActionsArrow; ?></a></th>
-		<? if (iphone() == false) { ?><th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statEpc', '<? echo $statEpcBy; ?>');">EPC<? echo $statEpcArrow; ?></a></th><? } ?>
-		<th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statTotal', '<? echo $statTotalBy; ?>');">Total <? echo $statTotalArrow; ?></a></th>
+		<th class='nowrap left'><a class="pointer" onclick="getOfferStats('', 'statAccountNickName', '<?php echo$statAccountNickNameBy; ?>');">Account <?php echo$statAccountNickNameArrow; ?></a></th>
+		<th class='nowrap left'><a class="pointer" onclick="getOfferStats('', 'offerName', '<?php echo$offerNameBy; ?>');">Offer <?php echo$offerNameArrow; ?></a></th>
+		<?php if (iphone() == false) { ?><th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statImpressions', '<?php echo$statImpressionsBy; ?>');">Impr. <?php echo$statImpressionsArrow; ?></a></th><?php } ?>
+		<th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statClicks', '<?php echo$statClicksBy; ?>');">Clicks <?php echo$statClicksArrow; ?></a></th>
+		<th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statActions', '<?php echo$statActionsBy; ?>');">Actions <?php echo$statActionsArrow; ?></a></th>
+		<?php if (iphone() == false) { ?><th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statEpc', '<?php echo$statEpcBy; ?>');">EPC<?php echo$statEpcArrow; ?></a></th><?php } ?>
+		<th class='nowrap right'><a class="pointer" onclick="getOfferStats('', 'statTotal', '<?php echo$statTotalBy; ?>');">Total <?php echo$statTotalArrow; ?></a></th>
 	</tr>
 
-	<? if ($getOfferStats['offerStats']) $offerStats = $getOfferStats['offerStats'][0]['offerStat'];
+	<?php if ($getOfferStats['offerStats']) $offerStats = $getOfferStats['offerStats'][0]['offerStat'];
 	for ($x = 0; $x < count($offerStats); $x++) { 
 		
 		#print_r_html($offerStats[$x]); 
@@ -231,17 +231,17 @@ switch ($_SESSION['stats202_order']) {
 			if (strlen($html['statAccountNickName']) > 30) { $html['statAccountNickName'] = substr($html['statAccountNickName'],0,30).'...'; }  
 		}  ?>
 	
-		<tr class="<? echo $html['row_class']; ?>">
-			<td class="left"><? echo $html['statAccountNickName']; ?></td>
-			<td class="left"><? echo $html['offerName']; ?></td>
-			<? if (iphone() == false) { ?><td class="right"><? echo $html['offerStatImpressions']; ?></td><? } ?>
-			<td class="right"><? echo $html['offerStatClicks']; ?></td>  
-			<td class="right"><? echo $html['offerStatActions']; ?></td>
-			<? if (iphone() == false) { ?><td class="right"><? echo $html['offerStatEpc']; ?></td><? } ?>
-			<td class="right"><? echo $html['offerStatTotal']; ?></td>
+		<tr class="<?php echo$html['row_class']; ?>">
+			<td class="left"><?php echo$html['statAccountNickName']; ?></td>
+			<td class="left"><?php echo$html['offerName']; ?></td>
+			<?php if (iphone() == false) { ?><td class="right"><?php echo$html['offerStatImpressions']; ?></td><?php } ?>
+			<td class="right"><?php echo$html['offerStatClicks']; ?></td>  
+			<td class="right"><?php echo$html['offerStatActions']; ?></td>
+			<?php if (iphone() == false) { ?><td class="right"><?php echo$html['offerStatEpc']; ?></td><?php } ?>
+			<td class="right"><?php echo$html['offerStatTotal']; ?></td>
 		</tr>		
 
-	<? } 
+	<?php } 
 	
 
 	$html['totalSubids'] = htmlentities(number_format($totalSubids));
@@ -253,12 +253,12 @@ switch ($_SESSION['stats202_order']) {
 	
 	<tr class="bottom">
 		<td class="left" colspan="2"><strong>Totals</strong></td>
-		<td class="right"><strong><? echo $html['totalOfferStatImpressions']; ?></strong></td>  
-		<td class="right"><strong><? echo $html['totalOfferStatClicks']; ?></strong></td>
-		<td class="right"><strong><? echo $html['totalOfferStatActions']; ?></strong></td>
-		<td class="right"><strong><? echo $html['totalOfferStatEpc']; ?></strong></td>
-		<td class="right"><strong><? echo $html['totalOfferStatTotal']; ?></strong></td>
+		<td class="right"><strong><?php echo$html['totalOfferStatImpressions']; ?></strong></td>  
+		<td class="right"><strong><?php echo$html['totalOfferStatClicks']; ?></strong></td>
+		<td class="right"><strong><?php echo$html['totalOfferStatActions']; ?></strong></td>
+		<td class="right"><strong><?php echo$html['totalOfferStatEpc']; ?></strong></td>
+		<td class="right"><strong><?php echo$html['totalOfferStatTotal']; ?></strong></td>
 	</tr>
 </table>
 
-<? echo $navBar; ?>
+<?php echo$navBar; ?>

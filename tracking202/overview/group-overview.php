@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -16,4 +16,4 @@ template_top('Group Overview',NULL,NULL,NULL);   ?>
 	loadContent('/tracking202/ajax/group_overview.php',null);
 </script>
 
-<? template_bottom();
+<?php template_bottom();

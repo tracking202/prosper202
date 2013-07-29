@@ -1,6 +1,6 @@
 
 <h4>What is Export202?</h4>
-<p>Export202 is a free simple utilty developed by <a href="<? echo $config['t202Url']; ?>">Tracking202</a>, that allows anyone to duplicate a succesful PPC campaign from Yahoo SEM or Google Adwords, to other networks in seconds.  It allows you to import a single campaign from Yahoo or Google Adwords.  You can even import an entire account with several campaigns in it at once, and quickly export it to MSN, Google or Yahoo in seconds.  Take your profitable campaigns and replicate them to more PPC networks in just seconds, absolutely free.  </p>
+<p>Export202 is a free simple utilty developed by <a href="<?php echo$config['t202Url']; ?>">Tracking202</a>, that allows anyone to duplicate a succesful PPC campaign from Yahoo SEM or Google Adwords, to other networks in seconds.  It allows you to import a single campaign from Yahoo or Google Adwords.  You can even import an entire account with several campaigns in it at once, and quickly export it to MSN, Google or Yahoo in seconds.  Take your profitable campaigns and replicate them to more PPC networks in just seconds, absolutely free.  </p>
 
 <h4>To use this tool please follow theses steps:</h4>
 <ul>
@@ -21,25 +21,25 @@
 <div class="csv-div">
 	<form enctype="multipart/form-data" action="/export202/" method="post">
 		<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />  
-		<? if ($error) { ?>
+		<?php if ($error) { ?>
 			<div class="warning"><div><h3>There were errors with your submission.</h3></div></div>
-		<? } ?>
+		<?php } ?>
 		<table class="csv-table" cellspacing="10" cellpadding="15" style="width: 0%; " align="left">
 			<tr>
 				<th>Upload .CSV file</th>
-				<td><input type="file" class="csv-file" name="csv" value="<? echo $_POST['csv']; ?>"/> <? echo $error['csv']; ?>
+				<td><input type="file" class="csv-file" name="csv" value="<?php echo$_POST['csv']; ?>"/> <?php echo$error['csv']; ?>
 			</tr>
 			<tr valign="top">
 				<th>Uploaded File Is From</th>
 				<td>
-					<input type="radio" class="csv-radio" name="network" <? if ($_POST['network'] == 'google') { echo ' CHECKED '; } ?> value="google"> a <strong>Google Adwords</strong> account<br/>
-					<input type="radio" class="csv-radio" name="network" <? if ($_POST['network'] == 'msn') { echo ' CHECKED '; } ?> value="msn"> an <strong>MSN AdCenter</strong> account <br/>
-					<input type="radio"  class="csv-radio"name="network" <? if ($_POST['network'] == 'yahoo') { echo ' CHECKED '; } ?> value="yahoo"> a <strong>Yahoo Search Marketing</strong> account<br/>
-					<? echo $error['network'] . $error['type']; ?>
+					<input type="radio" class="csv-radio" name="network" <?php if ($_POST['network'] == 'google') { echo ' CHECKED '; } ?> value="google"> a <strong>Google Adwords</strong> account<br/>
+					<input type="radio" class="csv-radio" name="network" <?php if ($_POST['network'] == 'msn') { echo ' CHECKED '; } ?> value="msn"> an <strong>MSN AdCenter</strong> account <br/>
+					<input type="radio"  class="csv-radio"name="network" <?php if ($_POST['network'] == 'yahoo') { echo ' CHECKED '; } ?> value="yahoo"> a <strong>Yahoo Search Marketing</strong> account<br/>
+					<?php echo$error['network'] . $error['type']; ?>
 				</td>
 			<tr>
 				<th/>
-				<td><? echo $error['token']; ?><br/><input class="csv-submit" type="submit" value="Start Conversion"></td>
+				<td><?php echo$error['token']; ?><br/><input class="csv-submit" type="submit" value="Start Conversion"></td>
 			</tr>	
 		</table>
 	</form>

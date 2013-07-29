@@ -125,4 +125,4 @@ template_top('Help Resources',NULL,NULL,NULL);  ?>
 
 
 
-<? template_bottom();
+<?php template_bottom();

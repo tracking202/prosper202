@@ -87,7 +87,7 @@ function info_top() { ?>
 				<td colspan="2" style="text-align: center;" ><a href="http://prosper202.com"><img src="/202-img/prosper202.png"/></a><br/></td>
 			</tr>
 			<tr>
-				<td><? } function info_bottom() { ?></td>
+				<td><?php } function info_bottom() { ?></td>
 			</tr>
 		</table>
 </div>
@@ -95,7 +95,7 @@ function info_top() { ?>
 </body>
 </html> 
 
-<? } 
+<?php } 
 
 
 

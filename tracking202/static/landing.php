@@ -7,7 +7,7 @@ function t202Init(){
 		var t202kw = t202GetVar('t202kw');
 	}
 
-	var lpip = '<? echo htmlentities($_GET['lpip']); ?>';
+	var lpip = '<?php echohtmlentities($_GET['lpip']); ?>';
 	var t202id = t202GetVar('t202id');
 	var OVRAW = t202GetVar('OVRAW');
 	var OVKEY = t202GetVar('OVKEY');
@@ -23,7 +23,7 @@ function t202Init(){
 	var language = navigator.appName=='Netscape'?navigator.language:navigator.browserLanguage; 
 	language = language.substr(0,2); 
 										    
-	document.write("<script src=\"http://<? echo $_SERVER['SERVER_NAME']; ?>/tracking202/static/record.php?lpip=" + t202Enc(lpip)
+	document.write("<script src=\"http://<?php echo$_SERVER['SERVER_NAME']; ?>/tracking202/static/record.php?lpip=" + t202Enc(lpip)
 		+ "&t202id="				+ t202Enc(t202id)
 		+ "&t202kw="				+ t202kw
 		+ "&OVRAW="					+ t202Enc(OVRAW)
