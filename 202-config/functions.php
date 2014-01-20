@@ -1,6 +1,6 @@
 <?php
 
-//our own die, that will display the theme aroudn the error message
+//our own die, that will display the them around the error message
 function _die($message) { 
 
 	info_top();
@@ -82,14 +82,16 @@ function info_top() { ?>
 
 <div class="container">
 
-		<table class="center" cellspacing="0" cellpadding="5">
-			<tr>
-				<td colspan="2" style="text-align: center;" ><a href="http://prosper202.com"><img src="/202-img/prosper202.png"/></a><br/></td>
-			</tr>
-			<tr>
-				<td><? } function info_bottom() { ?></td>
-			</tr>
-		</table>
+<table class="center" cellspacing="0" cellpadding="5">
+	<tr>
+		<td colspan="2" style="text-align: center;"><a
+			href="http://prosper202.com"><img src="/202-img/prosper202.png" /></a><br />
+		</td>
+	</tr>
+	<tr>
+		<td><? } function info_bottom() { ?></td>
+	</tr>
+</table>
 </div>
 
 </body>

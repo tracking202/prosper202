@@ -8,7 +8,7 @@ AUTH::require_user();
 $rss = fetch_rss( TRACKING202_RSS_URL . '/twitter/timeline.php');
  if ( isset($rss->items) && 0 != count($rss->items) ) {
  	
- 	$rss->items = array_slice($rss->items, 0, 3);
+ 	$rss->items = array_slice($rss->items, 0, 1);
  	foreach ($rss->items as $item ) { 
  		
  		$item_time = strtotime($item['pubdate'], time());

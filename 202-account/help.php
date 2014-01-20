@@ -41,7 +41,7 @@ template_top('Help Resources',NULL,NULL,NULL);  ?>
 				</tr>
 				<tr>
 					<th>Premium Paid Support:</th>
-					<td><a href="http://premiumsupport.tracking202.com./">http://premiumsupport.tracking202.com./</a></td>
+					<td><a href="http://premiumsupport.tracking202.com/">http://premiumsupport.tracking202.com./</a></td>
 				</tr>
 				<tr>
 					<th>Prosper202 Blog:</th>

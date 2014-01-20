@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -12,8 +12,8 @@ $unSecuredPixel_2 = '<img height="1" width="1" border="0" style="display: none;"
 $unSecuredPostBackUrl = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.php?amount=&subid=';
 $unSecuredPostBackUrl_2 = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.php?amount=&subid=';
 
-//post back url for stats202
-$stats202PostBackUrl = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.php?amount={amount}&subid={subid}'; 
+//universal pixel
+$unSecuredUniversalPixel = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .'/tracking202/static/upx.php?amount=" />';
 
 ?>
 
@@ -23,10 +23,18 @@ $stats202PostBackUrl = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.
 			$('pixel_type_simple_id').show();
 			$('pixel_type_advanced_id').hide();
 			$('advanced_pixel_type_tbody').hide();
+			$('pixel_type_universal_id').hide();
 		} else if (pixel_type == '1') {
 			$('pixel_type_simple_id').hide();
 			$('pixel_type_advanced_id').show();
 			$('advanced_pixel_type_tbody').show();
+			$('pixel_type_universal_id').hide();
+		} else if (pixel_type == '2') {
+			$('pixel_type_simple_id').hide();
+			$('pixel_type_advanced_id').hide();
+			$('advanced_pixel_type_tbody').hide();
+			$('pixel_type_universal_id').show();
+			
 		}	
 	}
 	function pixel_data_changed() {
@@ -34,10 +42,14 @@ $stats202PostBackUrl = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.
 		var pixel_code_2 = '<img height="1" width="1" border="0" style="display: none;" src="{0}://' + '<?php echo getTrackingDomain() ?>' + '/tracking202/static/gpx.php?amount={1}&cid={2}" />';
 		
 		var postback_code = '{0}://' + '<?php echo getTrackingDomain() ?>' + '/tracking202/static/gpb.php?amount={1}&subid=';
-		var postback_code_2 = '{0}://' + '<?php echo getTrackingDomain() ?>' + '/tracking202/static/gpb.php?amount={1}&subid=';
+		var postback_code_2 = '{0}://' + '<?php echo getTrackingDomain() ?>' + '/tracking202/static/gpb.php?amount={1}&cid={2}&subid=';
 		
+		var universal_pixel_code = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{0}://' + '<?php echo getTrackingDomain() ?>' + '/tracking202/static/upx.php?amount={1}" />';
+		var universal_pixel_code_2 = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="=" scrolling="no" src="{0}://' + '<?php echo getTrackingDomain() ?>' + '/tracking202/static/upx.php?amount={1}&cid={2}" />';
+
 		var pixelTypeValue = Form.getInputs('pixel_form','radio','pixel_type').find(function(radio) { return radio.checked; }).value;
 		var secureTypeValue = Form.getInputs('pixel_form','radio','secure_type').find(function(radio) { return radio.checked; }).value;
+
 		var http_val = 'http';
 		if(secureTypeValue==1) {
 			var http_val = 'https';
@@ -52,61 +64,72 @@ $stats202PostBackUrl = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.
 		$('unsecure_pixel').setValue(pixel_code.gsub(/\{0\}/,http_val).gsub(/\{1\}/,amount_value));
 		$('unsecure_pixel_2').setValue(pixel_code_2.gsub(/\{0\}/,http_val).gsub(/\{1\}/,amount_value).gsub(/\{2\}/,campaign_id_value));
 		$('unsecure_postback').setValue(postback_code.gsub(/\{0\}/,http_val).gsub(/\{1\}/,amount_value));
-		$('unsecure_postback_2').setValue(postback_code_2.gsub(/\{0\}/,http_val).gsub(/\{1\}/,amount_value));
+		$('unsecure_postback_2').setValue(postback_code_2.gsub(/\{0\}/,http_val).gsub(/\{1\}/,amount_value).gsub(/\{2\}/,campaign_id_value));
+		$('unsecure_universal_pixel').setValue(universal_pixel_code.gsub(/\{0\}/,http_val).gsub(/\{1\}/,amount_value));
+		$('unsecure_universal_pixel_2').setValue(universal_pixel_code_2.gsub(/\{0\}/,http_val).gsub(/\{1\}/,amount_value).gsub(/\{2\}/,campaign_id_value));
 	}
 </script>
 
 <div id="info">
-	<h2>Get your Pixel or Post Back URL</h2>
-	By placing a pixel on the advertiser page, everytime you get a conversion it will fire a tracking pixel and update your subids automatically.<br/>
-	Watch Conversions in REAL-TIME in your SPY view! The Post Back URL is supported by some networks, this will automatically post back to<br/>
-	T202 when you get a lead and again, automatically update your subids.<br/>
-	Use the options below to generate the type of Pixel or Post Back URL to be placed.<br/>
+<h2>Get your Pixel or Post Back URL</h2>
+By placing a pixel on the advertiser page, everytime you get a
+conversion it will fire a tracking pixel and update your subids
+automatically.<br />
+Watch Conversions in REAL-TIME in your SPY view! The Post Back URL is
+supported by some networks, this will automatically post back to<br />
+T202 when you get a lead and again, automatically update your subids.<br />
+Use the options below to generate the type of Pixel or Post Back URL to
+be placed.<br />
 </div>
 
 <form name="pixel_form" id="pixel_form">
 <table class="setup">
 	<thead>
 		<tr valign="top">
-			<td class="left_caption">
-				Get Pixel Code For:
-			</td>
-			<td>	
-				<input type="radio" name="pixel_type" value="0" onClick="pixel_type_select(this.value);" checked="checked" /> Simple Pixel Fire (only one click can be tracked simultaneously)<br/>
-				<input type="radio" name="pixel_type" value="1" onClick="pixel_type_select(this.value);" /> Advanced Pixel Fire (multiple clicks can be tracked simultaneously)
-			</td>
+			<td class="left_caption">Get Pixel Code For:</td>
+			<td><input type="radio" name="pixel_type" value="0"
+				onClick="pixel_type_select(this.value);" checked="checked" /> Simple
+			Pixel (only one click can be tracked simultaneously)<br />
+			<input type="radio" name="pixel_type" value="1"
+				onClick="pixel_type_select(this.value);" /> Advanced Pixel (multiple
+			clicks can be tracked simultaneously)<br />
+			<input type="radio" name="pixel_type" value="2"
+				onClick="pixel_type_select(this.value);" /> Universal Smart Pixel
+			(Tracks 202 conversions, and intelligently fires 3rd party pixels as
+			needed)</td>
 		</tr>
 		<tr valign="top">
-			<td class="left_caption">
-				Secure Link:
-			</td>
-			<td>
-				<input type="radio" name="secure_type" value="0" onchange="pixel_data_changed()" checked="checked" /> http://
-				<input type="radio" name="secure_type" value="1" onchange="pixel_data_changed()" /> https:// <br/><span style="color: #900;">(https:// will only work if your domain has an SSL installed)</span>
-			</td>
+			<td class="left_caption">Secure Link:</td>
+			<td><input type="radio" name="secure_type" value="0"
+				onchange="pixel_data_changed()" checked="checked" /> http:// <input
+				type="radio" name="secure_type" value="1"
+				onchange="pixel_data_changed()" /> https:// <br />
+			<span style="color: #900;">(https:// will only work if your domain
+			has an SSL installed)</span></td>
 		</tr>
 		<tr valign="top">
-			<td class="left_caption">
-				Amount:
-			</td>
-			<td>
-				<input type="text" value="" onkeyup="pixel_data_changed()" id="amount_value" /> <br/><span style="color: #900;">(enter an amount to override the affiliate campaign default)</span>
-			</td>
+			<td class="left_caption">Amount:</td>
+			<td><input type="text" value="" onkeyup="pixel_data_changed()"
+				id="amount_value" /> <br />
+			<span style="color: #900;">(enter an amount to override the affiliate
+			campaign default)</span></td>
 		</tr>
 	</thead>
-	<tbody id="advanced_pixel_type_tbody" style="display:none;">
-		<tr id="lp_aff_network" <? if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
+	<tbody id="advanced_pixel_type_tbody" style="display: none;">
+		<tr id="lp_aff_network"
+		<? if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
 			<td class="left_caption">Aff Network:</td>
-			<td>
-				<img id="aff_network_id_div_loading" src="/202-img/loader-small.gif"/>
-				<div id="aff_network_id_div" style="display: inline;"></div>
+			<td><img id="aff_network_id_div_loading"
+				src="/202-img/loader-small.gif" />
+			<div id="aff_network_id_div" style="display: inline;"></div>
 			</td>
 		</tr>
-		<tr id="lp_aff_campaign" <? if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
+		<tr id="lp_aff_campaign"
+		<? if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
 			<td class="left_caption">Aff Campaign:</td>
-			<td>
-				<img id="aff_campaign_id_div_loading" src="/202-img/loader-small.gif" style="display: none;"/>
-				<div id="aff_campaign_id_div" style="display: inline;"></div>
+			<td><img id="aff_campaign_id_div_loading"
+				src="/202-img/loader-small.gif" style="display: none;" />
+			<div id="aff_campaign_id_div" style="display: inline;"></div>
 			</td>
 		</tr>
 	</tbody>
@@ -118,11 +141,11 @@ $stats202PostBackUrl = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.
    
 </script>
 
-<?php
+		<?php
 
-echo '<style> textarea.code_snippet { width: 100%; height: 40px; } </style>';
+		echo '<style> textarea.code_snippet { width: 100%; height: 40px; } </style>';
 
-printf('
+		printf('
 <div id="pixel_type_simple_id">
 <h2>Simple Global Tracking Pixel</h2>
 		Here is the tracking pixel for your t202 account. Give this to the network or advertiser you are working with and ask them to place it on the confirmation page.
@@ -139,9 +162,9 @@ printf('
 		<textarea class="code_snippet" id="unsecure_postback">%s</textarea><br/>
 </div>
 ', $unSecuredPixel, $unSecuredPostBackUrl
-);
+		);
 
-printf('
+		printf('
 <div id="pixel_type_advanced_id" style="display:none;">
 <h2>Advanced Global Tracking Pixel</h2>
 		Here is the tracking pixel for your t202 account. Give this to the network or advertiser you are working with and ask them to place it on the confirmation page.
@@ -158,14 +181,19 @@ printf('
 		<textarea class="code_snippet" id="unsecure_postback_2">%s</textarea><br/>
 </div>
 ', $unSecuredPixel_2, $unSecuredPostBackUrl_2
-);
+		);
+		
+		printf('
+<div id="pixel_type_universal_id" style="display:none;">
+<h2>Universal Smart Tracking Pixel</h2>
+		Here is the universal smart tracking pixel for your t202 account. Give this to the network or advertiser you are working with and ask them to place it on the confirmation page.
+		With the pixel placed on the confirmation page, everytime you get a lead or sale, it will fire the pixel and update your leads automatically when this pixel fires. Additionally, it will fire the pixel for the traffic source that genearted this sale or lead.
+		If you are confused about which pixel you need (secured or unsecured), please contact the advertiser or network and they should be able to tell you which one you\'ll need.<br/><br/>
+		
+		<textarea class="code_snippet" id="unsecure_universal_pixel">%s</textarea><br/>
 
-echo "<form method='post' style='display: none;' id='postBackUrlForm' name='postBackUrlForm' action='/stats202/postback/'>";
-	echo "<input type='hidden' name='postBackUrl' value='$stats202PostBackUrl'/>";
-echo "</form>";
+</div>
+', $unSecuredUniversalPixel
+		);		
 
-
-echo "<h2>Add Postback URL To Stats202</h2>";
-echo "We have made it easy to add your postback url to Stats202.  To do so simply <a href='#' onclick='document.postBackUrlForm.submit();'>click here</a>!";
-
-template_bottom($server_row);
+		template_bottom($server_row);

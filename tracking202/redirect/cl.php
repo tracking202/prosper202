@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
 
 //run script   
 $mysql['click_id_public'] = mysql_real_escape_string($_GET['pci']);

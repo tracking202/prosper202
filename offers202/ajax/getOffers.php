@@ -206,8 +206,11 @@ switch ($_SESSION['offers202_order']) {
 			if (strtotime($html['offerStartDate']) >= mktime(0,0,0,date('m'), date('d'), date('Y'))) $html['offerStartDate'] = 'Today';
 			if (strtotime($html['offerUpdatedDate']) >= mktime(0,0,0,date('m'), date('d'), date('Y'))) $html['offerUpdatedDate'] = 'Today';
 			
-			if ($html['offerUrl']) 	$html['offerName'] = "<a href='{$html['offerUrl']}'>({$html['offerNetworkId']}) {$html['offerName']}</a>";
-			else 					$html['offerName'] = "({$html['offerNetworkId']}) {$html['offerName']}";
+			if ($html['offerNetworkId'])
+					$html['offerNetworkId'] = "({$html['offerNetworkId']}) ";
+					
+			if ($html['offerUrl']) 	$html['offerName'] = "<a href='{$html['offerUrl']}'>{$html['offerNetworkId']}{$html['offerName']}</a>";
+			else 					$html['offerName'] = "{$html['offerNetworkId']}{$html['offerName']}";
 			
 			if ($html['offerPayoutType'] == 'percent') 	$html['offerPayout'] .= '%'; 
 			else 										$html['offerPayout'] = '$'.$html['offerPayout'];

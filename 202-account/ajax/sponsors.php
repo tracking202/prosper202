@@ -18,7 +18,7 @@ foreach ($sponsors as $sponsor) {
  	
  	echo '<tr>';
  		echo '<td class="product-image"><img src="'.$html['image'].'"/></td>';
- 		echo '<td><a href="'.$html['url'].'">'.$html['name'].'</a><br/>'.$html['description'].'</td>';
+ 		echo '<td><a href="'.$html['url'].'" target="_blank">'.$html['name'].'</a><br/>'.$html['description'].'</td>';
  	echo '</tr>';
 }
 

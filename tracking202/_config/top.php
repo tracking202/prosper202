@@ -14,9 +14,9 @@
 	  <div>
 		<? if ($navigation[2] == 'setup') { $nav = true; ?>
 			<ul>
-				<li <? if ($navigation[3] == 'ppc_accounts.php' or !$navigation[3]) { echo 'class="on"'; } ?>><a href="/tracking202/setup/ppc_accounts.php">#1 PPC Accounts</a></li>
-				<li <? if ($navigation[3] == 'aff_networks.php') { echo 'class="on"'; } ?>><a href="/tracking202/setup/aff_networks.php">#2 Aff Networks</a></li>
-				<li <? if ($navigation[3] == 'aff_campaigns.php') { echo 'class="on"'; } ?>><a href="/tracking202/setup/aff_campaigns.php">#3 Aff Campaigns</a></li>
+				<li <? if ($navigation[3] == 'ppc_accounts.php' or !$navigation[3]) { echo 'class="on"'; } ?>><a href="/tracking202/setup/ppc_accounts.php">#1 Traffic Sources</a></li>
+				<li <? if ($navigation[3] == 'aff_networks.php') { echo 'class="on"'; } ?>><a href="/tracking202/setup/aff_networks.php">#2 Categories</a></li>
+				<li <? if ($navigation[3] == 'aff_campaigns.php') { echo 'class="on"'; } ?>><a href="/tracking202/setup/aff_campaigns.php">#3 Campaigns</a></li>
 				<li <? if ($navigation[3] == 'landing_pages.php') { echo 'class="on"'; } ?>><a href="/tracking202/setup/landing_pages.php">#4 Landing Pages</a></li>
 				<li <? if ($navigation[3] == 'text_ads.php') { echo 'class="on"'; } ?>><a href="/tracking202/setup/text_ads.php">#5 Text Ads</a></li>
 				<li <? switch($navigation[3]) { case "landing.php":  case "get_simple_landing_code.php":  case "get_adv_landing_code.php": echo 'class="on"'; break; } ?>><a href="/tracking202/setup/get_landing_code.php">#6 Get LP Code</a></li> 
@@ -38,8 +38,11 @@
 		<? if ($navigation[2] == 'analyze') { $nav = true; ?>
 			<ul>
 				<li <? if ($navigation[3] == 'keywords.php' or !$navigation[3]) { echo 'class="on"'; } ?>><a href="/tracking202/analyze/keywords.php">Keywords</a></li>
+				<li <? if ($navigation[3] == 'keywords_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/keywords_lpctr.php">Keywords LP CTR</a></li>
 				<li <? if ($navigation[3] == 'text_ads.php') { echo 'class="on"'; } ?>><a href="/tracking202/analyze/text_ads.php">Text Ads</a></li>
+				<li <? if ($navigation[3] == 'text_ads_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/text_ads_lpctr.php">Text Ads LP CTR</a></li>
 				<li <? if ($navigation[3] == 'referers.php') { echo 'class="on"'; } ?>><a href="/tracking202/analyze/referers.php">Referers</a></li>
+				<li <? if ($navigation[3] == 'referers_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/referers_lpctr.php">Referers LP CTR</a></li>
 				<li <? if ($navigation[3] == 'ips.php') { echo 'class="on"'; } ?>><a href="/tracking202/analyze/ips.php">IPs</a></li>
 				<li <? if ($navigation[3] == 'landing_pages.php') { echo 'class="on"'; } ?>><a href="/tracking202/analyze/landing_pages.php">Landing Pages</a></li>
 			</ul>

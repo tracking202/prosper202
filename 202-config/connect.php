@@ -1,9 +1,10 @@
 <?php
 
-$version = '1.6.1';
+$version = '1.7.2';
 
 DEFINE('TRACKING202_API_URL', 'http://api.tracking202.com');
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
+DEFINE('TRACKING202_ADS_URL', 'http://ads.tracking202.com');
 
 @ini_set('auto_detect_line_endings', TRUE);
 @ini_set('register_globals', 0);

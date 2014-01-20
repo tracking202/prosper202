@@ -4,7 +4,7 @@
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 
-//check to see if this is already installed, if so dob't do anything
+//check to see if this is already installed, if so don't do anything
 	if (  upgrade_needed() == false) {
 		
 		_die("<h2>Already Upgraded</h2>
@@ -35,7 +35,7 @@ if ($success != true) {
 	<? if ($error == true) { ?>
 	
 		<h2 style="color: #900;">An error occured</h2>
-		<span style="color: #900;">An unexpected error occured while you were trying to upgrade, please try again or if you keep encountering problems please contact <a href="http://prosper202.com/forum">our support forum</a>.</span>
+		<span style="color: #900;">An unexpected error occured while you were trying to upgrade, please try again or if you keep encountering problems please contact <a href="http://getsatisfaction.com/tracking202">our support forum</a>.</span>
 		<br/><br/>
 	<? } ?>
 	

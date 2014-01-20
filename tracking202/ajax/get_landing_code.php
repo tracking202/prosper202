@@ -43,9 +43,10 @@ AUTH::require_user();
 	$affiliate_link = 'http://' . getTrackingDomain() . '/tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'];
 	$html['affiliate_link'] = htmlentities($affiliate_link);
 
-	$javascript_code = '<script src="http://' . getTrackingDomain() . '/tracking202/static/landing.php?lpip=' . $landing_page_row['landing_page_id_public'] .'" type="text/javascript"></script>';
+	$javascript_code = '<script language="JavaScript" type="text/javascript"> cbr202=Math.random()*10000000000000000;document.write(\'<scr\'+\'ipt language="JavaScript" src="http://' . getTrackingDomain() . '/tracking202/static/landing.php?lpip=' . $landing_page_row['landing_page_id_public'] .'&202cb=\'+cbr202+\'" type="text/javascript"></scr\' + \'ipt>\'); </script>';
+	//$javascript_code = '<script src="http://' . getTrackingDomain() . '/tracking202/static/landing.php?lpip=' . $landing_page_row['landing_page_id_public'] .'" type="text/javascript"></script>';
 	$html['javascript_code'] = htmlentities($javascript_code);
-	printf('<p><b>Inbound Javascript Landing Page Code:</b>
+printf('<p><b>Inbound Javascript Landing Page Code:</b>
             This is the javascript code should be put right above your &#60;&#47;body&#62; tag on <u>only</u> the page(s) where your PPC visitors will first arrive to.
 			This code is not supposed to be placed on every single page on your website. For example this <u>is not</u> to be placed in a template file that is to be included on everyone of your pages.<br/><br/>
             This code is supposed to be only placed on the first page(s), that an incoming PPC visitor would be sent to.  
@@ -93,14 +94,14 @@ AUTH::require_user();
 if (readCookie(\'tracking202outbound\') != \'\') {
 	window.location=readCookie(\'tracking202outbound\');
 } else {
-	window.location=\'http://mydomain.com/tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'] .'\';
+	window.location=\'http://'. getTrackingDomain() .'/tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'] .'\';
 }
 	
 function readCookie(name) {
 	var nameEQ = name + "=";
 	var ca = document.cookie.split(\';\');
 	for(var i=0;i < ca.length;i++) {
-		var c = ca;
+		var c = ca[i];
 		while (c.charAt(0)==\' \') c = c.substring(1,c.length);
 		if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length,c.length);
 	}

@@ -1,8 +1,3 @@
-
-
-
-  
-  
 function submitFeedback() { 
     if ($('feedback_suggestion').value == '') { 
         $('feedback_denied').style.display = 'block';
@@ -74,9 +69,10 @@ function eraseCookie(name) {
 }
 
 
-function confirmSubmit()
+function confirmSubmit(message)
 {
-var agree=confirm("Are you sure you wish to continue?");
+var msg = message ? message : "Are you sure you wish to continue?";
+var agree=confirm(msg);
 if (agree)
 	return true ;
 else

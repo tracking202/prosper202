@@ -17,7 +17,7 @@ template_top();  ?>
 			<p>
 				<script type="text/javascript">
 				var is_ssl = ("https:" == document.location.protocol);
-				var asset_url = is_ssl ? "https://ads.tracking202.com/prosper202-home/" : "http://ads.tracking202.com/prosper202-home/";
+				var asset_url = is_ssl ? "https://ads.tracking202.com/prosper202-home/" : "<?php echo TRACKING202_ADS_URL; ?>/prosper202-home/";
 				document.write(unescape("%3Ciframe%20class%3D%22advertise%22%20src%3D%22"+asset_url+"%22%20scrolling%3D%22no%22%20frameborder%3D%220%22%3E%3C/iframe%3E"));
 				</script>
 			</p> 
@@ -49,22 +49,30 @@ template_top();  ?>
 			</table>
 			<table cellspacing="0" cellpadding="0" class="apps">
 				<tr>
-					<td class="product-image"><img src="/202-img/icons/tracking202.png"/></td>
+					<td class="product-image"><a href="/tracking202/"><img src="/202-img/icons/tracking202.png" border="0"/></a></td>
 					<td><a href="/tracking202/">Tracking202</a><br/>PPC affiliate conversion tracking software.</td>
 				</tr>
+								<tr>
+					<td class="product-image"><a href="../202-Mobile" target="_blank"><img src="/202-img/icons/mobile202.png" border="0"/></a></td>
+					<td><a href="../202-Mobile" target="_blank">Mobile202</a><br/>View your stats on the go with mobile optimized version of Tracking202</td></tr>
 				<tr>
-					<td class="product-image"><img src="/202-img/icons/stats202.png"/></td>
-					<td><a href="/stats202/">Stats202</a><br/>Automatically updates subids and has a mobile web stats app.</td>
-				</tr>
+					<td class="product-image"><a href="http://www.conversion202.com" target="_blank"><img src="/202-img/icons/con202.png" border="0"/></a></td>
+					<td><a href="http://www.conversion202.com" target="_blank">Conversion202</a><br/>A/B and Multivariate Testing to optimize conversions.</td></tr>
 				<tr>
-					<td class="product-image"><img src="/202-img/icons/offers202.png"/></td>
+					<td class="product-image"><a href="/202-resources/"><img src="/202-img/icons/resources.png" border="0"/></a></td>
+					<td><a href="/202-resources/">Resources202</a><br/>Discover more applications to help you sell.</td></tr>
+				<tr>
+					<td class="product-image"><a href="/offers202/"><img src="/202-img/icons/offers202.png" border="0"/></a></td>
 					<td><a href="/offers202/">Offers202</a><br/>Search for offers across many affiliate networks.</td>
 				</tr>
-				<tr>
+			
+				<!-- <tr>
 					<td class="product-image"><img src="/202-img/icons/alerts202.png"/></td>
 					<td><a href="/alerts202/">Alerts202</a><br/>Monitor certain offers and know when new ones arrive.</td>
-				</tr>
-				<!--<tr>
+				</tr><tr>
+					<td class="product-image"><img src="/202-img/icons/stats202.png"/></td>
+					<td><a href="/stats202/">Stats202</a><br/>Automatically updates subids and has a mobile web stats app.</td>
+				</tr><tr>
 					<td class="product-image"><img src="/202-img/icons/resources.png"/></td>
 					<td><a href="/202-resources/">Resources</a><br/>Discover more applications to help you sell.</td>
 				</tr>-->
@@ -88,7 +96,7 @@ template_top();  ?>
 				</tr>
 				<tr>
 					<td class="product-image"><img src="/202-img/icons/forum.png"/></td>
-					<td><a href="http://suport.tracking202.com/">Community Support</a><br/>Talk with other users, and get help.</td>
+					<td><a href="http://support.tracking202.com/" target="_blank">Community Support</a><br/>Talk with other users, and get help.</td>
 				</tr>
 				<!--<tr>
 					<td class="product-image"><img src="/202-img/icons/directory.png"/></td>
@@ -119,7 +127,7 @@ template_top();  ?>
 			<br/>
 			<table cellspacing="0" cellpadding="0" class="section">
 				<tr>
-					<td class="left" ><h2>Sponsors <a href="http://prosper202.com/advertise/" style="font-size: 10px;">(advertise)</span></h2></td>
+					<td class="left" ><h2>Sponsors <a href="http://prosper202.com/advertise/" style="font-size: 10px;" target="_blank">(advertise)</span></h2></td>
 					<td><hr></td>
 				</tr>
 			</table>

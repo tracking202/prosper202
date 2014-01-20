@@ -4,7 +4,8 @@
 if (!$_GET['subid'] and !$_GET['sid']) die();
 
 $click_id = $_GET['subid'];
-if ($_GET['sid']) $click_id = $_GET['sid'];
+if ($_GET['sid']) 
+	$click_id = $_GET['sid'];
 
 $mysql['user_id'] = 1;
 $mysql['click_id'] = mysql_real_escape_string($click_id);

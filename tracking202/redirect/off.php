@@ -37,7 +37,7 @@ if ($usedCachedRedirect==true) {
 }
 
 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
 
 /* OK FIRST IF THERE IS NO PUBLIC CLICK_ID, JUST REDIRECT TO THE NORMAL CAMPAIGN */
 if (!$_GET['pci']) { 

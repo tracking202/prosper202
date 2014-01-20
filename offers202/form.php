@@ -50,3 +50,8 @@
 
 <div id="m-content"></div>
 <script type="text/javascript">getOffers();</script>
+
+<div style="padding: 10px 0px 0px; text-align: center; font-size: 10px;">
+	<em>Results Powered By</em>
+	<a href="http://offervault.com"><img style="margin-bottom: -10px;" src="/202-img/offervault.png"/></a>
+</div>

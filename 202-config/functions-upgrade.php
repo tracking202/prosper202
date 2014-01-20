@@ -401,7 +401,180 @@ class UPGRADE {
 			$result = _mysql_query($sql);
 			$mysql_version = '1.6.1';
 		}
+
+		//upgrade from 1.6.1 to 1.6.2 beta
+		if ($mysql_version == '1.6.1') {
+			
+			$sql = "UPDATE 202_version SET version='1.6.2'; ";
+			$result = _mysql_query($sql);
+			$mysql_version = '1.6.2';
+			
+					
+		}
 		
+
+				//upgrade from 1.6.2 to 1.7 beta
+		if ($mysql_version == '1.6.2') {
+			
+			$sql = "UPDATE 202_version SET version='1.7'; ";
+			$result = _mysql_query($sql);
+			$mysql_version = '1.7';
+			
+					$sql ="CREATE TABLE IF NOT EXISTS `202_pixel_types` (
+  			  `pixel_type_id` TINYINT UNSIGNED NOT NULL AUTO_INCREMENT ,
+  		  	  `pixel_type` VARCHAR(45) NULL ,
+  			  PRIMARY KEY (`pixel_type_id`) ,
+  		      UNIQUE INDEX `pixel_type_UNIQUE` (`pixel_type` ASC) 
+  			) ENGINE=MyISAM DEFAULT CHARSET=latin1;";
+		$result = _mysql_query($sql);
+		
+		$sql ="CREATE TABLE IF NOT EXISTS `202_ppc_account_pixels` (
+ 			  `pixel_id` mediumint(8) unsigned NOT NULL auto_increment,
+  			  `pixel_code` text NOT NULL,
+  			  `pixel_type_id` mediumint(8) unsigned NOT NULL,
+  			  `ppc_account_id` mediumint(8) unsigned NOT NULL,
+  			  PRIMARY KEY  (`pixel_id`)
+ 			  ) ENGINE=MyISAM DEFAULT CHARSET=latin1;";
+		$result = _mysql_query($sql);
+		
+		$sql ="CREATE TABLE `202_clicks_total` (
+			  `click_count` int(20) unsigned NOT NULL default '0',
+ 			  PRIMARY KEY  (`click_count`)
+			  ) ENGINE=MyISAM DEFAULT CHARSET=latin1;";
+		$result = _mysql_query($sql);
+		
+		$sql ="INSERT IGNORE INTO `202_pixel_types` (`pixel_type`) VALUES 
+			  ('Image'),
+			  ('Iframe'),
+			  ('Javascript'),
+			  ('Postback')";
+		$result = _mysql_query($sql);
+		
+		$sql ="INSERT IGNORE INTO `202_platforms` (`platform_name`) VALUES 
+			  ('Mobile'),
+			  ('Tablet');";
+		$result = _mysql_query($sql);
+			
+		
+		$sql ="INSERT IGNORE INTO `202_clicks_total` (`click_count`) VALUES
+		(0);";
+		$result = _mysql_query($sql);
+		
+			
+		}	
+		
+				//upgrade from 1.7 beta to 1.7.1 beta
+			if ($mysql_version == '1.7') {
+			
+			$sql = "UPDATE 202_version SET version='1.7.1'; ";
+			$result = _mysql_query($sql);
+			$mysql_version = '1.7.1';
+				$sql ="CREATE TABLE IF NOT EXISTS `202_sort_keywords_lpctr` (
+  			  `sort_keyword_id` int(10) unsigned NOT NULL auto_increment,
+  			  `user_id` mediumint(8) unsigned NOT NULL,
+  			  `keyword_id` bigint(20) unsigned NOT NULL,
+ 			  `sort_keyword_clicks` mediumint(8) unsigned NOT NULL,
+ 			  `sort_keyword_click_throughs` mediumint(8) unsigned NOT NULL,
+		      `sort_keyword_ctr` decimal(10,2) NOT NULL,  
+ 		      `sort_keyword_leads` mediumint(8) unsigned NOT NULL,
+			  `sort_keyword_su_ratio` decimal(10,2) NOT NULL,
+			  `sort_keyword_payout` decimal(6,2) NOT NULL,
+			  `sort_keyword_epc` decimal(10,2) NOT NULL,
+			  `sort_keyword_avg_cpc` decimal(7,5) NOT NULL,
+			  `sort_keyword_income` decimal(10,2) NOT NULL,
+			  `sort_keyword_cost` decimal(13,5) NOT NULL,
+			  `sort_keyword_net` decimal(13,5) NOT NULL,
+  			  `sort_keyword_roi` decimal(10,2) NOT NULL,
+			  PRIMARY KEY  (`sort_keyword_id`),
+			  KEY `user_id` (`user_id`),
+			  KEY `keyword_id` (`keyword_id`),
+			  KEY `sort_keyword_clicks` (`sort_keyword_clicks`)
+			) ENGINE=MyISAM AUTO_INCREMENT=1;";
+				$result = _mysql_query($sql);
+				
+		$sql ="CREATE TABLE IF NOT EXISTS `202_sort_text_ads_lpctr` (
+  `sort_text_ad_id` int(10) unsigned NOT NULL auto_increment,
+  `user_id` mediumint(8) unsigned NOT NULL,
+  `text_ad_id` mediumint(8) unsigned NOT NULL,
+  `sort_text_ad_clicks` mediumint(8) unsigned NOT NULL,
+  `sort_text_ad_click_throughs` mediumint(8) unsigned NOT NULL,
+  `sort_text_ad_ctr` decimal(10,2) NOT NULL,  
+  `sort_text_ad_leads` mediumint(8) unsigned NOT NULL,
+  `sort_text_ad_su_ratio` decimal(10,2) NOT NULL,
+  `sort_text_ad_payout` decimal(6,2) NOT NULL,
+  `sort_text_ad_epc` decimal(10,2) NOT NULL,
+  `sort_text_ad_avg_cpc` decimal(7,5) NOT NULL,
+  `sort_text_ad_income` decimal(10,2) NOT NULL,
+  `sort_text_ad_cost` decimal(13,5) NOT NULL,
+  `sort_text_ad_net` decimal(13,5) NOT NULL,
+  `sort_text_ad_roi` decimal(10,2) NOT NULL,
+  PRIMARY KEY  (`sort_text_ad_id`),
+  KEY `user_id` (`user_id`),
+  KEY `keyword_id` (`text_ad_id`),
+  KEY `sort_keyword_clicks` (`sort_text_ad_clicks`),
+  KEY `sort_keyword_leads` (`sort_text_ad_leads`),
+  KEY `sort_keyword_signup_ratio` (`sort_text_ad_su_ratio`),
+  KEY `sort_keyword_payout` (`sort_text_ad_payout`),
+  KEY `sort_keyword_epc` (`sort_text_ad_epc`),
+  KEY `sort_keyword_cpc` (`sort_text_ad_avg_cpc`),
+  KEY `sort_keyword_income` (`sort_text_ad_income`),
+  KEY `sort_keyword_cost` (`sort_text_ad_cost`),
+  KEY `sort_keyword_net` (`sort_text_ad_net`),
+  KEY `sort_keyword_roi` (`sort_text_ad_roi`)
+) ENGINE=MyISAM  AUTO_INCREMENT=1 ;";	
+			$result = _mysql_query($sql);
+
+	$sql="CREATE TABLE IF NOT EXISTS `202_sort_referers_lpctr` (
+  `sort_referer_id` int(10) unsigned NOT NULL auto_increment,
+  `user_id` mediumint(8) unsigned NOT NULL,
+  `referer_id` bigint(20) unsigned NOT NULL,
+  `sort_referer_clicks` mediumint(8) unsigned NOT NULL,
+  `sort_referer_click_throughs` mediumint(8) unsigned NOT NULL,
+  `sort_referer_ctr` decimal(10,2) NOT NULL,
+  `sort_referer_leads` mediumint(8) unsigned NOT NULL,
+  `sort_referer_su_ratio` decimal(10,2) NOT NULL,
+  `sort_referer_payout` decimal(6,2) NOT NULL,
+  `sort_referer_epc` decimal(10,2) NOT NULL,
+  `sort_referer_avg_cpc` decimal(7,5) NOT NULL,
+  `sort_referer_income` decimal(10,2) NOT NULL,
+  `sort_referer_cost` decimal(13,5) NOT NULL,
+  `sort_referer_net` decimal(13,5) NOT NULL,
+  `sort_referer_roi` decimal(10,2) NOT NULL,
+  PRIMARY KEY  (`sort_referer_id`),
+  KEY `user_id` (`user_id`),
+  KEY `keyword_id` (`referer_id`),
+  KEY `sort_keyword_clicks` (`sort_referer_clicks`),
+  KEY `sort_keyword_leads` (`sort_referer_leads`),
+  KEY `sort_keyword_signup_ratio` (`sort_referer_su_ratio`),
+  KEY `sort_keyword_payout` (`sort_referer_payout`),
+  KEY `sort_keyword_epc` (`sort_referer_epc`),
+  KEY `sort_keyword_cpc` (`sort_referer_avg_cpc`),
+  KEY `sort_keyword_income` (`sort_referer_income`),
+  KEY `sort_keyword_cost` (`sort_referer_cost`),
+  KEY `sort_keyword_net` (`sort_referer_net`),
+  KEY `sort_keyword_roi` (`sort_referer_roi`)
+) ENGINE=MyISAM;";
+			$result = _mysql_query($sql);
+			
+$sql="ALTER TABLE `202_tracking_c1` CHANGE COLUMN `c1` `c1` VARCHAR(350) NOT NULL  ;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c2` CHANGE COLUMN `c2` `c2` VARCHAR(350) NOT NULL  ;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c3` CHANGE COLUMN `c3` `c3` VARCHAR(350) NOT NULL  ;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c4` CHANGE COLUMN `c4` `c4` VARCHAR(350) NOT NULL  ;";
+			$result = _mysql_query($sql);	
+			}
+			
+			//upgrade from 1.7.1 to 1.7.2 beta
+		if ($mysql_version == '1.7.1') {
+			
+			$sql = "UPDATE 202_version SET version='1.7.2'; ";
+			$result = _mysql_query($sql);
+			$mysql_version = '1.7.2';
+			
+					
+		}
 		return true;
 	}
 }

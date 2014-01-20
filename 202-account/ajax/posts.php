@@ -8,7 +8,7 @@ AUTH::require_user();
  $rss = fetch_rss('http://prosper.tracking202.com/blog/rss/');
  if ( isset($rss->items) && 0 != count($rss->items) ) {
  	
- 	$rss->items = array_slice($rss->items, 0, 5);
+ 	$rss->items = array_slice($rss->items, 0, 2);
  	foreach ($rss->items as $item ) { 
  		
  		$item['description'] = html2txt($item['description']);

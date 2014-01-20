@@ -1,4 +1,13 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<? //write out a transparent 1x1 gif
+header("content-type: image/gif"); 
+header('Content-Length: 43');
+header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
+header('Expires: Sun, 03 Feb 2008 05:00:00 GMT'); // Date in the past
+header("Pragma: no-cache");
+header('P3P: CP="IDC DSP COR CURa ADMa OUR IND PHY ONL COM STA"');
+echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
+
+include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
 
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;

@@ -1,3 +1,8 @@
+<? header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
+header('Expires: Sun, 03 Feb 2008 05:00:00 GMT'); // Date in the past
+header("Pragma: no-cache");
+$strProtocol = $_SERVER['HTTPS'] == 'on' ? 'https' : 'http'; 
+?>
 function t202Init(){
 	//this grabs the t202kw, but if they set a forced kw, this will be replaced 
 	
@@ -23,7 +28,7 @@ function t202Init(){
 	var language = navigator.appName=='Netscape'?navigator.language:navigator.browserLanguage; 
 	language = language.substr(0,2); 
 										    
-	document.write("<script src=\"http://<? echo $_SERVER['SERVER_NAME']; ?>/tracking202/static/record.php?lpip=" + t202Enc(lpip)
+	document.write("<script src=\"<?php echo $strProtocol; ?>://<? echo $_SERVER['SERVER_NAME']; ?>/tracking202/static/record.php?lpip=" + t202Enc(lpip)
 		+ "&t202id="				+ t202Enc(t202id)
 		+ "&t202kw="				+ t202kw
 		+ "&OVRAW="					+ t202Enc(OVRAW)

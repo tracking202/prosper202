@@ -76,8 +76,8 @@
 								location_country_code,
 								location_region_code,
 								location_city_name,*/ $click_sql2 .="
-								202_browsers.browser_id,
-								202_platforms.platform_id
+								202_browsers.browser_name,
+								202_platforms.platform_name
 					  FROM      202_clicks AS 2c
 					  					LEFT JOIN 202_clicks_advance USING (click_id)
 										LEFT JOIN 202_clicks_record USING (click_id)
@@ -165,7 +165,9 @@
 		$html['keyword'] = htmlentities($click_row['keyword'], ENT_QUOTES, 'UTF-8');
 		$html['click_lead'] = htmlentities($click_row['click_lead'], ENT_QUOTES, 'UTF-8');
 		$html['click_filtered'] = htmlentities($click_row['click_filtered'], ENT_QUOTES, 'UTF-8');      
-		
+		$html['browser_name'] = htmlentities($click_row['browser_name'], ENT_QUOTES, 'UTF-8');
+		$html['platform_name'] = htmlentities($click_row['platform_name'], ENT_QUOTES, 'UTF-8');      
+				
 		$html['location'] = '';
 		if ($click_row['location_country_name']) {
 			if ($click_row['location_country_name']) { 

@@ -257,12 +257,14 @@ AUTH::require_user();
 		
 		$html['browser_id'] = '';
 		if ($click_row['browser_id']) {
-			$html['browser_id'] = '<img title="'.$click_row['browser_name'].'" src="/202-img/icons/browsers/'.$click_row['browser_id'].'.png"/>';    
+			$html['browser_id'] = '<img title="'.$click_row['browser_name'].'" src="/202-img/icons/browsers/'.$click_row['browser_id'].'.png"/>';
+          //$html['browser_id'] = '<img title="'.$click_row['browser_name'].'" src="/202-img/icons/browsers/'.rand(1, 32).'.png"/>';
+			    
 		}
 		
 		$html['platform_id'] = '';
 		if ($click_row['platform_id']) {
-			$html['platform_id'] = '<img title="'.$click_row['platform_name'].'" src="/202-img/icons/platforms/'.$click_row['platform_id'].'.gif"/>';    
+			$html['platform_id'] = '<img title="'.$click_row['platform_name'].'" src="/202-img/icons/platforms/'.$click_row['platform_id'].'.png"/>';    
 
 		}
 		
@@ -281,7 +283,7 @@ AUTH::require_user();
 		
 		 <table cellpadding="0" cellspacing="0" class="item-table">
 			<tr class="<? echo $html['row_class']; ?>">
-				<td style="width: 53px;" id="<? echo $html['click_id']; ?>"><? printf('<a href="#%s">%s</a>', $html['click_id'], $html['click_id']); ?></td>
+				<td style="width: 53px;" id="<? echo $html['click_id']; ?>"><? printf('%s', $html['click_id']); ?></td>
 				<td class="date"><? echo $html['click_time']; ?></td>
 				<td class="ppc"><? echo $html['browser_id']; ?></td>
 				<td class="ppc"><? echo $html['platform_id']; ?></td>
@@ -291,7 +293,7 @@ AUTH::require_user();
 					<? if ($click_row['click_filtered'] == '1') { ?>
 						  <img style="margin-right: auto;" src="/202-img/icons/16x16/delete.png" alt="Filtered Out Click" title="filtered out click"/> 
 					<? } elseif ($click_row['click_lead'] == '1') { ?>
-						  <img style="margin-right: auto;" src="/202-img/icons/16x16/money_dollar.png" alt="Converted Click" title="converted click"/> 
+						  <img style="margin-right: auto;" src="/202-img/icons/16x16/money_dollar.png" alt="Converted Click" title="converted click" width="16px" height="16px"/> 
 					<? } else { ?>
 						  <img style="margin-right: auto;" src="/202-img/icons/16x16/add.png" alt="Real Click" title="real click"/> 
 					<? } ?>

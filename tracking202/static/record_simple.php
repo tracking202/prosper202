@@ -70,7 +70,7 @@ $referer_url_query = $referer_url_parsed['query'];
 @parse_str($referer_url_query, $referer_query);
 
 switch ($user_row['user_keyword_searched_or_bidded']) { 
-	
+
 	case "bidded":
 	      #try to get the bidded keyword first
 		if ($_GET['OVKEY']) { //if this is a Y! keyword
@@ -244,7 +244,7 @@ $click_sql = "INSERT INTO   202_clicks_record
 							click_in='".$mysql['click_in']."',
 							click_out='".$mysql['click_out']."'"; 
 $click_result = mysql_query($click_sql) or record_mysql_error($click_sql);
-							
+
 
 
 $landing_site_url = $_SERVER['HTTP_REFERER'];
@@ -260,7 +260,7 @@ if ($cloaking_on == true) {
 	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
 	$click_cloaking_site_url_id = INDEXES::get_site_url_id($cloaking_site_url); 
 	$mysql['click_cloaking_site_url_id'] = mysql_real_escape_string($click_cloaking_site_url_id);         
-	
+
 }
 
 
@@ -285,7 +285,7 @@ $click_result = mysql_query($click_sql) or record_mysql_error($click_sql);
 
 //update the click summary table if this is a 'real click'
 #if ($click_filtered == 0) {
-	
+
 	$now = time();
 
 	$today_day = date('j', time());

@@ -25,7 +25,7 @@ if ($usedCachedRedirect==true) {
 	$t202id = $_GET['t202id']; 
 	$handle = @fopen($myFile, 'r');
 	while ($row = @fgetcsv($handle, 100000, ",")) {
-		
+
 		//if a cached key is found for this t202id, redirect to that url
 		if ($row[0] == $t202id) { 
 			header('location: '. $row[1]); 
@@ -33,12 +33,12 @@ if ($usedCachedRedirect==true) {
 		}
 	}
 	@fclose($handle);
-	
+
 	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
 }
 
 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
 
 //grab tracker data
 
@@ -70,7 +70,7 @@ if ( is_writable(dirname(__FILE__) . '/cached' )) {
 		$handle = @fopen($myFile, 'w');
 		@fclose($handle);
 	} 
-	
+
 	# now save this link to the 
 	$handle = @fopen($myFile, 'r');
 	$writeNewIndex = true;
@@ -78,7 +78,7 @@ if ( is_writable(dirname(__FILE__) . '/cached' )) {
 		if ($row[0] == $t202id) $writeNewIndex = false;
 	}
 	@fclose($handle);
-	
+
 	if ($writeNewIndex) { 
 		//write this index to the txt file
 		$newLine = "$t202id, {$tracker_row['aff_campaign_url']} \n";
@@ -126,7 +126,7 @@ $referer_url_query = $referer_url_parsed['query'];
 @parse_str($referer_url_query, $referer_query);
 
 switch ($user_row['user_keyword_searched_or_bidded']) { 
-	
+
 	case "bidded":
 	      #try to get the bidded keyword first
 		if ($_GET['OVKEY']) { //if this is a Y! keyword
@@ -190,7 +190,7 @@ $mysql['click_in'] = 1;
 $mysql['click_out'] = 1; 
 
 
-												   
+
 $ip_id = INDEXES::get_ip_id($_SERVER['HTTP_X_FORWARDED_FOR']);
 $mysql['ip_id'] = mysql_real_escape_string($ip_id);
    
@@ -201,7 +201,7 @@ $user_id = $tracker_row['user_id'];
 
 $click_filtered = FILTER::startFilter($click_id,$ip_id,$ip_address,$user_id);
 $mysql['click_filtered'] = mysql_real_escape_string($click_filtered);
-	
+
 
 //ok we have the main data, now insert this row
 $click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
@@ -281,7 +281,7 @@ if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking
 } else { 
 	$mysql['click_cloaking'] = 0; 
 }
-	
+
 //ok we have our click recorded table, now lets insert theses
 $click_sql = "INSERT INTO   202_clicks_record
 			  SET           click_id='".$mysql['click_id']."',
@@ -292,7 +292,7 @@ $click_sql = "INSERT INTO   202_clicks_record
 $click_result = mysql_query($click_sql) or record_mysql_error($click_sql);  
 
 
-					
+
 //now lets get variables for clicks site
 //so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google.... 
 if ($referer_query['url']) { 
@@ -320,7 +320,7 @@ $redirect_site_url = replaceTrackerPlaceholders($redirect_site_url,$click_id);
 
 $click_redirect_site_url_id = INDEXES::get_site_url_id($redirect_site_url); 
 $mysql['click_redirect_site_url_id'] = mysql_real_escape_string($click_redirect_site_url_id);
-		  
+
 //insert this
 $click_sql = "INSERT INTO   202_clicks_site
 			  SET           click_id='".$mysql['click_id']."',
@@ -333,7 +333,7 @@ $click_result = mysql_query($click_sql) or record_mysql_error($click_sql);
 
 //update the click summary table if this is a 'real click'
 #if ($click_filtered == 0) {
-	
+
 	$now = time();
 
 	$today_day = date('j', time());
@@ -343,7 +343,7 @@ $click_result = mysql_query($click_sql) or record_mysql_error($click_sql);
 	//the click_time is recorded in the middle of the day
 	$click_time = mktime(12,0,0,$today_month,$today_day,$today_year);
 	$mysql['click_time'] = mysql_real_escape_string($click_time);
-	
+
 	//check to make sure this click_summary doesn't already exist
 	$check_sql = "SELECT  COUNT(*)
 				  FROM    202_summary_overview
@@ -353,8 +353,8 @@ $click_result = mysql_query($click_sql) or record_mysql_error($click_sql);
 				  AND     click_time='".$mysql['click_time']."'";
 	$check_result = mysql_query($check_sql) or record_mysql_error($check_sql);
 	$check_count = mysql_result($check_result,0,0);      
-	
-	
+
+
 	//if this click summary hasn't been recorded do this now
 	if ($check_count == 0 ) {
 
@@ -378,4 +378,3 @@ if ($cloaking_on == true) {
 } else {
 	header('location: '.$redirect_site_url);        
 } 
-

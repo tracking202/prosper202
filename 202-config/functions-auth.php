@@ -22,9 +22,12 @@ class AUTH {
 		}
 	}
 
-	function require_user() {
+	function require_user($auth_type='') {
 		if (AUTH::logged_in() == false) {
-			 die(include_once($_SERVER['DOCUMENT_ROOT']. '/202-access-denied.php'));
+			if($auth_type=="toolbar")
+				$_SESSION['toolbar'] = 'true';
+				//echo "what";
+			die(include_once($_SERVER['DOCUMENT_ROOT']. '/202-access-denied.php'));
 		}
 		AUTH::set_timezone($_SESSION['user_timezone']);  
 	}

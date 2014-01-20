@@ -20,6 +20,7 @@
   
 <link rel="shortcut icon" href="/202-img/favicon.gif" type="image/ico"/> 
 <link href="/202-css/account.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js"></script>
 <script type="text/javascript" src="/tracking202/js/prototype.js"></script>
 		
 <? switch ($navigation[1]) { 
@@ -43,7 +44,9 @@
 case "202-account":
 	?><script type="text/javascript" src="/202-js/account.js"></script><?php 
 	break;
-} ?>
+} 
+//include(TRACKING202_ADS_URL.'/adserver/init.php'); ?>
+
 
 
 </head>
@@ -61,7 +64,7 @@ case "202-account":
 				<!-- this is the prosper202 top-left logo/banner placement -->
 				<script type="text/javascript" charset="utf-8">
 					var is_ssl = ("https:" == document.location.protocol);
-					var asset_url = is_ssl ? "https://ads.tracking202.com/prosper202-topleft/" : "http://ads.tracking202.com/prosper202-topleft/";
+					var asset_url = is_ssl ? "https://ads.tracking202.com/prosper202-topleft/" : "<?php echo TRACKING202_ADS_URL; ?>/prosper202-topleft/";
 					document.write(unescape("%3Ciframe%20class%3D%22advertise-top-left%22%20src%3D%22"+asset_url+"%22%20scrolling%3D%22no%22%20frameborder%3D%220%22%3E%3C/iframe%3E"));
 				</script>
 			</td>
@@ -72,14 +75,18 @@ case "202-account":
 					<div style="float: left; ">
 						<a href="/tracking202/" <? if ($navigation[1] == 'tracking202') { echo 'class="bold";'; } ?>>Tracking202</a>  
 						&middot;
+						<a href="http://www.conversion202.com" <? if ($navigation[1] == 'alerts202') { echo 'class="bold";'; } ?> target="_blank">Conversion202</a>   
+						&middot;						
+				        <a href="/offers202/" <? if ($navigation[1] == 'offers202') { echo 'class="bold";'; } ?>>Offers202</a>  
+						&middot; 
+						
+						<?php /* 
 						<a href="/stats202/" <? if ($navigation[1] == 'stats202') { echo 'class="bold";'; } ?>>Stats202</a>  
 						&middot;
-						<a href="/offers202/" <? if ($navigation[1] == 'offers202') { echo 'class="bold";'; } ?>>Offers202</a>  
-						&middot; 
-						<a href="/alerts202/" <? if ($navigation[1] == 'alerts202') { echo 'class="bold";'; } ?>>Alerts202</a>   
-						<?php /* &middot; 
-						<a href="/202-resources/" <? if ($navigation[1] == '202-resources') { echo 'class="bold";'; } ?>>Resources<span id="new_offers"></span></a>
-						<script type="text/javascript"> new Ajax.Updater('new_offers', '/202-account/ajax/new-offers.php'); </script>*/ ?> 
+						<a href="/alerts202/" <? if ($navigation[1] == 'alerts202') { echo 'class="bold";'; } ?>>Alerts202eh</a>   
+						&middot; */ ?> 
+						<a href="/202-resources/" <? if ($navigation[1] == '202-resources') { echo 'class="bold";'; } ?>>Featured Resources<span id="new_offers"></span></a>
+						<script type="text/javascript"> new Ajax.Updater('new_offers', '/202-account/ajax/new-offers.php'); </script>
 					</div>
 					
 					<a href="/202-account/" <? if (($navigation[1] == '202-account') AND !$navigation[2]) { echo 'class="bold";'; } ?>>Home</a>  

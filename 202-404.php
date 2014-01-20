@@ -6,7 +6,7 @@
 	You may have clicked an expired link or mistyped the web address you were looking for.
 	
 	<ul>
-		<li><a href="/">Return home</a></li>
+		<li><a href="/">Return home</a></li>f
 	    	<li><a href="javascript:history.back();">Go back to the previous page</a></li>
 	</ul>
 	

@@ -71,10 +71,7 @@ template_top('Update Subids'); ?>
     <h2>Update Your Subids</h2>
 	Here is where you can update your income for tracking202, by importing your subids from your affiliate marketing reports.
 </div>
-
-	<div style="margin: 15px 30px; padding: 20px; border: 1px solid rgb(175,175,175); font-size: 1.5em; text-align: center; background: rgb(244,244,244); ">
-		<img src="/202-img/icons/16x16/new.png" style="margin: 0px 6px -4px 0px;" title="new" alt="new"/>You can now automatically update your subids by setting up your <a href="/stats202/postback/">Stats202</a> Postback URL.
-	</div>	
+	
     
     <? if ($success == true) { ?>
         <div class="success"><div><h3>Your submission was successful</h3>Your account income now reflects the subids from the commisisons you just uploaded.</div></div>

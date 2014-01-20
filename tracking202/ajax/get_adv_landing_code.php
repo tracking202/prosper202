@@ -29,8 +29,7 @@ AUTH::require_user();
 	
 	?><p><u>Make sure you test out all the links to make sure they work yourself before running them live.</u></p><?
 
-
-	$javascript_code = '<script src="http://' . getTrackingDomain() . '/tracking202/static/landing.php?lpip=' . $landing_page_row['landing_page_id_public'] .'" type="text/javascript"></script>';
+	$javascript_code = '<script language="JavaScript" type="text/javascript"> cbr202=Math.random()*10000000000000000;document.write(\'<scr\'+\'ipt language="JavaScript" src="http://' . getTrackingDomain() . '/tracking202/static/landing.php?lpip=' . $landing_page_row['landing_page_id_public'] .'&202cb=\'+cbr202+\'" type="text/javascript"></scr\' + \'ipt>\'); </script>';
 	$html['javascript_code'] = htmlentities($javascript_code);
 	printf('<p><b>Inbound Javascript Landing Page Code:</b>
             This is the javascript code should be put right above your &#60;&#47;body&#62; tag on <u>only</u> the page(s) where your PPC visitors will first arrive to.
