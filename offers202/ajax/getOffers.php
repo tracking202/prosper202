@@ -3,8 +3,6 @@
 
 AUTH::require_user();
 
-//print_r_html($_SESSION);
-
 //set the preferences
 if ($_POST['query']) 	$_SESSION['offers202_query'] = $_POST['query'];
 if ($_POST['limit']) 		$_SESSION['offers202_limit'] = $_POST['limit'];

@@ -9,15 +9,15 @@ AUTH::require_user();
 	
 //grab the users date range preferences
 	$time = grab_timeframe(); 
-	$mysql['to'] = mysql_real_escape_string($time['to']);
-	$mysql['from'] = mysql_real_escape_string($time['from']); 
+	$mysql['to'] = $db->real_escape_string($time['to']);
+	$mysql['from'] = $db->real_escape_string($time['from']); 
 	
 	
 //show real or filtered clicks
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
-	$user_result = _mysql_query($user_sql, $dbGlobalLink); //($user_sql);
-	$user_row = mysql_fetch_assoc($user_result);	
+	$user_result = _mysqli_query($user_sql, $dbGlobalLink); //($user_sql);
+	$user_row = $user_result->fetch_assoc();	
 	
 	$html['user_pref_group_1'] = htmlentities($user_row['user_pref_group_1'], ENT_QUOTES, 'UTF-8');
 	$html['user_pref_group_2'] = htmlentities($user_row['user_pref_group_2'], ENT_QUOTES, 'UTF-8');
@@ -39,20 +39,27 @@ AUTH::require_user();
 	
 ?>
 
-<h3 class="green overview-spacer">Group Overview</h3>
-<div>
-	<img src="/202-img/icons/16x16/page_white_excel.png" style="margin: 0px 0px -3px 3px;"/>
-	<a target="_new" href="/tracking202/overview/group_overview_download.php">
-		<strong>Download to excel</strong>
-	</a>
+<div class="row">
+	<div class="col-xs-8">
+		<h6>Group Overview</h6>
+		<small>The group overview screen gives you a quick glance at all of your traffic across all dimensions.</small>
+	</div>
+	<div class="col-xs-4 text-right" style="margin-top:15px;">
+		<img style="margin-bottom:2px;" src="/202-img/icons/16x16/page_white_excel.png"/>
+		<a style="font-size:12px;" target="_new" href="/tracking202/overview/group_overview_download.php">
+			<strong>Download to excel</strong>
+		</a>
+	</div>
 </div>
+
 <?
 
-$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 
-$info_result = _mysql_query($summary_form->getQuery($mysql['user_id'],$user_row));
+$info_result = _mysqli_query($summary_form->getQuery($mysql['user_id'],$user_row));
 
-while ($row = mysql_fetch_assoc($info_result)) {
+while ($row = $info_result->fetch_assoc()) {
+
 	$summary_form->addReportData($row);
 }
 

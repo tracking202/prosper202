@@ -4,34 +4,34 @@
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
 	
-	$mysql['user_name'] = mysql_real_escape_string($_POST['user_name']);
-	$mysql['user_email'] = mysql_real_escape_string($_POST['user_email']);
+	$mysql['user_name'] = $db->real_escape_string($_POST['user_name']);
+	$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
 	
 	$user_sql = "SELECT user_id FROM 202_users WHERE user_name='".$mysql['user_name']."' AND user_email='".$mysql['user_email']."'";
-	$user_result = _mysql_query($user_sql);
-	$user_row = mysql_fetch_assoc($user_result);
+	$user_result = _mysqli_query($user_sql);
+	$user_row = $user_result->fetch_assoc();
 	
-	if (!$user_row) { $error['user'] = '<div class="error"> Invalid username /email combination.</div>'; }
+	if (!$user_row) { $error['user'] = 'Invalid username /email combination.'; }
 	
 	//i there isn't any error, give this user, a new password, and email it to them!
 	if (!$error) {
 		
-		$mysql['user_id'] = mysql_real_escape_string($user_row['user_id']);
+		$mysql['user_id'] = $db->real_escape_string($user_row['user_id']);
 		
 		//generate random key
 		$user_pass_key = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 		$user_pass_key = substr(str_shuffle($user_pass_key), 0, 40) . time();
-		$mysql['user_pass_key'] = mysql_real_escape_string($user_pass_key);
+		$mysql['user_pass_key'] = $db->real_escape_string($user_pass_key);
 
 		//set the user pass time
-		$mysql['user_pass_time'] = time(); 
+		$mysql['user_pass_time'] = time();
 			
 		//insert this verification key into the database, and the timestamp of inserting it
 		$update_sql = "	UPDATE 	202_users 
 							SET 		user_pass_key='" . $mysql['user_pass_key'] . "',
 										user_pass_time='" . $mysql['user_pass_time'] . "'
 							WHERE		user_id='".$mysql['user_id']."'";
-		$update_result = _mysql_query($update_sql);
+		$update_result = _mysqli_query($update_sql);
 			
 		
 		//now email the user the script to reset their email
@@ -77,30 +77,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	<?php if ($success == true) { ?>
 	
-		<div class="error" style="text-align: center;"><br/>An email has been sent with a link where you can change your password.</div>
+		<center><small>An email has been sent with a link where you can change your password.</small></center>
 	
 	<?php } else { ?>
-	
-		<form method="post" action="">
-			<input type="hidden" name="token" value=""/>
-			<table class="config" cellspacing="0" cellpadding="5" style="margin: 0px auto;" >
-				<tr><td colspan="2" style="text-align: center;">Please enter your username and e-mail address.<br/>You will receive a new password via e-mail to <a href="/202-login.php">login</a> with.</td></tr>
-				<tr><td/></tr>
-				 <tr>
-					<th>Username:</th>
-					<td><input id="user_name" type="text" name="user_name" value="<?php echo $html['user_name']; ?>"/></td>
-				</tr>
-				 <tr>
-					<th>Email:</th>
-					<td><input id="user_name" type="text" name="user_email" value="<?php echo $html['user_email']; ?>"/></td>
-				</tr>
-				<?php if ($error['user']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user']); } ?>
-				<tr>
-					<td/>
-					<td><input id="submit" type="submit" value="Get New Password  &raquo;"/></td>
-				</tr>
-			</table>
-		</form>
-		
+	<div class="row">
+	<div class="main col-xs-4">
+	  	<center><img src="202-img/prosper202.png"></center>
+		<center><span class="infotext">Please enter your username and e-mail address.<br/>You will receive a new password via e-mail to <a href="/202-login.php">login</a> with.</span></center>
+		<form class="form-signin form-horizontal" role="form" method="post" action="">
+		      <div class="form-group <?php if ($error['user']) echo "has-error";?>">
+		      <?php if ($error['user']) { ?>
+			            <div class="tooltip right in login_tooltip"><div class="tooltip-arrow"></div>
+			            <div class="tooltip-inner"><?php echo $error['user'];?></div></div>
+		      <?php } ?>
+		        	<input type="text" class="form-control first" name="user_name" placeholder="Username">
+		        	<input type="text" class="form-control last" name="user_email" placeholder="Email">
+		        	<p></p>
+		        <button class="btn btn-lg btn-p202 btn-block" type="submit">Get New Password <span class="fui-arrow-right pull-right"></span></button>
+		      </div>
+	      </form>
+	</div>
+	</div>	
 	<?php } ?>
 <?php info_bottom(); ?>

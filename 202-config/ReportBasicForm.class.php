@@ -25,6 +25,13 @@ class ReportBasicForm {
 	const DETAIL_LEVEL_REDIRECT = 13;
 	const DETAIL_LEVEL_IP = 14;
 	const DETAIL_LEVEL_INTERVAL = 15;
+	const DETAIL_LEVEL_COUNTRY = 16;
+	const DETAIL_LEVEL_CITY = 17;
+	const DETAIL_LEVEL_ISP = 18;
+	const DETAIL_LEVEL_DEVICE_NAME = 20;
+	const DETAIL_LEVEL_BROWSER = 21;
+	const DETAIL_LEVEL_PLATFORM = 22;
+	const DETAIL_LEVEL_REGION = 23;
 
 	const DETAIL_GROUP_NONE = 0;
 
@@ -48,6 +55,7 @@ class ReportBasicForm {
 	const DISPLAY_LEVEL_NET = 11;
 	const DISPLAY_LEVEL_ROI = 12;
 	const DISPLAY_LEVEL_OPTIONS = 13;
+	const DISPLAY_LEVEL_CTR = 14;
 	
 	const SORT_NAME = 0;
 	const SORT_CLICK = 1;
@@ -73,7 +81,7 @@ class ReportBasicForm {
 	const DETAIL_INTERVAL_HOUR = 4;
 
 	private static $DISPLAY_LEVEL_ARRAY = array(self::DISPLAY_LEVEL_TITLE,self::DISPLAY_LEVEL_CLICK_COUNT,self::DISPLAY_LEVEL_LEAD_COUNT,self::DISPLAY_LEVEL_SU,self::DISPLAY_LEVEL_PAYOUT,self::DISPLAY_LEVEL_EPC,self::DISPLAY_LEVEL_CPC,self::DISPLAY_LEVEL_INCOME,self::DISPLAY_LEVEL_COST,self::DISPLAY_LEVEL_NET,self::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(self::DETAIL_LEVEL_PPC_NETWORK,self::DETAIL_LEVEL_PPC_ACCOUNT,self::DETAIL_LEVEL_AFFILIATE_NETWORK,self::DETAIL_LEVEL_CAMPAIGN,self::DETAIL_LEVEL_LANDING_PAGE,self::DETAIL_LEVEL_KEYWORD,self::DETAIL_LEVEL_TEXT_AD,self::DETAIL_LEVEL_REFERER,self::DETAIL_LEVEL_REDIRECT,self::DETAIL_LEVEL_IP,self::DETAIL_LEVEL_C1,self::DETAIL_LEVEL_C2,self::DETAIL_LEVEL_C3,self::DETAIL_LEVEL_C4);
+	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_COUNTRY,ReportBasicForm::DETAIL_LEVEL_REGION,ReportBasicForm::DETAIL_LEVEL_CITY,ReportBasicForm::DETAIL_LEVEL_ISP,ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME,ReportBasicForm::DETAIL_LEVEL_BROWSER,ReportBasicForm::DETAIL_LEVEL_PLATFORM,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4);
 	private static $SORT_LEVEL_ARRAY = array(self::SORT_NAME,self::SORT_CLICK,self::SORT_LEAD,self::SORT_SU,self::SORT_PAYOUT,self::SORT_EPC,self::SORT_CPC,self::SORT_INCOME,self::SORT_COST,self::SORT_NET,self::SORT_ROI);
 	
 	private static $DETAIL_INTERVAL_ARRAY = array(self::DETAIL_INTERVAL_DAY,self::DETAIL_INTERVAL_WEEK,self::DETAIL_INTERVAL_MONTH);
@@ -1640,6 +1648,20 @@ class ReportBasicForm {
 			return "Referer";
 		} else if ($arg0 == self::DETAIL_LEVEL_REDIRECT) {
 			return "Redirect";
+		} else if ($arg0 == self::DETAIL_LEVEL_COUNTRY) {
+			return "Country";
+		} else if ($arg0 == self::DETAIL_LEVEL_REGION) {
+			return "Region";
+		} else if ($arg0 == self::DETAIL_LEVEL_CITY) {
+			return "City";
+		} else if ($arg0 == self::DETAIL_LEVEL_ISP) {
+			return "ISP/Carrier";
+		} else if ($arg0 == self::DETAIL_LEVEL_DEVICE_NAME) {
+			return "Device name";
+		} else if ($arg0 == self::DETAIL_LEVEL_BROWSER) {
+			return "Browser";
+		} else if ($arg0 == self::DETAIL_LEVEL_PLATFORM) {
+			return "Platform";
 		} else if ($arg0 == self::DETAIL_LEVEL_IP) {
 			return "IP";
 		} else if ($arg0 == self::DETAIL_LEVEL_C1) {
@@ -1680,6 +1702,20 @@ class ReportBasicForm {
 			return "Referer";
 		} else if ($arg0 == self::DETAIL_LEVEL_REDIRECT) {
 			return "Redirect";
+		} else if ($arg0 == self::DETAIL_LEVEL_COUNTRY) {
+			return "Country";
+		} else if ($arg0 == self::DETAIL_LEVEL_REGION) {
+			return "Region";
+		} else if ($arg0 == self::DETAIL_LEVEL_CITY) {
+			return "City";
+		} else if ($arg0 == self::DETAIL_LEVEL_ISP) {
+			return "ISP/Carrier";
+		} else if ($arg0 == self::DETAIL_LEVEL_DEVICE_NAME) {
+			return "Device name";
+		} else if ($arg0 == self::DETAIL_LEVEL_BROWSER) {
+			return "Browser";
+		} else if ($arg0 == self::DETAIL_LEVEL_PLATFORM) {
+			return "Platform";
 		} else if ($arg0 == self::DETAIL_LEVEL_IP) {
 			return "IP";
 		} else if ($arg0 == self::DETAIL_LEVEL_C1) {
@@ -2346,11 +2382,11 @@ class ReportBasicForm {
 
 		$report_string .= '<div class="report_overflow" '.(($this->isDisplayTypeTable()) ? 'style="border: 0;"' : '').'>';
 
-		$report_string .= '<table class="result_report_table">';
-		$report_string .= '<thead '.(($this->isDisplayTypeTable()) ? 'class="group"' : '').'><tr>';
-		$report_string .= '<th class="result_main_column_level_0" colspan="'.$colspan.'">';
+		$report_string .= '<table class="table table-bordered" id="stats-table" style="margin-top:10px;">';
+		$report_string .= '<thead><tr style="background-color: #F8F8F8;">';
+		$report_string .= '<th colspan="'.$colspan.'">';
 		$report_string .= '<div>'.$title.' for '.date('m/d/Y', strtotime($this->getStartDate())).' to '.date('m/d/Y', strtotime($this->getEndDate())).'</div>';
-		$report_string .= '<div class="small">'.$this->getRanOn();
+		$report_string .= '<div>'.$this->getRanOn();
 		$report_string .= '</div>';
 		$report_string .= '</th>';
 		$report_string .= '</tr></thead>';
@@ -2503,7 +2539,7 @@ class ReportBasicForm {
 		$report_string = '';
 
 		$report_string .= '<div class="report_overflow" '.(($this->isDisplayTypeTable()) ? 'style="border: 0;"' : '').'>';
-		$report_string .= '<table class="result_report_table">';
+		$report_string .= '<table class="table table-bordered" id="stats-table" style="margin-top:10px;">';
 		$report_string .= '<thead '.(($this->isDisplayTypeTable()) ? 'class="group"' : '').'><tr>';
 		$report_string .= '<th class="result_main_column_level_0" colspan="1">';
 		$report_string .= '<div>'.$title.' for '.date('m/d/Y', strtotime($this->getStartDate())).' to '.date('m/d/Y', strtotime($this->getEndDate())).'</div>';

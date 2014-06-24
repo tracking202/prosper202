@@ -7,19 +7,21 @@ AUTH::require_user();
 
 //show the template
 template_top('Spy View',NULL,NULL,NULL); ?>
-
-<div id="info">
-	<h2>Spy View</h2>
-	Spy is a live view of visitors interacting with your affiliate campaigns.
-</div>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<h6>Spy View</h6>
+		<small>Spy is a live view of visitors interacting with your campaigns.</small>
+	</div>
+</div> 
 
 
 <?php display_calendar('/tracking202/ajax/click_history.php?spy=1', false, true, true, false, false, true, false); ?>
 	
 <script type="text/javascript">
-	if($('s-status-loading')) {   $('s-status-loading').style.display='';       }  
-   	runSpy();
-   	new PeriodicalExecuter(runSpy, 5); 
+	runSpy();
+   	window.setInterval(function(){
+	  runSpy();
+	}, 5000); 
 </script>  
 
 <?php  template_bottom();

@@ -7,8 +7,8 @@ include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 //check to see if this is already installed, if so dob't do anything
 	if (  is_installed() == true) {
 		
-		_die("<h2>Already Installed</h2>
-			  You appear to have already installed Prosper202. To reinstall please clear your old database tables first."); 	
+		_die("<h6>Already Installed</h6>
+			  <small>You appear to have already installed Prosper202. To reinstall please clear your old database tables first.</small>"); 	
 	 
 	}
 
@@ -37,30 +37,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		//no error, so now setup all of the mysql database structures
 		INSTALL::install_databases(); 
 		
-		$mysql['user_email'] = mysql_real_escape_string($_POST['user_email']);
-		$mysql['user_name'] = mysql_real_escape_string($_POST['user_name']);
-		$mysql['user_timezone'] = mysql_real_escape_string($_POST['user_timezone']);
-		$mysql['user_time_register'] = mysql_real_escape_string(time());
+		$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
+		$mysql['user_name'] = $db->real_escape_string($_POST['user_name']);
+		$mysql['user_timezone'] = $db->real_escape_string($_POST['user_timezone']);
+		$mysql['user_time_register'] = $db->real_escape_string(time());
 		
 		//md5 the user pass with salt
 	 	$user_pass = salt_user_pass($_POST['user_pass']);
-		$mysql['user_pass'] = mysql_real_escape_string($user_pass);      
- 
+		$mysql['user_pass'] = $db->real_escape_string($user_pass);      
+ 		
+ 		$hash = md5(uniqid(rand(), TRUE));
+		$user_hash = intercomHash($hash);
+
 		//insert this user
 		$user_sql = "  	INSERT INTO 	202_users
 					    	SET				user_email='".$mysql['user_email']."',
 					    		 			user_name='".$mysql['user_name']."',
 					    					user_pass='".$mysql['user_pass']."',
 					    					user_timezone='".$mysql['user_timezone']."',
-					    					user_time_register='".$mysql['user_time_register']."'";
-		$user_result = _mysql_query($user_sql);
+					    					user_time_register='".$mysql['user_time_register']."',
+					    					install_hash='".$hash."',
+					    					user_hash='".$user_hash."'";
+		$user_result = _mysqli_query($user_sql);
 		
-		$user_id = mysql_insert_id();
-		$mysql['user_id'] = mysql_real_escape_string($user_id);
+		$user_id = $db->insert_id;
+		$mysql['user_id'] = $db->real_escape_string($user_id);
 		
 		//update user preference table   
 		$user_sql = "INSERT INTO 202_users_pref SET user_id='".$mysql['user_id']."'";
-		$user_result = _mysql_query($user_sql);
+		$user_result = _mysqli_query($user_sql);
 			
 		//if this worked, show them the succes screen
 		$success = true;
@@ -79,143 +84,164 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 //only show install setup, if it, of course, isn't install already.
 
-if ($success != true) {
+if (!$success) {
 
-	info_top(); ?>
-	
-	<h2>Welcome</h2>
-	<p>Welcome to the  five minute Prosper202 installation process! You may want to browse the <a href="http://prosper202.com/apps/docs/">ReadMe documentation</a> at your leisure. Otherwise, just fill in the information below and you'll be on your way to using the most powerful internet marketing applications in the world.</p>
+	$mysqlversion = $db->server_info;
+	$html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
 
-	<h2 >System Configuration</h2>
-	<table cellspacing="0" cellpadding="5" >
-		<tr>
-			<th style="text-align: right;">PHP Version:</th>
-			<td><?php echo phpversion(); ?></td>
-		</tr>
-		<tr>
-			<th style="text-align: right;">MySQL Version:</th>
-			<td>
-				<?php $mysqlversion = mysqlversion();
-			     $html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
-			     echo $html['mysqlversion'] ; ?>
-			</td>
-		</tr>
-	</table>
-	
-	<?php 
-	
-	$phpversion = substr(phpversion(),0,1); 
-	if ($phpversion < 4) { 
-		$error['phpversion'] = '<br/><div class="error">Prosper202 requires PHP 4, or newer.</div>';
-		echo $error['phpversion']; info_bottom(); die(); 
+	$phpversion = phpversion(); 
+	if ($phpversion < 5.3) { 
+		$version_error['phpversion'] = 'Prosper202 requires PHP 5.3, or newer.';
 	}
 
 	$mysqlversion = substr($mysqlversion,0,3);
-	if ($mysqlversion < 4) { 
-		$error['mysqlversion'] = '<br/><div class="error">Prosper202 requires MySQL 5.0, or newer.</div>';
-		echo $error['mysqlversion']; info_bottom(); die(); 
-	} 
+	if ($mysqlversion < 5) { 
+		$version_error['mysqlversion'] = 'Prosper202 requires MySQL 5.0, or newer.';
+	}
+
+	if (!function_exists('curl_version')) { 
+		$version_error['curl'] = 'Prosper202 requires CURL to be installed.';
+	}  
 	
-	if ($mysqlversion < 5.1) { 
+
+	info_top(); ?>
+	<div class="main col-xs-7 install">
+	<center><img src="/202-img/prosper202.png"></center>
+	<h6>Welcome</h6>
+	<small>Welcome to the five minute Prosper202 installation process! You may want to browse the <a href="http://prosper202.com/apps/docs/">ReadMe documentation</a> at your leisure. Otherwise, just fill in the information below and you'll be on your way to using the most powerful internet marketing applications in the world.</small>
+
+	<h6>System Configuration</h6>
+	<div class="row" style="margin-bottom: 10px;">
+	  <div class="col-xs-3"><span class="label label-default">PHP Version:</span></div>
+	  <div class="col-xs-9"><span class="label label-<?php if ($version_error['phpversion']) {echo "important";} else {echo "primary";}?>"><?php echo phpversion(); ?></span></div>
+	</div>
+
+	<div class="row">
+	  <div class="col-xs-3"><span class="label label-default">MySQL Version:</span></div>
+	  <div class="col-xs-9"><span class="label label-<?php if ($version_error['mysqlversion']) {echo "important";} else {echo "primary";}?>"><?php echo $html['mysqlversion'] ;?></span></div>
+	</div>
+
+	<?php if($version_error){ ?>
+		<div class="row">
+		  	<?php if ($version_error['phpversion']) { ?>
+				<br><div class="col-xs-12"><span class="label label-important"><?php echo $version_error['phpversion'];?></span></div>
+			<?php } ?>
+			<?php if ($version_error['mysqlversion']) { ?>
+				<br><div class="col-xs-12"><span class="label label-important"><?php echo $version_error['mysqlversion'];?></span></div>
+			<?php } ?>
+
+			<?php if ($version_error['curl']) { ?>
+				<br><div class="col-xs-12"><span class="label label-important">CURL</span></div>
+			<?php } ?>
+		</div>
+
+	<?php info_bottom(); die();} ?>
+
+	<?php if ($mysqlversion < 5.1) { 
 		//warning this mysql doesn't have horizontal partitioning ?>
-		<h3 style="color: #900; ">Warning: Recommended MySQL 5.1 or later, not detected.</h3> 
-		You are about to install Prosper202 on a server that does not have MySQL 5.1. You can run the application just fine without MySQL 5.1, however, MySQL 5.1 has a horizontal partitioning feature that dramatically increases the speed that large click reports are generated. If you are an affiliate pushing over 5,000 clicks or more per day, we highly recommend you install Prosper202 on a dedicated server that has MySQL 5.1 or newer installed on it. You may continue installing Prosper202 without MySQL 5.1, but once you have around 250,000 clicks recorded in your database, you will start to notice a significant reduction in speed that your click reports are generated.  If you are someone not pushing heavy volume yet, you are probably fine without MySQL 5.1 for now, but you should look to upgrade to a dedicated server with MySQL 5.1 at a later time. <?
+		<br/><span class="infotext"><span class="label label-important">Warning:</span> Recommended MySQL 5.1 or later, not detected.<br/>You are about to install Prosper202 on a server that does not have MySQL 5.1. You can run the application just fine without MySQL 5.1, however, MySQL 5.1 has a horizontal partitioning feature that dramatically increases the speed that large click reports are generated. If you are an affiliate pushing over 5,000 clicks or more per day, we highly recommend you install Prosper202 on a dedicated server that has MySQL 5.1 or newer installed on it. You may continue installing Prosper202 without MySQL 5.1, but once you have around 250,000 clicks recorded in your database, you will start to notice a significant reduction in speed that your click reports are generated.  If you are someone not pushing heavy volume yet, you are probably fine without MySQL 5.1 for now, but you should look to upgrade to a dedicated server with MySQL 5.1 at a later time.</span>
+		<?
 	} ?>
 	
-	
-	
-	
-	
-	<h2>Create your account</h2>
-	Please provide the following information. Don't worry, you can always change these settings later. 
-	
-	<br/><br/><br/>
-		<form method="post">
-			<table cellspacing="0" cellpadding="5" class="config" style="margin: 0px auto;">
-				<tr>
-					<th>Your Email</th>
-					<td><input class="field" type="text" name="user_email" value="<?php echo $html['user_email']; ?>" tabindex="1"/></td>
-				</tr>
-				<?php if ($error['user_email']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user_email']); } ?>
-				<tr>
-					<th>Time Zone</th>
-					<td>
-						<select name="user_timezone">
-							<option <?php if ($html['user_timezone'] == '-11') { echo 'selected=""'; } ?> value="-11">-1100 : Samoa</option>
-							<option <?php if ($html['user_timezone'] == '-10') { echo 'selected=""'; } ?> value="-10">-1000 : Alaska, Hawai'i</option>
-							<option <?php if ($html['user_timezone'] == '-9') { echo 'selected=""'; } ?> value="-9">-0900 : </option>
-							<option <?php if (($html['user_timezone'] == '-8') or (empty($html['user_timezone']))) { echo 'selected=""'; } ?>  value="-8">-0800 : US Pacific</option>
-							<option <?php if ($html['user_timezone'] == '-7') { echo 'selected=""'; } ?> value="-7">-0700 : US Mountain</option>
-							<option <?php if ($html['user_timezone'] == '-6') { echo 'selected=""'; } ?> value="-6">-0600 : US Central</option>
-							<option <?php if ($html['user_timezone'] == '-5') { echo 'selected=""'; } ?> value="-5">-0500 : US Eastern</option>
-							<option <?php if ($html['user_timezone'] == '-4') { echo 'selected=""'; } ?> value="-4">-0400 : Atlantic</option>
-							<option <?php if ($html['user_timezone'] == '-3.5') { echo 'selected=""'; } ?> value="-3.5">-0350 : Newfoundland</option>
-							<option <?php if ($html['user_timezone'] == '-3') { echo 'selected=""'; } ?> value="-3">-0300 : Brazil, Argentina</option>
-							<option <?php if ($html['user_timezone'] == '-2') { echo 'selected=""'; } ?> value="-2">-0200 : Mid Atlantic</option>
-							<option <?php if ($html['user_timezone'] == '0') { echo 'selected=""'; } ?> value="0">+0000 : London, Dublin</option>
-							<option <?php if ($html['user_timezone'] == '1') { echo 'selected=""'; } ?> value="1">+0100 : Paris, Berlin, Amsterdam, Madrid</option>
-							<option <?php if ($html['user_timezone'] == ' 2') { echo 'selected=""'; } ?> value="2">+0200 : Athens, Istanbul, Helsinki</option>
-							<option <?php if ($html['user_timezone'] == '3') { echo 'selected=""'; } ?> value="3">+0300 : Kuwait, Moscow</option>
-							<option <?php if ($html['user_timezone'] == '3.5') { echo 'selected=""'; } ?> value="3.5">+0350 : Tehran</option>
-							<option <?php if ($html['user_timezone'] == '5.5') { echo 'selected=""'; } ?> value="5.5">+0530 : India</option>
-							<option <?php if ($html['user_timezone'] == '7') { echo 'selected=""'; } ?> value="7">+0700 : Bangkok</option>
-							<option <?php if ($html['user_timezone'] == '7.5') { echo 'selected=""'; } ?> value="7">+0700 : </option>
-							<option <?php if ($html['user_timezone'] == '8') { echo 'selected=""'; } ?> value="8">+0800 : Hong Kong</option>
-							<option <?php if ($html['user_timezone'] == '9') { echo 'selected=""'; } ?> value="9">+0900 : Tokyo</option>
-							<option <?php if ($html['user_timezone'] == '9.5') { echo 'selected=""'; } ?> value="9.5">+0950 : Darwin</option>
-							<option <?php if ($html['user_timezone'] == '10') { echo 'selected=""'; } ?> value="10">+1000 : Sydney</option>
-							<option <?php if ($html['user_timezone'] == '11') { echo 'selected=""'; } ?> value="11">+1100 : Magadan</option>
-							<option <?php if ($html['user_timezone'] == '12') { echo 'selected=""'; } ?> value="12">+1200 : Wellington</option>
-		               		 </select>
-		               	</td>
-		            </tr>
-		           <tr><td/></tr>
-				<tr>
-					<th>Username</th>
-					<td><input class="field" type="text" name="user_name" value="<?php echo $html['user_name']; ?>" tabindex="2"/></td>
-				</tr>
-				<?php if ($error['user_name']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user_name']); } ?>
-				<tr>
-					<th>Password</th>
-					<td><input class="field" type="password" name="user_pass" tabindex="3"/></td>
-				</tr>
-				<?php if ($error['user_pass']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user_pass']); } ?>
-				<tr>
-					<th>Verify Pass</th>
-					<td><input class="field" type="password" name="verify_user_pass" tabindex="4"/></td>
-				</tr>
-				<tr>
-					<td colspan="2"><i>Double-check your email address before continuing.</i></td>
-				</tr>
-				<tr>
-					<td/>
-					<td ><br/><input id="submit" type="submit" value="Install Prosper202 &raquo;" style="font-size: 1.2em;"/></td>
-				</tr>
-			</table>
+	<h6>Create your account</h6>
+	<small>Please provide the following information. Don't worry, you can always change these settings later.</small>
+	<br><br>
+		<form method="post" action="" class="form-horizontal" role="form">
+			<div class="form-group <?php if ($error['user_email']) echo "has-error";?>">
+			    <label for="user_email" class="col-xs-4 control-label"><strong>Your Email:</strong></label>
+			    <div class="col-xs-8">
+			      <input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email']; ?>">
+			    </div>
+			</div>
+
+			<div class="form-group">
+			    <label for="user_timezone" class="col-xs-4 control-label"><strong>Time Zone:</strong></label>
+			    <div class="col-xs-8">
+			      <?php
+			
+					function formatOffset($offset) {
+				        $hours = $offset / 3600;
+				        $remainder = $offset % 3600;
+				        $sign = $hours > 0 ? '+' : '-';
+				        $hour = (int) abs($hours);
+				        $minutes = (int) abs($remainder / 60);
+
+				        if ($hour == 0 AND $minutes == 0) {
+				            $sign = ' ';
+				        }
+				        return $sign . str_pad($hour, 2, '0', STR_PAD_LEFT) .':'. str_pad($minutes,2, '0');
+					}
+
+					$utc = new DateTimeZone('UTC');
+					$dt = new DateTime('now', $utc);
+
+					echo '<select class="form-control input-sm" name="user_timezone" id="user_timezone">';
+					foreach(DateTimeZone::listIdentifiers() as $tz) {
+					    $current_tz = new DateTimeZone($tz);
+					    $offset =  $current_tz->getOffset($dt);
+					    $transition =  $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());
+					    $abbr = $transition[0]['abbr'];
+
+					    echo '<option value="' .$tz. '">' .$tz. ' [' .$abbr. ' '. formatOffset($offset). ']</option>';
+					}
+					echo '</select>';
+					?>
+			    </div>
+			</div>
+
+			<div class="form-group <?php if ($error['user_name']) echo "has-error";?>">
+			    <label for="user_name" class="col-xs-4 control-label"><strong>Username:</strong></label>
+			    <div class="col-xs-8">
+			      <input type="text" class="form-control input-sm" id="user_name" name="user_name">
+			    </div>
+			</div>
+
+			<div class="form-group <?php if ($error['user_pass']) echo "has-error";?>">
+			    <label for="user_pass" class="col-xs-4 control-label"><strong>Password:</strong></label>
+			    <div class="col-xs-8">
+			      <input type="password" class="form-control input-sm" id="user_pass" name="user_pass">
+			    </div>
+			</div>
+
+			<div class="form-group <?php if ($error['user_pass']) echo "has-error";?>">
+			    <label for="verify_user_pass" class="col-xs-4 control-label"><strong>Verify Password:</strong></label>
+			    <div class="col-xs-8">
+			      <input type="password" class="form-control input-sm" id="verify_user_pass" name="verify_user_pass">
+			    </div>
+			</div>
+
+			<button class="btn btn-lg btn-p202 btn-block" type="submit">Install Prosper202<span class="fui-check-inverted pull-right"></span></button>
+
 		</form>
-	
-	<?php  info_bottom(); 
+		</div>
+	<?php info_bottom(); 
 	
 }
 
 
 //if success is equal to true, and this campaign did complete
-if ($success == true) {
+if ($success) {
 	
 	info_top(); ?>
-	
-	<h2>Success!</h2>
-	<p>Prosper202 has been installed. Now you can <a href="/202-login.php">log in</a> with the <strong>username</strong> "<code><?php echo $html['user_name']; ?></code>" and <strong>password</strong> "<code><?php echo $html['user_pass']; ?></code>".</p>
-	<dl>
-		<dt>Username</dt>
-		<dd><code><?php echo $html['user_name']; ?></code></dd>
-		<dt>Password</dt>
-		<dd><code><?php echo $html['user_pass']; ?></code></dd>
-		<dt>Login address</dt>
-		<dd><code><?php printf('<a href="/202-login.php">%s/202-login.php</a>',$_SERVER['SERVER_NAME']); ?></code></dd>
-	</dl>
-	<p>Were you expecting more steps? Sorry thats it!</p>
-	
+	<div class="main col-xs-7 install">
+	<center><img src="/202-img/prosper202.png"></center>
+		<h6>Success!</h6>
+		<small>Prosper202 has been installed. Now you can <a href="/202-login.php">log in</a> with your <strong>username</strong> <code><?php echo $html['user_name']; ?></code> and <strong>password</strong> <code><?php echo $html['user_pass']; ?></code>.</small><br></br>
+		<div class="row" style="margin-bottom: 10px;">
+		  <div class="col-xs-3"><span class="label label-default">Username:</span></div>
+		  <div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_name']; ?></span></div>
+		</div>
+		<div class="row" style="margin-bottom: 10px;">
+		  <div class="col-xs-3"><span class="label label-default">Password:</span></div>
+		  <div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_pass']; ?></span></div>
+		</div>
+		<div class="row" style="margin-bottom: 10px;">
+		  <div class="col-xs-3"><span class="label label-default">Login address:</span></div>
+		  <div class="col-xs-9"><small><?php printf('<a href="/202-login.php">%s/202-login.php</a>',$_SERVER['SERVER_NAME']); ?></small></div>
+		</div>
+
+		<p><small>Were you expecting more steps? Sorry thats it!</small></p>
+	</div>
 	<?php info_bottom();
 	
 }

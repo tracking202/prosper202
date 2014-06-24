@@ -16,11 +16,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
 	
 		//check to see if they are the owners of this affiliate network
-		$mysql['aff_campaign_id'] = mysql_real_escape_string($_POST['aff_campaign_id']);
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+		$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 		$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `user_id`='".$mysql['user_id']."' AND `aff_campaign_id`='".$mysql['aff_campaign_id']."'";
-		$aff_campaign_result = mysql_query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-		if (mysql_num_rows($aff_campaign_result) == 0 ) {
+		$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
+		if ($aff_campaign_result->num_rows == 0 ) {
 			$error['wrong_user'] = '<div class="error">You are not authorized to add an campaign to another users network</div>';    
 		}
 	
@@ -48,26 +48,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
 	//if editing, check to make sure the own the campaign they are editing
 	if ($editing == true) {
-		$mysql['text_ad_id'] = mysql_real_escape_string($_POST['text_ad_id']);
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+		$mysql['text_ad_id'] = $db->real_escape_string($_POST['text_ad_id']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 		$ad_varation_sql = "SELECT * FROM `202_text_ads` WHERE `user_id`='".$mysql['user_id']."' AND `text_ad_id`='".$mysql['text_ad_id']."'";
-		$text_ad_result = mysql_query($ad_varation_sql) or record_mysql_error($ad_varation_sql);
-		if (mysql_num_rows($text_ad_result) == 0 ) {
+		$text_ad_result = $db->query($ad_varation_sql) or record_mysql_error($ad_varation_sql);
+		if ($text_ad_result->num_rows == 0 ) {
 			$error['wrong_user'] .= '<div class="error">You are not authorized to modify another users campaign</div>';    
 		}
 	}
 	
 	if (!$error) { 
-		$mysql['text_ad_id'] = mysql_real_escape_string($_POST['text_ad_id']);
-		$mysql['text_ad_type'] = mysql_real_escape_string($_POST['text_ad_type']);
-		$mysql['landing_page_id'] = mysql_real_escape_string($_POST['landing_page_id']);
-		$mysql['aff_campaign_id'] = mysql_real_escape_string($_POST['aff_campaign_id']);
-		$mysql['text_ad_name'] = mysql_real_escape_string($_POST['text_ad_name']);
-		$mysql['text_ad_headline'] = mysql_real_escape_string($_POST['text_ad_headline']);
-		$mysql['text_ad_description'] = mysql_real_escape_string($_POST['text_ad_description']);
-		$mysql['text_ad_display_url'] = mysql_real_escape_string($_POST['text_ad_display_url']);
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-		$mysql['text_ad_time'] = mysql_real_escape_string(time());
+		$mysql['text_ad_id'] = $db->real_escape_string($_POST['text_ad_id']);
+		$mysql['text_ad_type'] = $db->real_escape_string($_POST['text_ad_type']);
+		$mysql['landing_page_id'] = $db->real_escape_string($_POST['landing_page_id']);
+		$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
+		$mysql['text_ad_name'] = $db->real_escape_string($_POST['text_ad_name']);
+		$mysql['text_ad_headline'] = $db->real_escape_string($_POST['text_ad_headline']);
+		$mysql['text_ad_description'] = $db->real_escape_string($_POST['text_ad_description']);
+		$mysql['text_ad_display_url'] = $db->real_escape_string($_POST['text_ad_display_url']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+		$mysql['text_ad_time'] = $db->real_escape_string(time());
 		
 		if ($editing == true) { $text_ad_sql  = "UPDATE `202_text_ads` SET"; } 
 		else {                  $text_ad_sql  = "INSERT INTO `202_text_ads` SET"; }
@@ -83,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 													  `text_ad_time`='".$mysql['text_ad_time']."'";
 													  
 		if ($editing == true) { $text_ad_sql  .= "WHERE `text_ad_id`='".$mysql['text_ad_id']."'"; } 
-		$text_ad_result = mysql_query($text_ad_sql) or record_mysql_error($text_ad_sql);
+		$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
 		$add_success = true;
 
 		//if the edit worked ok redirec them
@@ -100,8 +100,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 if (isset($_GET['delete_text_ad_id'])) { 
 
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-	$mysql['text_ad_id'] = mysql_real_escape_string($_GET['delete_text_ad_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['text_ad_id'] = $db->real_escape_string($_GET['delete_text_ad_id']);
 	$mysql['text_ad_time'] = time();
 	
 	$delete_sql = " UPDATE  `202_text_ads`
@@ -109,25 +109,25 @@ if (isset($_GET['delete_text_ad_id'])) {
 							`text_ad_time`='".$mysql['text_ad_time']."'
 					WHERE   `user_id`='".$mysql['user_id']."'
 					AND     `text_ad_id`='".$mysql['text_ad_id']."'";
-	if ($delete_result = mysql_query($delete_sql) or record_mysql_error($delete_result)) {
+	if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_result)) {
 		$delete_success = true;
 	}
 }
 
 if ($_GET['edit_text_ad_id']) { 
 	
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-	$mysql['text_ad_id'] = mysql_real_escape_string($_GET['edit_text_ad_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['text_ad_id'] = $db->real_escape_string($_GET['edit_text_ad_id']);
 	
 	$text_ad_sql = "SELECT * 
 						 FROM   `202_text_ads`
 						 WHERE  `text_ad_id`='".$mysql['text_ad_id']."'
 						 AND    `user_id`='".$mysql['user_id']."'";
-	$text_ad_result = mysql_query($text_ad_sql) or record_mysql_error($text_ad_sql);
-	$text_ad_row = mysql_fetch_assoc($text_ad_result);
+	$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
+	$text_ad_row = $text_ad_result->fetch_assoc();
 	
 
-	$mysql['aff_campaign_id'] = mysql_real_escape_string($text_ad_row['aff_campaign_id']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string($text_ad_row['aff_campaign_id']);
 	$html['landing_page_id'] = htmlentities($text_ad_row['landing_page_id'], ENT_QUOTES, 'UTF-8');    
 	$html['text_ad_type'] = htmlentities($text_ad_row['text_ad_type'], ENT_QUOTES, 'UTF-8');    
 	$html['aff_campaign_id'] = htmlentities($text_ad_row['aff_campaign_id'], ENT_QUOTES, 'UTF-8');    
@@ -140,15 +140,15 @@ if ($_GET['edit_text_ad_id']) {
 
 } elseif ($_GET['copy_text_ad_id']) { 
 	
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-	$mysql['text_ad_id'] = mysql_real_escape_string($_GET['copy_text_ad_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['text_ad_id'] = $db->real_escape_string($_GET['copy_text_ad_id']);
 	
 	$text_ad_sql = "SELECT * 
 						 FROM   `202_text_ads`
 						 WHERE  `text_ad_id`='".$mysql['text_ad_id']."'
 						 AND    `user_id`='".$mysql['user_id']."'";
-	$text_ad_result = mysql_query($text_ad_sql) or record_mysql_error($text_ad_sql);
-	$text_ad_row = mysql_fetch_assoc($text_ad_result);
+	$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
+	$text_ad_row = $text_ad_result->fetch_assoc();
 	
 	$html['text_ad_type'] = htmlentities($text_ad_row['text_ad_type'], ENT_QUOTES, 'UTF-8');
 	$html['landing_page_id'] = htmlentities($text_ad_row['landing_page_id'], ENT_QUOTES, 'UTF-8');
@@ -160,7 +160,7 @@ if ($_GET['edit_text_ad_id']) {
 
 } elseif (($_SERVER['REQUEST_METHOD'] == 'POST') and ($add_success != true)) {
 	
-	$mysql['aff_campaign_id'] = mysql_real_escape_string($_POST['aff_campaign_id']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
    	$html['aff_campaign_id'] = htmlentities($_POST['aff_campaign_id'], ENT_QUOTES, 'UTF-8');
     
     	$html['text_ad_type'] = htmlentities($_POST['text_ad_type'], ENT_QUOTES, 'UTF-8');   
@@ -177,260 +177,275 @@ if ($_GET['edit_text_ad_id']) {
 if ((($editing == true) or ($add_success != true)) and ($mysql['aff_campaign_id'])) {
     //now grab the affiliate network id, per that aff campaign id
     $aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."'";
-    $aff_campaign_result = mysql_query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-    $aff_campaign_row = mysql_fetch_assoc($aff_campaign_result);
+    $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
+    $aff_campaign_row = $aff_campaign_result->fetch_assoc();
 
-    $mysql['aff_network_id'] = mysql_real_escape_string($aff_campaign_row['aff_network_id']);
+    $mysql['aff_network_id'] = $db->real_escape_string($aff_campaign_row['aff_network_id']);
     $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `aff_network_id`='".$mysql['aff_network_id']."'";
-    $aff_network_result = mysql_query($aff_network_sql) or record_mysql_error($aff_network_sql);
-    $aff_network_row = mysql_fetch_assoc($aff_network_result);
+    $aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
+    $aff_network_row = $aff_network_result->fetch_assoc();
 
     $html['aff_network_id'] = htmlentities($aff_network_row['aff_network_id'], ENT_QUOTES, 'UTF-8');
 }
 
 template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
-		
-<div id="info">
-    <h2>Text Ad Setup (optional)</h2>
-	Here is where you enter in your text ad information. If you have too many text-ads and do not want to enter them all, you can skip this step.
+
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="row">
+			<div class="col-xs-5">
+				<h6>Text Ad Setup (optional)</h6>
+			</div>
+			<div class="col-xs-7">
+				<div class="<?php if($error) echo "error"; else echo "success";?> pull-right" style="margin-top: 20px;">
+					<small>
+						<?php if ($error) { ?> 
+							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token']; ?>
+						<?php } ?>
+						<?php if ($add_success == true) { ?>
+							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
+						<?php } ?>
+						<?php if ($delete_success == true) { ?>
+							<span class="fui-check-inverted"></span> You deletion was successful. You have succesfully removed a landing page.
+						<?php } ?>
+						
+					</small>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="col-xs-12">
+		<small>Here is where you enter in your text ad information. If you have too many text-ads and do not want to enter them all, you can skip this step.</small>
+	</div>
 </div>
 
-<table cellspacing="0" cellpadding="0" class="setup">
-    <tr valign="top">
-        <td>
-			<?php if ($error) { ?>
-				<div class="warning"><div><h3>There were errors with your submission.</h3></div></div>
-			<?php } echo $error['token']; ?>
+<div class="row form_seperator" style="margin-bottom:15px;">
+	<div class="col-xs-12"></div>
+</div>
 
-			<?php if ($add_success == true) { ?>
-				<div class="success"><div><h3>Your submission was successful</h3>Your changes were made succesfully.</div></div>
-			<?php } ?>
-
-			<?php if ($delete_success == true) { ?>
-				<div class="success"><div><h3>You deletion was successful</h3>You have succesfully removed a campaign.</div></div>
-			<?php } ?>
-			
-			<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
-				<input name="text_ad_id" type="hidden" value="<?php echo $html['text_ad_id']; ?>"/>	
-				<table>
-					<tr valign="top">
-						<td colspan="2">
-							<h2 class="green">Add Your Text Ads</h2>
-							<p style="text-align: justify;">Here you can add different text ads you might use with your PPC marketing.</p>  
-						</td>
-					</tr>
-			
-			<tr><td/><br/></tr>
-					
-			<tr valign="top">
-				<td class="left_caption">Text Ad For</td>	
-				<td>
-					<input type="radio" name="text_ad_type" value="0" <?php if ($html['text_ad_type'] == '0' or !$html['text_ad_type']) { echo ' CHECKED '; }  ?> onClick="text_ad_select(this.value);"> Direct Link Setup, or Simple Landing Page Setup<br/>
-					<input type="radio" name="text_ad_type" value="1" <?php if ($html['text_ad_type'] == '1') { echo ' CHECKED '; } ?> onClick="text_ad_select(this.value);"> Advanced Landing Page Setup
-					<?php echo $error['landing_page_type']; ?>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="2"><hr/></td>
-			</tr>
-						<tr id="lp_landing_page" <?php if (($html['text_ad_type'] == '0') or (!$html['text_ad_type'])) { echo ' style="display:none;"'; } ?>>
-				<td class="left_caption">Landing Page</td>
-				<td>
-					<img id="landing_page_div_loading" style="display: none;" src="/202-img/loader-small.gif"/>
-					<div id="landing_page_div" style="display: none;"></div>
-					<?php echo $error['landing_page_id']; ?>
-				</td>
-			</tr>
-			
-				<tr id="lp_aff_network" <?php if ($html['text_ad_type'] == '1') { echo ' style="display:none;"'; } ?>>
-						<td class="left_caption">Aff Network</td>
-						<td>
-							<img id="aff_network_id_div_loading" src="/202-img/loader-small.gif"/>
-							<div id="aff_network_id_div" style="display: inline;"></div>
-                        </td>
-					</tr>
-					<tr id="lp_aff_campaign" <?php if ($html['text_ad_type'] == '1') { echo ' style="display:none;"'; } ?>>
-						<td class="left_caption">Aff Campaign</td>
-                        <td>
-							<img id="aff_campaign_id_div_loading" src="/202-img/loader-small.gif" style="display: none;"/>
-							<div id="aff_campaign_id_div" style="display: inline;"></div>
-							<?php echo $error['aff_campaign_id']; ?>
-						</td>
-					</tr>
-					<tr valign="top">
-						<td class="left_caption">Ad Nickname <a class="onclick_color" onclick="alert('The ad nickname is the nickname we store for you, this is used for when you have several ads, you can quickly find the ones you are looking for by assigning each ad a unique nickname.');">?</a></td>
-						<td>
-							<input type="text" name="text_ad_name" value="<?php echo $html['text_ad_name']; ?>" style="width: 200px;"/>
-							<?php echo $error['text_ad_name']; ?>
-						</td>
-					</tr>
-					<tr valign="top">
-						<td class="left_caption">Ad Preview</td>
-						<td>
-							<table class="ad_copy" cellspacing="0" cellpadding="3">
-								<tr>
-									<td valign="bottom">
-										<div id="preview_headline" class="ad_copy_headline"><?php if ($html['text_ad_headline']) { echo $html['text_ad_headline']; } else { echo 'Luxury Cruise to Mars'; } ?></div>
-										<div id="preview_description" class="ad_copy_description"><?php if ($html['text_ad_description']) { echo $html['text_ad_description']; } else { echo 'Visit the Red Planet in style. Low-gravity fun for everyone!'; } ?></div>
-										<div id="preview_display_url" class="ad_copy_display_url"><?php if ($html['text_ad_display_url']) { echo $html['text_ad_display_url']; } else { echo 'www.example.com'; } ?></div>
-									</td>
-								</tr>
-							</table>
-						</td>
-					</tr>
-					<tr valign="top">
-						<td class="left_caption">Ad Headline</td>
-						<td>
-							<input type="text" name="text_ad_headline" style="width: 200px;" onkeyup="document.getElementById('preview_headline').innerHTML=this.value; if (document.getElementById('preview_headline').innerHTML=='') { document.getElementById('preview_headline').innerHTML='Luxury Cruise to Mars'; }" onchange="document.getElementById('preview_headline').innerHTML=this.value; if (document.getElementById('preview_headline').innerHTML=='') { document.getElementById('preview_headline').innerHTML='Luxury Cruise to Mars'; }" value="<?php echo $html['text_ad_headline']; ?>"/>
-							<?php echo $error['text_ad_headline']; ?>
-						</td>  
-					</tr>
-					<tr valign="top">
-						<td class="left_caption">Ad Description</td>
-						<td>
-							<textarea name="text_ad_description" style="width: 200px; height: 50px;"  onkeyup="document.getElementById('preview_description').innerHTML=this.value; if (document.getElementById('preview_description').innerHTML=='') { document.getElementById('preview_description').innerHTML='Visit the Red Planet in style. Low-gravity fun for everyone!'; }" onchange="document.getElementById('preview_description').innerHTML=this.value; if (document.getElementById('preview_description').innerHTML=='') { document.getElementById('preview_description').innerHTML='Visit the Red Planet in style. Low-gravity fun for everyone!'; }"><?php echo $html['text_ad_description']; ?></textarea>
-							<?php echo $error['text_ad_description']; ?>
-						</td>
-					</tr>
-					<tr valign="top">
-						<td class="left_caption">Display URL</td>
-						<td>
-							<input type="text" name="text_ad_display_url" style="width: 200px; display: inline;" onkeyup="document.getElementById('preview_display_url').innerHTML=this.value; if (document.getElementById('preview_display_url').innerHTML=='') { document.getElementById('preview_display_url').innerHTML='www.example.com'; }" onchange="document.getElementById('preview_display_url').innerHTML=this.value; if (document.getElementById('preview_display_url').innerHTML=='') { document.getElementById('preview_display_url').innerHTML='www.example.com'; }" value="<?php echo $html['text_ad_display_url']; ?>"/>
-							<?php echo $error['text_ad_display_url']; ?>
-						</td>
-					</tr>                               
-					<tr valign="top">
-						<td/>
-						<td>
-							<input type="submit" value="<?php if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"/>
-							<?php if ($editing == true or $_GET['copy_text_ad_id'] != '') { ?>
-								<button  style="display: inline; margin-left: 10px;" onclick="window.location='/tracking202/setup/text_ads.php'; return false; ">Cancel</button>   
-							<?php } ?> 
-						</td>
-					</tr>
-				</table>
-			</form>
-			<?php echo $error['text_ad_id']; ?>
-			<?php echo $error['wrong_user']; ?>  
+<div class="row">
+	<div class="col-xs-7">
+		<small><strong>Add Your Text Ads</strong></small><br/>
+		<span class="infotext">Here you can add different text ads you might use with your PPC marketing.</span>
 		
-		</td>
-		<td class="setup-right">   
-			<h2 class="green">Advanced Landing Page Text Ads</h2>
-			<ul>        
-				<?php $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-				$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND landing_page_type='1' AND landing_page_deleted='0'";
-				$landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
-				
-				while ($landing_page_row = mysql_fetch_array($landing_page_result, MYSQL_ASSOC)) {
-					$html['landing_page_nickname'] = htmlentities($landing_page_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');
-						
-					printf('<li>%s</li>', $html['landing_page_nickname']);
-						
-					?><ul style="margin-top: 0px;"><?php 
-							
-						$mysql['landing_page_id'] = mysql_real_escape_string($landing_page_row['landing_page_id']);
-						$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `landing_page_id`='".$mysql['landing_page_id']."' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC";
-						$text_ad_result = mysql_query($text_ad_sql) or record_mysql_error($text_ad_sql);
-							
-						while ($text_ad_row = mysql_fetch_array($text_ad_result, MYSQL_ASSOC)) {
-									
-							$html['text_ad_name'] = htmlentities($text_ad_row['text_ad_name'], ENT_QUOTES, 'UTF-8');
-							$html['text_ad_id'] = htmlentities($text_ad_row['text_ad_id'], ENT_QUOTES, 'UTF-8');
-									
-							printf('<li>%s - <a href="?copy_text_ad_id=%s" style="font-size: 9px;">copy</a> - <a href="?edit_text_ad_id=%s" style="font-size: 9px;">edit</a> - <a href="?delete_text_ad_id=%s" style="font-size: 9px;">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'],  $html['text_ad_id']);
-						
-									
-						}
+		<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" class="form-horizontal" role="form" style="margin:15px 0px;">
+			<input name="text_ad_id" type="hidden" value="<?php echo $html['text_ad_id']; ?>"/>
 
-					?></ul>
-				<?	} ?>
-				
-			</ul>
-			<br/><br/>
-			<h2 class="green">Direct Link/Simple Landing Page Text Ads</h2>
-			<ul>        
-			<?php  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-				$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
-				$aff_network_result = mysql_query($aff_network_sql) or record_mysql_error($aff_network_sql);
-				if (mysql_num_rows($aff_network_result) == 0 ) { 
-					?><li>You have not added any networks.</li><?
-				}
-				
-				while ($aff_network_row = mysql_fetch_array($aff_network_result, MYSQL_ASSOC)) {
-					$html['aff_network_name'] = htmlentities($aff_network_row['aff_network_name'], ENT_QUOTES, 'UTF-8');
-					$url['aff_network_id'] = urlencode($aff_network_row['aff_network_id']);
+			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
+				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Text Ad For: </label>
+
+				<div class="col-xs-8" style="margin-top: 10px;">
+					<label class="radio" style="line-height: 0.5;">
+	            		<input type="radio" name="text_ad_type" id="text_ad_type1" value="0" data-toggle="radio" <?php if ($html['text_ad_type'] == '0' or !$html['text_ad_type']) { echo 'checked'; }?>>
+	            			Direct Link Setup, or Simple Landing Page Setup
+	          		</label>
+	          		<label class="radio" style="line-height: 0.5;">
+	            		<input type="radio" name="text_ad_type" id="text_ad_type2" value="1" data-toggle="radio" <?php if ($html['text_ad_type'] == '1') { echo 'checked'; } ?>>
+	            			Advanced Landing Page Setup
+	          		</label>
+	          	</div>
+	        </div>
+
+	        <div id="aff-campaign-div" <?php if ($html['text_ad_type'] == '1') { echo 'style="display:none;"'; } ?>>
+		        <div class="form-group <?php if($error['aff_campaign_id']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        	<label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Affiliate Network:</label>
+		        	<div class="col-xs-6" style="margin-top: 10px;">
+		        		<img id="aff_network_id_div_loading" class="loading" src="/202-img/loader-small.gif"/>
+	                	<div id="aff_network_id_div"></div>
+		        	</div>
+		        </div>
+
+		        <div id="aff-campaign-group" class="form-group <?php if($error['aff_campaign_id']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        	<label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Affiliate Campaign:</label>
+		        	<div class="col-xs-6" style="margin-top: 10px;">
+		        		<img id="aff_campaign_id_div_loading" class="loading" src="/202-img/loader-small.gif" style="display: none;"/>
+	                    <div id="aff_campaign_id_div">
+	                    	<select class="form-control input-sm" id="aff_campaign_id" disabled="">
+	                    		<option>--</option>
+	                    	</select>
+	                    </div>
+		        	</div>
+		        </div>
+	        </div>
+
+	        <div id="lp_landing_page" <?php if (($html['text_ad_type'] == '0') or (!$html['text_ad_type'])) { echo ' style="display:none;"'; } ?>>
+		        <div class="form-group <?php if($error['landing_page_id']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        	<label for="landing_page_id" class="col-xs-4 control-label" style="text-align: left;">Landing Page:</label>
+		        	<div class="col-xs-6" style="margin-top: 10px;">
+		        		<img id="landing_page_div_loading" class="loading" src="/202-img/loader-small.gif"/>
+						<div id="landing_page_div"></div>
+		        	</div>
+		        </div>
+	        </div>
+
+	        <div class="form-group <?php if($error['text_ad_name']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        <label for="text_ad_name" class="col-xs-4 control-label" style="text-align: left;">Ad Nickname <span class="fui-info" data-toggle="tooltip" title="The ad nickname is the nickname we store for you, this is used for when you have several ads, you can quickly find the ones you are looking for by assigning each ad a unique nickname."></span></label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+	                <input type="text" class="form-control input-sm" id="text_ad_name" name="text_ad_name" value="<?php echo $html['text_ad_name']; ?>">
+		        </div>
+		    </div>
+
+		    <div class="form-group" style="margin-bottom: 0px;">
+		        <label class="col-xs-4 control-label" style="text-align: left;">Ad Preview </label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+		        	<div class="panel panel-default" style="border-color: #3498db; margin-bottom:0px">
+						<div class="panel-body">
+							<span id="ad-preview-headline"><?php if ($html['text_ad_headline']) { echo $html['text_ad_headline']; } else { echo 'Luxury Cruise to Mars'; } ?></span><br/>
+							<span id="ad-preview-body"><?php if ($html['text_ad_description']) { echo $html['text_ad_description']; } else { echo 'Visit the Red Planet in style. Low-gravity fun for everyone!'; } ?></span><br/>
+							<span id="ad-preview-url"><?php if ($html['text_ad_display_url']) { echo $html['text_ad_display_url']; } else { echo 'www.example.com'; } ?></span>
+						</div>
+					</div>
+		        </div>
+		    </div>
+
+		    <div class="form-group <?php if($error['>text_ad_headline']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        <label for="text_ad_headline" class="col-xs-4 control-label" style="text-align: left;">Ad Headline: </label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+	                <input type="text" class="form-control input-sm" id="text_ad_headline" name="text_ad_headline" value="<?php echo $html['text_ad_headline']; ?>">
+		        </div>
+		    </div>
+
+		    <div class="form-group <?php if($error['>text_ad_description']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        <label for="text_ad_description" class="col-xs-4 control-label" style="text-align: left;">Ad Description: </label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+					<textarea class="form-control" name="text_ad_description" id="text_ad_description" rows="2"><?php echo $html['text_ad_description']; ?></textarea>
+				</div>
+		    </div>
+
+		    <div class="form-group <?php if($error['>text_ad_display_url']) echo "has-error";?>" style="margin-bottom: 10px;">
+		        <label for="text_ad_display_url" class="col-xs-4 control-label" style="text-align: left;">Display URL: </label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+	                <input type="text" class="form-control input-sm" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo $html['text_ad_display_url']; ?>">
+		        </div>
+		    </div>
+
+		    <div class="form-group">
+				<div class="col-xs-6 col-xs-offset-4">
+				    <?php if ($editing == true) { ?>
+					    <div class="row">
+					    	<div class="col-xs-6">
+					    		<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>					
+					    	</div>
+					    	<div class="col-xs-6">
+								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'];?>">
+								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='/tracking202/setup/text_ads.php'; return false;">Cancel</button>					    		</div>
+					    	</div>
+				    <?php } else { ?>
+				    		<button class="btn btn-sm btn-p202 btn-block" type="submit" id="addedTextAd">Add</button>					
+					<?php } ?>
+				</div>
+			</div>
+
+		</form>
+	</div>
+
+	<div class="col-xs-4 col-xs-offset-1">
+		<div class="panel panel-default">
+			<div class="panel-heading">Advanced Landing Page Text Ads</div>
+			<div class="panel-body">
+				<ul>        
+					<?php $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+					$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND landing_page_type='1' AND landing_page_deleted='0'";
+					$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 					
-					printf('<li>%s</li>', $html['aff_network_name']);
-					
-					?><ul style="margin-top: 0px;"><?
-										
-						//print out the individual accounts per each PPC network
-						$mysql['aff_network_id'] = mysql_real_escape_string($aff_network_row['aff_network_id']);
-						$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_network_id`='".$mysql['aff_network_id']."' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
-						$aff_campaign_result = mysql_query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-						 
-						while ($aff_campaign_row = mysql_fetch_array($aff_campaign_result, MYSQL_ASSOC)) {
+					while ($landing_page_row = $landing_page_result->fetch_array(MYSQL_ASSOC)) {
+						$html['landing_page_nickname'] = htmlentities($landing_page_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');
 							
-							$html['aff_campaign_name'] = htmlentities($aff_campaign_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
-							$html['aff_campaign_payout'] = htmlentities($aff_campaign_row['aff_campaign_payout'], ENT_QUOTES, 'UTF-8');
-						
-							printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
-						
-							?><ul style="margin-top: 0px;"><?php 
+						printf('<li>%s</li>', $html['landing_page_nickname']);
 							
-								$mysql['aff_campaign_id'] = mysql_real_escape_string($aff_campaign_row['aff_campaign_id']);
-								$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC";
-								$text_ad_result = mysql_query($text_ad_sql) or record_mysql_error($text_ad_sql);
+						?><ul style="margin-top: 0px;"><?php 
 								
-								while ($text_ad_row = mysql_fetch_array($text_ad_result, MYSQL_ASSOC)) {
-									
-									$html['text_ad_name'] = htmlentities($text_ad_row['text_ad_name'], ENT_QUOTES, 'UTF-8');
-									$html['text_ad_id'] = htmlentities($text_ad_row['text_ad_id'], ENT_QUOTES, 'UTF-8');
-									
-									printf('<li>%s - <a href="?copy_text_ad_id=%s" style="font-size: 9px;">copy</a> - <a href="?edit_text_ad_id=%s" style="font-size: 9px;">edit</a> - <a href="?delete_text_ad_id=%s" style="font-size: 9px;">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'],  $html['text_ad_id']);
-						
-									
-								}
+							$mysql['landing_page_id'] = $db->real_escape_string($landing_page_row['landing_page_id']);
+							$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `landing_page_id`='".$mysql['landing_page_id']."' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC";
+							$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
+								
+							while ($text_ad_row = $text_ad_result->fetch_array(MYSQL_ASSOC)) {
+										
+								$html['text_ad_name'] = htmlentities($text_ad_row['text_ad_name'], ENT_QUOTES, 'UTF-8');
+								$html['text_ad_id'] = htmlentities($text_ad_row['text_ad_id'], ENT_QUOTES, 'UTF-8');
+										
+								printf('<li>%s - <a href="?copy_text_ad_id=%s">copy</a> - <a href="?edit_text_ad_id=%s">edit</a> - <a href="?delete_text_ad_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'],  $html['text_ad_id']);
+							
+										
+							}
 
-							?></ul><?						
-						} 
+						?></ul>
+					<?	} ?>
+				</ul>
+			</div>
+		</div>
+
+		<div class="panel panel-default">
+			<div class="panel-heading">Direct Link/Simple Landing Page Text Ads</div>
+			<div class="panel-body">
+				<ul>        
+				<?php  $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+					$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
+					$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
+					if ($aff_network_result->num_rows == 0 ) { 
+						?><li>You have not added any networks.</li><?
+					}
 					
-					?></ul><?
-					
-				} ?>
-			</ul>
-		</td>
-	</tr>				
-</table>
+					while ($aff_network_row = $aff_network_result->fetch_array(MYSQL_ASSOC)) {
+						$html['aff_network_name'] = htmlentities($aff_network_row['aff_network_name'], ENT_QUOTES, 'UTF-8');
+						$url['aff_network_id'] = urlencode($aff_network_row['aff_network_id']);
+						
+						printf('<li>%s</li>', $html['aff_network_name']);
+						
+						?><ul style="margin-top: 0px;"><?
+											
+							//print out the individual accounts per each PPC network
+							$mysql['aff_network_id'] = $db->real_escape_string($aff_network_row['aff_network_id']);
+							$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_network_id`='".$mysql['aff_network_id']."' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
+							$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
+							 
+							while ($aff_campaign_row = $aff_campaign_result->fetch_array(MYSQL_ASSOC)) {
+								
+								$html['aff_campaign_name'] = htmlentities($aff_campaign_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
+								$html['aff_campaign_payout'] = htmlentities($aff_campaign_row['aff_campaign_payout'], ENT_QUOTES, 'UTF-8');
+							
+								printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
+							
+								?><ul style="margin-top: 0px;"><?php 
+								
+									$mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_row['aff_campaign_id']);
+									$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC";
+									$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
+									
+									while ($text_ad_row = $text_ad_result->fetch_array(MYSQL_ASSOC)) {
+										
+										$html['text_ad_name'] = htmlentities($text_ad_row['text_ad_name'], ENT_QUOTES, 'UTF-8');
+										$html['text_ad_id'] = htmlentities($text_ad_row['text_ad_id'], ENT_QUOTES, 'UTF-8');
+										
+										printf('<li>%s - <a href="?copy_text_ad_id=%s">copy</a> - <a href="?edit_text_ad_id=%s">edit</a> - <a href="?delete_text_ad_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'],  $html['text_ad_id']);
+							
+										
+									}
+
+								?></ul><?						
+							} 
+						
+						?></ul><?
+						
+					} ?>
+				</ul>
+			</div>
+		</div>
+	</div>
+
+</div>
 
 <!-- open up the ajax aff network -->
 <script type="text/javascript">
-    
-	load_landing_page(0, <?php echo $html['landing_page_id']; if (!$html['landing_page_id']) { echo 0; } ?>, 'advlandingpage');
+$(document).ready(function() {
 
-   load_aff_network_id('<?php echo $html['aff_network_id']; ?>');
+    load_landing_page(0, <?php echo $html['landing_page_id']; if (!$html['landing_page_id']) { echo 0; } ?>, 'advlandingpage');
+
+   	load_aff_network_id('<?php echo $html['aff_network_id']; ?>');
     <?php if ($html['aff_network_id'] != '') { ?>
         load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>','<?php echo $html['aff_campaign_id']; ?>');
     <?php } ?>
-    
-	function text_ad_select(text_ad_type) {
-		if (text_ad_type == '0') { 
-			$('lp_landing_page').style.display = 'none';
-			load_landing_page(0, 0, '');
-			$('lp_aff_network').style.display = 'table-row';
-			$('lp_aff_campaign').style.display = 'table-row';
-		} else if (text_ad_type == '1') {
-			$('lp_landing_page').style.display = 'table-row';
-			load_landing_page(0, 0, 'advlandingpage');
-			$('lp_aff_network').style.display = 'none';
-			$('lp_aff_campaign').style.display = 'none';	
-			load_aff_network_id(0);
-			load_aff_campaign_id(0,0);
-		}	
-	}
-		
+});
 </script>
 
-
-		
 <?php template_bottom();

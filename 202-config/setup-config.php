@@ -39,65 +39,89 @@ switch($step) {
 	case 0:
 		info_top();
 ?>
+<div class="main col-xs-7 install">
+<center><img src="/202-img/prosper202.png"></center>
+	<small>Welcome to Prosper202. Before getting started, we need some information about your database. You will need to know the following items before proceeding.</small>
+	<br></br>
+	<small><ul>
+		<li>Database name</li>
+		<li>Database username</li>
+		<li>Database password</li>
+		<li>Database host</li>
+		<li>Memcache host (optional)</li>
+	</ul></small>
+	<small><strong>If for any reason this automatic file creation doesn't work, don't worry. All this does is fill in the database information to a configuration file. You may also simply open <code>202-config-sample.php</code> in a text editor, fill in your information, and save it as <code>202-config.php</code>. </strong>
+	<br></br>
+	In all likelihood, these items were supplied to you by your ISP. If you do not have this information, then you will need to contact them before you can continue. 
+	<br></br>
+	If you&#8217;re all ready, <a href="setup-config.php?step=1" class="btn btn-xs btn-p202">let&#8217;s go!</a></p>
+	</div>
+	<?php
 
-<p>Welcome to Prosper202. Before getting started, we need some information on the database. You will need to know the following items before proceeding.</p>
-<ol>
-	<li>Database name</li>
-	<li>Database username</li>
-	<li>Database password</li>
-	<li>Database host</li>
-	<li>Memcache host (optional)</li>
-</ol>
-<p><strong>If for any reason this automatic file creation doesn't work, don't worry. All this does is fill in the database information to a configuration file. You may also simply open <code>202-config-sample.php</code> in a text editor, fill in your information, and save it as <code>202-config.php</code>. </strong></p>
-<p>In all likelihood, these items were supplied to you by your ISP. If you do not have this information, then you will need to contact them before you can continue. If you&#8217;re all ready, <a href="setup-config.php?step=1">let&#8217;s go</a>! </p>
-<?php
+			info_bottom();
 
-		info_bottom();
+		break; 
 
-	break; 
+		case 1:
+			info_top();
+		?>
+	</p>
+	<div class="main col-xs-7 install">
+	<center><img src="/202-img/prosper202.png"></center>
+	<small>Enter your database connection details. If you're not sure about these, contact your host</small>
 
-	case 1:
-		info_top();
-	?>
-</p>
-<form method="post" action="setup-config.php?step=2" >
-	<p>Below you should enter your database connection details. If you're not sure about these, contact your host. </p>
-	<table class="config" cellspacing="0" cellpadding="5">
-		<tr>
-			<th >Database Name</th>
-			<td><input name="dbname" type="text" size="25" value="prosper202" /></td>
-			<td>The name of the database you want to run Prosper202 in. </td>
-		</tr>
-		<tr>
-			<th>User Name</th>
-			<td><input name="dbuser" type="text" size="25" value="username" /></td>
-			<td>Your MySQL username</td>
-		</tr>
-		<tr>
-			<th >Password</th>
-			<td><input name="dbpass" type="text" size="25" value="password" /></td>
-			<td>...and MySQL password.</td> 
-		</tr>
-		<tr>
-			<th >Database Host</th>
-			<td><input name="dbhost" type="text" size="25" value="localhost" /></td>
-			<td>99% chance you won't need to change this value.</td>
-		</tr>
-		<tr>
-		<th >Memcache Host</th>
-			<td><input name="mchost" type="text" size="25" value="localhost" /></td>
-			<td>If you don't know what this is, leave it alone.</td>
-		</tr>
-		<tr>
-			<th >Table Prefix</th>
-			<td><input name="prefix" type="text" id="prefix" value="202_" size="25" readonly="true" /></td>
-			<td>The table prefix that will be used, this can not be changed.</td>
-		</tr>
-	</table>
-	<h2 class="step">
-	<input name="submit" type="submit" value="Submit" />
-	</h2>
-</form>
+	<form method="post" action="setup-config.php?step=2" class="form-horizontal" role="form" style="margin-top:10px;">
+			<div class="form-group" style="margin-bottom: 0px;">
+			    <label for="dbname" class="col-xs-4 control-label" style="text-align:left"><strong>Database Name:</strong></label>
+			    <div class="col-xs-8" style="margin-top: 5px;">
+			      <input type="text" class="form-control input-sm" id="dbname" name="dbname" value="prosper202">
+			      <span class="help-block" style="font-size: 10px;">The name of the database you want to run Prosper202 in.</span>
+			    </div>
+			</div>
+
+			<div class="form-group" style="margin-bottom: 0px;">
+			    <label for="dbuser" class="col-xs-4 control-label" style="text-align:left"><strong>User Name:</strong></label>
+			    <div class="col-xs-8" style="margin-top: 5px;">
+			      <input type="text" class="form-control input-sm" id="dbuser" name="dbuser" value="username">
+			      <span class="help-block" style="font-size: 10px;">Your MySQL username</span>
+			    </div>
+			</div>
+
+			<div class="form-group" style="margin-bottom: 0px;">
+			    <label for="dbpass" class="col-xs-4 control-label" style="text-align:left"><strong>Password:</strong></label>
+			    <div class="col-xs-8" style="margin-top: 5px;">
+			      <input type="text" class="form-control input-sm" id="dbpass" name="dbpass" value="password">
+			      <span class="help-block" style="font-size: 10px;">...and MySQL password.</span>
+			    </div>
+			</div>
+
+			<div class="form-group" style="margin-bottom: 0px;">
+			    <label for="dbhost" class="col-xs-4 control-label" style="text-align:left"><strong>Database Host:</strong></label>
+			    <div class="col-xs-8" style="margin-top: 5px;">
+			      <input type="text" class="form-control input-sm" id="dbhost" name="dbhost" value="localhost">
+			      <span class="help-block" style="font-size: 10px;">99% chance you won't need to change this value.</span>
+			    </div>
+			</div>
+
+			<div class="form-group" style="margin-bottom: 0px;">
+			    <label for="mchost" class="col-xs-4 control-label" style="text-align:left"><strong>Memcache Host:</strong></label>
+			    <div class="col-xs-8" style="margin-top: 5px;">
+			      <input type="text" class="form-control input-sm" id="mchost" name="mchost" value="localhost">
+			      <span class="help-block" style="font-size: 10px;">If you don't know what this is, leave it alone.</span>
+			    </div>
+			</div>
+
+			<div class="form-group">
+			    <label for="prefix" class="col-xs-4 control-label" style="text-align:left"><strong>Table Prefix:</strong></label>
+			    <div class="col-xs-8" style="margin-top: 5px;">
+			      <input type="text" class="form-control input-sm" id="prefix" name="prefix" value="202_" readonly="true">
+			      <span class="help-block" style="font-size: 10px;">The table prefix that will be used, this can not be changed.</span>
+			    </div>
+			</div>
+
+			<button class="btn btn-sm btn-p202 btn-block" type="submit">Save database credentials<span class="fui-check-inverted pull-right"></span></button>
+	</form>
+</div>
 <?php
 		
 		info_bottom();
@@ -111,36 +135,25 @@ switch($step) {
 	$mchost  = trim($_POST['mchost']);
 
 	//see if it can conncet to the mysql host server
-	$connect = @mysql_connect($dbhost, $dbuser, $dbpass);
+
+	$connect = mysqli_connect($dbhost,$dbuser,$dbpass,$dbname);
 	
 	//if it could not connect, error
 	if (!$connect) {
-		_die("
-			<h2>Error establishing a database connection</h2>
-			<p>This either means that the username and password information in your <code>202-config.php</code> file is incorrect or we can't contact the database server at <code>$dbhost</code>. This could mean your host's database server is down.</p>
-			<ul>
+		_die("<h6>Error establishing a database connection</h6>
+			<p><small>This either means that the username and password information in your <code>202-config.php</code> file is incorrect or we can't contact the database server at <code>$dbhost</code>. This could mean your host's database server is down.</small></p>
+			<small>
+			<ul> 
 				<li>Are you sure you have the correct username and password?</li>
 				<li>Are you sure that you have typed the correct hostname?</li>
+				<li>Are you sure that you have typed the correct database name?</li>
 				<li>Are you sure that the database server is running?</li>
 			</ul>
-			<p>If you're unsure what these terms mean you should probably contact your host. If you still need help you can always visit the <a href='http://Prosper202.com/forum'>Prosper202 Support Forums</a>.</p>
-			");
+			</small> 
+			<p><small>If you're unsure what these terms mean you should probably contact your host. If you still need help you can always visit the <a href='http://support.tracking202.com'>Prosper202 Support Forums</a>.</small> <br><small><a href='setup-config.php?step=1'>Go back</a> and enter your database credentials again!</small></p>
+		");
 	}
-	
-	//now see if it can conncet to the individual mysql database
-	
-		if (!@mysql_select_db($dbname, $connect)) {
-			_die("
-				<h2>Can&#8217;t select database</h2>
-				<p>We were able to connect to the database server (which means your username and password is okay) but not able to select the <code>$dbname</code> database.</p>
-				<ul>
-				<li>Are you sure it exists?</li>
-				<li>Does the user <code>$dbuser</code> have permission to use the <code>$dbname</code> database?</li>
-				<li>On some systems the name of your database is prefixed with your username, so it would be like username_Prosper202. Could that be the problem?</li>
-				</ul>
-				<p>If you don't know how to setup a database you should <strong>contact your host</strong>. If all else fails you may find help at the <a href='http://Prosper202.com/forum'>Prosper202 Support Forums</a>.</p>");
-		}
-	
+
 
 	$handle = fopen($_SERVER['DOCUMENT_ROOT'] . '/202-config.php', 'w');
 
@@ -168,6 +181,6 @@ switch($step) {
 	fclose($handle);
 	chmod($_SERVER['DOCUMENT_ROOT'] . '/202-config.php', 0666);
 	
-	_die("<p>All right sparky! You've made it through this part of the installation. Prosper202 can now communicate with your database. If you are ready, time now to <a href=\"install.php\">run the install!</a></p>");
+	_die("<p>All right sparky! You've made it through this part of the installation. Prosper202 can now communicate with your database. If you are ready, go ahead and <a class='btn btn-xs btn-p202' href=\"install.php\">run the install!</a></p>");
 	break;
 }

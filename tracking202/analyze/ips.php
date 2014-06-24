@@ -8,10 +8,11 @@ AUTH::require_user();
 //show the template
 template_top('Analyze Incoming IP Addresses',NULL,NULL,NULL); ?>
 
-
-<div id="info">
-    <h2>Analyze Incoming IP Addresses</h2>                                                                                                                       
-</div>       
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<h6>Analyze Incoming IP Addresses</h6>
+	</div>
+</div>
 
 <?php display_calendar('/tracking202/ajax/sort_ips.php', true, true, true, true, true, true); ?> 
     

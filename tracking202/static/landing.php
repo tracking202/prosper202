@@ -1,8 +1,14 @@
-<?php header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
+<?php header('Content-type: application/javascript');
+header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
 header('Expires: Sun, 03 Feb 2008 05:00:00 GMT'); // Date in the past
 header("Pragma: no-cache");
-$strProtocol = $_SERVER['HTTPS'] == 'on' ? 'https' : 'http'; 
+if ( isset( $_SERVER["HTTPS"] ) && strtolower( $_SERVER["HTTPS"] ) == "on" ) {
+$strProtocol = 'https';
+} else {
+$strProtocol = 'http';
+} 
 ?>
+
 function t202Init(){
 	//this grabs the t202kw, but if they set a forced kw, this will be replaced 
 	
@@ -28,7 +34,7 @@ function t202Init(){
 	var language = navigator.appName=='Netscape'?navigator.language:navigator.browserLanguage; 
 	language = language.substr(0,2); 
 										    
-	document.write("<script src=\"<?php echo $strProtocol; ?>://<?php echo $_SERVER['SERVER_NAME']; ?>/tracking202/static/record.php?lpip=" + t202Enc(lpip)
+	var rurl="<?php echo $strProtocol; ?>://<?php echo $_SERVER['SERVER_NAME']; ?>/tracking202/static/record.php?lpip=" + t202Enc(lpip)
 		+ "&t202id="				+ t202Enc(t202id)
 		+ "&t202kw="				+ t202kw
 		+ "&OVRAW="					+ t202Enc(OVRAW)
@@ -42,9 +48,16 @@ function t202Init(){
 		+ "&keyword="				+ t202Enc(keyword)
 		+ "&referer="   			+ t202Enc(referer)
 		+ "&resolution="			+ t202Enc(resolution)
-		+ "&language="				+ t202Enc(language)
-		+ "\" type=\"text/javascript\" ></script>"
-	);
+		+ "&language="				+ t202Enc(language);
+		
+		(function(da, sa) {
+			var jsa, recjs = da.getElementsByTagName(sa)[0], load = function(url, id) {
+				if (da.getElementById(id)) {return;}
+				js202a = da.createElement("script");js202a.src = url;js202a.async = true;js202a.id = id;
+				recjs.parentNode.insertBefore(js202a, recjs);
+			};
+			load(rurl, "recjs");
+		}(document, "script"));
 		
 }
 

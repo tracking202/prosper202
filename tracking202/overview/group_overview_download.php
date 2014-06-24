@@ -9,15 +9,15 @@ AUTH::require_user();
 	
 //grab the users date range preferences
 	$time = grab_timeframe(); 
-	$mysql['to'] = mysql_real_escape_string($time['to']);
-	$mysql['from'] = mysql_real_escape_string($time['from']); 
+	$mysql['to'] = $db->real_escape_string($time['to']);
+	$mysql['from'] = $db->real_escape_string($time['from']); 
 	
 	
 //show real or filtered clicks
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
-	$user_result = _mysql_query($user_sql, $dbGlobalLink); //($user_sql);
-	$user_row = mysql_fetch_assoc($user_result);	
+	$user_result = _mysqli_query($user_sql, $dbGlobalLink); //($user_sql);
+	$user_row = $user_result->fetch_assoc();	
 	
 	$html['user_pref_group_1'] = htmlentities($user_row['user_pref_group_1'], ENT_QUOTES, 'UTF-8');
 	$html['user_pref_group_2'] = htmlentities($user_row['user_pref_group_2'], ENT_QUOTES, 'UTF-8');
@@ -37,11 +37,10 @@ AUTH::require_user();
 	$summary_form->setStartTime($mysql['from']);
 	$summary_form->setEndTime($mysql['to']);
 
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 
-	$info_result = _mysql_query($summary_form->getQuery($mysql['user_id'],$user_row));
-	
-	while ($row = mysql_fetch_assoc($info_result)) {
+	$info_result = _mysqli_query($summary_form->getQuery($mysql['user_id'],$user_row));
+	while ($row = $info_result->fetch_assoc()) {
 		$summary_form->addReportData($row);
 	}
 

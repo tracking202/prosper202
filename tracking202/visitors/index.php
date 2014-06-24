@@ -8,20 +8,17 @@ AUTH::require_user();
 
 //show the template
 template_top('Visitor History',NULL,NULL,NULL); ?>
-
-
-<div id="info">
-    <h2>Visitor History</h2>
-</div>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<h6>Visitor History</h6>
+	</div>
+</div> 
 
 <?php display_calendar('/tracking202/ajax/click_history.php', true, true, true, true, false, true, false); ?> 
     
 <script type="text/javascript">
    loadContent('/tracking202/ajax/click_history.php',null);
 </script>
-
-
-
 
 
 <?php  template_bottom($server_row);

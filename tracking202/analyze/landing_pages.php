@@ -10,12 +10,11 @@ AUTH::require_user();
 
 //show the template
 template_top('Analyze Landing Pages',NULL,NULL,NULL); ?>
-
-
-
-<div id="info">
-	<h2>Analyze Incoming Landing Pages</h2>
-</div>                                        
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<h6>Analyze Incoming Landing Pages</h6>
+	</div>
+</div>                                      
 
 <?php display_calendar('/tracking202/ajax/sort_landing_pages.php', true, true, true, true, true, true); ?> 
     

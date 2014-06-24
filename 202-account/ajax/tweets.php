@@ -1,7 +1,7 @@
 <?php
 
 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');    
+include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');  
 
 AUTH::require_user();
 
@@ -17,6 +17,6 @@ $rss = fetch_rss( TRACKING202_RSS_URL . '/twitter/timeline.php');
 	 		$item['title'] = str_replace('tracking202: ', '', $item['title']);
 	 		$item['description'] = html2txt($item['description']); ?>
  		
-	<h4><a href="http://twitter.tracking202.com"><img src="/202-img/twitter_logo.png"/ class="news_icon"></a> <a href='<?php echo ($item['link']); ?>'><?php echo $item['title']; ?></a> - <?php printf(('%s ago'), human_time_diff($item_time)) ; ?></h4>
+	<span class="fui-twitter"></span><a href='<?php echo ($item['link']); ?>'><?php echo $item['title']; ?></a> - <span style="font-size: 10px;">(<?php printf(('%s ago'), human_time_diff($item_time)) ; ?>)</span><br></br>
 	<?php } }
 } ?>

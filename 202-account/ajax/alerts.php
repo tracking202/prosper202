@@ -12,10 +12,10 @@ if ( isset($rss->items) && 0 != count($rss->items) ) {
 
 foreach ($rss->items as $item ) { 
 	//check if this alert is already marked as seen
-	$mysql['prosper_alert_id'] = mysql_real_escape_string($item['prosper_alert_id']);
+	$mysql['prosper_alert_id'] = $db->real_escape_string($item['prosper_alert_id']);
 	$sql = "SELECT COUNT(*) AS count FROM 202_alerts WHERE prosper_alert_id='{$mysql['prosper_alert_id']}' AND prosper_alert_seen='1'";
-	$result = _mysql_query($sql);
-	$row = mysql_fetch_assoc($result);
+	$result = _mysqli_query($sql);
+	$row = $result->fetch_assoc();
 	if ($row['count']) {
 		#echo 'dont show';
 		$dontShow[$item['prosper_alert_id']] = true;
@@ -29,23 +29,20 @@ if (!$showAlerts) die();
 
 #if items display the table
 if ($rss->items) { 
-	echo '<table class="alert2"><tr><td>';
-		echo "<h2>Tracking202 Alerts</h2>";
-		echo "<ul>";
 		foreach ($rss->items as $item ) { 
 			if ($dontShow[$item['prosper_alert_id']] == false) {
 				$item_time = human_time_diff(strtotime($item['pubdate'], time())) . " ago";
 				$html['time'] = htmlentities($item_time);
 				$html['prosper_alert_id'] = htmlentities($item['prosper_alert_id']);
 				$html['title'] = htmlentities($item['title']);
-				$html['description'] = nl2br(htmlentities($item['description']));
-				echo "<li id='prosper_alert_id_{$html['prosper_alert_id']}'>";
-					echo "<strong>{$html['title']} - {$html['time']}</strong><br/>";
-					echo "<div>{$html['description']} <a href='#' onclick='closeAlert({$html['prosper_alert_id']});'>[hide alert]</a></div>";
-				echo "</li>";
-			}
+				$html['description'] = nl2br(htmlentities($item['description'])); ?>
+
+				<div id="prosper-alerts" class="alert alert-error" data-alertid="<?php echo $html['prosper_alert_id'];?>">
+		            <button type="button" class="close fui-cross" data-dismiss="alert"></button>
+		            <strong><?php echo $html['title']. " - " .$html['time'];?></strong><br/>
+		            <span class="small"><?php echo $html['description'];?></span>
+		        </div>
+
+	  <?php }
 		}
-	
-	echo "</ul>";
-	echo '</td></tr></table>';
 }?>

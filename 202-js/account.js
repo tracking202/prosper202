@@ -1,12 +1,95 @@
-function closeAlert(prosper_alert_id) {
+$(document).ready(function() {
 
-	$('prosper_alert_id_'+prosper_alert_id).style.display='none';
-	new Ajax.Request('/202-account/ajax/alert-seen.php', {
-		 parameters: { prosper_alert_id:prosper_alert_id },
-	      onSuccess: function() {
-			 new Ajax.Updater('tracking202_alerts', '/202-account/ajax/alerts.php');
-	      }
+    $("[data-toggle='switch']").wrap('<div class="switch" />').parent().bootstrapSwitch();
+
+	$('#cb_status').click(function(){
+    	$.post("/202-account/api-integrations.php/?cb_status=1", function(data) {
+			$( "#cb_verified" ).hide().html(data).fadeIn("slow");
+		});
 	});
+
+    $("#erase_clicks_date").datepicker({dateFormat: 'dd-mm-yy'});
+
+	$('#erase_clicks_form').submit(function(event) {
+	    // check validation
+	    if ($("#erase_clicks_date").val() == "") {
+	        alert("Please pick date for clicks data!");
+	        event.preventDefault();
+	    } else {
+	    	var c = confirm("Are You Sure You Want To Delete All Your Clicks?");
+	    	if(c == false) {
+	    		event.preventDefault();
+	    	}
+	    }
+	});
+
+	$('input[name=maxmind-isp]').on("toggle", function(){
+        var checkbox = $(this);
+        $.post("/202-account/administration.php", { maxmind: checkbox.val()})
+		  .done(function(data) {
+		  	if(data){
+		  		$('#on-label').removeClass("checked");
+		  		checkbox.attr("checked", false);
+		  		$('input[id=off]').attr("checked", true);
+		  		$('#off-label').addClass("checked");
+		  	}
+		});
+    });
+
+    $('#generate-new-api-key').click(function(){
+    	var d = new Date();
+    	var date = (d.getMonth()+1)+"/"+d.getDate()+"/"+d.getFullYear();
+    	var key = generateApiKey();
+
+    	$.post("/202-account/account.php", { add_rest_api_key: true, rest_api_key: key})
+		  .done(function(data) {
+		  	$("#no-api-keys").remove();
+		  	$("#rest-api-keys").append('<li id="'+key+'"><span class="infotext">Date created: '+date+'</span> - <code>'+key+'</code> <a id="delete-rest-key" class="close fui-cross"></a></li>');
+		});
+	});
+
+});
+
+$(document).on('closed.bs.alert', '#prosper-alerts', function() {
+	var id = $(this).data("alertid");
+    $.post("/202-account/ajax/alert-seen.php", { prosper_alert_id:id })
+});
+
+$(document).on('click', '#delete-rest-key', function() {
+    var key = $(this).parent().attr("id");
+    
+    $.post("/202-account/account.php", { remove_rest_api_key: true, rest_api_key: key})
+		.done(function(data) {
+			if($('#rest-api-keys li').size() < 2){
+		    	$("#"+key).remove();
+		    	$("#rest-api-keys").append('<li id="no-api-keys">No API key\'s generated</li>');
+		    } else {
+		    	$("#"+key).remove();
+		    }
+	});
+});
+
+function generateApiKey() {
+
+  	var limit = 32;
+    var key = '';
+  
+    var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  
+    var list = chars.split('');
+    var len = list.length, i = 0;
+    
+    do {
+    
+      i++;
+    
+      var index = Math.floor(Math.random() * len);
+      
+      key += list[index];
+    
+    } while(i < limit);
+    
+    return key;
 }
 
 

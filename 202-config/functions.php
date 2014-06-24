@@ -4,16 +4,20 @@
 function _die($message) { 
 
 	info_top();
+	echo '<div class="main col-xs-7"><center><img src="/202-img/prosper202.png"></center>';
 	echo $message;
+	echo '</div>';
 	info_bottom();
 	die();
 }
 
 
 //our own function for controling mysqls and monitoring then.
-function _mysql_query($sql) {
-	
-	$result = mysql_query($sql) or die(mysql_error() . '<br/><br/>' . $sql);
+function _mysqli_query($sql) {
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
+	$result = $db->query($sql) or die($db->error . '<br/><br/>' . $sql);
 	return $result;
 	
 }
@@ -27,12 +31,13 @@ function salt_user_pass($user_pass) {
 }
 
 
-
 function is_installed() {
+	$database = DB::getInstance();
+	$db = $database->getConnection();
 	
 	//if a user account already exists, this application is installed
 	$user_sql = "SELECT COUNT(*) FROM 202_users";
-	$user_result = @mysql_query($user_sql);
+	$user_result = $db->query($user_sql);
 	
 	if ($user_result) {
 		return true;
@@ -48,24 +53,17 @@ function upgrade_needed() {
 	if ($mysql_version != $php_version) { return true; } else { return false; }
 		
 }
-	
-	
-
-function mysqlversion() { 
- 	$mysql_version_sql = "SELECT VERSION();";
-	$mysql_version_result = _mysql_query($mysql_version_sql);
-	$mysql_version = mysql_result($mysql_version_result,0,0); 	
-	return $mysql_version;
-} 
 
 	
 function info_top() { ?>
+
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en"> 
 <head>
 
-<title>Prosper202</title>
+<title>Prosper202 ClickServer</title>
+<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
 <meta name="description" content="description" />
 <meta name="keywords" content="keywords"/>
 <meta name="copyright" content="202, Inc" />
@@ -77,34 +75,36 @@ function info_top() { ?>
 <meta http-equiv="imagetoolbar" content="no"/>
   
 <link rel="shortcut icon" href="/202-img/favicon.gif" type="image/ico"/> 
-<link href="/202-css/info.css" rel="stylesheet" type="text/css"/>
+<!-- Loading Bootstrap -->
+<link href="/202-css/css/bootstrap.min.css" rel="stylesheet"/>
+<!-- Loading Flat UI -->
+<link href="/202-css/css/flat-ui.css" rel="stylesheet"/>
+<!-- Loading Custom CSS -->
+<link href="/202-css/custom.css" rel="stylesheet"/>
+<!--[if lt IE 9]>
+      <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+      <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+<![endif]-->
+<!-- Load JS here -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+    <script src="/202-js/bootstrap.min.js"></script>
+<script type='text/javascript'>
+var googletag=googletag||{};googletag.cmd=googletag.cmd||[];(function(){var e=document.createElement("script");e.async=true;e.type="text/javascript";var t="https:"==document.location.protocol;e.src=(t?"https:":"http:")+"//www.googletagservices.com/tag/js/gpt.js";var n=document.getElementsByTagName("script")[0];n.parentNode.insertBefore(e,n)})()
+</script>
+
+<script type='text/javascript'>
+googletag.cmd.push(function(){googletag.defineSlot("/1006305/P202_CS_Login_Page_288x200",[288,200],"div-gpt-ad-1398648278789-0").addService(googletag.pubads());googletag.pubads().enableSingleRequest();googletag.enableServices()})
+</script>
+</head>
 <body>
 
 <div class="container">
-
-<table class="center" cellspacing="0" cellpadding="5">
-	<tr>
-		<td colspan="2" style="text-align: center;"><a
-			href="http://prosper202.com"><img src="/202-img/prosper202.png" /></a><br />
-		</td>
-	</tr>
-	<tr>
-		<td><?php } function info_bottom() { ?></td>
-	</tr>
-</table>
+	<?php } function info_bottom() { ?>
 </div>
-
 </body>
 </html> 
 
 <?php } 
-
-
-
-
-
-
-
 
 function check_email_address($email) {
 // First, we check that there's one @ symbol, and that the lengths are right
@@ -164,7 +164,7 @@ function update_needed () {
 	
 	global $version;
 
-	 $rss = fetch_rss('http://prosper202.com/apps/currentversion/');
+	 $rss = fetch_rss('http://my.tracking202.com/clickserver/currentversion/');
 	 if ( isset($rss->items) && 0 != count($rss->items) ) {
 			 
 		$rss->items = array_slice($rss->items, 0, 1) ;
@@ -182,49 +182,6 @@ function update_needed () {
 	
 }
 
-function geoLocationDatabaseInstalled() { 
-	
-	$sql = "SELECT COUNT(*) FROM 202_locations";
-	$result = _mysql_query($sql);
-	$count = mysql_result($result, 0, 0); 
-	if ($count != 161877) return false;
-	
-	$sql = "SELECT COUNT(*) FROM 202_locations_block";
-	$result = _mysql_query($sql);
-	$count = mysql_result($result, 0, 0); 
-	if ($count != 1593228) return false;
-	
-	$sql = "SELECT COUNT(*) FROM 202_locations_city";
-	$result = _mysql_query($sql);
-	$count = mysql_result($result, 0, 0); 
-	if ($count != 101332) return false;
-	
-	$sql = "SELECT COUNT(*) FROM 202_locations_coordinates";
-	$result = _mysql_query($sql);
-	$count = mysql_result($result, 0, 0);
-	if ($count != 125204) return false;
-	
-	$sql = "SELECT COUNT(*) FROM 202_locations_country";
-	$result = _mysql_query($sql);
-	$count = mysql_result($result, 0, 0);
-	if ($count != 235) return false;
-	
-	$sql = "SELECT COUNT(*) FROM 202_locations_region";
-	$result = _mysql_query($sql);
-	$count = mysql_result($result, 0, 0); 
-	if ($count != 396) return false;
-	
-	#if no return false
-	return true;	
-}
-
-function getLocationDatabasedOn() { 
-	
-	return false;
-	
-}
-
- 
 function iphone() {
 	if ($_GET['iphone']) { return true; }
 	if(preg_match("/iphone/i",$_SERVER["HTTP_USER_AGENT"])) { return true; } else { return false; }

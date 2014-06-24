@@ -3,7 +3,6 @@
 AUTH::require_user();
 
 
-
 //if spy is enabled, run the query in a certain way.
 	if ($_GET['spy'] == 1) {
 		//$from = time() - 5;
@@ -18,7 +17,7 @@ AUTH::require_user();
 
 //run query
 	$click_sql = $query['click_sql'];
-	$click_result = mysql_query($click_sql) or record_mysql_error($click_sql); 
+	$click_result = $db->query($click_sql) or record_mysql_error($click_sql); 
 	
 //html escape vars
 	$html['from'] = htmlentities($query['from'], ENT_QUOTES, 'UTF-8');
@@ -28,20 +27,17 @@ AUTH::require_user();
 //if this click history, show the results
 	if ($_GET['spy'] != 1) {    
 	?>
-	<table cellspacing="0" cellpadding="0" style="width: 100%; font-size: 12px;">
-		<tr>
-			<td width="100%;">
-				<a target="_new" href="/tracking202/visitors/download/">
-					<strong>Download to excel</strong>
-					<img src="/202-img/icons/16x16/page_white_excel.png" style="margin: 0px 0px -3px 3px;"/>
-					
-				</a>
-			</td>
-			<td>
-				<?php printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']);  ?>
-			</td>
-		</tr>
-	</table>
+	<div class="row" style="margin-top: 10px;">
+		<div class="col-xs-6">
+			<span class="infotext"><?php printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']);  ?></span>
+		</div>
+		<div class="col-xs-6 text-right" style="top: -10px;">
+			<img style="margin-bottom:2px;" src="/202-img/icons/16x16/page_white_excel.png"/>
+			<a style="font-size:12px;" target="_new" href="/tracking202/visitors/download/">
+				<strong>Download to excel</strong>
+			</a>
+		</div>
+	</div>
 	<?
 	} 
 	
@@ -49,32 +45,28 @@ AUTH::require_user();
 	AUTH::set_timezone($_SESSION['user_timezone']);
 	
 //start displaying the data     
-	?><div class="data"><?
-	
-	
-		?>
-	
-	 <table cellpadding="3" cellspacing="0" class="item-table">
-			<tr class="<?php echo $html['row_class']; ?>" style="font-weight: bold; text-align: left;">
-				<td style="width: 53px;">Subid</td>
-				<td class="date">Date</td>
-				<td class="ppc"></td>
-				<td class="ppc"></td>
-				<?php if (geoLocationDatabaseInstalled() == true) echo '<td class="flag"></td>'; ?>
-				<td class="ppc"></td>
-				<td class="filter"></td>
-				<td class="ip">IP</td>
-				<td class="aff">Offer / LP</td>
-				<td class="referer_big">Referer</td>
-				<td class="ad">Text Ad</td>
-				<td class="referer"></td>
-				<td class="landing"></td>
-				<td class="outbound"></td>
-				<td class="cloaking"></td>
-				<td class="redirect"></td>
-				<td class="keyword"><div>Keyword</div></td>
+	?>
+<div class="row">
+	<div class="col-xs-12" style="margin-top: 10px;">
+	 <table class="table table-bordered" id="stats-table">
+	 	<thead>
+			<tr style="background-color: #f2fbfa;">
+				<td>Subid</td>
+				<td style="text-align:left; padding-left:10px;">Date</td>
+				<td>User Agent</td>
+				<td>GEO</td>
+				<td>ISP/Carrier</td>
+				<td>Click</td>
+				<td>IP</td>
+				<td>PPC Account</td>
+				<td>Offer / LP</td>
+				<td>Referer</td>
+				<td>Text Ad</td>
+				<td>Links</td>
+				<td>Keyword</td>
 			</tr>
-		 </table>
+		</thead>
+		<tbody>
 		 
 		<?
 	
@@ -82,11 +74,10 @@ AUTH::require_user();
 //If this is spy view, the last clicks in the last 5 seconds go into a hidden div, then it is made visible with a scriptialouc affect, so this div contains the clicks iwthin the last 5 seconds
 	if ($_GET['spy'] == 1) { 
 		$new = true; 
-		?><div id="m-newclicks" style="display: none;"><?
 	} 
 
 //if there is no clicks to display let them know :(
-	if (mysql_num_rows($click_result) == 0) { 
+	if ($click_result->num_rows == 0) { 
 		?><div style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">You have no data to display with your above filters currently.</div><?
 		if ($_GET['spy'] == 1) { 
 			?><div style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">The spy view only shows clicks activity within the past 24 hours.</div><?
@@ -94,9 +85,9 @@ AUTH::require_user();
 	}    
 	
 //now display all the clicks
-	while ($click_row = mysql_fetch_array($click_result, MYSQL_ASSOC)) {   
+	while ($click_row = $click_result->fetch_array(MYSQL_ASSOC)) {   
 								
-		$mysql['click_id'] = mysql_real_escape_string($click_row['click_id']);
+		$mysql['click_id'] = $db->real_escape_string($click_row['click_id']);
 		
 		if ($_GET['spy'] == 1) { 
 			$clicks_tbl  = "202_clicks_spy";
@@ -125,17 +116,17 @@ AUTH::require_user();
 								click_cloaking_site_url_id,
 								click_redirect_site_url_id,"; 
 		
-		if (geoLocationDatabaseInstalled() == true)  {
-			$click_sql2 .= "		location_country_name,
-								location_country_code,
-								location_region_code,
-								location_city_name,";
-		}
 		
-		$click_sql2 .="			202_browsers.browser_id,
+		$click_sql2 .="	
 								202_browsers.browser_name,
-								202_platforms.platform_id,
-								202_platforms.platform_name
+								202_platforms.platform_name,
+								202_device_models.device_name,
+								202_device_types.type_name,
+								202_locations_country.country_name,
+								202_locations_country.country_code,
+								202_locations_region.region_name,
+								202_locations_city.city_name,
+								202_locations_isp.isp_name
 					  FROM      $clicks_tbl  AS 2c  
 					  					LEFT JOIN 202_clicks_advance USING (click_id)
 										LEFT JOIN 202_clicks_record USING (click_id)
@@ -148,27 +139,30 @@ AUTH::require_user();
 										LEFT JOIN 202_ips ON (202_ips.ip_id = 202_clicks_advance.ip_id)
 										LEFT JOIN 202_keywords ON (202_keywords.keyword_id = 202_clicks_advance.keyword_id)
 										LEFT JOIN 202_browsers ON (202_browsers.browser_id = 202_clicks_advance.browser_id)
-										LEFT JOIN 202_platforms ON (202_platforms.platform_id = 202_clicks_advance.platform_id)";
-		if (geoLocationDatabaseInstalled() == true)  {
-			$click_sql2 .= "				LEFT JOIN 202_locations ON (202_ips.location_id = 202_locations.location_id)
-										LEFT JOIN 202_locations_country ON (202_locations.location_country_id = 202_locations_country.location_country_id)
-										LEFT JOIN 202_locations_city ON (202_locations.location_city_id = 202_locations_city.location_city_id) 
-										LEFT JOIN 202_locations_region ON (202_locations.location_region_id = 202_locations_region.location_region_id)";
-		}
+										LEFT JOIN 202_platforms ON (202_platforms.platform_id = 202_clicks_advance.platform_id)
+										LEFT JOIN 202_device_models ON (202_device_models.device_id = 202_clicks_advance.device_id)
+										LEFT JOIN 202_device_types ON (202_device_types.type_id = 202_device_models.device_type)
+										LEFT JOIN 202_locations_country ON (202_locations_country.country_id = 202_clicks_advance.country_id)
+										LEFT JOIN 202_locations_region ON (202_locations_region.region_id = 202_clicks_advance.region_id)
+										LEFT JOIN 202_locations_city ON (202_locations_city.city_id = 202_clicks_advance.city_id)
+										LEFT JOIN 202_locations_isp ON (202_locations_isp.isp_id = 202_clicks_advance.isp_id)";
+		
 
-		$click_sql2 .= "	  WHERE  2c.click_id='".$mysql['click_id']."'";
+		$click_sql2 .= "WHERE  2c.click_id='".$mysql['click_id']."'";
 		$click_row2 = memcache_mysql_fetch_assoc($click_sql2);
 		$click_row = array_merge($click_row, $click_row2);
 		
-		$mysql['click_referer_site_url_id'] = mysql_real_escape_string($click_row['click_referer_site_url_id']);
+
+		$mysql['click_referer_site_url_id'] = $db->real_escape_string($click_row['click_referer_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
 						 WHERE  202_site_urls.site_url_id = '".$mysql['click_referer_site_url_id']."'
 						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
 		$site_url_row = memcache_mysql_fetch_assoc($site_url_sql);
-		$html['referer'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
-		$html['referer_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');   
 
-		$mysql['click_landing_site_url_id'] = mysql_real_escape_string($click_row['click_landing_site_url_id']);
+		$html['referer'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
+		$html['referer_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');
+
+		$mysql['click_landing_site_url_id'] = $db->real_escape_string($click_row['click_landing_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
 						 WHERE  202_site_urls.site_url_id = '".$mysql['click_landing_site_url_id']."'
 						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
@@ -176,14 +170,14 @@ AUTH::require_user();
 		$html['landing'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
 		$html['landing_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');   
 		
-		$mysql['click_outbound_site_url_id'] = mysql_real_escape_string($click_row['click_outbound_site_url_id']);
+		$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_row['click_outbound_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
 						 WHERE  202_site_urls.site_url_id = '".$mysql['click_outbound_site_url_id']."'
 						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
 		$site_url_row = memcache_mysql_fetch_assoc($site_url_sql);
 		$html['outbound'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
 		$html['outbound_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');   
-
+		
 		//this is alittle different
 		if ($click_row['click_cloaking']) {
 			
@@ -201,12 +195,12 @@ AUTH::require_user();
 			$html['cloaking_host'] = '';	
 		}
 
-		$mysql['click_redirect_site_url_id'] = mysql_real_escape_string($click_row['click_redirect_site_url_id']);
+		$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_row['click_redirect_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
 						 WHERE  202_site_urls.site_url_id = '".$mysql['click_redirect_site_url_id']."'
 						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
-		$site_url_result = mysql_query($site_url_sql) or record_mysql_error($site_url_sql);
-		$site_url_row = mysql_fetch_assoc($site_url_result);
+		$site_url_result = $db->query($site_url_sql) or record_mysql_error($site_url_sql);
+		$site_url_row = $site_url_result->fetch_assoc();
 		$html['redirect'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
 		$html['redirect_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');  
 		  
@@ -217,8 +211,14 @@ AUTH::require_user();
 		$html['landing_page_nickname'] = htmlentities($click_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');   
 		$html['ppc_account_id'] = htmlentities($click_row['ppc_account_id'], ENT_QUOTES, 'UTF-8');   
 		$html['text_ad_id'] = htmlentities($click_row['text_ad_id'], ENT_QUOTES, 'UTF-8');   
-		$html['text_ad_name'] = htmlentities($click_row['text_ad_name'], ENT_QUOTES, 'UTF-8'); 
-		$html['aff_campaign_name'] = htmlentities($click_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
+		$html['text_ad_name'] = htmlentities($click_row['text_ad_name'], ENT_QUOTES, 'UTF-8');
+		
+		if ($click_row['aff_campaign_name'] != null) {
+		 	$html['aff_campaign_name'] = htmlentities($click_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
+		} else {
+			$html['aff_campaign_name'] = "Rotator url";
+		}
+
 		$html['aff_network_name'] = htmlentities($click_row['aff_network_name'], ENT_QUOTES, 'UTF-8');
 		$html['ppc_network_name'] = htmlentities($click_row['ppc_network_name'], ENT_QUOTES, 'UTF-8');
 		$html['ppc_account_name'] = htmlentities($click_row['ppc_account_name'], ENT_QUOTES, 'UTF-8');
@@ -226,7 +226,15 @@ AUTH::require_user();
 		$html['click_cpc'] = htmlentities(dollar_format($click_row['click_cpc']), ENT_QUOTES, 'UTF-8');
 		$html['keyword'] = htmlentities($click_row['keyword'], ENT_QUOTES, 'UTF-8');
 		$html['click_lead'] = htmlentities($click_row['click_lead'], ENT_QUOTES, 'UTF-8');
-		$html['click_filtered'] = htmlentities($click_row['click_filtered'], ENT_QUOTES, 'UTF-8');      
+		$html['click_filtered'] = htmlentities($click_row['click_filtered'], ENT_QUOTES, 'UTF-8');
+		$html['device_name'] = htmlentities($click_row['device_name'], ENT_QUOTES, 'UTF-8');
+		$html['browser_name'] = htmlentities($click_row['browser_name'], ENT_QUOTES, 'UTF-8'); 
+		$html['platform_name'] = htmlentities($click_row['platform_name'], ENT_QUOTES, 'UTF-8');
+		$html['country_code'] = htmlentities($click_row['country_code'], ENT_QUOTES, 'UTF-8');
+		$html['country_name'] = htmlentities($click_row['country_name'], ENT_QUOTES, 'UTF-8');
+		$html['region_name'] = htmlentities($click_row['region_name'], ENT_QUOTES, 'UTF-8');
+		$html['city_name'] = htmlentities($click_row['city_name'], ENT_QUOTES, 'UTF-8');
+		$html['isp_name'] = htmlentities($click_row['isp_name'], ENT_QUOTES, 'UTF-8');       
 		
 		//rotate colors
 		$html['row_class'] = 'item';
@@ -238,34 +246,15 @@ AUTH::require_user();
 		}     
 									 
 		$ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'],$click_row['ppc_account_name']); 
-		
-		if (geoLocationDatabaseInstalled() == true)  {
-			$html['location'] = '';
-			if ($click_row['location_country_name']) {
-				if ($click_row['location_country_name']) { 
-					$origin = $click_row['location_country_name']; 
-				} if (($click_row['location_region_code']) and (!is_numeric($click_row['location_region_code']))) { 
-					$origin = $click_row['location_region_code'] . ', ' . $origin; 
-				} if ($click_row['location_city_name']) { 
-					$origin = $click_row['location_city_name'] . ', ' . $origin;  
-				}
-				
-				$html['origin'] = htmlentities($origin, ENT_QUOTES, 'UTF-8');  
-				$html['location'] = '<img title="'.$html['origin'].'" src="http://'.$_SERVER['SERVER_NAME'].'/202-img/flags/'.strtolower($click_row['location_country_code']).'.png"/>';    
-			}
-		}                         
-		
-		$html['browser_id'] = '';
-		if ($click_row['browser_id']) {
-			$html['browser_id'] = '<img title="'.$click_row['browser_name'].'" src="/202-img/icons/browsers/'.$click_row['browser_id'].'.png"/>';
-          //$html['browser_id'] = '<img title="'.$click_row['browser_name'].'" src="/202-img/icons/browsers/'.rand(1, 32).'.png"/>';
-			    
-		}
-		
-		$html['platform_id'] = '';
-		if ($click_row['platform_id']) {
-			$html['platform_id'] = '<img title="'.$click_row['platform_name'].'" src="/202-img/icons/platforms/'.$click_row['platform_id'].'.png"/>';    
+        
+        if (!$click_row['type_name']) {
+            $html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: '.$html['browser_name'].'<br/> Platform: '.$html['platform_name'].' <br/>Device: '.$html['device_name'].'"><img title="'.$click_row['type_name'].'" src="/202-img/icons/platforms/other.png"/></span></span>';
+        } else {
+        	$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: '.$html['browser_name'].'<br/> Platform: '.$html['platform_name'].' <br/>Device: '.$html['device_name'].'"><img title="'.$click_row['type_name'].'" src="/202-img/icons/platforms/'.$click_row['type_name'].'.png"/></span></span> <img src="/202-img/icons/browsers/'.getBrowserIcon($html['browser_name']).'.png">';
+        }
 
+        if (!$html['country_code']) {
+			$html['country_code'] = 'non';
 		}
 		
 		//if this is an advance landing page, make the offer name, the landing page name
@@ -277,18 +266,15 @@ AUTH::require_user();
 		//before it ends, if this click is past 5 seconds, set true to $endofnewclicks
 		$diff = time() - $click_row['click_time']; 
 		if (($diff > 5) and ($new == true))  { 
-			$new = false; ?>
-			 </div>        
+			$new = false; ?>     
 		<?php } ?>
 		
-		 <table cellpadding="0" cellspacing="0" class="item-table">
-			<tr class="<?php echo $html['row_class']; ?>">
-				<td style="width: 53px;" id="<?php echo $html['click_id']; ?>"><?php printf('%s', $html['click_id']); ?></td>
-				<td class="date"><?php echo $html['click_time']; ?></td>
-				<td class="ppc"><?php echo $html['browser_id']; ?></td>
-				<td class="ppc"><?php echo $html['platform_id']; ?></td>
-				<?php if (geoLocationDatabaseInstalled() == true) echo '<td class="flag">' . $html['location'] .'</td>'; ?>
-				<td class="ppc"><?php echo $ppc_network_icon; ?></td>
+			<tr <?php if (($diff <= 5) and ($new == true)) {echo 'class="new-click" style="display:none;"';}?>>
+				<td id="<?php echo $html['click_id']; ?>"><?php printf('%s', $html['click_id']); ?></td>
+				<td style="text-align:left; padding-left:10px;"><?php echo $html['click_time']; ?></td>
+				<td class="device_info"><?php echo $html['device_type']; ?></td>
+				<td class="geo"><span data-toggle="tooltip" <?php echo 'title="'.$html['country_name'].' ('.$html['country_code'].'), '.$html['city_name'].' ('.$html['region_name'].')"';?>><img src="/202-img/flags/<?php echo strtolower($html['country_code']);?>.png"></span></td>
+				<td class="isp"><?php if($html['isp_name']) echo $html['isp_name']; else echo "-"?></td>
 				<td class="filter">
 					<?php if ($click_row['click_filtered'] == '1') { ?>
 						  <img style="margin-right: auto;" src="/202-img/icons/16x16/delete.png" alt="Filtered Out Click" title="filtered out click"/> 
@@ -299,42 +285,58 @@ AUTH::require_user();
 					<?php } ?>
 				</td>
 				<td class="ip"><?php echo $html['ip_address']; ?></td>
+				<td class="ppc"><?php echo $ppc_network_icon; ?></td>
 				<td class="aff"><?php echo $html['aff_campaign_name']; ?></td>
-				<td class="referer_big"><?php printf('<a href="%s" target="_new" title="Referer">%s</a>',$html['referer'],$html['referer_host']); ?></td>
-				<td class="ad"><?php echo $html['text_ad_name']; ?></td>
-				<td class="referer"><?php if ($html['referer'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_end_blue.png" alt="Referer" title="Referer: %s"/></a>',$html['referer'],$html['referer']); } ?></td>
-				<td class="landing"><?php if ($html['landing'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_pause_blue.png" alt="Landing"  title="Landing Page: %s"/></a>',$html['landing'],$html['landing']); } ?></td>
-				<td class="outbound"><?php if (($html['outbound'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_play_blue.png" alt="Outbound" title="Outbound: %s"/></a>',$html['outbound'],$html['outbound']); } ?></td>
-				<td class="cloaking"><?php if (($html['cloaking'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_equalizer_blue.png" alt="Cloaking" title="Cloaked Referer: %s"/></a>',$html['cloaking'],$html['cloaking']); } ?></td>
-				<td class="redirect"><?php if (($html['redirect'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_fastforward_blue.png" alt="Redirection" title="Redirect: %s"/></a>',$html['redirect'],$html['redirect']); } ?></td>
-				<td class="keyword"><div><span title="<?php echo $html['keyword']; ?>"><?php echo $html['keyword']; ?></span></div></td>
+				<td class="referer_big"><?php if($html['referer']) {printf('<a href="%s" target="_new" title="Referer">%s</a>',$html['referer'],$html['referer_host']);} else { echo "-";}?><?php  ?></td>
+				<td class="ad"><?php if($html['text_ad_name']) echo $html['text_ad_name']; else echo "-";?></td>
+				<td class="referer">
+					<?php if ($html['referer'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_end_blue.png" alt="Referer" title="Referer: %s"/></a>',$html['referer'],$html['referer']); } ?>
+					<?php if ($html['landing'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_pause_blue.png" alt="Landing"  title="Landing Page: %s"/></a>',$html['landing'],$html['landing']); } ?>
+					<?php if (($html['outbound'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_play_blue.png" alt="Outbound" title="Outbound: %s"/></a>',$html['outbound'],$html['outbound']); } ?>
+					<?php if (($html['cloaking'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_equalizer_blue.png" alt="Cloaking" title="Cloaked Referer: %s"/></a>',$html['cloaking'],$html['cloaking']); } ?>
+					<?php if (($html['redirect'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_fastforward_blue.png" alt="Redirection" title="Redirect: %s"/></a>',$html['redirect'],$html['redirect']); } ?>
+				</td>
+				<td class="keyword"><?php if($html['keyword']) echo "<em>".$html['keyword']."</em>"; else echo "-"; ?></td>
 			</tr>
-		 </table>
+			</div>
 	<?php  } ?>
-	</div>
+	</tbody>
+</table>
+<script type="text/javascript">
+	//tooltips int
+	$("[data-toggle=tooltip]").tooltip({html: true});
+</script>
+</div>
+</div>
 
-	<?php if (($query['pages'] > 2) and ($_GET['spy'] != 1)) { ?>
-		<div class="offset">   <?
-			if ($query['offset'] > 0) {
-				printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\');">First</a> ', $i);
-				printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\');">Prev</a> ', $query['offset'] - 1);
-			}
-			
-			if ($query['pages'] > 1) {
-				for ($i=0; $i < $query['pages']-1; $i++) {                         
-					if (($i >= $query['offset'] - 10) and ($i < $query['offset'] + 11)) { 
-						if ($query['offset'] == $i) { $class = 'class="link_selected"'; } else { $class='class="onclick_color"'; } 
-						printf(' <a %s onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\');">%s</a> ', $class, $i, $i+1);
-						unset($class);
+<?php if (($query['pages'] > 2) and ($_GET['spy'] != 1)) { ?>
+<div class="row">
+<div class="col-xs-12 text-center">
+	<div class="pagination" id="table-pages">
+	    <ul>
+			<?if ($query['offset'] > 0) {
+					printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', $query['offset'] - 1, $html['order']);
+				}
+
+				if ($query['pages'] > 1) {
+					for ($i=0; $i < $query['pages']-1; $i++) {
+						if (($i >= $query['offset'] - 10) and ($i < $query['offset'] + 11)) {
+							if ($query['offset'] == $i) { $class = 'class="active"'; }
+							printf(' <li %s><a onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\',\'%s\');">%s</a></li>', $class, $i, $html['order'], $i+1);
+							unset($class);
+						}
 					}
 				}
-			} 
-			
-			if ($query['offset'] < $query['pages'] - 2) {
-				printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\');"">Next</a> ', $query['offset'] + 1);
-				printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\');">Last</a> ', $query['pages'] - 2); 
-			} ?>
-		</div>   
-	<?php }   
+
+				if ($query['offset'] > 0) {
+					printf(' <li class="next"><a class="fui-arrow-right" onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', $query['offset'] + 1, $html['order']);
+				}
+			?>
+		</ul>
+	</div>
+	</div>
+</div>
+<?php } ?>
+
 
 

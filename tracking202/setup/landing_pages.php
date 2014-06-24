@@ -29,33 +29,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     	//if this is a simple landing page
     	if ($_POST['landing_page_type'] == '0') {
 	    //check to see if they are the owners of this affiliate network
-	    $mysql['aff_campaign_id'] = mysql_real_escape_string($_POST['aff_campaign_id']);
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+	    $mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 		$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `user_id`='".$mysql['user_id']."' AND `aff_campaign_id`='".$mysql['aff_campaign_id']."'";
-	    $aff_campaign_result = mysql_query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-	    if (mysql_num_rows($aff_campaign_result) == 0 ) {
+	    $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
+	    if ($aff_campaign_result->num_rows == 0 ) {
 			$error['wrong_user'] = '<div class="error">You are not authorized to add a landing page to another users campaign</div>';    
 	    }
     	}
     
     //if editing, check to make sure the own the campaign they are editing
     if ($editing == true) {
-		$mysql['landing_page_id'] = mysql_real_escape_string($_POST['landing_page_id']);
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+		$mysql['landing_page_id'] = $db->real_escape_string($_POST['landing_page_id']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 		$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND `landing_page_id`='".$mysql['landing_page_id']."'";
-        $landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
-		if (mysql_num_rows($landing_page_result) == 0 ) {
+        $landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
+		if ($landing_page_result->num_rows == 0 ) {
             $error['wrong_user'] .= '<div class="error">You are not authorized to modify another users campaign</div>';    
         }
     }
 	
 	if (!$error) { 
-	      $mysql['landing_page_id'] = mysql_real_escape_string($_POST['landing_page_id']);
-	      $mysql['aff_campaign_id'] = mysql_real_escape_string($_POST['aff_campaign_id']);
-	      $mysql['landing_page_nickname'] = mysql_real_escape_string($_POST['landing_page_nickname']);
-	      $mysql['landing_page_url'] = mysql_real_escape_string($_POST['landing_page_url']);
-		$mysql['landing_page_type'] = mysql_real_escape_string($_POST['landing_page_type']);
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+	      $mysql['landing_page_id'] = $db->real_escape_string($_POST['landing_page_id']);
+	      $mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
+	      $mysql['landing_page_nickname'] = $db->real_escape_string($_POST['landing_page_nickname']);
+	      $mysql['landing_page_url'] = $db->real_escape_string($_POST['landing_page_url']);
+		$mysql['landing_page_type'] = $db->real_escape_string($_POST['landing_page_type']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 		$mysql['landing_page_time'] = time();
 		
 		if ($editing == true) { $landing_page_sql  = "UPDATE `202_landing_pages` SET"; } 
@@ -69,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 											  `landing_page_time`='".$mysql['landing_page_time']."'";
 													  
 		if ($editing == true) { $landing_page_sql  .= "WHERE `landing_page_id`='".$mysql['landing_page_id']."'"; } 
-		$landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
+		$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 		$add_success = true;
 		
 		if ($editing == true) {
@@ -79,15 +79,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		
 		if ($editing != true) {
 			//if this landing page is brand new, add on a landing_page_id_public
-			$landing_page_row['landing_page_id'] = mysql_insert_id();
+			$landing_page_row['landing_page_id'] = $db->insert_id;
 			$landing_page_id_public = rand(1,9) . $landing_page_row['landing_page_id'] . rand(1,9);
-			$mysql['landing_page_id_public'] = mysql_real_escape_string($landing_page_id_public);
-            	$mysql['landing_page_id'] = mysql_real_escape_string($landing_page_row['landing_page_id']);                            
+			$mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
+            	$mysql['landing_page_id'] = $db->real_escape_string($landing_page_row['landing_page_id']);                            
 			
 			$landing_page_sql = "	UPDATE       `202_landing_pages`
 								 	SET          	 `landing_page_id_public`='".$mysql['landing_page_id_public']."'
 								 	WHERE        `landing_page_id`='".$mysql['landing_page_id']."'";
-			$landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
+			$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 			
         }
 	}
@@ -95,8 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 if (isset($_GET['delete_landing_page_id'])) { 
 
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-    	$mysql['landing_page_id'] = mysql_real_escape_string($_GET['delete_landing_page_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+    	$mysql['landing_page_id'] = $db->real_escape_string($_GET['delete_landing_page_id']);
 	$mysql['landing_page_time'] = time();
 	
 
@@ -107,24 +107,24 @@ if (isset($_GET['delete_landing_page_id'])) {
 					WHERE   `user_id`='".$mysql['user_id']."'
 					AND     `landing_page_id`='".$mysql['landing_page_id']."'";
     
-    if ($delete_result = mysql_query($delete_sql) or record_mysql_error($delete_result)) {
+    if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_result)) {
         $delete_success = true;
     }
 }
 
 if (($_GET['edit_landing_page_id']) and ($_SERVER['REQUEST_METHOD'] != 'POST')) { 
 	
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-    $mysql['landing_page_id'] = mysql_real_escape_string($_GET['edit_landing_page_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+    $mysql['landing_page_id'] = $db->real_escape_string($_GET['edit_landing_page_id']);
     
 	$landing_page_sql = "SELECT * 
                          FROM   `202_landing_pages`
                          WHERE  `landing_page_id`='".$mysql['landing_page_id']."'
 						 AND    `user_id`='".$mysql['user_id']."'";
-    $landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
-	$landing_page_row = mysql_fetch_assoc($landing_page_result);
+    $landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
+	$landing_page_row = $landing_page_result->fetch_assoc();
 	
-	$mysql['aff_campaign_id'] = mysql_real_escape_string($landing_page_row['aff_campaign_id']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string($landing_page_row['aff_campaign_id']);
 	$html['aff_campaign_id'] = htmlentities($landing_page_row['aff_campaign_id'], ENT_QUOTES, 'UTF-8');    
 	$html['landing_page_id'] = htmlentities($_GET['edit_landing_page_id'], ENT_QUOTES, 'UTF-8');    
 	$html['landing_page_type'] = htmlentities($landing_page_row['landing_page_type'], ENT_QUOTES, 'UTF-8');    
@@ -133,7 +133,7 @@ if (($_GET['edit_landing_page_id']) and ($_SERVER['REQUEST_METHOD'] != 'POST')) 
 
 } elseif (($_SERVER['REQUEST_METHOD'] == 'POST') and ($add_success != true)) {
 	
-    	$mysql['aff_campaign_id'] = mysql_real_escape_string($_POST['aff_campaign_id']);
+    	$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
 	$html['aff_network_id'] = htmlentities($_POST['aff_network_id'], ENT_QUOTES, 'UTF-8');
 	$html['aff_network_id'] = htmlentities($_POST['aff_network_id'], ENT_QUOTES, 'UTF-8');
 	$html['landing_page_type'] = htmlentities($_POST['landing_page_type'], ENT_QUOTES, 'UTF-8');
@@ -146,199 +146,221 @@ if (($_GET['edit_landing_page_id']) and ($_SERVER['REQUEST_METHOD'] != 'POST')) 
 if ((($editing == true) or ($add_success != true)) and ($mysql['aff_campaign_id'])) {
     //now grab the affiliate network id, per that aff campaign id
     $aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."'";
-    $aff_campaign_result = mysql_query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-    $aff_campaign_row = mysql_fetch_assoc($aff_campaign_result);
+    $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
+    $aff_campaign_row = $aff_campaign_result->fetch_assoc();
 
-    $mysql['aff_network_id'] = mysql_real_escape_string($aff_campaign_row['aff_network_id']);
+    $mysql['aff_network_id'] = $db->real_escape_string($aff_campaign_row['aff_network_id']);
     $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `aff_network_id`='".$mysql['aff_network_id']."'";
-    $aff_network_result = mysql_query($aff_network_sql) or record_mysql_error($aff_network_sql);
-    $aff_network_row = mysql_fetch_assoc($aff_network_result);
+    $aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
+    $aff_network_row = $aff_network_result->fetch_assoc();
 
     $html['aff_network_id'] = htmlentities($aff_network_row['aff_network_id'], ENT_QUOTES, 'UTF-8');
 }
 
 template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 		
-<div id="info">
-	<h2>Landing Page Setup (optional)</h2>
-	Please type in the URL addresses of the landing pages you plan on using.  <a class="onclick_color" onclick="Effect.toggle('helper','appear')">[help]</a>
-     <div style="display: none;" id="helper">
-	<br/><br/><strong>A Simple Landing Page</strong> is a landing page that only has one offer associated with it.<br/><br/>
-	Where as an <strong>Advanced Landing Page</strong> is a landing page that can run several offers on it, an example being a ringtone landing page.  Where you have outgoing links to several different carriers, which are really linked to different affiliate campaigns because some ringtone programs only payout on specific carriers.  So you have mutiple offers that someone can click through on your landing page.
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="row">
+			<div class="col-xs-5">
+				<h6>Landing Page Setup (optional)</h6>
+			</div>
+			<div class="col-xs-7">
+				<div class="<?php if($error) echo "error"; else echo "success";?> pull-right" style="margin-top: 20px;">
+					<small>
+						<?php if ($error) { ?> 
+							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token']; ?>
+						<?php } ?>
+						<?php if ($add_success == true) { ?>
+							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
+						<?php } ?>
+						<?php if ($delete_success == true) { ?>
+							<span class="fui-check-inverted"></span> You deletion was successful. You have succesfully removed a landing page.
+						<?php } ?>
+						
+					</small>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="col-xs-12">
+		<small>Please type in the URL addresses of the landing pages you plan on using. </small>
+	
 	</div>
 </div>
 
-<table cellspacing="0" cellpadding="0" class="setup">
-    <tr valign="top">
-        <td>
-            <?php if ($error) { ?>
-                <div class="warning"><div><h3>There were errors with your submission.</h3></div></div>
-            <?php } echo $error['token']; ?>
+<div class="row form_seperator" style="margin-bottom:15px;">
+	<div class="col-xs-12"></div>
+</div>
 
-            <?php if ($add_success == true) { ?>
-                <div class="success"><div><h3>Your submission was successful</h3>Your changes were made succesfully.</div></div>
-            <?php } ?>
+<div class="row">
+	<div class="col-xs-7">
+		<small><strong>Add A Landing Page (optional)</strong></small><br/>
+		<span class="infotext">Here you can add different landing pages you might use with your marketing.</span>
 
-            <?php if ($delete_success == true) { ?>
-                <div class="success"><div><h3>You deletion was successful</h3>You have succesfully removed a campaign.</div></div>
-            <?php } ?>
-			<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>">
-                <input name="landing_page_id" type="hidden" value="<?php echo $html['landing_page_id']; ?>"/>    
-                <table>
-                    <tr>
-                        <td colspan="2">
-					<h2 class="green">Add A Landing Page (optional)</h2>
-                            	<p style="text-align: justify;">Here you can add different landing pages you might use with your ppc marketing.</p>  
-				</td>
-			</tr>
-			<tr><td/><br/></tr>
-					<tr valign="top">
-				<td class="left_caption">Landing Page Type <a class="onclick_color" style="font-weight: normal; " onclick="alert('A Simple Landing Page is a landing page that only has one offer associated with it. Where as an Advanced Landing Page is a landing page that can run several offers on it, an example being a ringtone landing page.  Where you have outgoing links to several different carriers, which are really linked to different affiliate campaigns because some ringtone programs only payout on specific carriers.  So you have mutiple offers that someone can click through on your landing page.');">[?]</a></td>	
-				<td>
-					<input type="radio" name="landing_page_type" value="0" <?php if ($html['landing_page_type'] == '0' or !$html['landing_page_type']) { echo ' CHECKED '; }  ?> onClick="landing_page_select(this.value);"> Simple (One Offer on the page)<br/>
-					<input type="radio" name="landing_page_type" value="1" <?php if ($html['landing_page_type'] == '1') { echo ' CHECKED '; } ?> onClick="landing_page_select(this.value);"> Advanced (Mutiple Offers on the page)	
-					<?php echo $error['landing_page_type']; ?>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="2"><hr/></td>
-			</tr>
+		<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" class="form-horizontal" role="form" style="margin:15px 0px;">
+			<input name="landing_page_id" type="hidden" value="<?php echo $html['landing_page_id']; ?>"/>
+			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
+				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Landing Page Type <span class="fui-info" data-toggle="tooltip" title="A Simple Landing Page is a landing page that only has one offer associated with it. Where as an Advanced Landing Page is a landing page that can run several offers on it. An example would be a retail landing page where you have outgoing links to several different products."></span></label>
 
-			<tr id="lp_aff_network" <?php if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
-				<td class="left_caption">Aff Network</td>
-				<td>
-					<img id="aff_network_id_div_loading" src="/202-img/loader-small.gif"/>
-					<div id="aff_network_id_div" style="display: inline;"></div>
-				</td>
-			</tr>
-			<tr id="lp_aff_campaign" <?php if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
-				<td class="left_caption">Aff Campaign</td>
-				<td>
-					<img id="aff_campaign_id_div_loading" src="/202-img/loader-small.gif" style="display: none;"/>
-					<div id="aff_campaign_id_div" style="display: inline;"></div>
-				</td>
-			</tr>
+				<div class="col-xs-8" style="margin-top: 10px;">
+					<label class="radio" style="line-height: 0.5;">
+	            		<input type="radio" name="landing_page_type" id="landing_page_type1" value="0" data-toggle="radio" <?php if ($html['landing_page_type'] == '0' or !$html['landing_page_type']) { echo 'checked'; }?>>
+	            			Simple (One Offer on the page)
+	          		</label>
+	          		<label class="radio" style="line-height: 0.5;">
+	            		<input type="radio" name="landing_page_type" id="landing_page_type2" value="1" data-toggle="radio" <?php if ($html['landing_page_type'] == '1') { echo 'checked'; }?>>
+	            			Advanced (Mutiple Offers on the page)
+	          		</label>
+	          	</div>
+	        </div>
 
-			<tr>
-				<td class="left_caption">LP Nickname</td>
-				<td>
-					<input type="text" name="landing_page_nickname" value="<?php echo $html['landing_page_nickname']; ?>" style="width: 200px;"/>
-				</td>
-			</tr>
-			<tr>
-				<td class="left_caption">Landing Page URL</td>
-				<td><input type="text" name="landing_page_url" style="width: 200px; display: inline;" value="<?php echo $html['landing_page_url']; ?>"/></td>
-			</tr>                               
-			<tr>
-				<td/>
-				<td>
-					<input type="submit" value="<?php if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"/>
-					<?php if ($editing == true) { ?>
-						<input type="submit" value="Cancel" style="display: inline; margin-left: 10px;" onclick="window.location='/tracking202/setup/landing_pages.php'; return false; "/>   
+	        <div id="aff-campaign-div" <?php if ($html['landing_page_type'] == '1') { echo 'style="display:none;"'; } ?>>
+		        <div class="form-group <?php if($error['aff_campaign_id']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        	<label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Category:</label>
+		        	<div class="col-xs-6" style="margin-top: 10px;">
+		        		<img id="aff_network_id_div_loading" class="loading" src="/202-img/loader-small.gif"/>
+	                	<div id="aff_network_id_div"></div>
+		        	</div>
+		        </div>
+
+		        <div id="aff-campaign-group" class="form-group <?php if($error['aff_campaign_id']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        	<label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Campaign:</label>
+		        	<div class="col-xs-6" style="margin-top: 10px;">
+		        		<img id="aff_campaign_id_div_loading" class="loading" src="/202-img/loader-small.gif" style="display: none;"/>
+	                    <div id="aff_campaign_id_div">
+	                    	<select class="form-control input-sm" id="aff_campaign_id" disabled="">
+	                    		<option>--</option>
+	                    	</select>
+	                    </div>
+		        	</div>
+		        </div>
+	        </div>
+
+	        <div class="form-group <?php if($error['landing_page_nickname']) echo "has-error";?>" style="margin-bottom: 0px;">
+		        <label for="landing_page_nickname" class="col-xs-4 control-label" style="text-align: left;">LP Nickname:</label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+	                <input type="text" class="form-control input-sm" id="landing_page_nickname" name="landing_page_nickname" value="<?php echo $html['landing_page_nickname']; ?>">
+		        </div>
+		    </div>
+
+		    <div class="form-group <?php if($error['landing_page_url']) echo "has-error";?>" style="margin-bottom: 10px;">
+		        <label for="landing_page_url" class="col-xs-4 control-label" style="text-align: left;">Landing Page URL:</label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+	                <input type="text" class="form-control input-sm" id="landing_page_url" name="landing_page_url" value="<?php echo $html['landing_page_url']; ?>">
+		        </div>
+		    </div>
+
+		    <div class="form-group">
+				<div class="col-xs-6 col-xs-offset-4">
+				    <?php if ($editing == true) { ?>
+					    <div class="row">
+					    	<div class="col-xs-6">
+					    		<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>					
+					    	</div>
+					    	<div class="col-xs-6">
+								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'];?>">
+								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='/tracking202/setup/landing_pages.php'; return false;">Cancel</button>					    		</div>
+					    	</div>
+				    <?php } else { ?>
+				    		<button class="btn btn-sm btn-p202 btn-block" type="submit" id="addedLp" >Add</button>					
 					<?php } ?>
-				</td>
-			</tr>
-		</table>
-		<?php echo $error['aff_campaign_id']; ?>
-		<?php echo $error['landing_page_id']; ?>
-		<?php echo $error['landing_page_nickname']; ?>
-		<?php echo $error['landing_page_url']; ?>
-		<?php echo $error['wrong_user']; ?>
-	</form>
-		
-		</td>
-		<td class="setup-right">  
-			<h2 class="green">My Advanced Landing Pages</h2> 
-			<ul style="margin-top: 0px;">
-			 	<?php $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-				$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND landing_page_type='1' AND landing_page_deleted='0'";
-				$landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
-				
-				while ($landing_page_row = mysql_fetch_array($landing_page_result, MYSQL_ASSOC)) {
-					$html['landing_page_nickname'] = htmlentities($landing_page_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');
-                              $html['landing_page_id'] = htmlentities($landing_page_row['landing_page_id'], ENT_QUOTES, 'UTF-8');
-                              printf('<li>%s - <a href="?edit_landing_page_id=%s" style="font-size: 9px;">edit</a> - <a href="?delete_landing_page_id=%s" style="font-size: 9px;">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id']);
-				} ?>
-			</ul>
-			<br/><br/>
-			<h2 class="green">My Simple Landing Pages</h2>
-			<ul>        
-			<?php  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-				$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
-                $aff_network_result = mysql_query($aff_network_sql) or record_mysql_error($aff_network_sql);
-                if (mysql_num_rows($aff_network_result) == 0 ) { 
-                    ?><li>You have not landing_pageded any networks.</li><?
-                }
-				
-                while ($aff_network_row = mysql_fetch_array($aff_network_result, MYSQL_ASSOC)) {
-                    $html['aff_network_name'] = htmlentities($aff_network_row['aff_network_name'], ENT_QUOTES, 'UTF-8');
-                    $url['aff_network_id'] = urlencode($aff_network_row['aff_network_id']);
-                    
-                    printf('<li>%s</li>', $html['aff_network_name']);
-                    
-                    ?><ul style="margin-top: 0px;"><?
-                                        
-                        //print out the individual accounts per each PPC network
-                        $mysql['aff_network_id'] = mysql_real_escape_string($aff_network_row['aff_network_id']);
-						$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_network_id`='".$mysql['aff_network_id']."' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
-                        $aff_campaign_result = mysql_query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-                         
-                        while ($aff_campaign_row = mysql_fetch_array($aff_campaign_result, MYSQL_ASSOC)) {
-                            
-                            $html['aff_campaign_name'] = htmlentities($aff_campaign_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
-                            $html['aff_campaign_payout'] = htmlentities($aff_campaign_row['aff_campaign_payout'], ENT_QUOTES, 'UTF-8');
-						
-                            printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
-                        
-                            ?><ul style="margin-top: 0px;"><?php 
-                            
-                                $mysql['aff_campaign_id'] = mysql_real_escape_string($aff_campaign_row['aff_campaign_id']);
-								$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `landing_page_deleted`='0' AND landing_page_type='0'";
-								$landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
-								
-                                while ($landing_page_row = mysql_fetch_array($landing_page_result, MYSQL_ASSOC)) {
-									
-									$html['landing_page_nickname'] = htmlentities($landing_page_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');
-                                    $html['landing_page_id'] = htmlentities($landing_page_row['landing_page_id'], ENT_QUOTES, 'UTF-8');
-                                    
-                                    printf('<li>%s - <a href="?edit_landing_page_id=%s" style="font-size: 9px;">edit</a> - <a href="?delete_landing_page_id=%s" style="font-size: 9px;">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id']);
-						
-                                    
-                                }
+				</div>
+			</div>
 
-                            ?></ul><?php                        
-                        } 
-                    
-                    ?></ul><?
-                    
-                } ?>
-            </ul>
-        </td>
-    </tr>                
-</table>
+		</form>
+	</div>
 
+	<div class="col-xs-4 col-xs-offset-1">
+		<div class="panel panel-default">
+			<div class="panel-heading">My Advanced Landing Pages</div>
+			<div class="panel-body">
+				<ul>
+	                <?php $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	                $landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND landing_page_type='1' AND landing_page_deleted='0'";
+	                $landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
+	                
+	                if ($landing_page_result->num_rows == 0 ) { 
+		                ?><li>You have no advanced landing page.</li><?
+		            }
+
+	                while ($landing_page_row = $landing_page_result->fetch_array(MYSQL_ASSOC)) {
+	                    $html['landing_page_nickname'] = htmlentities($landing_page_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');
+	                              $html['landing_page_id'] = htmlentities($landing_page_row['landing_page_id'], ENT_QUOTES, 'UTF-8');
+	                              printf('<li>%s - <a href="?edit_landing_page_id=%s">edit</a> - <a href="?delete_landing_page_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id']);
+	                } ?>
+            	</ul>
+			</div>
+		</div>
+
+		<div class="panel panel-default">
+			<div class="panel-heading">My Simple Landing Pages</div>
+			<div class="panel-body">
+				<ul>        
+		            <?php  $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+		                $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
+		                $aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
+		                if ($aff_network_result->num_rows == 0 ) { 
+		                    ?><li>You have no simple landing page.</li><?
+		                }
+		                
+		                while ($aff_network_row = $aff_network_result->fetch_array(MYSQL_ASSOC)) {
+		                    $html['aff_network_name'] = htmlentities($aff_network_row['aff_network_name'], ENT_QUOTES, 'UTF-8');
+		                    $url['aff_network_id'] = urlencode($aff_network_row['aff_network_id']);
+		                    
+		                    printf('<li>%s</li>', $html['aff_network_name']);
+		                    
+		                    ?><ul><?
+		                                        
+		                        //print out the individual accounts per each PPC network
+		                        $mysql['aff_network_id'] = $db->real_escape_string($aff_network_row['aff_network_id']);
+		                        $aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_network_id`='".$mysql['aff_network_id']."' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
+		                        $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
+		                         
+		                        while ($aff_campaign_row = $aff_campaign_result->fetch_array(MYSQL_ASSOC)) {
+		                            
+		                            $html['aff_campaign_name'] = htmlentities($aff_campaign_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
+		                            $html['aff_campaign_payout'] = htmlentities($aff_campaign_row['aff_campaign_payout'], ENT_QUOTES, 'UTF-8');
+		                        
+		                            printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
+		                        
+		                            ?><ul style="margin-top: 0px;"><?php 
+		                            
+		                                $mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_row['aff_campaign_id']);
+		                                $landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `landing_page_deleted`='0' AND landing_page_type='0'";
+		                                $landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
+		                                
+		                                while ($landing_page_row = $landing_page_result->fetch_array(MYSQL_ASSOC)) {
+		                                    
+		                                    $html['landing_page_nickname'] = htmlentities($landing_page_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');
+		                                    $html['landing_page_id'] = htmlentities($landing_page_row['landing_page_id'], ENT_QUOTES, 'UTF-8');
+		                                    
+		                                    printf('<li>%s - <a href="?edit_landing_page_id=%s">edit</a> - <a href="?delete_landing_page_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id']);
+		                        
+		                                    
+		                                }
+
+		                            ?></ul><?php                        
+		                        } 
+		                    
+		                    ?></ul><?
+		                    
+		                } 
+		            ?>
+	            </ul>
+			</div>
+		</div>
+	</div>
+
+</div>
 <!-- open up the ajax aff network -->
 <script type="text/javascript">
-    
-   load_aff_network_id('<?php echo $html['aff_network_id']; ?>');
+$(document).ready(function() {
+
+   	load_aff_network_id('<?php echo $html['aff_network_id']; ?>');
     <?php if ($html['aff_network_id'] != '') { ?>
         load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>','<?php echo $html['aff_campaign_id']; ?>');
     <?php } ?>
+});
 </script>
-
-				
-					<script type="text/javascript">
-						function landing_page_select(landing_page_type) {
-							if (landing_page_type == '0') { 
-								$('lp_aff_network').style.display = 'table-row';
-								$('lp_aff_campaign').style.display = 'table-row';
-							} else if (landing_page_type == '1') {
-								$('lp_aff_network').style.display = 'none';
-								$('lp_aff_campaign').style.display = 'none';	
-								load_aff_network_id(0);
-								load_aff_campaign_id(0,0);
-							}	
-						}
-					</script>	
-        
 <?php template_bottom($server_row);

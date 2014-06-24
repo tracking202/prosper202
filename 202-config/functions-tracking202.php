@@ -1,9 +1,14 @@
 <?php 
 
+use UAParser\Parser;
 
 //This function will return true, if a user is logged in correctly, and false, if they are not.
 
 function send_email($to,$subject,$message,$from,$type_id) {
+
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	global $server_row;
 	
 	//add spam compliancy to email
@@ -31,18 +36,18 @@ function send_email($to,$subject,$message,$from,$type_id) {
 	//record email in mysql database
 	
 	//get information from sender
-		$mysql['email_from'] = mysql_real_escape_string($from);
+		$mysql['email_from'] = $db->real_escape_string($from);
 		$user_sql = "SELECT user_id FROM users_info WHERE user_email='".$mysql['email_from']."'";
-		$user_result = _mysql_query($user_sql) ; ; ; //($user_sql);
-		$user_row = mysql_fetch_assoc($user_result);
-		$mysql['email_from_user_id'] = mysql_real_escape_string($user_row['user_id']);    
+		$user_result = _mysqli_query($user_sql) ; ; ; //($user_sql);
+		$user_row = $user_result->fetch_assoc();
+		$mysql['email_from_user_id'] = $db->real_escape_string($user_row['user_id']);    
 	
 	//get information from receiever
-		$mysql['email_to'] = mysql_real_escape_string($to);
+		$mysql['email_to'] = $db->real_escape_string($to);
 		$user_sql = "SELECT user_id FROM users_info WHERE user_email='".$mysql['email_to']."'";
-		$user_result = _mysql_query($user_sql) ; ; //($user_sql);
-		$user_row = mysql_fetch_assoc($user_result);
-		$mysql['email_to_user_id'] = mysql_real_escape_string($user_row['user_id']);    
+		$user_result = _mysqli_query($user_sql) ; ; //($user_sql);
+		$user_row = $user_result->fetch_assoc();
+		$mysql['email_to_user_id'] = $db->real_escape_string($user_row['user_id']);    
 
 		
 	//get server information
@@ -51,12 +56,12 @@ function send_email($to,$subject,$message,$from,$type_id) {
 		 
 		$ip_id = INDEXES::get_ip_id($_SERVER['HTTP_X_FORWARDED_FOR']);
 		
-		$mysql['site_url_id'] = mysql_real_escape_string($site_url_id);
-		$mysql['ip_id'] = mysql_real_escape_string($ip_id);
+		$mysql['site_url_id'] = $db->real_escape_string($site_url_id);
+		$mysql['ip_id'] = $db->real_escape_string($ip_id);
 		$mysql['email_time'] = time();
-		$mysql['email_subject'] = mysql_real_escape_string($subject);
-		$mysql['email_message'] = mysql_real_escape_string($message);
-		$mysql['email_type_id'] = mysql_real_escape_string($type_id);
+		$mysql['email_subject'] = $db->real_escape_string($subject);
+		$mysql['email_message'] = $db->real_escape_string($message);
+		$mysql['email_type_id'] = $db->real_escape_string($type_id);
 		
 		 
 	//record email in mysql database
@@ -71,16 +76,19 @@ function send_email($to,$subject,$message,$from,$type_id) {
 										email_message = '" . $mysql['email_message'] . "',
 										email_type_id = '" . $mysql['email_type_id'] . "',
 										site_url_id = '" . $mysql['site_url_id'] . "'";
-		$record_result = _mysql_query($record_sql);  ; //($record_sql);
+		$record_result = _mysqli_query($record_sql);  ; //($record_sql);
 		
 }
 
-function record_mysql_error($sql)
-{
+function record_mysql_error($sql) {
+
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	global $server_row;
 										 
 	//record the mysql error
-		$clean['mysql_error_text'] = mysql_error(); 
+		$clean['mysql_error_text'] = mysqli_error($db); 
 
 	//if on dev server, echo the error
 		
@@ -89,17 +97,17 @@ function record_mysql_error($sql)
 		
 		 
 		$ip_id = INDEXES::get_ip_id($_SERVER['HTTP_X_FORWARDED_FOR']);
-		$mysql['ip_id'] = mysql_real_escape_string($ip_id);     
+		$mysql['ip_id'] = $db->real_escape_string($ip_id);     
 		
 		$site_url = 'http://'.$_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
 		$site_id = INDEXES::get_site_url_id($site_url); 
-		$mysql['site_id'] = mysql_real_escape_string($site_id); 
+		$mysql['site_id'] = $db->real_escape_string($site_id); 
 
-		$mysql['user_id'] = mysql_real_escape_string(strip_tags($_SESSION['user_id']));
-		$mysql['mysql_error_text'] = mysql_real_escape_string($clean['mysql_error_text']);
-		$mysql['mysql_error_sql'] = mysql_real_escape_string($sql);
-		$mysql['script_url'] = mysql_real_escape_string(strip_tags($_SERVER['SCRIPT_URL'])); 
-		$mysql['server_name'] = mysql_real_escape_string(strip_tags($_SERVER['SERVER_NAME'])); 
+		$mysql['user_id'] = $db->real_escape_string(strip_tags($_SESSION['user_id']));
+		$mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
+		$mysql['mysql_error_sql'] = $db->real_escape_string($sql);
+		$mysql['script_url'] = $db->real_escape_string(strip_tags($_SERVER['SCRIPT_URL'])); 
+		$mysql['server_name'] = $db->real_escape_string(strip_tags($_SERVER['SERVER_NAME'])); 
 		$mysql['mysql_error_time'] = time();
 									 
 		$report_sql = "INSERT     INTO  202_mysql_errors
@@ -109,7 +117,7 @@ function record_mysql_error($sql)
 										ip_id='".$mysql['ip_id']."',
 										site_id='".$mysql['site_id']."',
 										mysql_error_time='".$mysql['mysql_error_time']."'"; 
-		$report_query = _mysql_query($report_sql);
+		$report_query = _mysqli_query($report_sql);
 											 
 	//email administration of the error
 		$to = $_SERVER['SERVER_ADMIN'];
@@ -125,7 +133,7 @@ function record_mysql_error($sql)
 					
 					. . . . . . . . <br/><br/>
 												 
-					_mysql_query: ' . $sql . '<br/><br/>
+					_mysqli_query: ' . $sql . '<br/><br/>
 					 
 					mysql_error: ' . $clean['mysql_error_text'];
 		$from = $_SERVER['SERVER_ADMIN'];
@@ -148,6 +156,7 @@ function record_mysql_error($sql)
 
 
 function dollar_format($amount, $cpv = false) {
+	setlocale(LC_MONETARY, 'en_US.UTF-8');
 	if ($cpv == true) {
 		$decimals = 5;
 	} else {
@@ -155,9 +164,9 @@ function dollar_format($amount, $cpv = false) {
 	}
 	
 	if ($amount >= 0) {
-		$new_amount = "\$".sprintf("%.".$decimals."f",$amount);
+		$new_amount = money_format('%.'.$decimals.'n' ,$amount);
 	} else { 
-		$new_amount = "\$".sprintf("%.".$decimals."f",substr($amount,1,strlen($amount)));
+		$new_amount = money_format('%.'.$decimals.'n' ,$amount);
 		$new_amount = '('.$new_amount.')';    
 	}
 	
@@ -170,13 +179,14 @@ function dollar_format($amount, $cpv = false) {
 
 function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limit, $show_breakdown, $show_type, $show_cpc_or_cpv = true, $show_adv_breakdown = false) { 
   	global $navigation;
- 
+ 	$database = DB::getInstance();
+	$db = $database->getConnection();
 	AUTH::set_timezone($_SESSION['user_timezone']);
   		 
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
-	$user_result = _mysql_query($user_sql);
-	$user_row = mysql_fetch_assoc($user_result);
+	$user_result = _mysqli_query($user_sql);
+	$user_row = $user_result->fetch_assoc();
 	
 	$html['user_pref_aff_network_id'] = htmlentities($user_row['user_pref_aff_network_id'], ENT_QUOTES, 'UTF-8');
 	$html['user_pref_aff_campaign_id'] = htmlentities($user_row['user_pref_aff_campaign_id'], ENT_QUOTES, 'UTF-8');
@@ -193,526 +203,469 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 	$time = grab_timeframe();   
 	$html['from'] = date('m/d/Y - G:i', $time['from']);
 	$html['to'] = date('m/d/Y - G:i', $time['to']);  
-	$html['country'] = htmlentities($user_row['user_pref_country'], ENT_QUOTES, 'UTF-8');
 	$html['ip'] = htmlentities($user_row['user_pref_ip'], ENT_QUOTES, 'UTF-8');
+	$html['user_pref_country_id'] = htmlentities($user_row['user_pref_country_id'], ENT_QUOTES, 'UTF-8');
+	$html['user_pref_region_id'] = htmlentities($user_row['user_pref_region_id'], ENT_QUOTES, 'UTF-8');
+	$html['user_pref_isp_id'] = htmlentities($user_row['user_pref_isp_id'], ENT_QUOTES, 'UTF-8');
 	$html['referer'] = htmlentities($user_row['user_pref_referer'], ENT_QUOTES, 'UTF-8');
 	$html['keyword'] = htmlentities($user_row['user_pref_keyword'], ENT_QUOTES, 'UTF-8'); 
-	$html['page'] = htmlentities($page, ENT_QUOTES, 'UTF-8'); ?>
+	$html['page'] = htmlentities($page, ENT_QUOTES, 'UTF-8');
+	$html['user_pref_device_id'] = htmlentities($user_row['user_pref_device_id'], ENT_QUOTES, 'UTF-8');
+	$html['user_pref_browser_id'] = htmlentities($user_row['user_pref_browser_id'], ENT_QUOTES, 'UTF-8');
+	$html['user_pref_platform_id'] = htmlentities($user_row['user_pref_platform_id'], ENT_QUOTES, 'UTF-8'); ?>
 	
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+	<div id="preferences-wrapper">
+		<span style="position: absolute; font-size:12px;"><span class="fui-search"></span> Refine your search: </span>
+		<form id="user_prefs" onsubmit="return false;" class="form-inline text-right" role="form">
+		<div class="row">
+			<div class="col-xs-12">
+				<label for="from">Start date: </label>
+				<div class="form-group datepicker" style="margin-right: 5px;">
+				    <input type="text" class="form-control input-sm" name="from" id="from" value="<?php echo $html['from']; ?>">
+				</div>
 
-	<form onsubmit="return false;" id="user_prefs">
-		<input type="hidden" name="duration" value="1"/>
-		<input type="hidden" name="user_pref_adv" id="user_pref_adv" value="<?php if ($user_row['user_pref_adv'] == '1') { echo '1'; } ?>" />
-		
-		<table class="s-top" cellspacing="0" cellpadding="0" id="s-top">
-			<tr valign="top">
-				<td class="s-top-left"/>
-				<td class="s-top-middle">
-					<table class="s-top-middle-table" cellspacing="0" cellpadding="0">
-						<tr>
-							<td class="s-top-middle-table-left">Refine your search:</td>
-							<td >
-								<table cellspacing="0" cellpadding="0" class="s-top-middle-table-right" <?php if ($show_time == false) { echo 'style="display:none;"'; } ?>>
-									<tr>
-										<td>
-											Start Date: <input onclick=" $('from_cal').style.display='block'; $('to_cal').style.display='none';  unset_user_pref_time_predefined();"   class="s-input s-input-date" type="text" name="from" id="from" value="<?php echo $html['from']; ?>" onkeydown="$('from_cal').style.display='none'; unset_user_pref_time_predefined();"/>
-											
-											<div id="from_cal" class="scal tinyscal" style="position: absolute; z-index: 10; display: none;"></div>
-											<script type="text/javascript">
-												var options = ({
-												     updateformat: 'mm/dd/yyyy - 0:00',
-	            									     month:<?php echo date('m', $time['from']); ?>,
-												     year:<?php echo date('Y', $time['from']); ?>,
-												     day: <?php echo date('d', $time['from']); ?>
-												});
-												var from_cal = new scal('from_cal','from', options);
-											</script>
-											
-										</td>
-										<td>
-											End Date: <input onclick=" $('to_cal').style.display='block'; $('from_cal').style.display='none';  unset_user_pref_time_predefined();"  class="s-input s-input-date" type="text" name="to" id="to" value="<?php echo $html['to']; ?>" onkeydown="$('to_cal').style.display='none'; unset_user_pref_time_predefined();"/>		
-											
-											<div id="to_cal" class="scal tinyscal" style="position: absolute; z-index: 10; display: none;"></div>
-											<script type="text/javascript">
-												var options = ({
-												     updateformat: 'mm/dd/yyyy - 23:59',
-	            									     month:<?php echo date('m', $time['from']); ?>,
-												     year:<?php echo date('Y', $time['from']); ?>,
-												     day: <?php echo date('d', $time['from']); ?>
-												});
-												var to_cal = new scal('to_cal','to', options);
-											</script>
-											
-										</td>
-										<td><select class="s-input" name="user_pref_time_predefined" id="user_pref_time_predefined" onchange="set_user_pref_time_predefined();">
-											<option value="">Custom Date</option>                                       
-											<option <?php if ($time['user_pref_time_predefined'] == 'today') { echo 'selected=""'; } ?> value="today">Today</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'yesterday') { echo 'selected=""'; } ?> value="yesterday">Yesterday</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'last7') { echo 'selected=""'; } ?> value="last7">Last 7 Days</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'last14') { echo 'selected=""'; } ?> value="last14">Last 14 Days</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'last30') { echo 'selected=""'; } ?> value="last30">Last 30 Days</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'thismonth') { echo 'selected=""'; } ?> value="thismonth">This Month</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'lastmonth') { echo 'selected=""'; } ?> value="lastmonth">Last Month</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'thisyear') { echo 'selected=""'; } ?> value="thisyear">This Year</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'lastyear') { echo 'selected=""'; } ?> value="lastyear">Last Year</option>
-											<option <?php if ($time['user_pref_time_predefined'] == 'alltime') { echo 'selected=""'; } ?> value="alltime">All Time</option>
-										</select></td>
-									</tr>
-								</table>
-							</td>
-						</tr>
-					</table>
-				</td>
-				<td class="s-top-right"/>
-			</tr>
-		</table>
-	   
-	   <div class="s-bottom" >
-	   <?php if ($navigation[1] == 'tracking202') { ?>
-			<div id="s-main" <?php if ($show_adv == false) { echo 'style="display:none;"'; } ?>>
-				<table class="s-table" cellspacing="0" cellpadding="0">
-					<tr>
-						<td >
-							<table cellspacing="0" cellpadding="0" class="s-table-left">
-								<tr>
-									<td>PPC Network/Account</td>
-									<td><img id="ppc_network_id_div_loading" style="display: none;" src="/202-img/loader-small.gif"/><div id="ppc_network_id_div"></div></td>
-									<td class="s-td-slim"><img id="ppc_account_id_div_loading" style="display: none;" src="/202-img/loader-small.gif"/><div id="ppc_account_id_div"></div></td> 
-								</tr>
-							</table>
-						</td>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-right">
-								<tr>
-									<td>Keyword</td>
-									<td><input name="keyword" id="keyword" type="text" value="<?php echo $html['keyword']; ?>"/></td> 
-								</tr>
-							</table>
-						</td>
-					</tr>
-					<tr>
-						<td>
-							 <table cellspacing="0" cellpadding="0" class="s-table-left">
-								<tr>
-									<td>Aff Network/Campaign</td>
-									<td><img id="aff_network_id_div_loading" style="display: none;" src="/202-img/loader-small.gif"/><div id="aff_network_id_div" ></div></td>
-									<td class="s-td-slim"><img id="aff_campaign_id_div_loading" style="display: none;" src="/202-img/loader-small.gif"/><div id="aff_campaign_id_div"></div></td>
-								</tr>
-							</table>
-						</td>
-						<td >
-							<table cellspacing="0" cellpadding="0" class="s-table-right">
-								<tr>
-									<td>Visitor IP</td>
-									<td><input name="ip" id="ip" type="text" value="<?php echo $html['ip']; ?>"/> </td> 
-								</tr>
-							</table>
-						</td>  
-					</tr>
-				</table>
+				<label for="to">End date: </label>
+				<div class="form-group datepicker">
+				    <input type="text" class="form-control input-sm" name="to" id="to" value="<?php echo $html['to']; ?>">
+				</div>
+
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_time_predefined">Date</label>
+					<select class="form-control input-sm" name="user_pref_time_predefined" id="user_pref_time_predefined" onchange="set_user_pref_time_predefined();">
+					    <option value="">Custom Date</option>                                       
+						<option <?php if ($time['user_pref_time_predefined'] == 'today') { echo 'selected=""'; } ?> value="today">Today</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'yesterday') { echo 'selected=""'; } ?> value="yesterday">Yesterday</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'last7') { echo 'selected=""'; } ?> value="last7">Last 7 Days</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'last14') { echo 'selected=""'; } ?> value="last14">Last 14 Days</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'last30') { echo 'selected=""'; } ?> value="last30">Last 30 Days</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'thismonth') { echo 'selected=""'; } ?> value="thismonth">This Month</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'lastmonth') { echo 'selected=""'; } ?> value="lastmonth">Last Month</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'thisyear') { echo 'selected=""'; } ?> value="thisyear">This Year</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'lastyear') { echo 'selected=""'; } ?> value="lastyear">Last Year</option>
+						<option <?php if ($time['user_pref_time_predefined'] == 'alltime') { echo 'selected=""'; } ?> value="alltime">All Time</option>
+					</select>
+				</div>
 			</div>
-			
-			<div class="s-adv" id="s-adv" style="<?php if (($user_row['user_pref_adv'] != '1') or ($show_adv == false)) { echo 'display: none;'; } ?>">
-				<div class="s-border" <?php if ($show_adv == false) { echo 'style="display:none;"'; } ?>></div>
-				<table class="s-table" cellspacing="0" cellpadding="0">
-					<tr>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-left">
-								<tr>
-									<td>Text Ad</td>
-									<td><img id="text_ad_id_div_loading" style="display: none;" src="/202-img/loader-small.gif"/><div id="text_ad_id_div"></div></td>
-								</tr>
-							</table>
-						</td>
-						<td rowspan="3"><img id="ad_preview_div_loading" style="display: none;" src="/202-img/loader-small.gif"/><div id="ad_preview_div"></div></td>
+		</div>
+
+		<div class="form_seperator" style="margin:5px 0px; padding:1px">
+			<div class="col-xs-12"></div>
+		</div>
+
+		<?php if ($navigation[1] == 'tracking202') { ?>
+		<div class="row" style="text-align:left; <?php if ($show_adv == false) { echo 'display:none;'; } ?>">
+			<div class="col-xs-12" style="margin-top:5px;">
+				<div class="row">
+					<div class="col-xs-6">
+						<label>PPC Network/Account: </label>
 						
-					</tr>
-					<tr>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-left">
-								<tr>
-									<td>Method of Promotion</td>
-									<td><img id="method_of_promotion_div_loading" style="display: none;" src="/202-img/loader-small.gif"/><div id="method_of_promotion_div" style="display: none;"></div></td>
-								</tr>
-							</table>
-						</td>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-right">
-								<tr>
-									<td>Country</td>
-									<td><input name="country" id="country" readonly="readonly" type="text" value="<?php echo $html['country']; ?>"/> </td> 
-								</tr>
-							</table>
-						</td>
-					</tr>
-					<tr>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-left">
-								<tr>
-									<td>Landing Page</td>
-									<td>
-										<img id="landing_page_div_loading" style="display: none;" src="/202-img/loader-small.gif"/>
-										<div id="landing_page_div" style="display: none;"></div>
-									</td>
-								</tr>
-							</table>
-						</td>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-right">
-								<tr>
-									<td>Referer</td>
-									<td><input name="referer" id="referer" type="text" value="<?php echo $html['referer']; ?>"/> </td> 
-								</tr>
-							</table>
-						</td>
-					</tr>
-				</table>
+						<div class="form-group">
+							<img id="ppc_network_id_div_loading" class="loading" style="display: none;" src="/202-img/loader-small.gif"/>
+							<div id="ppc_network_id_div"></div>
+						</div>
+
+						<div class="form-group">
+							<div id="ppc_account_id_div"></div>
+						</div>
+					</div>
+
+					<div class="col-xs-6" style="text-align:right">
+						<label>Visitor IP: </label>
+						<div class="form-group">
+							<input type="text" class="form-control input-sm" name="ip" id="ip" value="<?php echo $html['ip']; ?>"/>
+						</div>
+					</div>
+
+					<div class="col-xs-6">
+						<label>Aff Network/Campaign: </label>
+						<div class="form-group">
+							<img id="aff_network_id_div_loading" class="loading" style="display: none;" src="/202-img/loader-small.gif"/>
+							<div id="aff_network_id_div" ></div>
+						</div>
+
+						<div class="form-group">
+							<div id="aff_campaign_id_div"></div>
+						</div>
+					</div>
+
+					<div class="col-xs-6" style="text-align:right">
+						<div class="row">
+							<div class="col-xs-6">
+								<label>Keyword: </label>
+								<div class="form-group">
+									<input name="keyword" id="keyword" type="text" class="form-control input-sm" value="<?php echo $html['keyword']; ?>"/>
+								</div>
+							</div>
+							<div class="col-xs-6">
+								<label>Referer: </label>
+								<div class="form-group">
+									<input name="referer" id="referer" type="text" class="form-control input-sm" value="<?php echo $html['referer']; ?>"/>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
 			</div>
-			
+		</div>
+
+		<div class="form_seperator" style="margin:5px 0px; padding:1px; <?php if ($show_adv == false) { echo 'display:none;'; } ?>">
+			<div class="col-xs-12"></div>
+		</div>
+		<div id="more-options" style="height: 87px; <?php if (($user_row['user_pref_adv'] != '1') or ($show_adv == false)) { echo 'display: none;'; } ?>">
+			<div class="row" style="text-align:left;">
+				<div class="col-xs-12" style="margin-top:5px;">
+					<div class="row">
+						<div class="col-xs-6">
+							<label>Text Ad: </label>
+							
+							<div class="form-group">
+								<img id="text_ad_id_div_loading" class="loading" style="display: none;" src="/202-img/loader-small.gif"/>
+								<div id="text_ad_id_div" style="margin-left: 69px;"></div>
+							</div>
+
+							<div class="form-group">
+								<img id="ad_preview_div_loading" class="loading" style="display: none;" src="/202-img/loader-small.gif"/>
+								<div id="ad_preview_div" style="position: absolute;top: -12px; font-size:10px;"></div>
+							</div>
+						</div>
+
+						<div class="col-xs-6" style="text-align:right">
+							<div class="row">
+								<div class="col-xs-6">
+								<label>Device type: </label>
+								<div class="form-group">
+									<img id="device_id_div_loading" class="loading" style="right:0px; left: 5px;" src="/202-img/loader-small.gif"/>
+									<div id="device_id_div" style="top: -12px; font-size:10px;">
+										<select class="form-control input-sm" name="device_id" id="device_id">
+	    									<option value="0"> -- </option>
+	    								</select>
+									</div>
+								</div>
+							</div>
+
+							<div class="col-xs-6">
+								<label>Country: </label>
+								<div class="form-group">
+									<img id="country_id_div_loading" class="loading" style="right:0px; left: 5px;" src="/202-img/loader-small.gif"/>
+									<div id="country_id_div" style="top: -12px; font-size:10px;">
+										<select class="form-control input-sm" name="country_id" id="country_id">
+	    									<option value="0"> -- </option>
+	    								</select>
+									</div>
+								</div>
+							</div>
+							</div>
+						</div>
+
+						<div class="col-xs-6">
+							<label>Method of Promotion: </label>
+							<div class="form-group">
+								<img id="method_of_promotion_div_loading" class="loading" style="display: none;" src="/202-img/loader-small.gif"/>
+								<div id="method_of_promotion_div" style="margin-left: 6px;"></div>
+							</div>
+						</div>
+
+						<div class="col-xs-6" style="text-align:right">
+							<div class="row">
+								<div class="col-xs-6">
+									<label>Browser: </label>
+									<div class="form-group">
+										<img id="browser_id_div_loading" class="loading" style="right:0px; left: 5px;" src="/202-img/loader-small.gif"/>
+										<div id="browser_id_div" style="top: -12px; font-size:10px;">
+											<select class="form-control input-sm" name="browser_id" id="browser_id">
+		    									<option value="0"> -- </option>
+		    								</select>
+										</div>
+									</div>
+								</div>
+								<div class="col-xs-6">
+									<label>Region: </label>
+									<div class="form-group">
+										<img id="region_id_div_loading" class="loading" style="right:0px; left: 5px;" src="/202-img/loader-small.gif"/>
+										<div id="region_id_div" style="top: -12px; font-size:10px;">
+											<select class="form-control input-sm" name="region_id" id="region_id">
+		    									<option value="0"> -- </option>
+		    								</select>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+
+						<div class="col-xs-6">
+							<label>Landing Page: </label>
+							<div class="form-group">
+								<img id="landing_page_div_loading" class="loading" style="display: none;" src="/202-img/loader-small.gif"/>
+								<div id="landing_page_div" style="margin-left: 45px;"></div>
+							</div>
+						</div>
+
+						<div class="col-xs-6" style="text-align:right">
+							<div class="row">
+								<div class="col-xs-6">
+									<label>Platforms: </label>
+									<div class="form-group">
+										<img id="platform_id_div_loading" class="loading" style="right:0px; left: 5px;" src="/202-img/loader-small.gif"/>
+										<div id="platform_id_div" style="top: -12px; font-size:10px;">
+											<select class="form-control input-sm" name="platform_id" id="platform_id">
+		    									<option value="0"> -- </option>
+		    								</select>
+										</div>
+									</div>
+								</div>
+								<div class="col-xs-6">
+									<label>ISP/Carrier: </label>
+									<div class="form-group">
+										<img id="isp_id_div_loading" class="loading" style="right:0px; left: 5px;" src="/202-img/loader-small.gif"/>
+										<div id="isp_id_div" style="top: -12px; font-size:10px;">
+											<select class="form-control input-sm" name="isp_id" id="isp_id">
+		    									<option value="0"> -- </option>
+		    								</select>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+
+					</div>
+				</div>
+			</div>
+
+			<div class="form_seperator" style="margin:5px 0px; padding:1px;">
+				<div class="col-xs-12"></div>
+			</div>
+		</div>
+
 		<?php } ?>
 		<?php if($show_adv_breakdown==true) { ?>
-			<div class="s-adv" id="s-adv" style="<?php if ($show_adv_breakdown == false) { echo 'display: none;'; } ?>">
-				<div class="s-border" <?php if ($show_adv_breakdown == false) { echo 'style="display:none;"'; } ?>></div>
-				<table class="s-table" cellspacing="0" cellpadding="0">
-					<tr>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-left">
-								<tr>
-									<td>
-										<span>Group By </span>
-										<select name="details[]">
-											<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
-												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_1']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
-											<?php } ?>
-										</select>
-									</td>
-									<td>
-										<span>Then Group By</span>
-										<select name="details[]">
-											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-											<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
-												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_2']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
-											<?php } ?>
-										</select>
-									</td>
-									<td>
-										<span>Then Group By</span>
-										<select name="details[]">
-											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-											<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
-												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_3']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
-											<?php } ?>
-										</select>
-									</td>
-									<td>
-										<span>Then Group By</span>
-										<select name="details[]">
-											<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-											<?php foreach(ReportBasicForm::getDetailArray() AS $detail_item) { ?>
-												<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_4']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
-											<?php } ?>
-										</select>
-									</td>
-								</tr>
-							</table>
-						</td>
-					</tr>
-					<tr>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-left">
-								<tr>
-									
-								</tr>
-							</table>
-						</td>
-					</tr>
-				</table>
+		<div class="row">
+			<div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) { echo 'text-align:left;'; } ?> <?php if ($show_bottom == false) { echo 'display:none;'; } ?>">
+				<label>Group By: </label>
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_limit">Date</label>
+					<select class="form-control input-sm" name="details[]">
+						<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
+							<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_1']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
+						<?php } ?>
+					</select>
+				</div>
+
+				<label>Then Group By: </label>
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_breakdown">Date</label>
+					<select class="form-control input-sm" name="details[]">
+						<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
+						<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
+							<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_2']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
+						<?php } ?>
+					</select>
+				</div>
+
+				<label>Then Group By: </label>
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_chart">Date</label>
+					<select class="form-control input-sm" name="details[]">
+						<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
+						<?php foreach(ReportSummaryForm::getDetailArray() AS $detail_item) { ?>
+							<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_3']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
+						<?php } ?>
+					</select>
+				</div>
+
+				<label>Then Group By: </label>
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_show">Date</label>
+					<select class="form-control input-sm" name="details[]">
+						<option value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>" <?php echo $html['user_pref_group_1']==ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
+						<?php foreach(ReportBasicForm::getDetailArray() AS $detail_item) { ?>
+							<option value="<?php echo $detail_item ?>" <?php echo $html['user_pref_group_4']==$detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
+						<?php } ?>
+					</select>
+				</div>
+				
 			</div>
+		</div>
+
+		<div class="form_seperator" style="margin:5px 0px; padding:1px;">
+			<div class="col-xs-12"></div>
+		</div>
+
 		<?php } ?>
-			<div class="s-adv">
-				<div class="s-border" <?php if ($show_adv == false) { echo 'style="display:none;"'; } ?>></div>
-				<table class="s-table" cellspacing="0" cellpadding="0">
-					 <tr>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-left" <?php if ($show_bottom == false) { echo 'style="display:none;"'; } ?>>
-								<tr>
-									<td>Display</td>
-									<td>
-										<select name="user_pref_limit" <?php if ($show_limit == false) { echo 'style="display:none;"'; } ?>>
-											<option <?php if ($user_row['user_pref_limit'] == '10') { echo 'SELECTED'; } ?> value="10">10</option>
-											<option <?php if ($user_row['user_pref_limit'] == '25') { echo 'SELECTED'; } ?> value="25">25</option>
-											<option <?php if ($user_row['user_pref_limit'] == '50') { echo 'SELECTED'; } ?> value="50">50</option>
-											<option <?php if ($user_row['user_pref_limit'] == '75') { echo 'SELECTED'; } ?> value="75">75</option> 
-											<option <?php if ($user_row['user_pref_limit'] == '100') { echo 'SELECTED'; } ?> value="100">100</option>
-											<option <?php if ($user_row['user_pref_limit'] == '150') { echo 'SELECTED'; } ?> value="150">150</option>
-											<option <?php if ($user_row['user_pref_limit'] == '200') { echo 'SELECTED'; } ?> value="200">200</option>
-										</select>
-									</td>
-									<td>
-										<select name="user_pref_breakdown" <?php if ($show_breakdown == false) { echo 'style="display:none;"'; } ?>>
-											<option <?php if ($user_row['user_pref_breakdown'] == 'hour') { echo 'SELECTED'; } ?> value="hour">By Hour</option>
-											<option <?php if ($user_row['user_pref_breakdown'] == 'day') { echo 'SELECTED'; } ?> value="day">By Day</option>
-											<option <?php if ($user_row['user_pref_breakdown'] == 'month') { echo 'SELECTED'; } ?> value="month">By Month</option>  
-											<option <?php if ($user_row['user_pref_breakdown'] == 'year') { echo 'SELECTED'; } ?> value="year">By Year</option>  
-										</select>
-									</td>
-									<td>
-										<select name="user_pref_chart" <?php if ($show_breakdown == false) { echo 'style="display:none;"'; } ?>>
-											<option <?php if ($user_row['user_pref_chart'] == 'profitloss') { echo 'SELECTED'; } ?> value="profitloss">Profit Loss Bar Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'clicks') { echo 'SELECTED'; } ?> value="clicks">Clicks Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'leads') { echo 'SELECTED'; } ?> value="leads">Leads Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'su_ratio') { echo 'SELECTED'; } ?> value="su_ratio">S/U Ratio Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'payout') { echo 'SELECTED'; } ?> value="payout">Payout Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'epc') { echo 'SELECTED'; } ?> value="epc">EPC Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'cpc') { echo 'SELECTED'; } ?> value="cpc">Avg CPC Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'income') { echo 'SELECTED'; } ?> value="income">Income Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'cost') { echo 'SELECTED'; } ?> value="cost">Cost Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'net') { echo 'SELECTED'; } ?> value="net">Net Line Graph</option>
-											<option <?php if ($user_row['user_pref_chart'] == 'roi') { echo 'SELECTED'; } ?> value="roi">ROI Line Graph</option> 
-										</select>
-									</td>
-									<td>
-										<select name="user_pref_show" <?php if ($show_type == false) { echo 'style="display:none;"'; } ?>>
-											<option <?php if ($user_row['user_pref_show'] == 'all') { echo 'SELECTED'; } ?> value="all">Show All Clicks</option>
-											<option <?php if ($user_row['user_pref_show'] == 'real') { echo 'SELECTED'; } ?> value="real">Show Real Clicks</option>
-											<option <?php if ($user_row['user_pref_show'] == 'filtered') { echo 'SELECTED'; } ?> value="filtered">Show Filtered Out Clicks</option>
-											<option <?php if ($user_row['user_pref_show'] == 'leads') { echo 'SELECTED'; } ?> value="leads">Show Converted Clicks</option>
-										</select>
-									</td>
-									<td class="s-td-slim">
-										<select name="user_cpc_or_cpv" <?php if ($show_cpc_or_cpv == false) { echo 'style="display:none;"'; } ?>>
-											<option <?php if ($user_row['user_cpc_or_cpv'] == 'cpc') { echo 'SELECTED'; } ?> value="cpc">CPC Costs</option>
-											<option <?php if ($user_row['user_cpc_or_cpv'] == 'cpv') { echo 'SELECTED'; } ?> value="cpv">CPV Costs</option>
-										</select>
-									</td>
-								</tr>
-							</table>
-						</td>
-						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-right">
-								<tr>
-									<!-- This first is so the ENTER is defaulted to the first submit -->
-									<td id="s-status-loading" style="display:none;"><img src="/202-img/loader-small.gif"/></td>
-									<td style="display: none;"><input type="submit" id="s-search" class="s-submit s-submit1" onclick="set_user_prefs('<?php echo $html['page']; ?>');" value="Save User Preferences"/></td>
-									<td><button id="s-toogleAdv" class="s-submit s-submit2" onclick="toggleAdvanced();" <?php if ($show_adv == false) { echo 'style="display:none;"'; } ?>><?php if ($user_row['user_pref_adv'] != '1') { echo 'More Options'; } else { echo 'Less Options'; } ?>
-									<td><input type="submit" id="s-search" class="s-submit s-submit1" onclick="set_user_prefs('<?php echo $html['page']; ?>');" value="Set Preferences"/></td>
-								</tr>
-							</table>
-						</td>
-					</tr>
-				</table>   
+		<div class="row">
+			<div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) { echo 'text-align:left;'; } ?> <?php if ($show_bottom == false) { echo 'display:none;'; } ?>">
+				<label>Display: </label>
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_limit">Date</label>
+					<select class="form-control input-sm" name="user_pref_limit" id="user_pref_limit" style="width: auto; <?php if ($show_limit == false) { echo 'display:none;'; } ?>">
+					    <option <?php if ($user_row['user_pref_limit'] == '10') { echo 'SELECTED'; } ?> value="10">10</option>
+						<option <?php if ($user_row['user_pref_limit'] == '25') { echo 'SELECTED'; } ?> value="25">25</option>
+						<option <?php if ($user_row['user_pref_limit'] == '50') { echo 'SELECTED'; } ?> value="50">50</option>
+						<option <?php if ($user_row['user_pref_limit'] == '75') { echo 'SELECTED'; } ?> value="75">75</option> 
+						<option <?php if ($user_row['user_pref_limit'] == '100') { echo 'SELECTED'; } ?> value="100">100</option>
+						<option <?php if ($user_row['user_pref_limit'] == '150') { echo 'SELECTED'; } ?> value="150">150</option>
+						<option <?php if ($user_row['user_pref_limit'] == '200') { echo 'SELECTED'; } ?> value="200">200</option>
+					</select>
+				</div>
+
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_breakdown">Date</label>
+					<select class="form-control input-sm" name="user_pref_breakdown" id="user_pref_breakdown" <?php if ($show_breakdown == false) { echo 'style="display:none;"'; } ?>>
+						<option <?php if ($user_row['user_pref_breakdown'] == 'hour') { echo 'SELECTED'; } ?> value="hour">By Hour</option>
+						<option <?php if ($user_row['user_pref_breakdown'] == 'day') { echo 'SELECTED'; } ?> value="day">By Day</option>
+						<option <?php if ($user_row['user_pref_breakdown'] == 'month') { echo 'SELECTED'; } ?> value="month">By Month</option>  
+						<option <?php if ($user_row['user_pref_breakdown'] == 'year') { echo 'SELECTED'; } ?> value="year">By Year</option>  
+					</select>
+				</div>
+
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_chart">Date</label>
+					<select class="form-control input-sm" name="user_pref_chart" id="user_pref_chart" <?php if ($show_breakdown == false) { echo 'style="display:none;"'; } ?>>
+						<option <?php if ($user_row['user_pref_chart'] == 'profitloss') { echo 'SELECTED'; } ?> value="profitloss">Profit Loss Bar Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'clicks') { echo 'SELECTED'; } ?> value="clicks">Clicks Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'leads') { echo 'SELECTED'; } ?> value="leads">Leads Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'su_ratio') { echo 'SELECTED'; } ?> value="su_ratio">S/U Ratio Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'payout') { echo 'SELECTED'; } ?> value="payout">Payout Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'epc') { echo 'SELECTED'; } ?> value="epc">EPC Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'cpc') { echo 'SELECTED'; } ?> value="cpc">Avg CPC Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'income') { echo 'SELECTED'; } ?> value="income">Income Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'cost') { echo 'SELECTED'; } ?> value="cost">Cost Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'net') { echo 'SELECTED'; } ?> value="net">Net Line Graph</option>
+						<option <?php if ($user_row['user_pref_chart'] == 'roi') { echo 'SELECTED'; } ?> value="roi">ROI Line Graph</option> 
+					</select>
+				</div>
+
+				<div class="form-group">
+					<label class="sr-only" for="user_pref_show">Date</label>
+					<select style="width: 155px;" class="form-control input-sm" name="user_pref_show" id="user_pref_show" <?php if ($show_type == false) { echo 'style="display:none;"'; } ?>>
+						<option <?php if ($user_row['user_pref_show'] == 'all') { echo 'SELECTED'; } ?> value="all">Show All Clicks</option>
+						<option <?php if ($user_row['user_pref_show'] == 'real') { echo 'SELECTED'; } ?> value="real">Show Real Clicks</option>
+						<option <?php if ($user_row['user_pref_show'] == 'filtered') { echo 'SELECTED'; } ?> value="filtered">Show Filtered Out Clicks</option>
+						<option <?php if ($user_row['user_pref_show'] == 'filtered_bot') { echo 'SELECTED'; } ?> value="filtered_bot">Show Filtered Out Bot Clicks</option>
+						<option <?php if ($user_row['user_pref_show'] == 'leads') { echo 'SELECTED'; } ?> value="leads">Show Converted Clicks</option>
+					</select>
+				</div>
+
+				<div class="form-group">
+					<label class="sr-only" for="user_cpc_or_cpv">Date</label>
+					<select class="form-control input-sm" name="user_cpc_or_cpv" id="user_cpc_or_cpv" <?php if ($show_cpc_or_cpv == false) { echo 'style="display:none;"'; } ?>>
+						<option <?php if ($user_row['user_cpc_or_cpv'] == 'cpc') { echo 'SELECTED'; } ?> value="cpc">CPC Costs</option>
+						<option <?php if ($user_row['user_cpc_or_cpv'] == 'cpv') { echo 'SELECTED'; } ?> value="cpv">CPV Costs</option>
+					</select>
+				</div>
+				<button id="s-search" style="width: 130px; <?php if ($show_adv != false) { echo 'float:right;'; } ?>" type="submit" class="btn btn-xs btn-info" onclick="set_user_prefs('<?php echo $html['page']; ?>');">Set Preferences</button>
+				<button id="s-toogleAdv" style="width: 130px; margin-right: 5px; float:right; <?php if ($show_adv == false) { echo 'display:none;'; } ?>" type="submit" class="btn btn-xs btn-default">More Options</button>
 			</div>
-	   </div>
-	   <div id="s-status"></div>  
-   </form>
-   
-   <div id="m-content"></div>                                
+		</div>
+
+		</form>
+	</div>	   
+</div>
+</div>
+
+<div class="row">
+	<div class="col-xs-12">
+		<div id="m-content">
+			<div class="loading-stats"><span class="infotext">Loading stats...</span> <img src="/202-img/loader-small.gif"></div>
+		</div>  
+	</div>
+</div>                              
    
    <script type="text/javascript">
 		
 		/* TIME SETTING FUNCTION */ 
 		function set_user_pref_time_predefined() {
-			
-			$('to_cal').style.display='none'; 
-			$('from_cal').style.display='none';
-	
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'today') {
-				<?php  $time['from'] = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
-					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
+
+			var element = $('#user_pref_time_predefined');
+
+			if (element.val() == 'today') {
+				<?php $time['from'] = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
+					  $time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+			}
+
+			if (element.val() == 'yesterday') {
+				<?php $time['from'] = mktime(0,0,0,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
+					  $time['to'] = mktime(23,59,59,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400)); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+			}
+
+			if (element.val() == 'last7') {
+				<?php $time['from'] = mktime(0,0,0,date('m',time()-86400*7),date('d',time()-86400*7),date('Y',time()-86400*7));
+					  $time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+			}
+
+			if (element.val() == 'last14') {
+				<?php $time['from'] = mktime(0,0,0,date('m',time()-86400*14),date('d',time()-86400*14),date('Y',time()-86400*14));
+					  $time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+			}
+
+			if (element.val() == 'last30') {
+				<?php $time['from'] = mktime(0,0,0,date('m',time()-86400*30),date('d',time()-86400*30),date('Y',time()-86400*30));
+					  $time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+			}
+
+			if (element.val() == 'thismonth') {
+				<?php $time['from'] = mktime(0,0,0,date('m',time()),1,date('Y',time()));
+					  $time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+			}
+
+			if (element.val() == 'lastmonth') {
+				<?php $time['from'] = mktime(0,0,0,date('m',time()-2629743),1,date('Y',time()-2629743));
+					  $time['to'] = mktime(23,59,59,date('m',time()-2629743),getLastDayOfMonth(date('m',time()-2629743), date('Y',time()-2629743)),date('Y',time()-2629743)); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+			}
+
+			if (element.val() == 'thisyear') {
+				<?php $time['from'] = mktime(0,0,0,1,1,date('Y',time()));
+					  $time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+			}
+
+			if (element.val() == 'lastyear') {
+				<?php $time['from'] = mktime(0,0,0,1,1,date('Y',time()-31556926));
+					  $time['to'] = mktime(0,0,0,12,getLastDayOfMonth(date('m',time()-31556926), date('Y',time()-31556926)),date('Y',time()-31556926)); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
 			}
 			
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'yesterday') {
-				<?php  $time['from'] = mktime(0,0,0,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
-					$time['to'] = mktime(23,59,59,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400)); ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
-			}
-			
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'last7') {
-				<?php  $time['from'] = mktime(0,0,0,date('m',time()-86400*7),date('d',time()-86400*7),date('Y',time()-86400*7));
-					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));  ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
-			}
-			
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'last14') {
-				<?php  $time['from'] = mktime(0,0,0,date('m',time()-86400*14),date('d',time()-86400*14),date('Y',time()-86400*14));
-					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));  ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
-			}
-			
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'last30') {
-				<?php  $time['from'] = mktime(0,0,0,date('m',time()-86400*30),date('d',time()-86400*30),date('Y',time()-86400*30));
-					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));    ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
-			}
-			
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'thismonth') {
-				<?php  $time['from'] = mktime(0,0,0,date('m',time()),1,date('Y',time()));
-					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));   ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
-			}
-	
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'lastmonth') {
-				<?php  $time['from'] = mktime(0,0,0,date('m',time()-2629743),1,date('Y',time()-2629743));
-					$time['to'] = mktime(23,59,59,date('m',time()-2629743),getLastDayOfMonth(date('m',time()-2629743), date('Y',time()-2629743)),date('Y',time()-2629743));   ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
-			}
-			
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'thisyear') {
-				<?php  $time['from'] = mktime(0,0,0,1,1,date('Y',time()));
-					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));   ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
-			}
-			
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'lastyear') {
-				<?php  $time['from'] = mktime(0,0,0,1,1,date('Y',time()-31556926));
-					$time['to'] = mktime(0,0,0,12,getLastDayOfMonth(date('m',time()-31556926), date('Y',time()-31556926)),date('Y',time()-31556926));   ?>
-				
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
-			}
-			
-			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'alltime') {
+			if (element.val() == 'alltime') {
 				<?php  
 				//for the time from, do something special select the exact date this user was registered and use that :)
-				$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+				$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 				$user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='".$mysql['user_id']."'";
-				$user_result = mysql_query($user_sql) or record_mysql_error($user_sql);
-				$user_row = mysql_fetch_assoc($user_result);
+				$user_result = $db->query($user_sql) or record_mysql_error($user_sql);
+				$user_row = $user_result->fetch_assoc();
 				$time['from'] = $user_row['user_time_register'];
 				
 				$time['from'] = mktime(0,0,0,date('m',$time['from']),date('d',$time['from']),date('Y',$time['from']));  
-				$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));    ?>
-		
-				//now set the from and to dates
-				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
-				
-				//now set the calendar dates too
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
-				from_cal.setCurrentDate(d);
-				
-				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
-				to_cal.setCurrentDate(d);
+				$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+				$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+				$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
 			}
-			
-			//bump the date down for some reason it keeps adding ONE MONTH?!?!?!?!
-			from_cal.setCurrentDate('monthdown');
-			to_cal.setCurrentDate('monthdown');
-			
-		}
-	
-		/* TOGGLE FUNCTION */
-		function toggleAdvanced() { 
-			
-			$('to_cal').style.display='none'; 
-			$('from_cal').style.display='none';
-			
-			Effect.toggle('s-adv','blind');
-			if ($('text_ad_id')) {  $('text_ad_id').selectedIndex = 0;  } 
-			if ($('method_of_promotion')) {  $('method_of_promotion').selectedIndex = 0;  } 
-			if ($('landing_page_id')) {  $('landing_page_id').selectedIndex = 0;  } 
-			$('ad_preview_div').style.display = 'none';
-			$('country').value = '';
-			$('referer').value = '';
-			
-			if($('s-adv').style.display == 'none') { 
-				$('user_pref_adv').value = '1';
-				$('s-toogleAdv').innerHTML = 'Less Options';
-			} else {
-				$('user_pref_adv').value = '';
-				$('s-toogleAdv').innerHTML = 'More Options';
-			}
-			
-			<?php /*set_user_prefs('<?php echo $html['page']; ?>'); */ ?>
 		}
 		
 		/* SHOW FIELDS */        
@@ -738,6 +691,16 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 			load_landing_page('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_landing_page_id']; ?>', '<?php echo $html['user_pref_method_of_promotion']; ?>');
 		<?php } ?>
 
+		<?php if($show_adv != false) { ?>
+			load_country_id('<?php echo $html['user_pref_country_id']; ?>');
+			load_region_id('<?php echo $html['user_pref_region_id']; ?>');
+			load_isp_id('<?php echo $html['user_pref_isp_id']; ?>');
+			load_device_id('<?php echo $html['user_pref_device_id']; ?>');
+			load_browser_id('<?php echo $html['user_pref_browser_id']; ?>');
+			load_platform_id('<?php echo $html['user_pref_platform_id']; ?>');
+		<?php } ?>
+		
+
    </script> 
 <?php }
 
@@ -745,11 +708,14 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 function grab_timeframe() {
 	
 	AUTH::set_timezone($_SESSION['user_timezone']);
-	
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 	$user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
-	$user_result = _mysql_query($user_sql) ; ; //($user_sql); 
-	$user_row = mysql_fetch_assoc($user_result);
+	$user_result = _mysqli_query($user_sql) ; ; //($user_sql); 
+	$user_row = $user_result->fetch_assoc();
 	
 	if (($user_row['user_pref_time_predefined'] == 'today') or ($user_row['pref_time_from'] != '')) { 
 		$time['from'] = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
@@ -799,10 +765,10 @@ function grab_timeframe() {
 	if($user_row['user_pref_time_predefined'] == 'alltime') { 
 		
 		//for the time from, do something special select the exact date this user was registered and use that :)
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 		$user2_sql = "SELECT user_time_register FROM 202_users WHERE user_id='".$mysql['user_id']."'";
-		$user2_result = mysql_query($user2_sql) or record_mysql_error($user2_sql);
-		$user2_row = mysql_fetch_assoc($user2_result);
+		$user2_result = $db->query($user2_sql) or record_mysql_error($user2_sql);
+		$user2_row = $user2_result->fetch_assoc();
 		$time['from'] = $user2_row['user_time_register']; 
 	
 		$time['from'] = mktime(0,0,0,date('m',$time['from']),date('d',$time['from']),date('Y',$time['from']));  
@@ -824,16 +790,18 @@ function getLastDayOfMonth($month, $year){
 }
 
 function getTrackingDomain() {
+	$database = DB::getInstance();
+	$db = $database->getConnection();
 	$tracking_domain_sql = "
 		SELECT
 			`user_tracking_domain`
 		FROM
 			`202_users_pref`
 		WHERE
-			`user_id`='".mysql_real_escape_string($_SESSION['user_id'])."'
+			`user_id`='".$db->real_escape_string($_SESSION['user_id'])."'
 	";
-	$tracking_domain_result = _mysql_query($tracking_domain_sql) ; ; //($user_sql);
-	$tracking_domain_row = mysql_fetch_assoc($tracking_domain_result);
+	$tracking_domain_result = _mysqli_query($tracking_domain_sql) ; ; //($user_sql);
+	$tracking_domain_row = $tracking_domain_result->fetch_assoc();
 	$tracking_domain = $_SERVER['SERVER_NAME'];
 	if(strlen($tracking_domain_row['user_tracking_domain'])>0) {
 		$tracking_domain = $tracking_domain_row['user_tracking_domain'];
@@ -843,12 +811,15 @@ function getTrackingDomain() {
 
 //the above, if true, are options to turn on specific filtering techniques.
 function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_order, $offset, $pref_limit, $count) {
-											   
+	
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	//grab user preferences  
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);    
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);    
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
-	$user_result = _mysql_query($user_sql) ; ; //($user_sql);
-	$user_row = mysql_fetch_assoc($user_result);
+	$user_result = _mysqli_query($user_sql) ; ; //($user_sql);
+	$user_row = $user_result->fetch_assoc();
 	
 	
 	//do extra joins if advance selector is enabled
@@ -878,8 +849,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 				$command .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id) ";
 			}
 		}
-		
-		
+
 		//if domain lookup
 		if ($user_row['user_pref_referer'] and !preg_match('/202_site_domains/', $command)) { 
 			
@@ -903,12 +873,41 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 		if ($user_row['user_pref_ip'] and !preg_match('/202_ips/', $command)) { 
 			$command .= " LEFT JOIN 202_ips AS 2i ON (2ca.ip_id = 2i.ip_id) ";
 		}
+
+		//if there is a country lookup, and we have not joined the 202 country table. do so now
+		if ($user_row['user_pref_country_id'] and !preg_match('/202_locations_country/', $command)) { 
+			$command .= " LEFT JOIN 202_locations_country AS 2cy ON (2ca.country_id = 2cy.country_id) ";
+		}
+
+		//if there is a region lookup, and we have not joined the 202 region table. do so now
+		if ($user_row['user_pref_region_id'] and !preg_match('/202_locations_region/', $command)) { 
+			$command .= " LEFT JOIN 202_locations_region AS 2rg ON (2ca.region_id = 2rg.region_id) ";
+		}
+
+		//if there is a isp lookup, and we have not joined the 202 isp table. do so now
+		if ($user_row['user_pref_isp_id'] and !preg_match('/202_locations_isp/', $command)) { 
+			$command .= " LEFT JOIN 202_locations_isp AS 2is ON (2ca.isp_id = 2is.isp_id) ";
+		}
+
+		//if there is a device lookup, and we have not joined the 202 device table. do so now
+		if ($user_row['user_pref_device_id'] and !preg_match('/202_device_models/', $command)) { 
+			$command .= " LEFT JOIN 202_device_models AS 2d ON (2ca.device_id = 2d.device_id) ";
+		}
+
+		//if there is a browser lookup, and we have not joined the 202 browser table. do so now
+		if ($user_row['user_pref_browser_id'] and !preg_match('/202_browsers/', $command)) { 
+			$command .= " LEFT JOIN 202_browsers AS 2b ON (2ca.browser_id = 2b.browser_id) ";
+		}
+
+		//if there is a platform lookup, and we have not joined the 202 platform table. do so now
+		if ($user_row['user_pref_platform_id'] and !preg_match('/202_platforms/', $command)) { 
+			$command .= " LEFT JOIN 202_platforms AS 2p ON (2ca.platform_id = 2p.platform_id) ";
+		}
 	}
 	
 	
 	
 	$click_sql = $command . " WHERE $db_table.user_id='".$mysql['user_id']."' ";
-	
 
 	//set show preferences
 	if ($pref_show == true) {
@@ -918,34 +917,36 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 			$click_sql .=   " AND click_filtered='0' ";
 		} elseif ($user_row['user_pref_show'] == 'leads') {
 			$click_sql .=   " AND click_filtered='0' AND click_lead='1' ";   
+		} elseif ($user_row['user_pref_show'] == 'filtered_bot') {
+			$click_sql .=   " AND click_bot='1'"; 
 		}   
 	}
 		
 	//set advanced preferences                    
 	if ($pref_adv == true) {
 		if ($user_row['user_pref_ppc_network_id'] and !($user_row['user_pref_ppc_account_id'])) { 
-			$mysql['user_pref_ppc_network_id'] = mysql_real_escape_string($user_row['user_pref_ppc_network_id']);
+			$mysql['user_pref_ppc_network_id'] = $db->real_escape_string($user_row['user_pref_ppc_network_id']);
 			$click_sql .=   "  AND      2pn.ppc_network_id='".$mysql['user_pref_ppc_network_id']."'";
 		}
 		
 
 		if ($user_row['user_pref_ppc_account_id']) { 
-			$mysql['user_pref_ppc_account_id'] = mysql_real_escape_string($user_row['user_pref_ppc_account_id']);
+			$mysql['user_pref_ppc_account_id'] = $db->real_escape_string($user_row['user_pref_ppc_account_id']);
 			$click_sql .=   " AND      2c.ppc_account_id='".$mysql['user_pref_ppc_account_id']."'";
 		}
 		 
 	   if ($user_row['user_pref_aff_network_id'] and !$user_row['user_pref_aff_campaign_id']) { 
 
-			$mysql['user_pref_aff_network_id'] = mysql_real_escape_string($user_row['user_pref_aff_network_id']);
+			$mysql['user_pref_aff_network_id'] = $db->real_escape_string($user_row['user_pref_aff_network_id']);
 			$click_sql .=   "  AND      2an.aff_network_id='".$mysql['user_pref_aff_network_id']."'";
 		}
 		
 		if ($user_row['user_pref_aff_campaign_id']) { 
-			$mysql['user_pref_aff_campaign_id'] = mysql_real_escape_string($user_row['user_pref_aff_campaign_id']);
+			$mysql['user_pref_aff_campaign_id'] = $db->real_escape_string($user_row['user_pref_aff_campaign_id']);
 			$click_sql .=   " AND      2c.aff_campaign_id='".$mysql['user_pref_aff_campaign_id']."'";
 		}
 		if ($user_row['user_pref_text_ad_id']) { 
-			$mysql['user_pref_text_ad_id'] = mysql_real_escape_string($user_row['user_pref_text_ad_id']);
+			$mysql['user_pref_text_ad_id'] = $db->real_escape_string($user_row['user_pref_text_ad_id']);
 			$click_sql .=   " AND      2ca.text_ad_id='".$mysql['user_pref_text_ad_id']."'";
 		} 
 		if ($user_row['user_pref_method_of_promotion'] != '0') { 
@@ -958,31 +959,57 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 		
 
 		if ($user_row['user_pref_landing_page_id']) { 
-			$mysql['user_landing_page_id'] = mysql_real_escape_string($user_row['user_pref_landing_page_id']);
+			$mysql['user_landing_page_id'] = $db->real_escape_string($user_row['user_pref_landing_page_id']);
 			$click_sql .=   " AND      2c.landing_page_id='".$mysql['user_landing_page_id']."'";
 		}   
 		
-		/*if ($user_row['pref_country_id']) { 
-			$mysql['user_pref_country_id'] = mysql_real_escape_string($user_row['pref_country_id']);
-			$click_sql .=   " AND      pref_country_id=".$mysql['user_pref_country_id'];
-		}*/
+		if ($user_row['user_pref_country_id']) { 
+			$mysql['user_pref_country_id'] = $db->real_escape_string($user_row['user_pref_country_id']);
+			$click_sql .=   " AND      2ca.country_id=".$mysql['user_pref_country_id'];
+		}
+
+		if ($user_row['user_pref_region_id']) { 
+			$mysql['user_pref_region_id'] = $db->real_escape_string($user_row['user_pref_region_id']);
+			$click_sql .=   " AND      2ca.region_id=".$mysql['user_pref_region_id'];
+		}
+
+		if ($user_row['user_pref_isp_id']) { 
+			$mysql['user_pref_isp_id'] = $db->real_escape_string($user_row['user_pref_isp_id']);
+			$click_sql .=   " AND      2is.isp_id=".$mysql['user_pref_isp_id'];
+		}
 		
 		if ($user_row['user_pref_referer']) { 
-			$mysql['user_pref_referer'] = mysql_real_escape_string($user_row['user_pref_referer']);
+			$mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
 			$click_sql .=   " AND 2sd.site_domain_host LIKE CONVERT( _utf8 '%".$mysql['user_pref_referer']."%' USING latin1 )
 							COLLATE latin1_swedish_ci ";    
 		}
 		
 		if ($user_row['user_pref_keyword']) { 
-			$mysql['user_pref_keyword'] = mysql_real_escape_string($user_row['user_pref_keyword']);
+			$mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
 			$click_sql .=   " AND 2k.keyword LIKE CONVERT( _utf8 '%".$mysql['user_pref_keyword']."%' USING latin1 )
 							COLLATE latin1_swedish_ci ";    
 		}
 		
 		if ($user_row['user_pref_ip']) { 
-			$mysql['user_pref_ip'] = mysql_real_escape_string($user_row['user_pref_ip']);
+			$mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
 			$click_sql .=   " AND 2i.ip_address LIKE CONVERT( _utf8 '%".$mysql['user_pref_ip']."%' USING latin1 )
 							COLLATE latin1_swedish_ci ";    
+		}
+
+		if ($user_row['user_pref_device_id']) { 
+			$mysql['user_pref_device_id'] = $db->real_escape_string($user_row['user_pref_device_id']);
+			$click_sql .=   " AND      2d.device_type=".$mysql['user_pref_device_id'];    
+		}
+
+		if ($user_row['user_pref_browser_id']) { 
+			$mysql['user_pref_browser_id'] = $db->real_escape_string($user_row['user_pref_browser_id']);
+			$click_sql .=   " AND      2b.browser_id=".$mysql['user_pref_browser_id'];    
+		}
+
+
+		if ($user_row['user_pref_platform_id']) { 
+			$mysql['user_pref_platform_id'] = $db->real_escape_string($user_row['user_pref_platform_id']);
+			$click_sql .=   " AND      2p.platform_id=".$mysql['user_pref_platform_id'];    
 		}	
 	}
 	
@@ -990,8 +1017,8 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 	if ($pref_time == true) {    
 		$time = grab_timeframe();  
 		
-		$mysql['from'] = mysql_real_escape_string($time['from']);
-		$mysql['to'] = mysql_real_escape_string($time['to']);
+		$mysql['from'] = $db->real_escape_string($time['from']);
+		$mysql['to'] = $db->real_escape_string($time['to']);
 		if ($mysql['from'] != '') {
 			$click_sql .=   " AND click_time > ".$mysql['from']." "; 
 		}
@@ -1010,8 +1037,8 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 	if ($count == true) { 
  
 		//before it limits, we want to know the TOTAL number of rows
-		$click_result = _mysql_query($click_sql) ; //($click_sql);
-		$rows = mysql_num_rows($click_result);
+		$click_result = _mysqli_query($click_sql) ; //($click_sql);
+		$rows = $click_result->num_rows;
 		
 		
 		//only if there is a limit set, run this code 
@@ -1026,7 +1053,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 			}
 		   
 			if (is_numeric($offset) and ($pref_limit == true)) {
-				$mysql['offset'] = mysql_real_escape_string($offset*$user_row['user_pref_limit']);
+				$mysql['offset'] = $db->real_escape_string($offset*$user_row['user_pref_limit']);
 				$click_sql .= $mysql['offset'].",";
 				
 				//declare starting row number
@@ -1038,9 +1065,9 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 			if ($pref_limit == true) {
 				
 				if (is_numeric($pref_limit)) {
-					$mysql['user_pref_limit'] = mysql_real_escape_string($pref_limit);                    
+					$mysql['user_pref_limit'] = $db->real_escape_string($pref_limit);                    
 				} else {
-					$mysql['user_pref_limit'] = mysql_real_escape_string($user_row['user_pref_limit']);
+					$mysql['user_pref_limit'] = $db->real_escape_string($user_row['user_pref_limit']);
 				}
 				$click_sql .= $mysql['user_pref_limit'];
 				
@@ -1066,28 +1093,29 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 	}
 		   
 	$query['click_sql'] = $click_sql;
-	#echo  $click_sql . '<br/><br/>';
-	
 	return $query;
 	
 }
 
 function display_suggestion($suggestion_row) {
 
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	//lets determine, if this user has already voted on this:
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
-	$mysql['suggestion_id'] = mysql_real_escape_string($suggestion_row['suggestion_id']);
-	$votes_sql = "SELECT COUNT(*) FROM suggestion_votes WHERE user_id='".$mysql['user_id']."' AND suggestion_id='".$mysql['suggestion_id']."'";
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['suggestion_id'] = $db->real_escape_string($suggestion_row['suggestion_id']);
+	$votes_sql = "SELECT * FROM suggestion_votes WHERE user_id='".$mysql['user_id']."' AND suggestion_id='".$mysql['suggestion_id']."'";
 	
-	$votes_result = _mysql_query($votes_sql) ; //($votes_sql);
+	$votes_result = _mysqli_query($votes_sql) ; //($votes_sql);
 	$already_voted = '';
-	if (mysql_result($votes_result,0,0) > 0) { $already_voted = '1'; } 
+	if ($votes_result->num_rows > 0) { $already_voted = '1'; } 
 	
 	if ($suggestion_row['votes'] > 0) { $suggestion_row['votes'] = '+' . $suggestion_row['votes']; }
-	$mysql['user_id'] = mysql_real_escape_string($suggestion_row['user_id']);
+	$mysql['user_id'] = $db->real_escape_string($suggestion_row['user_id']);
 	$user_sql = "SELECT user_username FROM users WHERE user_id='".$mysql['user_id']."'";
-	$user_result = _mysql_query($user_sql) ; ; //($user_sql);
-	$user_row = mysql_fetch_assoc($user_result);
+	$user_result = _mysqli_query($user_sql) ; ; //($user_sql);
+	$user_row = $user_result->fetch_assoc();
 	
 	$html['suggestion_id'] = htmlentities($suggestion_row['suggestion_id'], ENT_QUOTES, 'UTF-8');
 	$html['user_username'] = htmlentities($user_row['user_username'], ENT_QUOTES, 'UTF-8');
@@ -1151,11 +1179,11 @@ function display_suggestion($suggestion_row) {
 					<div class="comment2">
 						<ul> 
 							<li> <?
-								$mysql['suggestion_id'] = mysql_real_escape_string($suggestion_row['suggestion_id']);
+								$mysql['suggestion_id'] = $db->real_escape_string($suggestion_row['suggestion_id']);
 								$suggestion2_sql = "SELECT * FROM suggestions WHERE suggestion_reply_to_id='".$mysql['suggestion_id']."'";
-								$suggestion2_result = _mysql_query($suggestion2_sql) ; //($suggestion2_sql);
+								$suggestion2_result = _mysqli_query($suggestion2_sql) ; //($suggestion2_sql);
 								
-								while ($suggestion2_row = mysql_fetch_array($suggestion2_result)) {
+								while ($suggestion2_row = $suggestion2_result->fetch_array()) {
 									display_suggestion($suggestion2_row);       
 								} ?>
 							</li>
@@ -1170,13 +1198,16 @@ function display_suggestion($suggestion_row) {
 
 function numberofcomments($suggestion_id) {
 	
-	$mysql['suggestion_reply_to_id'] = mysql_real_escape_string($suggestion_id);
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
+	$mysql['suggestion_reply_to_id'] = $db->real_escape_string($suggestion_id);
 	$suggestion_sql = "SELECT * FROM suggestions WHERE suggestion_reply_to_id='".$mysql['suggestion_reply_to_id']."' ORDER BY suggestion_votes DESC";
-	$suggestion_result = _mysql_query($suggestion_sql) ; //($suggestion_sql);
-	$comments['from'] = mysql_num_rows($suggestion_result);
+	$suggestion_result = _mysqli_query($suggestion_sql) ; //($suggestion_sql);
+	$comments['from'] = $suggestion_result->num_rows;
 	if ($comments['from'] > 0) { 
 		$comments['to'] = $comments['from'];
-		while ($suggestion_row = mysql_fetch_array($suggestion_result)) {
+		while ($suggestion_row = $suggestion_result->fetch_array()) {
 			$comments2 = numberofcomments($suggestion_row['suggestion_id']);
 			$comments['to'] = $comments['to'] + $comments2['to'];
 		}
@@ -1515,18 +1546,21 @@ class FILTER {
 	}
 	
 	function checkUserIP($click_id, $ip_id, $user_id) {
-	 
-		$mysql['ip_id'] = mysql_real_escape_string($ip_id);      
-		$mysql['user_id'] = mysql_real_escape_string($user_id);    
+	 	
+	 	$database = DB::getInstance();
+		$db = $database->getConnection();
+
+		$mysql['ip_id'] = $db->real_escape_string($ip_id);      
+		$mysql['user_id'] = $db->real_escape_string($user_id);    
 		
-		$count_sql = "SELECT    COUNT(*) 
+		$count_sql = "SELECT    *
 					  FROM      202_users 
 					  WHERE     user_id='".$mysql['user_id']."' 
 					  AND       user_last_login_ip_id='".$mysql['ip_id']."'";
-		$count_result = _mysql_query($count_sql) ; //($count_sql);
+		$count_result = _mysqli_query($count_sql) ; //($count_sql);
 	
 		//if the click_id's ip address, is the same ip adddress of the click_id's owner's last logged in ip, filter this.  This means if the ip hit on the page was the same as the owner of the click affiliate program, we want to filter out the clicks by the owner when he/she  is trying to test 
-		if (mysql_result($count_result,0,0) > 0) { 
+		if ($count_result->num_rows > 0) { 
 			
 			return true;  
 		}
@@ -1560,13 +1594,15 @@ class FILTER {
 	//this will filter out a click if it the IP WAS RECORDED, for a particular user within the last 24 hours, if it existed before, filter out this click.
 	function checkLastIps($user_id, $ip_id) {
 
-		$mysql['user_id'] = mysql_real_escape_string($user_id);
-		$mysql['ip_id'] = mysql_real_escape_string($ip_id);
+		$database = DB::getInstance();
+		$db = $database->getConnection();
+
+		$mysql['user_id'] = $db->real_escape_string($user_id);
+		$mysql['ip_id'] = $db->real_escape_string($ip_id);
 		
-		$check_sql = "SELECT COUNT(*) AS count FROM 202_last_ips WHERE user_id='".$mysql['user_id']."' AND ip_id='".$mysql['ip_id']."'";
-		$check_result = _mysql_query($check_sql) ; //($check_sql);
-		$check_row = mysql_fetch_assoc($check_result);
-		$count = $check_row['count'];
+		$check_sql = "SELECT * FROM 202_last_ips WHERE user_id='".$mysql['user_id']."' AND ip_id='".$mysql['ip_id']."'";
+		$check_result = _mysqli_query($check_sql) ; //($check_sql);
+		$count = $check_result->num_rows;
 		 
 		if ($count > 0) {
 			//if this ip has been seen within the last 24 hours, filter it out. 
@@ -1576,1364 +1612,879 @@ class FILTER {
 			//else if this ip has not been recorded, record it now
 			$mysql['time'] = time();
 			$insert_sql = "INSERT INTO 202_last_ips SET user_id='".$mysql['user_id']."', ip_id='".$mysql['ip_id']."', time='".$mysql['time']."'";
-			$insert_result = _mysql_query($insert_sql) ; //($insert_sql);
+			$insert_result = _mysqli_query($insert_sql) ; //($insert_sql);
 			return false;	
 		}
 		
 	}
-	
-	/* RETIRED FUNCTION
-	//This thing lagged the crap outa the servers
-	function checkIPTiming($click_id, $ip_id, $user_id, $click_time, $count, $seconds_ago) { 
-		
-		if ($click_time == 0) {
-			return false;
-			$click_time = time();
-		}
-		
-		//filter out this entire ip, if this ip was detected five times within 30 seconds
-		$mysql['click_id'] = mysql_real_escape_string($click_id);
-		$mysql['user_id'] = mysql_real_escape_string($user_id);
-		$mysql['ip_id'] = mysql_real_escape_string($ip_id);
-		$mysql['seconds_ago'] = $click_time - $seconds_ago;
-		
-		if ($seconds_ago == 150) {
-			$memcache = 0;	
-		} else {
-			$memcache = 1;	
-		}
-		
-		//$difference = $mysql['seconds_ago'] - $click_time;
-		//echo "difference $difference ::";
-		
-	
-		$check_sql = "SELECT COUNT(*) AS count FROM clicks LEFT JOIN clicks_advance USING (click_id) WHERE ip_id='".$mysql['ip_id']."' AND click_time BETWEEN ".$mysql['seconds_ago'] ." AND $click_time";
-		//echo "<p>$check_sql</p>";
-		$check_result = _mysql_query($check_sql) ; //($check_sql); 
-		$check_row = mysql_fetch_assoc($check_result);
-		if ($check_row['count'] > $count) {
-			//echo " " .$check_row['count'] . " within $seconds_ago seconds greater than $count  ";
-			//not only update from, but also backwords
-			return true;
-		}
-		
-		return false;    
-	} */
+
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  /*****************************************************************
-
-	File name: browser.php
-	Author: Gary White
-	Last modified: November 10, 2003
-	
-	**************************************************************
-
-	Copyright (C) 2003  Gary White
-	
-	This program is free software; you can redistribute it and/or
-	modify it under the terms of the GNU General Public License
-	as published by the Free Software Foundation; either version 2
-	of the License, or (at your option) any later version.
-	
-	This program is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-	GNU General Public License for more details at:
-	http://www.gnu.org/copyleft/gpl.html
-
-	**************************************************************
-
-	Browser class
-	
-	Identifies the user's Operating system, browser and version
-	by parsing the HTTP_USER_AGENT string sent to the server
-	
-	Typical Usage:
-	
-		require_once($_SERVER['DOCUMENT_ROOT'].'/include/browser.php');
-		$br = new Browser;
-		echo "$br->Platform, $br->Name version $br->Version";
-	
-	For operating systems, it will correctly identify:
-		Microsoft Windows
-		MacIntosh
-		Linux
-
-	Anything not determined to be one of the above is considered to by Unix
-	because most Unix based browsers seem to not report the operating system.
-	The only known problem here is that, if a HTTP_USER_AGENT string does not
-	contain the operating system, it will be identified as Unix. For unknown
-	browsers, this may not be correct.
-	
-	For browsers, it should correctly identify all versions of:
-		Amaya
-		Galeon
-		iCab
-		Internet Explorer
-			For AOL versions it will identify as Internet Explorer (AOL) and the version
-			will be the AOL version instead of the IE version.
-		Konqueror
-		Lynx
-		Mozilla
-		Netscape Navigator/Communicator
-		OmniWeb
-		Opera
-		Pocket Internet Explorer for handhelds
-		Safari
-		WebTV
-*****************************************************************/
-
-	class Browser {
-		private $_agent = '';
-		private $_browser_name = '';
-		private $_version = '';
-		private $_platform = '';
-		private $_os = '';
-		private $_is_aol = false;
-		private $_is_mobile = false;
-		private $_is_robot = false;
-		private $_aol_version = '';
+class PLATFORMS {
 		
-		var $Platform = "";
-		var $Browser = "";
-		
+	    function get_device_info(){
 
-		const BROWSER_UNKNOWN = 'unknown';
-		const VERSION_UNKNOWN = 'unknown';
+	    	global $memcacheWorking, $memcache;
+	    	$detect = new Mobile_Detect;
+	    	$ua = $detect->getUserAgent();
 
-		const BROWSER_OPERA = 'Opera';                            // http://www.opera.com/
-		const BROWSER_OPERA_MINI = 'Opera Mini';                  // http://www.opera.com/mini/
-		const BROWSER_WEBTV = 'WebTV';                            // http://www.webtv.net/pc/
-		const BROWSER_IE = 'Internet Explorer';                   // http://www.microsoft.com/ie/
-		const BROWSER_POCKET_IE = 'Pocket Internet Explorer';     // http://en.wikipedia.org/wiki/Internet_Explorer_Mobile
-		const BROWSER_KONQUEROR = 'Konqueror';                    // http://www.konqueror.org/
-		const BROWSER_ICAB = 'iCab';                              // http://www.icab.de/
-		const BROWSER_OMNIWEB = 'OmniWeb';                        // http://www.omnigroup.com/applications/omniweb/
-		const BROWSER_FIREBIRD = 'Firebird';                      // http://www.ibphoenix.com/
-		const BROWSER_FIREFOX = 'Firefox';                        // http://www.mozilla.com/en-US/firefox/firefox.html
-		const BROWSER_ICEWEASEL = 'Iceweasel';                    // http://www.geticeweasel.org/
-		const BROWSER_SHIRETOKO = 'Shiretoko';                    // http://wiki.mozilla.org/Projects/shiretoko
-		const BROWSER_MOZILLA = 'Mozilla';                        // http://www.mozilla.com/en-US/
-		const BROWSER_AMAYA = 'Amaya';                            // http://www.w3.org/Amaya/
-		const BROWSER_LYNX = 'Lynx';                              // http://en.wikipedia.org/wiki/Lynx
-		const BROWSER_SAFARI = 'Safari';                          // http://apple.com
-		const BROWSER_IPHONE = 'iPhone';                          // http://apple.com
-		const BROWSER_IPOD = 'iPod';                              // http://apple.com
-		const BROWSER_IPAD = 'iPad';                              // http://apple.com
-		const BROWSER_CHROME = 'Chrome';                          // http://www.google.com/chrome
-		const BROWSER_ANDROID = 'Android';                        // http://www.android.com/
-		const BROWSER_GOOGLEBOT = 'GoogleBot';                    // http://en.wikipedia.org/wiki/Googlebot
-		const BROWSER_SLURP = 'Yahoo! Slurp';                     // http://en.wikipedia.org/wiki/Yahoo!_Slurp
-		const BROWSER_W3CVALIDATOR = 'W3C Validator';             // http://validator.w3.org/
-		const BROWSER_BLACKBERRY = 'BlackBerry';                  // http://www.blackberry.com/
-		const BROWSER_ICECAT = 'IceCat';                          // http://en.wikipedia.org/wiki/GNU_IceCat
-		const BROWSER_NOKIA_S60 = 'Nokia S60 OSS Browser';        // http://en.wikipedia.org/wiki/Web_Browser_for_S60
-		const BROWSER_NOKIA = 'Nokia Browser';                    // * all other WAP-based browsers on the Nokia Platform
-		const BROWSER_MSN = 'MSN Browser';                        // http://explorer.msn.com/
-		const BROWSER_MSNBOT = 'MSN Bot';                         // http://search.msn.com/msnbot.htm
-		                                                          // http://en.wikipedia.org/wiki/Msnbot  (used for Bing as well)
-		
-		const BROWSER_NETSCAPE_NAVIGATOR = 'Netscape Navigator';  // http://browser.netscape.com/ (DEPRECATED)
-		const BROWSER_GALEON = 'Galeon';                          // http://galeon.sourceforge.net/ (DEPRECATED)
-		const BROWSER_NETPOSITIVE = 'NetPositive';                // http://en.wikipedia.org/wiki/NetPositive (DEPRECATED)
-		const BROWSER_PHOENIX = 'Phoenix';                        // http://en.wikipedia.org/wiki/History_of_Mozilla_Firefox (DEPRECATED)
+			//If Cache working
+			if ($memcacheWorking) {
+				$device_info = $memcache->get(md5("user-agent" . $ua . systemHash()));
 
-		const PLATFORM_UNKNOWN = 'unknown';
-		const PLATFORM_WINDOWS = 'Windows';
-		const PLATFORM_WINDOWS_CE = 'Windows CE';
-		const PLATFORM_APPLE = 'Apple';
-		const PLATFORM_LINUX = 'Linux';
-		const PLATFORM_OS2 = 'OS/2';
-		const PLATFORM_BEOS = 'BeOS';
-		const PLATFORM_IPHONE = 'iPhone';
-		const PLATFORM_IPOD = 'iPod';
-		const PLATFORM_IPAD = 'iPad';
-		const PLATFORM_BLACKBERRY = 'BlackBerry';
-		const PLATFORM_NOKIA = 'Nokia';
-		const PLATFORM_FREEBSD = 'FreeBSD';
-		const PLATFORM_OPENBSD = 'OpenBSD';
-		const PLATFORM_NETBSD = 'NetBSD';
-		const PLATFORM_SUNOS = 'SunOS';
-		const PLATFORM_OPENSOLARIS = 'OpenSolaris';
-		const PLATFORM_ANDROID = 'Android';
-		
-		const OPERATING_SYSTEM_UNKNOWN = 'unknown';
+				if (!$device_info) {
 
-		public function Browser($useragent="") {
-			$this->reset();
-			if( $useragent != "" ) {
-				$this->setUserAgent($useragent);
+					$parse_info = PLATFORMS::parseUserAgentInfo($detect);
+					$memcache->set( md5("user-agent" . $ua . systemHash()), $parse_info, false);
+					return $parse_info;
+
+				} else {
+					return $device_info;
+				}
+
 			}
+
+			//If Cache is not working
 			else {
-				$this->determine();
+
+				return PLATFORMS::parseUserAgentInfo($detect);
 			}
-		}
 
-		/**
-		* Reset all properties
-		*/
-		public function reset() {
-			$this->_agent = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : "";
-			$this->_browser_name = self::BROWSER_UNKNOWN;
-			$this->_version = self::VERSION_UNKNOWN;
-			$this->_platform = self::PLATFORM_UNKNOWN;
-			$this->_os = self::OPERATING_SYSTEM_UNKNOWN;
-			$this->_is_aol = false;
-			$this->_is_mobile = false;
-			$this->_is_robot = false;
-			$this->_aol_version = self::VERSION_UNKNOWN;
-		}
-
-		/**
-		* Check to see if the specific browser is valid
-		* @param string $browserName
-		* @return True if the browser is the specified browser
-		*/
-		function isBrowser($browserName) { return( 0 == strcasecmp($this->_browser_name, trim($browserName))); }
-
-		/**
-		* The name of the browser.  All return types are from the class contants
-		* @return string Name of the browser
-		*/
-		public function getBrowser() { return $this->_browser_name; }
-		/**
-		* Set the name of the browser
-		* @param $browser The name of the Browser
-		*/
-		public function setBrowser($browser) { return $this->_browser_name = $browser; }
-		/**
-		* The name of the platform.  All return types are from the class contants
-		* @return string Name of the browser
-		*/
-		public function getPlatform() { return $this->_platform; }
-		/**
-		* Set the name of the platform
-		* @param $platform The name of the Platform
-		*/
-		public function setPlatform($platform) { return $this->_platform = $platform; }
-		/**
-		* The version of the browser.
-		* @return string Version of the browser (will only contain alpha-numeric characters and a period)
-		*/
-		public function getVersion() { return $this->_version; }
-		/**
-		* Set the version of the browser
-		* @param $version The version of the Browser
-		*/
-		public function setVersion($version) { $this->_version = preg_replace('/[^0-9,.,a-z,A-Z-]/','',$version); }
-		/**
-		* The version of AOL.
-		* @return string Version of AOL (will only contain alpha-numeric characters and a period)
-		*/
-		public function getAolVersion() { return $this->_aol_version; }
-		/**
-		* Set the version of AOL
-		* @param $version The version of AOL
-		*/
-		public function setAolVersion($version) { $this->_aol_version = preg_replace('/[^0-9,.,a-z,A-Z]/','',$version); }
-		/**
-		* Is the browser from AOL?
-		* @return boolean True if the browser is from AOL otherwise false
-		*/
-		public function isAol() { return $this->_is_aol; }
-		/**
-		* Is the browser from a mobile device?
-		* @return boolean True if the browser is from a mobile device otherwise false
-		*/
-		public function isMobile() { return $this->_is_mobile; }
-		/**
-		* Is the browser from a robot (ex Slurp,GoogleBot)?
-		* @return boolean True if the browser is from a robot otherwise false
-		*/
-		public function isRobot() { return $this->_is_robot; }
-		/**
-		* Set the browser to be from AOL
-		* @param $isAol
-		*/
-		public function setAol($isAol) { $this->_is_aol = $isAol; }
-		/**
-		 * Set the Browser to be mobile
-		 * @param boolean $value is the browser a mobile brower or not
-		 */
-		protected function setMobile($value=true) { $this->_is_mobile = $value; }
-		/**
-		 * Set the Browser to be a robot
-		 * @param boolean $value is the browser a robot or not
-		 */
-		protected function setRobot($value=true) { $this->_is_robot = $value; }
-		/**
-		* Get the user agent value in use to determine the browser
-		* @return string The user agent from the HTTP header
-		*/
-		public function getUserAgent() { return $this->_agent; }
-		/**
-		* Set the user agent value (the construction will use the HTTP header value - this will overwrite it)
-		* @param $agent_string The value for the User Agent
-		*/
-		public function setUserAgent($agent_string) {
-			$this->reset();
-			$this->_agent = $agent_string;
-			$this->determine();
-		}
-		/**
-		 * Used to determine if the browser is actually "chromeframe"
-		 * @since 1.7
-		 * @return boolean True if the browser is using chromeframe
-		 */
-		public function isChromeFrame() {
-			return( strpos($this->_agent,"chromeframe") !== false );
-		}
-		/**
-		* Returns a formatted string with a summary of the details of the browser.
-		* @return string formatted string with a summary of the browser
-		*/
-		public function __toString() {
-			return "<strong>Browser Name:</strong>{$this->getBrowser()}<br/>\n" .
-			       "<strong>Browser Version:</strong>{$this->getVersion()}<br/>\n" .
-			       "<strong>Browser User Agent String:</strong>{$this->getUserAgent()}<br/>\n" .
-			       "<strong>Platform:</strong>{$this->getPlatform()}<br/>";
-		}
-		/**
-		 * Protected routine to calculate and determine what the browser is in use (including platform)
-		 */
-		protected function determine() {
-			$this->checkPlatform();
-			$this->checkBrowsers();
-			$this->checkForAol();
-		}
-		/**
-		 * Protected routine to determine the browser type
-		 * @return boolean True if the browser was detected otherwise false
-		 */
-		 protected function checkBrowsers() {
-			return (
-				// well-known, well-used
-				// Special Notes:
-				// (1) Opera must be checked before FireFox due to the odd
-				//     user agents used in some older versions of Opera
-				// (2) WebTV is strapped onto Internet Explorer so we must
-				//     check for WebTV before IE
-				// (3) (deprecated) Galeon is based on Firefox and needs to be
-				//     tested before Firefox is tested
-				// (4) OmniWeb is based on Safari so OmniWeb check must occur
-				//     before Safari
-				// (5) Netscape 9+ is based on Firefox so Netscape checks
-				//     before FireFox are necessary
-				$this->checkBrowserWebTv() ||
-				$this->checkBrowserInternetExplorer() ||
-				$this->checkBrowserOpera() ||
-				$this->checkBrowserGaleon() ||
-				$this->checkBrowserNetscapeNavigator9Plus() ||
-				$this->checkBrowserFirefox() ||
-				$this->checkBrowserChrome() ||
-				$this->checkBrowserOmniWeb() ||
-
-				// common mobile
-				$this->checkBrowserAndroid() ||
-				$this->checkBrowseriPad() ||
-				$this->checkBrowseriPod() ||
-				$this->checkBrowseriPhone() ||
-				$this->checkBrowserBlackBerry() ||
-				$this->checkBrowserNokia() ||
-
-				// common bots
-				$this->checkBrowserGoogleBot() ||
-				$this->checkBrowserMSNBot() ||
-				$this->checkBrowserSlurp() ||
-
-				// WebKit base check (post mobile and others)
-				$this->checkBrowserSafari() ||
-				
-				// everyone else
-				$this->checkBrowserNetPositive() ||
-				$this->checkBrowserFirebird() ||
-				$this->checkBrowserKonqueror() ||
-				$this->checkBrowserIcab() ||
-				$this->checkBrowserPhoenix() ||
-				$this->checkBrowserAmaya() ||
-				$this->checkBrowserLynx() ||
-				$this->checkBrowserShiretoko() ||
-				$this->checkBrowserIceCat() ||
-				$this->checkBrowserW3CValidator() ||
-				$this->checkBrowserMozilla() /* Mozilla is such an open standard that you must check it last */
-			);
 	    }
 
-	    /**
-	     * Determine if the user is using a BlackBerry (last updated 1.7)
-	     * @return boolean True if the browser is the BlackBerry browser otherwise false
-	     */
-	    protected function checkBrowserBlackBerry() {
-		    if( stripos($this->_agent,'blackberry') !== false ) {
-			    $aresult = explode("/",stristr($this->_agent,"BlackBerry"));
-			    $aversion = explode(' ',$aresult[1]);
-			    $this->setVersion($aversion[0]);
-			    $this->_browser_name = self::BROWSER_BLACKBERRY;
-			    $this->setMobile(true);
-			    $this->Browser=29;
-			    return true;
-		    }
-		    return false;
-	    }
+	    function parseUserAgentInfo($detect){
 
-	    /**
-	     * Determine if the user is using an AOL User Agent (last updated 1.7)
-	     * @return boolean True if the browser is from AOL otherwise false
-	     */
-	    protected function checkForAol() {
-			$this->setAol(false);
-			$this->setAolVersion(self::VERSION_UNKNOWN);
+	    		$database = DB::getInstance();
+				$db = $database->getConnection();
 
-			if( stripos($this->_agent,'aol') !== false ) {
-			    $aversion = explode(' ',stristr($this->_agent, 'AOL'));
-			    $this->setAol(true);
-			    $this->setAolVersion(preg_replace('/[^0-9\.a-z]/i', '', $aversion[1]));
-			    $this->Browser=8;
-			    return true;
-		    }
-		    return false;
-	    }
+	    		$parser = Parser::create();
+	    		$result = $parser->parse($detect->getUserAgent());
+				//If is not mobile or tablet
+				if( !$detect->isMobile() && !$detect->isTablet() ){
 
-	    /**
-	     * Determine if the browser is the GoogleBot or not (last updated 1.7)
-	     * @return boolean True if the browser is the GoogletBot otherwise false
-	     */
-	    protected function checkBrowserGoogleBot() {
-		    if( stripos($this->_agent,'googlebot') !== false ) {
-				$aresult = explode('/',stristr($this->_agent,'googlebot'));
-				$aversion = explode(' ',$aresult[1]);
-				$this->setVersion(str_replace(';','',$aversion[0]));
-				$this->_browser_name = self::BROWSER_GOOGLEBOT;
-				$this->setRobot(true);
-				$this->Browser=26;
-				return true;
-		    }
-		    return false;
-	    }
-
-		/**
-	     * Determine if the browser is the MSNBot or not (last updated 1.9)
-	     * @return boolean True if the browser is the MSNBot otherwise false
-	     */
-		protected function checkBrowserMSNBot() {
-			if( stripos($this->_agent,"msnbot") !== false ) {
-				$aresult = explode("/",stristr($this->_agent,"msnbot"));
-				$aversion = explode(" ",$aresult[1]);
-				$this->setVersion(str_replace(";","",$aversion[0]));
-				$this->_browser_name = self::BROWSER_MSNBOT;
-				$this->setRobot(true);
-				$this->Browser=34;
-				return true;
-			}
-			return false;
-		}	    
-	    
-	    /**
-	     * Determine if the browser is the W3C Validator or not (last updated 1.7)
-	     * @return boolean True if the browser is the W3C Validator otherwise false
-	     */
-	    protected function checkBrowserW3CValidator() {
-		    if( stripos($this->_agent,'W3C-checklink') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'W3C-checklink'));
-			    $aversion = explode(' ',$aresult[1]);
-			    $this->setVersion($aversion[0]);
-			    $this->_browser_name = self::BROWSER_W3CVALIDATOR;
-			    $this->Browser=28;
-			    return true;
-		    }
-		    else if( stripos($this->_agent,'W3C_Validator') !== false ) {
-				// Some of the Validator versions do not delineate w/ a slash - add it back in
-				$ua = str_replace("W3C_Validator ", "W3C_Validator/", $this->_agent);
-			    $aresult = explode('/',stristr($ua,'W3C_Validator'));
-			    $aversion = explode(' ',$aresult[1]);
-			    $this->setVersion($aversion[0]);
-			    $this->_browser_name = self::BROWSER_W3CVALIDATOR;
-			    $this->Browser=28;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is the Yahoo! Slurp Robot or not (last updated 1.7)
-	     * @return boolean True if the browser is the Yahoo! Slurp Robot otherwise false
-	     */
-	    protected function checkBrowserSlurp() {
-		    if( stripos($this->_agent,'slurp') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'Slurp'));
-			    $aversion = explode(' ',$aresult[1]);
-			    $this->setVersion($aversion[0]);
-			    $this->_browser_name = self::BROWSER_SLURP;
-				$this->setRobot(true);
-				$this->setMobile(false);
-				$this->Browser=27;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Internet Explorer or not (last updated 1.7)
-	     * @return boolean True if the browser is Internet Explorer otherwise false
-	     */
-	    protected function checkBrowserInternetExplorer() {
-
-		    // Test for v1 - v1.5 IE
-		    if( stripos($this->_agent,'microsoft internet explorer') !== false ) {
-			    $this->setBrowser(self::BROWSER_IE);
-			    $this->Browser=1;
-			    $this->setVersion('1.0');
-			    $aresult = stristr($this->_agent, '/');
-			    if( preg_match('/308|425|426|474|0b1/i', $aresult) ) {
-				    $this->setVersion('1.5');
-			    }
-				return true;
-		    }
-		    // Test for versions > 1.5
-		    else if( stripos($this->_agent,'msie') !== false && stripos($this->_agent,'opera') === false ) {
-		    	// See if the browser is the odd MSN Explorer
-		    	if( stripos($this->_agent,'msnb') !== false ) {
-			    	$aresult = explode(' ',stristr(str_replace(';','; ',$this->_agent),'MSN'));
-				    $this->setBrowser( self::BROWSER_MSN );
-				    $this->Browser=33;
-				    $this->setVersion(str_replace(array('(',')',';'),'',$aresult[1]));
-				    return true;
-		    	}
-		    	$aresult = explode(' ',stristr(str_replace(';','; ',$this->_agent),'msie'));
-		    	$this->setBrowser( self::BROWSER_IE );
-		    	$this->Browser=1;
-		    	$this->setVersion(str_replace(array('(',')',';'),'',$aresult[1]));
-		    	return true;
-		    }
-		    // Test for Pocket IE
-		    else if( stripos($this->_agent,'mspie') !== false || stripos($this->_agent,'pocket') !== false ) {
-			    $aresult = explode(' ',stristr($this->_agent,'mspie'));
-			    $this->setPlatform( self::PLATFORM_WINDOWS_CE );
-			    $this->setBrowser( self::BROWSER_POCKET_IE );
-			    $this->Browser=14;
-			    $this->setMobile(true);
-
-			    if( stripos($this->_agent,'mspie') !== false ) {
-				    $this->setVersion($aresult[1]);
-			    }
-			    else {
-				    $aversion = explode('/',$this->_agent);
-				    $this->setVersion($aversion[1]);
-			    }
-			    return true;
-		    }
-			return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Opera or not (last updated 1.7)
-	     * @return boolean True if the browser is Opera otherwise false
-	     */
-	    protected function checkBrowserOpera() {
-		    if( stripos($this->_agent,'opera mini') !== false ) {
-			    $resultant = stristr($this->_agent, 'opera mini');
-			    if( preg_match('/\//',$resultant) ) {
-				    $aresult = explode('/',$resultant);
-				    $aversion = explode(' ',$aresult[1]);
-				    $this->setVersion($aversion[0]);
+					switch ($result->device->family) {
+						//Is Bot
+						case 'Bot':
+							$type = "4";
+							$result->device->family = "Bot";
+							break;
+						//Is Desktop
+						case 'Other':
+							$type = "1";
+							$result->device->family = "Desktop";
+							break;
+					}
+				} else {
+					//If tablet
+					if ($detect->isTablet()) {
+						$type = "3";
+					//If mobile	
+					} else {
+						$type = "2";
+					}
 				}
-			    else {
-				    $aversion = explode(' ',stristr($resultant,'opera mini'));
-				    $this->setVersion($aversion[1]);
-			    }
-			    $this->_browser_name = self::BROWSER_OPERA_MINI;
-			    $this->Browser=12;
-				$this->setMobile(true);
-				return true;
-		    }
-		    else if( stripos($this->_agent,'opera') !== false ) {
-			    $resultant = stristr($this->_agent, 'opera');
-			    if( preg_match('/Version\/(10.*)$/',$resultant,$matches) ) {
-				    $this->setVersion($matches[1]);
-			    }
-			    else if( preg_match('/\//',$resultant) ) {
-				    $aresult = explode('/',str_replace("("," ",$resultant));
-				    $aversion = explode(' ',$aresult[1]);
-				    $this->setVersion($aversion[0]);
-			    }
-			    else {
-				    $aversion = explode(' ',stristr($resultant,'opera'));
-				    $this->setVersion(isset($aversion[1])?$aversion[1]:"");
-			    }
-			    $this->_browser_name = self::BROWSER_OPERA;
-			    $this->Browser=6;
-			    return true;
-		    }
-			return false;
+
+				//Select from DB and return ID's
+				$mysql['browser'] = $db->real_escape_string($result->ua->family);
+				$mysql['platform'] = $db->real_escape_string($result->os->family);
+				$mysql['device'] = $db->real_escape_string($result->device->family);
+				$mysql['device_type'] = $db->real_escape_string($type);
+
+				//Get browser ID
+				$browser_sql = "SELECT browser_id FROM 202_browsers WHERE browser_name='".$mysql['browser']."'";
+				$browser_result = _mysqli_query($browser_sql);
+				$browser_row = $browser_result->fetch_assoc();
+					if ($browser_row) {
+						 $browser_id = $browser_row['browser_id'];
+					} else {
+						$browser_sql = "INSERT INTO 202_browsers SET browser_name='".$mysql['browser']."'";
+						$browser_result = _mysqli_query($browser_sql) ;
+						$browser_id = $db->insert_id;
+					}
+
+				//Get platform ID
+				$platform_sql = "SELECT platform_id FROM 202_platforms WHERE platform_name='".$mysql['platform']."'";
+				$platform_result = _mysqli_query($platform_sql);
+				$platform_row = $platform_result->fetch_assoc();
+					if ($platform_row) {
+						 $platform_id = $platform_row['platform_id'];
+					} else {
+						$platform_sql = "INSERT INTO 202_platforms SET platform_name='".$mysql['platform']."'";
+						$platform_result = _mysqli_query($platform_sql) ;
+						$platform_id = $db->insert_id;
+					}
+
+				//Get device model ID
+				$device_sql = "SELECT device_id, device_type FROM 202_device_models WHERE device_name='".$mysql['device']."'";
+				$device_result = _mysqli_query($device_sql);
+				$device_row = $device_result->fetch_assoc();
+					if ($device_row) {
+						 $device_id = $device_row['device_id'];
+						 $device_type = $device_row['device_type'];
+					} else {
+						$device_sql = "INSERT INTO 202_device_models SET device_name='".$mysql['device']."', device_type='".$mysql['device_type']."'";
+						$device_result = _mysqli_query($device_sql) ;
+						$device_id = $db->insert_id;
+						$device_type = $type;
+					}
+
+				$data = array('browser' => $browser_id, 'platform' => $platform_id, 'device' => $device_id, 'type' => $device_type);
+				return $data;
 	    }
-
-	    /**
-	     * Determine if the browser is Chrome or not (last updated 1.7)
-	     * @return boolean True if the browser is Chrome otherwise false
-	     */
-	    protected function checkBrowserChrome() {
-		    if( stripos($this->_agent,'Chrome') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'Chrome'));
-			    $aversion = explode(' ',$aresult[1]);
-			    $this->setVersion($aversion[0]);
-			    $this->setBrowser(self::BROWSER_CHROME);
-			    $this->Browser=9;
-			    return true;
-		    }
-		    return false;
-	    }
-
-
-	    /**
-	     * Determine if the browser is WebTv or not (last updated 1.7)
-	     * @return boolean True if the browser is WebTv otherwise false
-	     */
-	    protected function checkBrowserWebTv() {
-		    if( stripos($this->_agent,'webtv') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'webtv'));
-			    $aversion = explode(' ',$aresult[1]);
-			    $this->setVersion($aversion[0]);
-			    $this->setBrowser(self::BROWSER_WEBTV);
-			    $this->Browser=13;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is NetPositive or not (last updated 1.7)
-	     * @return boolean True if the browser is NetPositive otherwise false
-	     */
-	    protected function checkBrowserNetPositive() {
-		    if( stripos($this->_agent,'NetPositive') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'NetPositive'));
-			    $aversion = explode(' ',$aresult[1]);
-			    $this->setVersion(str_replace(array('(',')',';'),'',$aversion[0]));
-			    $this->setBrowser(self::BROWSER_NETPOSITIVE);
-			    $this->Browser=36;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Galeon or not (last updated 1.7)
-	     * @return boolean True if the browser is Galeon otherwise false
-	     */
-	    protected function checkBrowserGaleon() {
-		    if( stripos($this->_agent,'galeon') !== false ) {
-			    $aresult = explode(' ',stristr($this->_agent,'galeon'));
-			    $aversion = explode('/',$aresult[0]);
-			    $this->setVersion($aversion[1]);
-			    $this->setBrowser(self::BROWSER_GALEON);
-			    $this->Browser=35;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Konqueror or not (last updated 1.7)
-	     * @return boolean True if the browser is Konqueror otherwise false
-	     */
-	    protected function checkBrowserKonqueror() {
-		    if( stripos($this->_agent,'Konqueror') !== false ) {
-			    $aresult = explode(' ',stristr($this->_agent,'Konqueror'));
-			    $aversion = explode('/',$aresult[0]);
-			    $this->setVersion($aversion[1]);
-			    $this->setBrowser(self::BROWSER_KONQUEROR);
-			    $this->Browser=3;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is iCab or not (last updated 1.7)
-	     * @return boolean True if the browser is iCab otherwise false
-	     */
-	    protected function checkBrowserIcab() {
-		    if( stripos($this->_agent,'icab') !== false ) {
-			    $aversion = explode(' ',stristr(str_replace('/',' ',$this->_agent),'icab'));
-			    $this->setVersion($aversion[1]);
-			    $this->setBrowser(self::BROWSER_ICAB);
-			    $this->Browser=15;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is OmniWeb or not (last updated 1.7)
-	     * @return boolean True if the browser is OmniWeb otherwise false
-	     */
-	    protected function checkBrowserOmniWeb() {
-		    if( stripos($this->_agent,'omniweb') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'omniweb'));
-			    $aversion = explode(' ',isset($aresult[1])?$aresult[1]:"");
-			    $this->setVersion($aversion[0]);
-			    $this->setBrowser(self::BROWSER_OMNIWEB);
-			    $this->Browser=5;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Phoenix or not (last updated 1.7)
-	     * @return boolean True if the browser is Phoenix otherwise false
-	     */
-	    protected function checkBrowserPhoenix() {
-		    if( stripos($this->_agent,'Phoenix') !== false ) {
-			    $aversion = explode('/',stristr($this->_agent,'Phoenix'));
-			    $this->setVersion($aversion[1]);
-			    $this->setBrowser(self::BROWSER_PHOENIX);
-			    $this->Browser=37;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Firebird or not (last updated 1.7)
-	     * @return boolean True if the browser is Firebird otherwise false
-	     */
-	    protected function checkBrowserFirebird() {
-		    if( stripos($this->_agent,'Firebird') !== false ) {
-			    $aversion = explode('/',stristr($this->_agent,'Firebird'));
-			    $this->setVersion($aversion[1]);
-			    $this->setBrowser(self::BROWSER_FIREBIRD);
-			    $this->Browser=16;
-				return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Netscape Navigator 9+ or not (last updated 1.7)
-		 * NOTE: (http://browser.netscape.com/ - Official support ended on March 1st, 2008)
-	     * @return boolean True if the browser is Netscape Navigator 9+ otherwise false
-	     */
-	    protected function checkBrowserNetscapeNavigator9Plus() {
-		    if( stripos($this->_agent,'Firefox') !== false && preg_match('/Navigator\/([^ ]*)/i',$this->_agent,$matches) ) {
-			    $this->setVersion($matches[1]);
-			    $this->setBrowser(self::BROWSER_NETSCAPE_NAVIGATOR);
-			    $this->Browser=4;
-			    return true;
-		    }
-		    else if( stripos($this->_agent,'Firefox') === false && preg_match('/Netscape6?\/([^ ]*)/i',$this->_agent,$matches) ) {
-			    $this->setVersion($matches[1]);
-			    $this->setBrowser(self::BROWSER_NETSCAPE_NAVIGATOR);
-			    $this->Browser=4;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Shiretoko or not (https://wiki.mozilla.org/Projects/shiretoko) (last updated 1.7)
-	     * @return boolean True if the browser is Shiretoko otherwise false
-	     */
-	    protected function checkBrowserShiretoko() {
-		    if( stripos($this->_agent,'Mozilla') !== false && preg_match('/Shiretoko\/([^ ]*)/i',$this->_agent,$matches) ) {
-			    $this->setVersion($matches[1]);
-			    $this->setBrowser(self::BROWSER_SHIRETOKO);
-			    $this->Browser=18;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Ice Cat or not (http://en.wikipedia.org/wiki/GNU_IceCat) (last updated 1.7)
-	     * @return boolean True if the browser is Ice Cat otherwise false
-	     */
-	    protected function checkBrowserIceCat() {
-		    if( stripos($this->_agent,'Mozilla') !== false && preg_match('/IceCat\/([^ ]*)/i',$this->_agent,$matches) ) {
-			    $this->setVersion($matches[1]);
-			    $this->setBrowser(self::BROWSER_ICECAT);
-			    $this->Browser=30;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Nokia or not (last updated 1.7)
-	     * @return boolean True if the browser is Nokia otherwise false
-	     */
-	    protected function checkBrowserNokia() {
-		    if( preg_match("/Nokia([^\/]+)\/([^ SP]+)/i",$this->_agent,$matches) ) {
-			    $this->setVersion($matches[2]);
-				if( stripos($this->_agent,'Series60') !== false || strpos($this->_agent,'S60') !== false ) {
-					$this->setBrowser(self::BROWSER_NOKIA_S60);
-					$this->Browser=31;
-				}
-				else {
-					$this->setBrowser( self::BROWSER_NOKIA );
-					$this->Browser=32;
-				}
-			    $this->setMobile(true);
-			    return true;
-		    }
-			return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Firefox or not (last updated 1.7)
-	     * @return boolean True if the browser is Firefox otherwise false
-	     */
-	    protected function checkBrowserFirefox() {
-		    if( stripos($this->_agent,'safari') === false ) {
-				if( preg_match("/Firefox[\/ \(]([^ ;\)]+)/i",$this->_agent,$matches) ) {
-					$this->setVersion($matches[1]);
-					$this->setBrowser(self::BROWSER_FIREFOX);
-					$this->Browser=2;
-					return true;
-				}
-				else if( preg_match("/Firefox$/i",$this->_agent,$matches) ) {
-					$this->setVersion("");
-					$this->setBrowser(self::BROWSER_FIREFOX);
-					$this->Browser=2;
-					return true;
-				}
-			}
-		    return false;
-	    }
-
-		/**
-	     * Determine if the browser is Firefox or not (last updated 1.7)
-	     * @return boolean True if the browser is Firefox otherwise false
-	     */
-	    protected function checkBrowserIceweasel() {
-			if( stripos($this->_agent,'Iceweasel') !== false ) {
-				$aresult = explode('/',stristr($this->_agent,'Iceweasel'));
-				$aversion = explode(' ',$aresult[1]);
-				$this->setVersion($aversion[0]);
-				$this->setBrowser(self::BROWSER_ICEWEASEL);
-				$this->Browser=17;
-				return true;
-			}
-			return false;
-		}
-	    /**
-	     * Determine if the browser is Mozilla or not (last updated 1.7)
-	     * @return boolean True if the browser is Mozilla otherwise false
-	     */
-	    protected function checkBrowserMozilla() {
-		    if( stripos($this->_agent,'mozilla') !== false  && preg_match('/rv:[0-9].[0-9][a-b]?/i',$this->_agent) && stripos($this->_agent,'netscape') === false) {
-			    $aversion = explode(' ',stristr($this->_agent,'rv:'));
-			    preg_match('/rv:[0-9].[0-9][a-b]?/i',$this->_agent,$aversion);
-			    $this->setVersion(str_replace('rv:','',$aversion[0]));
-			    $this->setBrowser(self::BROWSER_MOZILLA);
-			    $this->Browser=19;
-			    return true;
-		    }
-		    else if( stripos($this->_agent,'mozilla') !== false && preg_match('/rv:[0-9]\.[0-9]/i',$this->_agent) && stripos($this->_agent,'netscape') === false ) {
-			    $aversion = explode('',stristr($this->_agent,'rv:'));
-			    $this->setVersion(str_replace('rv:','',$aversion[0]));
-			    $this->setBrowser(self::BROWSER_MOZILLA);
-			    $this->Browser=19;
-			    return true;
-		    }
-		    else if( stripos($this->_agent,'mozilla') !== false  && preg_match('/mozilla\/([^ ]*)/i',$this->_agent,$matches) && stripos($this->_agent,'netscape') === false ) {
-			    $this->setVersion($matches[1]);
-			    $this->setBrowser(self::BROWSER_MOZILLA);
-			    $this->Browser=19;
-			    return true;
-		    }
-			return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Lynx or not (last updated 1.7)
-	     * @return boolean True if the browser is Lynx otherwise false
-	     */
-	    protected function checkBrowserLynx() {
-		    if( stripos($this->_agent,'lynx') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'Lynx'));
-			    $aversion = explode(' ',(isset($aresult[1])?$aresult[1]:""));
-			    $this->setVersion($aversion[0]);
-			    $this->setBrowser(self::BROWSER_LYNX);
-			    $this->Browser=21;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Amaya or not (last updated 1.7)
-	     * @return boolean True if the browser is Amaya otherwise false
-	     */
-	    protected function checkBrowserAmaya() {
-		    if( stripos($this->_agent,'amaya') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'Amaya'));
-			    $aversion = explode(' ',$aresult[1]);
-			    $this->setVersion($aversion[0]);
-			    $this->setBrowser(self::BROWSER_AMAYA);
-			    $this->Browser=20;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Safari or not (last updated 1.7)
-	     * @return boolean True if the browser is Safari otherwise false
-	     */
-	    protected function checkBrowserSafari() {
-		    if( stripos($this->_agent,'Safari') !== false && stripos($this->_agent,'iPhone') === false && stripos($this->_agent,'iPod') === false ) {
-			    $aresult = explode('/',stristr($this->_agent,'Version'));
-			    if( isset($aresult[1]) ) {
-				    $aversion = explode(' ',$aresult[1]);
-				    $this->setVersion($aversion[0]);
-			    }
-			    else {
-				    $this->setVersion(self::VERSION_UNKNOWN);
-			    }
-			    $this->setBrowser(self::BROWSER_SAFARI);
-			    $this->Browser=7;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is iPhone or not (last updated 1.7)
-	     * @return boolean True if the browser is iPhone otherwise false
-	     */
-	    protected function checkBrowseriPhone() {
-		    if( stripos($this->_agent,'iPhone') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'Version'));
-			    if( isset($aresult[1]) ) {
-				    $aversion = explode(' ',$aresult[1]);
-				    $this->setVersion($aversion[0]);
-			    }
-			    else {
-				    $this->setVersion(self::VERSION_UNKNOWN);
-			    }
-			    $this->setMobile(true);
-			    $this->setBrowser(self::BROWSER_IPHONE);
-			    $this->Browser=22;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is iPod or not (last updated 1.7)
-	     * @return boolean True if the browser is iPod otherwise false
-	     */
-	    protected function checkBrowseriPad() {
-		    if( stripos($this->_agent,'iPad') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'Version'));
-			    if( isset($aresult[1]) ) {
-				    $aversion = explode(' ',$aresult[1]);
-				    $this->setVersion($aversion[0]);
-			    }
-			    else {
-				    $this->setVersion(self::VERSION_UNKNOWN);
-			    }
-			    $this->setMobile(true);
-			    $this->setBrowser(self::BROWSER_IPAD);
-			    $this->Browser=24;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is iPod or not (last updated 1.7)
-	     * @return boolean True if the browser is iPod otherwise false
-	     */
-	    protected function checkBrowseriPod() {
-		    if( stripos($this->_agent,'iPod') !== false ) {
-			    $aresult = explode('/',stristr($this->_agent,'Version'));
-			    if( isset($aresult[1]) ) {
-				    $aversion = explode(' ',$aresult[1]);
-				    $this->setVersion($aversion[0]);
-			    }
-			    else {
-				    $this->setVersion(self::VERSION_UNKNOWN);
-			    }
-			    $this->setMobile(true);
-			    $this->setBrowser(self::BROWSER_IPOD);
-			    $this->Browser=23;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine if the browser is Android or not (last updated 1.7)
-	     * @return boolean True if the browser is Android otherwise false
-	     */
-	    protected function checkBrowserAndroid() {
-		    if( stripos($this->_agent,'Android') !== false ) {
-			    $aresult = explode(' ',stristr($this->_agent,'Android'));
-			    if( isset($aresult[1]) ) {
-				    $aversion = explode(' ',$aresult[1]);
-				    $this->setVersion($aversion[0]);
-			    }
-			    else {
-				    $this->setVersion(self::VERSION_UNKNOWN);
-			    }
-			    $this->setMobile(true);
-			    $this->setBrowser(self::BROWSER_ANDROID);
-			    $this->Browser=25;
-			    return true;
-		    }
-		    return false;
-	    }
-
-	    /**
-	     * Determine the user's platform (last updated 1.7)
-	     */
-	    protected function checkPlatform() {
-		    if( stripos($this->_agent, 'windows') !== false ) {
-			    $this->_platform = self::PLATFORM_WINDOWS;
-			    $this->Platform=1;
-		    }
-		    else if( stripos($this->_agent, 'iPad') !== false ) {
-			    $this->_platform = self::PLATFORM_IPAD;
-			    $this->Platform=7;
-		    }
-		    else if( stripos($this->_agent, 'iPod') !== false ) {
-			    $this->_platform = self::PLATFORM_IPOD;
-			    $this->Platform=6;
-		    }
-		    else if( stripos($this->_agent, 'iPhone') !== false ) {
-			    $this->_platform = self::PLATFORM_IPHONE;
-			    $this->Platform=6;
-		    }
-		    elseif( stripos($this->_agent, 'mac') !== false ) {
-			    $this->_platform = self::PLATFORM_APPLE;
-			    $this->Platform=2;
-		    }
-		    elseif( stripos($this->_agent, 'android') !== false ) {
-			    $this->_platform = self::PLATFORM_ANDROID;
-			    $this->Platform=6;
-		    }
-		    elseif( stripos($this->_agent, 'linux') !== false ) {
-			    $this->_platform = self::PLATFORM_LINUX;
-			    $this->Platform=3;
-		    }
-		    else if( stripos($this->_agent, 'Nokia') !== false ) {
-			    $this->_platform = self::PLATFORM_NOKIA;
-			    $this->Platform=6;
-		    }
-		    else if( stripos($this->_agent, 'BlackBerry') !== false ) {
-			    $this->_platform = self::PLATFORM_BLACKBERRY;
-			    $this->Platform=6;
-		    }
-		    elseif( stripos($this->_agent,'FreeBSD') !== false ) {
-			    $this->_platform = self::PLATFORM_FREEBSD;
-			    $this->Platform=3;
-		    }
-		    elseif( stripos($this->_agent,'OpenBSD') !== false ) {
-			    $this->_platform = self::PLATFORM_OPENBSD;
-			    $this->Platform=3;
-		    }
-		    elseif( stripos($this->_agent,'NetBSD') !== false ) {
-			    $this->_platform = self::PLATFORM_NETBSD;
-			    $this->Platform=3;
-		    }
-		    elseif( stripos($this->_agent, 'OpenSolaris') !== false ) {
-			    $this->_platform = self::PLATFORM_OPENSOLARIS;
-			    $this->Platform=3;
-		    }
-		    elseif( stripos($this->_agent, 'SunOS') !== false ) {
-			    $this->_platform = self::PLATFORM_SUNOS;
-			    $this->Platform=3;
-		    }
-		    elseif( stripos($this->_agent, 'OS\/2') !== false ) {
-			    $this->_platform = self::PLATFORM_OS2;
-			    $this->Platform=4;
-		    }
-		    elseif( stripos($this->_agent, 'BeOS') !== false ) {
-			    $this->_platform = self::PLATFORM_BEOS;
-			    $this->Platform=5;
-		    }
-		    elseif( stripos($this->_agent, 'win') !== false ) {
-			    $this->_platform = self::PLATFORM_WINDOWS;
-			    $this->Platform=1;
-		    }
-
-	    }
-	    
     }
 
 
 class INDEXES {
 	
 		
+	//this returns the location_country_id, when a Country Code is given
+	function get_country_id($country_name, $country_code) {
+		
+		global $memcacheWorking, $memcache;
+		
+		if ($memcacheWorking) {
+			$time = 2592000; //30 days in sec
+			//get from memcached
+			$getID = $memcache->get(md5("country-id" . $country_name . systemHash()));
+
+			if ($getID) {
+				$country_id = $getID;
+				return $country_id;
+			} else {
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['country_name'] = $db->real_escape_string($country_name);
+				$mysql['country_code'] = $db->real_escape_string($country_code);
+
+				$country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='".$mysql['country_code']."'";
+				$country_result = _mysqli_query($country_sql);
+				$country_row = $country_result->fetch_assoc(); 
+				if ($country_row) {
+					//if this ip_id already exists, return the ip_id for it.
+					$country_id = $country_row['country_id'];
+					//add to memcached
+					$setID = $memcache->set( md5("country-id" . $country_name . systemHash()), $country_id, false, $time );
+					return $country_id;
+				} else {
+					//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
+					$country_sql = "INSERT INTO 202_locations_country SET country_code='".$mysql['country_code']."', country_name='".$mysql['country_name']."'";
+					$country_result = _mysqli_query($country_sql) ; //($ip_sql);
+					$country_id = $db->insert_id;
+					//add to memcached
+					$setID = $memcache->set( md5("country-id" . $country_name . systemHash()), $country_id, false, $time );
+					return $country_id;
+				}    
+			}
+			
+		} else {
+			$database = DB::getInstance();
+			$db = $database->getConnection();
+
+			$mysql['country_name'] = $db->real_escape_string($country_name);
+			$mysql['country_code'] = $db->real_escape_string($country_code);
+
+			$country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='".$mysql['country_code']."'";
+			$country_result = _mysqli_query($country_sql);
+			$country_row = $country_result->fetch_assoc(); 
+			if ($country_row) {
+				//if this country already exists, return the location_country_id for it.
+				$country_id = $country_row['country_id'];
+				
+				return $country_id;    
+			} else {
+				//else if this  doesn't exist, insert the new countryrow, and return the_id for this new row we found 
+				$country_sql = "INSERT INTO 202_locations_country SET country_code='".$mysql['country_code']."', country_name='".$mysql['country_name']."'";
+				$country_result = _mysqli_query($country_sql) ; //($ip_sql);
+				$country_id = $db->insert_id;
+				
+				return $country_id;    
+			}
+		}
+	}
+
+	//this returns the location_city_id, when a City name is given
+	function get_city_id($city_name, $country_id) {
+		
+		global $memcacheWorking, $memcache;
+		
+		if ($memcacheWorking) {
+			$time = 2592000; //30 days in sec
+			//get from memcached
+			$getID = $memcache->get(md5( "city-id" . $city_name . $country_id . systemHash()));
+
+			if ($getID) {
+				$city_id = $getID;
+				return $city_id;
+			} else {
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['city_name'] = $db->real_escape_string($city_name);
+				$mysql['country_id'] = $db->real_escape_string($country_id);
+
+				$city_sql = "SELECT city_id FROM 202_locations_city WHERE city_name='".$mysql['city_name']."'";
+				$city_result = _mysqli_query($city_sql);
+				$city_row = $city_result->fetch_assoc(); 
+				if ($city_row) {
+					//if this ip_id already exists, return the ip_id for it.
+					$city_id = $city_row['city_id'];
+					//add to memcached
+					$setID = $memcache->set( md5("city-id" . $city_name . $country_id . systemHash()), $city_id, false, $time );
+					return $city_id;
+				} else {
+					//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
+					$city_sql = "INSERT INTO 202_locations_city SET city_name='".$mysql['city_name']."', main_country_id='".$mysql['country_id']."'";
+					$city_result = _mysqli_query($city_sql) ; //($ip_sql);
+					$city_id = $db->insert_id;
+					//add to memcached
+					$setID = $memcache->set( md5("city-id" . $city_name . $country_id . systemHash()), $city_id, false, $time );
+					return $city_id;
+				}    
+			}
+			
+		} else {
+
+			$database = DB::getInstance();
+			$db = $database->getConnection();
+
+			$mysql['city_name'] = $db->real_escape_string($city_name);
+			$mysql['country_id'] = $db->real_escape_string($country_id);
+
+			$city_sql = "SELECT city_id FROM 202_locations_city WHERE city_name='".$mysql['city_name']."'";
+			$city_result = _mysqli_query($city_sql);
+			$city_row = $city_result->fetch_assoc(); 
+			if ($city_row) {
+				//if this country already exists, return the location_country_id for it.
+				$city_id = $city_row['city_id'];
+				
+				return $city_id;    
+			} else {
+				//else if this  doesn't exist, insert the new cityrow, and return the_id for this new row we found 
+				$city_sql = "INSERT INTO 202_locations_city SET city_name='".$mysql['city_name']."', main_country_id='".$mysql['country_id']."'";
+				$city_result = _mysqli_query($city_sql) ; //($ip_sql);
+				$city_id = $db->insert_id;
+				
+				return $city_id;    
+			}
+		}
+	}  
+
+	//this returns the isp_id, when a isp name is given
+	function get_isp_id($isp) {
+		
+		global $memcacheWorking, $memcache;
+		
+		if ($memcacheWorking) {
+			$time = 604800; //7 days in sec
+			//get from memcached
+			$getID = $memcache->get(md5( "isp-id" . $isp . systemHash()));
+
+			if ($getID) {
+				$isp_id = $getID;
+				return $isp_id;
+			} else {
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['isp'] = $db->real_escape_string($isp);
+
+				$isp_sql = "SELECT isp_id FROM 202_locations_isp WHERE isp_name='".$mysql['isp']."'";
+				$isp_result = _mysqli_query($isp_sql);
+				$isp_row = $isp_result->fetch_assoc(); 
+				if ($isp_row) {
+					//if this ip_id already exists, return the ip_id for it.
+					$isp_id = $isp_row['isp_id'];
+					//add to memcached
+					$setID = $memcache->set( md5("isp-id" . $isp . systemHash()), $isp_id, false, $time );
+					return $isp_id;
+				} else {
+					//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
+					$isp_sql = "INSERT INTO 202_locations_isp SET isp_name='".$mysql['isp']."'";
+					$isp_result = _mysqli_query($isp_sql) ; //($isp_sql);
+					$isp_id = $db->insert_id;
+					//add to memcached
+					$setID = $memcache->set( md5("isp-id" . $isp . systemHash()), $isp_id, false, $time );
+					return $isp_id;
+				}    
+			}
+			
+		} else {
+
+			$database = DB::getInstance();
+			$db = $database->getConnection();
+
+			$mysql['isp'] = $db->real_escape_string($isp);
+
+			$isp_sql = "SELECT isp_id FROM 202_locations_isp WHERE isp_name='".$mysql['isp']."'";
+			$isp_result = _mysqli_query($isp_sql);
+			$isp_row = $isp_result->fetch_assoc(); 
+			if ($isp_row) {
+				//if this isp already exists, return the isp_id for it.
+				$isp_id = $isp_row['isp_id'];
+				
+				return $isp_id;    
+			} else {
+				//else if this  doesn't exist, insert the new isp row, and return the_id for this new row we found 
+				$isp_sql = "INSERT INTO 202_locations_isp SET isp_name='".$mysql['isp']."'";
+				$isp_result = _mysqli_query($isp_sql) ; //($isp_sql);
+				$isp_id = $db->insert_id;
+				
+				return $isp_id;    
+			}
+		}
+	}
+
 	//this returns the ip_id, when a ip_address is given
 	function get_ip_id($ip_address) {
-	
-		$mysql['ip_address'] = mysql_real_escape_string($ip_address);
 		
-		$ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='".$mysql['ip_address']."'";
-		$ip_result = _mysql_query($ip_sql);
-		$ip_row = mysql_fetch_assoc($ip_result); 
-		if ($ip_row) {
-			//if this ip already exists, return the ip_id for it.
-			$ip_id = $ip_row['ip_id'];
+		global $memcacheWorking, $memcache;
+
+		if ($memcacheWorking) {
+			$time = 604800; //7 days in sec
+			//get from memcached
+			$getID = $memcache->get(md5("ip-id" . $ip_address . systemHash()));
+
+			if ($getID) {
+				$ip_id = $getID;
+				return $ip_id;
+			} else {
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['ip_address'] = $db->real_escape_string($ip_address);
+
+				$ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='".$mysql['ip_address']."'";
+				$ip_result = _mysqli_query($ip_sql);
+				$ip_row = $ip_result->fetch_assoc(); 
+				if ($ip_row) {
+					//if this ip_id already exists, return the ip_id for it.
+					$ip_id = $ip_row['ip_id'];
+					//add to memcached
+					$setID = $memcache->set( md5( "ip-id" . $ip_address . systemHash()), $ip_id, false, $time );
+					return $ip_id;
+				} else {
+					//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
+					$ip_sql = "INSERT INTO 202_ips SET ip_address='".$mysql['ip_address']."'";
+					$ip_result = _mysqli_query($ip_sql) ; //($ip_sql);
+					$ip_id = $db->insert_id;
+					//add to memcached
+					$setID = $memcache->set( md5( "ip-id" . $ip_address . systemHash()), $ip_id, false, $time );
+					return $ip_id;
+				}    
+			}
 			
-			return $ip_id;    
 		} else {
-			//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
-			//but before we do this, we need to grab the location_id
-			$location_id = INDEXES::get_location_id($ip_address); 
-			$mysql['location_id'] = mysql_real_escape_string($location_id);    
-			$ip_sql = "INSERT INTO 202_ips SET ip_address='".$mysql['ip_address']."', location_id='".$mysql['location_id']."'";
-			$ip_result = _mysql_query($ip_sql) ; //($ip_sql);
-			$ip_id = mysql_insert_id();
-			
-			return $ip_id;    
+
+			$database = DB::getInstance();
+			$db = $database->getConnection();
+
+			$mysql['ip_address'] = $db->real_escape_string($ip_address);
+
+			$ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='".$mysql['ip_address']."'";
+			$ip_result = _mysqli_query($ip_sql);
+			$ip_row = $ip_result->fetch_assoc(); 
+			if ($ip_row) {
+				//if this ip already exists, return the ip_id for it.
+				$ip_id = $ip_row['ip_id'];
+				
+				return $ip_id;    
+			} else {
+				//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
+				$ip_sql = "INSERT INTO 202_ips SET ip_address='".$mysql['ip_address']."'";
+				$ip_result = _mysqli_query($ip_sql) ; //($ip_sql);
+				$ip_id = $db->insert_id;
+				
+				return $ip_id;   
+			}
 		}
 	}   
 	
-	//this returns the site_url_id, when a site_url_address is given
-	function get_site_url_id($site_url_address) { 
-	
-		$mysql['site_url_address'] = mysql_real_escape_string($site_url_address);
-		$site_domain_id = INDEXES::get_site_domain_id($site_url_address); 
-		$mysql['site_domain_id'] = mysql_real_escape_string($site_domain_id);    
-		$site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='".$mysql['site_domain_id']."', site_url_address='".$mysql['site_url_address']."'"; 
-		$site_url_result = _mysql_query($site_url_sql) ; //($site_url_sql);
-		$site_url_id = mysql_insert_id();
-		return $site_url_id;
-	}    
 	
 	//this returns the site_domain_id, when a site_url_address is given
-	function get_site_domain_id($site_url_address) { 
-	
+	function get_site_domain_id($site_url_address) {
+
+		global $memcacheWorking, $memcache;
+
 		$parsed_url = @parse_url($site_url_address);
 		$site_domain_host = $parsed_url['host'];
 		$site_domain_host = str_replace('www.','',$site_domain_host);
-		$mysql['site_domain_host'] = mysql_real_escape_string($site_domain_host);
-		
-		$site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='".$mysql['site_domain_host']."'"; 
-		$site_domain_result = _mysql_query($site_domain_sql);
-		$site_domain_row = mysql_fetch_assoc($site_domain_result);
-		if ($site_domain_row) {
-			//if this site_domain_id already exists, return the site_domain_id for it.
-			$site_domain_id = $site_domain_row['site_domain_id'];
-			return $site_domain_id;    
+
+		//if a cached key is found for this lpip, redirect to that url
+		if ($memcacheWorking) {
+			$time = 2592000; //30 days in sec
+			//get from memcached
+			$getID = $memcache->get( md5("domain-id" . $site_domain_host . systemHash()));
+
+			if ($getID) {
+				$site_domain_id = $getID;
+				return $site_domain_id;
+			} else {
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['site_domain_host'] = $db->real_escape_string($site_domain_host);
+
+				$site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='".$mysql['site_domain_host']."'"; 
+				$site_domain_result = _mysqli_query($site_domain_sql);
+				$site_domain_row = $site_domain_result->fetch_assoc();
+				if ($site_domain_row) {
+					//if this site_domain_id already exists, return the site_domain_id for it.
+					$site_domain_id = $site_domain_row['site_domain_id'];
+					//add to memcached
+					$setID = $memcache->set( md5("domain-id" . $site_domain_host . systemHash()), $site_domain_id, false, $time );
+					return $site_domain_id;
+				} else {
+					//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
+					$site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='".$mysql['site_domain_host']."'"; 
+					$site_domain_result = _mysqli_query($site_domain_sql) ; //($site_domain_sql);
+					$site_domain_id = $db->insert_id;
+					//add to memcached
+					$setID = $memcache->set( md5("domain-id" . $site_domain_host . systemHash()), $site_domain_id, false, $time );
+					return $site_domain_id;
+				}    
+			}
+			
 		} else {
-			//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
-			$site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='".$mysql['site_domain_host']."'"; 
-			$site_domain_result = _mysql_query($site_domain_sql) ; //($site_domain_sql);
-			$site_domain_id = mysql_insert_id();
-			return $site_domain_id;    
-		}    
-	} 
+			
+			$database = DB::getInstance();
+			$db = $database->getConnection();
+
+			$mysql['site_domain_host'] = $db->real_escape_string($site_domain_host);
+
+			$site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='".$mysql['site_domain_host']."'"; 
+			$site_domain_result = _mysqli_query($site_domain_sql);
+			$site_domain_row = $site_domain_result->fetch_assoc();
+			if ($site_domain_row) {
+				//if this site_domain_id already exists, return the site_domain_id for it.
+				$site_domain_id = $site_domain_row['site_domain_id'];
+				//add to memcached
+				return $site_domain_id;    
+			} else {
+				//else if this  doesn't exist, insert the new iprow, and return the_id for this new row we found
+				$site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='".$mysql['site_domain_host']."'"; 
+				$site_domain_result = _mysqli_query($site_domain_sql) ; //($site_domain_sql);
+				$site_domain_id = $db->insert_id;
+				return $site_domain_id;    
+			}    
+
+		}
+	}
+
+	//this returns the site_url_id, when a site_url_address is given
+	function get_site_url_id($site_url_address) { 
+		
+		global $memcacheWorking, $memcache;
+
+		$site_domain_id = INDEXES::get_site_domain_id($site_url_address); 
+		
+			if ($memcacheWorking) {
+				$time = 604800; //7 days in sec
+				//get from memcached
+				$getURL = $memcache->get( md5("url-id" . $site_url_address . systemHash()));
+				if ($getURL) {
+					return $getURL;
+
+				} else {
+
+					$database = DB::getInstance();
+					$db = $database->getConnection();
+
+					$mysql['site_url_address'] = $db->real_escape_string($site_url_address);
+					$mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
+
+					$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."'";
+					$site_url_result = _mysqli_query($site_url_sql);
+					$site_url_row = $site_url_result->fetch_assoc();
+					if ($site_url_row) {
+						//if this site_url_id already exists, return the site_url_id for it.
+						$site_url_id = $site_url_row['site_url_id'];
+						$setID = $memcache->set(md5("url-id" . $site_url_address . systemHash()), $site_url_id, false, $time);
+						return $site_url_id;
+					} else{
+
+						$site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='".$mysql['site_domain_id']."', site_url_address='".$mysql['site_url_address']."'"; 
+						$site_url_result = _mysqli_query($site_url_sql) ; //($site_url_sql);
+						$site_url_id = $db->insert_id;
+						$setID = $memcache->set(md5("url-id" . $site_url_address . systemHash()), $site_url_id, false, $time);
+						return $site_url_id;
+					} 
+
+				}
+
+			} else {
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['site_url_address'] = $db->real_escape_string($site_url_address);
+				$mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
+
+				$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."'";
+				$site_url_result = _mysqli_query($site_url_sql);
+				$site_url_row = $site_url_result->fetch_assoc();
+				if ($site_url_row) {
+					//if this site_url_id already exists, return the site_url_id for it.
+					$site_url_id = $site_url_row['site_url_id'];
+					return $site_url_id;
+				} else{
+
+					$site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='".$mysql['site_domain_id']."', site_url_address='".$mysql['site_url_address']."'"; 
+					$site_url_result = _mysqli_query($site_url_sql) ; //($site_url_sql);
+					$site_url_id = $db->insert_id;
+					return $site_url_id;
+
+				}
+
+			}
+	}       
+	
 	
 	//this returns the keyword_id
 	function get_keyword_id($keyword) {
 		
+		global $memcacheWorking, $memcache;
+
 		//only grab the first 255 charactesr of keyword
 		$keyword = substr($keyword, 0, 255);
-		$mysql['keyword'] = mysql_real_escape_string($keyword);
 		
-		$keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='".$mysql['keyword']."'";
-		$keyword_result = _mysql_query($keyword_sql);
-		$keyword_row = mysql_fetch_assoc($keyword_result);
-		if ($keyword_row) {
-			//if this already exists, return the id for it
-			$keyword_id = $keyword_row['keyword_id'];
-			return $keyword_id;    
+		if ($memcacheWorking) {
+				//get from memcached
+				$getKeyword = $memcache->get( md5("keyword-id" . $keyword . systemHash()));
+				if ($getKeyword) {
+					return $getKeyword;
+
+				} else {
+
+					$database = DB::getInstance();
+					$db = $database->getConnection();
+
+					$mysql['keyword'] = $db->real_escape_string($keyword);
+
+					$keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='".$mysql['keyword']."'";
+					$keyword_result = _mysqli_query($keyword_sql);
+					$keyword_row = $keyword_result->fetch_assoc();
+					if ($keyword_row) {
+						//if this already exists, return the id for it
+						$keyword_id = $keyword_row['keyword_id'];
+						$setID = $memcache->set(md5("keyword-id" . $keyword . systemHash()), $keyword_id, false);
+						return $keyword_id;
+					} else{
+
+						$keyword_sql = "INSERT INTO 202_keywords SET keyword='".$mysql['keyword']."'";
+						$keyword_result = _mysqli_query($keyword_sql) ; //($keyword_sql);
+						$keyword_id = $db->insert_id;
+						$setID = $memcache->set(md5("keyword-id" . $keyword . systemHash()), $keyword_id, false);
+						return $keyword_id;
+					} 
+
+				}
+
 		} else {
-			//else if this ip doesn't exist, insert the row and grab the id for it
-			$keyword_sql = "INSERT INTO 202_keywords SET keyword='".$mysql['keyword']."'";
-			$keyword_result = _mysql_query($keyword_sql) ; //($keyword_sql);
-			$keyword_id = mysql_insert_id();
-			return $keyword_id;    
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['keyword'] = $db->real_escape_string($keyword);
+
+				$keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='".$mysql['keyword']."'";
+				$keyword_result = _mysqli_query($keyword_sql);
+				$keyword_row = $keyword_result->fetch_assoc();
+				if ($keyword_row) {
+					//if this already exists, return the id for it
+					$keyword_id = $keyword_row['keyword_id'];
+					return $keyword_id;    
+				} else {
+					//else if this ip doesn't exist, insert the row and grab the id for it
+					$keyword_sql = "INSERT INTO 202_keywords SET keyword='".$mysql['keyword']."'";
+					$keyword_result = _mysqli_query($keyword_sql) ; //($keyword_sql);
+					$keyword_id = $db->insert_id;
+					return $keyword_id;    
+				}
+
 		}
 	}
 	
 	//this returns the c1 id
 	function get_c1_id($c1) {
 		
+		global $memcacheWorking, $memcache;
+
 		//only grab the first 350 charactesr of c1
 		$c1 = substr($c1, 0, 350);
-		$mysql['c1'] = mysql_real_escape_string($c1);
 		
-		$c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='".$mysql['c1']."'";
-		$c1_result = _mysql_query($c1_sql);
-		$c1_row = mysql_fetch_assoc($c1_result);
-		if ($c1_row) {
-			//if this already exists, return the id for it
-			$c1_id = $c1_row['c1_id'];
-			return $c1_id;    
+		if ($memcacheWorking) {
+				//get from memcached
+				$getc1 = $memcache->get( md5("c1-id" . $c1 . systemHash()));
+				if ($getc1) {
+					return $getc1;
+
+				} else {
+
+					$database = DB::getInstance();
+					$db = $database->getConnection();
+
+					$mysql['c1'] = $db->real_escape_string($c1);
+
+					$c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='".$mysql['c1']."'";
+					$c1_result = _mysqli_query($c1_sql);
+					$c1_row = $c1_result->fetch_assoc();
+					if ($c1_row) {
+						//if this already exists, return the id for it
+						$c1_id = $c1_row['c1_id'];
+						$setID = $memcache->set(md5("c1-id" . $c1 . systemHash()), $c1_id, false);
+						return $c1_id;
+					} else{
+
+						$c1_sql = "INSERT INTO 202_tracking_c1 SET c1='".$mysql['c1']."'";
+						$c1_result = _mysqli_query($c1_sql) ; //($c1_sql);
+						$c1_id = $db->insert_id;
+						$setID = $memcache->set(md5("c1-id" . $c1 . systemHash()), $c1_id, false);
+						return $c1_id;
+					} 
+
+				}
+
 		} else {
-			//else if this ip doesn't exist, insert the row and grab the id for it
-			$c1_sql = "INSERT INTO 202_tracking_c1 SET c1='".$mysql['c1']."'";
-			$c1_result = _mysql_query($c1_sql) ; //($c1_sql);
-			$c1_id = mysql_insert_id();
-			return $c1_id;     
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+					
+				$mysql['c1'] = $db->real_escape_string($c1);
+
+				$c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='".$mysql['c1']."'";
+				$c1_result = _mysqli_query($c1_sql);
+				$c1_row = $c1_result->fetch_assoc();
+				if ($c1_row) {
+					//if this already exists, return the id for it
+					$c1_id = $c1_row['c1_id'];
+					return $c1_id;    
+				} else {
+					//else if this ip doesn't exist, insert the row and grab the id for it
+					$c1_sql = "INSERT INTO 202_tracking_c1 SET c1='".$mysql['c1']."'";
+					$c1_result = _mysqli_query($c1_sql) ; //($c1_sql);
+					$c1_id = $db->insert_id;
+					return $c1_id;     
+				}
+
 		}
 	}
-	
+
 	//this returns the c2 id
 	function get_c2_id($c2) {
 		
+		global $memcacheWorking, $memcache;
+
 		//only grab the first 350 charactesr of c2
 		$c2 = substr($c2, 0, 350);
-		$mysql['c2'] = mysql_real_escape_string($c2);
 		
-		$c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='".$mysql['c2']."'";
-		$c2_result = _mysql_query($c2_sql);
-		$c2_row = mysql_fetch_assoc($c2_result);
-		if ($c2_row) {
-			//if this already exists, return the id for it
-			$c2_id = $c2_row['c2_id'];
-			return $c2_id;    
+		if ($memcacheWorking) {
+				//get from memcached
+				$getc2 = $memcache->get( md5("c2-id" . $c2 . systemHash()));
+				if ($getc2) {
+					return $getc2;
+
+				} else {
+
+					$database = DB::getInstance();
+					$db = $database->getConnection();
+
+					$mysql['c2'] = $db->real_escape_string($c2);
+
+					$c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='".$mysql['c2']."'";
+					$c2_result = _mysqli_query($c2_sql);
+					$c2_row = $c2_result->fetch_assoc();
+					if ($c2_row) {
+						//if this already exists, return the id for it
+						$c2_id = $c2_row['c2_id'];
+						$setID = $memcache->set(md5("c2-id" . $c2 . systemHash()), $c2_id, false);
+						return $c2_id;
+					} else{
+
+						$c2_sql = "INSERT INTO 202_tracking_c2 SET c2='".$mysql['c2']."'";
+						$c2_result = _mysqli_query($c2_sql) ; //($c2_sql);
+						$c2_id = $db->insert_id;
+						$setID = $memcache->set(md5("c2-id" . $c2 . systemHash()), $c2_id, false);
+						return $c2_id;
+					} 
+
+				}
+
 		} else {
-			//else if this ip doesn't exist, insert the row and grab the id for it
-			$c2_sql = "INSERT INTO 202_tracking_c2 SET c2='".$mysql['c2']."'";
-			$c2_result = _mysql_query($c2_sql) ; //($c2_sql);
-			$c2_id = mysql_insert_id();
-			return $c2_id;    
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['c2'] = $db->real_escape_string($c2);
+
+				$c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='".$mysql['c2']."'";
+				$c2_result = _mysqli_query($c2_sql);
+				$c2_row = $c2_result->fetch_assoc();
+				if ($c2_row) {
+					//if this already exists, return the id for it
+					$c2_id = $c2_row['c2_id'];
+					return $c2_id;    
+				} else {
+					//else if this ip doesn't exist, insert the row and grab the id for it
+					$c2_sql = "INSERT INTO 202_tracking_c2 SET c2='".$mysql['c2']."'";
+					$c2_result = _mysqli_query($c2_sql) ; //($c2_sql);
+					$c2_id = $db->insert_id;
+					return $c2_id;    
+				}
+
 		}
 	}
-	
+
 	//this returns the c3 id
 	function get_c3_id($c3) {
 		
+		global $memcacheWorking, $memcache;
+
 		//only grab the first 350 charactesr of c3
 		$c3 = substr($c3, 0, 350);
-		$mysql['c3'] = mysql_real_escape_string($c3);
 		
-		$c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='".$mysql['c3']."'";
-		$c3_result = _mysql_query($c3_sql);
-		$c3_row = mysql_fetch_assoc($c3_result);
-		if ($c3_row) {
-			//if this already exists, return the id for it
-			$c3_id = $c3_row['c3_id'];
-			return $c3_id;    
+		if ($memcacheWorking) {
+				//get from memcached
+				$getc3 = $memcache->get( md5("c3-id" . $c3 . systemHash()));
+				if ($getc3) {
+					return $getc3;
+
+				} else {
+
+					$database = DB::getInstance();
+					$db = $database->getConnection();
+
+					$mysql['c3'] = $db->real_escape_string($c3);
+
+					$c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='".$mysql['c3']."'";
+					$c3_result = _mysqli_query($c3_sql);
+					$c3_row = $c3_result->fetch_assoc();
+					if ($c3_row) {
+						//if this already exists, return the id for it
+						$c3_id = $c3_row['c3_id'];
+						$setID = $memcache->set(md5("c3-id" . $c3 . systemHash()), $c3_id, false);
+						return $c3_id;
+					} else{
+
+						$c3_sql = "INSERT INTO 202_tracking_c3 SET c3='".$mysql['c3']."'";
+						$c3_result = _mysqli_query($c3_sql) ; //($c3_sql);
+						$c3_id = $db->insert_id;
+						$setID = $memcache->set(md5("c3-id" . $c3 . systemHash()), $c3_id, false);
+						return $c3_id;
+					} 
+
+				}
+
 		} else {
-			//else if this ip doesn't exist, insert the row and grab the id for it
-			$c3_sql = "INSERT INTO 202_tracking_c3 SET c3='".$mysql['c3']."'";
-			$c3_result = _mysql_query($c3_sql) ; //($c3_sql);
-			$c3_id = mysql_insert_id();
-			return $c3_id;    
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['c3'] = $db->real_escape_string($c3);
+
+				$c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='".$mysql['c3']."'";
+				$c3_result = _mysqli_query($c3_sql);
+				$c3_row = $c3_result->fetch_assoc();
+				if ($c3_row) {
+					//if this already exists, return the id for it
+					$c3_id = $c3_row['c3_id'];
+					return $c3_id;    
+				} else {
+					//else if this ip doesn't exist, insert the row and grab the id for it
+					$c3_sql = "INSERT INTO 202_tracking_c3 SET c3='".$mysql['c3']."'";
+					$c3_result = _mysqli_query($c3_sql) ; //($c3_sql);
+					$c3_id = $db->insert_id;
+					return $c3_id;    
+				}
+
 		}
 	}
 	
 	//this returns the c4 id
 	function get_c4_id($c4) {
 		
+		global $memcacheWorking, $memcache;
+
 		//only grab the first 350 charactesr of c4
 		$c4 = substr($c4, 0, 350);
-		$mysql['c4'] = mysql_real_escape_string($c4);
 		
-		$c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='".$mysql['c4']."'";
-		$c4_result = _mysql_query($c4_sql);
-		$c4_row = mysql_fetch_assoc($c4_result);
-		if ($c4_row) {
-			//if this already exists, return the id for it
-			$c4_id = $c4_row['c4_id'];
-			return $c4_id;    
+		if ($memcacheWorking) {
+				//get from memcached
+				$getc4 = $memcache->get( md5("c4-id" . $c4 . systemHash()));
+				if ($getc4) {
+					return $getc4;
+
+				} else {
+
+					$database = DB::getInstance();
+					$db = $database->getConnection();
+
+					$mysql['c4'] = $db->real_escape_string($c4);
+
+					$c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='".$mysql['c4']."'";
+					$c4_result = _mysqli_query($c4_sql);
+					$c4_row = $c4_result->fetch_assoc();
+					if ($c4_row) {
+						//if this already exists, return the id for it
+						$c4_id = $c4_row['c4_id'];
+						$setID = $memcache->set(md5("c4-id" . $c4 . systemHash()), $c4_id, false);
+						return $c4_id;
+					} else{
+
+						$c4_sql = "INSERT INTO 202_tracking_c4 SET c4='".$mysql['c4']."'";
+						$c4_result = _mysqli_query($c4_sql) ; //($c4_sql);
+						$c4_id = $db->insert_id;
+						$setID = $memcache->set(md5("c4-id" . $c4 . systemHash()), $c4_id, false);
+						return $c4_id;
+					} 
+
+				}
+
 		} else {
-			//else if this ip doesn't exist, insert the row and grab the id for it
-			$c4_sql = "INSERT INTO 202_tracking_c4 SET c4='".$mysql['c4']."'";
-			$c4_result = _mysql_query($c4_sql) ; //($c4_sql);
-			$c4_id = mysql_insert_id();
-			return $c4_id;    
+
+				$database = DB::getInstance();
+				$db = $database->getConnection();
+
+				$mysql['c4'] = $db->real_escape_string($c4);
+
+				$c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='".$mysql['c4']."'";
+				$c4_result = _mysqli_query($c4_sql);
+				$c4_row = $c4_result->fetch_assoc();
+				if ($c4_row) {
+					//if this already exists, return the id for it
+					$c4_id = $c4_row['c4_id'];
+					return $c4_id;    
+				} else {
+					//else if this ip doesn't exist, insert the row and grab the id for it
+					$c4_sql = "INSERT INTO 202_tracking_c4 SET c4='".$mysql['c4']."'";
+					$c4_result = _mysqli_query($c4_sql) ; //($c4_sql);
+					$c4_id = $db->insert_id;
+					return $c4_id;    
+				}
+
 		}
 	}
 	
-	//this returns the location_id
-	function get_location_id($ip_address) {
-
-		if (geoLocationDatabaseInstalled() == true) { 
-			$clean['ip_address'] = ip2long($ip_address);
-			$mysql['ip_address'] = mysql_real_escape_string($clean['ip_address']);
-			$location_sql = "SELECT location_id FROM 202_locations_block WHERE location_block_ip_from >= '".$mysql['ip_address']."' AND location_block_ip_to <= '".$mysql['ip_address'] ."'";
-			$location_row = memcache_mysql_fetch_assoc($location_sql);
-			$location_id = $location_row['location_id'];
-			return $location_id;
-		} else {
-			return 0;	
-		}
-	}
-	
-	function get_platform_and_browser_id() {
-		$br = new Browser;
-		$id['platform'] = $br->Platform;
-		$id['browser'] = $br->Browser; 
-		return $id;      
-	}
 }
-
-
-
-
-
-
- function getLocation($addr) {
-   
-	$ipnum = sprintf("%u", ip2long($addr));
-	$mysql['ipnum'] = mysql_real_escape_string($ipnum);
-	$block_sql = "SELECT location_id FROM blocks WHERE ".$mysql['ipnum']." BETWEEN startIpNum AND endIpNum";
-	$block_row = memcache_mysql_fetch_assoc($block_sql);
-	
-	$mysql['location_id'] = mysql_real_escape_string($block_row['location_id']);
-	$location_sql = "SELECT country_code, region, city FROM locations WHERE location_id='".$mysql['location_id']."'";
-	$location_row = memcache_mysql_fetch_assoc($location_sql);
-	
-	$mysql['country_code'] = mysql_real_escape_string($location_row['country_code']);
-	$country_sql = "SELECT country_name FROM countries WHERE country_code='".$mysql['country_code']."'";
-	$country_row = memcache_mysql_fetch_assoc($country_sql);
-	
-	$location['country_name'] = $country_row['country_name'];
-	$location['country_code'] = $location_row['country_code'];
-	$location['region'] = $location_row['region'];
-	$location['city'] = $location_row['city'];
-
-	return $location;
-}
-
-
-
-
 
 
 function showChart ($chart, $chartWidth, $chartHeight) {
 	
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	$reg_key = "C1XUW9CU8Y4L.NS5T4Q79KLYCK07EK";
 	
 	$chart_xml = SendChartData ( $chart );
-	$mysql['chart_xml'] = mysql_real_escape_string($chart_xml);
+	$mysql['chart_xml'] = $db->real_escape_string($chart_xml);
 
 	$chart_sql = "INSERT INTO 202_charts SET chart_xml='".$mysql['chart_xml']."'";
-	$chart_result = _mysql_query($chart_sql) ; //($chart_sql);
-	$chart_id = mysql_insert_id();
+	$chart_result = _mysqli_query($chart_sql) ; //($chart_sql);
+	$chart_id = $db->insert_id;
 
 	$url['chart_id'] = urlencode($chart_id);                                                                                                       
 	echo InsertChart ( '/202-charts/charts.swf', 
@@ -2944,11 +2495,15 @@ function showChart ($chart, $chartWidth, $chartHeight) {
 
 
 function runBreakdown($user_pref) {
+
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	//grab time
 		$time = grab_timeframe();    
 	 
 	 //get breakdown pref
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);   
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);   
 		$user_sql = "
 			SELECT
 				user_time_register,
@@ -2960,12 +2515,13 @@ function runBreakdown($user_pref) {
 				LEFT JOIN 202_users_pref USING (user_id) 
 			WHERE
 				202_users.user_id='".$mysql['user_id']."'";
-		$user_result = _mysql_query($user_sql) ; ; //($user_sql);
-		$user_row = mysql_fetch_assoc($user_result);
+		$user_result = _mysqli_query($user_sql) ; ; //($user_sql);
+		$user_row = $user_result->fetch_assoc();
 
 		if ($user_row['user_pref_show'] == 'all') { $click_flitered = ''; }
 		if ($user_row['user_pref_show'] == 'real') { $click_filtered = " AND click_filtered='0' "; }
 		if ($user_row['user_pref_show'] == 'filtered') { $click_filtered = " AND click_filtered='1' "; }
+		if ($user_row['user_pref_show'] == 'filtered_bot') { $click_filtered = " AND click_bot='1' "; }
 		if ($user_row['user_pref_show'] == 'leads') { $click_filtered = " AND click_lead='1' "; } 
 
 		
@@ -2979,7 +2535,7 @@ function runBreakdown($user_pref) {
 			FROM 202_sort_breakdowns
 			WHERE user_id='".$mysql['user_id']."'
 		";
-		$breakdown_result = _mysql_query($breakdown_sql) ; //($breakdown_sql);
+		$breakdown_result = _mysqli_query($breakdown_sql) ; //($breakdown_sql);
 	
 	//find where to start from.
 		$start = $time['from'];
@@ -3015,18 +2571,20 @@ function runBreakdown($user_pref) {
 			$end = $end - 31556926;            
 		}
  
-		$mysql['from'] = mysql_real_escape_string($from);    
-		$mysql['to'] = mysql_real_escape_string($to);    
+		$mysql['from'] = $db->real_escape_string($from);    
+		$mysql['to'] = $db->real_escape_string($to);    
 
 		//build query
 		$command = "
 			SELECT
-				COUNT(*) AS clicks,
+			COUNT(*) AS clicks,
 				AVG(2c.click_cpc) AS avg_cpc,
+				SUM(2cr.click_out) AS click_throughs,
 				SUM(2c.click_lead) AS leads,
 				SUM(2c.click_payout*2c.click_lead) AS income
 			FROM
 				202_clicks AS 2c
+				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 		";
 		$db_table = "2c";
 		$pref_time = false;
@@ -3057,15 +2615,65 @@ function runBreakdown($user_pref) {
 		
 		$query = query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_order, $offset, $pref_limit, $count);
 		$click_sql = $query['click_sql']; 
-		
-		$click_result = _mysql_query($click_sql);
-		$click_row = mysql_fetch_assoc($click_result);
+
+		global $memcacheWorking, $memcache;
+
+		if (!user_cache_time($mysql['user_id'])) {
+
+			$click_result = _mysqli_query($click_sql) ; //($click_sql);
+			$click_row = $click_result->fetch_assoc();
+
+		} else {
+
+			if ($memcacheWorking) {
+
+				$getCache = $memcache->get(md5($click_sql . systemHash()));
+
+				if ($getCache) {
+					$click_row = unserialize($getCache);
+
+				} else {
+					$click_result = _mysqli_query( $click_sql );
+					$fetchArray = $click_result->fetch_assoc();
+					$setCache = $memcache->set( md5( $click_sql . systemHash()), serialize( $fetchArray ), false, user_cache_time($mysql['user_id'])  );
+					$click_row = $fetchArray;
+
+				}
+
+			} else {
+
+			$click_result = _mysqli_query($click_sql) ; //($click_sql);
+			$click_row = $click_result->fetch_assoc();
+
+			}
+		}
+				
+		//for AVG Payouts
+		$payouts_sql = "
+			SELECT
+				SUM(2c.click_payout) AS payout
+			FROM 202_clicks AS 2c
+			WHERE 2c.click_lead='1'
+			AND 2c.click_time > ".$mysql['from'] ."
+			AND 2c.click_time <= ".$mysql['to'] ."
+		";
+		$payout_result = _mysqli_query($payouts_sql) ; //($breakdown_sql);
+		$payout_row = $payout_result->fetch_assoc();
 		
 		//get the stats
 		$clicks = 0;  
 		$clicks = $click_row['clicks'];
-		
-		$total_clicks = $total_clicks + $clicks;        
+
+		$total_clicks = $total_clicks + $clicks;
+
+		//click throughs
+		$click_throughs = $click_row['click_throughs'];
+		$total_click_throughs = $total_click_throughs + $click_throughs;
+
+		//LP CTR
+		$ctr = @round($click_throughs / $clicks * 100, 2);
+
+		$total_ctr = @round($total_click_throughs / $total_clicks * 100, 2);        
 	
 		//avg cpc and cost    
 		$avg_cpc = 0;
@@ -3089,10 +2697,12 @@ function runBreakdown($user_pref) {
 		
 		$total_su_ratio = @round($total_leads/$total_clicks*100,2);
 		
-		//were not using payout
+		$payout = 0;
+
 		//current payout
-		//$payout = 0;
-		//$payout = $info_row['aff_campaign_payout'];
+		if ($click_row['leads'] > 0) {
+			$payout = $payout_row['payout']/$leads;
+		}
 
 		//income
 		$income = 0;
@@ -3119,15 +2729,18 @@ function runBreakdown($user_pref) {
 		$total_roi = @round($total_net/$total_cost);
 		
 		//html escape vars
-		$mysql['clicks'] = mysql_real_escape_string($clicks);
-		$mysql['leads'] = mysql_real_escape_string($leads);
-		$mysql['su_ratio'] = mysql_real_escape_string($su_ratio);
-		$mysql['epc'] = mysql_real_escape_string($epc);
-		$mysql['avg_cpc'] = mysql_real_escape_string($avg_cpc);
-		$mysql['income'] = mysql_real_escape_string($income);
-		$mysql['cost'] = mysql_real_escape_string($cost);
-		$mysql['net'] = mysql_real_escape_string($net);
-		$mysql['roi'] = mysql_real_escape_string($roi);
+		$mysql['clicks'] = $db->real_escape_string($clicks);
+		$mysql['click_throughs'] = $db->real_escape_string($click_throughs);
+		$mysql['ctr'] = $db->real_escape_string($ctr);
+		$mysql['leads'] = $db->real_escape_string($leads);
+		$mysql['su_ratio'] = $db->real_escape_string($su_ratio);
+		$mysql['payout'] = $db->real_escape_string($payout);
+		$mysql['epc'] = $db->real_escape_string($epc);
+		$mysql['avg_cpc'] = $db->real_escape_string($avg_cpc);
+		$mysql['income'] = $db->real_escape_string($income);
+		$mysql['cost'] = $db->real_escape_string($cost);
+		$mysql['net'] = $db->real_escape_string($net);
+		$mysql['roi'] = $db->real_escape_string($roi);
 		
 		//insert chart
 		$sort_breakdown_sql = "
@@ -3138,9 +2751,11 @@ function runBreakdown($user_pref) {
 				sort_breakdown_to='".$mysql['to']."',
 				user_id='".$mysql['user_id']."',
 				sort_breakdown_clicks='".$mysql['clicks']."',
+				sort_breakdown_click_throughs='".$mysql['click_throughs']."',
+				sort_breakdown_ctr='".$mysql['ctr']."',
 				sort_breakdown_leads='".$mysql['leads']."',
 				sort_breakdown_su_ratio='".$mysql['su_ratio']."',
-				sort_breakdown_payout='".$mysql['sort_breakdown_payout']."',
+				sort_breakdown_payout='".$mysql['payout']."',
 				sort_breakdown_epc='".$mysql['epc']."',
 				sort_breakdown_avg_cpc='".$mysql['avg_cpc']."',
 				sort_breakdown_income='".$mysql['income']."',
@@ -3148,7 +2763,7 @@ function runBreakdown($user_pref) {
 				sort_breakdown_net='".$mysql['net']."',
 				sort_breakdown_roi='".$mysql['roi']."'
 		";
-		$sort_breakdown_result = _mysql_query($sort_breakdown_sql) ; //($sort_breakdown_sql);
+		$sort_breakdown_result = _mysqli_query($sort_breakdown_sql) ; //($sort_breakdown_sql);
 	}
 	
 	$breakdown_sql = "
@@ -3156,7 +2771,7 @@ function runBreakdown($user_pref) {
 		FROM 202_sort_breakdowns
 		WHERE user_id='".$mysql['user_id']."'
 	";
-	$breakdown_result = _mysql_query($breakdown_sql) ; //($breakdown_sql);
+	$breakdown_result = _mysqli_query($breakdown_sql) ; //($breakdown_sql);
 
 	$chartWidth = $_POST['chartWidth'];
 	$chartHeight = 180;
@@ -3212,26 +2827,29 @@ function runBreakdown($user_pref) {
 		$chart [ 'chart_data' ][ 3 ][ 0 ] = "Net";
 
 		//extract the data from the query result one row at a time
-		for ( $i=0; $i < mysql_num_rows($breakdown_result); $i++ ) {
+		for ( $i=0; $i < $breakdown_result->num_rows; $i++ ) {
+
+		   $breakdown_result->field_seek($breakdown_result->current_field);
 
 		   //determine which column in the PHP array the current data belongs to
-		   $col = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $row = $breakdown_result->fetch_assoc();
+		   $col = $row['sort_breakdown_from'];
 
 		   //populate the PHP array with the Year title
-		   $date = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $date = $row['sort_breakdown_from'];
 		   $date = date_chart($breakdown, $date);      
 		  
 		   $chart [ 'chart_data' ][ 0 ][ $col ] = $date;
 
 		   //populate the PHP array with the revenue data
-		   $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_income");
-		   $chart [ 'chart_data' ][ 2 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_cost");
-		   $chart [ 'chart_data' ][ 3 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_net");
+		   $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_income'];
+		   $chart [ 'chart_data' ][ 2 ][ $col ] = $row['sort_breakdown_cost'];
+		   $chart [ 'chart_data' ][ 3 ][ $col ] = $row['sort_breakdown_net'];
 		}
 		
 		$chart[ 'series_color' ] = array (  "70CF40", "CF4040", "409CCF","000000"); 
 		$chart[ 'series_gap' ] = array ( 'set_gap'=>40, 'bar_gap'=>-35 );
-		$chart[ 'chart_grid_h' ] = array ( 'alpha'=>20, 'color'=>"000000", 'thickness'=>1, 'type'=>"dashed" );
+		$chart[ 'chart_grid_h' ] = array ( 'alpha'=>20, 'color'=>"000000", 'thickness'=>1, 'type'=>"solid" );
 		$chart[ 'axis_value' ] = array (   'bold'             =>  false, 'size'             =>  10                   );                     
 		$chart[ 'axis_category' ] = array (    'skip'          =>  $skip, 'bold'          =>  false, 'size'          =>  10); 
 		$chart[ 'legend_label' ] = array (   'bold'    =>  true,   'size'    =>  12, ); 
@@ -3256,13 +2874,16 @@ function runBreakdown($user_pref) {
 		elseif ($pref_chart == 'roi') { $chart [ 'chart_data' ][ 1 ][ 0 ] = "ROI"; } 
 		
 		//extract the data from the query result one row at a time
-		for ( $i=0; $i < mysql_num_rows($breakdown_result); $i++ ) {
+		for ( $i=0; $i < $breakdown_result->num_rows; $i++ ) {
+
+			$breakdown_result->field_seek($breakdown_result->current_field);
 
 		   //determine which column in the PHP array the current data belongs to
-		   $col = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $row = $breakdown_result->fetch_assoc();
+		   $col = $row['sort_breakdown_from'];
 
 		   //populate the PHP array with the Year title
-		   $date = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $date = $row['sort_breakdown_from'];
 		   $date = date_chart($breakdown, $date);
 		   
 		   $chart [ 'chart_data' ][ 0 ][ $col ] = $date;
@@ -3270,23 +2891,23 @@ function runBreakdown($user_pref) {
 		   //populate the PHP array with the revenue data
 		  
 		   
-			if ($pref_chart == 'clicks') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_clicks");  }
-			elseif ($pref_chart == 'leads') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_leads");  }  
-			elseif ($pref_chart == 'su_ratio') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_su_ratio");  }   
-			elseif ($pref_chart == 'payout') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_payout");  }   
-			elseif ($pref_chart == 'epc') { $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_epc");  } 
-			elseif ($pref_chart == 'cpc') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_avg_cpc");  } 
-			elseif ($pref_chart == 'income') { $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_income");  } 
-			elseif ($pref_chart == 'cost') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_cost");  } 
-			elseif ($pref_chart == 'net') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_net");  } 
-			elseif ($pref_chart == 'roi') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_roi");  } 
+			if ($pref_chart == 'clicks') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_clicks'];  }
+			elseif ($pref_chart == 'leads') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_leads'];  }  
+			elseif ($pref_chart == 'su_ratio') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_su_ratio'];  }   
+			elseif ($pref_chart == 'payout') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_payout'];  }   
+			elseif ($pref_chart == 'epc') { $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_epc'];  } 
+			elseif ($pref_chart == 'cpc') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_avg_cpc'];  } 
+			elseif ($pref_chart == 'income') { $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_income'];  } 
+			elseif ($pref_chart == 'cost') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_cost'];  } 
+			elseif ($pref_chart == 'net') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_net'];  } 
+			elseif ($pref_chart == 'roi') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_roi'];  } 
 		}
 
 		//$chart[ 'series_color' ] = array (  "003399"); 
 		$chart[ 'series_color' ] = array (  "000000"); 
 		$chart[ 'chart_type' ] = "Line";                          
 		//$chart[ 'chart_transition' ] = array ( 'type'=>"dissolve", 'delay'=>.5, 'duration'=>.5, 'order'=>"series" ); 
-		$chart[ 'chart_grid_h' ] = array ( 'alpha'=>20, 'color'=>"000000", 'thickness'=>1, 'type'=>"dashed" );
+		$chart[ 'chart_grid_h' ] = array ( 'alpha'=>20, 'color'=>"000000", 'thickness'=>1, 'type'=>"solid" );
 		   
 	
 	}    
@@ -3294,9 +2915,9 @@ function runBreakdown($user_pref) {
 	$chart[ 'axis_value' ] = array (   'bold'             =>  false, 'size'             =>  10                   );                     
 	$chart[ 'axis_category' ] = array (    'skip'          =>  $skip, 'bold'          =>  false, 'size'          =>  10); 
 	$chart[ 'legend_label' ] = array (   'bold'    =>  true,   'size'    =>  12, ); 
-	$chart[ 'chart_rect' ] = array (   'x'               =>  40,'y'               =>  20,'width'           =>  $chartWidth-60,'height'          =>  $chartHeight,);                                   
-	
-	showChart ($chart, $chartWidth-20, $chartHeight+40) ;
+	$chart[ 'chart_rect' ] = array (   'x'               =>  40,'y'               =>  20,'width'           =>  $chartWidth,'height'          =>  $chartHeight,);                                   
+
+	showChart ($chart, $chartWidth, $chartHeight+40) ;
 
 	
 	?><div style="padding: 3px 0px;"></div><?
@@ -3319,11 +2940,14 @@ function date_chart($breakdown, $date) {
 
 function runHourly($user_pref) {
 
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	//grab time
 		$time = grab_timeframe();    
 	 
 	 //get breakdown pref
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);   
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);   
 		$user_sql = "
 			SELECT
 				user_time_register,
@@ -3336,13 +2960,14 @@ function runHourly($user_pref) {
 			WHERE
 				2u.user_id='".$mysql['user_id']."'
 		";
-		$user_result = _mysql_query($user_sql) ; ; //($user_sql);
-		$user_row = mysql_fetch_assoc($user_result);
+		$user_result = _mysqli_query($user_sql) ; ; //($user_sql);
+		$user_row = $user_result->fetch_assoc();
 
 
 		if ($user_row['user_pref_show'] == 'all') { $click_flitered = ''; }
 		if ($user_row['user_pref_show'] == 'real') { $click_filtered = " AND click_filtered='0' "; }
 		if ($user_row['user_pref_show'] == 'filtered') { $click_filtered = " AND click_filtered='1' "; }
+		if ($user_row['user_pref_show'] == 'filtered_bot') { $click_filtered = " AND click_bot='1' "; }
 		if ($user_row['user_pref_show'] == 'leads') { $click_filtered = " AND click_lead='1' "; } 
 
 	//breakdown should be hour, day, month, or year.
@@ -3354,7 +2979,7 @@ function runHourly($user_pref) {
 			FROM 202_sort_breakdowns
 			WHERE user_id='".$mysql['user_id']."'
 		";
-		$breakdown_result = _mysql_query($breakdown_sql) ; //($breakdown_sql);
+		$breakdown_result = _mysqli_query($breakdown_sql) ; //($breakdown_sql);
 	
 	//find where to start from.
 		$start = $time['from'];
@@ -3376,22 +3001,25 @@ function runHourly($user_pref) {
 		//each hour
 		$from = mktime(date('G',$end),0,0,date('m',$end),date('d',$end),date('y',$end));
 		$to = mktime(date('G',$end),59,59,date('m',$end),date('d',$end),date('y',$end));
-		$end = $end - 3600; 
+		$end = $end - 3600;
+		$end1 = $end + 3600; 
 
-		$hour =  date('G', $end);
+		$hour = date('G', $end1);
 		
-		$mysql['from'] = mysql_real_escape_string($from);    
-		$mysql['to'] = mysql_real_escape_string($to);    
+		$mysql['from'] = $db->real_escape_string($from);    
+		$mysql['to'] = $db->real_escape_string($to);    
 
 		//build query
 		$command = "
 			SELECT
 				COUNT(*) AS clicks,
+				SUM(2cr.click_out) AS click_throughs,
 				SUM(click_cpc) AS cost,
 				SUM(2c.click_lead) AS leads,
 				SUM(2c.click_payout*2c.click_lead) AS income
 			FROM
 				202_clicks AS 2c
+				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 		";
 		$db_table = "2c";
 		$pref_time = false;
@@ -3420,12 +3048,52 @@ function runHourly($user_pref) {
 		$pref_limit = false;
 		$count = false;  
 		
-		$query = query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_order, $offset, $pref_limit, $count); 
-		$click_sql = $query['click_sql'];  
-		
-		$click_result = _mysql_query($click_sql) ; //($click_sql);
-		$click_row = mysql_fetch_assoc($click_result);
-		
+		$query = query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_order, $offset, $pref_limit, $count);
+		$click_sql = $query['click_sql'];
+
+		global $memcacheWorking, $memcache;
+
+		if (!user_cache_time($mysql['user_id'])) {
+
+			$click_result = _mysqli_query($click_sql) ; //($click_sql);
+			$click_row = $click_result->fetch_assoc();
+
+		} else {
+
+			if ($memcacheWorking) {
+
+				$getCache = $memcache->get(md5($click_sql . systemHash()));
+
+				if ($getCache) {
+					$click_row = unserialize($getCache);
+
+				} else {
+					$click_result = _mysqli_query( $click_sql );
+					$fetchArray = $click_result->fetch_assoc();
+					$setCache = $memcache->set( md5( $click_sql . systemHash()), serialize( $fetchArray ), false, user_cache_time($mysql['user_id'])  );
+					$click_row = $fetchArray;
+
+				}
+
+			} else {
+
+			$click_result = _mysqli_query($click_sql) ; //($click_sql);
+			$click_row = $click_result->fetch_assoc();
+
+			}
+		}
+
+		//for AVG Payouts
+		$payouts_sql = "
+			SELECT
+				SUM(2c.click_payout) AS payout
+			FROM 202_clicks AS 2c
+			WHERE 2c.click_lead='1'
+			AND 2c.click_time > ".$mysql['from'] ."
+			AND 2c.click_time <= ".$mysql['to'] ."
+		";
+		$payout_result = _mysqli_query($payouts_sql) ; //($breakdown_sql);
+		$payout_row = $payout_result->fetch_assoc();
 		
 		//get the stats
 		$clicks[$hour] = $click_row['clicks'] + $clicks[$hour];
@@ -3442,6 +3110,15 @@ function runHourly($user_pref) {
 		$total_cost = $total_cost +  $click_row['cost'];
 		$total_avg_cpc = @round($total_cost/$total_clicks, 5);
 
+		//clicks out
+		$click_throughs[$hour] = $click_row['click_throughs'] + $click_throughs[$hour];
+		$total_click_throughs = $total_click_throughs + $click_row['click_throughs'];
+
+		//CTR
+		$ctr[$hour] = @round($click_throughs[$hour] / $clicks[$hour] * 100, 2);
+
+		$total_ctr = @round($total_click_throughs / $total_clicks * 100, 2);
+
 		//leads
 		$leads[$hour] = $click_row['leads'] + $leads[$hour];
 		
@@ -3451,11 +3128,12 @@ function runHourly($user_pref) {
 		$su_ratio[$hour] = @round($leads[$hour]/$clicks[$hour]*100,2);
 		
 		$total_su_ratio = @round($total_leads/$total_clicks*100,2);
-		
-		//were not using payout
+
 		//current payout
-		//$payout = 0;
-		//$payout = $info_row['aff_campaign_payout'];
+
+		if ($click_row['leads'] > 0) {
+			$payout[$hour] = $payout_row['payout']/$leads[$hour];
+		}
 
 		//income
 		$income[$hour] = $click_row['income'] + $income[$hour];
@@ -3479,22 +3157,25 @@ function runHourly($user_pref) {
 	}
 	
 	for ($hour=0; $hour < 24; $hour++) { 
-
 		//html escape vars
 		$from = $hour;
 		$to = $hour +1;   if ($to == 24) { $to = 0; }
 		
-		$mysql['from'] = mysql_real_escape_string($from);
-		$mysql['to'] = mysql_real_escape_string($to);
-		$mysql['clicks'] = mysql_real_escape_string($clicks[$hour]);
-		$mysql['leads'] = mysql_real_escape_string($leads[$hour]);
-		$mysql['su_ratio'] = mysql_real_escape_string($su_ratio[$hour]);
-		$mysql['epc'] = mysql_real_escape_string($epc[$hour]);
-		$mysql['avg_cpc'] = mysql_real_escape_string($avg_cpc[$hour]);
-		$mysql['income'] = mysql_real_escape_string($income[$hour]);
-		$mysql['cost'] = mysql_real_escape_string($cost[$hour]);
-		$mysql['net'] = mysql_real_escape_string($net[$hour]);
-		$mysql['roi'] = mysql_real_escape_string($roi[$hour]);
+		$mysql['from'] = $db->real_escape_string($from);
+		$mysql['to'] = $db->real_escape_string($to);
+		$mysql['clicks'] = $db->real_escape_string($clicks[$hour]);
+		$mysql['click_throughs'] = $db->real_escape_string($click_throughs[$hour]);
+		$mysql['ctr'] = $db->real_escape_string($ctr[$hour]);
+		$mysql['leads'] = $db->real_escape_string($leads[$hour]);
+		$mysql['su_ratio'] = $db->real_escape_string($su_ratio[$hour]);
+		$mysql['payout'] = $db->real_escape_string($payout[$hour]);
+		$mysql['epc'] = $db->real_escape_string($epc[$hour]);
+		$mysql['avg_cpc'] = $db->real_escape_string($avg_cpc[$hour]);
+		$mysql['income'] = $db->real_escape_string($income[$hour]);
+		$mysql['cost'] = $db->real_escape_string($cost[$hour]);
+		$mysql['net'] = $db->real_escape_string($net[$hour]);
+		$mysql['roi'] = $db->real_escape_string($roi[$hour]);
+
 		
 		//insert chart
 		$sort_breakdown_sql = "
@@ -3504,9 +3185,11 @@ function runHourly($user_pref) {
 				sort_breakdown_to='".$mysql['to']."',
 				user_id='".$mysql['user_id']."',
 				sort_breakdown_clicks='".$mysql['clicks']."',
+				sort_breakdown_click_throughs='".$mysql['click_throughs']."',
+				sort_breakdown_ctr='".$mysql['ctr']."',
 				sort_breakdown_leads='".$mysql['leads']."',
 				sort_breakdown_su_ratio='".$mysql['su_ratio']."',
-				sort_breakdown_payout='".$mysql['sort_breakdown_payout']."',
+				sort_breakdown_payout='".$mysql['payout']."',
 				sort_breakdown_epc='".$mysql['epc']."',
 				sort_breakdown_avg_cpc='".$mysql['avg_cpc']."',
 				sort_breakdown_income='".$mysql['income']."',
@@ -3514,7 +3197,7 @@ function runHourly($user_pref) {
 				sort_breakdown_net='".$mysql['net']."',
 				sort_breakdown_roi='".$mysql['roi']."'
 		";
-		$sort_breakdown_result = _mysql_query($sort_breakdown_sql) ; //($sort_breakdown_sql);    
+		$sort_breakdown_result = _mysqli_query($sort_breakdown_sql) ; //($sort_breakdown_sql);  
 	}
 	
 	
@@ -3524,7 +3207,7 @@ function runHourly($user_pref) {
 		WHERE user_id='".$mysql['user_id']."'
 		ORDER BY sort_breakdown_from ASC
 	";
-	$breakdown_result = _mysql_query($breakdown_sql) ; //($breakdown_sql);
+	$breakdown_result = _mysqli_query($breakdown_sql) ; //($breakdown_sql);
 
 	$chartWidth = $_POST['chartWidth'];
 	$chartHeight = 180;
@@ -3541,15 +3224,17 @@ function runHourly($user_pref) {
 
 
 		//extract the data from the query result one row at a time
-		for ( $i=0; $i < mysql_num_rows($breakdown_result); $i++ ) {
+		for ( $i=0; $i < $breakdown_result->num_rows; $i++ ) {
 
 		   //determine which column in the PHP array the current data belongs to
-		   $col = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
-		  $col++;
+			$breakdown_result->field_seek($breakdown_result->current_field);
+			$row = $breakdown_result->fetch_assoc();
+		    $col = $row['sort_breakdown_from'];
+		    $col++;		   
 		   
 		   
 		   //populate the PHP array with the Year title
-		   $hour = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $hour = $row['sort_breakdown_from'];
 	
 		   if ($hour == 0) { $hour = 'midnight'; } 
 		   if (( $hour > 0) and ($hour < 12)) { $hour = $hour . 'am'; } 
@@ -3559,9 +3244,9 @@ function runHourly($user_pref) {
 		   $chart [ 'chart_data' ][ 0 ][ $col ] = $hour;
 
 		   //populate the PHP array with the revenue data
-		   $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_income");
-		   $chart [ 'chart_data' ][ 2 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_cost");
-		   $chart [ 'chart_data' ][ 3 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_net");
+		   $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_income'];
+		   $chart [ 'chart_data' ][ 2 ][ $col ] = $row['sort_breakdown_cost'];
+		   $chart [ 'chart_data' ][ 3 ][ $col ] = $row['sort_breakdown_net'];
 		}
 		
 		$chart[ 'series_color' ] = array (  "70CF40", "CF4040", "409CCF","000000"); 
@@ -3591,15 +3276,16 @@ function runHourly($user_pref) {
 		elseif ($pref_chart == 'roi') { $chart [ 'chart_data' ][ 1 ][ 0 ] = "ROI"; } 
 		
 		//extract the data from the query result one row at a time
-		for ( $i=0; $i < mysql_num_rows($breakdown_result); $i++ ) {
+		for ( $i=0; $i < $breakdown_result->num_rows; $i++ ) {
 
 		   //determine which column in the PHP array the current data belongs to
-		   $col = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $breakdown_result->field_seek($breakdown_result->current_field);
+		   $row = $breakdown_result->fetch_assoc();
+		   $col = $row['sort_breakdown_from'];
 		   $col++;
 		   
-		   
 		    //populate the PHP array with the Year title
-		   $hour = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $hour = $row['sort_breakdown_from'];
 	
 		   if ($hour == 0) { $hour = 'midnight'; } 
 		   if (( $hour > 0) and ($hour < 12)) { $hour = $hour . 'am'; } 
@@ -3611,16 +3297,16 @@ function runHourly($user_pref) {
 		   //populate the PHP array with the revenue data
 		  
 		   
-			if ($pref_chart == 'clicks') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_clicks");  }
-			elseif ($pref_chart == 'leads') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_leads");  }  
-			elseif ($pref_chart == 'su_ratio') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_su_ratio");  }   
-			elseif ($pref_chart == 'payout') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_payout");  }   
-			elseif ($pref_chart == 'epc') { $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_epc");  } 
-			elseif ($pref_chart == 'cpc') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_avg_cpc");  } 
-			elseif ($pref_chart == 'income') { $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_income");  } 
-			elseif ($pref_chart == 'cost') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_cost");  } 
-			elseif ($pref_chart == 'net') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_net");  } 
-			elseif ($pref_chart == 'roi') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_roi");  } 
+			if ($pref_chart == 'clicks') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_clicks'];  }
+			elseif ($pref_chart == 'leads') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_leads'];  }  
+			elseif ($pref_chart == 'su_ratio') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_su_ratio'];  }   
+			elseif ($pref_chart == 'payout') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_payout'];  }   
+			elseif ($pref_chart == 'epc') { $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_epc'];  } 
+			elseif ($pref_chart == 'cpc') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_avg_cpc'];  } 
+			elseif ($pref_chart == 'income') { $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_income'];  } 
+			elseif ($pref_chart == 'cost') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_cost'];  } 
+			elseif ($pref_chart == 'net') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_net'];  } 
+			elseif ($pref_chart == 'roi') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_roi'];  } 
 		}
 
 		//$chart[ 'series_color' ] = array (  "003399"); 
@@ -3647,23 +3333,27 @@ function runHourly($user_pref) {
 
 function runWeekly($user_pref) {
 
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	//grab time
 		$time = grab_timeframe();    
 	 
 	 //get breakdown pref
-		$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);   
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);   
 		$user_sql = "SELECT 	user_time_register,
 								user_pref_breakdown,
 								user_pref_chart,
 								user_pref_show
 					 FROM   202_users LEFT JOIN 202_users_pref USING (user_id) 
 					 WHERE  202_users.user_id='".$mysql['user_id']."'";
-		$user_result = _mysql_query($user_sql) ; ; //($user_sql);
-		$user_row = mysql_fetch_assoc($user_result);
+		$user_result = _mysqli_query($user_sql) ; ; //($user_sql);
+		$user_row = $user_result->fetch_assoc();
 
 		if ($user_row['user_pref_show'] == 'all') { $click_flitered = ''; }
 		if ($user_row['user_pref_show'] == 'real') { $click_filtered = " AND click_filtered='0' "; }
 		if ($user_row['user_pref_show'] == 'filtered') { $click_filtered = " AND click_filtered='1' "; }
+		if ($user_row['user_pref_show'] == 'filtered_bot') { $click_filtered = " AND click_bot='1' "; }
 		if ($user_row['user_pref_show'] == 'leads') { $click_filtered = " AND click_lead='1' "; } 
 
 		
@@ -3677,7 +3367,7 @@ function runWeekly($user_pref) {
 			FROM 202_sort_breakdowns
 			WHERE user_id='".$mysql['user_id']."'
 		";
-		$breakdown_result = _mysql_query($breakdown_sql) ; //($breakdown_sql);
+		$breakdown_result = _mysqli_query($breakdown_sql) ; //($breakdown_sql);
 	
 	//find where to start from.
 		$start = $time['from'];
@@ -3699,8 +3389,10 @@ function runWeekly($user_pref) {
 		$from = mktime(0,0,0,date('m',$end),date('d',$end),date('y',$end));
 		$to = mktime(23,59,59,date('m',$end),date('d',$end),date('y',$end)); 
 		$end = $end - 86400;
+		$end1 = $end + 86400;
+
 		
-		$day =  date('D', $end);
+		$day =  date('D', $end1);
 		switch ($day) { 
 			case "Sun": $day = 1; break;
 			case "Mon": $day = 2; break;
@@ -3711,18 +3403,20 @@ function runWeekly($user_pref) {
 			case "Sat": $day = 7; break;
 		}
 		
-		$mysql['from'] = mysql_real_escape_string($from);    
-		$mysql['to'] = mysql_real_escape_string($to);    
+		$mysql['from'] = $db->real_escape_string($from);    
+		$mysql['to'] = $db->real_escape_string($to);    
 
 		//build query
 		$command = "
 			SELECT
 				COUNT(*) AS clicks,
+				SUM(2cr.click_out) AS click_throughs,
 				SUM(click_cpc) AS cost,
 				SUM(2c.click_lead) AS leads,
 				SUM(2c.click_payout*2c.click_lead) AS income
 			FROM
 				202_clicks AS 2c
+				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 		";
 		$db_table = "2c";
 		$pref_time = false;
@@ -3756,14 +3450,36 @@ function runWeekly($user_pref) {
 		
 		$click_sql = $query['click_sql'];
 		
-		$click_result = _mysql_query($click_sql) ; //($click_sql);
-		$click_row = mysql_fetch_assoc($click_result);
+		$click_result = _mysqli_query($click_sql) ; //($click_sql);
+		$click_row = $click_result->fetch_assoc();
+
+		//for AVG Payouts
+		$payouts_sql = "
+			SELECT
+				SUM(2c.click_payout) AS payout
+			FROM 202_clicks AS 2c
+			WHERE 2c.click_lead='1'
+			AND 2c.click_time > ".$mysql['from'] ."
+			AND 2c.click_time <= ".$mysql['to'] ."
+		";
+		$payout_result = _mysqli_query($payouts_sql) ; //($breakdown_sql);
+		$payout_row = $payout_result->fetch_assoc();
 		
 		
 		//get the stats
 		$clicks[$day] = $click_row['clicks'] + $clicks[$day];
 		
 		$total_clicks = $total_clicks + $click_row['clicks'];
+
+		//click_throughs
+		$click_throughs[$day] = $click_row['click_throughs'] + $click_throughs[$day];
+
+		$total_click_throughs = $total_click_throughs + $click_row['click_throughs'];
+
+		//ctr
+		$ctr[$day] = @round($click_throughs[$day] / $clicks[$day] * 100, 2);
+
+		$total_ctr = @round($total_click_throughs / $total_clicks * 100, 2);
 	
 		//avg cpc and cost    
 		$cost[$day] = $click_row['cost'] + $cost[$day]; 
@@ -3785,10 +3501,11 @@ function runWeekly($user_pref) {
 		
 		$total_su_ratio = @round($total_leads/$total_clicks*100,2);
 		
-		//were not using payout
+
 		//current payout
-		//$payout = 0;
-		//$payout = $info_row['aff_campaign_payout'];
+		if ($click_row['leads'] > 0) {
+			$payout[$day] = $payout_row['payout']/$leads[$day];
+		}
 
 		//income
 		$income[$day] = $click_row['income'] + $income[$day];
@@ -3817,17 +3534,20 @@ function runWeekly($user_pref) {
 		$from = $day;
 		//$to = $hour +1;   if ($to == 24) { $to = 0; }
 		
-		$mysql['from'] = mysql_real_escape_string($from);
-		$mysql['to'] = mysql_real_escape_string($to);
-		$mysql['clicks'] = mysql_real_escape_string($clicks[$day]);
-		$mysql['leads'] = mysql_real_escape_string($leads[$day]);
-		$mysql['su_ratio'] = mysql_real_escape_string($su_ratio[$day]);
-		$mysql['epc'] = mysql_real_escape_string($epc[$day]);
-		$mysql['avg_cpc'] = mysql_real_escape_string($avg_cpc[$day]);
-		$mysql['income'] = mysql_real_escape_string($income[$day]);
-		$mysql['cost'] = mysql_real_escape_string($cost[$day]);
-		$mysql['net'] = mysql_real_escape_string($net[$day]);
-		$mysql['roi'] = mysql_real_escape_string($roi[$day]);
+		$mysql['from'] = $db->real_escape_string($from);
+		$mysql['to'] = $db->real_escape_string($to);
+		$mysql['clicks'] = $db->real_escape_string($clicks[$day]);
+		$mysql['click_throughs'] = $db->real_escape_string($click_throughs[$day]);
+		$mysql['ctr'] = $db->real_escape_string($ctr[$day]);
+		$mysql['leads'] = $db->real_escape_string($leads[$day]);
+		$mysql['su_ratio'] = $db->real_escape_string($su_ratio[$day]);
+		$mysql['payout'] = $db->real_escape_string($payout[$day]);
+		$mysql['epc'] = $db->real_escape_string($epc[$day]);
+		$mysql['avg_cpc'] = $db->real_escape_string($avg_cpc[$day]);
+		$mysql['income'] = $db->real_escape_string($income[$day]);
+		$mysql['cost'] = $db->real_escape_string($cost[$day]);
+		$mysql['net'] = $db->real_escape_string($net[$day]);
+		$mysql['roi'] = $db->real_escape_string($roi[$day]);
 		
 		//insert chart
 		$sort_breakdown_sql = "
@@ -3837,9 +3557,11 @@ function runWeekly($user_pref) {
 				sort_breakdown_to='".$mysql['to']."',
 				user_id='".$mysql['user_id']."',
 				sort_breakdown_clicks='".$mysql['clicks']."',
+				sort_breakdown_click_throughs='".$mysql['click_throughs']."',
+				sort_breakdown_ctr='".$mysql['ctr']."',
 				sort_breakdown_leads='".$mysql['leads']."',
 				sort_breakdown_su_ratio='".$mysql['su_ratio']."',
-				sort_breakdown_payout='".$mysql['sort_breakdown_payout']."',
+				sort_breakdown_payout='".$mysql['payout']."',
 				sort_breakdown_epc='".$mysql['epc']."',
 				sort_breakdown_avg_cpc='".$mysql['avg_cpc']."',
 				sort_breakdown_income='".$mysql['income']."',
@@ -3847,7 +3569,7 @@ function runWeekly($user_pref) {
 				sort_breakdown_net='".$mysql['net']."',
 				sort_breakdown_roi='".$mysql['roi']."'
 		";
-		$sort_breakdown_result = _mysql_query($sort_breakdown_sql) ; #echo "<p>$sort_breakdown_sql</p>";
+		$sort_breakdown_result = _mysqli_query($sort_breakdown_sql) ; #echo "<p>$sort_breakdown_sql</p>";
 	}
 	
 	
@@ -3857,7 +3579,7 @@ function runWeekly($user_pref) {
 		WHERE user_id='".$mysql['user_id']."'
 		ORDER BY sort_breakdown_from ASC
 	";
-	$breakdown_result = _mysql_query($breakdown_sql) ; //($breakdown_sql);
+	$breakdown_result = _mysqli_query($breakdown_sql) ; //($breakdown_sql);
 
 	$chartWidth = $_POST['chartWidth'];
 	$chartHeight = 180;
@@ -3874,15 +3596,17 @@ function runWeekly($user_pref) {
 
 
 		//extract the data from the query result one row at a time
-		for ( $i=0; $i < mysql_num_rows($breakdown_result); $i++ ) {
+		for ( $i=0; $i < $breakdown_result->num_rows; $i++ ) {
 
 		   //determine which column in the PHP array the current data belongs to
-		   $col = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
-		  $col++;
+		   $breakdown_result->field_seek($breakdown_result->current_field);
+		   $row = $breakdown_result->fetch_assoc();
+		   $col = $row['sort_breakdown_from'];
+		   $col++;
 		   
 		   
 		   //populate the PHP array with the Year title
-		   $day = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $day = $row['sort_breakdown_from'];
 		   
 		   switch ($day) { 
 				case 1: $day = "Sun"; break;
@@ -3897,9 +3621,9 @@ function runWeekly($user_pref) {
 		    $chart [ 'chart_data' ][ 0 ][ $col ] = $day;
 
 		   //populate the PHP array with the revenue data
-		   $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_income");
-		   $chart [ 'chart_data' ][ 2 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_cost");
-		   $chart [ 'chart_data' ][ 3 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_net");
+		   $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_income'];
+		   $chart [ 'chart_data' ][ 2 ][ $col ] = $row['sort_breakdown_cost'];
+		   $chart [ 'chart_data' ][ 3 ][ $col ] = $row['sort_breakdown_net'];
 		}
 		
 		$chart[ 'series_color' ] = array (  "70CF40", "CF4040", "409CCF","000000"); 
@@ -3929,15 +3653,17 @@ function runWeekly($user_pref) {
 		elseif ($pref_chart == 'roi') { $chart [ 'chart_data' ][ 1 ][ 0 ] = "ROI"; } 
 		
 		//extract the data from the query result one row at a time
-		for ( $i=0; $i < mysql_num_rows($breakdown_result); $i++ ) {
+		for ( $i=0; $i < $breakdown_result->num_rows; $i++ ) {
 
 		   //determine which column in the PHP array the current data belongs to
-		   $col = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $breakdown_result->field_seek($breakdown_result->current_field);
+		   $row = $breakdown_result->fetch_assoc();
+		   $col = $row['sort_breakdown_from'];
 		   $col++;
 		   
 		   
 		    //populate the PHP array with the Year title
-		   $day = mysql_result ( $breakdown_result, $i, "sort_breakdown_from");
+		   $day = $row['sort_breakdown_from'];
 		   switch ($day) { 
 				case 1: $day = "Sun"; break;
 				case 2: $day = "Mon"; break;
@@ -3953,16 +3679,16 @@ function runWeekly($user_pref) {
 		   //populate the PHP array with the revenue data
 		  
 		   
-			if ($pref_chart == 'clicks') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_clicks");  }
-			elseif ($pref_chart == 'leads') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_leads");  }  
-			elseif ($pref_chart == 'su_ratio') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_su_ratio");  }   
-			elseif ($pref_chart == 'payout') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_payout");  }   
-			elseif ($pref_chart == 'epc') { $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_epc");  } 
-			elseif ($pref_chart == 'cpc') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_avg_cpc");  } 
-			elseif ($pref_chart == 'income') { $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_income");  } 
-			elseif ($pref_chart == 'cost') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_cost");  } 
-			elseif ($pref_chart == 'net') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_net");  } 
-			elseif ($pref_chart == 'roi') {  $chart [ 'chart_data' ][ 1 ][ $col ] = mysql_result ( $breakdown_result, $i, "sort_breakdown_roi");  } 
+			if ($pref_chart == 'clicks') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_clicks'];  }
+			elseif ($pref_chart == 'leads') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_leads'];  }  
+			elseif ($pref_chart == 'su_ratio') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_su_ratio'];  }   
+			elseif ($pref_chart == 'payout') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_payout'];  }   
+			elseif ($pref_chart == 'epc') { $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_epc'];  } 
+			elseif ($pref_chart == 'cpc') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_avg_cpc'];  } 
+			elseif ($pref_chart == 'income') { $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_income'];  } 
+			elseif ($pref_chart == 'cost') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_cost'];  } 
+			elseif ($pref_chart == 'net') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_net'];  } 
+			elseif ($pref_chart == 'roi') {  $chart [ 'chart_data' ][ 1 ][ $col ] = $row['sort_breakdown_roi'];  } 
 		}
 
 		//$chart[ 'series_color' ] = array (  "003399"); 
@@ -4001,7 +3727,7 @@ function memcache_set_user_key($sql) {
 		$sql = md5($sql);
 		$user_id = $_SESSION['user_id'];
 		
-		$getCache = $memcache -> get($user_id);
+		$getCache = $memcache -> get(md5($user_id . systemHash()));
 		
 		$queries = explode(",",$getCache);
 		
@@ -4013,26 +3739,9 @@ function memcache_set_user_key($sql) {
 		
 		$queries = implode(",", $queries);
 		
-		$setCache = $memcache -> set ($user_id, $queries);
+		$setCache = $memcache -> set (md5($user_id, $queries . systemHash()), false);
 		
 	}	
-
-}
-
-
-function memcache_delete_user_keys() {
-
-	/*global $memcache;
-
-	$user_id = $_SESSION['user_id'];
-	
-	$queryKeys = explode(",", $memcache -> get($user_id));
-	
-	foreach ($queryKeys as $deletedKey) {
-		if ($deletedKey != '') { 
-			$memcache -> delete($deletedKey);
-		}
-	}*/
 
 }
 
@@ -4043,24 +3752,25 @@ function memcache_mysql_fetch_assoc( $sql, $allowCaching = 1, $minutes = 5 ) {
 
 	if ($memcacheWorking == false) { 
 		
-		$result = _mysql_query($sql);
-		$row = mysql_fetch_assoc($result);
+		$result = _mysqli_query($sql);
+		$row = $result->fetch_assoc();
 		return $row;
 	} else {
 
 		if( $allowCaching == 0 ) {
-			$result = _mysql_query($sql);
-			$row = mysql_fetch_assoc($result);
+			$result = _mysqli_query($sql);
+			$row = $result->fetch_assoc();
 			return $row;
 		} else {
 
 			// Check if its set
-			$getCache = $memcache->get( md5( $sql ) );
+			$getCache = $memcache->get( md5( $sql . systemHash()));
 			
 			if( $getCache === false ) {
 				// cache this data
-				$fetchArray = mysql_fetch_assoc( _mysql_query( $sql ) );
-				$setCache = $memcache->set( md5( $sql ), serialize( $fetchArray ), false, 60*$minutes  );
+				$result = _mysqli_query( $sql );
+				$fetchArray = $result->fetch_assoc();
+				$setCache = $memcache->set( md5( $sql . systemHash()), serialize( $fetchArray ), false, 60*$minutes  );
 				
 				//store all this users memcache keys, so we can delete them fast later on
 				memcache_set_user_key($sql);
@@ -4082,8 +3792,8 @@ function foreach_memcache_mysql_fetch_assoc( $sql, $allowCaching = 1 ) {
 	
 	if ($memcacheWorking == false) { 
 		$row = array();
-		$result = _mysql_query($sql) ; //($sql);
-		while ($fetch = mysql_fetch_assoc($result)) {
+		$result = _mysqli_query($sql) ; //($sql);
+		while ($fetch = $result->fetch_assoc()) {
 			$row[] = $fetch;
 		}
 		return $row;
@@ -4091,22 +3801,22 @@ function foreach_memcache_mysql_fetch_assoc( $sql, $allowCaching = 1 ) {
 
 		if( $allowCaching == 0 ) {
 			$row = array();
-			$result = _mysql_query($sql) ; //($sql);
-			while ($fetch = mysql_fetch_assoc($result)) {
+			$result = _mysqli_query($sql) ; //($sql);
+			while ($fetch = $result->fetch_assoc()) {
 				$row[] = $fetch;
 			}
 			return $row;
 		} else {
 			
-			$getCache = $memcache->get( md5( $sql ) );
+			$getCache = $memcache->get( md5( $sql . systemHash()));
 			if( $getCache === false ) { 
 				//if data is NOT cache, cache this data
 				$row = array();     
-				$result = _mysql_query($sql) ; //($sql);
-				while ($fetch = mysql_fetch_assoc($result)) {
+				$result = _mysqli_query($sql) ; //($sql);
+				while ($fetch = $result->fetch_assoc()) {
 					$row[] = $fetch;
 				}
-				$setCache = $memcache->set( md5( $sql ), serialize( $row ), false, 60*5 );  
+				$setCache = $memcache->set( md5( $sql . systemHash()), serialize( $row ), false, 60*5 );  
 				
 				//store all this users memcache keys, so we can delete them fast later on
 				memcache_set_user_key($sql);
@@ -4190,7 +3900,7 @@ function break_lines($text) {
 
 //this funciton delays an SQL statement, puts in in a mysql table, to be cronjobed out every 5 minutes
 function delay_sql($delayed_sql) {
-	
+
 	$mysql['delayed_sql'] = str_replace("'","''",$delayed_sql);
 	$mysql['delayed_time'] = time();
 	
@@ -4207,7 +3917,7 @@ function delay_sql($delayed_sql) {
 						'".$mysql['delayed_time']."'
 					);";
 	
-	$delayed_result = _mysql_query($delayed_sql) ; //($delayed_sql);
+	$delayed_result = _mysqli_query($delayed_sql) ; //($delayed_sql);
 }
 
 
@@ -4217,7 +3927,7 @@ function rotateTrackerUrl($tracker_row) {
 	
 	if (!$tracker_row['aff_campaign_rotate']) return $tracker_row['aff_campaign_url'];
 	
-	$mysql['aff_campaign_id'] = mysql_real_escape_string($tracker_row['aff_campaign_id']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
 	$urls = array();
 	array_push($urls, $tracker_row['aff_campaign_url']);
 
@@ -4230,24 +3940,24 @@ function rotateTrackerUrl($tracker_row) {
 	$count = count($urls);
 	
 	$sql5 = "SELECT rotation_num FROM 202_rotations WHERE aff_campaign_id='".$mysql['aff_campaign_id']."'";
-	$result5 = _mysql_query($sql5);
-	$row5 = mysql_fetch_assoc($result5);
+	$result5 = _mysqli_query($sql5);
+	$row5 = $result5->fetch_assoc();
 	if ($row5) { 
 		
 		$old_num = $row5['rotation_num'];
 		if ($old_num >= ($count - 1))		$num = 0;
 		else 						$num = $old_num + 1;
 		
-		$mysql['num'] = mysql_real_escape_string($num);
+		$mysql['num'] = $db->real_escape_string($num);
 		$sql5 = " UPDATE 202_rotations SET rotation_num='".$mysql['num']."' WHERE aff_campaign_id='".$mysql['aff_campaign_id']."'";
-		$result5 = _mysql_query($sql5);
+		$result5 = _mysqli_query($sql5);
 	
 	} else {
 		//insert the rotation
 		$num = 0;
-		$mysql['num'] = mysql_real_escape_string($num);
+		$mysql['num'] = $db->real_escape_string($num);
 		$sql5 = " INSERT INTO 202_rotations SET aff_campaign_id='".$mysql['aff_campaign_id']."',  rotation_num='".$mysql['num']."' ";
-		$result5 = _mysql_query($sql5);
+		$result5 = _mysqli_query($sql5);
 		$rotation_num = 0;
 	}
 	
@@ -4256,8 +3966,12 @@ function rotateTrackerUrl($tracker_row) {
 }
 
 function replaceTrackerPlaceholders($url,$click_id) {
+
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
 	//get the tracker placeholder values
-	$mysql['click_id'] = mysql_real_escape_string($click_id);
+	$mysql['click_id'] = $db->real_escape_string($click_id);
 	
 	if(preg_match('/\[\[c1\]\]/', $url) || preg_match('/\[\[c2\]\]/', $url) || preg_match('/\[\[c3\]\]/', $url) || preg_match('/\[\[c4\]\]/', $url)) {
 		$click_sql = "
@@ -4277,8 +3991,8 @@ function replaceTrackerPlaceholders($url,$click_id) {
 			WHERE
 				2c.click_id='".$mysql['click_id']."'
 		";
-		$click_result = _mysql_query($click_sql);
-		$click_row = mysql_fetch_assoc($click_result);
+		$click_result = _mysqli_query($click_sql);
+		$click_row = $click_result->fetch_assoc();
 		
 		$url = preg_replace('/\[\[c1\]\]/', $click_row['c1'], $url);
 		$url = preg_replace('/\[\[c2\]\]/', $click_row['c2'], $url);
@@ -4298,57 +4012,314 @@ function setClickIdCookie($click_id,$campaign_id=0) {
 	setcookie('tracking202subid_a_' . $campaign_id,$click_id,$expire,'/', $_SERVER['SERVER_NAME']);
 }
 
-/* backup the db OR just a table */
-function backup_tables()
-{
-	
-	/*$link = mysql_connect($host,$user,$pass);
-	mysql_select_db($name,$link);
-	*/
-	//get all of the tables
-
-	$tables = array();
-	$result = mysql_query('SHOW TABLES');
-	while($row = mysql_fetch_row($result))
-	{
-		$tables[] = $row[0];
-	}
-
-
-	//cycle through
-	foreach($tables as $table)
-	{
-		$result = mysql_query('SELECT * FROM '.$table);
-		$num_fields = mysql_num_fields($result);
-		
-		$return.= 'DROP TABLE '.$table.';';
-		$row2 = mysql_fetch_row(mysql_query('SHOW CREATE TABLE '.$table));
-		$return.= "\n\n".$row2[1].";\n\n";
-		
-		for ($i = 0; $i < $num_fields; $i++)  
-		{
-			while($row = mysql_fetch_row($result))
-			{
-				$return.= 'INSERT INTO '.$table.' VALUES(';
-				for($j=0; $j < $num_fields; $j++) 
-				{
-					$row[$j] = addslashes($row[$j]);
-					$row[$j] = ereg_replace("\n","\\n",$row[$j]);
-					if (isset($row[$j])) { $return.= '"'.$row[$j].'"' ; } else { $return.= '""'; }
-					if ($j<($num_fields-1)) { $return.= ','; }
-				}
-				$return.= ");\n";
-			}
-		}
-		$return.="\n\n\n";
-	}
-	
-	//save file
-	$handle = fopen('cached/db-backup-'.time().'-'.(md5(implode(',',$tables))).'.sql','w+');
-	fwrite($handle,$return);
-	fclose($handle);
-	
-	echo '202-backup\db-backup-'.time().'-'.(md5(implode(',',$tables))).'.sql','w+';
+function setPCIdCookie($click_id_public) {
+	setcookie('tracking202pci',$click_id_public,0,'/', $_SERVER['SERVER_NAME']);
 }
+
+function setOutboundCookie($outbound_site_url) {
+	setcookie('tracking202outbound',$outbound_site_url,0,'/', $_SERVER['SERVER_NAME']);
+}
+
+function user_cache_time($user_id)
+{	
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+
+	$mysql['user_id'] = $db->real_escape_string($user_id);
+	$sql = "SELECT cache_time FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
+	$result = _mysqli_query($sql);
+	$row = $result->fetch_assoc();
+	return $row['cache_time'];
+}
+
+
+function get_user_data_feedback($user_id){
+	$database = DB::getInstance();
+	$db = $database->getConnection();
+	$mysql['user_id'] = $db->real_escape_string($user_id);
+	$sql = "SELECT user_email, user_time_register, clickserver_api_key, install_hash, user_hash, modal_status, vip_perks_status FROM 202_users WHERE user_id='".$mysql['user_id']."'";
+	$result = _mysqli_query($sql);
+	$row = $result->fetch_assoc();
+
+	return array(
+      	'user_email' => $row['user_email'],
+      	'time_stamp' => $row['user_time_register'],
+      	'api_key' => $row['clickserver_api_key'],
+      	'install_hash' => $row['install_hash'],
+      	'user_hash' => $row['user_hash'],
+      	'modal_status' => $row['modal_status'],
+      	'vip_perks_status' => $row['vip_perks_status'],
+   );
+}
+
+
+function clickserver_api_upgrade_url($key){
+
+	//Initiate curl
+	$ch = curl_init();
+	// Disable SSL verification
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	// Will return the response, if false it print the response
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	// Set the url
+	curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/api/v1/auth/?apiKey='.$key.'&clickserverId='.base64_encode($_SERVER['HTTP_HOST']));
+	// Execute
+	$result=curl_exec($ch);
+
+	$data = json_decode($result, true);
+
+		if ($data['isValidKey'] != 'true' || $data['isValidDomain'] != 'true') {
+			return false;
+			die();
+		}
+
+	$download_url = $data['downloadURL'];
+	return $download_url;
+
+	curl_close($ch);
+}
+
+function clickserver_api_key_validate($key){
+	//Initiate curl
+	$ch = curl_init();
+	// Disable SSL verification
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	// Will return the response, if false it print the response
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	// Set the url
+	curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/api/v1/auth/?apiKey='.$key.'&clickserverId='.base64_encode($_SERVER['HTTP_HOST']));
+	// Execute
+	$result=curl_exec($ch);
+
+	$data = json_decode($result, true);
+
+	if ($data['isValidKey'] != 'true' || $data['isValidDomain'] != 'true') {
+		return false;
+		die();
+	}
+
+	return true;
+
+	curl_close($ch);
+}
+
+function getGeoData($ip){
+
+	global $GEOIP_REGION_NAME;
+	
+	$gi = geoip_open($_SERVER['DOCUMENT_ROOT']. "/202-config/geo/GeoLite.dat", GEOIP_STANDARD);
+
+	$record = geoip_record_by_addr($gi, $ip);
+
+	$country = $record->country_name;
+	$country_code = $record->country_code;
+	$city = $record->city;
+	$region = $GEOIP_REGION_NAME[$record->country_code][$record->region];
+
+	if ($record != "null") {
+		if ($country == null) {
+			$country = "Unknown country";
+			$country_code = "non";
+		}
+
+		if ($city == null) {
+			$city = "Unknown city";
+		}
+
+		if ($region == null) {
+			$region = "Unknown region";
+		}
+	}
+
+	$geoData = array('country' => $country, 'country_code' => $country_code, 'region' => $region, 'city' => $city);
+
+	geoip_close($gi);
+	
+	return $geoData;
+}
+
+function getIspData($ip){
+	$giisp = geoip_open($_SERVER['DOCUMENT_ROOT']. "/202-config/geo/GeoIPISP.dat", GEOIP_STANDARD);
+	$isp = geoip_org_by_addr($giisp, $ip);
+
+	if (!$isp) {
+		$isp = "Unknown ISP/Carrier";
+	}
+
+	geoip_close($giisp);
+
+	return $isp;
+}
+
+function systemHash(){
+  $hash = hash('ripemd160', $_SERVER['HTTP_HOST'] . $_SERVER['SERVER_ADDR']);
+  return $hash;
+}
+
+function getBrowserIcon($name){
+	switch ($name) {
+		case 'Chrome':
+			$icon = 'chrome';
+			break;
+
+		case 'Chrome Frame':
+			$icon = 'chrome';
+			break;	
+
+		case 'Android':
+			$icon = 'android';
+			break;
+
+		case 'Chrome Mobile':
+			$icon = 'chrome';
+			break;
+
+		case 'Chrome Mobile iOS':
+			$icon = 'chrome';
+			break;
+		
+		case 'Firefox':
+			$icon = 'firefox';
+			break;
+		
+		case 'IE':
+			$icon = 'ie';
+			break;
+
+		case 'Mobile Safari':
+			$icon = 'safari';
+			break;
+
+		case 'Safari':
+			$icon = 'safari';
+			break;
+
+		case 'Opera':
+			$icon = 'opera';
+			break;
+
+		case 'Opera Tablet':
+			$icon = 'opera';
+			break;
+
+		case 'Opera Mobile':
+			$icon = 'opera';
+			break;
+
+		case 'WebKit Nightly':
+			$icon = 'webkitnightly';
+			break;
+
+		default:
+			$icon = 'other';
+	}
+
+	return $icon;
+}
+
+function getSurveyData($install_hash){
+
+	//Initiate curl
+	$ch = curl_init();
+	// Disable SSL verification
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	// Will return the response, if false it print the response
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	// Set the url
+	curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/api/v1/deep/survey/'.$install_hash);
+	// Execute
+	$result = curl_exec($ch);
+	//close connection
+	curl_close($ch);
+
+	$data = json_decode($result, true);
+
+	return $data;
+}
+
+function updateSurveyData($install_hash, $post){
+
+	$fields = http_build_query($post);
+
+	//Initiate curl
+	$ch = curl_init();
+	// Set the url
+	curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/api/v1/deep/survey/'.$install_hash);
+	// Disable SSL verification
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	// Will return the response, if false it print the response
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	//Set to post
+	curl_setopt($ch, CURLOPT_POST, 1);
+	//Set post fields
+	curl_setopt($ch,CURLOPT_POSTFIELDS, $fields);
+	// Execute
+	$result = curl_exec($ch);
+
+	$data = json_decode($result, true);
+
+	//close connection
+	curl_close($ch);
+
+	return $data;
+
+}
+
+function intercomHash($install_hash){
+	//Initiate curl
+	$ch = curl_init();
+	// Set the url
+	curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/api/v1/hash/?h='.$install_hash);
+	// Disable SSL verification
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	// Will return the response, if false it print the response
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	// Execute
+	$result = curl_exec($ch);
+
+	$data = json_decode($result, true);
+
+	//close connection
+	curl_close($ch);
+
+	return $data['user_hash'];
+}
+
+function rotator_data($query, $type){
+	//Initiate curl
+	$ch = curl_init();
+	// Set the url
+	curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/api/v1/deep/rotator/'.$type.'/'.$query);
+	// Disable SSL verification
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	// Will return the response, if false it print the response
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	// Execute
+	$result = curl_exec($ch);
+
+	//close connection
+	curl_close($ch);
+
+	return $result;
+}
+
+function changelog(){
+	//Initiate curl
+	$ch = curl_init();
+	// Set the url
+	curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/clickserver/currentversion/changelogs.php');
+	// Disable SSL verification
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	// Will return the response, if false it print the response
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	// Execute
+	$result = curl_exec($ch);
+
+	//close connection
+	curl_close($ch);
+
+	return json_decode($result, true);
+}
+
 
 ?>

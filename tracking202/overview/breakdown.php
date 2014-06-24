@@ -2,15 +2,14 @@
 
 AUTH::require_user();
 
-
-
-
 //show the template
 template_top('Breakdown Overview',NULL,NULL,NULL);  ?>
 
-<div id="info">
-	<h2>Breakdown Overview</h2>
-	The breakdown overview allows you to see your stats per day, per hour, or an interval that you set. 
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<h6>Breakdown Overview</h6>
+		<small>The breakdown overview allows you to see your stats per day, per hour, or an interval that you set.</small>
+	</div>
 </div>
 
 <?php display_calendar('/tracking202/ajax/sort_breakdown.php', true, true, true, false, true, true); ?>    

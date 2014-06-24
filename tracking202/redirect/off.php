@@ -1,48 +1,66 @@
 <?php 
-
-
 #only allow numeric acip's
 $acip = $_GET['acip'];
 if (!is_numeric($acip)) die(); 
 
-#cached redirects stored here:
-$myFile = "cached/off-cached.csv";
-
-
-# check to see if mysql connection works, if not fail over to cached .CSV stored redirect urls
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config.php'); 
+include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');  
 
 $usedCachedRedirect = false;
-$dbconnect = @mysql_connect($dbhost,$dbuser,$dbpass); 
-if (!$dbconnect) $usedCachedRedirect = true; 
-
-if ($usedCachedRedirect==false) $dbselect = @mysql_select_db($dbname);
-if (!$dbselect) $usedCachedRedirect = true; 
+if (!$db) $usedCachedRedirect = true;
 
 #the mysql server is down, use the txt cached redirect
 if ($usedCachedRedirect==true) { 
 
-	$handle = @fopen($myFile, 'r');
-	while ($row = @fgetcsv($handle, 100000, ",")) {
-		
-		//if a cached key is found for this t202id, redirect to that url
-		if ($row[0] == $acip) { 
-			header('location: '. $row[1]); 
-			die();
+		$acip = $_GET['acip'];
+
+		//if a cached key is found for this acip, redirect to that url
+		if ($memcacheWorking) {
+			$getUrl = $memcache->get(md5('ac_'.$acip.systemHash()));
+			if ($getUrl) {
+
+				$new_url = str_replace("[[subid]]", "p202", $getUrl);
+
+				//c1 sring replace for cached redirect
+				if(isset($_GET['c1']) && $_GET['c1'] != ''){
+					$new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
+				}	else {
+					$new_url = str_replace("[[c1]]", "p202c1", $new_url);
+				}
+
+				//c2 sring replace for cached redirect
+				if(isset($_GET['c2']) && $_GET['c2'] != ''){
+					$new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
+				}	else {
+					$new_url = str_replace("[[c2]]", "p202c2", $new_url);
+				}
+				
+				//c3 sring replace for cached redirect
+				if(isset($_GET['c3']) && $_GET['c3'] != ''){
+					$new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
+				}	else {
+					$new_url = str_replace("[[c3]]", "p202c3", $new_url);
+				}
+
+				//c4 sring replace for cached redirect
+				if(isset($_GET['c4']) && $_GET['c4'] != ''){
+					$new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
+				}	else {
+					$new_url = str_replace("[[c4]]", "p202c4", $new_url);
+				}
+			
+			
+				header('location: '. $new_url); 
+				die();
+			}
 		}
-	}
-	@fclose($handle);
 	
 	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
 }
 
-
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
-
 /* OK FIRST IF THERE IS NO PUBLIC CLICK_ID, JUST REDIRECT TO THE NORMAL CAMPAIGN */
 if (!$_GET['pci']) { 
 
-	$mysql['aff_campaign_id_public'] = mysql_real_escape_string($acip);
+	$mysql['aff_campaign_id_public'] = $db->real_escape_string($acip);
 	$aff_campaign_sql = "SELECT   aff_campaign_rotate, 
 									aff_campaign_url, 
 									aff_campaign_url_2, 
@@ -53,43 +71,17 @@ if (!$_GET['pci']) {
 									aff_campaign_cloaking 
 						    FROM 	202_aff_campaigns 
 						    WHERE 	aff_campaign_id_public='".$mysql['aff_campaign_id_public']."'";
-	$aff_campaign_row = memcache_mysql_fetch_assoc($aff_campaign_sql);
+	$aff_campaign_row = memcache_mysql_fetch_assoc($db, $aff_campaign_sql);
 	
 	if (empty($aff_campaign_row['aff_campaign_url'])) { die(); } //if there is no aff_url to redirect to DIEEEEEE!!!!!!! EEEEEE!!!
-
-	#cache the results 
-	if ( is_writable(dirname(__FILE__) . '/cached' )) {
 	
-		#if the file does not exist create it
-		if (!file_exists($myFile)) { 
-			$handle = @fopen($myFile, 'w');
-			@fclose($handle);
-		} 
-		
-		# now save this link to the 
-		$handle = @fopen($myFile, 'r');
-		$writeNewIndex = true;
-		while (($row = @fgetcsv($handle, 100000, ",")) and ($writeNewIndex == true)) {
-			if ($row[0] == $acip) $writeNewIndex = false;
-		}
-		@fclose($handle);
-		
-		if ($writeNewIndex) { 
-			//write this index to the txt file
-			$newLine = "$acip, {$aff_campaign_row['aff_campaign_url']} \n";
-			$newHandle = @fopen($myFile, 'a+');
-			@fwrite($newHandle, $newLine);
-			@fclose($newHandle);
-		}
-	}
-	
-	$redirect_site_url = rotateTrackerUrl($aff_campaign_row); 
+	$redirect_site_url = rotateTrackerUrl($db, $aff_campaign_row); 
 	//$redirect_site_url = $redirect_site_url . $click_id;
-	$redirect_site_url = replaceTrackerPlaceholders($redirect_site_url,$click_id);
+	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_id);
 
 	//ok if there is a url that exists, if redirect php style, or if its cloaked, redirect meta refresh style.
 	if ($aff_campaign_row['aff_campaign_cloaking'] == 0) {
-		
+
 		//cloaking OFF, so do a php header redirect
 		header('location: '.$redirect_site_url);
 	
@@ -142,8 +134,8 @@ if (!$_GET['pci']) {
 /* ------------------------------------------------------- */ 
 
 
-$mysql['aff_campaign_id_public'] = mysql_real_escape_string($_GET['acip']);
-$mysql['click_id_public'] = mysql_real_escape_string($_GET['pci']);
+$mysql['aff_campaign_id_public'] = $db->real_escape_string($_GET['acip']);
+$mysql['click_id_public'] = $db->real_escape_string($_GET['pci']);
 
 $info_sql = "
 	SELECT
@@ -173,51 +165,26 @@ $info_sql = "
 		2ac.aff_campaign_id_public='".$mysql['aff_campaign_id_public']."'
 		AND 2cr.click_id_public='".$mysql['click_id_public']."'
 ";
-$info_row = memcache_mysql_fetch_assoc($info_sql);
+$info_row = memcache_mysql_fetch_assoc($db, $info_sql);
 
+if ($memcacheWorking) {  
 
+	$url = $tracker_row['aff_campaign_url']."&subid=p202";
+	$tid = $acip;
 
-
-#cache the results 
-if ( is_writable(dirname(__FILE__) . '/cached' )) {
-
-	#if the file does not exist create it
-	if (!file_exists($myFile)) { 
-		$handle = @fopen($myFile, 'w');
-		@fclose($handle);
-	} 
-	
-	# now save this link to the 
-	$handle = @fopen($myFile, 'r');
-	$writeNewIndex = true;
-	while (($row = @fgetcsv($handle, 100000, ",")) and ($writeNewIndex == true)) {
-		if ($row[0] == $acip) $writeNewIndex = false;
-	}
-	@fclose($handle);
-	
-	if ($writeNewIndex) { 
-		//write this index to the txt file
-		$newLine = "$acip, {$info_row['aff_campaign_url']} \n";
-		$newHandle = @fopen($myFile, 'a+');
-		@fwrite($newHandle, $newLine);
-		@fclose($newHandle);
+	$getKey = $memcache->get(md5('ac_'.$tid.systemHash()));
+	if($getKey === false){
+		$setUrl = $memcache->set(md5('ac_'.$tid.systemHash()), $url, false, 0);
 	}
 }
-	
-	
-
-
 
 $click_id = $info_row['click_id'];
-$mysql['click_id'] = mysql_real_escape_string($click_id);
-/****** THESES ARE THE VARIABLES I NEED TO UPDATE TO THE PUBLIC_CLICK_ID *********/
 
-// click spy & clicks
-//	aff_campaign_id
-// 	click_payout
+$mysql['click_id'] = $db->real_escape_string($click_id);
 
-$mysql['aff_campaign_id'] = mysql_real_escape_string($info_row['aff_campaign_id']);
-$mysql['click_payout'] = mysql_real_escape_string($info_row['aff_campaign_payout']);
+
+$mysql['aff_campaign_id'] = $db->real_escape_string($info_row['aff_campaign_id']);
+$mysql['click_payout'] = $db->real_escape_string($info_row['aff_campaign_payout']);
 
 $update_sql = "
 	UPDATE
@@ -232,11 +199,8 @@ $update_sql = "
 		2c.click_id='".$mysql['click_id']."'
 ";
 //this function delays the sql, because UPDATING is very very slow
-delay_sql($update_sql);
+delay_sql($db, $update_sql);
 
-//clicks_record
-// 	click_cloaking
-// 	click_out
 
 $mysql['click_out'] = 1;
 
@@ -260,29 +224,23 @@ $update_sql = "
 	WHERE
 		click_id='".$mysql['click_id']."'
 ";
-delay_sql($update_sql);
-
-
-//clicks_site
-//	click_outbound_site_url_id='".$mysql['click_outbound_site_url_id']."',
-//	click_cloaking_site_url_id='".$mysql['click_cloaking_site_url_id']."',
-//	click_redirect_site_url_id='".$mysql['click_redirect_site_url_id']."'";
+delay_sql($db, $update_sql);
 
 $outbound_site_url = 'http://'.$_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-$click_outbound_site_url_id = INDEXES::get_site_url_id($outbound_site_url); 
-$mysql['click_outbound_site_url_id'] = mysql_real_escape_string($click_outbound_site_url_id); 
+$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url); 
+$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_site_url_id); 
 
 if ($cloaking_on == true) {
 	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
 }
 
 
-$redirect_site_url = rotateTrackerUrl($info_row); 
-//$redirect_site_url = $redirect_site_url . $click_id;
-$redirect_site_url = replaceTrackerPlaceholders($redirect_site_url,$click_id);
+$redirect_site_url = rotateTrackerUrl($db, $info_row); 
 
-$click_redirect_site_url_id = INDEXES::get_site_url_id($redirect_site_url); 
-$mysql['click_redirect_site_url_id'] = mysql_real_escape_string($click_redirect_site_url_id);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_id);
+
+$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url); 
+$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
 
 $update_sql = "
 	UPDATE
@@ -293,7 +251,7 @@ $update_sql = "
 	WHERE
 		click_id='".$mysql['click_id']."'
 ";
-delay_sql($update_sql);
+delay_sql($db, $update_sql);
 
 
 //alright now the updates,
@@ -307,12 +265,12 @@ delay_sql($update_sql);
 //update the click summary table if this is a 'real click'
 #if ($info_row['click_filtered'] == 0) {
 	
-	$mysql['landing_page_id'] = mysql_real_escape_string($info_row['landing_page_id']);
-	$mysql['user_id'] = mysql_real_escape_string($info_row['user_id']);
+	$mysql['landing_page_id'] = $db->real_escape_string($info_row['landing_page_id']);
+	$mysql['user_id'] = $db->real_escape_string($info_row['user_id']);
 	
 	//set timezone correctly
 	$user_sql = "SELECT user_timezone FROM 202_users WHERE user_id='".$mysql['user_id']."'";
-	$user_row = memcache_mysql_fetch_assoc($user_sql);	
+	$user_row = memcache_mysql_fetch_assoc($db, $user_sql);	
 	AUTH::set_timezone($user_row['user_timezone']);
 
 
@@ -324,17 +282,17 @@ delay_sql($update_sql);
 
 	//the click_time is recorded in the middle of the day
 	$click_time = mktime(12,0,0,$today_month,$today_day,$today_year);
-	$mysql['click_time'] = mysql_real_escape_string($click_time);
+	$mysql['click_time'] = $db->real_escape_string($click_time);
 
 	//check to make sure this click_summary doesn't already exist
-	$check_sql = "SELECT  COUNT(*)
+	$check_sql = "SELECT  *
 				  FROM    202_summary_overview
 				  WHERE user_id='".$mysql['user_id']."'
 				  AND     landing_page_id='".$mysql['landing_page_id']."'
 				  AND     aff_campaign_id='".$mysql['aff_campaign_id']."'
 				  AND     click_time='".$mysql['click_time']."'";
-	$check_result = mysql_query($check_sql) or record_mysql_error($check_sql);
-	$check_count = mysql_result($check_result,0,0);      
+	$check_result = $db->query($check_sql) or record_mysql_error($check_sql);
+	$check_count = $check_result->num_rows;      
 
 	//if this click summary hasn't been recorded do this now
 	if ($check_count == 0 ) {
@@ -344,7 +302,7 @@ delay_sql($update_sql);
 								   landing_page_id='".$mysql['landing_page_id']."',
 								   aff_campaign_id='".$mysql['aff_campaign_id']."',
 								   click_time='".$mysql['click_time']."'";
-		$insert_result = mysql_query($insert_sql);
+		$insert_result = $db->query($insert_sql);
 	}  
 #}
 

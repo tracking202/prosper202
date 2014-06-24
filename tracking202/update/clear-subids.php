@@ -2,69 +2,60 @@
 
 AUTH::require_user();
 
-
-
-
-
-//this deletes all this users cached data to the old result sets, we want new stuff because they just updated old clicks
-	memcache_delete_user_keys();
-
 template_top('Clear Subids',NULL,NULL,NULL);  ?>
 
-<div id="info">
-	<h2>Delete all subids for a specific campaign.</h2>
-	If you accidentally uploaded all of your subids, instead of only the converted subids, you can delete them all here, and then reupload again! 
+<div class="row">
+	<div class="col-xs-12">
+		<h6>Delete all subids for a specific campaign.</h6>
+		<small>If you accidentally uploaded all of your subids, instead of only the converted subids, you can delete them all here, and then reupload again!</small>
+	</div>
 </div>
 
-	<form id="clear_subids_form" method="post" >
-		<table class="setup">
-			<tr  id="tracker_aff_network" >
-				<td class="left_caption">Affiliate Network</td>
-				<td>
-	                    <img id="aff_network_id_div_loading" style="display: none;" src="/202-img/loader-small.gif"/>
-	                    <div id="aff_network_id_div"></div>
-	                </td>
-			</tr>                                             
-			<tr id="tracker_aff_campaign">
-				<td  class="left_caption">Campaign</td>
-				<td>
-					<img id="aff_campaign_id_div_loading" style="display: none;" src="/202-img/loader-small.gif"/>
-					<div id="aff_campaign_id_div"></div>
-				</td> 
-			</tr>
-		</table>
-	</form>
-	<table style="margin: 5px auto;">
-		<tr>
-			<td>
-				<button onclick="clear_subids(); ">Clear Subids</button>
-			</td>
-			<td><img id="clear_subids_loading" style="display: none;" src="/202-img/loader-small.gif"/></td>
-		</tr>
-	</table>           
-	<div id="clear_subids" style="width: 500px; margin: 0px auto;"></div>
-																					
-	<!-- open up the ajax aff network -->
-    <script type="text/javascript">
-        load_aff_network_id(0);
-	</script>
-	
-	<script type="text/javascript">
+<div class="row form_seperator" style="margin-bottom:15px; margin-top:15px;">
+	<div class="col-xs-12"></div>
+</div>
 
-	function clear_subids() { 
-		$('clear_subids_loading').style.display='inline';
-		$('clear_subids').style.display='none';
-		new Ajax.Updater('clear_subids', '../ajax/clear_subids.php', 
-		{
-			parameters: $('clear_subids_form').serialize(true),
-			onSuccess: function() { 
-				$('clear_subids_loading').style.display='none';
-				$('clear_subids').style.display='block';   
-			}
-		});	
-	}
+<div class="row">
+	<div class="col-xs-6">
+		<form id="clear_subids_form" method="post" action="" class="form-horizontal" role="form" style="margin:0px 0px 0px 15px;">
+			<div id="tracker_aff_network" class="form-group" style="margin-bottom: 0px;">
+		        <label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Affiliate Network:</label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+		        	<img id="aff_network_id_div_loading" class="loading" style="display: none;" src="/202-img/loader-small.gif"/>
+	                <div id="aff_network_id_div"></div>
+		        </div>
+		    </div>
 
+			<div id="tracker_aff_campaign" class="form-group" style="margin-bottom: 0px;">
+		        <label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Affiliate Campaign:</label>
+		        <div class="col-xs-6" style="margin-top: 10px;">
+		        	<img id="aff_campaign_id_div_loading" class="loading" src="/202-img/loader-small.gif" style="display: none;"/>
+			        <div id="aff_campaign_id_div">
+			            <select class="form-control input-sm" id="aff_campaign_id" disabled="">
+			                <option>--</option>
+			            </select>
+			        </div>
+		        </div>
+		    </div>
 
+		    <div class="form-group">
+				<div class="col-xs-10" style="margin-top: 10px;">
+					<input type="button" id="clear-subids" class="btn btn-sm btn-p202 btn-block" value="Clear Subids">					
+				</div>
+			</div>
+
+		</form>
+	</div>
+	<div class="col-xs-6" id="response">
+		
+	</div>
+</div>
+
+<!-- open up the ajax aff network -->
+<script type="text/javascript">
+	$(document).ready(function() {
+	   	load_aff_network_id(0);
+	});
 </script>
 		
 <?php template_bottom();

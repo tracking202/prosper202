@@ -2,12 +2,9 @@
 
 AUTH::require_user();
 
-
-
-
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
-	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 	
     $subids = $_POST['subids']; 
 	$subids = trim($subids); 
@@ -15,7 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$subids = str_replace("\n",'',$subids);
 	
 	foreach( $subids as $key => $click_id ) {
-		$mysql['click_id'] = mysql_real_escape_string($click_id);
+		$mysql['click_id'] = $db->real_escape_string($click_id);
 		
 		$click_sql = "
 			SELECT 2c.click_id 
@@ -25,9 +22,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				2c.click_id ='". $mysql['click_id']."'
 				AND 2c.user_id='".$mysql['user_id']."'  
 		";
-		$click_result = mysql_query($click_sql) or record_mysql_error($click_sql);
-		$click_row = mysql_fetch_assoc($click_result);
-		$mysql['click_id'] = mysql_real_escape_string($click_row['click_id']);
+		$click_result = $db->query($click_sql) or record_mysql_error($click_sql);
+		$click_row = $click_result->fetch_assoc();
+		$mysql['click_id'] = $db->real_escape_string($click_row['click_id']);
 		
 		$update_sql = "
 			UPDATE 202_clicks
@@ -38,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				click_id='" . $mysql['click_id'] ."'
 				AND user_id='".$mysql['user_id']."'
 		";
-		$update_result = mysql_query($update_sql) or die(mysql_error());
+		$update_result = $db->query($update_sql) or die(mysql_error($update_sql));
 		
 		$update_sql = "
 			UPDATE 202_clicks_spy
@@ -49,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				click_id='" . $mysql['click_id'] ."'
 				AND user_id='".$mysql['user_id']."'
 		";
-		$update_result = mysql_query($update_sql) or die(mysql_error());
+		$update_result = $db->query($update_sql) or die(mysql_error($update_sql));
 	} 
 	
     $success = true;
@@ -61,29 +58,42 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 //show the template
 template_top('Delete Subids',NULL,NULL,NULL); ?>
 
-<div id="info">
-    <h2>Delete Individual Subids</h2>
-	Ok, just like the upload subids but in reverse, upload the subids you want to delete instead!
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="row">
+			<div class="col-xs-4">
+				<h6>Delete Individual Subids</h6>
+			</div>
+			<div class="col-xs-8">
+				<div class="success pull-right" style="margin-top: 20px;">
+					<small>
+						<?php if ($success == true) { ?>
+							<span class="fui-check-inverted"></span> Your submission was successful. Your account income now reflects the subids just deleted.
+						<?php } ?>
+					</small>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="col-xs-12">
+		<small>Ok, just like the upload subids but in reverse, upload the subids you want to delete instead!</small>
+	</div>
 </div>
-    
-    <?php if ($success == true) { ?>
-        <div class="success"><div><h3>Your submission was successful</h3>Your account income now reflects the deleted subids from the commisisons you just uploaded.</div></div>
-    <?php } ?>
-	<div id="m-content">
-	<form method="post" action="">
-		<table cellpadding="0" cellspacing="1" class="m-stats">    
-			<tr>
-				<th>Subids</th>
-			</tr>
-            <tr valign="top">
-				<td><textarea name="subids" style="height: 200px; width: 100%; margin: 0px auto;"><?php echo $_POST['subids']; ?></textarea></td>
-			</tr>
-			<tr>
-				<td class="m-row-bottom">
-					<input type="submit" value="Update Subids"/>   
-				</td> 
-            </tr>
-		</table>
-	</form> 
-   </div>     
+
+<div class="row form_seperator">
+	<div class="col-xs-12"></div>
+</div>
+
+<div class="row">
+	<div class="col-xs-12">
+		<form method="post" action="" class="form-horizontal" role="form">
+			<div class="form-group" style="margin:0px 0px 15px 0px;">
+			    <label for="subids">Subids</label>
+				<textarea rows="5" name="subids" id="subids" placeholder="Add your subids..." class="form-control"><?php echo $_POST['subids']; ?></textarea>			  
+			</div>
+			<button class="btn btn-sm btn-p202 btn-block" type="submit">Update Subids</button>
+		</form>
+	</div>
+</div>
+<script src="/202-js/flatui-fileinput.js"></script>
 <?php template_bottom();

@@ -17,7 +17,7 @@ class ReportSummaryForm extends ReportBasicForm {
 	const DEBUG = MO_DEBUG;
 
 	private static $DISPLAY_LEVEL_ARRAY = array(ReportBasicForm::DISPLAY_LEVEL_TITLE,ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT,ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT,ReportBasicForm::DISPLAY_LEVEL_SU,ReportBasicForm::DISPLAY_LEVEL_PAYOUT,ReportBasicForm::DISPLAY_LEVEL_EPC,ReportBasicForm::DISPLAY_LEVEL_CPC,ReportBasicForm::DISPLAY_LEVEL_INCOME,ReportBasicForm::DISPLAY_LEVEL_COST,ReportBasicForm::DISPLAY_LEVEL_NET,ReportBasicForm::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4);
+	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_COUNTRY,ReportBasicForm::DETAIL_LEVEL_REGION,ReportBasicForm::DETAIL_LEVEL_CITY,ReportBasicForm::DETAIL_LEVEL_ISP,ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME,ReportBasicForm::DETAIL_LEVEL_BROWSER,ReportBasicForm::DETAIL_LEVEL_PLATFORM,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4);
 	private static $SORT_LEVEL_ARRAY = array(ReportBasicForm::SORT_NAME,ReportBasicForm::SORT_CLICK,ReportBasicForm::SORT_LEAD,ReportBasicForm::SORT_SU,ReportBasicForm::SORT_PAYOUT,ReportBasicForm::SORT_EPC,ReportBasicForm::SORT_CPC,ReportBasicForm::SORT_INCOME,ReportBasicForm::SORT_COST,ReportBasicForm::SORT_NET,ReportBasicForm::SORT_ROI);
 	
 	// +-----------------------------------------------------------------------+
@@ -75,7 +75,7 @@ class ReportSummaryForm extends ReportBasicForm {
 	 */
 	function getDisplay() {
 		if (is_null($this->display)) {
-			$this->display = array(ReportBasicForm::DISPLAY_LEVEL_TITLE,ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT,ReportBasicForm::DISPLAY_LEVEL_CLICK_OUT_COUNT,ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT,ReportBasicForm::DISPLAY_LEVEL_SU,ReportBasicForm::DISPLAY_LEVEL_PAYOUT,ReportBasicForm::DISPLAY_LEVEL_EPC,ReportBasicForm::DISPLAY_LEVEL_CPC,ReportBasicForm::DISPLAY_LEVEL_INCOME,ReportBasicForm::DISPLAY_LEVEL_COST,ReportBasicForm::DISPLAY_LEVEL_NET,ReportBasicForm::DISPLAY_LEVEL_ROI);
+            $this->display = array(ReportBasicForm::DISPLAY_LEVEL_TITLE,ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT,ReportBasicForm::DISPLAY_LEVEL_CLICK_OUT_COUNT,ReportBasicForm::DISPLAY_LEVEL_CTR,ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT,ReportBasicForm::DISPLAY_LEVEL_SU,ReportBasicForm::DISPLAY_LEVEL_PAYOUT,ReportBasicForm::DISPLAY_LEVEL_EPC,ReportBasicForm::DISPLAY_LEVEL_CPC,ReportBasicForm::DISPLAY_LEVEL_INCOME,ReportBasicForm::DISPLAY_LEVEL_COST,ReportBasicForm::DISPLAY_LEVEL_NET,ReportBasicForm::DISPLAY_LEVEL_ROI);
 		}
 		return $this->display;
 	}
@@ -134,6 +134,20 @@ class ReportSummaryForm extends ReportBasicForm {
 			return "referer_id";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_REDIRECT) {
 			return "redirect_id";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_COUNTRY) {
+			return "country_id";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_REGION) {
+			return "region_id";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_CITY) {
+			return "city_id";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_ISP) {
+			return "isp_id";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME) {
+			return "device_id";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_BROWSER) {
+			return "browser_id";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_PLATFORM) {
+			return "platform_id";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_IP) {
 			return "ip_id";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C1) {
@@ -176,6 +190,20 @@ class ReportSummaryForm extends ReportBasicForm {
 			return "ReportSummaryRefererForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_REDIRECT) {
 			return "ReportSummaryRedirectForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_COUNTRY) {
+			return "ReportSummaryCountryForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_REGION) {
+			return "ReportSummaryRegionForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_CITY) {
+			return "ReportSummaryCityForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_ISP) {
+			return "ReportSummaryIspForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME) {
+			return "ReportSummaryDeviceNameForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_BROWSER) {
+			return "ReportSummaryBrowserForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_PLATFORM) {
+			return "ReportSummaryPlatformForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_IP) {
 			return "ReportSummaryIpForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C1) {
@@ -228,6 +256,10 @@ class ReportSummaryForm extends ReportBasicForm {
 	 * @return String
 	 */
 	function getQuery($user_id,$user_row) {
+
+		$database = DB::getInstance();
+		$db = $database->getConnection(); 
+
 		$info_sql = '';
 		//select regular setup
 		$info_sql .= "
@@ -275,6 +307,54 @@ class ReportSummaryForm extends ReportBasicForm {
 				2k.keyword AS keyword_name,
 			";
 		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_COUNTRY)) {
+			$info_sql .= "
+				2ca.country_id,
+				2cy.country_name AS country_name,
+			";
+		}
+
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REGION)) {
+			$info_sql .= "
+				2ca.region_id,
+				2rg.region_name AS region_name,
+			";
+		}
+
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_CITY)) {
+			$info_sql .= "
+				2ca.city_id,
+				2ci.city_name AS city_name,
+			";
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ISP)) {
+			$info_sql .= "
+				2ca.isp_id,
+				2is.isp_name AS isp_name,
+			";
+		}
+
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME)) {
+			$info_sql .= "
+				2ca.device_id,
+				2d.device_name AS device_name,
+			";
+		}
+
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_BROWSER)) {
+			$info_sql .= "
+				2ca.browser_id,
+				2b.browser_name AS browser_name,
+			";
+		}
+
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PLATFORM)) {
+			$info_sql .= "
+				2ca.platform_id,
+				2p.platform_name AS platform_name,
+			";
+		}
+
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
 			$info_sql .= "
 				2ca.ip_id,
@@ -338,6 +418,18 @@ class ReportSummaryForm extends ReportBasicForm {
 		if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TEXT_AD) ||
 			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_KEYWORD) ||
 			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_COUNTRY) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REGION) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_CITY) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ISP) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_BROWSER) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PLATFORM) ||
+			$user_row['user_pref_country_id'] ||
+			$user_row['user_pref_region_id'] ||
+			$user_row['user_pref_isp_id'] ||
+			$user_row['user_pref_browser_id'] ||
+			$user_row['user_pref_platform_id'] ||
 			$user_row['user_pref_text_ad_id'] ||
 			$user_row['user_pref_ip']
 			) {
@@ -349,8 +441,57 @@ class ReportSummaryForm extends ReportBasicForm {
 					LEFT OUTER JOIN 202_text_ads AS 2ta ON (2ca.text_ad_id = 2ta.text_ad_id)
 				";
 			}
+			if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_COUNTRY) ||
+				$user_row['user_pref_country_id']
+				) {
+				$info_sql .= "
+					LEFT OUTER JOIN 202_locations_country AS 2cy ON (2ca.country_id = 2cy.country_id) 
+				";
+			}
+
+			if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REGION) ||
+				$user_row['user_pref_region_id']
+				) {
+				$info_sql .= "
+					LEFT OUTER JOIN 202_locations_region AS 2rg ON (2ca.region_id = 2rg.region_id) 
+				";
+			}
+
+			if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ISP) ||
+				$user_row['user_pref_isp_id']
+				) {
+				$info_sql .= "
+					LEFT OUTER JOIN 202_locations_isp AS 2is ON (2ca.isp_id = 2is.isp_id) 
+				";
+			}
+			if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_BROWSER) ||
+				$user_row['user_pref_browser_id']
+				) {
+				$info_sql .= "
+					LEFT OUTER JOIN 202_browsers AS 2b ON (2ca.browser_id = 2b.browser_id) 
+				";
+			}
+			if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PLATFORM) ||
+				$user_row['user_pref_platform_id']
+				) {
+				$info_sql .= "
+					LEFT OUTER JOIN 202_platforms AS 2p ON (2ca.platform_id = 2p.platform_id) 
+				";
+			}
+			if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_CITY)
+				) {
+				$info_sql .= "
+					LEFT OUTER JOIN 202_locations_city AS 2ci ON (2ca.city_id = 2ci.city_id) 
+				";
+			}
+			if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME)
+				) {
+				$info_sql .= "
+					LEFT OUTER JOIN 202_device_models AS 2d ON (2ca.device_id = 2d.device_id) 
+				";
+			}
 			if($user_row['user_pref_keyword']) {
-				$mysql['user_pref_keyword'] = mysql_real_escape_string($user_row['user_pref_keyword']);
+				$mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
 				$info_sql .= "
 					INNER JOIN 202_keywords AS 2k ON (
 						2ca.keyword_id = 2k.keyword_id
@@ -364,7 +505,7 @@ class ReportSummaryForm extends ReportBasicForm {
 			}
 			
 			if($user_row['user_pref_ip']) {
-				$mysql['user_pref_ip'] = mysql_real_escape_string($user_row['user_pref_ip']);
+				$mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
 				$info_sql .= "
 					INNER JOIN 202_ips AS 2i ON (
 						2ca.ip_id = 2i.ip_id
@@ -377,6 +518,7 @@ class ReportSummaryForm extends ReportBasicForm {
 				";
 			}
 		}
+
 		if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK) ||
 			$user_row['user_pref_aff_network_id']
 			) {
@@ -467,6 +609,10 @@ class ReportSummaryForm extends ReportBasicForm {
 			$info_sql .= "
 				AND 2c.click_filtered=1
 			";
+		} else if ($user_row['user_pref_show'] == 'filtered_bot') {
+			$info_sql .= "
+				AND 2c.click_bot=1
+			";
 		} else if ($user_row['user_pref_show'] == 'leads') {
 			$info_sql .= "
 				AND 2c.click_lead=1
@@ -474,33 +620,68 @@ class ReportSummaryForm extends ReportBasicForm {
 		}
 		
 		if ($user_row['user_pref_ppc_account_id']) {
-			$mysql['user_pref_ppc_account_id'] = mysql_real_escape_string($user_row['user_pref_ppc_account_id']);
+			$mysql['user_pref_ppc_account_id'] = $db->real_escape_string($user_row['user_pref_ppc_account_id']);
 			$info_sql .= "
 				AND 2c.ppc_account_id='".$mysql['user_pref_ppc_account_id']."'
 			";
 		} else if ($user_row['user_pref_ppc_network_id']) {
-			$mysql['user_pref_ppc_network_id'] = mysql_real_escape_string($user_row['user_pref_ppc_network_id']);
+			$mysql['user_pref_ppc_network_id'] = $db->real_escape_string($user_row['user_pref_ppc_network_id']);
 			$info_sql .= "
 				AND 2pn.ppc_network_id='".$mysql['user_pref_ppc_network_id']."'
 			";
 		}
 		
 		if ($user_row['user_pref_aff_campaign_id']) { 
-			$mysql['user_pref_aff_campaign_id'] = mysql_real_escape_string($user_row['user_pref_aff_campaign_id']);
+			$mysql['user_pref_aff_campaign_id'] = $db->real_escape_string($user_row['user_pref_aff_campaign_id']);
 			$info_sql .= "
 				AND 2c.aff_campaign_id='".$mysql['user_pref_aff_campaign_id']."'
 			";
 		} else if ($user_row['user_pref_aff_network_id']) { 
-			$mysql['user_pref_aff_network_id'] = mysql_real_escape_string($user_row['user_pref_aff_network_id']);
+			$mysql['user_pref_aff_network_id'] = $db->real_escape_string($user_row['user_pref_aff_network_id']);
 			$info_sql .= "
 				AND 2an.aff_network_id='".$mysql['user_pref_aff_network_id']."'
 			";
 		}
 		
 		if ($user_row['user_pref_text_ad_id']) { 
-			$mysql['user_pref_text_ad_id'] = mysql_real_escape_string($user_row['user_pref_text_ad_id']);
+			$mysql['user_pref_text_ad_id'] = $db->real_escape_string($user_row['user_pref_text_ad_id']);
 			$info_sql .= "
 				AND 2ca.text_ad_id='".$mysql['user_pref_text_ad_id']."'
+			";
+		}
+
+		if ($user_row['user_pref_country_id']) { 
+			$mysql['user_pref_country_id'] = $db->real_escape_string($user_row['user_pref_country_id']);
+			$info_sql .= "
+				AND 2cy.country_id='".$mysql['user_pref_country_id']."'
+			";
+		}
+
+		if ($user_row['user_pref_region_id']) { 
+			$mysql['user_pref_region_id'] = $db->real_escape_string($user_row['user_pref_region_id']);
+			$info_sql .= "
+				AND 2rg.region_id='".$mysql['user_pref_region_id']."'
+			";
+		}
+
+		if ($user_row['user_pref_isp_id']) { 
+			$mysql['user_pref_isp_id'] = $db->real_escape_string($user_row['user_pref_isp_id']);
+			$info_sql .= "
+				AND 2is.isp_id='".$mysql['user_pref_isp_id']."'
+			";
+		}
+
+		if ($user_row['user_pref_browser_id']) { 
+			$mysql['user_pref_browser_id'] = $db->real_escape_string($user_row['user_pref_browser_id']);
+			$info_sql .= "
+				AND 2b.browser_id='".$mysql['user_pref_browser_id']."'
+			";
+		}
+
+		if ($user_row['user_pref_platform_id']) { 
+			$mysql['user_pref_platform_id'] = $db->real_escape_string($user_row['user_pref_platform_id']);
+			$info_sql .= "
+				AND 2p.platform_id='".$mysql['user_pref_platform_id']."'
 			";
 		}
 		
@@ -515,7 +696,7 @@ class ReportSummaryForm extends ReportBasicForm {
 	function getRowHeaderHtml($tr_class = "") {
 		$html_val = "";
 		
-		$html_val .= "<tr class=\"" . $tr_class . "\">";
+		$html_val .= "<tr class=\"" . $tr_class . "\" style=\"background-color: #f2fbfa;\">";
 		
 		if ($this->getRollupSubTables()) {
 			$html_val .= "<th></th>";
@@ -526,7 +707,9 @@ class ReportSummaryForm extends ReportBasicForm {
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT==$display_item_key) {
 				$html_val .= "<th>Clicks</th>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CLICK_OUT_COUNT==$display_item_key) {
-				$html_val .= "<th>Click Outs</th>";
+				$html_val .= "<th>Click Throughs</th>";
+			} else if (ReportBasicForm::DISPLAY_LEVEL_CTR==$display_item_key) {
+				$html_val .= "<th>LP CTR</th>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT==$display_item_key) {
 				$html_val .= "<th>Leads</th>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_SU==$display_item_key) {
@@ -567,7 +750,9 @@ class ReportSummaryForm extends ReportBasicForm {
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT==$display_item_key) {
 				$html_val .= "<th>Clicks</th>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CLICK_OUT_COUNT==$display_item_key) {
-				$html_val .= "<th>Click Outs</th>";
+				$html_val .= "<th>Click Throughs</th>";
+			} else if (ReportBasicForm::DISPLAY_LEVEL_CTR==$display_item_key) {
+				$html_val .= "<th>LP CTR</th>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT==$display_item_key) {
 				$html_val .= "<th>Leads</th>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_SU==$display_item_key) {
@@ -634,6 +819,36 @@ class ReportSummaryForm extends ReportBasicForm {
 			ReportBasicForm::echoCell("Referer Id");
 			ReportBasicForm::echoCell("Referer Name");
 		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_COUNTRY)) {
+			ReportBasicForm::echoCell("Country Id");
+			ReportBasicForm::echoCell("Country Name");
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REGION)) {
+			ReportBasicForm::echoCell("Region Id");
+			ReportBasicForm::echoCell("Region Name");
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_CITY)) {
+			ReportBasicForm::echoCell("City Id");
+			ReportBasicForm::echoCell("City Name");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ISP)) {
+			ReportBasicForm::echoCell("ISP/Carrier Id");
+			ReportBasicForm::echoCell("ISP/Carrier Name");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME)) {
+			ReportBasicForm::echoCell("Device Id");
+			ReportBasicForm::echoCell("Device Name");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_BROWSER)) {
+			ReportBasicForm::echoCell("Browser Id");
+			ReportBasicForm::echoCell("Browser Name");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PLATFORM)) {
+			ReportBasicForm::echoCell("Platform Id");
+			ReportBasicForm::echoCell("Platform Name");
+		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
 			ReportBasicForm::echoCell("IP Id");
 			ReportBasicForm::echoCell("IP Name");
@@ -654,7 +869,9 @@ class ReportSummaryForm extends ReportBasicForm {
 			if (ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT==$display_item_key) {
 				ReportBasicForm::echoCell("Clicks");
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CLICK_OUT_COUNT==$display_item_key) {
-				ReportBasicForm::echoCell("Click Outs");
+				ReportBasicForm::echoCell("Click Throughs");
+			} else if (ReportBasicForm::DISPLAY_LEVEL_CTR==$display_item_key) {
+				ReportBasicForm::echoCell("LP CTR");
 			} else if (ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT==$display_item_key) {
 				ReportBasicForm::echoCell("Leads");
 			} else if (ReportBasicForm::DISPLAY_LEVEL_SU==$display_item_key) {
@@ -717,6 +934,10 @@ class ReportSummaryForm extends ReportBasicForm {
 				$html_val .= "<td>"
 					. $row->getClickOut() .
 				"</td>";
+			} else if (ReportBasicForm::DISPLAY_LEVEL_CTR==$display_item_key) {
+				$html_val .= "<td>"
+				. $row->getCtr() .
+				"%</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT==$display_item_key) {
 				$html_val .= "<td>"
 					. $row->getLeads() .
@@ -756,13 +977,13 @@ class ReportSummaryForm extends ReportBasicForm {
 				$html_val .= '$' . number_format($row->getNet(),2) . '</td>';
 			} else if (ReportBasicForm::DISPLAY_LEVEL_ROI==$display_item_key) {
 				if($row->getRoi()<0) {
-					$html_val .= '<td class="m-row_neg">';
+					$html_val .= '<td><span class="label label-important">';
 				} else if($row->getRoi()>0) {
-					$html_val .= '<td class="m-row_pos">';
+					$html_val .= '<td><span class="label label-primary">';
 				} else {
-					$html_val .= '<td class="m-row_zero">';
+					$html_val .= '<td><span class="label label-default">';
 				}
-				$html_val .= $row->getRoi() . "%</td>";
+				$html_val .= $row->getRoi() . "%</span></td>";
 			}
 		}
 		
@@ -794,6 +1015,10 @@ class ReportSummaryForm extends ReportBasicForm {
 				$html_val .= "<td>"
 					. $row->getClickOut() .
 				"</td>";
+			} else if (ReportBasicForm::DISPLAY_LEVEL_CTR==$display_item_key) {
+				$html_val .= "<td>"
+				. $row->getCtr() .
+				"%</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT==$display_item_key) {
 				$html_val .= "<td>"
 					. $row->getLeads() .
@@ -880,6 +1105,34 @@ class ReportSummaryForm extends ReportBasicForm {
 			ReportBasicForm::echoCell($row->getRefererId());
 			ReportBasicForm::echoCell($row->getRefererName());
 		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_COUNTRY)) {
+			ReportBasicForm::echoCell($row->getCountryId());
+			ReportBasicForm::echoCell($row->getCountryName());
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REGION)) {
+			ReportBasicForm::echoCell($row->getRegionId());
+			ReportBasicForm::echoCell($row->getRegionName());
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_CITY)) {
+			ReportBasicForm::echoCell($row->getCityId());
+			ReportBasicForm::echoCell($row->getCityName());
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ISP)) {
+			ReportBasicForm::echoCell($row->getIspId());
+			ReportBasicForm::echoCell($row->getIspName());
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME)) {
+			ReportBasicForm::echoCell($row->getDeviceId());
+			ReportBasicForm::echoCell($row->getDeviceName());
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_BROWSER)) {
+			ReportBasicForm::echoCell($row->getBrowserId());
+			ReportBasicForm::echoCell($row->getBrowserName());
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PLATFORM)) {
+			ReportBasicForm::echoCell($row->getPlatformId());
+			ReportBasicForm::echoCell($row->getPlatformName());
+		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
 			ReportBasicForm::echoCell($row->getIpId());
 			ReportBasicForm::echoCell($row->getIpName());
@@ -902,6 +1155,8 @@ class ReportSummaryForm extends ReportBasicForm {
 				ReportBasicForm::echoCell($row->getClicks());
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CLICK_OUT_COUNT==$display_item_key) {
 				ReportBasicForm::echoCell($row->getClickOut());
+			} else if (ReportBasicForm::DISPLAY_LEVEL_CTR==$display_item_key) {
+				ReportBasicForm::echoCell($row->getCtr());
 			} else if (ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT==$display_item_key) {
 				ReportBasicForm::echoCell($row->getLeads());
 			} else if (ReportBasicForm::DISPLAY_LEVEL_SU==$display_item_key) {
@@ -1293,6 +1548,327 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm {
 		return $this->getName();
 	}
 }
+
+/**
+ * ReportSummaryIpForm contains methods to total tracking events by publisher
+ * @author Ben Rotz
+ */
+class ReportSummaryCountryForm extends ReportSummaryTotalForm {
+
+	/**
+	 * Alias for getCountryId
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getCountryId();
+	}
+	
+	/**
+	 * Alias for getCountryName
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getCountryName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No Country]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No Country]';
+		}
+		return $this->getName();
+	}
+}
+
+
+/**
+ * ReportSummaryIpForm contains methods to total tracking events by publisher
+ * @author Ben Rotz
+ */
+class ReportSummaryRegionForm extends ReportSummaryTotalForm {
+
+	/**
+	 * Alias for getCountryId
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getRegionId();
+	}
+	
+	/**
+	 * Alias for getCountryName
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getRegionName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No Region]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No Region]';
+		}
+		return $this->getName();
+	}
+}
+
+
+/**
+ * ReportSummaryIpForm contains methods to total tracking events by publisher
+ * @author Ben Rotz
+ */
+class ReportSummaryCityForm extends ReportSummaryTotalForm {
+
+	/**
+	 * Alias for getCityId
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getCityId();
+	}
+	
+	/**
+	 * Alias for getCityName
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getCityName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No City]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No City]';
+		}
+		return $this->getName();
+	}
+}
+
+
+/**
+ * ReportSummaryIpForm contains methods to total tracking events by publisher
+ * @author Ben Rotz
+ */
+class ReportSummaryIspForm extends ReportSummaryTotalForm {
+
+	/**
+	 * Alias for getIspId
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getIspId();
+	}
+	
+	/**
+	 * Alias for getIspName
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getIspName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No Isp]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No Isp]';
+		}
+		return $this->getName();
+	}
+}
+
+
+/**
+ * ReportSummaryIpForm contains methods to total tracking events by publisher
+ * @author Ben Rotz
+ */
+class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm {
+
+	/**
+	 * Alias for getIspId
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getDeviceId();
+	}
+	
+	/**
+	 * Alias for getIspName
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getDeviceName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No Device]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No Device]';
+		}
+		return $this->getName();
+	}
+}
+
+
+/**
+ * ReportSummaryIpForm contains methods to total tracking events by publisher
+ * @author Ben Rotz
+ */
+class ReportSummaryBrowserForm extends ReportSummaryTotalForm {
+
+	/**
+	 * Alias for getIspId
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getBrowserId();
+	}
+	
+	/**
+	 * Alias for getIspName
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getBrowserName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No Browser]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No Browser]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryIpForm contains methods to total tracking events by publisher
+ * @author Ben Rotz
+ */
+class ReportSummaryPlatformForm extends ReportSummaryTotalForm {
+
+	/**
+	 * Alias for getIspId
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getPlatformId();
+	}
+	
+	/**
+	 * Alias for getIspName
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getPlatformName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No Platform]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No Platform]';
+		}
+		return $this->getName();
+	}
+}
+
 
 /**
  * ReportSummaryIpForm contains methods to total tracking events by publisher
@@ -2079,6 +2655,280 @@ class ReportSummaryTotalForm {
 	}
 	
 	/**
+	 * Returns the country_id
+	 * @return integer
+	 */
+	function getCountryId() {
+		if (is_null($this->country_id)) {
+			$this->country_id = 0;
+		}
+		return $this->country_id;
+	}
+	
+	/**
+	 * Sets the country_id
+	 * @param integer
+	 */
+	function setCountryId($arg0) {
+		$this->country_id = $arg0;
+	}
+	
+	/**
+	 * Returns the country_name
+	 * @return string
+	 */
+	function getCountryName() {
+		if (is_null($this->country_name)) {
+			$this->country_name = "";
+		}
+		return $this->country_name;
+	}
+	
+	/**
+	 * Sets the country_name
+	 * @param string
+	 */
+	function setCountryName($arg0) {
+		$this->country_name = $arg0;
+	}
+
+	/**
+	 * Returns the country_id
+	 * @return integer
+	 */
+	function getRegionId() {
+		if (is_null($this->region_id)) {
+			$this->region_id = 0;
+		}
+		return $this->region_id;
+	}
+	
+	/**
+	 * Sets the country_id
+	 * @param integer
+	 */
+	function setRegionId($arg0) {
+		$this->region_id = $arg0;
+	}
+	
+	/**
+	 * Returns the country_name
+	 * @return string
+	 */
+	function getRegionName() {
+		if (is_null($this->region_name)) {
+			$this->region_name = "";
+		}
+		return $this->region_name;
+	}
+	
+	/**
+	 * Sets the country_name
+	 * @param string
+	 */
+	function setRegionName($arg0) {
+		$this->region_name = $arg0;
+	}
+
+
+	/**
+	 * Returns the city_id
+	 * @return integer
+	 */
+	function getCityId() {
+		if (is_null($this->city_id)) {
+			$this->city_id = 0;
+		}
+		return $this->city_id;
+	}
+	
+	/**
+	 * Sets the city_id
+	 * @param integer
+	 */
+	function setCityId($arg0) {
+		$this->city_id = $arg0;
+	}
+	
+	/**
+	 * Returns the city_name
+	 * @return string
+	 */
+	function getCityName() {
+		if (is_null($this->city_name)) {
+			$this->city_name = "";
+		}
+		return $this->city_name;
+	}
+	
+	/**
+	 * Sets the country_name
+	 * @param string
+	 */
+	function setCityName($arg0) {
+		$this->city_name = $arg0;
+	}
+
+
+	/**
+	 * Returns the isp_id
+	 * @return integer
+	 */
+	function getIspId() {
+		if (is_null($this->isp_id)) {
+			$this->isp_id = 0;
+		}
+		return $this->isp_id;
+	}
+	
+	/**
+	 * Sets the city_id
+	 * @param integer
+	 */
+	function setIspId($arg0) {
+		$this->isp_id = $arg0;
+	}
+	
+	/**
+	 * Returns the city_name
+	 * @return string
+	 */
+	function getIspName() {
+		if (is_null($this->isp_name)) {
+			$this->isp_name = "";
+		}
+		return $this->isp_name;
+	}
+	
+	/**
+	 * Sets the country_name
+	 * @param string
+	 */
+	function setIspName($arg0) {
+		$this->isp_name = $arg0;
+	}
+
+
+	/**
+	 * Returns the isp_id
+	 * @return integer
+	 */
+	function getDeviceId() {
+		if (is_null($this->device_id)) {
+			$this->device_id = 0;
+		}
+		return $this->device_id;
+	}
+	
+	/**
+	 * Sets the city_id
+	 * @param integer
+	 */
+	function setDeviceId($arg0) {
+		$this->device_id = $arg0;
+	}
+	
+	/**
+	 * Returns the city_name
+	 * @return string
+	 */
+	function getDeviceName() {
+		if (is_null($this->device_name)) {
+			$this->device_name = "";
+		}
+		return $this->device_name;
+	}
+	
+	/**
+	 * Sets the country_name
+	 * @param string
+	 */
+	function setDeviceName($arg0) {
+		$this->device_name = $arg0;
+	}
+
+
+	/**
+	 * Returns the isp_id
+	 * @return integer
+	 */
+	function getBrowserId() {
+		if (is_null($this->browser_id)) {
+			$this->browser_id = 0;
+		}
+		return $this->browser_id;
+	}
+	
+	/**
+	 * Sets the city_id
+	 * @param integer
+	 */
+	function setBrowserId($arg0) {
+		$this->browser_id = $arg0;
+	}
+	
+	/**
+	 * Returns the city_name
+	 * @return string
+	 */
+	function getBrowserName() {
+		if (is_null($this->browser_name)) {
+			$this->browser_name = "";
+		}
+		return $this->browser_name;
+	}
+	
+	/**
+	 * Sets the country_name
+	 * @param string
+	 */
+	function setBrowserName($arg0) {
+		$this->browser_name = $arg0;
+	}
+
+
+
+	/**
+	 * Returns the isp_id
+	 * @return integer
+	 */
+	function getPlatformId() {
+		if (is_null($this->platform_id)) {
+			$this->platform_id = 0;
+		}
+		return $this->platform_id;
+	}
+	
+	/**
+	 * Sets the city_id
+	 * @param integer
+	 */
+	function setPlatformId($arg0) {
+		$this->platform_id = $arg0;
+	}
+	
+	/**
+	 * Returns the city_name
+	 * @return string
+	 */
+	function getPlatformName() {
+		if (is_null($this->platform_name)) {
+			$this->platform_name = "";
+		}
+		return $this->platform_name;
+	}
+	
+	/**
+	 * Sets the country_name
+	 * @param string
+	 */
+	function setPlatformName($arg0) {
+		$this->platform_name = $arg0;
+	}
+
+
+
+	/**
 	 * Returns the ip_id
 	 * @return integer
 	 */
@@ -2583,6 +3433,18 @@ class ReportSummaryTotalForm {
 	 */
 	function setClickOut($arg0) {
 		$this->click_out += $arg0;
+	}
+
+	/**
+	 * Returns the ctr
+	 * @return number
+	 */
+	function getCtr() {
+		if($this->getClicks()!=0) {
+			return @round(($this->getClickOut()/$this->getClicks())*100);
+		} else {
+			return 0;
+		}
 	}
 	
 	/**

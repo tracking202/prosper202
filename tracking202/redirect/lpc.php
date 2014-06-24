@@ -1,7 +1,7 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
 
 //run script   
-$mysql['landing_page_id_public'] = mysql_real_escape_string($_GET['lpip']);
+$mysql['landing_page_id_public'] = $db->real_escape_string($_GET['lpip']);
 
 $tracker_sql = "SELECT  aff_campaign_name,
 						  aff_campaign_rotate,
@@ -12,15 +12,15 @@ $tracker_sql = "SELECT  aff_campaign_name,
 						  aff_campaign_url_5
 				FROM    202_landing_pages LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
 				WHERE   landing_page_id_public='".$mysql['landing_page_id_public']."'";
-$tracker_row = memcache_mysql_fetch_assoc($tracker_sql);
+$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
 if (!$tracker_row) { die(); }
 //DONT ESCAPE THE DESITNATIONL URL IT TOTALLY SCREWS UP
 $html['aff_campaign_name'] = htmlentities($tracker_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); 
 
 //modify the redirect site url to go through another cloaked link
-$redirect_site_url = rotateTrackerUrl($tracker_row);
-$redirect_site_url = replaceTrackerPlaceholders($redirect_site_url,$click_id);
+$redirect_site_url = rotateTrackerUrl($db, $tracker_row);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_id);
 ?>
 
 <html>

@@ -17,7 +17,7 @@ AUTH::require_user();
  			$item['description'] = substr($item['description'],0,350) . ' [...]';
  		} ?>
  		
-	<h4><a href="http://blog.tracking202.com"><img src="/202-img/blog_icon.png"/ class="news_icon"></a> <a href='<?php echo ($item['link']); ?>'><?php echo $item['title']; ?></a> - <?php printf(('%s ago'), human_time_diff(strtotime($item['pubdate'], time() ) )) ; ?></h4>
-	<p><?php echo $item['description']; ?></p>
+	<i class="fa fa-rss-square"></i> <a href='<?php echo ($item['link']); ?>'><?php echo $item['title']; ?></a> - <span style="font-size: 10px;">(<?php printf(('%s ago'), human_time_diff(strtotime($item['pubdate'], time() ) )) ; ?>)</span><br/>
+	<span class="infotext"><?php echo $item['description']; ?></span><br></br>
 	<?php }
 } ?>

@@ -20,7 +20,7 @@
 	
 //run query
 	$click_sql = $query['click_sql'];
-	$click_result = mysql_query($click_sql) or record_mysql_error($click_sql); 
+	$click_result = $db->query($click_sql) or record_mysql_error($click_sql); 
 	
 //html escape vars
 	$html['from'] = htmlentities($query['from'], ENT_QUOTES, 'UTF-8');
@@ -37,7 +37,10 @@
 			"PPC Network"  . "\t" . 
 			"PPC account"  . "\t" . 
 			"Click Real/Filtered"  . "\t" . 
-			"IP Address"  . "\t" . 
+			"IP Address"  . "\t" .
+			"Country"  . "\t" .
+			"Country Code"  . "\t" .
+			"City"  . "\t" . 
 			"Offer/LP"  . "\t" . 
 			"Text Ad"  . "\t" . 
 			"Referer" . "\t" . 
@@ -48,9 +51,9 @@
 			"Keyword" . "\n";
 	
 //now display all the clicks
-	while ($click_row = mysql_fetch_array($click_result, MYSQL_ASSOC)) {   
+	while ($click_row = $click_result->fetch_array(MYSQL_ASSOC)) {   
 								
-		$mysql['click_id'] = mysql_real_escape_string($click_row['click_id']);
+		$mysql['click_id'] = $db->real_escape_string($click_row['click_id']);
 		
 		$click_sql2 = "SELECT  2c.click_id,
 								click_alp,
@@ -71,11 +74,7 @@
 								click_landing_site_url_id,
 								click_outbound_site_url_id,
 								click_cloaking_site_url_id,
-								click_redirect_site_url_id,"; /*
-								location_country_name,
-								location_country_code,
-								location_region_code,
-								location_city_name,*/ $click_sql2 .="
+								click_redirect_site_url_id,
 								202_browsers.browser_name,
 								202_platforms.platform_name
 					  FROM      202_clicks AS 2c
@@ -91,15 +90,28 @@
 										LEFT JOIN 202_keywords ON (202_keywords.keyword_id = 202_clicks_advance.keyword_id)
 										LEFT JOIN 202_browsers ON (202_browsers.browser_id = 202_clicks_advance.browser_id)
 										LEFT JOIN 202_platforms ON (202_platforms.platform_id = 202_clicks_advance.platform_id)";
-										/*LEFT JOIN 202_locations USING (location_id)
-										LEFT JOIN 202_locations_country USING (location_country_id)
-										LEFT JOIN 202_locations_city USING (location_city_id)
-										LEFT JOIN 202_locations_region USING (location_region_id)*/
+							
 		$click_sql2 .= "	  WHERE     2c.click_id='".$mysql['click_id']."'";
 		$click_row2 = memcache_mysql_fetch_assoc($click_sql2);
 		$click_row = array_merge($click_row, $click_row2);
 		
-		$mysql['click_referer_site_url_id'] = mysql_real_escape_string($click_row['click_referer_site_url_id']);
+			//Country GEO data
+			$mysql['country_id'] = $db->real_escape_string($click_row['country_id']);
+			$country_id_sql = "SELECT * FROM 202_locations_country 
+							   WHERE  country_id = '".$mysql['country_id']."'";
+			$country_id_row = memcache_mysql_fetch_assoc($country_id_sql);
+			$html['location_country_code'] = htmlentities($country_id_row['country_code'], ENT_QUOTES, 'UTF-8');   
+			$html['location_country_name'] = htmlentities($country_id_row['country_name'], ENT_QUOTES, 'UTF-8');
+			
+			//City GEO data
+			$mysql['city_id'] = $db->real_escape_string($click_row['city_id']);
+			$city_id_sql = "SELECT * FROM 202_locations_city 
+							   WHERE  city_id = '".$mysql['city_id']."'";
+			$city_id_row = memcache_mysql_fetch_assoc($city_id_sql);
+			$html['location_city_name'] = htmlentities($city_id_row['city_name'], ENT_QUOTES, 'UTF-8');
+
+
+		$mysql['click_referer_site_url_id'] = $db->real_escape_string($click_row['click_referer_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
 						 WHERE  202_site_urls.site_url_id = '".$mysql['click_referer_site_url_id']."'
 						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
@@ -107,7 +119,7 @@
 		$html['referer'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
 		$html['referer_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');   
 
-		$mysql['click_landing_site_url_id'] = mysql_real_escape_string($click_row['click_landing_site_url_id']);
+		$mysql['click_landing_site_url_id'] = $db->real_escape_string($click_row['click_landing_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
 						 WHERE  202_site_urls.site_url_id = '".$mysql['click_landing_site_url_id']."'
 						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
@@ -115,7 +127,7 @@
 		$html['landing'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
 		$html['landing_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');   
 		
-		$mysql['click_outbound_site_url_id'] = mysql_real_escape_string($click_row['click_outbound_site_url_id']);
+		$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_row['click_outbound_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
 						 WHERE  202_site_urls.site_url_id = '".$mysql['click_outbound_site_url_id']."'
 						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
@@ -140,12 +152,12 @@
 			$html['cloaking_host'] = '';	
 		}
 
-		$mysql['click_redirect_site_url_id'] = mysql_real_escape_string($click_row['click_redirect_site_url_id']);
+		$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_row['click_redirect_site_url_id']);
 		$site_url_sql = "SELECT * FROM 202_site_urls LEFT JOIN 202_site_domains USING (site_domain_id) 
 						 WHERE  202_site_urls.site_url_id = '".$mysql['click_redirect_site_url_id']."'
 						 AND    202_site_urls.site_domain_id = 202_site_domains.site_domain_id";
-		$site_url_result = mysql_query($site_url_sql) or record_mysql_error($site_url_sql);
-		$site_url_row = mysql_fetch_assoc($site_url_result);
+		$site_url_result = $db->query($site_url_sql) or record_mysql_error($site_url_sql);
+		$site_url_row = $site_url_result->fetch_assoc();
 		$html['redirect'] = htmlentities($site_url_row['site_url_address'], ENT_QUOTES, 'UTF-8');   
 		$html['redirect_host'] = htmlentities($site_url_row['site_domain_host'], ENT_QUOTES, 'UTF-8');  
 		  
@@ -197,6 +209,9 @@
 			$click_row['ppc_account_name']  . "\t" . 
 			$click_filtered  . "\t" . 
 			$click_row['ip_address']  . "\t" . 
+			$html['location_country_name']  . "\t" .
+			$html['location_country_code']  . "\t" .
+			$html['location_city_name']  . "\t" .
 			$click_row['aff_campaign_name']  . "\t" . 
 			$click_row['text_ad_name']  . "\t" . 
 			$html['referer'] . "\t" . 

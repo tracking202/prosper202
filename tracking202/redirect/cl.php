@@ -1,7 +1,7 @@
 <?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
 
 //run script   
-$mysql['click_id_public'] = mysql_real_escape_string($_GET['pci']);
+$mysql['click_id_public'] = $db->real_escape_string($_GET['pci']);
 
 $tracker_sql = "
 	SELECT
@@ -16,7 +16,7 @@ $tracker_sql = "
 		AND 202_clicks_record.click_id = 202_clicks_site.click_id 
 		AND 202_clicks_site.click_redirect_site_url_id = 202_site_urls.site_url_id
 ";
-$tracker_row = memcache_mysql_fetch_assoc($tracker_sql);
+$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
 if (!$tracker_row) {
 	$action_site_url = "/202-404.php";

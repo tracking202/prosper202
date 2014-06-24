@@ -1,0 +1,49 @@
+Release notes
+
+Version 1.8.4
+--Internet Explorer cookie javascript issue fixed.
+--New redesigned Rotator.
+--Old tables migrated to InnoDB.
+
+Version 1.8.3.3
+--Group Overview MySQL error
+--Fixed memory problem
+--Internet Explorer Detector
+--Simple Landing page javascript code conflict with jQuery
+
+Version 1.8.3.2
+--SSL bug fixed
+--Global Post Back bug fixed
+--Setup wizard tweaked
+
+Version 1.8.3.1
+--Check if geoIP model exist
+--Some code tweaks
+
+Version 1.8.3
+--Brand New Look & Feel
+--VIP Perks System
+--Enhancements for Mobile
+--Database enhancements
+--New postback response codes
+--Enhanced security
+--Expanded user agent detection
+--Bot, search engine crawler detection and filtering
+--New reports for GEO, User Agent and Platforms
+--New group overview segments
+--New report filters
+--New Reporting API
+--Landing Page redirect url
+--Improved support for organic traffic
+--Smart post click redirection rules
+--Raw universal smart pixel
+--New tokens for universal smart pixels
+--Clickbank API integration
+--1-Click auto upgrade
+--New async javascript for lp javascript
+--Expanded timezones
+--Reports caching
+--Ability to delete clicks prior to a certain date
+--BlazerCache redirects
+--BlazerCache downtime protection
+--Smart Rotator

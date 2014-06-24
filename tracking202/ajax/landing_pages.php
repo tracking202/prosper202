@@ -5,19 +5,24 @@ AUTH::require_user();
 
 
 
-if (($_POST['type'] != 'landingpage') and  ($_POST['type'] != 'advlandingpage')) { 
-    die();    
+if (($_POST['type'] != 'landingpage') and  ($_POST['type'] != 'advlandingpage')) { ?>
+	
+	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id" disabled="">
+        <option value="0"> -- </option>
+    </select>
+
+    <?php die();    
 }
 
-$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 
 if ($_POST['type'] == 'landingpage') {
-	$mysql['aff_campaign_id'] = mysql_real_escape_string($_POST['aff_campaign_id']);      
+	$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);      
 	$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `landing_page_deleted`='0' ORDER BY `aff_campaign_id`, `landing_page_nickname` ASC";
 }
 
 if ($_POST['type'] == 'advlandingpage') {
-	$mysql['aff_campaign_id'] = mysql_real_escape_string($_POST['aff_campaign_id']);      
+	$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);      
 	$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND `landing_page_type`='1' AND `landing_page_deleted`='0' ORDER BY `aff_campaign_id`, `landing_page_nickname` ASC";
 }
 
@@ -25,17 +30,19 @@ if ($_POST['type'] == 'advlandingpage') {
 
 ?><input id="landing_page_style_type" type="hidden" name="landing_page_style_type" value="<?php echo htmlentities($_POST['type']); ?>"/><?
 
-$landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
+$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 
-if (mysql_num_rows($landing_page_result) == 0) {
+if ($landing_page_result->num_rows == 0) { ?>
 
-	//echo '<div class="error">You have not added any landing pages for this campaign yet.</div>';
+	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id">
+        <option value="0"> -- </option>
+    </select>
 
-} else { ?>
+<?php } else { ?>
 
-	<select name="landing_page_id" id="landing_page_id" onchange="<?php if ($_POST['type' ] =='advlandingpage') echo 'load_adv_text_ad_id(this.value);'; else  echo ' load_text_ad_id( $(\'aff_campaign_id\').value ); ';  ?>">					
+	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id" onchange="<?php if ($_POST['type' ] =='advlandingpage') echo 'load_adv_text_ad_id(this.value);'; else  echo ' load_text_ad_id( $(\'#aff_campaign_id\').val() ); ';  ?>">					
 		<option value="0"> -- </option> <?
-		while ($landing_page_row = mysql_fetch_array($landing_page_result, MYSQL_ASSOC)) {
+		while ($landing_page_row = $landing_page_result->fetch_array(MYSQL_ASSOC)) {
 
 			$html['landing_page_id'] = htmlentities($landing_page_row['landing_page_id'], ENT_QUOTES, 'UTF-8');
 			$html['landing_page_nickname'] = htmlentities($landing_page_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');

@@ -22,6 +22,7 @@ AUTH::require_user();
  	}
  	
  	if ($counter < 20) {?>
+ 		
 	 	<h4><a href="http://meetup.tracking202.com" target="_blank"><img src="/202-img/meetup_logo.png"/ class="news_icon"></a> <a href='<?php echo ($html['link']); ?>'  target="_blank"><?php echo $html['title']; ?></a> - <?php echo $html['time']; ?></h4>
 		<p><?php echo $html['description']; ?></p><?php  
  	}
