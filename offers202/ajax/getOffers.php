@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 
 AUTH::require_user();
@@ -102,7 +102,7 @@ echo $results;
 //create the navigation bar
 $navBar = "<div class='offers-nav'>";
 $navBar .= "<strong>Page {$html['page']} of {$html['pages']}</strong>  "; ?>
-<? if ($pages > 1) { $navBar .= " <span style='padding: 0px 10px'>&mdash;</span> ";
+<?php if ($pages > 1) { $navBar .= " <span style='padding: 0px 10px'>&mdash;</span> ";
 	if ($page > 1) {
 		$navBar .= ' <a href="#" onclick="getOffers('.htmlentities($i).')">First</a> ';
 		$navBar .= ' <a href="#" onclick="getOffers('.htmlentities($page - 1).')">Prev</a> ';
@@ -132,18 +132,18 @@ $navBar .= "</div> <div class='clear'></div>";
 	<form id="offers_limit_form">
 		Show:
 		<select class="limit" name="limit" onchange="setOffersLimitPref();">
-			<option <? if ($_SESSION['offers202_limit'] == 10) echo ' SELECTED '; ?> value="10">10 results</option>
-			<option <? if ($_SESSION['offers202_limit'] == 25) echo ' SELECTED '; ?> value="25">25 results</option>
-			<option <? if ($_SESSION['offers202_limit'] == 50) echo ' SELECTED '; ?> value="50">50 results</option>
-			<option <? if ($_SESSION['offers202_limit'] == 75) echo ' SELECTED '; ?> value="75">75 results</option>
-			<option <? if (($_SESSION['offers202_limit'] == 100) or (!$_SESSION['offers202_limit'])) echo ' SELECTED '; ?> value="100">100 results</option>
-			<option <? if ($_SESSION['offers202_limit'] == 150) echo ' SELECTED '; ?> value="150">150 results</option>
-			<option <? if ($_SESSION['offers202_limit'] == 200) echo ' SELECTED '; ?> value="200">200 results</option>
-			<option <? if ($_SESSION['offers202_limit'] == 250) echo ' SELECTED '; ?> value="250">250 results</option>
-			<option <? if ($_SESSION['offers202_limit'] == 500) echo ' SELECTED '; ?> value="500">500 results</option>
+			<option <?php if ($_SESSION['offers202_limit'] == 10) echo ' SELECTED '; ?> value="10">10 results</option>
+			<option <?php if ($_SESSION['offers202_limit'] == 25) echo ' SELECTED '; ?> value="25">25 results</option>
+			<option <?php if ($_SESSION['offers202_limit'] == 50) echo ' SELECTED '; ?> value="50">50 results</option>
+			<option <?php if ($_SESSION['offers202_limit'] == 75) echo ' SELECTED '; ?> value="75">75 results</option>
+			<option <?php if (($_SESSION['offers202_limit'] == 100) or (!$_SESSION['offers202_limit'])) echo ' SELECTED '; ?> value="100">100 results</option>
+			<option <?php if ($_SESSION['offers202_limit'] == 150) echo ' SELECTED '; ?> value="150">150 results</option>
+			<option <?php if ($_SESSION['offers202_limit'] == 200) echo ' SELECTED '; ?> value="200">200 results</option>
+			<option <?php if ($_SESSION['offers202_limit'] == 250) echo ' SELECTED '; ?> value="250">250 results</option>
+			<option <?php if ($_SESSION['offers202_limit'] == 500) echo ' SELECTED '; ?> value="500">500 results</option>
 		</select>
 	</form>
-</div><div style="clear: both;"></div><? 
+</div><div style="clear: both;"></div><?php 
 
 
 $networkNameBy = $_SESSION['offers202_by'];
@@ -187,15 +187,15 @@ switch ($_SESSION['offers202_order']) {
 
 <table cellpadding="0" cellspacing="0" class="offers-table">
 	<tr>
-		<th class='nowrap'><a href="#" onclick="getOffers('', 'networkName', '<? echo $networkNameBy; ?>');">Network <? echo $networkNameArrow; ?></a></th>
-		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerName', '<? echo $offerNameBy; ?>');">Offer <? echo $offerNameArrow; ?></a></th>
-		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerPayout', '<? echo $offerPayoutBy; ?>');">Payout <? echo $offerPayoutArrow; ?></a></th>
-		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerType', '<? echo $offerTypeBy; ?>');">Type <? echo $offerTypeArrow; ?></a></th>
-		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerUpdatedDate', '<? echo $offerUpdatedDateBy; ?>');">Last Updated <? echo $offerUpdatedDateArrow; ?></a></th>
-		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerStartDate', '<? echo $offerStartDateBy; ?>');">Started <? echo $offerStartDateArrow; ?></a></th>
+		<th class='nowrap'><a href="#" onclick="getOffers('', 'networkName', '<?php echo $networkNameBy; ?>');">Network <?php echo $networkNameArrow; ?></a></th>
+		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerName', '<?php echo $offerNameBy; ?>');">Offer <?php echo $offerNameArrow; ?></a></th>
+		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerPayout', '<?php echo $offerPayoutBy; ?>');">Payout <?php echo $offerPayoutArrow; ?></a></th>
+		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerType', '<?php echo $offerTypeBy; ?>');">Type <?php echo $offerTypeArrow; ?></a></th>
+		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerUpdatedDate', '<?php echo $offerUpdatedDateBy; ?>');">Last Updated <?php echo $offerUpdatedDateArrow; ?></a></th>
+		<th class='nowrap'><a href="#" onclick="getOffers('', 'offerStartDate', '<?php echo $offerStartDateBy; ?>');">Started <?php echo $offerStartDateArrow; ?></a></th>
 	</tr>
 	 
-	<? if ($total_rows) { 
+	<?php if ($total_rows) { 
 		$offers = $getOffers['offers'][0]['offer'];
 		for ($x = 0; $x < count($offers); $x++) { 
 			$html = array_map('htmlentities', $offers[$x]);
@@ -235,4 +235,4 @@ switch ($_SESSION['offers202_order']) {
 
 
 
-<? echo $navBar;  ?>
+<?php echo $navBar;  ?>

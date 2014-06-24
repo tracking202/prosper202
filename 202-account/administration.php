@@ -55,15 +55,15 @@ return $mbytes;
 	style="margin: 0px auto; padding-left: 100px;">
 	<tr>
 		<th>Prosper202 Version:</th>
-		<td><? echo $version; ?></td>
+		<td><?php echo $version; ?></td>
 	</tr>
 	<tr>
 		<th>PHP Version:</th>
-		<td><? echo phpversion(); ?></td>
+		<td><?php echo phpversion(); ?></td>
 	</tr>
 	<tr>
 		<th>MySQL Version:</th>
-		<td><? $mysql_version_sql = "SELECT VERSION();";
+		<td><?php $mysql_version_sql = "SELECT VERSION();";
 		$mysql_version_result = _mysql_query($mysql_version_sql);
 		$mysql_version = mysql_result($mysql_version_result,0,0);
 		$html['mysql_version'] = htmlentities($mysql_version, ENT_QUOTES, 'UTF-8');
@@ -72,30 +72,30 @@ return $mbytes;
 	<tr>
 		<th>PHP Safe Mode <a href="#"
 			onclick="alert('PHP Safe Mode needs to be turned off in order for Stats202, Offers202 or Alerts202 to work. You will have to contact your web host to have them disable it.');">[?]</a></th>
-		<td><? if (@ini_get('safe_mode'))  	echo '<strong style="color: #900;">On</strong> - this should be turned off.';
+		<td><?php if (@ini_get('safe_mode'))  	echo '<strong style="color: #900;">On</strong> - this should be turned off.';
 		else 					   		echo 'Off'; ?></td>
 	</tr>
 	<tr>
 		<th>Memcache Installed <a href="#"
 			onclick="alert('If you have memcache installed and working, it will speed up click redirections');">[?]</a></th>
-		<td><? if ($memcacheInstalled)  	echo 'Yes';
+		<td><?php if ($memcacheInstalled)  	echo 'Yes';
 		else 					   	echo 'No'; ?></td>
 	</tr>
 	<tr>
 		<th>Memcache Running <a href="#"
 			onclick="alert('If memcache is installed, but not running, check your 202-config.php to make sure your connecting to a server that has memcache installed');">[?]</a></th>
-		<td><? if ($memcacheWorking)  	echo 'Yes';
+		<td><?php if ($memcacheWorking)  	echo 'Yes';
 		else 					   	echo 'No'; ?></td>
 	</tr>
 	<tr>
 		<th>Geo-Location DB Installed <a
 			href="http://prosper202.com/apps/docs/geolocationdb/">[?]</a></th>
-		<td><? if (geoLocationDatabaseInstalled() == false) 	echo 'No ';
+		<td><?php if (geoLocationDatabaseInstalled() == false) 	echo 'No ';
 		else 											echo 'Yes'; ?></td>
 	</tr>
 	<tr>
 		<th>Default Keyword Preference</th>
-		<td><?  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+		<td><?php  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 		$user_sql = "SELECT * FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
 		$user_result = _mysql_query($user_sql);
 		$user_row = mysql_fetch_assoc($user_result);
@@ -105,7 +105,7 @@ return $mbytes;
 	<tr>
 		<th>Cached Redirects for MySQL Failure <a href="#"
 			onclick="alert('Make sure this is working, this will make sure your redirects still continue to work in the event of a complete MySQL failure.');">[?]</a></th>
-		<td><? if (is_writeable($_SERVER['DOCUMENT_ROOT'].'/tracking202/redirect/cached/')) echo 'Yes';
+		<td><?php if (is_writeable($_SERVER['DOCUMENT_ROOT'].'/tracking202/redirect/cached/')) echo 'Yes';
 		else 																				echo '<strong style="color: #900;">No</strong>
 			     																						   <br/>To enable this CHMOD the directory below to 777:<br/> ' . $_SERVER['DOCUMENT_ROOT'].'/tracking202/redirect/cached/ '; ?>
 
@@ -115,19 +115,19 @@ return $mbytes;
 <table cellspacing="0" cellpadding="10" style="margin: 0px auto;">
 	<tr>
 		<th>post_max_size:</th>
-		<td><? echo ini_get('post_max_size'); ?></td>
+		<td><?php echo ini_get('post_max_size'); ?></td>
 	</tr>
 	<tr>
 		<th>upload_max_filesize:</th>
-		<td><? echo ini_get('upload_max_filesize'); ?></td>
+		<td><?php echo ini_get('upload_max_filesize'); ?></td>
 	</tr>
 	<tr>
 		<th>max_input_time:</th>
-		<td><? echo ini_get('max_input_time'); ?> (seconds)</td>
+		<td><?php echo ini_get('max_input_time'); ?> (seconds)</td>
 	</tr>
 	<tr>
 		<th>max_execution_time:</th>
-		<td><? echo ini_get('max_execution_time'); ?> (seconds)</td>
+		<td><?php echo ini_get('max_execution_time'); ?> (seconds)</td>
 	</tr>
 
 </table>
@@ -144,7 +144,7 @@ return $mbytes;
 	style="margin: 0px auto; padding-left: 100px;">
 	<tr>
 		<th>Current Prosper202 Database Size:</th>
-		<td><? echo database_size(); ?> MB</td>
+		<td><?php echo database_size(); ?> MB</td>
 	</tr>
 	</table>
 <?php /**/ ?>
@@ -167,7 +167,7 @@ setup data)</strong></span></td></tr>
 
 </form>
 
-	<? 
+	<?php 
 
 
 	//show the last 20 logins failed or pass

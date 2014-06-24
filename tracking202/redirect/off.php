@@ -1,4 +1,4 @@
-<? 
+<?php 
 
 
 #only allow numeric acip's
@@ -100,27 +100,27 @@ if (!$_GET['pci']) {
 
 		<html>
 			<head>
-				<title><? echo $html['aff_campaign_name']; ?></title>
+				<title><?php echo $html['aff_campaign_name']; ?></title>
 				<meta name="robots" content="noindex">
-				<meta http-equiv="refresh" content="1; url=<? echo $redirect_site_url; ?>">
+				<meta http-equiv="refresh" content="1; url=<?php echo $redirect_site_url; ?>">
 			</head>
 			<body>
 			
 			<form name="form1" id="form1" method="get" action="/tracking202/redirect/cl2.php">
-				<input type="hidden" name="q" value="<? echo $redirect_site_url; ?>"/>
+				<input type="hidden" name="q" value="<?php echo $redirect_site_url; ?>"/>
 			</form>
 				<script type="text/javascript">
 					document.form1.submit();
 				</script>
 		
 				<div style="padding: 30px; text-align: center;">
-					You are being automatically redirected to <? echo $html['aff_campaign_name']; ?>.<br/><br/>
-					Page Stuck? <a href="<? echo $redirect_site_url; ?>">Click Here</a>.
+					You are being automatically redirected to <?php echo $html['aff_campaign_name']; ?>.<br/><br/>
+					Page Stuck? <a href="<?php echo $redirect_site_url; ?>">Click Here</a>.
 				</div>
 			</body>
 		</html> 
 
- <? }
+ <?php }
 	
 	//terminate this script, this is the end, if there was no public_click_id
 	die();
@@ -359,26 +359,26 @@ if ($cloaking_on == true) {
 	
 ?> <html>
 	<head>
-		<title><? echo $html['aff_campaign_name']; ?></title>
+		<title><?php echo $html['aff_campaign_name']; ?></title>
 		<meta name="robots" content="noindex">
-		<meta http-equiv="refresh" content="1; url=<? echo $redirect_site_url; ?>">
+		<meta http-equiv="refresh" content="1; url=<?php echo $redirect_site_url; ?>">
 	</head>
 	<body>
 	
 		<form name="form1" id="form1" method="get" action="/tracking202/redirect/cl2.php">
-			<input type="hidden" name="q" value="<? echo $redirect_site_url; ?>"/>
+			<input type="hidden" name="q" value="<?php echo $redirect_site_url; ?>"/>
 		</form>
 		<script type="text/javascript">
 			document.form1.submit();
 		</script>
 		
 		<div style="padding: 30px; text-align: center;">
-			You are being automatically redirected to <? echo $html['aff_campaign_name']; ?>.<br/><br/>
-			Page Stuck? <a href="<? echo $redirect_site_url; ?>">Click Here</a>.
+			You are being automatically redirected to <?php echo $html['aff_campaign_name']; ?>.<br/><br/>
+			Page Stuck? <a href="<?php echo $redirect_site_url; ?>">Click Here</a>.
 		</div>
     </body>
 </html> 
-<? } else { 
+<?php } else { 
 	
 	//if cloaking is turned off, php header redirect out
 	header('location: '.$redirect_site_url);

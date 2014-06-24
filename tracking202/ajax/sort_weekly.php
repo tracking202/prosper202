@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -138,20 +138,20 @@ AUTH::require_user();
 
 	<table cellpadding="0" cellspacing="1" class="m-stats">
 		<tr>   
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_order']; ?>');">Time</a></th>
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_clicks_order']; ?>');">Clicks</a></th> 
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_leads_order']; ?>');">Leads</a></th>
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_su_ratio_order']; ?>');">Avg S/U</a></th>
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_payout_order']; ?>');">Avg Payout</a></th>
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_epc_order']; ?>');">Avg EPC</a></th> 
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_avg_cpc_order']; ?>');">Avg CPC</a></th>
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_income_order']; ?>');">Income</a></th>
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_cost_order']; ?>');">Cost</a></th>
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_net_order']; ?>');">Net</a></th>
-			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<? echo $html['sort_breakdown_roi_order']; ?>');">ROI</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_order']; ?>');">Time</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_clicks_order']; ?>');">Clicks</a></th> 
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_leads_order']; ?>');">Leads</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_su_ratio_order']; ?>');">Avg S/U</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_payout_order']; ?>');">Avg Payout</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_epc_order']; ?>');">Avg EPC</a></th> 
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_avg_cpc_order']; ?>');">Avg CPC</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_income_order']; ?>');">Income</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_cost_order']; ?>');">Cost</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_net_order']; ?>');">Net</a></th>
+			<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_weekly.php','','<?php echo $html['sort_breakdown_roi_order']; ?>');">ROI</a></th>
 		</tr>   
 
-		<? while ($breakdown_row = mysql_fetch_array($breakdown_result, MYSQL_ASSOC)) { 
+		<?php while ($breakdown_row = mysql_fetch_array($breakdown_result, MYSQL_ASSOC)) { 
 			
 			//also harvest a total stats
 			$stats_total['clicks'] = $stats_total['clicks'] + $breakdown_row['sort_breakdown_clicks']; 
@@ -190,21 +190,21 @@ AUTH::require_user();
 			error_reporting(6135); ?> 
 		
 			<tr>
-				<td class="m-row2 m-row2-fade"><? echo $html['sort_breakdown_time']; ?></td>
-				<td class="m-row1"><? echo $html['sort_breakdown_clicks']; ?></td>
-				<td class="m-row1"><? echo $html['sort_breakdown_leads']; ?></td> 
-				<td class="m-row1"><? echo $html['sort_breakdown_su_ratio']; ?></td>
-				<td class="m-row1"><? echo $html['sort_breakdown_payout']; ?></td> 
-				<td class="m-row3"><? echo $html['sort_breakdown_epc']; ?></td>
-				<td class="m-row3"><? echo $html['sort_breakdown_avg_cpc']; ?></td>
-				<td class="m-row4 "><? echo $html['sort_breakdown_income']; ?></td>
-				<td class="m-row4 ">(<? echo $html['sort_breakdown_cost']; ?>)</td>
-				<td class="<? if ($breakdown_row['sort_breakdown_net'] > 0) { echo 'm-row_pos'; } elseif ($breakdown_row['sort_breakdown_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['sort_breakdown_net'] ; ?></td>
-				<td class="<? if ($breakdown_row['sort_breakdown_net'] > 0) { echo 'm-row_pos'; } elseif ($breakdown_row['sort_breakdown_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['sort_breakdown_roi'] ; ?></td>
+				<td class="m-row2 m-row2-fade"><?php echo $html['sort_breakdown_time']; ?></td>
+				<td class="m-row1"><?php echo $html['sort_breakdown_clicks']; ?></td>
+				<td class="m-row1"><?php echo $html['sort_breakdown_leads']; ?></td> 
+				<td class="m-row1"><?php echo $html['sort_breakdown_su_ratio']; ?></td>
+				<td class="m-row1"><?php echo $html['sort_breakdown_payout']; ?></td> 
+				<td class="m-row3"><?php echo $html['sort_breakdown_epc']; ?></td>
+				<td class="m-row3"><?php echo $html['sort_breakdown_avg_cpc']; ?></td>
+				<td class="m-row4 "><?php echo $html['sort_breakdown_income']; ?></td>
+				<td class="m-row4 ">(<?php echo $html['sort_breakdown_cost']; ?>)</td>
+				<td class="<?php if ($breakdown_row['sort_breakdown_net'] > 0) { echo 'm-row_pos'; } elseif ($breakdown_row['sort_breakdown_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['sort_breakdown_net'] ; ?></td>
+				<td class="<?php if ($breakdown_row['sort_breakdown_net'] > 0) { echo 'm-row_pos'; } elseif ($breakdown_row['sort_breakdown_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['sort_breakdown_roi'] ; ?></td>
 			</tr>
-		<? } ?>
+		<?php } ?>
 		
-		<?   error_reporting(0); 
+		<?php   error_reporting(0); 
 			$rows = mysql_num_rows($breakdown_result);
 			$html['clicks'] = htmlentities($stats_total['clicks'], ENT_QUOTES, 'UTF-8');  
 			$html['leads'] = htmlentities($stats_total['leads'], ENT_QUOTES, 'UTF-8');  
@@ -219,16 +219,16 @@ AUTH::require_user();
 			error_reporting(6135);  ?>   
 		<tr>
 			<td class="m-row2 m-row-bottom"><strong>Totals for report</strong></td>
-			<td class="m-row1 m-row-bottom"><strong><? echo $html['clicks']; ?></strong></td>
-			<td class="m-row1 m-row-bottom"><strong><? echo $html['leads']; ?></strong></td>
-			<td class="m-row1 m-row-bottom"><strong><? echo $html['su_ratio']; ?></strong></td>  
-			<td class="m-row1 m-row-bottom"><strong><? echo $html['payout']; ?></strong></td>  
-			<td class="m-row3 m-row-bottom"><strong><? echo $html['epc']; ?></strong></td>  
-			<td class="m-row3 m-row-bottom"><strong><? echo $html['cpc']; ?></strong></td>  
-			<td class="m-row4 m-row-bottom "><strong><? echo $html['income']; ?></strong></td>
-			<td class="m-row4 m-row-bottom "><strong>(<? echo $html['cost']; ?>)</strong></td>
-			<td class=" m-row-bottom <? if ($stats_total['net'] > 0) { echo 'm-row_pos'; } elseif ($stats_total['net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><strong><? echo $html['net']; ?></strong></td>
-			<td class=" m-row-bottom <? if ($stats_total['net'] > 0) { echo 'm-row_pos'; } elseif ($stats_total['net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><strong><? echo $html['roi']; ?></strong></td>
+			<td class="m-row1 m-row-bottom"><strong><?php echo $html['clicks']; ?></strong></td>
+			<td class="m-row1 m-row-bottom"><strong><?php echo $html['leads']; ?></strong></td>
+			<td class="m-row1 m-row-bottom"><strong><?php echo $html['su_ratio']; ?></strong></td>  
+			<td class="m-row1 m-row-bottom"><strong><?php echo $html['payout']; ?></strong></td>  
+			<td class="m-row3 m-row-bottom"><strong><?php echo $html['epc']; ?></strong></td>  
+			<td class="m-row3 m-row-bottom"><strong><?php echo $html['cpc']; ?></strong></td>  
+			<td class="m-row4 m-row-bottom "><strong><?php echo $html['income']; ?></strong></td>
+			<td class="m-row4 m-row-bottom "><strong>(<?php echo $html['cost']; ?>)</strong></td>
+			<td class=" m-row-bottom <?php if ($stats_total['net'] > 0) { echo 'm-row_pos'; } elseif ($stats_total['net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><strong><?php echo $html['net']; ?></strong></td>
+			<td class=" m-row-bottom <?php if ($stats_total['net'] > 0) { echo 'm-row_pos'; } elseif ($stats_total['net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><strong><?php echo $html['roi']; ?></strong></td>
 		</tr>
 	</table>
 

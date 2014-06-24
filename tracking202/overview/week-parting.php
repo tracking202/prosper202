@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -13,10 +13,10 @@ template_top('Hourly Overview',NULL,NULL,NULL);  ?>
 	Here you can see what day of the week performs best.
 </div>
 
-<? display_calendar('/tracking202/ajax/sort_weekly.php', true, true, true, false, true, true); ?>    
+<?php display_calendar('/tracking202/ajax/sort_weekly.php', true, true, true, false, true, true); ?>    
 
 <script type="text/javascript">
    loadContent('/tracking202/ajax/sort_weekly.php',null);
 </script>
 
-<? template_bottom();
+<?php template_bottom();

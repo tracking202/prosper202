@@ -1,4 +1,4 @@
-<? header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
+<?php header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
 header('Expires: Sun, 03 Feb 2008 05:00:00 GMT'); // Date in the past
 header("Pragma: no-cache");
 $strProtocol = $_SERVER['HTTPS'] == 'on' ? 'https' : 'http'; 
@@ -12,7 +12,7 @@ function t202Init(){
 		var t202kw = t202GetVar('t202kw');
 	}
 
-	var lpip = '<? echo htmlentities($_GET['lpip']); ?>';
+	var lpip = '<?php echo htmlentities($_GET['lpip']); ?>';
 	var t202id = t202GetVar('t202id');
 	var OVRAW = t202GetVar('OVRAW');
 	var OVKEY = t202GetVar('OVKEY');
@@ -28,7 +28,7 @@ function t202Init(){
 	var language = navigator.appName=='Netscape'?navigator.language:navigator.browserLanguage; 
 	language = language.substr(0,2); 
 										    
-	document.write("<script src=\"<?php echo $strProtocol; ?>://<? echo $_SERVER['SERVER_NAME']; ?>/tracking202/static/record.php?lpip=" + t202Enc(lpip)
+	document.write("<script src=\"<?php echo $strProtocol; ?>://<?php echo $_SERVER['SERVER_NAME']; ?>/tracking202/static/record.php?lpip=" + t202Enc(lpip)
 		+ "&t202id="				+ t202Enc(t202id)
 		+ "&t202kw="				+ t202kw
 		+ "&OVRAW="					+ t202Enc(OVRAW)

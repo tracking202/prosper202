@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -41,7 +41,7 @@ template_top($server_row,'Get Advanced Landing Page Code',NULL,NULL,NULL);  ?>
 					<div id="area_1">
 						<select name="aff_campaign_id_1" id="aff_campaign_id_1" onchange="">
 							<option value="0"> -- </option> 	
-							<? 	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+							<?php 	$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 								$aff_campaign_sql = "SELECT aff_campaign_id, aff_campaign_name, aff_network_name FROM 202_aff_campaigns LEFT JOIN 202_aff_networks USING (aff_network_id) WHERE 202_aff_campaigns.user_id='".$mysql['user_id']."' AND aff_campaign_deleted='0' AND aff_network_deleted=0 ORDER BY aff_network_name ASC";
 							
 								$aff_campaign_result = _mysql_query($aff_campaign_sql); // or record_mysql_error($aff_campaign_sql);
@@ -130,4 +130,4 @@ template_top($server_row,'Get Advanced Landing Page Code',NULL,NULL,NULL);  ?>
         /*load_ppc_account_id(0,0);*/        
 	</script>
 		
-<? template_bottom($server_row);
+<?php template_bottom($server_row);

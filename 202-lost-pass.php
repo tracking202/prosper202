@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 
 
@@ -73,13 +73,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 
 
-<? info_top(); ?>
+<?php info_top(); ?>
 
-	<? if ($success == true) { ?>
+	<?php if ($success == true) { ?>
 	
 		<div class="error" style="text-align: center;"><br/>An email has been sent with a link where you can change your password.</div>
 	
-	<? } else { ?>
+	<?php } else { ?>
 	
 		<form method="post" action="">
 			<input type="hidden" name="token" value=""/>
@@ -88,13 +88,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				<tr><td/></tr>
 				 <tr>
 					<th>Username:</th>
-					<td><input id="user_name" type="text" name="user_name" value="<? echo $html['user_name']; ?>"/></td>
+					<td><input id="user_name" type="text" name="user_name" value="<?php echo $html['user_name']; ?>"/></td>
 				</tr>
 				 <tr>
 					<th>Email:</th>
-					<td><input id="user_name" type="text" name="user_email" value="<? echo $html['user_email']; ?>"/></td>
+					<td><input id="user_name" type="text" name="user_email" value="<?php echo $html['user_email']; ?>"/></td>
 				</tr>
-				<? if ($error['user']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user']); } ?>
+				<?php if ($error['user']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user']); } ?>
 				<tr>
 					<td/>
 					<td><input id="submit" type="submit" value="Get New Password  &raquo;"/></td>
@@ -102,5 +102,5 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			</table>
 		</form>
 		
-	<? } ?>
-<? info_bottom(); ?>
+	<?php } ?>
+<?php info_bottom(); ?>

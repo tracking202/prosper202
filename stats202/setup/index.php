@@ -12,7 +12,7 @@ template_top('Affiliate Accounts');
 include_once('../top.php');   ?>
 	 
 
-<?  //build the get query for the offers202 restful api
+<?php  //build the get query for the offers202 restful api
 $get = array();
 $get['apiKey'] = $_SESSION['user_api_key'];
 $get['stats202AppKey'] = $_SESSION['user_stats202_app_key'];
@@ -37,8 +37,8 @@ checkForApiErrors($getStatAccounts);   ?>
 <table style="margin: 0px auto;">
 	<tr>
 		<td style="padding: 0px 0px 20px;">
-			<? if ($_GET['delete']) echo "<div class='success'><div><h3>Your submission was successful</h3>You have deleted an account.</div></div>"; ?>
-			<? if ($_GET['success']) echo "<div class='success'><div><h3>Your submission was successful</h3>You have modified or created a new account</div></div>"; ?>				
+			<?php if ($_GET['delete']) echo "<div class='success'><div><h3>Your submission was successful</h3>You have deleted an account.</div></div>"; ?>
+			<?php if ($_GET['success']) echo "<div class='success'><div><h3>Your submission was successful</h3>You have modified or created a new account</div></div>"; ?>				
 			<h3 class="green">My Affiliate Accounts</h3><p>Here is where you can add all of your affiliate accounts. 
 			&nbsp; To add a new account <a href="new">click here</a>.
 		</td>
@@ -73,4 +73,4 @@ checkForApiErrors($getStatAccounts);   ?>
 	</tr>
 </table>
 
-<? template_bottom();
+<?php template_bottom();

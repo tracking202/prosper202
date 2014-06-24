@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -22,4 +22,4 @@ template_top($server_row,'Get Landing Page Code',NULL,NULL,NULL);  ?>
 
 
 		
-<? template_bottom($server_row);
+<?php template_bottom($server_row);

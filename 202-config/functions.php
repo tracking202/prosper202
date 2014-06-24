@@ -89,7 +89,7 @@ function info_top() { ?>
 		</td>
 	</tr>
 	<tr>
-		<td><? } function info_bottom() { ?></td>
+		<td><?php } function info_bottom() { ?></td>
 	</tr>
 </table>
 </div>
@@ -97,7 +97,7 @@ function info_top() { ?>
 </body>
 </html> 
 
-<? } 
+<?php } 
 
 
 

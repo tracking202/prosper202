@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -305,24 +305,24 @@ $html['rows'] = htmlentities($query['rows'], ENT_QUOTES, 'UTF-8');
 			</a>
 		</td>
 		<td>
-			<? printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']); ?>
+			<?php printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']); ?>
 		</td>
 	</tr>
 </table>
 
 <table cellpadding="0" cellspacing="1" class="m-stats">
 	<tr>   
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_referer_order']; ?>');">Referer</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_clicks_order']; ?>');">Clicks</a></th> 
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_leads_order']; ?>');">Leads</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_su_ratio_order']; ?>');">S/U</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_payout_order']; ?>');">Payout</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_epc_order']; ?>');">EPC</a></th> 
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_avg_cpc_order']; ?>');">Avg CPC</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_income_order']; ?>');">Income</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_cost_order']; ?>');">Cost</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_net_order']; ?>');">Net</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<? echo $html['sort_referer_roi_order']; ?>');">ROI</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_referer_order']; ?>');">Referer</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_clicks_order']; ?>');">Clicks</a></th> 
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_leads_order']; ?>');">Leads</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_su_ratio_order']; ?>');">S/U</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_payout_order']; ?>');">Payout</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_epc_order']; ?>');">EPC</a></th> 
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_avg_cpc_order']; ?>');">Avg CPC</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_income_order']; ?>');">Income</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_cost_order']; ?>');">Cost</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_net_order']; ?>');">Net</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_referers.php','','<?php echo $html['sort_referer_roi_order']; ?>');">ROI</a></th>
 	</tr>   
 	
 	<?
@@ -357,22 +357,22 @@ while ($referer_row = mysql_fetch_array($referer_result, MYSQL_ASSOC)) {
 	error_reporting(6135); ?> 
 	
 	<tr>
-		<td class="m-row2  m-row2-fade" ><? echo $html['referer']; ?></td>
-		<td class="m-row1"><? echo $html['sort_referer_clicks']; ?></td>
-		<td class="m-row1"><? echo $html['sort_referer_leads']; ?></td> 
-		<td class="m-row1"><? echo $html['sort_referer_su_ratio']; ?></td>
-		<td class="m-row1"><? echo $html['sort_referer_payout']; ?></td> 
-		<td class="m-row3"><? echo $html['sort_referer_epc']; ?></td>
-		<td class="m-row3"><? echo $html['sort_referer_avg_cpc']; ?></td>
-		<td class="m-row4 "><? echo $html['sort_referer_income']; ?></td>
-		<td class="m-row4 ">(<? echo $html['sort_referer_cost']; ?>)</td>
-		<td class="<? if ($referer_row['sort_referer_net'] > 0) { echo 'm-row_pos'; } elseif ($referer_row['sort_referer_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['sort_referer_net'] ; ?></td>
-		<td class="<? if ($referer_row['sort_referer_net'] > 0) { echo 'm-row_pos'; } elseif ($referer_row['sort_referer_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['sort_referer_roi'] ; ?></td>
+		<td class="m-row2  m-row2-fade" ><?php echo $html['referer']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_referer_clicks']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_referer_leads']; ?></td> 
+		<td class="m-row1"><?php echo $html['sort_referer_su_ratio']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_referer_payout']; ?></td> 
+		<td class="m-row3"><?php echo $html['sort_referer_epc']; ?></td>
+		<td class="m-row3"><?php echo $html['sort_referer_avg_cpc']; ?></td>
+		<td class="m-row4 "><?php echo $html['sort_referer_income']; ?></td>
+		<td class="m-row4 ">(<?php echo $html['sort_referer_cost']; ?>)</td>
+		<td class="<?php if ($referer_row['sort_referer_net'] > 0) { echo 'm-row_pos'; } elseif ($referer_row['sort_referer_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['sort_referer_net'] ; ?></td>
+		<td class="<?php if ($referer_row['sort_referer_net'] > 0) { echo 'm-row_pos'; } elseif ($referer_row['sort_referer_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['sort_referer_roi'] ; ?></td>
 	</tr>
-<? } ?>
+<?php } ?>
 </table>   
 
-<? if ($query['pages'] > 2) { ?>
+<?php if ($query['pages'] > 2) { ?>
 	<div class="offset">   <?
 		if ($query['offset'] > 0) {
 			printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/sort_referers.php\',\'%s\',\'%s\');">First</a> ', $i, $html['order']);
@@ -394,4 +394,4 @@ while ($referer_row = mysql_fetch_array($referer_result, MYSQL_ASSOC)) {
 			printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/sort_referers.php\',\'%s\',\'%s\');">Last</a> ', $query['pages'] - 2, $html['order']); 
 		} ?>
 	</div>   
-<? } ?>
+<?php } ?>

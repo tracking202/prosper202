@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -38,7 +38,7 @@ AUTH::require_user();
 				</a>
 			</td>
 			<td>
-				<? printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']);  ?>
+				<?php printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']);  ?>
 			</td>
 		</tr>
 	</table>
@@ -55,12 +55,12 @@ AUTH::require_user();
 		?>
 	
 	 <table cellpadding="3" cellspacing="0" class="item-table">
-			<tr class="<? echo $html['row_class']; ?>" style="font-weight: bold; text-align: left;">
+			<tr class="<?php echo $html['row_class']; ?>" style="font-weight: bold; text-align: left;">
 				<td style="width: 53px;">Subid</td>
 				<td class="date">Date</td>
 				<td class="ppc"></td>
 				<td class="ppc"></td>
-				<? if (geoLocationDatabaseInstalled() == true) echo '<td class="flag"></td>'; ?>
+				<?php if (geoLocationDatabaseInstalled() == true) echo '<td class="flag"></td>'; ?>
 				<td class="ppc"></td>
 				<td class="filter"></td>
 				<td class="ip">IP</td>
@@ -279,41 +279,41 @@ AUTH::require_user();
 		if (($diff > 5) and ($new == true))  { 
 			$new = false; ?>
 			 </div>        
-		<? } ?>
+		<?php } ?>
 		
 		 <table cellpadding="0" cellspacing="0" class="item-table">
-			<tr class="<? echo $html['row_class']; ?>">
-				<td style="width: 53px;" id="<? echo $html['click_id']; ?>"><? printf('%s', $html['click_id']); ?></td>
-				<td class="date"><? echo $html['click_time']; ?></td>
-				<td class="ppc"><? echo $html['browser_id']; ?></td>
-				<td class="ppc"><? echo $html['platform_id']; ?></td>
-				<? if (geoLocationDatabaseInstalled() == true) echo '<td class="flag">' . $html['location'] .'</td>'; ?>
-				<td class="ppc"><? echo $ppc_network_icon; ?></td>
+			<tr class="<?php echo $html['row_class']; ?>">
+				<td style="width: 53px;" id="<?php echo $html['click_id']; ?>"><?php printf('%s', $html['click_id']); ?></td>
+				<td class="date"><?php echo $html['click_time']; ?></td>
+				<td class="ppc"><?php echo $html['browser_id']; ?></td>
+				<td class="ppc"><?php echo $html['platform_id']; ?></td>
+				<?php if (geoLocationDatabaseInstalled() == true) echo '<td class="flag">' . $html['location'] .'</td>'; ?>
+				<td class="ppc"><?php echo $ppc_network_icon; ?></td>
 				<td class="filter">
-					<? if ($click_row['click_filtered'] == '1') { ?>
+					<?php if ($click_row['click_filtered'] == '1') { ?>
 						  <img style="margin-right: auto;" src="/202-img/icons/16x16/delete.png" alt="Filtered Out Click" title="filtered out click"/> 
-					<? } elseif ($click_row['click_lead'] == '1') { ?>
+					<?php } elseif ($click_row['click_lead'] == '1') { ?>
 						  <img style="margin-right: auto;" src="/202-img/icons/16x16/money_dollar.png" alt="Converted Click" title="converted click" width="16px" height="16px"/> 
-					<? } else { ?>
+					<?php } else { ?>
 						  <img style="margin-right: auto;" src="/202-img/icons/16x16/add.png" alt="Real Click" title="real click"/> 
-					<? } ?>
+					<?php } ?>
 				</td>
-				<td class="ip"><? echo $html['ip_address']; ?></td>
-				<td class="aff"><? echo $html['aff_campaign_name']; ?></td>
-				<td class="referer_big"><? printf('<a href="%s" target="_new" title="Referer">%s</a>',$html['referer'],$html['referer_host']); ?></td>
-				<td class="ad"><? echo $html['text_ad_name']; ?></td>
-				<td class="referer"><? if ($html['referer'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_end_blue.png" alt="Referer" title="Referer: %s"/></a>',$html['referer'],$html['referer']); } ?></td>
-				<td class="landing"><? if ($html['landing'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_pause_blue.png" alt="Landing"  title="Landing Page: %s"/></a>',$html['landing'],$html['landing']); } ?></td>
-				<td class="outbound"><? if (($html['outbound'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_play_blue.png" alt="Outbound" title="Outbound: %s"/></a>',$html['outbound'],$html['outbound']); } ?></td>
-				<td class="cloaking"><? if (($html['cloaking'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_equalizer_blue.png" alt="Cloaking" title="Cloaked Referer: %s"/></a>',$html['cloaking'],$html['cloaking']); } ?></td>
-				<td class="redirect"><? if (($html['redirect'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_fastforward_blue.png" alt="Redirection" title="Redirect: %s"/></a>',$html['redirect'],$html['redirect']); } ?></td>
-				<td class="keyword"><div><span title="<? echo $html['keyword']; ?>"><? echo $html['keyword']; ?></span></div></td>
+				<td class="ip"><?php echo $html['ip_address']; ?></td>
+				<td class="aff"><?php echo $html['aff_campaign_name']; ?></td>
+				<td class="referer_big"><?php printf('<a href="%s" target="_new" title="Referer">%s</a>',$html['referer'],$html['referer_host']); ?></td>
+				<td class="ad"><?php echo $html['text_ad_name']; ?></td>
+				<td class="referer"><?php if ($html['referer'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_end_blue.png" alt="Referer" title="Referer: %s"/></a>',$html['referer'],$html['referer']); } ?></td>
+				<td class="landing"><?php if ($html['landing'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_pause_blue.png" alt="Landing"  title="Landing Page: %s"/></a>',$html['landing'],$html['landing']); } ?></td>
+				<td class="outbound"><?php if (($html['outbound'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_play_blue.png" alt="Outbound" title="Outbound: %s"/></a>',$html['outbound'],$html['outbound']); } ?></td>
+				<td class="cloaking"><?php if (($html['cloaking'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_equalizer_blue.png" alt="Cloaking" title="Cloaked Referer: %s"/></a>',$html['cloaking'],$html['cloaking']); } ?></td>
+				<td class="redirect"><?php if (($html['redirect'] != '') and ($click_row['click_out'] == 1)) { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_fastforward_blue.png" alt="Redirection" title="Redirect: %s"/></a>',$html['redirect'],$html['redirect']); } ?></td>
+				<td class="keyword"><div><span title="<?php echo $html['keyword']; ?>"><?php echo $html['keyword']; ?></span></div></td>
 			</tr>
 		 </table>
-	<?  } ?>
+	<?php  } ?>
 	</div>
 
-	<? if (($query['pages'] > 2) and ($_GET['spy'] != 1)) { ?>
+	<?php if (($query['pages'] > 2) and ($_GET['spy'] != 1)) { ?>
 		<div class="offset">   <?
 			if ($query['offset'] > 0) {
 				printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\');">First</a> ', $i);
@@ -335,6 +335,6 @@ AUTH::require_user();
 				printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/click_history.php\',\'%s\');">Last</a> ', $query['pages'] - 2); 
 			} ?>
 		</div>   
-	<? }   
+	<?php }   
 
 

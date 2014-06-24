@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -12,11 +12,11 @@ template_top('Account Overview',NULL,NULL,NULL);   ?>
                             
 
 
-<? display_calendar('/tracking202/ajax/account_overview.php', true, false, true, false, true, true);    ?>
+<?php display_calendar('/tracking202/ajax/account_overview.php', true, false, true, false, true, true);    ?>
 
 
 <script type="text/javascript">
  loadContent('/tracking202/ajax/account_overview.php',null);
 </script>
 
-<? template_bottom();
+<?php template_bottom();

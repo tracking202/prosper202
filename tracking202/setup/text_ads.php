@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -198,20 +198,20 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 <table cellspacing="0" cellpadding="0" class="setup">
     <tr valign="top">
         <td>
-			<? if ($error) { ?>
+			<?php if ($error) { ?>
 				<div class="warning"><div><h3>There were errors with your submission.</h3></div></div>
-			<? } echo $error['token']; ?>
+			<?php } echo $error['token']; ?>
 
-			<? if ($add_success == true) { ?>
+			<?php if ($add_success == true) { ?>
 				<div class="success"><div><h3>Your submission was successful</h3>Your changes were made succesfully.</div></div>
-			<? } ?>
+			<?php } ?>
 
-			<? if ($delete_success == true) { ?>
+			<?php if ($delete_success == true) { ?>
 				<div class="success"><div><h3>You deletion was successful</h3>You have succesfully removed a campaign.</div></div>
-			<? } ?>
+			<?php } ?>
 			
-			<form method="post" action="<? if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
-				<input name="text_ad_id" type="hidden" value="<? echo $html['text_ad_id']; ?>"/>	
+			<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" style>
+				<input name="text_ad_id" type="hidden" value="<?php echo $html['text_ad_id']; ?>"/>	
 				<table>
 					<tr valign="top">
 						<td colspan="2">
@@ -225,43 +225,43 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 			<tr valign="top">
 				<td class="left_caption">Text Ad For</td>	
 				<td>
-					<input type="radio" name="text_ad_type" value="0" <? if ($html['text_ad_type'] == '0' or !$html['text_ad_type']) { echo ' CHECKED '; }  ?> onClick="text_ad_select(this.value);"> Direct Link Setup, or Simple Landing Page Setup<br/>
-					<input type="radio" name="text_ad_type" value="1" <? if ($html['text_ad_type'] == '1') { echo ' CHECKED '; } ?> onClick="text_ad_select(this.value);"> Advanced Landing Page Setup
-					<? echo $error['landing_page_type']; ?>
+					<input type="radio" name="text_ad_type" value="0" <?php if ($html['text_ad_type'] == '0' or !$html['text_ad_type']) { echo ' CHECKED '; }  ?> onClick="text_ad_select(this.value);"> Direct Link Setup, or Simple Landing Page Setup<br/>
+					<input type="radio" name="text_ad_type" value="1" <?php if ($html['text_ad_type'] == '1') { echo ' CHECKED '; } ?> onClick="text_ad_select(this.value);"> Advanced Landing Page Setup
+					<?php echo $error['landing_page_type']; ?>
 				</td>
 			</tr>
 			<tr>
 				<td colspan="2"><hr/></td>
 			</tr>
-						<tr id="lp_landing_page" <? if (($html['text_ad_type'] == '0') or (!$html['text_ad_type'])) { echo ' style="display:none;"'; } ?>>
+						<tr id="lp_landing_page" <?php if (($html['text_ad_type'] == '0') or (!$html['text_ad_type'])) { echo ' style="display:none;"'; } ?>>
 				<td class="left_caption">Landing Page</td>
 				<td>
 					<img id="landing_page_div_loading" style="display: none;" src="/202-img/loader-small.gif"/>
 					<div id="landing_page_div" style="display: none;"></div>
-					<? echo $error['landing_page_id']; ?>
+					<?php echo $error['landing_page_id']; ?>
 				</td>
 			</tr>
 			
-				<tr id="lp_aff_network" <? if ($html['text_ad_type'] == '1') { echo ' style="display:none;"'; } ?>>
+				<tr id="lp_aff_network" <?php if ($html['text_ad_type'] == '1') { echo ' style="display:none;"'; } ?>>
 						<td class="left_caption">Aff Network</td>
 						<td>
 							<img id="aff_network_id_div_loading" src="/202-img/loader-small.gif"/>
 							<div id="aff_network_id_div" style="display: inline;"></div>
                         </td>
 					</tr>
-					<tr id="lp_aff_campaign" <? if ($html['text_ad_type'] == '1') { echo ' style="display:none;"'; } ?>>
+					<tr id="lp_aff_campaign" <?php if ($html['text_ad_type'] == '1') { echo ' style="display:none;"'; } ?>>
 						<td class="left_caption">Aff Campaign</td>
                         <td>
 							<img id="aff_campaign_id_div_loading" src="/202-img/loader-small.gif" style="display: none;"/>
 							<div id="aff_campaign_id_div" style="display: inline;"></div>
-							<? echo $error['aff_campaign_id']; ?>
+							<?php echo $error['aff_campaign_id']; ?>
 						</td>
 					</tr>
 					<tr valign="top">
 						<td class="left_caption">Ad Nickname <a class="onclick_color" onclick="alert('The ad nickname is the nickname we store for you, this is used for when you have several ads, you can quickly find the ones you are looking for by assigning each ad a unique nickname.');">?</a></td>
 						<td>
-							<input type="text" name="text_ad_name" value="<? echo $html['text_ad_name']; ?>" style="width: 200px;"/>
-							<? echo $error['text_ad_name']; ?>
+							<input type="text" name="text_ad_name" value="<?php echo $html['text_ad_name']; ?>" style="width: 200px;"/>
+							<?php echo $error['text_ad_name']; ?>
 						</td>
 					</tr>
 					<tr valign="top">
@@ -270,9 +270,9 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 							<table class="ad_copy" cellspacing="0" cellpadding="3">
 								<tr>
 									<td valign="bottom">
-										<div id="preview_headline" class="ad_copy_headline"><? if ($html['text_ad_headline']) { echo $html['text_ad_headline']; } else { echo 'Luxury Cruise to Mars'; } ?></div>
-										<div id="preview_description" class="ad_copy_description"><? if ($html['text_ad_description']) { echo $html['text_ad_description']; } else { echo 'Visit the Red Planet in style. Low-gravity fun for everyone!'; } ?></div>
-										<div id="preview_display_url" class="ad_copy_display_url"><? if ($html['text_ad_display_url']) { echo $html['text_ad_display_url']; } else { echo 'www.example.com'; } ?></div>
+										<div id="preview_headline" class="ad_copy_headline"><?php if ($html['text_ad_headline']) { echo $html['text_ad_headline']; } else { echo 'Luxury Cruise to Mars'; } ?></div>
+										<div id="preview_description" class="ad_copy_description"><?php if ($html['text_ad_description']) { echo $html['text_ad_description']; } else { echo 'Visit the Red Planet in style. Low-gravity fun for everyone!'; } ?></div>
+										<div id="preview_display_url" class="ad_copy_display_url"><?php if ($html['text_ad_display_url']) { echo $html['text_ad_display_url']; } else { echo 'www.example.com'; } ?></div>
 									</td>
 								</tr>
 							</table>
@@ -281,43 +281,43 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 					<tr valign="top">
 						<td class="left_caption">Ad Headline</td>
 						<td>
-							<input type="text" name="text_ad_headline" style="width: 200px;" onkeyup="document.getElementById('preview_headline').innerHTML=this.value; if (document.getElementById('preview_headline').innerHTML=='') { document.getElementById('preview_headline').innerHTML='Luxury Cruise to Mars'; }" onchange="document.getElementById('preview_headline').innerHTML=this.value; if (document.getElementById('preview_headline').innerHTML=='') { document.getElementById('preview_headline').innerHTML='Luxury Cruise to Mars'; }" value="<? echo $html['text_ad_headline']; ?>"/>
-							<? echo $error['text_ad_headline']; ?>
+							<input type="text" name="text_ad_headline" style="width: 200px;" onkeyup="document.getElementById('preview_headline').innerHTML=this.value; if (document.getElementById('preview_headline').innerHTML=='') { document.getElementById('preview_headline').innerHTML='Luxury Cruise to Mars'; }" onchange="document.getElementById('preview_headline').innerHTML=this.value; if (document.getElementById('preview_headline').innerHTML=='') { document.getElementById('preview_headline').innerHTML='Luxury Cruise to Mars'; }" value="<?php echo $html['text_ad_headline']; ?>"/>
+							<?php echo $error['text_ad_headline']; ?>
 						</td>  
 					</tr>
 					<tr valign="top">
 						<td class="left_caption">Ad Description</td>
 						<td>
-							<textarea name="text_ad_description" style="width: 200px; height: 50px;"  onkeyup="document.getElementById('preview_description').innerHTML=this.value; if (document.getElementById('preview_description').innerHTML=='') { document.getElementById('preview_description').innerHTML='Visit the Red Planet in style. Low-gravity fun for everyone!'; }" onchange="document.getElementById('preview_description').innerHTML=this.value; if (document.getElementById('preview_description').innerHTML=='') { document.getElementById('preview_description').innerHTML='Visit the Red Planet in style. Low-gravity fun for everyone!'; }"><? echo $html['text_ad_description']; ?></textarea>
-							<? echo $error['text_ad_description']; ?>
+							<textarea name="text_ad_description" style="width: 200px; height: 50px;"  onkeyup="document.getElementById('preview_description').innerHTML=this.value; if (document.getElementById('preview_description').innerHTML=='') { document.getElementById('preview_description').innerHTML='Visit the Red Planet in style. Low-gravity fun for everyone!'; }" onchange="document.getElementById('preview_description').innerHTML=this.value; if (document.getElementById('preview_description').innerHTML=='') { document.getElementById('preview_description').innerHTML='Visit the Red Planet in style. Low-gravity fun for everyone!'; }"><?php echo $html['text_ad_description']; ?></textarea>
+							<?php echo $error['text_ad_description']; ?>
 						</td>
 					</tr>
 					<tr valign="top">
 						<td class="left_caption">Display URL</td>
 						<td>
-							<input type="text" name="text_ad_display_url" style="width: 200px; display: inline;" onkeyup="document.getElementById('preview_display_url').innerHTML=this.value; if (document.getElementById('preview_display_url').innerHTML=='') { document.getElementById('preview_display_url').innerHTML='www.example.com'; }" onchange="document.getElementById('preview_display_url').innerHTML=this.value; if (document.getElementById('preview_display_url').innerHTML=='') { document.getElementById('preview_display_url').innerHTML='www.example.com'; }" value="<? echo $html['text_ad_display_url']; ?>"/>
-							<? echo $error['text_ad_display_url']; ?>
+							<input type="text" name="text_ad_display_url" style="width: 200px; display: inline;" onkeyup="document.getElementById('preview_display_url').innerHTML=this.value; if (document.getElementById('preview_display_url').innerHTML=='') { document.getElementById('preview_display_url').innerHTML='www.example.com'; }" onchange="document.getElementById('preview_display_url').innerHTML=this.value; if (document.getElementById('preview_display_url').innerHTML=='') { document.getElementById('preview_display_url').innerHTML='www.example.com'; }" value="<?php echo $html['text_ad_display_url']; ?>"/>
+							<?php echo $error['text_ad_display_url']; ?>
 						</td>
 					</tr>                               
 					<tr valign="top">
 						<td/>
 						<td>
-							<input type="submit" value="<? if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"/>
-							<? if ($editing == true or $_GET['copy_text_ad_id'] != '') { ?>
+							<input type="submit" value="<?php if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"/>
+							<?php if ($editing == true or $_GET['copy_text_ad_id'] != '') { ?>
 								<button  style="display: inline; margin-left: 10px;" onclick="window.location='/tracking202/setup/text_ads.php'; return false; ">Cancel</button>   
-							<? } ?> 
+							<?php } ?> 
 						</td>
 					</tr>
 				</table>
 			</form>
-			<? echo $error['text_ad_id']; ?>
-			<? echo $error['wrong_user']; ?>  
+			<?php echo $error['text_ad_id']; ?>
+			<?php echo $error['wrong_user']; ?>  
 		
 		</td>
 		<td class="setup-right">   
 			<h2 class="green">Advanced Landing Page Text Ads</h2>
 			<ul>        
-				<? $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+				<?php $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 				$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND landing_page_type='1' AND landing_page_deleted='0'";
 				$landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
 				
@@ -326,7 +326,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 						
 					printf('<li>%s</li>', $html['landing_page_nickname']);
 						
-					?><ul style="margin-top: 0px;"><? 
+					?><ul style="margin-top: 0px;"><?php 
 							
 						$mysql['landing_page_id'] = mysql_real_escape_string($landing_page_row['landing_page_id']);
 						$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `landing_page_id`='".$mysql['landing_page_id']."' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC";
@@ -349,7 +349,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 			<br/><br/>
 			<h2 class="green">Direct Link/Simple Landing Page Text Ads</h2>
 			<ul>        
-			<?  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+			<?php  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 				$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
 				$aff_network_result = mysql_query($aff_network_sql) or record_mysql_error($aff_network_sql);
 				if (mysql_num_rows($aff_network_result) == 0 ) { 
@@ -376,7 +376,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 						
 							printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
 						
-							?><ul style="margin-top: 0px;"><? 
+							?><ul style="margin-top: 0px;"><?php 
 							
 								$mysql['aff_campaign_id'] = mysql_real_escape_string($aff_campaign_row['aff_campaign_id']);
 								$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC";
@@ -406,12 +406,12 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 <!-- open up the ajax aff network -->
 <script type="text/javascript">
     
-	load_landing_page(0, <? echo $html['landing_page_id']; if (!$html['landing_page_id']) { echo 0; } ?>, 'advlandingpage');
+	load_landing_page(0, <?php echo $html['landing_page_id']; if (!$html['landing_page_id']) { echo 0; } ?>, 'advlandingpage');
 
-   load_aff_network_id('<? echo $html['aff_network_id']; ?>');
-    <? if ($html['aff_network_id'] != '') { ?>
-        load_aff_campaign_id('<? echo $html['aff_network_id']; ?>','<? echo $html['aff_campaign_id']; ?>');
-    <? } ?>
+   load_aff_network_id('<?php echo $html['aff_network_id']; ?>');
+    <?php if ($html['aff_network_id'] != '') { ?>
+        load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>','<?php echo $html['aff_campaign_id']; ?>');
+    <?php } ?>
     
 	function text_ad_select(text_ad_type) {
 		if (text_ad_type == '0') { 
@@ -433,4 +433,4 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 
 
 		
-<? template_bottom();
+<?php template_bottom();

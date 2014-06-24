@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -17,7 +17,7 @@ template_top('Analyze Landing Pages',NULL,NULL,NULL); ?>
 	<h2>Analyze Incoming Landing Pages</h2>
 </div>                                        
 
-<? display_calendar('/tracking202/ajax/sort_landing_pages.php', true, true, true, true, true, true); ?> 
+<?php display_calendar('/tracking202/ajax/sort_landing_pages.php', true, true, true, true, true, true); ?> 
     
 <script type="text/javascript">
    loadContent('/tracking202/ajax/sort_landing_pages.php',null);
@@ -26,5 +26,5 @@ template_top('Analyze Landing Pages',NULL,NULL,NULL); ?>
 
 
 
-<?  template_bottom();
+<?php  template_bottom();
 	

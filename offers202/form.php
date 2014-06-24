@@ -1,12 +1,12 @@
-<? AUTH::require_user(); ?>
+<?php AUTH::require_user(); ?>
 
 <form id="offers_form" class="offers_form" onsubmit="return false;">
 	<table class="offers_form_table" cellspacing='0' cellpadding='5'>
 		<tr>
 			<th>Search:</th>
-			<td><input class="query" type="text" name="query" value="<? echo htmlentities($_SESSION['offers202_query']); ?>" ></td>
+			<td><input class="query" type="text" name="query" value="<?php echo htmlentities($_SESSION['offers202_query']); ?>" ></td>
             
-			<td><? include_once('ajax/getNetworks.php'); ?></td>
+			<td><?php include_once('ajax/getNetworks.php'); ?></td>
 		
            	 	<td><input class="search" type="submit" onclick="setOffersPref();" value="Search Offers"/></td>
 	            <td>

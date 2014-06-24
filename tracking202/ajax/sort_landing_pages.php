@@ -1,4 +1,4 @@
-<? 
+<?php 
 
 //include config
 	include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
@@ -336,26 +336,26 @@ $html['rows'] = htmlentities($query['rows'], ENT_QUOTES, 'UTF-8');
 			</a>	
 		</td>
 		<td>
-			<? printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']); ?>
+			<?php printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']); ?>
 		</td>
 	</tr>
 </table>
 
 <table cellpadding="0" cellspacing="1" class="m-stats">
 	<tr>   
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_landing_page_order']; ?>');">Landing Page</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_clicks_order']; ?>');">Clicks</a></th> 
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_click_throughs_order']; ?>');">Click Throughs</a></th> 
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_ctr_order']; ?>');">CTR</a></th> 
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_leads_order']; ?>');">Leads</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_su_ratio_order']; ?>');">S/U</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_payout_order']; ?>');">Payout</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_epc_order']; ?>');">EPC</a></th> 
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_avg_cpc_order']; ?>');">Avg CPC</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_income_order']; ?>');">Income</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_cost_order']; ?>');">Cost</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_net_order']; ?>');">Net</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<? echo $html['sort_landing_page_roi_order']; ?>');">ROI</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_landing_page_order']; ?>');">Landing Page</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_clicks_order']; ?>');">Clicks</a></th> 
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_click_throughs_order']; ?>');">Click Throughs</a></th> 
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_ctr_order']; ?>');">CTR</a></th> 
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_leads_order']; ?>');">Leads</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_su_ratio_order']; ?>');">S/U</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_payout_order']; ?>');">Payout</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_epc_order']; ?>');">EPC</a></th> 
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_avg_cpc_order']; ?>');">Avg CPC</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_income_order']; ?>');">Income</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_cost_order']; ?>');">Cost</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_net_order']; ?>');">Net</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_landing_pages.php','','<?php echo $html['sort_landing_page_roi_order']; ?>');">ROI</a></th>
 	</tr>   
 	
 	<?
@@ -386,24 +386,24 @@ while ($landing_page_row = mysql_fetch_array($landing_page_result, MYSQL_ASSOC))
 	$html['sort_landing_page_roi'] = htmlentities($landing_page_row['sort_landing_page_roi'].'%', ENT_QUOTES, 'UTF-8'); ?>
 	
 	<tr>
-		<td class="m-row2  m-row2-fade" ><? echo $html['landing_page_nickname']; ?></td>
-		<td class="m-row1"><? echo $html['sort_landing_page_clicks']; ?></td>
-		<td class="m-row1"><? echo $html['sort_landing_page_click_throughs']; ?></td>
-		<td class="m-row1"><? echo $html['sort_landing_page_ctr']; ?></td>
-		<td class="m-row1"><? echo $html['sort_landing_page_leads']; ?></td> 
-		<td class="m-row1"><? echo $html['sort_landing_page_su_ratio']; ?></td>
-		<td class="m-row1"><? echo $html['sort_landing_page_payout']; ?></td> 
-		<td class="m-row3"><? echo $html['sort_landing_page_epc']; ?></td>
-		<td class="m-row3"><? echo $html['sort_landing_page_avg_cpc']; ?></td>
-		<td class="m-row4 "><? echo $html['sort_landing_page_income']; ?></td>
-		<td class="m-row4 ">(<? echo $html['sort_landing_page_cost']; ?>)</td>
-		<td class="<? if ($landing_page_row['sort_landing_page_net'] > 0) { echo 'm-row_pos'; } elseif ($landing_page_row['sort_landing_page_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['sort_landing_page_net'] ; ?></td>
-		<td class="<? if ($landing_page_row['sort_landing_page_net'] > 0) { echo 'm-row_pos'; } elseif ($landing_page_row['sort_landing_page_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['sort_landing_page_roi'] ; ?></td>
+		<td class="m-row2  m-row2-fade" ><?php echo $html['landing_page_nickname']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_landing_page_clicks']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_landing_page_click_throughs']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_landing_page_ctr']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_landing_page_leads']; ?></td> 
+		<td class="m-row1"><?php echo $html['sort_landing_page_su_ratio']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_landing_page_payout']; ?></td> 
+		<td class="m-row3"><?php echo $html['sort_landing_page_epc']; ?></td>
+		<td class="m-row3"><?php echo $html['sort_landing_page_avg_cpc']; ?></td>
+		<td class="m-row4 "><?php echo $html['sort_landing_page_income']; ?></td>
+		<td class="m-row4 ">(<?php echo $html['sort_landing_page_cost']; ?>)</td>
+		<td class="<?php if ($landing_page_row['sort_landing_page_net'] > 0) { echo 'm-row_pos'; } elseif ($landing_page_row['sort_landing_page_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['sort_landing_page_net'] ; ?></td>
+		<td class="<?php if ($landing_page_row['sort_landing_page_net'] > 0) { echo 'm-row_pos'; } elseif ($landing_page_row['sort_landing_page_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['sort_landing_page_roi'] ; ?></td>
 	</tr>
-<? } ?>
+<?php } ?>
 </table>   
 
-<? if ($query['pages'] > 2) { ?>
+<?php if ($query['pages'] > 2) { ?>
 	<div class="offset">   <?
 		if ($query['offset'] > 0) {
 			printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/sort_landing_pages.php\',\'%s\',\'%s\');">First</a> ', $i, $html['order']);
@@ -425,4 +425,4 @@ while ($landing_page_row = mysql_fetch_array($landing_page_result, MYSQL_ASSOC))
 			printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/sort_landing_pages.php\',\'%s\',\'%s\');">Last</a> ', $query['pages'] - 2, $html['order']); 
 		} ?>
 	</div>   
-<? } ?>
+<?php } ?>

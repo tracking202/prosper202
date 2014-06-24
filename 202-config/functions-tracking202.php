@@ -137,12 +137,12 @@ function record_mysql_error($sql)
 		<div class="warning" style="margin: 40px auto; width: 450px;">
 			<div>
 				<h3>A database error has occured, the webmaster has been notified</h3>
-				<p>If this error persists, you may email us directly: <? printf('<a href="mailto:%s">%s</a>',$_SERVER['SERVER_ADMIN'],$_SERVER['SERVER_ADMIN']); ?></p>
+				<p>If this error persists, you may email us directly: <?php printf('<a href="mailto:%s">%s</a>',$_SERVER['SERVER_ADMIN'],$_SERVER['SERVER_ADMIN']); ?></p>
 			</div>
 		</div>
 		
 	   
-		<? template_bottom($server_row);  die();
+		<?php template_bottom($server_row);  die();
 }
 
 
@@ -202,7 +202,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 
 	<form onsubmit="return false;" id="user_prefs">
 		<input type="hidden" name="duration" value="1"/>
-		<input type="hidden" name="user_pref_adv" id="user_pref_adv" value="<? if ($user_row['user_pref_adv'] == '1') { echo '1'; } ?>" />
+		<input type="hidden" name="user_pref_adv" id="user_pref_adv" value="<?php if ($user_row['user_pref_adv'] == '1') { echo '1'; } ?>" />
 		
 		<table class="s-top" cellspacing="0" cellpadding="0" id="s-top">
 			<tr valign="top">
@@ -212,33 +212,33 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 						<tr>
 							<td class="s-top-middle-table-left">Refine your search:</td>
 							<td >
-								<table cellspacing="0" cellpadding="0" class="s-top-middle-table-right" <? if ($show_time == false) { echo 'style="display:none;"'; } ?>>
+								<table cellspacing="0" cellpadding="0" class="s-top-middle-table-right" <?php if ($show_time == false) { echo 'style="display:none;"'; } ?>>
 									<tr>
 										<td>
-											Start Date: <input onclick=" $('from_cal').style.display='block'; $('to_cal').style.display='none';  unset_user_pref_time_predefined();"   class="s-input s-input-date" type="text" name="from" id="from" value="<? echo $html['from']; ?>" onkeydown="$('from_cal').style.display='none'; unset_user_pref_time_predefined();"/>
+											Start Date: <input onclick=" $('from_cal').style.display='block'; $('to_cal').style.display='none';  unset_user_pref_time_predefined();"   class="s-input s-input-date" type="text" name="from" id="from" value="<?php echo $html['from']; ?>" onkeydown="$('from_cal').style.display='none'; unset_user_pref_time_predefined();"/>
 											
 											<div id="from_cal" class="scal tinyscal" style="position: absolute; z-index: 10; display: none;"></div>
 											<script type="text/javascript">
 												var options = ({
 												     updateformat: 'mm/dd/yyyy - 0:00',
-	            									     month:<? echo date('m', $time['from']); ?>,
-												     year:<? echo date('Y', $time['from']); ?>,
-												     day: <? echo date('d', $time['from']); ?>
+	            									     month:<?php echo date('m', $time['from']); ?>,
+												     year:<?php echo date('Y', $time['from']); ?>,
+												     day: <?php echo date('d', $time['from']); ?>
 												});
 												var from_cal = new scal('from_cal','from', options);
 											</script>
 											
 										</td>
 										<td>
-											End Date: <input onclick=" $('to_cal').style.display='block'; $('from_cal').style.display='none';  unset_user_pref_time_predefined();"  class="s-input s-input-date" type="text" name="to" id="to" value="<? echo $html['to']; ?>" onkeydown="$('to_cal').style.display='none'; unset_user_pref_time_predefined();"/>		
+											End Date: <input onclick=" $('to_cal').style.display='block'; $('from_cal').style.display='none';  unset_user_pref_time_predefined();"  class="s-input s-input-date" type="text" name="to" id="to" value="<?php echo $html['to']; ?>" onkeydown="$('to_cal').style.display='none'; unset_user_pref_time_predefined();"/>		
 											
 											<div id="to_cal" class="scal tinyscal" style="position: absolute; z-index: 10; display: none;"></div>
 											<script type="text/javascript">
 												var options = ({
 												     updateformat: 'mm/dd/yyyy - 23:59',
-	            									     month:<? echo date('m', $time['from']); ?>,
-												     year:<? echo date('Y', $time['from']); ?>,
-												     day: <? echo date('d', $time['from']); ?>
+	            									     month:<?php echo date('m', $time['from']); ?>,
+												     year:<?php echo date('Y', $time['from']); ?>,
+												     day: <?php echo date('d', $time['from']); ?>
 												});
 												var to_cal = new scal('to_cal','to', options);
 											</script>
@@ -246,16 +246,16 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 										</td>
 										<td><select class="s-input" name="user_pref_time_predefined" id="user_pref_time_predefined" onchange="set_user_pref_time_predefined();">
 											<option value="">Custom Date</option>                                       
-											<option <? if ($time['user_pref_time_predefined'] == 'today') { echo 'selected=""'; } ?> value="today">Today</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'yesterday') { echo 'selected=""'; } ?> value="yesterday">Yesterday</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'last7') { echo 'selected=""'; } ?> value="last7">Last 7 Days</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'last14') { echo 'selected=""'; } ?> value="last14">Last 14 Days</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'last30') { echo 'selected=""'; } ?> value="last30">Last 30 Days</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'thismonth') { echo 'selected=""'; } ?> value="thismonth">This Month</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'lastmonth') { echo 'selected=""'; } ?> value="lastmonth">Last Month</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'thisyear') { echo 'selected=""'; } ?> value="thisyear">This Year</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'lastyear') { echo 'selected=""'; } ?> value="lastyear">Last Year</option>
-											<option <? if ($time['user_pref_time_predefined'] == 'alltime') { echo 'selected=""'; } ?> value="alltime">All Time</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'today') { echo 'selected=""'; } ?> value="today">Today</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'yesterday') { echo 'selected=""'; } ?> value="yesterday">Yesterday</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'last7') { echo 'selected=""'; } ?> value="last7">Last 7 Days</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'last14') { echo 'selected=""'; } ?> value="last14">Last 14 Days</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'last30') { echo 'selected=""'; } ?> value="last30">Last 30 Days</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'thismonth') { echo 'selected=""'; } ?> value="thismonth">This Month</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'lastmonth') { echo 'selected=""'; } ?> value="lastmonth">Last Month</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'thisyear') { echo 'selected=""'; } ?> value="thisyear">This Year</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'lastyear') { echo 'selected=""'; } ?> value="lastyear">Last Year</option>
+											<option <?php if ($time['user_pref_time_predefined'] == 'alltime') { echo 'selected=""'; } ?> value="alltime">All Time</option>
 										</select></td>
 									</tr>
 								</table>
@@ -268,8 +268,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 		</table>
 	   
 	   <div class="s-bottom" >
-	   <? if ($navigation[1] == 'tracking202') { ?>
-			<div id="s-main" <? if ($show_adv == false) { echo 'style="display:none;"'; } ?>>
+	   <?php if ($navigation[1] == 'tracking202') { ?>
+			<div id="s-main" <?php if ($show_adv == false) { echo 'style="display:none;"'; } ?>>
 				<table class="s-table" cellspacing="0" cellpadding="0">
 					<tr>
 						<td >
@@ -285,7 +285,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 							<table cellspacing="0" cellpadding="0" class="s-table-right">
 								<tr>
 									<td>Keyword</td>
-									<td><input name="keyword" id="keyword" type="text" value="<? echo $html['keyword']; ?>"/></td> 
+									<td><input name="keyword" id="keyword" type="text" value="<?php echo $html['keyword']; ?>"/></td> 
 								</tr>
 							</table>
 						</td>
@@ -304,7 +304,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 							<table cellspacing="0" cellpadding="0" class="s-table-right">
 								<tr>
 									<td>Visitor IP</td>
-									<td><input name="ip" id="ip" type="text" value="<? echo $html['ip']; ?>"/> </td> 
+									<td><input name="ip" id="ip" type="text" value="<?php echo $html['ip']; ?>"/> </td> 
 								</tr>
 							</table>
 						</td>  
@@ -312,8 +312,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 				</table>
 			</div>
 			
-			<div class="s-adv" id="s-adv" style="<? if (($user_row['user_pref_adv'] != '1') or ($show_adv == false)) { echo 'display: none;'; } ?>">
-				<div class="s-border" <? if ($show_adv == false) { echo 'style="display:none;"'; } ?>></div>
+			<div class="s-adv" id="s-adv" style="<?php if (($user_row['user_pref_adv'] != '1') or ($show_adv == false)) { echo 'display: none;'; } ?>">
+				<div class="s-border" <?php if ($show_adv == false) { echo 'style="display:none;"'; } ?>></div>
 				<table class="s-table" cellspacing="0" cellpadding="0">
 					<tr>
 						<td>
@@ -340,7 +340,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 							<table cellspacing="0" cellpadding="0" class="s-table-right">
 								<tr>
 									<td>Country</td>
-									<td><input name="country" id="country" readonly="readonly" type="text" value="<? echo $html['country']; ?>"/> </td> 
+									<td><input name="country" id="country" readonly="readonly" type="text" value="<?php echo $html['country']; ?>"/> </td> 
 								</tr>
 							</table>
 						</td>
@@ -361,7 +361,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 							<table cellspacing="0" cellpadding="0" class="s-table-right">
 								<tr>
 									<td>Referer</td>
-									<td><input name="referer" id="referer" type="text" value="<? echo $html['referer']; ?>"/> </td> 
+									<td><input name="referer" id="referer" type="text" value="<?php echo $html['referer']; ?>"/> </td> 
 								</tr>
 							</table>
 						</td>
@@ -369,10 +369,10 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 				</table>
 			</div>
 			
-		<? } ?>
+		<?php } ?>
 		<?php if($show_adv_breakdown==true) { ?>
-			<div class="s-adv" id="s-adv" style="<? if ($show_adv_breakdown == false) { echo 'display: none;'; } ?>">
-				<div class="s-border" <? if ($show_adv_breakdown == false) { echo 'style="display:none;"'; } ?>></div>
+			<div class="s-adv" id="s-adv" style="<?php if ($show_adv_breakdown == false) { echo 'display: none;'; } ?>">
+				<div class="s-border" <?php if ($show_adv_breakdown == false) { echo 'style="display:none;"'; } ?>></div>
 				<table class="s-table" cellspacing="0" cellpadding="0">
 					<tr>
 						<td>
@@ -430,59 +430,59 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 			</div>
 		<?php } ?>
 			<div class="s-adv">
-				<div class="s-border" <? if ($show_adv == false) { echo 'style="display:none;"'; } ?>></div>
+				<div class="s-border" <?php if ($show_adv == false) { echo 'style="display:none;"'; } ?>></div>
 				<table class="s-table" cellspacing="0" cellpadding="0">
 					 <tr>
 						<td>
-							<table cellspacing="0" cellpadding="0" class="s-table-left" <? if ($show_bottom == false) { echo 'style="display:none;"'; } ?>>
+							<table cellspacing="0" cellpadding="0" class="s-table-left" <?php if ($show_bottom == false) { echo 'style="display:none;"'; } ?>>
 								<tr>
 									<td>Display</td>
 									<td>
-										<select name="user_pref_limit" <? if ($show_limit == false) { echo 'style="display:none;"'; } ?>>
-											<option <? if ($user_row['user_pref_limit'] == '10') { echo 'SELECTED'; } ?> value="10">10</option>
-											<option <? if ($user_row['user_pref_limit'] == '25') { echo 'SELECTED'; } ?> value="25">25</option>
-											<option <? if ($user_row['user_pref_limit'] == '50') { echo 'SELECTED'; } ?> value="50">50</option>
-											<option <? if ($user_row['user_pref_limit'] == '75') { echo 'SELECTED'; } ?> value="75">75</option> 
-											<option <? if ($user_row['user_pref_limit'] == '100') { echo 'SELECTED'; } ?> value="100">100</option>
-											<option <? if ($user_row['user_pref_limit'] == '150') { echo 'SELECTED'; } ?> value="150">150</option>
-											<option <? if ($user_row['user_pref_limit'] == '200') { echo 'SELECTED'; } ?> value="200">200</option>
+										<select name="user_pref_limit" <?php if ($show_limit == false) { echo 'style="display:none;"'; } ?>>
+											<option <?php if ($user_row['user_pref_limit'] == '10') { echo 'SELECTED'; } ?> value="10">10</option>
+											<option <?php if ($user_row['user_pref_limit'] == '25') { echo 'SELECTED'; } ?> value="25">25</option>
+											<option <?php if ($user_row['user_pref_limit'] == '50') { echo 'SELECTED'; } ?> value="50">50</option>
+											<option <?php if ($user_row['user_pref_limit'] == '75') { echo 'SELECTED'; } ?> value="75">75</option> 
+											<option <?php if ($user_row['user_pref_limit'] == '100') { echo 'SELECTED'; } ?> value="100">100</option>
+											<option <?php if ($user_row['user_pref_limit'] == '150') { echo 'SELECTED'; } ?> value="150">150</option>
+											<option <?php if ($user_row['user_pref_limit'] == '200') { echo 'SELECTED'; } ?> value="200">200</option>
 										</select>
 									</td>
 									<td>
-										<select name="user_pref_breakdown" <? if ($show_breakdown == false) { echo 'style="display:none;"'; } ?>>
-											<option <? if ($user_row['user_pref_breakdown'] == 'hour') { echo 'SELECTED'; } ?> value="hour">By Hour</option>
-											<option <? if ($user_row['user_pref_breakdown'] == 'day') { echo 'SELECTED'; } ?> value="day">By Day</option>
-											<option <? if ($user_row['user_pref_breakdown'] == 'month') { echo 'SELECTED'; } ?> value="month">By Month</option>  
-											<option <? if ($user_row['user_pref_breakdown'] == 'year') { echo 'SELECTED'; } ?> value="year">By Year</option>  
+										<select name="user_pref_breakdown" <?php if ($show_breakdown == false) { echo 'style="display:none;"'; } ?>>
+											<option <?php if ($user_row['user_pref_breakdown'] == 'hour') { echo 'SELECTED'; } ?> value="hour">By Hour</option>
+											<option <?php if ($user_row['user_pref_breakdown'] == 'day') { echo 'SELECTED'; } ?> value="day">By Day</option>
+											<option <?php if ($user_row['user_pref_breakdown'] == 'month') { echo 'SELECTED'; } ?> value="month">By Month</option>  
+											<option <?php if ($user_row['user_pref_breakdown'] == 'year') { echo 'SELECTED'; } ?> value="year">By Year</option>  
 										</select>
 									</td>
 									<td>
-										<select name="user_pref_chart" <? if ($show_breakdown == false) { echo 'style="display:none;"'; } ?>>
-											<option <? if ($user_row['user_pref_chart'] == 'profitloss') { echo 'SELECTED'; } ?> value="profitloss">Profit Loss Bar Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'clicks') { echo 'SELECTED'; } ?> value="clicks">Clicks Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'leads') { echo 'SELECTED'; } ?> value="leads">Leads Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'su_ratio') { echo 'SELECTED'; } ?> value="su_ratio">S/U Ratio Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'payout') { echo 'SELECTED'; } ?> value="payout">Payout Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'epc') { echo 'SELECTED'; } ?> value="epc">EPC Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'cpc') { echo 'SELECTED'; } ?> value="cpc">Avg CPC Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'income') { echo 'SELECTED'; } ?> value="income">Income Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'cost') { echo 'SELECTED'; } ?> value="cost">Cost Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'net') { echo 'SELECTED'; } ?> value="net">Net Line Graph</option>
-											<option <? if ($user_row['user_pref_chart'] == 'roi') { echo 'SELECTED'; } ?> value="roi">ROI Line Graph</option> 
+										<select name="user_pref_chart" <?php if ($show_breakdown == false) { echo 'style="display:none;"'; } ?>>
+											<option <?php if ($user_row['user_pref_chart'] == 'profitloss') { echo 'SELECTED'; } ?> value="profitloss">Profit Loss Bar Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'clicks') { echo 'SELECTED'; } ?> value="clicks">Clicks Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'leads') { echo 'SELECTED'; } ?> value="leads">Leads Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'su_ratio') { echo 'SELECTED'; } ?> value="su_ratio">S/U Ratio Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'payout') { echo 'SELECTED'; } ?> value="payout">Payout Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'epc') { echo 'SELECTED'; } ?> value="epc">EPC Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'cpc') { echo 'SELECTED'; } ?> value="cpc">Avg CPC Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'income') { echo 'SELECTED'; } ?> value="income">Income Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'cost') { echo 'SELECTED'; } ?> value="cost">Cost Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'net') { echo 'SELECTED'; } ?> value="net">Net Line Graph</option>
+											<option <?php if ($user_row['user_pref_chart'] == 'roi') { echo 'SELECTED'; } ?> value="roi">ROI Line Graph</option> 
 										</select>
 									</td>
 									<td>
-										<select name="user_pref_show" <? if ($show_type == false) { echo 'style="display:none;"'; } ?>>
-											<option <? if ($user_row['user_pref_show'] == 'all') { echo 'SELECTED'; } ?> value="all">Show All Clicks</option>
-											<option <? if ($user_row['user_pref_show'] == 'real') { echo 'SELECTED'; } ?> value="real">Show Real Clicks</option>
-											<option <? if ($user_row['user_pref_show'] == 'filtered') { echo 'SELECTED'; } ?> value="filtered">Show Filtered Out Clicks</option>
-											<option <? if ($user_row['user_pref_show'] == 'leads') { echo 'SELECTED'; } ?> value="leads">Show Converted Clicks</option>
+										<select name="user_pref_show" <?php if ($show_type == false) { echo 'style="display:none;"'; } ?>>
+											<option <?php if ($user_row['user_pref_show'] == 'all') { echo 'SELECTED'; } ?> value="all">Show All Clicks</option>
+											<option <?php if ($user_row['user_pref_show'] == 'real') { echo 'SELECTED'; } ?> value="real">Show Real Clicks</option>
+											<option <?php if ($user_row['user_pref_show'] == 'filtered') { echo 'SELECTED'; } ?> value="filtered">Show Filtered Out Clicks</option>
+											<option <?php if ($user_row['user_pref_show'] == 'leads') { echo 'SELECTED'; } ?> value="leads">Show Converted Clicks</option>
 										</select>
 									</td>
 									<td class="s-td-slim">
-										<select name="user_cpc_or_cpv" <? if ($show_cpc_or_cpv == false) { echo 'style="display:none;"'; } ?>>
-											<option <? if ($user_row['user_cpc_or_cpv'] == 'cpc') { echo 'SELECTED'; } ?> value="cpc">CPC Costs</option>
-											<option <? if ($user_row['user_cpc_or_cpv'] == 'cpv') { echo 'SELECTED'; } ?> value="cpv">CPV Costs</option>
+										<select name="user_cpc_or_cpv" <?php if ($show_cpc_or_cpv == false) { echo 'style="display:none;"'; } ?>>
+											<option <?php if ($user_row['user_cpc_or_cpv'] == 'cpc') { echo 'SELECTED'; } ?> value="cpc">CPC Costs</option>
+											<option <?php if ($user_row['user_cpc_or_cpv'] == 'cpv') { echo 'SELECTED'; } ?> value="cpv">CPV Costs</option>
 										</select>
 									</td>
 								</tr>
@@ -493,9 +493,9 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 								<tr>
 									<!-- This first is so the ENTER is defaulted to the first submit -->
 									<td id="s-status-loading" style="display:none;"><img src="/202-img/loader-small.gif"/></td>
-									<td style="display: none;"><input type="submit" id="s-search" class="s-submit s-submit1" onclick="set_user_prefs('<? echo $html['page']; ?>');" value="Save User Preferences"/></td>
-									<td><button id="s-toogleAdv" class="s-submit s-submit2" onclick="toggleAdvanced();" <? if ($show_adv == false) { echo 'style="display:none;"'; } ?>><? if ($user_row['user_pref_adv'] != '1') { echo 'More Options'; } else { echo 'Less Options'; } ?>
-									<td><input type="submit" id="s-search" class="s-submit s-submit1" onclick="set_user_prefs('<? echo $html['page']; ?>');" value="Set Preferences"/></td>
+									<td style="display: none;"><input type="submit" id="s-search" class="s-submit s-submit1" onclick="set_user_prefs('<?php echo $html['page']; ?>');" value="Save User Preferences"/></td>
+									<td><button id="s-toogleAdv" class="s-submit s-submit2" onclick="toggleAdvanced();" <?php if ($show_adv == false) { echo 'style="display:none;"'; } ?>><?php if ($user_row['user_pref_adv'] != '1') { echo 'More Options'; } else { echo 'Less Options'; } ?>
+									<td><input type="submit" id="s-search" class="s-submit s-submit1" onclick="set_user_prefs('<?php echo $html['page']; ?>');" value="Set Preferences"/></td>
 								</tr>
 							</table>
 						</td>
@@ -517,151 +517,151 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 			$('from_cal').style.display='none';
 	
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'today') {
-				<?  $time['from'] = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
+				<?php  $time['from'] = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
 					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'yesterday') {
-				<?  $time['from'] = mktime(0,0,0,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
+				<?php  $time['from'] = mktime(0,0,0,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
 					$time['to'] = mktime(23,59,59,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400)); ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'last7') {
-				<?  $time['from'] = mktime(0,0,0,date('m',time()-86400*7),date('d',time()-86400*7),date('Y',time()-86400*7));
+				<?php  $time['from'] = mktime(0,0,0,date('m',time()-86400*7),date('d',time()-86400*7),date('Y',time()-86400*7));
 					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));  ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'last14') {
-				<?  $time['from'] = mktime(0,0,0,date('m',time()-86400*14),date('d',time()-86400*14),date('Y',time()-86400*14));
+				<?php  $time['from'] = mktime(0,0,0,date('m',time()-86400*14),date('d',time()-86400*14),date('Y',time()-86400*14));
 					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));  ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'last30') {
-				<?  $time['from'] = mktime(0,0,0,date('m',time()-86400*30),date('d',time()-86400*30),date('Y',time()-86400*30));
+				<?php  $time['from'] = mktime(0,0,0,date('m',time()-86400*30),date('d',time()-86400*30),date('Y',time()-86400*30));
 					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));    ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'thismonth') {
-				<?  $time['from'] = mktime(0,0,0,date('m',time()),1,date('Y',time()));
+				<?php  $time['from'] = mktime(0,0,0,date('m',time()),1,date('Y',time()));
 					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));   ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 	
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'lastmonth') {
-				<?  $time['from'] = mktime(0,0,0,date('m',time()-2629743),1,date('Y',time()-2629743));
+				<?php  $time['from'] = mktime(0,0,0,date('m',time()-2629743),1,date('Y',time()-2629743));
 					$time['to'] = mktime(23,59,59,date('m',time()-2629743),getLastDayOfMonth(date('m',time()-2629743), date('Y',time()-2629743)),date('Y',time()-2629743));   ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'thisyear') {
-				<?  $time['from'] = mktime(0,0,0,1,1,date('Y',time()));
+				<?php  $time['from'] = mktime(0,0,0,1,1,date('Y',time()));
 					$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));   ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'lastyear') {
-				<?  $time['from'] = mktime(0,0,0,1,1,date('Y',time()-31556926));
+				<?php  $time['from'] = mktime(0,0,0,1,1,date('Y',time()-31556926));
 					$time['to'] = mktime(0,0,0,12,getLastDayOfMonth(date('m',time()-31556926), date('Y',time()-31556926)),date('Y',time()-31556926));   ?>
 				
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
 			if($('user_pref_time_predefined').options[$('user_pref_time_predefined').selectedIndex].value == 'alltime') {
-				<?  
+				<?php  
 				//for the time from, do something special select the exact date this user was registered and use that :)
 				$mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 				$user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='".$mysql['user_id']."'";
@@ -673,14 +673,14 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 				$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));    ?>
 		
 				//now set the from and to dates
-				$('from').value='<? echo date('m/d/y - G:i',$time['from']); ?>';
-				$('to').value='<? echo date('m/d/y - G:i',$time['to']); ?>';  
+				$('from').value='<?php echo date('m/d/y - G:i',$time['from']); ?>';
+				$('to').value='<?php echo date('m/d/y - G:i',$time['to']); ?>';  
 				
 				//now set the calendar dates too
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['from']), date('n',$time['from']), date('j',$time['from'])); ?>);
 				from_cal.setCurrentDate(d);
 				
-				var d = new Date(<? printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
+				var d = new Date(<?php printf('%s, %s, %s', date('Y',$time['to']), date('n',$time['to']), date('j',$time['to'])); ?>);
 				to_cal.setCurrentDate(d);
 			}
 			
@@ -712,34 +712,34 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 				$('s-toogleAdv').innerHTML = 'More Options';
 			}
 			
-			<? /*set_user_prefs('<? echo $html['page']; ?>'); */ ?>
+			<?php /*set_user_prefs('<?php echo $html['page']; ?>'); */ ?>
 		}
 		
 		/* SHOW FIELDS */        
 
-		load_ppc_network_id('<? echo $html['user_pref_ppc_network_id']; ?>');
-		<? if ($html['user_pref_ppc_account_id'] != '') { ?>
-			load_ppc_account_id('<? echo $html['user_pref_ppc_network_id']; ?>','<? echo $html['user_pref_ppc_account_id']; ?>');      
-		<? } ?>
+		load_ppc_network_id('<?php echo $html['user_pref_ppc_network_id']; ?>');
+		<?php if ($html['user_pref_ppc_account_id'] != '') { ?>
+			load_ppc_account_id('<?php echo $html['user_pref_ppc_network_id']; ?>','<?php echo $html['user_pref_ppc_account_id']; ?>');      
+		<?php } ?>
 		
-		load_aff_network_id('<? echo $html['user_pref_aff_network_id']; ?>');
-		<? if ($html['user_pref_aff_campaign_id'] != '') { ?>
-			load_aff_campaign_id('<? echo $html['user_pref_aff_network_id']; ?>','<? echo $html['user_pref_aff_campaign_id']; ?>');
-		<? } ?>
+		load_aff_network_id('<?php echo $html['user_pref_aff_network_id']; ?>');
+		<?php if ($html['user_pref_aff_campaign_id'] != '') { ?>
+			load_aff_campaign_id('<?php echo $html['user_pref_aff_network_id']; ?>','<?php echo $html['user_pref_aff_campaign_id']; ?>');
+		<?php } ?>
 		
-		<? if ($html['user_pref_text_ad_id'] != '') { ?>
-			load_text_ad_id('<? echo $html['user_pref_aff_campaign_id']; ?>','<? echo $html['user_pref_text_ad_id']; ?>');
-			load_ad_preview('<? echo $html['user_pref_text_ad_id']; ?>'); 
-		<? } ?>
+		<?php if ($html['user_pref_text_ad_id'] != '') { ?>
+			load_text_ad_id('<?php echo $html['user_pref_aff_campaign_id']; ?>','<?php echo $html['user_pref_text_ad_id']; ?>');
+			load_ad_preview('<?php echo $html['user_pref_text_ad_id']; ?>'); 
+		<?php } ?>
 		
-		load_method_of_promotion('<? echo $html['user_pref_method_of_promotion']; ?>');
+		load_method_of_promotion('<?php echo $html['user_pref_method_of_promotion']; ?>');
 		
-		<? if ($html['user_pref_landing_page_id'] != '') { ?>
-			load_landing_page('<? echo $html['user_pref_aff_campaign_id']; ?>', '<? echo $html['user_pref_landing_page_id']; ?>', '<? echo $html['user_pref_method_of_promotion']; ?>');
-		<? } ?>
+		<?php if ($html['user_pref_landing_page_id'] != '') { ?>
+			load_landing_page('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_landing_page_id']; ?>', '<?php echo $html['user_pref_method_of_promotion']; ?>');
+		<?php } ?>
 
    </script> 
-<? }
+<?php }
 
 
 function grab_timeframe() {
@@ -1095,59 +1095,59 @@ function display_suggestion($suggestion_row) {
 	$html['suggestion_votes'] = htmlentities($suggestion_row['suggestion_votes'], ENT_QUOTES, 'UTF-8');
 	$html['suggestion_text'] = htmlentities($suggestion_row['suggestion_text'], ENT_QUOTES, 'UTF-8'); ?>
 	
-	<li id="c-comment<? echo $html['suggestion_id']; ?>">
+	<li id="c-comment<?php echo $html['suggestion_id']; ?>">
 		<table class="c-table" cellspacing="0" cellpadding="0">
 			<tr class="c-head">
-				<td class="c-info"><strong><? echo $html['user_username']; ?></strong> <span class="c-time"><? echo $html['suggestion_time']; ?></span></td>
-				<td class="c-votes" id="c-votes<? echo $html['suggestion_id']; ?>"><? echo $html['suggestion_votes']; ?> rating</td>
+				<td class="c-info"><strong><?php echo $html['user_username']; ?></strong> <span class="c-time"><?php echo $html['suggestion_time']; ?></span></td>
+				<td class="c-votes" id="c-votes<?php echo $html['suggestion_id']; ?>"><?php echo $html['suggestion_votes']; ?> rating</td>
 				<td class="c-vote-no">
-					<img id="c-vote-no<? echo $html['suggestion_id']; ?>" src="/202-img/icons/18x18/vote-no<? if ($already_voted == '1') { echo '-off'; } ?>.png" alt="Vote No" title="Vote No" <? if ($already_voted != '1') { ?> onclick="vote('<? echo $html['suggestion_id']; ?>','','1');" <? } ?>/>
+					<img id="c-vote-no<?php echo $html['suggestion_id']; ?>" src="/202-img/icons/18x18/vote-no<?php if ($already_voted == '1') { echo '-off'; } ?>.png" alt="Vote No" title="Vote No" <?php if ($already_voted != '1') { ?> onclick="vote('<?php echo $html['suggestion_id']; ?>','','1');" <?php } ?>/>
 				</td> 
 				<td class="c-vote-yes">
-					<img id="c-vote-yes<? echo $html['suggestion_id']; ?>" src="/202-img/icons/18x18/vote-yes<? if ($already_voted == '1') { echo '-off'; } ?>.png" alt="Vote Yes" title="Vote Yes" <? if ($already_voted != '1') { ?> onclick="vote('<? echo $html['suggestion_id']; ?>','1','');" <? } ?>/>
+					<img id="c-vote-yes<?php echo $html['suggestion_id']; ?>" src="/202-img/icons/18x18/vote-yes<?php if ($already_voted == '1') { echo '-off'; } ?>.png" alt="Vote Yes" title="Vote Yes" <?php if ($already_voted != '1') { ?> onclick="vote('<?php echo $html['suggestion_id']; ?>','1','');" <?php } ?>/>
 				</td>
 							
-				<? if (AUTH::admin_logged_in() == true) { ?>
+				<?php if (AUTH::admin_logged_in() == true) { ?>
 					<td class="c-delete">
-						<img id="c-delete<? echo $html['suggestion_id']; ?>" src="/202-img/icons/16x16/cancel.png" title="Delete" onclick="deleteComment('<? echo $html['suggestion_id']; ?>');"/>
+						<img id="c-delete<?php echo $html['suggestion_id']; ?>" src="/202-img/icons/16x16/cancel.png" title="Delete" onclick="deleteComment('<?php echo $html['suggestion_id']; ?>');"/>
 					</td> 
 					<td class="c-complete">
-						<img id="c-complete<? echo $html['suggestion_id']; ?>" src="/202-img/icons/16x16/accept.png" title="Completed" onclick="completeComment('<? echo $html['suggestion_id']; ?>');"/>
+						<img id="c-complete<?php echo $html['suggestion_id']; ?>" src="/202-img/icons/16x16/accept.png" title="Completed" onclick="completeComment('<?php echo $html['suggestion_id']; ?>');"/>
 					</td>
-				<? } ?>
+				<?php } ?>
 				
 			</tr>
 		</table>
 		<div class="c-body">
-			<? echo $html['suggestion_text']; ?> 
-			<div style="text-align: right;"><?  //show on show comments, if there are comments
+			<?php echo $html['suggestion_text']; ?> 
+			<div style="text-align: right;"><?php  //show on show comments, if there are comments
 				$comments = 0;
 				$comments = numberofcomments($suggestion_row['suggestion_id']);
 				if ($comments['from'] != '') { ?>
-					<a class="onclick_color c-onclick"  id="c-showComments<? echo $html['suggestion_id']; ?>" onclick="showComments('<? echo $html['suggestion_id']; ?>');">[Show Comments <? echo $comments['from'] . ' of ' .$comments['to']; ?>]</a>
-					<a class="onclick_color c-onclick"  id="c-hideComments<? echo $html['suggestion_id']; ?>" onclick="hideComments('<? echo $html['suggestion_id']; ?>');" style="display: none;">[Hide Comments]</a>
-				<? } ?>
-				<a class="onclick_color c-onclick" id="c-showReply<? echo $html['suggestion_id']; ?>" onclick="showCreply('<? echo $html['suggestion_id']; ?>');">[Reply]</a>
-				<a class="onclick_color c-onclick" id="c-hideReply<? echo $html['suggestion_id']; ?>" onclick="hideCreply('<? echo $html['suggestion_id']; ?>');" style="display: none;">[Hide Reply]</a> 
+					<a class="onclick_color c-onclick"  id="c-showComments<?php echo $html['suggestion_id']; ?>" onclick="showComments('<?php echo $html['suggestion_id']; ?>');">[Show Comments <?php echo $comments['from'] . ' of ' .$comments['to']; ?>]</a>
+					<a class="onclick_color c-onclick"  id="c-hideComments<?php echo $html['suggestion_id']; ?>" onclick="hideComments('<?php echo $html['suggestion_id']; ?>');" style="display: none;">[Hide Comments]</a>
+				<?php } ?>
+				<a class="onclick_color c-onclick" id="c-showReply<?php echo $html['suggestion_id']; ?>" onclick="showCreply('<?php echo $html['suggestion_id']; ?>');">[Reply]</a>
+				<a class="onclick_color c-onclick" id="c-hideReply<?php echo $html['suggestion_id']; ?>" onclick="hideCreply('<?php echo $html['suggestion_id']; ?>');" style="display: none;">[Hide Reply]</a> 
 			</div>
 		</div>
-		<div id="c-row2<? echo $html['suggestion_id']; ?>" class="c-row2">
-			<div id="c-post<? echo $html['suggestion_id']; ?>" style="display: none;">
-				<div id="c-options<? echo $html['suggestion_id']; ?>" class="c-highlight">
+		<div id="c-row2<?php echo $html['suggestion_id']; ?>" class="c-row2">
+			<div id="c-post<?php echo $html['suggestion_id']; ?>" style="display: none;">
+				<div id="c-options<?php echo $html['suggestion_id']; ?>" class="c-highlight">
 					[Reply]
 				</div>
-				<div id="c-reply<? echo $html['suggestion_id']; ?>" class="c-reply">
-					<form id="c-reply-form<? echo $html['suggestion_id']; ?>" onsubmit="return suggestionReply('<? echo $html['suggestion_id']; ?>');" method="post">
-						<input type="hidden" name="suggestion_reply_to_id" value="<? echo $html['suggestion_id']; ?>"/>
-						<textarea name="c-suggestion" id="c-suggestion<? echo $html['suggestion_id']; ?>" class="c-reply-textarea"></textarea>
-						<div id="c-error<? echo $html['suggestion_id']; ?>" class="error" style="display: none;">The submission you sent us was empty!</div>
+				<div id="c-reply<?php echo $html['suggestion_id']; ?>" class="c-reply">
+					<form id="c-reply-form<?php echo $html['suggestion_id']; ?>" onsubmit="return suggestionReply('<?php echo $html['suggestion_id']; ?>');" method="post">
+						<input type="hidden" name="suggestion_reply_to_id" value="<?php echo $html['suggestion_id']; ?>"/>
+						<textarea name="c-suggestion" id="c-suggestion<?php echo $html['suggestion_id']; ?>" class="c-reply-textarea"></textarea>
+						<div id="c-error<?php echo $html['suggestion_id']; ?>" class="error" style="display: none;">The submission you sent us was empty!</div>
 						<input type="submit" value="Submit Comment" class="c-reply-submit"/>    
 					</form>
 				</div>
 			</div>
 			
-			<div id="c-replies<? echo $html['suggestion_id']; ?>" style="display: none;">
-				<? if ($comments > 0) { ?>
+			<div id="c-replies<?php echo $html['suggestion_id']; ?>" style="display: none;">
+				<?php if ($comments > 0) { ?>
 					<div class="comment2">
 						<ul> 
 							<li> <?
@@ -1161,10 +1161,10 @@ function display_suggestion($suggestion_row) {
 							</li>
 						</ul>
 					</div>
-				<? } ?>
+				<?php } ?>
 			</div>
 		</div>
-	</li> <? 
+	</li> <?php 
 	
 }
 

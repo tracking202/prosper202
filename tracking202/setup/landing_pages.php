@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -171,19 +171,19 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 <table cellspacing="0" cellpadding="0" class="setup">
     <tr valign="top">
         <td>
-            <? if ($error) { ?>
+            <?php if ($error) { ?>
                 <div class="warning"><div><h3>There were errors with your submission.</h3></div></div>
-            <? } echo $error['token']; ?>
+            <?php } echo $error['token']; ?>
 
-            <? if ($add_success == true) { ?>
+            <?php if ($add_success == true) { ?>
                 <div class="success"><div><h3>Your submission was successful</h3>Your changes were made succesfully.</div></div>
-            <? } ?>
+            <?php } ?>
 
-            <? if ($delete_success == true) { ?>
+            <?php if ($delete_success == true) { ?>
                 <div class="success"><div><h3>You deletion was successful</h3>You have succesfully removed a campaign.</div></div>
-            <? } ?>
-			<form method="post" action="<? if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>">
-                <input name="landing_page_id" type="hidden" value="<? echo $html['landing_page_id']; ?>"/>    
+            <?php } ?>
+			<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>">
+                <input name="landing_page_id" type="hidden" value="<?php echo $html['landing_page_id']; ?>"/>    
                 <table>
                     <tr>
                         <td colspan="2">
@@ -195,23 +195,23 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 					<tr valign="top">
 				<td class="left_caption">Landing Page Type <a class="onclick_color" style="font-weight: normal; " onclick="alert('A Simple Landing Page is a landing page that only has one offer associated with it. Where as an Advanced Landing Page is a landing page that can run several offers on it, an example being a ringtone landing page.  Where you have outgoing links to several different carriers, which are really linked to different affiliate campaigns because some ringtone programs only payout on specific carriers.  So you have mutiple offers that someone can click through on your landing page.');">[?]</a></td>	
 				<td>
-					<input type="radio" name="landing_page_type" value="0" <? if ($html['landing_page_type'] == '0' or !$html['landing_page_type']) { echo ' CHECKED '; }  ?> onClick="landing_page_select(this.value);"> Simple (One Offer on the page)<br/>
-					<input type="radio" name="landing_page_type" value="1" <? if ($html['landing_page_type'] == '1') { echo ' CHECKED '; } ?> onClick="landing_page_select(this.value);"> Advanced (Mutiple Offers on the page)	
-					<? echo $error['landing_page_type']; ?>
+					<input type="radio" name="landing_page_type" value="0" <?php if ($html['landing_page_type'] == '0' or !$html['landing_page_type']) { echo ' CHECKED '; }  ?> onClick="landing_page_select(this.value);"> Simple (One Offer on the page)<br/>
+					<input type="radio" name="landing_page_type" value="1" <?php if ($html['landing_page_type'] == '1') { echo ' CHECKED '; } ?> onClick="landing_page_select(this.value);"> Advanced (Mutiple Offers on the page)	
+					<?php echo $error['landing_page_type']; ?>
 				</td>
 			</tr>
 			<tr>
 				<td colspan="2"><hr/></td>
 			</tr>
 
-			<tr id="lp_aff_network" <? if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
+			<tr id="lp_aff_network" <?php if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
 				<td class="left_caption">Aff Network</td>
 				<td>
 					<img id="aff_network_id_div_loading" src="/202-img/loader-small.gif"/>
 					<div id="aff_network_id_div" style="display: inline;"></div>
 				</td>
 			</tr>
-			<tr id="lp_aff_campaign" <? if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
+			<tr id="lp_aff_campaign" <?php if ($html['landing_page_type'] == '1') { echo ' style="display:none;"'; } ?>>
 				<td class="left_caption">Aff Campaign</td>
 				<td>
 					<img id="aff_campaign_id_div_loading" src="/202-img/loader-small.gif" style="display: none;"/>
@@ -222,35 +222,35 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 			<tr>
 				<td class="left_caption">LP Nickname</td>
 				<td>
-					<input type="text" name="landing_page_nickname" value="<? echo $html['landing_page_nickname']; ?>" style="width: 200px;"/>
+					<input type="text" name="landing_page_nickname" value="<?php echo $html['landing_page_nickname']; ?>" style="width: 200px;"/>
 				</td>
 			</tr>
 			<tr>
 				<td class="left_caption">Landing Page URL</td>
-				<td><input type="text" name="landing_page_url" style="width: 200px; display: inline;" value="<? echo $html['landing_page_url']; ?>"/></td>
+				<td><input type="text" name="landing_page_url" style="width: 200px; display: inline;" value="<?php echo $html['landing_page_url']; ?>"/></td>
 			</tr>                               
 			<tr>
 				<td/>
 				<td>
-					<input type="submit" value="<? if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"/>
-					<? if ($editing == true) { ?>
+					<input type="submit" value="<?php if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"/>
+					<?php if ($editing == true) { ?>
 						<input type="submit" value="Cancel" style="display: inline; margin-left: 10px;" onclick="window.location='/tracking202/setup/landing_pages.php'; return false; "/>   
-					<? } ?>
+					<?php } ?>
 				</td>
 			</tr>
 		</table>
-		<? echo $error['aff_campaign_id']; ?>
-		<? echo $error['landing_page_id']; ?>
-		<? echo $error['landing_page_nickname']; ?>
-		<? echo $error['landing_page_url']; ?>
-		<? echo $error['wrong_user']; ?>
+		<?php echo $error['aff_campaign_id']; ?>
+		<?php echo $error['landing_page_id']; ?>
+		<?php echo $error['landing_page_nickname']; ?>
+		<?php echo $error['landing_page_url']; ?>
+		<?php echo $error['wrong_user']; ?>
 	</form>
 		
 		</td>
 		<td class="setup-right">  
 			<h2 class="green">My Advanced Landing Pages</h2> 
 			<ul style="margin-top: 0px;">
-			 	<? $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+			 	<?php $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 				$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND landing_page_type='1' AND landing_page_deleted='0'";
 				$landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
 				
@@ -263,7 +263,7 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 			<br/><br/>
 			<h2 class="green">My Simple Landing Pages</h2>
 			<ul>        
-			<?  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+			<?php  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 				$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
                 $aff_network_result = mysql_query($aff_network_sql) or record_mysql_error($aff_network_sql);
                 if (mysql_num_rows($aff_network_result) == 0 ) { 
@@ -290,7 +290,7 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 						
                             printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
                         
-                            ?><ul style="margin-top: 0px;"><? 
+                            ?><ul style="margin-top: 0px;"><?php 
                             
                                 $mysql['aff_campaign_id'] = mysql_real_escape_string($aff_campaign_row['aff_campaign_id']);
 								$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `landing_page_deleted`='0' AND landing_page_type='0'";
@@ -306,7 +306,7 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
                                     
                                 }
 
-                            ?></ul><?                        
+                            ?></ul><?php                        
                         } 
                     
                     ?></ul><?
@@ -320,10 +320,10 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 <!-- open up the ajax aff network -->
 <script type="text/javascript">
     
-   load_aff_network_id('<? echo $html['aff_network_id']; ?>');
-    <? if ($html['aff_network_id'] != '') { ?>
-        load_aff_campaign_id('<? echo $html['aff_network_id']; ?>','<? echo $html['aff_campaign_id']; ?>');
-    <? } ?>
+   load_aff_network_id('<?php echo $html['aff_network_id']; ?>');
+    <?php if ($html['aff_network_id'] != '') { ?>
+        load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>','<?php echo $html['aff_campaign_id']; ?>');
+    <?php } ?>
 </script>
 
 				
@@ -341,4 +341,4 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 						}
 					</script>	
         
-<? template_bottom($server_row);
+<?php template_bottom($server_row);

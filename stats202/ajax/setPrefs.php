@@ -1,4 +1,4 @@
-<? include_once('/home/admin202/private_202files/connect-dashboard.php');   
+<?php include_once('/home/admin202/private_202files/connect-dashboard.php');   
 
 AUTH::require_user();
 

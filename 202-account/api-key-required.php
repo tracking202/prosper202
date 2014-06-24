@@ -15,4 +15,4 @@ template_top('API Key Required');  ?>
 </div>
 
         
-<? template_bottom();
+<?php template_bottom();

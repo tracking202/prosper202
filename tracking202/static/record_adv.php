@@ -1,4 +1,4 @@
-<? header("Pragma: no-cache");
+<?php header("Pragma: no-cache");
 header("Expires: -1"); 
 
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 

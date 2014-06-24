@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -38,5 +38,5 @@ $mysql['aff_network_id'] = mysql_real_escape_string($_POST['aff_network_id']);
     
 			} ?>
         </select> 
-    <? }  
+    <?php }  
  

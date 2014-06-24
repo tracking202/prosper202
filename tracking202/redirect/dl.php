@@ -1,4 +1,4 @@
-<? 
+<?php 
 
 #only allow numeric t202ids
 $t202id = $_GET['t202id']; 

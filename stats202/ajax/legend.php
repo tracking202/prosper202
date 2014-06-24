@@ -1,4 +1,4 @@
-<? 
+<?php 
 
 include_once('/home/admin202/private_202files/connect-dashboard.php');
 
@@ -6,7 +6,7 @@ AUTH::require_user(); ?>
 
 <table cellspacing="0" cellpadding="0" class="legend">
 	<tr>
-		<th colspan="4"><h3 >Today's Stats - <? echo date('g:ia'); ?></h3></th>
+		<th colspan="4"><h3 >Today's Stats - <?php echo date('g:ia'); ?></h3></th>
 	</tr>
 
 	<?
@@ -60,14 +60,14 @@ AUTH::require_user(); ?>
 		}
 		?>
 		
-		<tr class="<? echo $html['row_class']; ?>">
-			<td class="left"><? echo $html['stat_name']; ?></td>
-			<!--<td class="right"><? echo $clicks; ?></td>  
-			<td class="right"><? echo $actions; ?></td>-->
-			<td class="right"><? echo $total; ?></td>
+		<tr class="<?php echo $html['row_class']; ?>">
+			<td class="left"><?php echo $html['stat_name']; ?></td>
+			<!--<td class="right"><?php echo $clicks; ?></td>  
+			<td class="right"><?php echo $actions; ?></td>-->
+			<td class="right"><?php echo $total; ?></td>
 		</tr>
 		
-	<? } 
+	<?php } 
 	
 	//show totals at the bottom
 	if ($total_clicks > 0) { $total_clicks = number_format($total_clicks); } else { $total_clicks = '-'; }
@@ -78,14 +78,14 @@ AUTH::require_user(); ?>
 	
 	<tr class="bottom">
 		<td class="left"><strong>Totals</strong></td>
-		<!--<td class="right"><? echo $total_clicks; ?></td>  
-		<td class="right"><? echo $total_actions; ?></td>-->
-		<td class="right"><strong><? echo $total_total; ?></strong></td>
+		<!--<td class="right"><?php echo $total_clicks; ?></td>  
+		<td class="right"><?php echo $total_actions; ?></td>-->
+		<td class="right"><strong><?php echo $total_total; ?></strong></td>
 	</tr>
 </table>
 
 
 
-<? 
+<?php 
 
 include_once('/home/admin202/private_202files/connect-end.php');

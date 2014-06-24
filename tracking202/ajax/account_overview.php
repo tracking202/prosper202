@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 	
@@ -47,7 +47,7 @@ AUTH::require_user();
 		<th>Cost</th>
 		<th>Net</th>
 		<th>ROI</th>
-	</tr> <?                        
+	</tr> <?php                        
 				
 	
 
@@ -234,33 +234,33 @@ for($x = 0; $x < 2; $x++) {
 		}
 		?>
    
-	<? if ($alp_counter == 1) { $alp_counter++; /*?>
+	<?php if ($alp_counter == 1) { $alp_counter++; /*?>
 		<tr>
 			<td colspan="12"><hr/></td>
 		</tr>
 	<?*/ } ?>
 		
 	<tr>
-		<? if ($x == 0) { ?>
-			<td class="m-row2"><? echo $html['aff_network_name']; ?></td>
-			<td class="m-row2 m-row2-fade" ><? printf('<a href="#aff_%s" style="color: #000000;">%s</a>', $html['aff_campaign_id'], $html['aff_campaign_name']); ?></td>
-		<? } else { ?>
+		<?php if ($x == 0) { ?>
+			<td class="m-row2"><?php echo $html['aff_network_name']; ?></td>
+			<td class="m-row2 m-row2-fade" ><?php printf('<a href="#aff_%s" style="color: #000000;">%s</a>', $html['aff_campaign_id'], $html['aff_campaign_name']); ?></td>
+		<?php } else { ?>
 			<td class="m-row2">Advanced LP</td>
-			<td class="m-row2 m-row2-fade"><? printf('<a href="#lp_%s" style="color: #000000;">%s</a>', $html['landing_page_id'], $html['landing_page_nickname']); ?></td>
-		<? } ?>
-		<td class="m-row1"><? echo $html['clicks']; ?></td>
-		<td class="m-row1"><? echo $html['leads']; ?></td> 
-		<td class="m-row1"><? echo  $html['su_ratio']; ?></td>
-		<td class="m-row1"><? if ($x==0) { echo $html['payout']; } ?></td> 
-		<td class="m-row3"><? echo $html['epc']; ?></td>
-		<td class="m-row3"><? echo $html['avg_cpc']; ?></td>
-		<td class="m-row4 "><? echo $html['income']; ?></td>
-		<td class="m-row4 ">(<? echo $html['cost']; ?>)</td>
-		<td class="<? if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['net'] ; ?></td>
-		<td class="<? if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['roi'] ; ?></td>
+			<td class="m-row2 m-row2-fade"><?php printf('<a href="#lp_%s" style="color: #000000;">%s</a>', $html['landing_page_id'], $html['landing_page_nickname']); ?></td>
+		<?php } ?>
+		<td class="m-row1"><?php echo $html['clicks']; ?></td>
+		<td class="m-row1"><?php echo $html['leads']; ?></td> 
+		<td class="m-row1"><?php echo  $html['su_ratio']; ?></td>
+		<td class="m-row1"><?php if ($x==0) { echo $html['payout']; } ?></td> 
+		<td class="m-row3"><?php echo $html['epc']; ?></td>
+		<td class="m-row3"><?php echo $html['avg_cpc']; ?></td>
+		<td class="m-row4 "><?php echo $html['income']; ?></td>
+		<td class="m-row4 ">(<?php echo $html['cost']; ?>)</td>
+		<td class="<?php if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['net'] ; ?></td>
+		<td class="<?php if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['roi'] ; ?></td>
 	</tr> 
 	
-	<? //OK NOW if this is an advanced landing page, u just showed the stats, but go through again and gata all the data now for the individual ones
+	<?php //OK NOW if this is an advanced landing page, u just showed the stats, but go through again and gata all the data now for the individual ones
 	if ($x == 1) {
 		
 		
@@ -376,15 +376,15 @@ for($x = 0; $x < 2; $x++) {
 				}
 				
 				?><tr>
-					<td class="m-row2" style="padding-left: 20px;"> - <? echo $html['aff_network_name']; ?></td>
-					<td class="m-row2 m-row2-fade"  style="padding-left: 20px;"> - <? echo $html['aff_campaign_name']; ?></td>
-					<td class="m-row1"><? echo $html['clicks']; ?></td>
-					<td class="m-row1"><? echo $html['leads']; ?></td> 
-					<td class="m-row1"><? echo  $html['su_ratio']; ?></td>
-					<td class="m-row1"><? { echo $html['payout']; } ?></td> 
-					<td class="m-row3"><? echo $html['epc']; ?></td>
+					<td class="m-row2" style="padding-left: 20px;"> - <?php echo $html['aff_network_name']; ?></td>
+					<td class="m-row2 m-row2-fade"  style="padding-left: 20px;"> - <?php echo $html['aff_campaign_name']; ?></td>
+					<td class="m-row1"><?php echo $html['clicks']; ?></td>
+					<td class="m-row1"><?php echo $html['leads']; ?></td> 
+					<td class="m-row1"><?php echo  $html['su_ratio']; ?></td>
+					<td class="m-row1"><?php { echo $html['payout']; } ?></td> 
+					<td class="m-row3"><?php echo $html['epc']; ?></td>
 					<td class="m-row3"></td>
-					<td class="m-row4 "><? echo $html['income']; ?></td>
+					<td class="m-row4 "><?php echo $html['income']; ?></td>
 					<td class="m-row4 "></td>
 					<td class="m-row_zero"></td>
 					<td class="m-row_zero"></td>
@@ -408,18 +408,18 @@ $html['total_roi'] = htmlentities($total_roi.'%', ENT_QUOTES, 'UTF-8');  ?>
 
 	<tr>
 		<td class="m-row2 m-row-bottom " colspan="2"><strong>Totals for report</strong></td>
-		<td class="m-row1 m-row-bottom"><strong><? echo $html['total_clicks']; ?></strong></td>
-		<td class="m-row1 m-row-bottom"><strong><? echo $html['total_leads']; ?></strong></td>
-		<td class="m-row1 m-row-bottom"><strong><? echo $html['total_su_ratio']; ?></strong></td>      
+		<td class="m-row1 m-row-bottom"><strong><?php echo $html['total_clicks']; ?></strong></td>
+		<td class="m-row1 m-row-bottom"><strong><?php echo $html['total_leads']; ?></strong></td>
+		<td class="m-row1 m-row-bottom"><strong><?php echo $html['total_su_ratio']; ?></strong></td>      
 		<td class="m-row1 m-row-bottom"/>    
-		<td class="m-row3 m-row-bottom"><strong><? echo $html['total_epc']; ?></strong></td>      
-		<td class="m-row3 m-row-bottom"><strong><? echo $html['total_avg_cpc']; ?></strong></td>      
-		<td class="m-row4 m-row-bottom"><strong><? echo $html['total_income']; ?></strong></td>
-		<td class="m-row4 m-row-bottom"><strong>(<? echo $html['total_cost']; ?>)</strong></td>
-		<td class="<? if ($total_net > 0) { echo 'm-row_pos'; } elseif ($total_net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?> m-row-bottom"><strong><? echo $html['total_net']; ?></strong></td>
-		<td class="<? if ($total_net > 0) { echo 'm-row_pos'; } elseif ($total_net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?> m-row-bottom"><strong><? echo $html['total_roi']; ?></strong></td>
+		<td class="m-row3 m-row-bottom"><strong><?php echo $html['total_epc']; ?></strong></td>      
+		<td class="m-row3 m-row-bottom"><strong><?php echo $html['total_avg_cpc']; ?></strong></td>      
+		<td class="m-row4 m-row-bottom"><strong><?php echo $html['total_income']; ?></strong></td>
+		<td class="m-row4 m-row-bottom"><strong>(<?php echo $html['total_cost']; ?>)</strong></td>
+		<td class="<?php if ($total_net > 0) { echo 'm-row_pos'; } elseif ($total_net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?> m-row-bottom"><strong><?php echo $html['total_net']; ?></strong></td>
+		<td class="<?php if ($total_net > 0) { echo 'm-row_pos'; } elseif ($total_net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?> m-row-bottom"><strong><?php echo $html['total_roi']; ?></strong></td>
 	</tr>
-</table> <?     
+</table> <?php     
 
 
 
@@ -505,8 +505,8 @@ for($x = 0; $x < 2; $x++) {
 		$html['landing_page_id'] = htmlentities($info_row['landing_page_id'], ENT_QUOTES, 'UTF-8');
 		$html['landing_page_nickname'] = htmlentities($info_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');  ?>
 	
-	<? if ($x==0) { ?><h3 class="green overview-spacer" id="aff_<? echo $html['aff_campaign_id']; ?>"><? echo $html['aff_campaign_name']; ?> <span style="font-size: 65%; color: grey; font-weight: normal;">[direct link &amp; simple lp]</span></h3>
-	<? } else { ?><h3 class="green overview-spacer" id="lp_<? echo $html['landing_page_id']; ?>"><? echo $html['landing_page_nickname']; ?> <span style="font-size: 65%; color: grey; font-weight: normal;">[adv lp]</span></h3><? } ?>
+	<?php if ($x==0) { ?><h3 class="green overview-spacer" id="aff_<?php echo $html['aff_campaign_id']; ?>"><?php echo $html['aff_campaign_name']; ?> <span style="font-size: 65%; color: grey; font-weight: normal;">[direct link &amp; simple lp]</span></h3>
+	<?php } else { ?><h3 class="green overview-spacer" id="lp_<?php echo $html['landing_page_id']; ?>"><?php echo $html['landing_page_nickname']; ?> <span style="font-size: 65%; color: grey; font-weight: normal;">[adv lp]</span></h3><?php } ?>
 	<table cellpadding="0" cellspacing="1" class="m-stats"> 
 		<tr class="stats-grey">   
 			<th colspan="2">PPC Account</th>
@@ -647,24 +647,24 @@ for($x = 0; $x < 2; $x++) {
 				$html['ppc_account_name'] = substr($html['ppc_account_name'],0,20) . '...';   
 			} ?>
 	   
-		<? if ($clicks >0) { ?>
+		<?php if ($clicks >0) { ?>
 			
 		<tr>
-			<td class="m-row2 m-row-small grey"><? echo $ppc_network_icon; ?></td>
+			<td class="m-row2 m-row-small grey"><?php echo $ppc_network_icon; ?></td>
 			<td class="m-row2 m-row2-fade " >[no ppc referer]</td>  
-			<td class="m-row1"><? echo $html['clicks']; ?></td>
-			<td class="m-row1"><? echo $html['leads']; ?></td> 
-			<td class="m-row1"><? echo  $html['su_ratio']; ?></td>
-			<td class="m-row1"><? echo $html['payout']; ?></td> 
-			<td class="m-row3"><? echo $html['epc']; ?></td>
-			<td class="m-row3"><? echo $html['avg_cpc']; ?></td>
-			<td class="m-row4 "><? echo $html['income']; ?></td>
-			<td class="m-row4 ">(<? echo $html['cost']; ?>)</td>
-			<td class="<? if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['net'] ; ?></td>
-			<td class="<? if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['roi'] ; ?></td>
+			<td class="m-row1"><?php echo $html['clicks']; ?></td>
+			<td class="m-row1"><?php echo $html['leads']; ?></td> 
+			<td class="m-row1"><?php echo  $html['su_ratio']; ?></td>
+			<td class="m-row1"><?php echo $html['payout']; ?></td> 
+			<td class="m-row3"><?php echo $html['epc']; ?></td>
+			<td class="m-row3"><?php echo $html['avg_cpc']; ?></td>
+			<td class="m-row4 "><?php echo $html['income']; ?></td>
+			<td class="m-row4 ">(<?php echo $html['cost']; ?>)</td>
+			<td class="<?php if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['net'] ; ?></td>
+			<td class="<?php if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['roi'] ; ?></td>
 		</tr> 
 		
-		<? }
+		<?php }
 		
 	//mysql escape the variables
 		$mysql['aff_campaign_id'] = mysql_real_escape_string($info_row['aff_campaign_id']);    
@@ -846,21 +846,21 @@ for($x = 0; $x < 2; $x++) {
 			} ?>
 	   
 		<tr>
-			<td class="m-row2 m-row-small grey"><? echo $ppc_network_icon; ?></td>
-			<td class="m-row2 m-row2-fade " ><? echo $html['ppc_account_name']; ?></td>  
-			<td class="m-row1"><? echo $html['clicks']; ?></td>
-			<td class="m-row1"><? echo $html['leads']; ?></td> 
-			<td class="m-row1"><? echo  $html['su_ratio']; ?></td>
-			<td class="m-row1"><? echo $html['payout']; ?></td> 
-			<td class="m-row3"><? echo $html['epc']; ?></td>
-			<td class="m-row3"><? echo $html['avg_cpc']; ?></td>
-			<td class="m-row4 "><? echo $html['income']; ?></td>
-			<td class="m-row4 ">(<? echo $html['cost']; ?>)</td>
-			<td class="<? if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['net'] ; ?></td>
-			<td class="<? if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['roi'] ; ?></td>
+			<td class="m-row2 m-row-small grey"><?php echo $ppc_network_icon; ?></td>
+			<td class="m-row2 m-row2-fade " ><?php echo $html['ppc_account_name']; ?></td>  
+			<td class="m-row1"><?php echo $html['clicks']; ?></td>
+			<td class="m-row1"><?php echo $html['leads']; ?></td> 
+			<td class="m-row1"><?php echo  $html['su_ratio']; ?></td>
+			<td class="m-row1"><?php echo $html['payout']; ?></td> 
+			<td class="m-row3"><?php echo $html['epc']; ?></td>
+			<td class="m-row3"><?php echo $html['avg_cpc']; ?></td>
+			<td class="m-row4 "><?php echo $html['income']; ?></td>
+			<td class="m-row4 ">(<?php echo $html['cost']; ?>)</td>
+			<td class="<?php if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['net'] ; ?></td>
+			<td class="<?php if ($net > 0) { echo 'm-row_pos'; } elseif ($net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['roi'] ; ?></td>
 		</tr> 
 		
-	<?  }                                                                    
+	<?php  }                                                                    
 				
 	$html['total_clicks'] = htmlentities($total_clicks, ENT_QUOTES, 'UTF-8');
 	$html['total_leads'] = htmlentities($total_leads, ENT_QUOTES, 'UTF-8');  
@@ -874,19 +874,19 @@ for($x = 0; $x < 2; $x++) {
 
 		<tr>
 			<td class="m-row2 m-row-bottom" colspan="2"><strong>Totals for report</strong></td>
-			<td class="m-row1 m-row-bottom"><strong><? echo $html['total_clicks']; ?></strong></td>
-			<td class="m-row1 m-row-bottom"><strong><? echo $html['total_leads']; ?></strong></td>
-			<td class="m-row1 m-row-bottom"><strong><? echo $html['total_su_ratio']; ?></strong></td>      
+			<td class="m-row1 m-row-bottom"><strong><?php echo $html['total_clicks']; ?></strong></td>
+			<td class="m-row1 m-row-bottom"><strong><?php echo $html['total_leads']; ?></strong></td>
+			<td class="m-row1 m-row-bottom"><strong><?php echo $html['total_su_ratio']; ?></strong></td>      
 			<td class="m-row1 m-row-bottom"/>    
-			<td class="m-row3 m-row-bottom"><strong><? echo $html['total_epc']; ?></strong></td>      
-			<td class="m-row3 m-row-bottom"><strong><? echo $html['total_avg_cpc']; ?></strong></td>      
-			<td class="m-row4 m-row-bottom"><strong><? echo $html['total_income']; ?></strong></td>
-			<td class="m-row4 m-row-bottom"><strong>(<? echo $html['total_cost']; ?>)</strong></td>
-			<td class="<? if ($total_net > 0) { echo 'm-row_pos'; } elseif ($total_net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?> m-row-bottom"><strong><? echo $html['total_net']; ?></strong></td>
-			<td class="<? if ($total_net > 0) { echo 'm-row_pos'; } elseif ($total_net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?> m-row-bottom"><strong><? echo $html['total_roi']; ?></strong></td>
+			<td class="m-row3 m-row-bottom"><strong><?php echo $html['total_epc']; ?></strong></td>      
+			<td class="m-row3 m-row-bottom"><strong><?php echo $html['total_avg_cpc']; ?></strong></td>      
+			<td class="m-row4 m-row-bottom"><strong><?php echo $html['total_income']; ?></strong></td>
+			<td class="m-row4 m-row-bottom"><strong>(<?php echo $html['total_cost']; ?>)</strong></td>
+			<td class="<?php if ($total_net > 0) { echo 'm-row_pos'; } elseif ($total_net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?> m-row-bottom"><strong><?php echo $html['total_net']; ?></strong></td>
+			<td class="<?php if ($total_net > 0) { echo 'm-row_pos'; } elseif ($total_net < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?> m-row-bottom"><strong><?php echo $html['total_roi']; ?></strong></td>
 		</tr>
 	</table>
-<? }  
+<?php }  
 
 }?>
 

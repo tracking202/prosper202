@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 
 AUTH::require_user();
@@ -957,8 +957,8 @@ $mysql['export_session_id'] = mysql_real_escape_string($export_session_id);
 
 		?>			</textarea>
 		</td>
-		<? /*<td class="csv-export">
-			<? printf('<a href="http://%s/tmp/%s-google-textads.csv"><img src="http://%s/images/excel-48.gif"/></a>',$_SERVER['SERVER_NAME'], $export_session_id_public,$_SERVER['STATIC_SERVER_NAME']); ?>
+		<?php /*<td class="csv-export">
+			<?php printf('<a href="http://%s/tmp/%s-google-textads.csv"><img src="http://%s/images/excel-48.gif"/></a>',$_SERVER['SERVER_NAME'], $export_session_id_public,$_SERVER['STATIC_SERVER_NAME']); ?>
 		</td>*/ ?>
 	</tr>
 </table>
@@ -1123,8 +1123,8 @@ $mysql['export_session_id'] = mysql_real_escape_string($export_session_id);
 	
 		?>			</textarea>
 		</td>
-		<? /*<td class="csv-export">
-			<? printf('<a href="http://%s/tmp/%s-google-keywords.csv" onClick="saveFile(this);"><img src="http://%s/images/excel-48.gif"/></a>',$_SERVER['SERVER_NAME'], $export_session_id_public,$_SERVER['STATIC_SERVER_NAME']); ?>
+		<?php /*<td class="csv-export">
+			<?php printf('<a href="http://%s/tmp/%s-google-keywords.csv" onClick="saveFile(this);"><img src="http://%s/images/excel-48.gif"/></a>',$_SERVER['SERVER_NAME'], $export_session_id_public,$_SERVER['STATIC_SERVER_NAME']); ?>
 		</td>*/ ?>
 	</tr>
 </table>

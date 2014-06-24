@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
 	
 //get the aff_camapaign_id
 $mysql['aff_campaign_id_public'] = mysql_real_escape_string($_GET['acip']);

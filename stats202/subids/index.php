@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 AUTH::require_valid_app_key('stats202', $_SESSION['user_api_key'], $_SESSION['user_stats202_app_key']);
@@ -28,5 +28,5 @@ display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limit, $show_
 
 
 
-<? template_bottom(); 
+<?php template_bottom(); 
 

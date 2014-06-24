@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -303,24 +303,24 @@ $html['rows'] = htmlentities($query['rows'], ENT_QUOTES, 'UTF-8');
 			</a>
 		</td>
 		<td>
-			<? printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']); ?>
+			<?php printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>',$html['from'],$html['to'],$html['rows']); ?>
 		</td>
 	</tr>
 </table>
 
 <table cellpadding="0" cellspacing="1" class="m-stats">
 	<tr>   
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_keyword_order']; ?>');">Keyword</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_clicks_order']; ?>');">Clicks</a></th> 
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_leads_order']; ?>');">Leads</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_su_ratio_order']; ?>');">S/U</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_payout_order']; ?>');">Payout</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_epc_order']; ?>');">EPC</a></th> 
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_avg_cpc_order']; ?>');">Avg CPC</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_income_order']; ?>');">Income</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_cost_order']; ?>');">Cost</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_net_order']; ?>');">Net</a></th>
-		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<? echo $html['sort_keyword_roi_order']; ?>');">ROI</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_keyword_order']; ?>');">Keyword</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_clicks_order']; ?>');">Clicks</a></th> 
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_leads_order']; ?>');">Leads</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_su_ratio_order']; ?>');">S/U</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_payout_order']; ?>');">Payout</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_epc_order']; ?>');">EPC</a></th> 
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_avg_cpc_order']; ?>');">Avg CPC</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_income_order']; ?>');">Income</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_cost_order']; ?>');">Cost</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_net_order']; ?>');">Net</a></th>
+		<th><a class="onclick_color" onclick="loadContent('/tracking202/ajax/sort_keywords.php','','<?php echo $html['sort_keyword_roi_order']; ?>');">ROI</a></th>
 	</tr>   
 	
 	<?
@@ -353,22 +353,22 @@ while ($keyword_row = mysql_fetch_array($keyword_result, MYSQL_ASSOC)) {
 	error_reporting(6135); ?> 
 	
 	<tr>
-		<td class="m-row2  m-row2-fade" ><? echo $html['keyword']; ?></td>
-		<td class="m-row1"><? echo $html['sort_keyword_clicks']; ?></td>
-		<td class="m-row1"><? echo $html['sort_keyword_leads']; ?></td> 
-		<td class="m-row1"><? echo $html['sort_keyword_su_ratio']; ?></td>
-		<td class="m-row1"><? echo $html['sort_keyword_payout']; ?></td> 
-		<td class="m-row3"><? echo $html['sort_keyword_epc']; ?></td>
-		<td class="m-row3"><? echo $html['sort_keyword_avg_cpc']; ?></td>
-		<td class="m-row4 "><? echo $html['sort_keyword_income']; ?></td>
-		<td class="m-row4 ">(<? echo $html['sort_keyword_cost']; ?>)</td>
-		<td class="<? if ($keyword_row['sort_keyword_net'] > 0) { echo 'm-row_pos'; } elseif ($keyword_row['sort_keyword_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['sort_keyword_net'] ; ?></td>
-		<td class="<? if ($keyword_row['sort_keyword_net'] > 0) { echo 'm-row_pos'; } elseif ($keyword_row['sort_keyword_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><? echo $html['sort_keyword_roi'] ; ?></td>
+		<td class="m-row2  m-row2-fade" ><?php echo $html['keyword']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_keyword_clicks']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_keyword_leads']; ?></td> 
+		<td class="m-row1"><?php echo $html['sort_keyword_su_ratio']; ?></td>
+		<td class="m-row1"><?php echo $html['sort_keyword_payout']; ?></td> 
+		<td class="m-row3"><?php echo $html['sort_keyword_epc']; ?></td>
+		<td class="m-row3"><?php echo $html['sort_keyword_avg_cpc']; ?></td>
+		<td class="m-row4 "><?php echo $html['sort_keyword_income']; ?></td>
+		<td class="m-row4 ">(<?php echo $html['sort_keyword_cost']; ?>)</td>
+		<td class="<?php if ($keyword_row['sort_keyword_net'] > 0) { echo 'm-row_pos'; } elseif ($keyword_row['sort_keyword_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['sort_keyword_net'] ; ?></td>
+		<td class="<?php if ($keyword_row['sort_keyword_net'] > 0) { echo 'm-row_pos'; } elseif ($keyword_row['sort_keyword_net'] < 0) { echo 'm-row_neg'; } else { echo 'm-row_zero'; } ?>"><?php echo $html['sort_keyword_roi'] ; ?></td>
 	</tr>
-<? } ?> 
+<?php } ?> 
 </table>   
 
-<? if ($query['pages'] > 2) { ?>
+<?php if ($query['pages'] > 2) { ?>
 	<div class="offset">   <?
 		if ($query['offset'] > 0) {
 			printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/sort_keywords.php\',\'%s\',\'%s\');">First</a> ', $i, $html['order']);
@@ -390,4 +390,4 @@ while ($keyword_row = mysql_fetch_array($keyword_result, MYSQL_ASSOC)) {
 			printf(' <a class="onclick_color" onclick="loadContent(\'/tracking202/ajax/sort_keywords.php\',\'%s\',\'%s\');">Last</a> ', $query['pages'] - 2, $html['order']); 
 		} ?>
 	</div>   
-<? } ?>
+<?php } ?>

@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -19,7 +19,7 @@ template_top('Update CPC',NULL,NULL,NULL);  ?>
 				<td>
 					<input type="radio" name="tracker_type" value="0" onClick="tracker_select(this.value);" CHECKED > Direct Link Setup, or Simple Landing Page Setup<br/>
 					<input type="radio" name="tracker_type" value="1" onClick="tracker_select(this.value);"> Advanced Landing Page Setup
-					<? echo $error['landing_page_type']; ?>
+					<?php echo $error['landing_page_type']; ?>
 				</td>
 			</tr>
 			
@@ -202,4 +202,4 @@ template_top('Update CPC',NULL,NULL,NULL);  ?>
 
 </script>
 		
-<? template_bottom();
+<?php template_bottom();

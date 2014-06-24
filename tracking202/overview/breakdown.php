@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -13,10 +13,10 @@ template_top('Breakdown Overview',NULL,NULL,NULL);  ?>
 	The breakdown overview allows you to see your stats per day, per hour, or an interval that you set. 
 </div>
 
-<? display_calendar('/tracking202/ajax/sort_breakdown.php', true, true, true, false, true, true); ?>    
+<?php display_calendar('/tracking202/ajax/sort_breakdown.php', true, true, true, false, true, true); ?>    
 
 <script type="text/javascript">
    loadContent('/tracking202/ajax/sort_breakdown.php',null);
 </script>
 
-<? template_bottom();
+<?php template_bottom();

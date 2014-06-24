@@ -1,4 +1,4 @@
-<? 
+<?php 
 
 #only allow numeric t202ids
 $lpip = $_GET['lpip']; 

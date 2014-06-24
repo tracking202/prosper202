@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -14,7 +14,7 @@ template_top('Visitor History',NULL,NULL,NULL); ?>
     <h2>Visitor History</h2>
 </div>
 
-<? display_calendar('/tracking202/ajax/click_history.php', true, true, true, true, false, true, false); ?> 
+<?php display_calendar('/tracking202/ajax/click_history.php', true, true, true, true, false, true, false); ?> 
     
 <script type="text/javascript">
    loadContent('/tracking202/ajax/click_history.php',null);
@@ -24,5 +24,5 @@ template_top('Visitor History',NULL,NULL,NULL); ?>
 
 
 
-<?  template_bottom($server_row);
+<?php  template_bottom($server_row);
     

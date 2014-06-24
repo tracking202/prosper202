@@ -324,7 +324,7 @@ learn more about it in our help section later.</div>
 					onclick="alert('This your affiliate link for the campaign. If you do not know how to track subids or what a subid is, ask your affiliate manager before moving forward. If you do not set up subids properly, your campaigns will not track!');">
 				[?] </a></td>
 				<td style="white-space: nowrap;">
-				<textarea name="aff_campaign_url" rows="3" cols="30" id="aff_campaign_url" style="width: 260px; display: inline;"/><? echo $html['aff_campaign_url']; ?></textarea>	
+				<textarea name="aff_campaign_url" rows="3" cols="30" id="aff_campaign_url" style="width: 260px; display: inline;"/><?php echo $html['aff_campaign_url']; ?></textarea>	
 				<div>
     <!-- Part of CtrTard's Subid Injection Button Mod, 8-12-2010, http://ctrtard.com --> 
     <input type="button" value="[[subid]]" onclick="insertAtCaret('aff_campaign_url','[[subid]]');" />
@@ -555,4 +555,4 @@ function caret(node) {
 }
 </script>
  
-<? template_bottom();			
+<?php template_bottom();			

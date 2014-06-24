@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -15,7 +15,7 @@ template_top($server_row,'Get Simple Landing Page Code',NULL,NULL,NULL);  ?>
 			<tr>
 				<td class="left_caption">Affiliate Network</td>
 				<td>
-                    <img id="aff_network_id_div_loading" style="display: none;" src="http://<? echo $_SERVER['STATIC_SERVER_NAME']; ?>/images/loader-small.gif"/>
+                    <img id="aff_network_id_div_loading" style="display: none;" src="http://<?php echo $_SERVER['STATIC_SERVER_NAME']; ?>/images/loader-small.gif"/>
                     <div id="aff_network_id_div"></div>
                 </td>
 			</tr>                                             
@@ -92,4 +92,4 @@ template_top($server_row,'Get Simple Landing Page Code',NULL,NULL,NULL);  ?>
         /*load_ppc_account_id(0,0);*/        
 	</script>
 		
-<? template_bottom($server_row);
+<?php template_bottom($server_row);

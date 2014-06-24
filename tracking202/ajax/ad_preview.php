@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -19,13 +19,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		<table id="ad_preview" class="ad_copy" cellspacing="0" cellpadding="3">
 		    <tr>
 				<td valign="bottom" style="white-space: normal;">
-					<div class="ad_copy_headline"><? echo $html['text_ad_headline']; ?></div>
-					<div class="ad_copy_description"><? echo $html['text_ad_description']; ?></div>
-					<div class="ad_copy_display_url"><? echo $html['text_ad_display_url']; ?></div>
+					<div class="ad_copy_headline"><?php echo $html['text_ad_headline']; ?></div>
+					<div class="ad_copy_description"><?php echo $html['text_ad_description']; ?></div>
+					<div class="ad_copy_display_url"><?php echo $html['text_ad_display_url']; ?></div>
 			    </td>
 		    </tr>
 	    </table>
 
-<?  }
+<?php  }
 } ?>  
  

@@ -1,4 +1,4 @@
-<?  function template_top($title = 'Prosper202 Self Hosted Apps') { global $navigation; global $version;  ?>
+<?php  function template_top($title = 'Prosper202 Self Hosted Apps') { global $navigation; global $version;  ?>
 
 
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
@@ -6,7 +6,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en"> 
 <head>
 
-<title><? echo $title; ?></title>
+<title><?php echo $title; ?></title>
 <meta name="description" content="description" />
 <meta name="keywords" content="keywords"/>
 <meta name="copyright" content="Prosper202, Inc" />
@@ -23,7 +23,7 @@
 <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js"></script>
 <script type="text/javascript" src="/tracking202/js/prototype.js"></script>
 		
-<? switch ($navigation[1]) { 
+<?php switch ($navigation[1]) { 
 	
 	case "tracking202": 
 	case "stats202":
@@ -73,29 +73,29 @@ case "202-account":
 				<div class="skyline">
 		
 					<div style="float: left; ">
-						<a href="/tracking202/" <? if ($navigation[1] == 'tracking202') { echo 'class="bold";'; } ?>>Tracking202</a>  
+						<a href="/tracking202/" <?php if ($navigation[1] == 'tracking202') { echo 'class="bold";'; } ?>>Tracking202</a>  
 						&middot;
-						<a href="http://www.conversion202.com" <? if ($navigation[1] == 'alerts202') { echo 'class="bold";'; } ?> target="_blank">Conversion202</a>   
+						<a href="http://www.conversion202.com" <?php if ($navigation[1] == 'alerts202') { echo 'class="bold";'; } ?> target="_blank">Conversion202</a>   
 						&middot;						
-				        <a href="/offers202/" <? if ($navigation[1] == 'offers202') { echo 'class="bold";'; } ?>>Offers202</a>  
+				        <a href="/offers202/" <?php if ($navigation[1] == 'offers202') { echo 'class="bold";'; } ?>>Offers202</a>  
 						&middot; 
 						
 						<?php /* 
-						<a href="/stats202/" <? if ($navigation[1] == 'stats202') { echo 'class="bold";'; } ?>>Stats202</a>  
+						<a href="/stats202/" <?php if ($navigation[1] == 'stats202') { echo 'class="bold";'; } ?>>Stats202</a>  
 						&middot;
-						<a href="/alerts202/" <? if ($navigation[1] == 'alerts202') { echo 'class="bold";'; } ?>>Alerts202eh</a>   
+						<a href="/alerts202/" <?php if ($navigation[1] == 'alerts202') { echo 'class="bold";'; } ?>>Alerts202eh</a>   
 						&middot; */ ?> 
-						<a href="/202-resources/" <? if ($navigation[1] == '202-resources') { echo 'class="bold";'; } ?>>Featured Resources<span id="new_offers"></span></a>
+						<a href="/202-resources/" <?php if ($navigation[1] == '202-resources') { echo 'class="bold";'; } ?>>Featured Resources<span id="new_offers"></span></a>
 						<script type="text/javascript"> new Ajax.Updater('new_offers', '/202-account/ajax/new-offers.php'); </script>
 					</div>
 					
-					<a href="/202-account/" <? if (($navigation[1] == '202-account') AND !$navigation[2]) { echo 'class="bold";'; } ?>>Home</a>  
+					<a href="/202-account/" <?php if (($navigation[1] == '202-account') AND !$navigation[2]) { echo 'class="bold";'; } ?>>Home</a>  
 					&middot;
-					<a href="/202-account/account.php" <? if ($navigation[2] == 'account.php') { echo 'class="bold";'; } ?>>My Account</a>  
+					<a href="/202-account/account.php" <?php if ($navigation[2] == 'account.php') { echo 'class="bold";'; } ?>>My Account</a>  
 					&middot; 
-					<a href="/202-account/administration.php" <? if ($navigation[2] == 'administration.php') { echo 'class="bold";'; } ?>>Administration</a>  
+					<a href="/202-account/administration.php" <?php if ($navigation[2] == 'administration.php') { echo 'class="bold";'; } ?>>Administration</a>  
 					&middot; 
-					<a href="/202-account/help.php" <? if ($navigation[2] == 'help.php') { echo 'class="bold";'; } ?>>Help</a>  
+					<a href="/202-account/help.php" <?php if ($navigation[2] == 'help.php') { echo 'class="bold";'; } ?>>Help</a>  
 					&middot;
 					<a href="/202-account/signout.php">Sign Out</a>  
 				</div>
@@ -106,7 +106,7 @@ case "202-account":
 		</tr>
 	</table>
 	
-	<div class="content"><? 
+	<div class="content"><?php 
 		
 		if ($navigation[1] == 'tracking202') {  include_once($_SERVER['DOCUMENT_ROOT'] . '/tracking202/_config/top.php'); }
 		
@@ -125,11 +125,11 @@ case "202-account":
 		<a href="http://prosper202.com/forum/">Forum</a>
 		&middot; 
 		
-		<? if ($_SESSION['update_needed'] == true) { ?>
-		 	<strong>Your Prosper202 <? echo $version; ?> is out of date. <a href="http://prosper202.com/apps/download/">Please update</a>.</strong>
-		 <? } else { ?>
-		 	Your Prosper202 <? echo $version; ?> is up to date.
-		 <? } ?>
+		<?php if ($_SESSION['update_needed'] == true) { ?>
+		 	<strong>Your Prosper202 <?php echo $version; ?> is out of date. <a href="http://prosper202.com/apps/download/">Please update</a>.</strong>
+		 <?php } else { ?>
+		 	Your Prosper202 <?php echo $version; ?> is up to date.
+		 <?php } ?>
 		 
 		 <!--<p style="margin-top: 10px;">Like our software? &nbsp; You'll love the <a href="http://revolution.tracking202.com" style="padding: 0px;">Revolution202 Partner Network</a>!</p>-->
 		 
@@ -157,4 +157,4 @@ case "202-account":
 </body>
 
 
-<? } ?>
+<?php } ?>

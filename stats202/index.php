@@ -1,1 +1,1 @@
-<? header('location: /stats202/earnings/');
+<?php header('location: /stats202/earnings/');

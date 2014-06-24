@@ -99,7 +99,7 @@ echo $results;
 //create the navigation bar
 $navBar = "<div class='offers-nav'>";
 $navBar .= "<strong>Page {$html['page']} of {$html['pages']}</strong>  "; ?>
-<? if ($pages > 1) { $navBar .= " <span style='padding: 0px 10px'>&mdash;</span> ";
+<?php if ($pages > 1) { $navBar .= " <span style='padding: 0px 10px'>&mdash;</span> ";
 	if ($page > 1) {
 		$navBar .= ' <a  class="pointer" onclick="getSubids('.htmlentities($i).')">First</a> ';
 		$navBar .= ' <a  class="pointer" onclick="getSubids('.htmlentities($page - 1).')">Prev</a> ';
@@ -130,7 +130,7 @@ $navBar .= "</div> <div class='clear'></div>"; ?>
 		<img src="/202-img/icons/16x16/page_white_excel.png" style="margin: 0px 0px -3px 3px;"/>
 	</a>
 </div>
-<div style="clear: both;"></div><? 
+<div style="clear: both;"></div><?php 
 
 
 
@@ -170,14 +170,14 @@ switch ($_SESSION['stats202_order']) {
 
 <table cellpadding="0" cellspacing="0" class="offers-table">
 	<tr>
-		<th class='nowrap left'><a class="pointer" onclick="getSubids('', 'subidDate', '<? echo $subidDateBy; ?>');">Date <? echo $subidDateArrow; ?></a></th>
-		<th class='nowrap left'><a class="pointer" onclick="getSubids('', 'statAccountNickName', '<? echo $statAccountNickNameBy; ?>');">Account <? echo $statAccountNickNameArrow; ?></a></th>
-		<th class='nowrap left'><a class="pointer" onclick="getSubids('', 'subid', '<? echo $subidBy; ?>');">Subid <? echo $subidArrow; ?></a></th>
-		<th class='nowrap right'><a class="pointer" onclick="getSubids('', 'subidActions', '<? echo $subidActionsBy; ?>');">Actions <? echo $subidActionsArrow; ?></a></th>
-		<th class='nowrap right'><a class="pointer" onclick="getSubids('', 'subidAmount', '<? echo $subidAmountBy; ?>');">Amount <? echo $subidAmountArrow; ?></a></th>
+		<th class='nowrap left'><a class="pointer" onclick="getSubids('', 'subidDate', '<?php echo $subidDateBy; ?>');">Date <?php echo $subidDateArrow; ?></a></th>
+		<th class='nowrap left'><a class="pointer" onclick="getSubids('', 'statAccountNickName', '<?php echo $statAccountNickNameBy; ?>');">Account <?php echo $statAccountNickNameArrow; ?></a></th>
+		<th class='nowrap left'><a class="pointer" onclick="getSubids('', 'subid', '<?php echo $subidBy; ?>');">Subid <?php echo $subidArrow; ?></a></th>
+		<th class='nowrap right'><a class="pointer" onclick="getSubids('', 'subidActions', '<?php echo $subidActionsBy; ?>');">Actions <?php echo $subidActionsArrow; ?></a></th>
+		<th class='nowrap right'><a class="pointer" onclick="getSubids('', 'subidAmount', '<?php echo $subidAmountBy; ?>');">Amount <?php echo $subidAmountArrow; ?></a></th>
 	</tr>
 
-	<? 
+	<?php 
 	if ($getSubids['subids'])	$subids = $getSubids['subids'][0]['subid'];
 	for ($x = 0; $x < count($subids); $x++) { 
 		
@@ -200,25 +200,25 @@ switch ($_SESSION['stats202_order']) {
 			$z--;
 		}  ?>
 	
-		<tr class="<? echo $html['row_class']; ?>">
-			<td class="left"><? echo $html['subidDate']; ?></td>
-			<td class="left"><? echo $html['statAccountNickName']; ?></td>
-			<td class="left"><? echo $html['subid']; ?></td>
-			<td class="right"><? echo $html['subidActions']; ?></td>
-			<td class="right"><? echo $html['subidAmount']; ?></td>
+		<tr class="<?php echo $html['row_class']; ?>">
+			<td class="left"><?php echo $html['subidDate']; ?></td>
+			<td class="left"><?php echo $html['statAccountNickName']; ?></td>
+			<td class="left"><?php echo $html['subid']; ?></td>
+			<td class="right"><?php echo $html['subidActions']; ?></td>
+			<td class="right"><?php echo $html['subidAmount']; ?></td>
 		</tr>		
 
-	<? } ?>
+	<?php } ?>
 	
-	<? $html['totalSubids'] = htmlentities(number_format($totalSubids));
+	<?php $html['totalSubids'] = htmlentities(number_format($totalSubids));
 	$html['totalSubidActions'] = htmlentities(number_format($totalSubidActions));
 	$html['totalSubidAmount'] = htmlentities('$'.number_format($totalSubidAmount, 2));  ?>
 	
 	<tr class="bottom">
 		<td class="left" colspan="3"><strong>Totals</strong></td>
-		<td class="right"><strong><? echo $html['totalSubidActions']; ?></strong></td>  
-		<td class="right"><strong><? echo $html['totalSubidAmount']; ?></strong></td>
+		<td class="right"><strong><?php echo $html['totalSubidActions']; ?></strong></td>  
+		<td class="right"><strong><?php echo $html['totalSubidAmount']; ?></strong></td>
 	</tr>
 </table>
 
-<? echo $navBar; ?>
+<?php echo $navBar; ?>

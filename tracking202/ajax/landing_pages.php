@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -23,7 +23,7 @@ if ($_POST['type'] == 'advlandingpage') {
 
 #print_r_html($_POST);
 
-?><input id="landing_page_style_type" type="hidden" name="landing_page_style_type" value="<? echo htmlentities($_POST['type']); ?>"/><?
+?><input id="landing_page_style_type" type="hidden" name="landing_page_style_type" value="<?php echo htmlentities($_POST['type']); ?>"/><?
 
 $landing_page_result = mysql_query($landing_page_sql) or record_mysql_error($landing_page_sql);
 
@@ -33,7 +33,7 @@ if (mysql_num_rows($landing_page_result) == 0) {
 
 } else { ?>
 
-	<select name="landing_page_id" id="landing_page_id" onchange="<? if ($_POST['type' ] =='advlandingpage') echo 'load_adv_text_ad_id(this.value);'; else  echo ' load_text_ad_id( $(\'aff_campaign_id\').value ); ';  ?>">					
+	<select name="landing_page_id" id="landing_page_id" onchange="<?php if ($_POST['type' ] =='advlandingpage') echo 'load_adv_text_ad_id(this.value);'; else  echo ' load_text_ad_id( $(\'aff_campaign_id\').value ); ';  ?>">					
 		<option value="0"> -- </option> <?
 		while ($landing_page_row = mysql_fetch_array($landing_page_result, MYSQL_ASSOC)) {
 

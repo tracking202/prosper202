@@ -232,92 +232,92 @@ template_top('User Profile',NULL,NULL,NULL);  ?>
 		</td>
 	</tr>
 	<tr>
-		<td colspan="2"><? if ($update_profile == true) { ?>
+		<td colspan="2"><?php if ($update_profile == true) { ?>
 		<div class="success">
 		<div>
 		<h3>Your submission was successful</h3>
 		Your changes were made succesfully.</div>
 		</div>
-		<? } ?> <? echo $error['token'] . $error['user_email'] . $error['user_keyword_searched_or_bidded'] . $error['user_tracking_domain']; ?>
+		<?php } ?> <?php echo $error['token'] . $error['user_email'] . $error['user_keyword_searched_or_bidded'] . $error['user_tracking_domain']; ?>
 		</td>
 	</tr>
 	<tr>
 		<td class="left_caption">Time zone (GMT) *</td>
 		<td><select name="user_timezone">
 			<option
-			<? if ($html['user_timezone'] == '-11') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-11') { echo 'selected=""'; } ?>
 				value="-11">-1100 : Samoa</option>
 			<option
-			<? if ($html['user_timezone'] == '-10') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-10') { echo 'selected=""'; } ?>
 				value="-10">-1000 : Alaska, Hawai'i</option>
 			<option
-			<? if ($html['user_timezone'] == '-9') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-9') { echo 'selected=""'; } ?>
 				value="-9">-0900 :</option>
 			<option
-			<? if ($html['user_timezone'] == '-8') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-8') { echo 'selected=""'; } ?>
 				value="-8">-0800 : US Pacific</option>
 			<option
-			<? if ($html['user_timezone'] == '-7') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-7') { echo 'selected=""'; } ?>
 				value="-7">-0700 : US Mountain</option>
 			<option
-			<? if ($html['user_timezone'] == '-6') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-6') { echo 'selected=""'; } ?>
 				value="-6">-0600 : US Central</option>
 			<option
-			<? if ($html['user_timezone'] == '-5') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-5') { echo 'selected=""'; } ?>
 				value="-5">-0500 : US Eastern</option>
 			<option
-			<? if ($html['user_timezone'] == '-4') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-4') { echo 'selected=""'; } ?>
 				value="-4">-0400 : Atlantic</option>
 			<option
-			<? if ($html['user_timezone'] == '-3.5') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-3.5') { echo 'selected=""'; } ?>
 				value="-3.5">-0350 : Newfoundland</option>
 			<option
-			<? if ($html['user_timezone'] == '-3') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-3') { echo 'selected=""'; } ?>
 				value="-3">-0300 : Brazil, Argentina</option>
 			<option
-			<? if ($html['user_timezone'] == '-2') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '-2') { echo 'selected=""'; } ?>
 				value="-2">-0200 : Mid Atlantic</option>
 			<option
-			<? if ($html['user_timezone'] == '0') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '0') { echo 'selected=""'; } ?>
 				value="0">+0000 : London, Dublin</option>
 			<option
-			<? if ($html['user_timezone'] == '1') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '1') { echo 'selected=""'; } ?>
 				value="1">+0100 : Paris, Berlin, Amsterdam, Madrid</option>
 			<option
-			<? if ($html['user_timezone'] == '2') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '2') { echo 'selected=""'; } ?>
 				value="2">+0200 : Athens, Istanbul, Helsinki</option>
 			<option
-			<? if ($html['user_timezone'] == '3') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '3') { echo 'selected=""'; } ?>
 				value="3">+0300 : Kuwait, Moscow</option>
 			<option
-			<? if ($html['user_timezone'] == '3.5') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '3.5') { echo 'selected=""'; } ?>
 				value="3.5">+0350 : Tehran</option>
 			<option
-			<? if ($html['user_timezone'] == '5.5') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '5.5') { echo 'selected=""'; } ?>
 				value="5.5">+0530 : India</option>
 			<option
-			<? if ($html['user_timezone'] == '7') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '7') { echo 'selected=""'; } ?>
 				value="7">+0700 : Bangkok</option>
 			<option
-			<? if ($html['user_timezone'] == '7.5') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '7.5') { echo 'selected=""'; } ?>
 				value="7">+0700 :</option>
 			<option
-			<? if ($html['user_timezone'] == '8') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '8') { echo 'selected=""'; } ?>
 				value="8">+0800 : Hong Kong</option>
 			<option
-			<? if ($html['user_timezone'] == '9') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '9') { echo 'selected=""'; } ?>
 				value="9">+0900 : Tokyo</option>
 			<option
-			<? if ($html['user_timezone'] == '9.5') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '9.5') { echo 'selected=""'; } ?>
 				value="9.5">+0950 : Darwin</option>
 			<option
-			<? if ($html['user_timezone'] == '10') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '10') { echo 'selected=""'; } ?>
 				value="10">+1000 : Sydney</option>
 			<option
-			<? if ($html['user_timezone'] == '11') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '11') { echo 'selected=""'; } ?>
 				value="11">+1100 : Magadan</option>
 			<option
-			<? if ($html['user_timezone'] == '12') { echo 'selected=""'; } ?>
+			<?php if ($html['user_timezone'] == '12') { echo 'selected=""'; } ?>
 				value="12">+1200 : Wellington</option>
 		</select></td>
 	</tr>
@@ -326,10 +326,10 @@ template_top('User Profile',NULL,NULL,NULL);  ?>
 		<td class="left_caption">Keyword Preference *</td>
 		<td><select name="user_keyword_searched_or_bidded">
 			<option
-			<? if ($html['user_keyword_searched_or_bidded'] == 'searched') { echo 'selected=""'; } ?>
+			<?php if ($html['user_keyword_searched_or_bidded'] == 'searched') { echo 'selected=""'; } ?>
 				value="searched">Pickup Searched Keyword</option>
 			<option
-			<? if ($html['user_keyword_searched_or_bidded'] == 'bidded') { echo 'selected=""'; } ?>
+			<?php if ($html['user_keyword_searched_or_bidded'] == 'bidded') { echo 'selected=""'; } ?>
 				value="bidded">Pickup Bidded Keyword</option>
 		</select></td>
 	</tr>
@@ -337,13 +337,13 @@ template_top('User Profile',NULL,NULL,NULL);  ?>
 	<tr>
 		<td class="left_caption">Email *</td>
 		<td><input type="text" name="user_email" size="40"
-			value="<? echo $html['user_email']; ?>" /></td>
+			value="<?php echo $html['user_email']; ?>" /></td>
 	</tr>
 
 	<tr>
 		<td class="left_caption">Tracking Domain</td>
 		<td><input type="text" name="user_tracking_domain" size="40"
-			value="<? echo $html['user_tracking_domain']; ?>" /></td>
+			value="<?php echo $html['user_tracking_domain']; ?>" /></td>
 	</tr>
 
 	<tr>
@@ -380,11 +380,11 @@ template_top('User Profile',NULL,NULL,NULL);  ?>
 	<tr>
 		<td class="left_caption">My Tracking202 API Key</td>
 		<td><input type="text" name="user_api_key" size="40"
-			value="<? echo $html['user_api_key']; ?>" /></td>
+			value="<?php echo $html['user_api_key']; ?>" /></td>
 	</tr>
 	<tr>
 		<td />
-		<td><input class="submit" type="submit" value="Update API Keys" /> <? if ($_SESSION['user_api_key']) echo "&nbsp;&nbsp; <button class='submit' onclick='window.location=\"?remove_user_api_key=1\"; return false;'>Delete Api Key</a>"; ?>
+		<td><input class="submit" type="submit" value="Update API Keys" /> <?php if ($_SESSION['user_api_key']) echo "&nbsp;&nbsp; <button class='submit' onclick='window.location=\"?remove_user_api_key=1\"; return false;'>Delete Api Key</a>"; ?>
 		</td>
 	</tr>
 </table>
@@ -404,13 +404,13 @@ template_top('User Profile',NULL,NULL,NULL);  ?>
 		</td>
 	</tr>
 	<tr>
-		<td colspan="2"><? if ($change_user_pass == true) { ?>
+		<td colspan="2"><?php if ($change_user_pass == true) { ?>
 		<div class="success">
 		<div>
 		<h3>Your submission was successful</h3>
 		Your changes were made succesfully.</div>
 		</div>
-		<? } ?> <? echo $error['token']; ?> <? echo $error['user_pass']; ?></td>
+		<?php } ?> <?php echo $error['token']; ?> <?php echo $error['user_pass']; ?></td>
 	</tr>
 	<tr>
 		<td class="left_caption">New Password</td>
@@ -434,4 +434,4 @@ template_top('User Profile',NULL,NULL,NULL);  ?>
 
 
 
-		<? template_bottom();
+		<?php template_bottom();

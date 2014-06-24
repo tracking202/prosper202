@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -201,7 +201,7 @@ switch ($_GET['case']) {
 			<form enctype="multipart/form-data" action="/tracking202/update/upload.php" method="post">
 				<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />  
 				
-				<?  if ($error) echo '<table cellspacing="1" cellpadding="4" class="upload-table"><tr><td><div class="error">There were errors with your submission.<br/>The csv you tried to upload failed, it was empty, or it did not end with the extension .csv or .txt</div></td></tr></table><br/>'; ?>
+				<?php  if ($error) echo '<table cellspacing="1" cellpadding="4" class="upload-table"><tr><td><div class="error">There were errors with your submission.<br/>The csv you tried to upload failed, it was empty, or it did not end with the extension .csv or .txt</div></td></tr></table><br/>'; ?>
 				
 				<table cellspacing="1" cellpadding="10" class="upload-table">
 					<tr>
@@ -216,6 +216,6 @@ switch ($_GET['case']) {
 			</form>
 			
 		</div> 
-		<? template_bottom();
+		<?php template_bottom();
 		break;
 }

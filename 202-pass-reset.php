@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 
 
@@ -68,7 +68,7 @@ if ($success == true) {
 				
 //else if none of the above, show the code to reset! ?>
  
-	<? info_top(); ?>
+	<?php info_top(); ?>
 		<form method="post" action="">
 			<input type="hidden" name="token" value=""/>
 			<table class="config" cellspacing="0" cellpadding="5" style="margin: 0px auto;" >
@@ -76,13 +76,13 @@ if ($success == true) {
 				<tr><td/></tr>
 				 <tr>
 					<th>Username:</th>
-					<td><input id="user_name" type="text" name="user_name" value="<? echo $html['user_name']; ?>"  readonly="true""/></td>
+					<td><input id="user_name" type="text" name="user_name" value="<?php echo $html['user_name']; ?>"  readonly="true""/></td>
 				</tr>
 				 <tr>
 					<th>New Pass:</th>
 					<td><input id="user_name" type="password" name="user_pass" "/></td>
 				</tr>
-				<? if ($error['user_pass']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user_pass']); } ?>
+				<?php if ($error['user_pass']) { printf('<tr><td colspan="2">%s</td></tr>', $error['user_pass']); } ?>
 				<tr>
 					<th>Verify Pass:</th>
 					<td><input id="user_name" type="password" name="verify_user_pass" /></td>
@@ -93,4 +93,4 @@ if ($success == true) {
 				</tr>
 			</table>
 		</form>
-	<? info_bottom(); ?> 
+	<?php info_bottom(); ?> 

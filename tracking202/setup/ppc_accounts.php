@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -227,26 +227,26 @@ usernames for each account you have.</div>
 
 <table cellspacing="0" cellpadding="0" class="setup">
 	<tr valign="top">
-		<td><? if ($error) { ?>
+		<td><?php if ($error) { ?>
 		<div class="warning">
 		<div>
 		<h3>There were errors with your submission.</h3>
 		</div>
 		</div>
-		<? } echo $error['token']; ?> <? if ($add_success == true) { ?>
+		<?php } echo $error['token']; ?> <?php if ($add_success == true) { ?>
 		<div class="success">
 		<div>
 		<h3>Your submission was successful</h3>
 		</div>
 		</div>
-		<? } ?> <? if ($delete_success == true) { ?>
+		<?php } ?> <?php if ($delete_success == true) { ?>
 		<div class="success">
 		<div>
 		<h3>Your deletion was successful</h3>
 		You have succesfully removed an account.</div>
 		</div>
-		<? } ?>
-		<form method="post" action="<? echo $_SERVER['REDIRECT_URL']; ?>">
+		<?php } ?>
+		<form method="post" action="<?php echo $_SERVER['REDIRECT_URL']; ?>">
 		<table style="margin: 0px auto;">
 			<tr>
 				<td colspan="2" style="width: 400px;">
@@ -264,22 +264,22 @@ usernames for each account you have.</div>
 				<td class="left_caption">Traffic Source</td>
 				<td><input type="text" name="ppc_network_name"
 					style="display: inline;" maxlength="50"
-					value="<? echo $html['ppc_network_name']; ?>" /> <input
+					value="<?php echo $html['ppc_network_name']; ?>" /> <input
 					type="submit"
-					value="<? if ($network_editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"
-					style="display: inline; margin-left: 10px;" /> <? if ($network_editing == true) { ?>
+					value="<?php if ($network_editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"
+					style="display: inline; margin-left: 10px;" /> <?php if ($network_editing == true) { ?>
 				<input type="hidden" name="ppc_network_id"
 					value="<?php echo filter_input(INPUT_GET, 'edit_ppc_network_id', FILTER_SANITIZE_NUMBER_INT);?>">
 				<input type="submit" value="Cancel"
 					style="display: inline; margin-left: 10px;"
 					onclick="window.location='/tracking202/setup/ppc_accounts.php'; return false; " />
-					<? } ?></td>
+					<?php } ?></td>
 			</tr>
 		</table>
-		<? echo $error['ppc_network_name']; ?></form>
+		<?php echo $error['ppc_network_name']; ?></form>
 
 		<form method="post"
-			action="<? if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>"
+			action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>"
 			style>
 		<table style="margin-top: 35px;">
 			<tr>
@@ -299,7 +299,7 @@ usernames for each account you have.</div>
 				<td class="left_caption">Traffic Source</td>
 				<td><select name="ppc_network_id">
 					<option value="">--</option>
-					<?  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+					<?php  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 					$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='".$mysql['user_id']."' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
 					$ppc_network_result = _mysql_query($ppc_network_sql) ; //($ppc_network_sql);
 					while ($ppc_network_row = mysql_fetch_array($ppc_network_result, MYSQL_ASSOC)) {
@@ -324,13 +324,13 @@ usernames for each account you have.</div>
 				<td class="left_caption">Account Username</td>
 				<td><input type="text" name="ppc_account_name"
 					style="display: inline;"
-					value="<? echo $html['ppc_account_name']; ?>" /></td>
+					value="<?php echo $html['ppc_account_name']; ?>" /></td>
 			</tr>
 			<tr>
 				<td class="left_caption">Pixel Type</td>
 				<td><select name="pixel_type_id">
 					<option value=""
-					<? //if ($editing != true) { echo 'selected="selected"'; }?>>--</option>
+					<?php //if ($editing != true) { echo 'selected="selected"'; }?>>--</option>
 					<?
 					$ppc_network_sql = "SELECT * FROM `202_pixel_types`";
 					$ppc_network_result = _mysql_query($ppc_network_sql) ; //($ppc_network_sql);
@@ -354,19 +354,19 @@ usernames for each account you have.</div>
 			<tr>
 				<td class="left_caption">Pixel Code</td>
 				<td><input type="text" name="pixel_code" style="display: inline;"
-					value="<? echo $selected['pixel_code']; ?>" /> <input type="submit"
-					value="<? if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"
-					style="display: inline; margin-left: 10px;"  size="340"/> <? if ($editing == true) { ?>
+					value="<?php echo $selected['pixel_code']; ?>" /> <input type="submit"
+					value="<?php if ($editing == true) { echo 'Edit'; } else { echo 'Add'; } ?>"
+					style="display: inline; margin-left: 10px;"  size="340"/> <?php if ($editing == true) { ?>
 				<input type="hidden" name="pixel_id"
 					value="<?php echo $selected['pixel_id'];?>"> <input type="submit"
 					value="Cancel" style="display: inline; margin-left: 10px;"
 					onclick="window.location='/tracking202/setup/ppc_accounts.php'; return false; " />
 
-					<? } ?></td>
+					<?php } ?></td>
 			</tr>
 		</table>
-		<? echo $error['ppc_network_id']; ?> <? echo $error['ppc_account_name']; ?>
-		<? echo $error['wrong_user']; ?></form>
+		<?php echo $error['ppc_network_id']; ?> <?php echo $error['ppc_account_name']; ?>
+		<?php echo $error['wrong_user']; ?></form>
 
 
 		</td>
@@ -374,7 +374,7 @@ usernames for each account you have.</div>
 		<h3 class="green">My Traffic Sources</h3>
 
 		<ul>
-		<?  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
+		<?php  $mysql['user_id'] = mysql_real_escape_string($_SESSION['user_id']);
 		$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='".$mysql['user_id']."' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
 		$ppc_network_result = _mysql_query($ppc_network_sql) ; //($ppc_network_sql);
 		if (mysql_num_rows($ppc_network_result) == 0 ) {
@@ -418,4 +418,4 @@ usernames for each account you have.</div>
 	</tr>
 </table>
 
-		<? template_bottom();
+		<?php template_bottom();

@@ -1,4 +1,4 @@
-<? include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -171,49 +171,49 @@ AUTH::require_user();
 			</p>
 		</td>
 	<tr>
-	<? if ($_POST['tracker_type'] == 0) { ?>
+	<?php if ($_POST['tracker_type'] == 0) { ?>
 	<tr>
 		<td class="left_caption">Affiliate Network</td>
-		<td><? echo $html['aff_network_name']; ?></td>
+		<td><?php echo $html['aff_network_name']; ?></td>
 	</tr>                                             
 	<tr>
 		<td class="left_caption">Campaign</td>
-		<td><? echo $html['aff_campaign_name']; ?><td>
+		<td><?php echo $html['aff_campaign_name']; ?><td>
 	</tr>
-	<? } ?>
+	<?php } ?>
 	<tr>
 		<td class="left_caption">Text Ad</td>
-		<td><? echo $html['text_ad_name']; ?></td>
+		<td><?php echo $html['text_ad_name']; ?></td>
 	</tr>
-	<? if ($_POST['tracker_type'] == 0) { ?>
+	<?php if ($_POST['tracker_type'] == 0) { ?>
 	<tr>
 		<td class="left_caption">Method of Promotion</td>
-		<td><? echo $html['method_of_promotion']; ?></td>
+		<td><?php echo $html['method_of_promotion']; ?></td>
 	</tr>
-	<? } ?>
+	<?php } ?>
 	<tr valign="top">
 		<td class="left_caption">Landing Page</td>
-		<td><? echo $html['landing_page_name']; ?></td>
+		<td><?php echo $html['landing_page_name']; ?></td>
 	</tr>
 	<tr>
 		<td class="left_caption">PPC Network</td>
-		<td><? echo $html['ppc_network_name']; ?></td>
+		<td><?php echo $html['ppc_network_name']; ?></td>
 	</tr>
 	<tr>
 		<td class="left_caption">PPC Account</td>
-		<td><? echo $html['ppc_account_name']; ?></td>
+		<td><?php echo $html['ppc_account_name']; ?></td>
 	</tr>
 	<tr>
 		<td class="left_caption">From</td>
-		<td><? echo $html['from']; ?></td>
+		<td><?php echo $html['from']; ?></td>
 	</tr>
 	<tr>
 		<td class="left_caption">To</td>
-		<td><? echo $html['to']; ?></td>
+		<td><?php echo $html['to']; ?></td>
 	</tr>
 	<tr>
 		<td class="left_caption">Updated CPC</td>
-		<td><? echo $html['click_cpc']; ?></td>
+		<td><?php echo $html['click_cpc']; ?></td>
 	</tr>
 	<tr>
 		<td colspan="2"><p style="font-weight: bold; color: #900; text-align: center;">BE VERY SURE YOU WANT TO DO THIS!</td>
