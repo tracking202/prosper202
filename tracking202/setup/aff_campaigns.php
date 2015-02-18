@@ -332,9 +332,21 @@ learn more about it in our help section later.</div>
     <input type="button" value="[[c2]]" onclick="insertAtCaret('aff_campaign_url','[[c2]]');" /> 
     <input type="button" value="[[c3]]" onclick="insertAtCaret('aff_campaign_url','[[c3]]');" /> 
     <input type="button" value="[[c4]]" onclick="insertAtCaret('aff_campaign_url','[[c4]]');" />
+    <input type="button" value="[[c5]]" onclick="insertAtCaret('aff_campaign_url','[[c5]]');" /> 
+    <input type="button" value="[[c6]]" onclick="insertAtCaret('aff_campaign_url','[[c6]]');" /> 
+    <input type="button" value="[[c7]]" onclick="insertAtCaret('aff_campaign_url','[[c7]]');" /> 
+    <input type="button" value="[[c8]]" onclick="insertAtCaret('aff_campaign_url','[[c8]]');" />
+    <input type="button" value="[[c9]]" onclick="insertAtCaret('aff_campaign_url','[[c9]]');" /> 
+    <input type="button" value="[[c10]]" onclick="insertAtCaret('aff_campaign_url','[[c10]]');" /> 
+    <input type="button" value="[[c11]]" onclick="insertAtCaret('aff_campaign_url','[[c11]]');" /> 
+    <input type="button" value="[[c12]]" onclick="insertAtCaret('aff_campaign_url','[[c12]]');" />
+    <input type="button" value="[[c13]]" onclick="insertAtCaret('aff_campaign_url','[[c13]]');" /> 
+    <input type="button" value="[[c14]]" onclick="insertAtCaret('aff_campaign_url','[[c14]]');" /> 
+    <input type="button" value="[[c15]]" onclick="insertAtCaret('aff_campaign_url','[[c15]]');" /> 
     <br> 	
 				<div id="non_CTC2">The following tracking placeholders can be used:<br />
-				[[subid]], [[c1]], [[c2]], [[c3]], [[c4]]</div>
+				[[subid]], [[c1]], [[c2]], [[c3]], [[c4]], [[c5]], [[c6]], [[c7]], [[c8]], [[c9]], [[c10]], [[c11]], [[c12]], [[c13]], [[c14]], [[c15]] 
+				</div>
 				</td>
 			</tr>
 			<tr id="rotateUrl2"

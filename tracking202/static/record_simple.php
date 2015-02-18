@@ -127,6 +127,138 @@ $c4 = str_replace('%20',' ',$c4);
 $c4_id = INDEXES::get_c4_id($c4);
 $mysql['c4_id'] = mysql_real_escape_string($c4_id);
 
+$c5 = mysql_real_escape_string($_GET['c5']);
+$c5 = str_replace('%20',' ',$c5);  
+$c5_id = INDEXES::get_c5_id($c5); 
+$mysql['c5_id'] = mysql_real_escape_string($c5_id);
+
+$c6 = mysql_real_escape_string($_GET['c6']);
+$c6 = str_replace('%20',' ',$c6);
+$c6_id = INDEXES::get_c6_id($c6);
+$mysql['c6_id'] = mysql_real_escape_string($c6_id);
+
+$c7 = mysql_real_escape_string($_GET['c7']);
+$c7 = str_replace('%20',' ',$c7);  
+$c7_id = INDEXES::get_c7_id($c7); 
+$mysql['c7_id'] = mysql_real_escape_string($c7_id);
+
+$c8 = mysql_real_escape_string($_GET['c8']);
+$c8 = str_replace('%20',' ',$c8);
+$c8_id = INDEXES::get_c8_id($c8);
+$mysql['c8_id'] = mysql_real_escape_string($c8_id);
+
+$c9 = mysql_real_escape_string($_GET['c9']);
+$c9 = str_replace('%20',' ',$c9);  
+$c9_id = INDEXES::get_c9_id($c9); 
+$mysql['c9_id'] = mysql_real_escape_string($c9_id);
+
+$c10 = mysql_real_escape_string($_GET['c10']);
+$c10 = str_replace('%20',' ',$c10);
+$c10_id = INDEXES::get_c10_id($c10);
+$mysql['c10_id'] = mysql_real_escape_string($c10_id);
+
+$c11 = mysql_real_escape_string($_GET['c11']);
+$c11 = str_replace('%20',' ',$c11);  
+$c11_id = INDEXES::get_c11_id($c11); 
+$mysql['c11_id'] = mysql_real_escape_string($c11_id);
+
+$c12 = mysql_real_escape_string($_GET['c12']);
+$c12 = str_replace('%20',' ',$c12);
+$c12_id = INDEXES::get_c12_id($c12);
+$mysql['c12_id'] = mysql_real_escape_string($c12_id);
+
+$c13 = mysql_real_escape_string($_GET['c13']);
+$c13 = str_replace('%20',' ',$c13);  
+$c13_id = INDEXES::get_c13_id($c13); 
+$mysql['c13_id'] = mysql_real_escape_string($c13_id);
+
+$c14 = mysql_real_escape_string($_GET['c14']);
+$c14 = str_replace('%20',' ',$c14);
+$c14_id = INDEXES::get_c14_id($c14);
+$mysql['c14_id'] = mysql_real_escape_string($c14_id);
+
+$c15 = mysql_real_escape_string($_GET['c15']);
+$c15 = str_replace('%20',' ',$c15);  
+$c15_id = INDEXES::get_c15_id($c15); 
+$mysql['c15_id'] = mysql_real_escape_string($c15_id);
+
+
+$mv1 = mysql_real_escape_string($_GET['mv1']);
+$mv1 = str_replace('%20',' ',$mv1);  
+$mv1_id = INDEXES::get_mv1_id($mv1); 
+$mysql['mv1_id'] = mysql_real_escape_string($mv1_id);
+
+$mv2 = mysql_real_escape_string($_GET['mv2']);
+$mv2 = str_replace('%20',' ',$mv2);
+$mv2_id = INDEXES::get_mv2_id($mv2);
+$mysql['mv2_id'] = mysql_real_escape_string($mv2_id);
+
+$mv3 = mysql_real_escape_string($_GET['mv3']);
+$mv3 = str_replace('%20',' ',$mv3);  
+$mv3_id = INDEXES::get_mv3_id($mv3); 
+$mysql['mv3_id'] = mysql_real_escape_string($mv3_id);
+
+$mv4 = mysql_real_escape_string($_GET['mv4']);
+$mv4 = str_replace('%20',' ',$mv4);
+$mv4_id = INDEXES::get_mv4_id($mv4);
+$mysql['mv4_id'] = mysql_real_escape_string($mv4_id);
+
+$mv5 = mysql_real_escape_string($_GET['mv5']);
+$mv5 = str_replace('%20',' ',$mv5);  
+$mv5_id = INDEXES::get_mv5_id($mv5); 
+$mysql['mv5_id'] = mysql_real_escape_string($mv5_id);
+
+$mv6 = mysql_real_escape_string($_GET['mv6']);
+$mv6 = str_replace('%20',' ',$mv6);
+$mv6_id = INDEXES::get_mv6_id($mv6);
+$mysql['mv6_id'] = mysql_real_escape_string($mv6_id);
+
+$mv7 = mysql_real_escape_string($_GET['mv7']);
+$mv7 = str_replace('%20',' ',$mv7);  
+$mv7_id = INDEXES::get_mv7_id($mv7); 
+$mysql['mv7_id'] = mysql_real_escape_string($mv7_id);
+
+$mv8 = mysql_real_escape_string($_GET['mv8']);
+$mv8 = str_replace('%20',' ',$mv8);
+$mv8_id = INDEXES::get_mv8_id($mv8);
+$mysql['mv8_id'] = mysql_real_escape_string($mv8_id);
+
+$mv9 = mysql_real_escape_string($_GET['mv9']);
+$mv9 = str_replace('%20',' ',$mv9);  
+$mv9_id = INDEXES::get_mv9_id($mv9); 
+$mysql['mv9_id'] = mysql_real_escape_string($mv9_id);
+
+$mv10 = mysql_real_escape_string($_GET['mv10']);
+$mv10 = str_replace('%20',' ',$mv10);
+$mv10_id = INDEXES::get_mv10_id($mv10);
+$mysql['mv10_id'] = mysql_real_escape_string($mv10_id);
+
+$mv11 = mysql_real_escape_string($_GET['mv11']);
+$mv11 = str_replace('%20',' ',$mv11);  
+$mv11_id = INDEXES::get_mv11_id($mv11); 
+$mysql['mv11_id'] = mysql_real_escape_string($mv11_id);
+
+$mv12 = mysql_real_escape_string($_GET['mv12']);
+$mv12 = str_replace('%20',' ',$mv12);
+$mv12_id = INDEXES::get_mv12_id($mv12);
+$mysql['mv12_id'] = mysql_real_escape_string($mv12_id);
+
+$mv13 = mysql_real_escape_string($_GET['mv13']);
+$mv13 = str_replace('%20',' ',$mv13);  
+$mv13_id = INDEXES::get_mv13_id($mv13); 
+$mysql['mv13_id'] = mysql_real_escape_string($mv13_id);
+
+$mv14 = mysql_real_escape_string($_GET['mv14']);
+$mv14 = str_replace('%20',' ',$mv14);
+$mv14_id = INDEXES::get_mv14_id($mv14);
+$mysql['mv14_id'] = mysql_real_escape_string($mv14_id);
+
+$mv15 = mysql_real_escape_string($_GET['mv15']);
+$mv15 = str_replace('%20',' ',$mv15);  
+$mv15_id = INDEXES::get_mv15_id($mv15); 
+$mysql['mv15_id'] = mysql_real_escape_string($mv15_id);
+
+
 $ip_id = INDEXES::get_ip_id($_SERVER['HTTP_X_FORWARDED_FOR']);
 $mysql['ip_id'] = mysql_real_escape_string($ip_id);     
 
@@ -220,7 +352,33 @@ $click_sql = "
 		c1_id = '".$mysql['c1_id']."',
 		c2_id = '".$mysql['c2_id']."',
 		c3_id = '".$mysql['c3_id']."',
-		c4_id = '".$mysql['c4_id']."'";
+		c4_id = '".$mysql['c4_id']."',
+		c5_id = '".$mysql['c5_id']."',
+		c6_id = '".$mysql['c6_id']."',
+		c7_id = '".$mysql['c7_id']."',
+		c8_id = '".$mysql['c8_id']."',
+		c9_id = '".$mysql['c9_id']."',
+		c10_id = '".$mysql['c10_id']."',
+		c11_id = '".$mysql['c11_id']."',
+		c12_id = '".$mysql['c12_id']."', 		
+		c13_id = '".$mysql['c13_id']."',
+		c14_id = '".$mysql['c14_id']."',
+		c15_id = '".$mysql['c15_id']."', 
+		mv1_id = '".$mysql['mv1_id']."',
+		mv2_id = '".$mysql['mv2_id']."',
+		mv3_id = '".$mysql['mv3_id']."',
+		mv4_id = '".$mysql['mv4_id']."',
+		mv5_id = '".$mysql['mv5_id']."',
+		mv6_id = '".$mysql['mv6_id']."',
+		mv7_id = '".$mysql['mv7_id']."',
+		mv8_id = '".$mysql['mv8_id']."',
+		mv9_id = '".$mysql['mv9_id']."',
+		mv10_id = '".$mysql['mv10_id']."',
+		mv11_id = '".$mysql['mv11_id']."',
+		mv12_id = '".$mysql['mv12_id']."', 		
+		mv13_id = '".$mysql['mv13_id']."',
+		mv14_id = '".$mysql['mv14_id']."',
+		mv15_id = '".$mysql['mv15_id']."'";
 $click_result = mysql_query($click_sql) or record_mysql_error($click_sql);
 
 //now gather variables for the clicks record db

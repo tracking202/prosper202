@@ -45,6 +45,15 @@
 				<li <? if ($navigation[3] == 'referers_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/referers_lpctr.php">Referers LP CTR</a></li>
 				<li <? if ($navigation[3] == 'ips.php') { echo 'class="on"'; } ?>><a href="/tracking202/analyze/ips.php">IPs</a></li>
 				<li <? if ($navigation[3] == 'landing_pages.php') { echo 'class="on"'; } ?>><a href="/tracking202/analyze/landing_pages.php">Landing Pages</a></li>
+                <br>
+                <li <? if ($navigation[3] == 'mv1_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/mv1_lpctr.php">Snippet A LP CTR</a></li> 
+                <li <? if ($navigation[3] == 'mv2_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/mv2_lpctr.php">Snippet B LP CTR</a></li>       
+                <li <? if ($navigation[3] == 'mv3_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/mv3_lpctr.php">Snippet C LP CTR</a></li> 
+                <li <? if ($navigation[3] == 'mv4_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/mv4_lpctr.php">Snippet D LP CTR</a></li>   
+                <li <? if ($navigation[3] == 'mv5_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/mv5_lpctr.php">Snippet E LP CTR</a></li> 
+                <li <? if ($navigation[3] == 'mv6_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/mv6_lpctr.php">Snippet F LP CTR</a></li>   
+                <li <? if ($navigation[3] == 'mv7_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/mv7_lpctr.php">Snippet G LP CTR</a></li> 
+                <li <? if ($navigation[3] == 'mv8_lpctr.php' or !$navigation[3]) { echo ' class="on" '; } ?>><a href="/tracking202/analyze/mv8_lpctr.php">Snippet H LP CTR</a></li>   
 			</ul>
 		<? } ?>
 		

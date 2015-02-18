@@ -2867,6 +2867,605 @@ class INDEXES {
 			return $c4_id;    
 		}
 	}
+
+	//this returns the c5 id
+	function get_c5_id($c5) {
+		
+		//only grab the first 350 charactesr of c5
+		$c5 = substr($c5, 0, 350);
+		$mysql['c5'] = mysql_real_escape_string($c5);
+		
+		$c5_sql = "SELECT c5_id FROM 202_tracking_c5 WHERE c5='".$mysql['c5']."'";
+		$c5_result = _mysql_query($c5_sql);
+		$c5_row = mysql_fetch_assoc($c5_result);
+		if ($c5_row) {
+			//if this already exists, return the id for it
+			$c5_id = $c5_row['c5_id'];
+			return $c5_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c5_sql = "INSERT INTO 202_tracking_c5 SET c5='".$mysql['c5']."'";
+			$c5_result = _mysql_query($c5_sql) ; //($c5_sql);
+			$c5_id = mysql_insert_id();
+			return $c5_id;    
+		}
+	}
+
+	//this returns the c6 id
+	function get_c6_id($c6) {
+		
+		//only grab the first 350 charactesr of c6
+		$c6 = substr($c6, 0, 350);
+		$mysql['c6'] = mysql_real_escape_string($c6);
+		
+		$c6_sql = "SELECT c6_id FROM 202_tracking_c6 WHERE c6='".$mysql['c6']."'";
+		$c6_result = _mysql_query($c6_sql);
+		$c6_row = mysql_fetch_assoc($c6_result);
+		if ($c6_row) {
+			//if this already exists, return the id for it
+			$c6_id = $c6_row['c6_id'];
+			return $c6_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c6_sql = "INSERT INTO 202_tracking_c6 SET c6='".$mysql['c6']."'";
+			$c6_result = _mysql_query($c6_sql) ; //($c6_sql);
+			$c6_id = mysql_insert_id();
+			return $c6_id;    
+		}
+	}
+
+	//this returns the c7 id
+	function get_c7_id($c7) {
+		
+		//only grab the first 350 charactesr of c7
+		$c7 = substr($c7, 0, 350);
+		$mysql['c7'] = mysql_real_escape_string($c7);
+		
+		$c7_sql = "SELECT c7_id FROM 202_tracking_c7 WHERE c7='".$mysql['c7']."'";
+		$c7_result = _mysql_query($c7_sql);
+		$c7_row = mysql_fetch_assoc($c7_result);
+		if ($c7_row) {
+			//if this already exists, return the id for it
+			$c7_id = $c7_row['c7_id'];
+			return $c7_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c7_sql = "INSERT INTO 202_tracking_c7 SET c7='".$mysql['c7']."'";
+			$c7_result = _mysql_query($c7_sql) ; //($c7_sql);
+			$c7_id = mysql_insert_id();
+			return $c7_id;    
+		}
+	}
+
+	//this returns the c8 id
+	function get_c8_id($c8) {
+		
+		//only grab the first 350 charactesr of c8
+		$c8 = substr($c8, 0, 350);
+		$mysql['c8'] = mysql_real_escape_string($c8);
+		
+		$c8_sql = "SELECT c8_id FROM 202_tracking_c8 WHERE c8='".$mysql['c8']."'";
+		$c8_result = _mysql_query($c8_sql);
+		$c8_row = mysql_fetch_assoc($c8_result);
+		if ($c8_row) {
+			//if this already exists, return the id for it
+			$c8_id = $c8_row['c8_id'];
+			return $c8_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c8_sql = "INSERT INTO 202_tracking_c8 SET c8='".$mysql['c8']."'";
+			$c8_result = _mysql_query($c8_sql) ; //($c8_sql);
+			$c8_id = mysql_insert_id();
+			return $c8_id;    
+		}
+	}
+
+	//this returns the c9 id
+	function get_c9_id($c9) {
+		
+		//only grab the first 350 charactesr of c9
+		$c9 = substr($c9, 0, 350);
+		$mysql['c9'] = mysql_real_escape_string($c9);
+		
+		$c9_sql = "SELECT c9_id FROM 202_tracking_c9 WHERE c9='".$mysql['c9']."'";
+		$c9_result = _mysql_query($c9_sql);
+		$c9_row = mysql_fetch_assoc($c9_result);
+		if ($c9_row) {
+			//if this already exists, return the id for it
+			$c9_id = $c9_row['c9_id'];
+			return $c9_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c9_sql = "INSERT INTO 202_tracking_c9 SET c9='".$mysql['c9']."'";
+			$c9_result = _mysql_query($c9_sql) ; //($c9_sql);
+			$c9_id = mysql_insert_id();
+			return $c9_id;    
+		}
+	}
+
+	//this returns the c10 id
+	function get_c10_id($c10) {
+		
+		//only grab the first 350 charactesr of c10
+		$c10 = substr($c10, 0, 350);
+		$mysql['c10'] = mysql_real_escape_string($c10);
+		
+		$c10_sql = "SELECT c10_id FROM 202_tracking_c10 WHERE c10='".$mysql['c10']."'";
+		$c10_result = _mysql_query($c10_sql);
+		$c10_row = mysql_fetch_assoc($c10_result);
+		if ($c10_row) {
+			//if this already exists, return the id for it
+			$c10_id = $c10_row['c10_id'];
+			return $c10_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c10_sql = "INSERT INTO 202_tracking_c10 SET c10='".$mysql['c10']."'";
+			$c10_result = _mysql_query($c10_sql) ; //($c10_sql);
+			$c10_id = mysql_insert_id();
+			return $c10_id;    
+		}
+	}
+
+	//this returns the c11 id
+	function get_c11_id($c11) {
+		
+		//only grab the first 350 charactesr of c11
+		$c11 = substr($c11, 0, 350);
+		$mysql['c11'] = mysql_real_escape_string($c11);
+		
+		$c11_sql = "SELECT c11_id FROM 202_tracking_c11 WHERE c11='".$mysql['c11']."'";
+		$c11_result = _mysql_query($c11_sql);
+		$c11_row = mysql_fetch_assoc($c11_result);
+		if ($c11_row) {
+			//if this already exists, return the id for it
+			$c11_id = $c11_row['c11_id'];
+			return $c11_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c11_sql = "INSERT INTO 202_tracking_c11 SET c11='".$mysql['c11']."'";
+			$c11_result = _mysql_query($c11_sql) ; //($c11_sql);
+			$c11_id = mysql_insert_id();
+			return $c11_id;    
+		}
+	}
+
+	//this returns the c12 id
+	function get_c12_id($c12) {
+		
+		//only grab the first 350 charactesr of c12
+		$c12 = substr($c12, 0, 350);
+		$mysql['c12'] = mysql_real_escape_string($c12);
+		
+		$c12_sql = "SELECT c12_id FROM 202_tracking_c12 WHERE c12='".$mysql['c12']."'";
+		$c12_result = _mysql_query($c12_sql);
+		$c12_row = mysql_fetch_assoc($c12_result);
+		if ($c12_row) {
+			//if this already exists, return the id for it
+			$c12_id = $c12_row['c12_id'];
+			return $c12_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c12_sql = "INSERT INTO 202_tracking_c12 SET c12='".$mysql['c12']."'";
+			$c12_result = _mysql_query($c12_sql) ; //($c12_sql);
+			$c12_id = mysql_insert_id();
+			return $c12_id;    
+		}
+	}
+
+	//this returns the c13 id
+	function get_c13_id($c13) {
+		
+		//only grab the first 350 charactesr of c13
+		$c13 = substr($c13, 0, 350);
+		$mysql['c13'] = mysql_real_escape_string($c13);
+		
+		$c13_sql = "SELECT c13_id FROM 202_tracking_c13 WHERE c13='".$mysql['c13']."'";
+		$c13_result = _mysql_query($c13_sql);
+		$c13_row = mysql_fetch_assoc($c13_result);
+		if ($c13_row) {
+			//if this already exists, return the id for it
+			$c13_id = $c13_row['c13_id'];
+			return $c13_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c13_sql = "INSERT INTO 202_tracking_c13 SET c13='".$mysql['c13']."'";
+			$c13_result = _mysql_query($c13_sql) ; //($c13_sql);
+			$c13_id = mysql_insert_id();
+			return $c13_id;    
+		}
+	}
+
+	//this returns the c14 id
+	function get_c14_id($c14) {
+		
+		//only grab the first 350 charactesr of c14
+		$c14 = substr($c14, 0, 350);
+		$mysql['c14'] = mysql_real_escape_string($c14);
+		
+		$c14_sql = "SELECT c14_id FROM 202_tracking_c14 WHERE c14='".$mysql['c14']."'";
+		$c14_result = _mysql_query($c14_sql);
+		$c14_row = mysql_fetch_assoc($c14_result);
+		if ($c14_row) {
+			//if this already exists, return the id for it
+			$c14_id = $c14_row['c14_id'];
+			return $c14_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c14_sql = "INSERT INTO 202_tracking_c14 SET c14='".$mysql['c14']."'";
+			$c14_result = _mysql_query($c14_sql) ; //($c14_sql);
+			$c14_id = mysql_insert_id();
+			return $c14_id;    
+		}
+	}
+
+	//this returns the c15 id
+	function get_c15_id($c15) {
+		
+		//only grab the first 350 charactesr of c15
+		$c15 = substr($c15, 0, 350);
+		$mysql['c15'] = mysql_real_escape_string($c15);
+		
+		$c15_sql = "SELECT c15_id FROM 202_tracking_c15 WHERE c15='".$mysql['c15']."'";
+		$c15_result = _mysql_query($c15_sql);
+		$c15_row = mysql_fetch_assoc($c15_result);
+		if ($c15_row) {
+			//if this already exists, return the id for it
+			$c15_id = $c15_row['c15_id'];
+			return $c15_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$c15_sql = "INSERT INTO 202_tracking_c15 SET c15='".$mysql['c15']."'";
+			$c15_result = _mysql_query($c15_sql) ; //($c15_sql);
+			$c15_id = mysql_insert_id();
+			return $c15_id;    
+		}
+	}	
+
+	//this returns the mv1 id
+	function get_mv1_id($mv1) {
+		
+		//only grab the first 350 characters of mv1
+		$mv1 = substr($mv1, 0, 350);
+		$mysql['mv1'] = mysql_real_escape_string($mv1);
+		
+		$mv1_sql = "SELECT mv1_id FROM 202_tracking_mv1 WHERE mv1='".$mysql['mv1']."'";
+		$mv1_result = _mysql_query($mv1_sql);
+		$mv1_row = mysql_fetch_assoc($mv1_result);
+		if ($mv1_row) {
+			//if this already exists, return the id for it
+			$mv1_id = $mv1_row['mv1_id'];
+			return $mv1_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv1_sql = "INSERT INTO 202_tracking_mv1 SET mv1='".$mysql['mv1']."'";
+			$mv1_result = _mysql_query($mv1_sql) ; //($mv1_sql);
+			$mv1_id = mysql_insert_id();
+			return $mv1_id;     
+		}
+	}
+	
+	//this returns the mv2 id
+	function get_mv2_id($mv2) {
+		
+		//only grab the first 350 characters of mv2
+		$mv2 = substr($mv2, 0, 350);
+		$mysql['mv2'] = mysql_real_escape_string($mv2);
+		
+		$mv2_sql = "SELECT mv2_id FROM 202_tracking_mv2 WHERE mv2='".$mysql['mv2']."'";
+		$mv2_result = _mysql_query($mv2_sql);
+		$mv2_row = mysql_fetch_assoc($mv2_result);
+		if ($mv2_row) {
+			//if this already exists, return the id for it
+			$mv2_id = $mv2_row['mv2_id'];
+			return $mv2_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv2_sql = "INSERT INTO 202_tracking_mv2 SET mv2='".$mysql['mv2']."'";
+			$mv2_result = _mysql_query($mv2_sql) ; //($mv2_sql);
+			$mv2_id = mysql_insert_id();
+			return $mv2_id;    
+		}
+	}
+	
+	//this returns the mv3 id
+	function get_mv3_id($mv3) {
+		
+		//only grab the first 350 characters of mv3
+		$mv3 = substr($mv3, 0, 350);
+		$mysql['mv3'] = mysql_real_escape_string($mv3);
+		
+		$mv3_sql = "SELECT mv3_id FROM 202_tracking_mv3 WHERE mv3='".$mysql['mv3']."'";
+		$mv3_result = _mysql_query($mv3_sql);
+		$mv3_row = mysql_fetch_assoc($mv3_result);
+		if ($mv3_row) {
+			//if this already exists, return the id for it
+			$mv3_id = $mv3_row['mv3_id'];
+			return $mv3_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv3_sql = "INSERT INTO 202_tracking_mv3 SET mv3='".$mysql['mv3']."'";
+			$mv3_result = _mysql_query($mv3_sql) ; //($mv3_sql);
+			$mv3_id = mysql_insert_id();
+			return $mv3_id;    
+		}
+	}
+	
+	//this returns the mv4 id
+	function get_mv4_id($mv4) {
+		
+		//only grab the first 350 characters of mv4
+		$mv4 = substr($mv4, 0, 350);
+		$mysql['mv4'] = mysql_real_escape_string($mv4);
+		
+		$mv4_sql = "SELECT mv4_id FROM 202_tracking_mv4 WHERE mv4='".$mysql['mv4']."'";
+		$mv4_result = _mysql_query($mv4_sql);
+		$mv4_row = mysql_fetch_assoc($mv4_result);
+		if ($mv4_row) {
+			//if this already exists, return the id for it
+			$mv4_id = $mv4_row['mv4_id'];
+			return $mv4_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv4_sql = "INSERT INTO 202_tracking_mv4 SET mv4='".$mysql['mv4']."'";
+			$mv4_result = _mysql_query($mv4_sql) ; //($mv4_sql);
+			$mv4_id = mysql_insert_id();
+			return $mv4_id;    
+		}
+	}
+
+	//this returns the mv5 id
+	function get_mv5_id($mv5) {
+		
+		//only grab the first 350 characters of mv5
+		$mv5 = substr($mv5, 0, 350);
+		$mysql['mv5'] = mysql_real_escape_string($mv5);
+		
+		$mv5_sql = "SELECT mv5_id FROM 202_tracking_mv5 WHERE mv5='".$mysql['mv5']."'";
+		$mv5_result = _mysql_query($mv5_sql);
+		$mv5_row = mysql_fetch_assoc($mv5_result);
+		if ($mv5_row) {
+			//if this already exists, return the id for it
+			$mv5_id = $mv5_row['mv5_id'];
+			return $mv5_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv5_sql = "INSERT INTO 202_tracking_mv5 SET mv5='".$mysql['mv5']."'";
+			$mv5_result = _mysql_query($mv5_sql) ; //($mv5_sql);
+			$mv5_id = mysql_insert_id();
+			return $mv5_id;    
+		}
+	}
+
+	//this returns the mv6 id
+	function get_mv6_id($mv6) {
+		
+		//only grab the first 350 characters of mv6
+		$mv6 = substr($mv6, 0, 350);
+		$mysql['mv6'] = mysql_real_escape_string($mv6);
+		
+		$mv6_sql = "SELECT mv6_id FROM 202_tracking_mv6 WHERE mv6='".$mysql['mv6']."'";
+		$mv6_result = _mysql_query($mv6_sql);
+		$mv6_row = mysql_fetch_assoc($mv6_result);
+		if ($mv6_row) {
+			//if this already exists, return the id for it
+			$mv6_id = $mv6_row['mv6_id'];
+			return $mv6_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv6_sql = "INSERT INTO 202_tracking_mv6 SET mv6='".$mysql['mv6']."'";
+			$mv6_result = _mysql_query($mv6_sql) ; //($mv6_sql);
+			$mv6_id = mysql_insert_id();
+			return $mv6_id;    
+		}
+	}
+
+	//this returns the mv7 id
+	function get_mv7_id($mv7) {
+		
+		//only grab the first 350 characters of mv7
+		$mv7 = substr($mv7, 0, 350);
+		$mysql['mv7'] = mysql_real_escape_string($mv7);
+		
+		$mv7_sql = "SELECT mv7_id FROM 202_tracking_mv7 WHERE mv7='".$mysql['mv7']."'";
+		$mv7_result = _mysql_query($mv7_sql);
+		$mv7_row = mysql_fetch_assoc($mv7_result);
+		if ($mv7_row) {
+			//if this already exists, return the id for it
+			$mv7_id = $mv7_row['mv7_id'];
+			return $mv7_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv7_sql = "INSERT INTO 202_tracking_mv7 SET mv7='".$mysql['mv7']."'";
+			$mv7_result = _mysql_query($mv7_sql) ; //($mv7_sql);
+			$mv7_id = mysql_insert_id();
+			return $mv7_id;    
+		}
+	}
+
+	//this returns the mv8 id
+	function get_mv8_id($mv8) {
+		
+		//only grab the first 350 characters of mv8
+		$mv8 = substr($mv8, 0, 350);
+		$mysql['mv8'] = mysql_real_escape_string($mv8);
+		
+		$mv8_sql = "SELECT mv8_id FROM 202_tracking_mv8 WHERE mv8='".$mysql['mv8']."'";
+		$mv8_result = _mysql_query($mv8_sql);
+		$mv8_row = mysql_fetch_assoc($mv8_result);
+		if ($mv8_row) {
+			//if this already exists, return the id for it
+			$mv8_id = $mv8_row['mv8_id'];
+			return $mv8_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv8_sql = "INSERT INTO 202_tracking_mv8 SET mv8='".$mysql['mv8']."'";
+			$mv8_result = _mysql_query($mv8_sql) ; //($mv8_sql);
+			$mv8_id = mysql_insert_id();
+			return $mv8_id;    
+		}
+	}
+
+	//this returns the mv9 id
+	function get_mv9_id($mv9) {
+		
+		//only grab the first 350 characters of mv9
+		$mv9 = substr($mv9, 0, 350);
+		$mysql['mv9'] = mysql_real_escape_string($mv9);
+		
+		$mv9_sql = "SELECT mv9_id FROM 202_tracking_mv9 WHERE mv9='".$mysql['mv9']."'";
+		$mv9_result = _mysql_query($mv9_sql);
+		$mv9_row = mysql_fetch_assoc($mv9_result);
+		if ($mv9_row) {
+			//if this already exists, return the id for it
+			$mv9_id = $mv9_row['mv9_id'];
+			return $mv9_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv9_sql = "INSERT INTO 202_tracking_mv9 SET mv9='".$mysql['mv9']."'";
+			$mv9_result = _mysql_query($mv9_sql) ; //($mv9_sql);
+			$mv9_id = mysql_insert_id();
+			return $mv9_id;    
+		}
+	}
+
+	//this returns the mv10 id
+	function get_mv10_id($mv10) {
+		
+		//only grab the first 350 characters of mv10
+		$mv10 = substr($mv10, 0, 350);
+		$mysql['mv10'] = mysql_real_escape_string($mv10);
+		
+		$mv10_sql = "SELECT mv10_id FROM 202_tracking_mv10 WHERE mv10='".$mysql['mv10']."'";
+		$mv10_result = _mysql_query($mv10_sql);
+		$mv10_row = mysql_fetch_assoc($mv10_result);
+		if ($mv10_row) {
+			//if this already exists, return the id for it
+			$mv10_id = $mv10_row['mv10_id'];
+			return $mv10_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv10_sql = "INSERT INTO 202_tracking_mv10 SET mv10='".$mysql['mv10']."'";
+			$mv10_result = _mysql_query($mv10_sql) ; //($mv10_sql);
+			$mv10_id = mysql_insert_id();
+			return $mv10_id;    
+		}
+	}
+
+	//this returns the mv11 id
+	function get_mv11_id($mv11) {
+		
+		//only grab the first 350 characters of mv11
+		$mv11 = substr($mv11, 0, 350);
+		$mysql['mv11'] = mysql_real_escape_string($mv11);
+		
+		$mv11_sql = "SELECT mv11_id FROM 202_tracking_mv11 WHERE mv11='".$mysql['mv11']."'";
+		$mv11_result = _mysql_query($mv11_sql);
+		$mv11_row = mysql_fetch_assoc($mv11_result);
+		if ($mv11_row) {
+			//if this already exists, return the id for it
+			$mv11_id = $mv11_row['mv11_id'];
+			return $mv11_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv11_sql = "INSERT INTO 202_tracking_mv11 SET mv11='".$mysql['mv11']."'";
+			$mv11_result = _mysql_query($mv11_sql) ; //($mv11_sql);
+			$mv11_id = mysql_insert_id();
+			return $mv11_id;    
+		}
+	}
+
+	//this returns the mv12 id
+	function get_mv12_id($mv12) {
+		
+		//only grab the first 350 characters of mv12
+		$mv12 = substr($mv12, 0, 350);
+		$mysql['mv12'] = mysql_real_escape_string($mv12);
+		
+		$mv12_sql = "SELECT mv12_id FROM 202_tracking_mv12 WHERE mv12='".$mysql['mv12']."'";
+		$mv12_result = _mysql_query($mv12_sql);
+		$mv12_row = mysql_fetch_assoc($mv12_result);
+		if ($mv12_row) {
+			//if this already exists, return the id for it
+			$mv12_id = $mv12_row['mv12_id'];
+			return $mv12_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv12_sql = "INSERT INTO 202_tracking_mv12 SET mv12='".$mysql['mv12']."'";
+			$mv12_result = _mysql_query($mv12_sql) ; //($mv12_sql);
+			$mv12_id = mysql_insert_id();
+			return $mv12_id;    
+		}
+	}
+
+	//this returns the mv13 id
+	function get_mv13_id($mv13) {
+		
+		//only grab the first 350 characters of mv13
+		$mv13 = substr($mv13, 0, 350);
+		$mysql['mv13'] = mysql_real_escape_string($mv13);
+		
+		$mv13_sql = "SELECT mv13_id FROM 202_tracking_mv13 WHERE mv13='".$mysql['mv13']."'";
+		$mv13_result = _mysql_query($mv13_sql);
+		$mv13_row = mysql_fetch_assoc($mv13_result);
+		if ($mv13_row) {
+			//if this already exists, return the id for it
+			$mv13_id = $mv13_row['mv13_id'];
+			return $mv13_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv13_sql = "INSERT INTO 202_tracking_mv13 SET mv13='".$mysql['mv13']."'";
+			$mv13_result = _mysql_query($mv13_sql) ; //($mv13_sql);
+			$mv13_id = mysql_insert_id();
+			return $mv13_id;    
+		}
+	}
+
+	//this returns the mv14 id
+	function get_mv14_id($mv14) {
+		
+		//only grab the first 350 characters of mv14
+		$mv14 = substr($mv14, 0, 350);
+		$mysql['mv14'] = mysql_real_escape_string($mv14);
+		
+		$mv14_sql = "SELECT mv14_id FROM 202_tracking_mv14 WHERE mv14='".$mysql['mv14']."'";
+		$mv14_result = _mysql_query($mv14_sql);
+		$mv14_row = mysql_fetch_assoc($mv14_result);
+		if ($mv14_row) {
+			//if this already exists, return the id for it
+			$mv14_id = $mv14_row['mv14_id'];
+			return $mv14_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv14_sql = "INSERT INTO 202_tracking_mv14 SET mv14='".$mysql['mv14']."'";
+			$mv14_result = _mysql_query($mv14_sql) ; //($mv14_sql);
+			$mv14_id = mysql_insert_id();
+			return $mv14_id;    
+		}
+	}
+
+	//this returns the mv15 id
+	function get_mv15_id($mv15) {
+		
+		//only grab the first 350 characters of mv15
+		$mv15 = substr($mv15, 0, 350);
+		$mysql['mv15'] = mysql_real_escape_string($mv15);
+		
+		$mv15_sql = "SELECT mv15_id FROM 202_tracking_mv15 WHERE mv15='".$mysql['mv15']."'";
+		$mv15_result = _mysql_query($mv15_sql);
+		$mv15_row = mysql_fetch_assoc($mv15_result);
+		if ($mv15_row) {
+			//if this already exists, return the id for it
+			$mv15_id = $mv15_row['mv15_id'];
+			return $mv15_id;    
+		} else {
+			//else if this ip doesn't exist, insert the row and grab the id for it
+			$mv15_sql = "INSERT INTO 202_tracking_mv15 SET mv15='".$mysql['mv15']."'";
+			$mv15_result = _mysql_query($mv15_sql) ; //($mv15_sql);
+			$mv15_id = mysql_insert_id();
+			return $mv15_id;    
+		}
+	}	
+
 	
 	//this returns the location_id
 	function get_location_id($ip_address) {
@@ -4259,14 +4858,70 @@ function replaceTrackerPlaceholders($url,$click_id) {
 	//get the tracker placeholder values
 	$mysql['click_id'] = mysql_real_escape_string($click_id);
 	
-	if(preg_match('/\[\[c1\]\]/', $url) || preg_match('/\[\[c2\]\]/', $url) || preg_match('/\[\[c3\]\]/', $url) || preg_match('/\[\[c4\]\]/', $url)) {
+	if(	preg_match('/\[\[c1\]\]/', $url) || 
+		preg_match('/\[\[c2\]\]/', $url) || 
+		preg_match('/\[\[c3\]\]/', $url) || 
+		preg_match('/\[\[c4\]\]/', $url) ||
+		preg_match('/\[\[c5\]\]/', $url) || 
+		preg_match('/\[\[c6\]\]/', $url) || 
+		preg_match('/\[\[c7\]\]/', $url) ||
+		preg_match('/\[\[c8\]\]/', $url) || 
+		preg_match('/\[\[c9\]\]/', $url) || 
+		preg_match('/\[\[c10\]\]/', $url) ||
+		preg_match('/\[\[c11\]\]/', $url) || 
+		preg_match('/\[\[c12\]\]/', $url) || 
+		preg_match('/\[\[c13\]\]/', $url) ||
+		preg_match('/\[\[c14\]\]/', $url) || 
+		preg_match('/\[\[c15\]\]/', $url) || 
+		preg_match('/\[\[mv1\]\]/', $url) || 		
+		preg_match('/\[\[mv2\]\]/', $url) || 
+		preg_match('/\[\[mv3\]\]/', $url) || 
+		preg_match('/\[\[mv4\]\]/', $url) ||
+		preg_match('/\[\[mv5\]\]/', $url) || 
+		preg_match('/\[\[mv6\]\]/', $url) || 
+		preg_match('/\[\[mv7\]\]/', $url) ||
+		preg_match('/\[\[mv8\]\]/', $url) || 
+		preg_match('/\[\[mv9\]\]/', $url) || 
+		preg_match('/\[\[mv10\]\]/', $url) ||
+		preg_match('/\[\[mv11\]\]/', $url) || 
+		preg_match('/\[\[mv12\]\]/', $url) || 
+		preg_match('/\[\[mv13\]\]/', $url) ||
+		preg_match('/\[\[mv14\]\]/', $url) || 
+		preg_match('/\[\[mv15\]\]/', $url) 							
+		) {
 		$click_sql = "
 			SELECT
 				2c.click_id,
 				2tc1.c1,
 				2tc2.c2,
 				2tc3.c3,
-				2tc4.c4
+				2tc4.c4,
+				2tc5.c5,
+				2tc6.c6,
+				2tc7.c7,
+				2tc8.c8,
+				2tc9.c9,
+				2tc10.c10,
+				2tc11.c11,
+				2tc12.c12,
+				2tc13.c13,
+				2tc14.c14,
+				2tc15.c15, 
+				2tmv1.mv1,
+				2tmv2.mv2,
+				2tmv3.mv3,
+				2tmv4.mv4,
+				2tmv5.mv5,
+				2tmv6.mv6,
+				2tmv7.mv7,
+				2tmv8.mv8,
+				2tmv9.mv9,
+				2tmv10.mv10,
+				2tmv11.mv11,
+				2tmv12.mv12,
+				2tmv13.mv13,
+				2tmv14.mv14,
+				2tmv15.mv15													
 			FROM
 				202_clicks AS 2c
 				LEFT OUTER JOIN 202_clicks_tracking AS 2ct ON (2ct.click_id = 2c.click_id)
@@ -4274,6 +4929,32 @@ function replaceTrackerPlaceholders($url,$click_id) {
 				LEFT OUTER JOIN 202_tracking_c2 AS 2tc2 ON (2ct.c2_id = 2tc2.c2_id)
 				LEFT OUTER JOIN 202_tracking_c3 AS 2tc3 ON (2ct.c3_id = 2tc3.c3_id)
 				LEFT OUTER JOIN 202_tracking_c4 AS 2tc4 ON (2ct.c4_id = 2tc4.c4_id)
+				LEFT OUTER JOIN 202_tracking_c5 AS 2tc5 ON (2ct.c5_id = 2tc5.c5_id)
+				LEFT OUTER JOIN 202_tracking_c6 AS 2tc6 ON (2ct.c6_id = 2tc6.c6_id)
+				LEFT OUTER JOIN 202_tracking_c7 AS 2tc7 ON (2ct.c7_id = 2tc7.c7_id)
+				LEFT OUTER JOIN 202_tracking_c8 AS 2tc8 ON (2ct.c8_id = 2tc8.c8_id)
+				LEFT OUTER JOIN 202_tracking_c9 AS 2tc9 ON (2ct.c9_id = 2tc9.c9_id)
+				LEFT OUTER JOIN 202_tracking_c10 AS 2tc10 ON (2ct.c10_id = 2tc10.c10_id)
+				LEFT OUTER JOIN 202_tracking_c11 AS 2tc11 ON (2ct.c11_id = 2tc11.c11_id)
+				LEFT OUTER JOIN 202_tracking_c12 AS 2tc12 ON (2ct.c12_id = 2tc12.c12_id)
+				LEFT OUTER JOIN 202_tracking_c13 AS 2tc13 ON (2ct.c13_id = 2tc13.c13_id)
+				LEFT OUTER JOIN 202_tracking_c14 AS 2tc14 ON (2ct.c14_id = 2tc14.c14_id)
+				LEFT OUTER JOIN 202_tracking_c15 AS 2tc15 ON (2ct.c15_id = 2tc15.c15_id)
+				LEFT OUTER JOIN 202_tracking_c1 AS 2tmv1 ON (2ct.mv1_id = 2tmv1.mv1_id)
+				LEFT OUTER JOIN 202_tracking_c2 AS 2tmv2 ON (2ct.mv2_id = 2tmv2.mv2_id)
+				LEFT OUTER JOIN 202_tracking_c3 AS 2tmv3 ON (2ct.mv3_id = 2tmv3.mv3_id)
+				LEFT OUTER JOIN 202_tracking_c4 AS 2tmv4 ON (2ct.mv4_id = 2tmv4.mv4_id)
+				LEFT OUTER JOIN 202_tracking_c5 AS 2tmv5 ON (2ct.mv5_id = 2tmv5.mv5_id)
+				LEFT OUTER JOIN 202_tracking_c6 AS 2tmv6 ON (2ct.mv6_id = 2tmv6.mv6_id)
+				LEFT OUTER JOIN 202_tracking_c7 AS 2tmv7 ON (2ct.mv7_id = 2tmv7.mv7_id)
+				LEFT OUTER JOIN 202_tracking_c8 AS 2tmv8 ON (2ct.mv8_id = 2tmv8.mv8_id)
+				LEFT OUTER JOIN 202_tracking_c9 AS 2tmv9 ON (2ct.mv9_id = 2tmv9.mv9_id)
+				LEFT OUTER JOIN 202_tracking_c10 AS 2tmv10 ON (2ct.mv10_id = 2tmv10.mv10_id)
+				LEFT OUTER JOIN 202_tracking_c11 AS 2tmv11 ON (2ct.mv11_id = 2tmv11.mv11_id)
+				LEFT OUTER JOIN 202_tracking_c12 AS 2tmv12 ON (2ct.mv12_id = 2tmv12.mv12_id)
+				LEFT OUTER JOIN 202_tracking_c13 AS 2tmv13 ON (2ct.mv13_id = 2tmv13.mv13_id)
+				LEFT OUTER JOIN 202_tracking_c14 AS 2tmv14 ON (2ct.mv14_id = 2tmv14.mv14_id)
+				LEFT OUTER JOIN 202_tracking_c15 AS 2tmv15 ON (2ct.mv15_id = 2tc15.mv15_id)
 			WHERE
 				2c.click_id='".$mysql['click_id']."'
 		";
@@ -4284,6 +4965,32 @@ function replaceTrackerPlaceholders($url,$click_id) {
 		$url = preg_replace('/\[\[c2\]\]/', $click_row['c2'], $url);
 		$url = preg_replace('/\[\[c3\]\]/', $click_row['c3'], $url);
 		$url = preg_replace('/\[\[c4\]\]/', $click_row['c4'], $url);
+		$url = preg_replace('/\[\[c5\]\]/', $click_row['c5'], $url);
+		$url = preg_replace('/\[\[c6\]\]/', $click_row['c6'], $url);
+		$url = preg_replace('/\[\[c7\]\]/', $click_row['c7'], $url);
+		$url = preg_replace('/\[\[c8\]\]/', $click_row['c8'], $url);
+		$url = preg_replace('/\[\[c9\]\]/', $click_row['c9'], $url);
+		$url = preg_replace('/\[\[c10\]\]/', $click_row['c10'], $url);
+		$url = preg_replace('/\[\[c11\]\]/', $click_row['c11'], $url);
+		$url = preg_replace('/\[\[c12\]\]/', $click_row['c12'], $url);
+		$url = preg_replace('/\[\[c13\]\]/', $click_row['c13'], $url);
+		$url = preg_replace('/\[\[c14\]\]/', $click_row['c14'], $url);
+		$url = preg_replace('/\[\[c15\]\]/', $click_row['c15'], $url);
+		$url = preg_replace('/\[\[mv1\]\]/', $click_row['mv1'], $url);
+		$url = preg_replace('/\[\[mv2\]\]/', $click_row['mv2'], $url);
+		$url = preg_replace('/\[\[mv3\]\]/', $click_row['mv3'], $url);
+		$url = preg_replace('/\[\[mv4\]\]/', $click_row['mv4'], $url);
+		$url = preg_replace('/\[\[mv5\]\]/', $click_row['mv5'], $url);
+		$url = preg_replace('/\[\[mv6\]\]/', $click_row['mv6'], $url);
+		$url = preg_replace('/\[\[mv7\]\]/', $click_row['mv7'], $url);
+		$url = preg_replace('/\[\[mv8\]\]/', $click_row['mv8'], $url);
+		$url = preg_replace('/\[\[mv9\]\]/', $click_row['mv9'], $url);
+		$url = preg_replace('/\[\[mv10\]\]/', $click_row['mv10'], $url);
+		$url = preg_replace('/\[\[mv11\]\]/', $click_row['mv11'], $url);
+		$url = preg_replace('/\[\[mv12\]\]/', $click_row['mv12'], $url);
+		$url = preg_replace('/\[\[mv13\]\]/', $click_row['mv13'], $url);
+		$url = preg_replace('/\[\[mv14\]\]/', $click_row['mv14'], $url);
+		$url = preg_replace('/\[\[mv15\]\]/', $click_row['mv15'], $url);
 	}
 	
 	$url = preg_replace('/\[\[subid\]\]/', $mysql['click_id'], $url);

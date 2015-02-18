@@ -88,6 +88,18 @@ AUTH::require_user();
 	$html['c2'] = mysql_real_escape_string($_POST['c2']);
 	$html['c3'] = mysql_real_escape_string($_POST['c3']);
 	$html['c4'] = mysql_real_escape_string($_POST['c4']);
+	$html['c5'] = mysql_real_escape_string($_POST['c5']);
+	$html['c6'] = mysql_real_escape_string($_POST['c6']);
+	$html['c7'] = mysql_real_escape_string($_POST['c7']);
+	$html['c8'] = mysql_real_escape_string($_POST['c8']);
+	$html['c9'] = mysql_real_escape_string($_POST['c9']);
+	$html['c10'] = mysql_real_escape_string($_POST['c10']);
+	$html['c11'] = mysql_real_escape_string($_POST['c11']);
+	$html['c12'] = mysql_real_escape_string($_POST['c12']);	
+	$html['c13'] = mysql_real_escape_string($_POST['c13']);
+	$html['c14'] = mysql_real_escape_string($_POST['c14']);
+	$html['c15'] = mysql_real_escape_string($_POST['c15']);	
+
 	$tracking_variable_string = '&';
 	if($html['c1']) {
 		$tracking_variable_string .= 'c1=' . $html['c1'] . '&';
@@ -101,7 +113,39 @@ AUTH::require_user();
 	if($html['c4']) {
 		$tracking_variable_string .= 'c4=' . $html['c4'] . '&';
 	}
-	
+	if($html['c5']){
+		$tracking_variable_string .= 'c5=' . $html['c5'] . '&';
+	}
+	if($html['c6']) {
+		$tracking_variable_string .= 'c6=' . $html['c6'] . '&';
+	}
+	if($html['c7']) {
+		$tracking_variable_string .= 'c7=' . $html['c7'] . '&';
+	}
+	if($html['c8']) {
+		$tracking_variable_string .= 'c8=' . $html['c8'] . '&';
+	}
+	if($html['c9']) {
+		$tracking_variable_string .= 'c9=' . $html['c9'] . '&';
+	}
+	if($html['c10']) {
+		$tracking_variable_string .= 'c10=' . $html['c10'] . '&';
+	}
+	if($html['c11']) {
+		$tracking_variable_string .= 'c11=' . $html['c11'] . '&';
+	}
+	if($html['c12']) {
+		$tracking_variable_string .= 'c12=' . $html['c12'] . '&';
+	}
+	if($html['c13']) {
+		$tracking_variable_string .= 'c13=' . $html['c13'] . '&';
+	}
+	if($html['c14']) {
+		$tracking_variable_string .= 'c14=' . $html['c14'] . '&';
+	}
+	if($html['c15']) {
+		$tracking_variable_string .= 'c15=' . $html['c15'] . '&';
+	}
 	
 	?><p><u>Make sure you test out all the links to make sure they work yourself before running them live.</u></p><?
 	

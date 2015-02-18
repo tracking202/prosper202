@@ -17,7 +17,47 @@ class ReportSummaryForm extends ReportBasicForm {
 	const DEBUG = MO_DEBUG;
 
 	private static $DISPLAY_LEVEL_ARRAY = array(ReportBasicForm::DISPLAY_LEVEL_TITLE,ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT,ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT,ReportBasicForm::DISPLAY_LEVEL_SU,ReportBasicForm::DISPLAY_LEVEL_PAYOUT,ReportBasicForm::DISPLAY_LEVEL_EPC,ReportBasicForm::DISPLAY_LEVEL_CPC,ReportBasicForm::DISPLAY_LEVEL_INCOME,ReportBasicForm::DISPLAY_LEVEL_COST,ReportBasicForm::DISPLAY_LEVEL_NET,ReportBasicForm::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4);
+	private static $DETAIL_LEVEL_ARRAY = array(
+		ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,
+		ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,
+		ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,
+		ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,
+		ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,
+		ReportBasicForm::DETAIL_LEVEL_KEYWORD,
+		ReportBasicForm::DETAIL_LEVEL_TEXT_AD,
+		ReportBasicForm::DETAIL_LEVEL_REFERER,
+		ReportBasicForm::DETAIL_LEVEL_IP,
+		ReportBasicForm::DETAIL_LEVEL_C1,
+		ReportBasicForm::DETAIL_LEVEL_C2,
+		ReportBasicForm::DETAIL_LEVEL_C3,
+		ReportBasicForm::DETAIL_LEVEL_C4, 
+		ReportBasicForm::DETAIL_LEVEL_C5,
+		ReportBasicForm::DETAIL_LEVEL_C6,
+		ReportBasicForm::DETAIL_LEVEL_C7,
+		ReportBasicForm::DETAIL_LEVEL_C8, 
+		ReportBasicForm::DETAIL_LEVEL_C9,
+		ReportBasicForm::DETAIL_LEVEL_C10,
+		ReportBasicForm::DETAIL_LEVEL_C11,
+		ReportBasicForm::DETAIL_LEVEL_C12, 
+		ReportBasicForm::DETAIL_LEVEL_C13,
+		ReportBasicForm::DETAIL_LEVEL_C14,
+		ReportBasicForm::DETAIL_LEVEL_C15, 
+		ReportBasicForm::DETAIL_LEVEL_MV1,
+		ReportBasicForm::DETAIL_LEVEL_MV2,
+		ReportBasicForm::DETAIL_LEVEL_MV3,
+		ReportBasicForm::DETAIL_LEVEL_MV4, 
+		ReportBasicForm::DETAIL_LEVEL_MV5,
+		ReportBasicForm::DETAIL_LEVEL_MV6,
+		ReportBasicForm::DETAIL_LEVEL_MV7,
+		ReportBasicForm::DETAIL_LEVEL_MV8, 
+		ReportBasicForm::DETAIL_LEVEL_MV9,
+		ReportBasicForm::DETAIL_LEVEL_MV10,
+		ReportBasicForm::DETAIL_LEVEL_MV11,
+		ReportBasicForm::DETAIL_LEVEL_MV12, 
+		ReportBasicForm::DETAIL_LEVEL_MV13,
+		ReportBasicForm::DETAIL_LEVEL_MV14,
+		ReportBasicForm::DETAIL_LEVEL_MV15 		
+	);
 	private static $SORT_LEVEL_ARRAY = array(ReportBasicForm::SORT_NAME,ReportBasicForm::SORT_CLICK,ReportBasicForm::SORT_LEAD,ReportBasicForm::SORT_SU,ReportBasicForm::SORT_PAYOUT,ReportBasicForm::SORT_EPC,ReportBasicForm::SORT_CPC,ReportBasicForm::SORT_INCOME,ReportBasicForm::SORT_COST,ReportBasicForm::SORT_NET,ReportBasicForm::SORT_ROI);
 	
 	// +-----------------------------------------------------------------------+
@@ -144,6 +184,58 @@ class ReportSummaryForm extends ReportBasicForm {
 			return 'c3';
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C4) {
 			return "c4";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C5) {
+			return "c5";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C6) {
+			return "c6";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C7) {
+			return "c7";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C8) {
+			return "c8";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C9) {
+			return "c9";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C10) {
+			return "c10";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C11) {
+			return "c11";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C12) {
+			return "c12";			
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C13) {
+			return "c13";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C14) {
+			return "c14";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C15) {
+			return "c15";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV1) {
+			return "LPG Snippet A";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV2) {
+			return "LPG Snippet B";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV3) {
+			return "LPG Snippet C";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV4) {
+			return "LPG Snippet D";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV5) {
+			return "LPG Snippet E";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV6) {
+			return "LPG Snippet F";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV7) {
+			return "LPG Snippet G";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV8) {
+			return "LPG Snippet H";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV9) {
+			return "mv9";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV10) {
+			return "mv10";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV11) {
+			return "mv11";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV12) {
+			return "mv12";			
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV13) {
+			return "mv13";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV14) {
+			return "mv14";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV15) {
+			return "mv15";			
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_INTERVAL) {
 			return "interval_id";
 		} else {
@@ -186,6 +278,58 @@ class ReportSummaryForm extends ReportBasicForm {
 			return 'ReportSummaryC3Form';
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C4) {
 			return "ReportSummaryC4Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C5) {
+			return "ReportSummaryC5Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C6) {
+			return "ReportSummaryC6Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C7) {
+			return "ReportSummaryC7Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C8) {
+			return "ReportSummaryC8Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C9) {
+			return "ReportSummaryC9Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C10) {
+			return "ReportSummaryC10Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C11) {
+			return "ReportSummaryC11Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C12) {
+			return "ReportSummaryC12Form";			
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C13) {
+			return "ReportSummaryC13Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C14) {
+			return "ReportSummaryC14Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_C15) {
+			return "ReportSummaryC15Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV1) {
+			return "ReportSummaryMV1Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV2) {
+			return "ReportSummaryMV2Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV3) {
+			return "ReportSummaryMV3Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV4) {
+			return "ReportSummaryMV4Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV5) {
+			return "ReportSummaryMV5Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV6) {
+			return "ReportSummaryMV6Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV7) {
+			return "ReportSummaryMV7Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV8) {
+			return "ReportSummaryMV8Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV9) {
+			return "ReportSummaryMV9Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV10) {
+			return "ReportSummaryMV10Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV11) {
+			return "ReportSummaryMV11Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV12) {
+			return "ReportSummaryMV12Form";			
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV13) {
+			return "ReportSummaryMV13Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV14) {
+			return "ReportSummaryMV14Form";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_MV15) {
+			return "ReportSummaryMV15Form";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_INTERVAL) {
 			return "ReportSummaryIntervalForm";
 		} else {
@@ -293,30 +437,188 @@ class ReportSummaryForm extends ReportBasicForm {
 				2sur.site_url_address AS redirect_name,
 			";
 		}
-		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C1)) {
-			$info_sql .= "
-				2ct.c1_id,
-				2tc1.c1,
-			";
-		}
-		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C2)) {
-			$info_sql .= "
-				2ct.c2_id,
-				2tc2.c2,
-			";
-		}
-		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C3)) {
-			$info_sql .= "
-				2ct.c3_id,
-				2tc3.c3,
-			";
-		}
-		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)) {
-			$info_sql .= "
-				2ct.c4_id,
-				2tc4.c4,
-			";
-		}
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C1)) {
+            $info_sql .= "
+                2ct.c1_id,
+                2tc1.c1,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C2)) {
+            $info_sql .= "
+                2ct.c2_id,
+                2tc2.c2,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C3)) {
+            $info_sql .= "
+                2ct.c3_id,
+                2tc3.c3,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)) {
+            $info_sql .= "
+                2ct.c4_id,
+                2tc4.c4,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C5)) {
+            $info_sql .= "
+                2ct.c5_id,
+                2tc5.c5,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C6)) {
+            $info_sql .= "
+                2ct.c6_id,
+                2tc6.c6,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C7)) {
+            $info_sql .= "
+                2ct.c7_id,
+                2tc7.c7,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C8)) {
+            $info_sql .= "
+                2ct.c8_id,
+                2tc8.c8,
+            ";
+        }
+
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C9)) {
+            $info_sql .= "
+                2ct.c9_id,
+                2tc9.c9,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C10)) {
+            $info_sql .= "
+                2ct.c10_id,
+                2tc10.c10,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C11)) {
+            $info_sql .= "
+                2ct.c11_id,
+                2tc11.c11,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C12)) {
+            $info_sql .= "
+                2ct.c12_id,
+                2tc12.c12,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C13)) {
+            $info_sql .= "
+                2ct.c13_id,
+                2tc13.c13,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C14)) {
+            $info_sql .= "
+                2ct.c14_id,
+                2tc14.c14,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C15)) {
+            $info_sql .= "
+                2ct.c15_id,
+                2tc15.c15,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV1)) {
+            $info_sql .= "
+                2ct.mv1_id,
+                2tmv1.mv1,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV2)) {
+            $info_sql .= "
+                2ct.mv2_id,
+                2tmv2.mv2,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV3)) {
+            $info_sql .= "
+                2ct.mv3_id,
+                2tmv3.mv3,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV4)) {
+            $info_sql .= "
+                2ct.mv4_id,
+                2tmv4.mv4,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV5)) {
+            $info_sql .= "
+                2ct.mv5_id,
+                2tmv5.mv5,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV6)) {
+            $info_sql .= "
+                2ct.mv6_id,
+                2tmv6.mv6,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV7)) {
+            $info_sql .= "
+                2ct.mv7_id,
+                2tmv7.mv7,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV8)) {
+            $info_sql .= "
+                2ct.mv8_id,
+                2tmv8.mv8,
+            ";
+        }
+
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV9)) {
+            $info_sql .= "
+                2ct.mv9_id,
+                2tmv9.mv9,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV10)) {
+            $info_sql .= "
+                2ct.mv10_id,
+                2tmv10.mv10,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV11)) {
+            $info_sql .= "
+                2ct.mv11_id,
+                2tmv11.mv11,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV12)) {
+            $info_sql .= "
+                2ct.mv12_id,
+                2tmv12.mv12,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV13)) {
+            $info_sql .= "
+                2ct.mv13_id,
+                2tmv13.mv13,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV14)) {
+            $info_sql .= "
+                2ct.mv14_id,
+                2tmv14.mv14,
+            ";
+        }
+        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV15)) {
+            $info_sql .= "
+                2ct.mv15_id,
+                2tmv15.mv15,
+            ";
+        }
 		$info_sql .= "
 				COUNT(*) AS clicks,
 				SUM(2cr.click_out) AS click_out,
@@ -427,7 +729,33 @@ class ReportSummaryForm extends ReportBasicForm {
 		if(	$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C1) ||
 			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C2) ||
 			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C3) ||
-			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4) || 
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C5) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C6) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C7) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C8) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C9) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C10) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C11) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C12) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C13) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C14) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C15) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV1) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV2) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV3) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV4) || 
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV5) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV6) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV7) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV8) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV9) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV10) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV11) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV12) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV13) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV14) ||
+			$this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV15) 
 		) {
 			$info_sql .= "
 				LEFT OUTER JOIN 202_clicks_tracking AS 2ct ON (2c.click_id = 2ct.click_id)
@@ -452,6 +780,137 @@ class ReportSummaryForm extends ReportBasicForm {
 					LEFT OUTER JOIN 202_tracking_c4 AS 2tc4 ON (2ct.c4_id = 2tc4.c4_id)
 				";
 			}
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C5)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c5 AS 2tc5 ON (2ct.c5_id = 2tc5.c5_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C6)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c6 AS 2tc6 ON (2ct.c6_id = 2tc6.c6_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C7)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c7 AS 2tc7 ON (2ct.c7_id = 2tc7.c7_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C8)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c8 AS 2tc8 ON (2ct.c8_id = 2tc8.c8_id)
+                ";
+            }
+	        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C9)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c9 AS 2tc9 ON (2ct.c9_id = 2tc9.c9_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C10)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c10 AS 2tc10 ON (2ct.c10_id = 2tc10.c10_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C11)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c11 AS 2tc11 ON (2ct.c11_id = 2tc11.c11_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C12)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c12 AS 2tc12 ON (2ct.c12_id = 2tc12.c12_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C13)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c13 AS 2tc13 ON (2ct.c13_id = 2tc13.c13_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C14)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c14 AS 2tc14 ON (2ct.c14_id = 2tc14.c14_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C15)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_c15 AS 2tc15 ON (2ct.c15_id = 2tc15.c15_id)
+                ";
+            }
+	        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV1)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv1 AS 2tmv1 ON (2ct.mv1_id = 2tmv1.mv1_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV2)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv2 AS 2tmv2 ON (2ct.mv2_id = 2tmv2.mv2_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV3)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv3 AS 2tmv3 ON (2ct.mv3_id = 2tmv3.mv3_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV4)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv4 AS 2tmv4 ON (2ct.mv4_id = 2tmv4.mv4_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV5)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv5 AS 2tmv5 ON (2ct.mv5_id = 2tmv5.mv5_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV6)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv6 AS 2tmv6 ON (2ct.mv6_id = 2tmv6.mv6_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV7)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv7 AS 2tmv7 ON (2ct.mv7_id = 2tmv7.mv7_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV8)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv8 AS 2tmv8 ON (2ct.mv8_id = 2tmv8.mv8_id)
+                ";
+            }
+	        if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV9)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv9 AS 2tmv9 ON (2ct.mv9_id = 2tmv9.mv9_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV10)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv10 AS 2tmv10 ON (2ct.mv10_id = 2tmv10.mv10_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV11)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv11 AS 2tmv11 ON (2ct.mv11_id = 2tmv11.mv11_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV12)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv12 AS 2tmv12 ON (2ct.mv12_id = 2tmv12.mv12_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV13)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv13 AS 2tmv13 ON (2ct.mv13_id = 2tmv13.mv13_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV14)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv14 AS 2tmv14 ON (2ct.mv14_id = 2tmv14.mv14_id)
+                ";
+            }
+            if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV15)) {
+                $info_sql .= "
+                    LEFT OUTER JOIN 202_tracking_mv15 AS 2tmv15 ON (2ct.mv15_id = 2tmv15.mv15_id)
+                ";
+            }
+
 		}
 		$info_sql .= "
 			WHERE
@@ -650,6 +1109,85 @@ class ReportSummaryForm extends ReportBasicForm {
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)) {
 			ReportBasicForm::echoCell("c4");
 		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C5)) {
+			ReportBasicForm::echoCell("c5");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C6)) {
+			ReportBasicForm::echoCell("c6");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C7)) {
+			ReportBasicForm::echoCell("c7");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C8)) {
+			ReportBasicForm::echoCell("c8");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C9)) {
+			ReportBasicForm::echoCell("c9");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C10)) {
+			ReportBasicForm::echoCell("c10");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C11)) {
+			ReportBasicForm::echoCell("c11");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C12)) {
+			ReportBasicForm::echoCell("c12");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C13)) {
+			ReportBasicForm::echoCell("c13");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C14)) {
+			ReportBasicForm::echoCell("c14");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C15)) {
+			ReportBasicForm::echoCell("c15");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV1)) {
+			ReportBasicForm::echoCell("mv1");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV2)) {
+			ReportBasicForm::echoCell("mv2");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV3)) {
+			ReportBasicForm::echoCell("mv3");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV4)) {
+			ReportBasicForm::echoCell("mv4");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV5)) {
+			ReportBasicForm::echoCell("mv5");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV6)) {
+			ReportBasicForm::echoCell("mv6");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV7)) {
+			ReportBasicForm::echoCell("mv7");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV8)) {
+			ReportBasicForm::echoCell("mv8");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV9)) {
+			ReportBasicForm::echoCell("mv9");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV10)) {
+			ReportBasicForm::echoCell("mv10");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV11)) {
+			ReportBasicForm::echoCell("mv11");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV12)) {
+			ReportBasicForm::echoCell("mv12");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV13)) {
+			ReportBasicForm::echoCell("mv13");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV14)) {
+			ReportBasicForm::echoCell("mv14");
+		}
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV15)) {
+			ReportBasicForm::echoCell("mv15");
+		}	
+
 		foreach($this->getDisplay() AS $display_item_key) {
 			if (ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT==$display_item_key) {
 				ReportBasicForm::echoCell("Clicks");
@@ -896,6 +1434,84 @@ class ReportSummaryForm extends ReportBasicForm {
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)) {
 			ReportBasicForm::echoCell($row->getC4());
 		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C5)) {
+			ReportBasicForm::echoCell($row->getC5());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C6)) {
+			ReportBasicForm::echoCell($row->getC6());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C7)) {
+			ReportBasicForm::echoCell($row->getC7());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C8)) {
+			ReportBasicForm::echoCell($row->getC8());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C9)) {
+			ReportBasicForm::echoCell($row->getC9());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C10)) {
+			ReportBasicForm::echoCell($row->getC10());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C11)) {
+			ReportBasicForm::echoCell($row->getC11());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C12)) {
+			ReportBasicForm::echoCell($row->getC12());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C13)) {
+			ReportBasicForm::echoCell($row->getC13());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C14)) {
+			ReportBasicForm::echoCell($row->getC14());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C15)) {
+			ReportBasicForm::echoCell($row->getC15());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV1)) {
+			ReportBasicForm::echoCell($row->getMV1());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV2)) {
+			ReportBasicForm::echoCell($row->getMV2());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV3)) {
+			ReportBasicForm::echoCell($row->getMV3());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV4)) {
+			ReportBasicForm::echoCell($row->getMV4());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV5)) {
+			ReportBasicForm::echoCell($row->getMV5());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV6)) {
+			ReportBasicForm::echoCell($row->getMV6());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV7)) {
+			ReportBasicForm::echoCell($row->getMV7());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV8)) {
+			ReportBasicForm::echoCell($row->getMV8());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV9)) {
+			ReportBasicForm::echoCell($row->getMV9());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV10)) {
+			ReportBasicForm::echoCell($row->getMV10());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV11)) {
+			ReportBasicForm::echoCell($row->getMV11());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV12)) {
+			ReportBasicForm::echoCell($row->getMV12());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV13)) {
+			ReportBasicForm::echoCell($row->getMV13());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV14)) {
+			ReportBasicForm::echoCell($row->getMV14());
+		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_MV15)) {
+			ReportBasicForm::echoCell($row->getMV15());
+		}
 		
 		foreach($this->getDisplay() AS $display_item_key) {
 			if (ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT==$display_item_key) {
@@ -917,7 +1533,7 @@ class ReportSummaryForm extends ReportBasicForm {
 			} else if (ReportBasicForm::DISPLAY_LEVEL_COST==$display_item_key) {
 				ReportBasicForm::echoCell('$' . number_format($row->getCost(),2));
 			} else if (ReportBasicForm::DISPLAY_LEVEL_NET==$display_item_key) {
-				ReportBasicForm::echoCell('$' . number_format($row->getNet(),2));
+		c		ReportBasicForm::echoCell('$' . number_format($row->getNet(),2));
 			} else if (ReportBasicForm::DISPLAY_LEVEL_ROI==$display_item_key) {
 				ReportBasicForm::echoCell($row->getRoi());
 			}
@@ -1561,6 +2177,1153 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm {
 }
 
 /**
+ * ReportSummaryC5Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC5Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC5
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC5();
+	}
+	
+	/**
+	 * Alias for getC5
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC5();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c5]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c5]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC6Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC6Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC6
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC6();
+	}
+	
+	/**
+	 * Alias for getC6
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC6();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c6]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c6]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC7Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC7Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC7
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC7();
+	}
+	
+	/**
+	 * Alias for getC7
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC7();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c7]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c7]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC8Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC8Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC8
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC8();
+	}
+	
+	/**
+	 * Alias for getC8
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC8();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c8]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c8]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC9Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC9Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC9
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC9();
+	}
+	
+	/**
+	 * Alias for getC9
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC9();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c9]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c9]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC10Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC10Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC10
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC10();
+	}
+	
+	/**
+	 * Alias for getC10
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC10();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c10]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c10]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC11Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC11Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC11
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC11();
+	}
+	
+	/**
+	 * Alias for getC11
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC11();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c11]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c11]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC12Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC12Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC12
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC12();
+	}
+	
+	/**
+	 * Alias for getC12
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC12();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c12]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c12]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC13Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC13Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC13
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC13();
+	}
+	
+	/**
+	 * Alias for getC13
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC13();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c13]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c13]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC14Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC14Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC14
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC14();
+	}
+	
+	/**
+	 * Alias for getC14
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC14();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c14]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c14]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryC15Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryC15Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC15
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getC15();
+	}
+	
+	/**
+	 * Alias for getC15
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getC15();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No c15]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No c15]';
+		}
+		return $this->getName();
+	}
+}
+
+
+/**
+ * ReportSummaryMV1Form contains methods to total tracking events by publisher_url_affiliate
+ * @author Ben Rotz
+ */
+class ReportSummaryMV1Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV1
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV1();
+	}
+	
+	/**
+	 * Alias for getMV1
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV1();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet A unused]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet A unused]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV2Form contains methods to get the tracking events for an offer on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV2Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV2
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV2();
+	}
+	
+	/**
+	 * Alias for getMV2
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV2();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet B unused]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet B unused]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV3Form contains methods to group the pay changes
+ * @author Ben Rotz
+ */
+class ReportSummaryMV3Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV3
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV3();
+	}
+	
+	/**
+	 * Alias for getMV3
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV3();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet C unused]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet C unused]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV4Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV4Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV4
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV4();
+	}
+	
+	/**
+	 * Alias for getMV4
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV4();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet D unused]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet D unused]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV5Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV5Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV5
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV5();
+	}
+	
+	/**
+	 * Alias for getMV5
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV5();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet E unused]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet E unused]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV6Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV6Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV6
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV6();
+	}
+	
+	/**
+	 * Alias for getMV6
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV6();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet F unused]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet F unused';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV7Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV7Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV7
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV7();
+	}
+	
+	/**
+	 * Alias for getMV7
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV7();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet G unused]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet G unused]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV8Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV8Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV8
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV8();
+	}
+	
+	/**
+	 * Alias for getMV8
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV8();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet H unused]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[Snippet H unused]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV9Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV9Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV9
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV9();
+	}
+	
+	/**
+	 * Alias for getMV9
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV9();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No mv9]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No mv9]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV10Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV10Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV10
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV10();
+	}
+	
+	/**
+	 * Alias for getMV10
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV10();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No mv10]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No mv10]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV11Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV11Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV11
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV11();
+	}
+	
+	/**
+	 * Alias for getMV11
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV11();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No mv11]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No mv11]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV12Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV12Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV12
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV12();
+	}
+	
+	/**
+	 * Alias for getMV12
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV12();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No mv12]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No mv12]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV13Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV13Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV13
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV13();
+	}
+	
+	/**
+	 * Alias for getMV13
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV13();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No mv13]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No mv13]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV14Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV14Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV14
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV14();
+	}
+	
+	/**
+	 * Alias for getMV14
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV14();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No mv14]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No mv14]';
+		}
+		return $this->getName();
+	}
+}
+
+/**
+ * ReportSummaryMV15Form contains methods to get the tracking events for an account rep on the payment report form
+ * @author Ben Rotz
+ */
+class ReportSummaryMV15Form extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getMV15
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getMV15();
+	}
+	
+	/**
+	 * Alias for getMV15
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getMV15();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+		if ($this->getName()=='') {
+			return '[No mv15]';
+		}
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+		if ($this->getName()=='') {
+			return '[No mv15]';
+		}
+		return $this->getName();
+	}
+}
+
+
+
+/**
  * ReportSummaryIntervalForm contains methods to total tracking events by interval_id
  * @author Ben Rotz
  */
@@ -1632,6 +3395,34 @@ class ReportSummaryTotalForm {
 	private $c2;
 	private $c3;
 	private $c4;
+	private $c5;
+	private $c6;
+	private $c7;
+	private $c8;
+	private $c9;
+	private $c10;
+	private $c11;
+	private $c12;
+	private $c13;
+	private $c14;
+	private $c15;
+	
+	private $mv1;
+	private $mv2;
+	private $mv3;
+	private $mv4;
+	private $mv5;
+	private $mv6;
+	private $mv7;
+	private $mv8;
+	private $mv9;
+	private $mv10;
+	private $mv11;
+	private $mv12;
+	private $mv13;
+	private $mv14;
+	private $mv15;
+
 	private $interval_id;
 	private $interval_name;
 	private $formatted_interval_name;
@@ -2154,81 +3945,583 @@ class ReportSummaryTotalForm {
 		$this->affiliate_campaign_name = $arg0;
 	}
 	
-	/**
-	 * Returns the c1
-	 * @return string
-	 */
-	function getC1() {
-		if (is_null($this->c1)) {
-			$this->c1 = 0;
-		}
-		return $this->c1;
-	}
-	
-	/**
-	 * Sets the c1
-	 * @param string
-	 */
-	function setC1($arg0) {
-		$this->c1 = $arg0;
-	}
-	
-	/**
-	 * Returns the c2
-	 * @return string
-	 */
-	function getC2() {
-		if (is_null($this->c2)) {
-			$this->c2 = '';
-		}
-		return $this->c2;
-	}
-	
-	/**
-	 * Sets the c2
-	 * @param string
-	 */
-	function setC2($arg0) {
-		$this->c2 = $arg0;
-	}
-	
-	/**
-	 * Returns the c3
-	 * @return string
-	 */
-	function getC3() {
-		if (is_null($this->c3)) {
-			$this->c3 = '';
-		}
-		return $this->c3;
-	}
-	
-	/**
-	 * Sets the c3
-	 * @param string
-	 */
-	function setC3($arg0) {
-		$this->c3 = $arg0;
-	}
-	
-	/**
-	 * Returns the c4
-	 * @return string
-	 */
-	function getC4() {
-		if (is_null($this->c4)) {
-			$this->c4 = '';
-		}
-		return $this->c4;
-	}
-	
-	/**
-	 * Sets the c4
-	 * @param string
-	 */
-	function setC4($arg0) {
-		$this->c4 = $arg0;
-	}
+    /**
+     * Returns the c1
+     * @return string
+     */
+    function getC1() {
+        if (is_null($this->c1)) {
+            $this->c1 = 0;
+        }
+        return $this->c1;
+    }
+    
+    /**
+     * Sets the c1
+     * @param string
+     */
+    function setC1($arg0) {
+        $this->c1 = $arg0;
+    }
+    
+    /**
+     * Returns the c2
+     * @return string
+     */
+    function getC2() {
+        if (is_null($this->c2)) {
+            $this->c2 = '';
+        }
+        return $this->c2;
+    }
+    
+    /**
+     * Sets the c2
+     * @param string
+     */
+    function setC2($arg0) {
+        $this->c2 = $arg0;
+    }
+    
+    /**
+     * Returns the c3
+     * @return string
+     */
+    function getC3() {
+        if (is_null($this->c3)) {
+            $this->c3 = '';
+        }
+        return $this->c3;
+    }
+    
+    /**
+     * Sets the c3
+     * @param string
+     */
+    function setC3($arg0) {
+        $this->c3 = $arg0;
+    }
+    
+    /**
+     * Returns the c4
+     * @return string
+     */
+    function getC4() {
+        if (is_null($this->c4)) {
+            $this->c4 = '';
+        }
+        return $this->c4;
+    }
+    
+    /**
+     * Sets the c4
+     * @param string
+     */
+    function setC4($arg0) {
+        $this->c4 = $arg0;
+    }
+    
+    /**
+     * Returns the c5
+     * @return string
+     */
+    function getC5() {
+        if (is_null($this->c5)) {
+            $this->c5 = 0;
+        }
+        return $this->c5;
+    }
+    
+    /**
+     * Sets the c5
+     * @param string
+     */
+    function setC5($arg0) {
+        $this->c5 = $arg0;
+    }
+    
+    /**
+     * Returns the c6
+     * @return string
+     */
+    function getC6() {
+        if (is_null($this->c6)) {
+            $this->c6 = '';
+        }
+        return $this->c6;
+    }
+    
+    /**
+     * Sets the c6
+     * @param string
+     */
+    function setC6($arg0) {
+        $this->c6 = $arg0;
+    }
+    
+    /**
+     * Returns the c7
+     * @return string
+     */
+    function getC7() {
+        if (is_null($this->c7)) {
+            $this->c7 = '';
+        }
+        return $this->c7;
+    }
+    
+    /**
+     * Sets the c7
+     * @param string
+     */
+    function setC7($arg0) {
+        $this->c7 = $arg0;
+    }
+    
+    /**
+     * Returns the c8
+     * @return string
+     */
+    function getC8() {
+        if (is_null($this->c8)) {
+            $this->c8 = '';
+        }
+        return $this->c8;
+    }
+    
+    /**
+     * Sets the c8
+     * @param string
+     */
+    function setC8($arg0) {
+        $this->c8 = $arg0;
+    }
+
+    /**
+     * Returns the c9
+     * @return string
+     */
+    function getC9() {
+        if (is_null($this->c9)) {
+            $this->c9 = '';
+        }
+        return $this->c9;
+    }
+    
+    /**
+     * Sets the c9
+     * @param string
+     */
+    function setC9($arg0) {
+        $this->c9 = $arg0;
+    }
+    
+    /**
+     * Returns the c10
+     * @return string
+     */
+    function getC10() {
+        if (is_null($this->c10)) {
+            $this->c10 = '';
+        }
+        return $this->c10;
+    }
+    
+    /**
+     * Sets the c10
+     * @param string
+     */
+    function setC10($arg0) {
+        $this->c10 = $arg0;
+    }
+    
+    /**
+     * Returns the c11
+     * @return string
+     */
+    function getC11() {
+        if (is_null($this->c11)) {
+            $this->c11 = '';
+        }
+        return $this->c11;
+    }
+    
+    /**
+     * Sets the c11
+     * @param string
+     */
+    function setC11($arg0) {
+        $this->c11 = $arg0;
+    }
+    
+    /**
+     * Returns the c12
+     * @return string
+     */
+    function getC12() {
+        if (is_null($this->c12)) {
+            $this->c12 = '';
+        }
+        return $this->c12;
+    }
+    
+    /**
+     * Sets the c12
+     * @param string
+     */
+    function setC12($arg0) {
+        $this->c12 = $arg0;
+    }
+    
+    /**
+     * Returns the c13
+     * @return string
+     */
+    function getC13() {
+        if (is_null($this->c13)) {
+            $this->c13 = 0;
+        }
+        return $this->c13;
+    }
+    
+    /**
+     * Sets the c13
+     * @param string
+     */
+    function setC13($arg0) {
+        $this->c13 = $arg0;
+    }
+    
+    /**
+     * Returns the c14
+     * @return string
+     */
+    function getC14() {
+        if (is_null($this->c14)) {
+            $this->c14 = '';
+        }
+        return $this->c14;
+    }
+    
+    /**
+     * Sets the c14
+     * @param string
+     */
+    function setC14($arg0) {
+        $this->c14 = $arg0;
+    }
+    
+    /**
+     * Returns the c15
+     * @return string
+     */
+    function getC15() {
+        if (is_null($this->c15)) {
+            $this->c15 = '';
+        }
+        return $this->c15;
+    }
+    
+    /**
+     * Sets the c15
+     * @param string
+     */
+    function setC15($arg0) {
+        $this->c15 = $arg0;
+    }
+    
+
+    /**
+     * Returns the mv1
+     * @return string
+     */
+    function getMV1() {
+        if (is_null($this->mv1)) {
+            $this->mv1 = 0;
+        }
+        return $this->mv1;
+    }
+    
+    /**
+     * Sets the mv1
+     * @param string
+     */
+    function setMV1($arg0) {
+        $this->mv1 = $arg0;
+    }
+    
+    /**
+     * Returns the mv2
+     * @return string
+     */
+    function getMV2() {
+        if (is_null($this->mv2)) {
+            $this->mv2 = '';
+        }
+        return $this->mv2;
+    }
+    
+    /**
+     * Sets the mv2
+     * @param string
+     */
+    function setMV2($arg0) {
+        $this->mv2 = $arg0;
+    }
+    
+    /**
+     * Returns the mv3
+     * @return string
+     */
+    function getMV3() {
+        if (is_null($this->mv3)) {
+            $this->mv3 = '';
+        }
+        return $this->mv3;
+    }
+    
+    /**
+     * Sets the mv3
+     * @param string
+     */
+    function setMV3($arg0) {
+        $this->mv3 = $arg0;
+    }
+    
+    /**
+     * Returns the mv4
+     * @return string
+     */
+    function getMV4() {
+        if (is_null($this->mv4)) {
+            $this->mv4 = '';
+        }
+        return $this->mv4;
+    }
+    
+    /**
+     * Sets the mv4
+     * @param string
+     */
+    function setMV4($arg0) {
+        $this->mv4 = $arg0;
+    }
+    
+    /**
+     * Returns the mv5
+     * @return string
+     */
+    function getMV5() {
+        if (is_null($this->mv5)) {
+            $this->mv5 = 0;
+        }
+        return $this->mv5;
+    }
+    
+    /**
+     * Sets the mv5
+     * @param string
+     */
+    function setMV5($arg0) {
+        $this->mv5 = $arg0;
+    }
+    
+    /**
+     * Returns the mv6
+     * @return string
+     */
+    function getMV6() {
+        if (is_null($this->mv6)) {
+            $this->mv6 = '';
+        }
+        return $this->mv6;
+    }
+    
+    /**
+     * Sets the mv6
+     * @param string
+     */
+    function setMV6($arg0) {
+        $this->mv6 = $arg0;
+    }
+    
+    /**
+     * Returns the mv7
+     * @return string
+     */
+    function getMV7() {
+        if (is_null($this->mv7)) {
+            $this->mv7 = '';
+        }
+        return $this->mv7;
+    }
+    
+    /**
+     * Sets the mv7
+     * @param string
+     */
+    function setMV7($arg0) {
+        $this->mv7 = $arg0;
+    }
+    
+    /**
+     * Returns the mv8
+     * @return string
+     */
+    function getMV8() {
+        if (is_null($this->mv8)) {
+            $this->mv8 = '';
+        }
+        return $this->mv8;
+    }
+    
+    /**
+     * Sets the mv8
+     * @param string
+     */
+    function setMV8($arg0) {
+        $this->mv8 = $arg0;
+    }
+
+    /**
+     * Returns the mv9
+     * @return string
+     */
+    function getMV9() {
+        if (is_null($this->mv9)) {
+            $this->mv9 = '';
+        }
+        return $this->mv9;
+    }
+    
+    /**
+     * Sets the mv9
+     * @param string
+     */
+    function setMV9($arg0) {
+        $this->mv9 = $arg0;
+    }
+    
+    /**
+     * Returns the mv10
+     * @return string
+     */
+    function getMV10() {
+        if (is_null($this->mv10)) {
+            $this->mv10 = '';
+        }
+        return $this->mv10;
+    }
+    
+    /**
+     * Sets the mv10
+     * @param string
+     */
+    function setMV10($arg0) {
+        $this->mv10 = $arg0;
+    }
+    
+    /**
+     * Returns the mv11
+     * @return string
+     */
+    function getMV11() {
+        if (is_null($this->mv11)) {
+            $this->mv11 = '';
+        }
+        return $this->mv11;
+    }
+    
+    /**
+     * Sets the mv11
+     * @param string
+     */
+    function setMV11($arg0) {
+        $this->mv11 = $arg0;
+    }
+    
+    /**
+     * Returns the mv12
+     * @return string
+     */
+    function getMV12() {
+        if (is_null($this->mv12)) {
+            $this->mv12 = '';
+        }
+        return $this->mv12;
+    }
+    
+    /**
+     * Sets the mv12
+     * @param string
+     */
+    function setMV12($arg0) {
+        $this->mv12 = $arg0;
+    }
+    
+    /**
+     * Returns the mv13
+     * @return string
+     */
+    function getMV13() {
+        if (is_null($this->mv13)) {
+            $this->mv13 = 0;
+        }
+        return $this->mv13;
+    }
+    
+    /**
+     * Sets the mv13
+     * @param string
+     */
+    function setMV13($arg0) {
+        $this->mv13 = $arg0;
+    }
+    
+    /**
+     * Returns the mv14
+     * @return string
+     */
+    function getMV14() {
+        if (is_null($this->mv14)) {
+            $this->mv14 = '';
+        }
+        return $this->mv14;
+    }
+    
+    /**
+     * Sets the mv14
+     * @param string
+     */
+    function setMV14($arg0) {
+        $this->mv14 = $arg0;
+    }
+    
+    /**
+     * Returns the mv15
+     * @return string
+     */
+    function getMV15() {
+        if (is_null($this->mv15)) {
+            $this->mv15 = '';
+        }
+        return $this->mv15;
+    }
+    
+    /**
+     * Sets the mv15
+     * @param string
+     */
+    function setMV15($arg0) {
+        $this->mv15 = $arg0;
+    }
+    
+
+
+
+
+
+
 	
 	/**
 	 * Returns the interval_id

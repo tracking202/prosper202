@@ -103,7 +103,7 @@ template_top($server_row,'Get Trackers',NULL,NULL,NULL);  ?>
 				<td class="left_caption">Tracking ID c1</td>
 				<td valign="center">
 					<input type="text" name="c1" />
-					<span style="font-size: 11px; padding-left: 10px;">c1-c4 variables must be no longer than 350 characters.</span>
+					<span style="font-size: 11px; padding-left: 10px;">c1-c15 variables must be no longer than 350 characters.</span>
 				</td>
 			</tr>
 			<tr>
@@ -117,6 +117,51 @@ template_top($server_row,'Get Trackers',NULL,NULL,NULL);  ?>
 			<tr>
 				<td class="left_caption">Tracking ID c4</td>
 				<td valign="center"><input type="text" name="c4" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c5</td>
+				<td valign="center"><input type="text" name="c5" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c6</td>
+				<td valign="center"><input type="text" name="c6" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c7</td>
+				<td valign="center"><input type="text" name="c7" /></td>
+			</tr>
+
+			<tr>
+				<td class="left_caption">Tracking ID c8</td>
+				<td valign="center"><input type="text" name="c8" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c9</td>
+				<td valign="center"><input type="text" name="c9" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c10</td>
+				<td valign="center"><input type="text" name="c10" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c11</td>
+				<td valign="center"><input type="text" name="c11" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c12</td>
+				<td valign="center"><input type="text" name="c12" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c13</td>
+				<td valign="center"><input type="text" name="c13" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c14</td>
+				<td valign="center"><input type="text" name="c14" /></td>
+			</tr>
+			<tr>
+				<td class="left_caption">Tracking ID c15</td>
+				<td valign="center"><input type="text" name="c15" /></td>
 			</tr>
 		</table>
 	</form>

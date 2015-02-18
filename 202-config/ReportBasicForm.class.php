@@ -26,6 +26,34 @@ class ReportBasicForm {
 	const DETAIL_LEVEL_IP = 14;
 	const DETAIL_LEVEL_INTERVAL = 15;
 
+    const DETAIL_LEVEL_MV1 = 16;
+    const DETAIL_LEVEL_MV2 = 17;
+    const DETAIL_LEVEL_MV3 = 18;
+    const DETAIL_LEVEL_MV4 = 19;
+    const DETAIL_LEVEL_MV5 = 20;
+    const DETAIL_LEVEL_MV6 = 21;
+    const DETAIL_LEVEL_MV7 = 22;
+    const DETAIL_LEVEL_MV8 = 23;
+    const DETAIL_LEVEL_MV9 = 24;
+    const DETAIL_LEVEL_MV10 = 25;
+    const DETAIL_LEVEL_MV11 = 26;
+    const DETAIL_LEVEL_MV12 = 27;
+    const DETAIL_LEVEL_MV13 = 28;
+    const DETAIL_LEVEL_MV14 = 29;
+    const DETAIL_LEVEL_MV15 = 30;
+
+    const DETAIL_LEVEL_C5 = 31;
+    const DETAIL_LEVEL_C6 = 32;
+    const DETAIL_LEVEL_C7 = 33;
+    const DETAIL_LEVEL_C8 = 34;
+    const DETAIL_LEVEL_C9 = 35;
+    const DETAIL_LEVEL_C10 = 36;
+    const DETAIL_LEVEL_C11 = 37;
+    const DETAIL_LEVEL_C12 = 38;
+    const DETAIL_LEVEL_C13 = 39;
+    const DETAIL_LEVEL_C14 = 40;
+    const DETAIL_LEVEL_C15 = 41;
+
 	const DETAIL_GROUP_NONE = 0;
 
 	const DISPLAY_TYPE_TABLE = 0;
@@ -73,7 +101,48 @@ class ReportBasicForm {
 	const DETAIL_INTERVAL_HOUR = 4;
 
 	private static $DISPLAY_LEVEL_ARRAY = array(self::DISPLAY_LEVEL_TITLE,self::DISPLAY_LEVEL_CLICK_COUNT,self::DISPLAY_LEVEL_LEAD_COUNT,self::DISPLAY_LEVEL_SU,self::DISPLAY_LEVEL_PAYOUT,self::DISPLAY_LEVEL_EPC,self::DISPLAY_LEVEL_CPC,self::DISPLAY_LEVEL_INCOME,self::DISPLAY_LEVEL_COST,self::DISPLAY_LEVEL_NET,self::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(self::DETAIL_LEVEL_PPC_NETWORK,self::DETAIL_LEVEL_PPC_ACCOUNT,self::DETAIL_LEVEL_AFFILIATE_NETWORK,self::DETAIL_LEVEL_CAMPAIGN,self::DETAIL_LEVEL_LANDING_PAGE,self::DETAIL_LEVEL_KEYWORD,self::DETAIL_LEVEL_TEXT_AD,self::DETAIL_LEVEL_REFERER,self::DETAIL_LEVEL_REDIRECT,self::DETAIL_LEVEL_IP,self::DETAIL_LEVEL_C1,self::DETAIL_LEVEL_C2,self::DETAIL_LEVEL_C3,self::DETAIL_LEVEL_C4);
+	private static $DETAIL_LEVEL_ARRAY = array(
+		self::DETAIL_LEVEL_PPC_NETWORK,
+		self::DETAIL_LEVEL_PPC_ACCOUNT,
+		self::DETAIL_LEVEL_AFFILIATE_NETWORK,
+		self::DETAIL_LEVEL_CAMPAIGN,
+		self::DETAIL_LEVEL_LANDING_PAGE,
+		self::DETAIL_LEVEL_KEYWORD,
+		self::DETAIL_LEVEL_TEXT_AD,
+		self::DETAIL_LEVEL_REFERER,
+		self::DETAIL_LEVEL_REDIRECT,
+		self::DETAIL_LEVEL_IP,
+		self::DETAIL_LEVEL_C1,
+		self::DETAIL_LEVEL_C2,
+		self::DETAIL_LEVEL_C3,
+		self::DETAIL_LEVEL_C4, 
+		self::DETAIL_LEVEL_C5,
+		self::DETAIL_LEVEL_C6,
+		self::DETAIL_LEVEL_C7,
+		self::DETAIL_LEVEL_C8, 
+		self::DETAIL_LEVEL_C9,
+		self::DETAIL_LEVEL_C10,
+		self::DETAIL_LEVEL_C11,
+		self::DETAIL_LEVEL_C12, 
+		self::DETAIL_LEVEL_C13,
+		self::DETAIL_LEVEL_C14,
+		self::DETAIL_LEVEL_C15, 
+		self::DETAIL_LEVEL_MV1,
+		self::DETAIL_LEVEL_MV2,
+		self::DETAIL_LEVEL_MV3,
+		self::DETAIL_LEVEL_MV4, 
+		self::DETAIL_LEVEL_MV5,
+		self::DETAIL_LEVEL_MV6,
+		self::DETAIL_LEVEL_MV7,
+		self::DETAIL_LEVEL_MV8, 
+		self::DETAIL_LEVEL_MV9,
+		self::DETAIL_LEVEL_MV10,
+		self::DETAIL_LEVEL_MV11,
+		self::DETAIL_LEVEL_MV12, 
+		self::DETAIL_LEVEL_MV13,
+		self::DETAIL_LEVEL_MV14,
+		self::DETAIL_LEVEL_MV15 
+	);
 	private static $SORT_LEVEL_ARRAY = array(self::SORT_NAME,self::SORT_CLICK,self::SORT_LEAD,self::SORT_SU,self::SORT_PAYOUT,self::SORT_EPC,self::SORT_CPC,self::SORT_INCOME,self::SORT_COST,self::SORT_NET,self::SORT_ROI);
 	
 	private static $DETAIL_INTERVAL_ARRAY = array(self::DETAIL_INTERVAL_DAY,self::DETAIL_INTERVAL_WEEK,self::DETAIL_INTERVAL_MONTH);
@@ -1650,6 +1719,58 @@ class ReportBasicForm {
 			return "c3";
 		} else if ($arg0 == self::DETAIL_LEVEL_C4) {
 			return "c4";
+		} else if ($arg0 == self::DETAIL_LEVEL_C5) {
+			return "c5";
+		} else if ($arg0 == self::DETAIL_LEVEL_C6) {
+			return "c6";
+		} else if ($arg0 == self::DETAIL_LEVEL_C7) {
+			return "c7";
+		} else if ($arg0 == self::DETAIL_LEVEL_C8) {
+			return "c8";
+		} else if ($arg0 == self::DETAIL_LEVEL_C9) {
+			return "c9";
+		} else if ($arg0 == self::DETAIL_LEVEL_C10) {
+			return "c10";
+		} else if ($arg0 == self::DETAIL_LEVEL_C11) {
+			return "c11";
+		} else if ($arg0 == self::DETAIL_LEVEL_C12) {
+			return "c12";			
+		} else if ($arg0 == self::DETAIL_LEVEL_C13) {
+			return "c13";
+		} else if ($arg0 == self::DETAIL_LEVEL_C14) {
+			return "c14";
+		} else if ($arg0 == self::DETAIL_LEVEL_C15) {
+			return "c15";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV1) {
+			return "LPG Snippet A";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV2) {
+			return "LPG Snippet B";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV3) {
+			return "LPG Snippet C";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV4) {
+			return "LPG Snippet D";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV5) {
+			return "LPG Snippet E";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV6) {
+			return "LPG Snippet F";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV7) {
+			return "LPG Snippet G";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV8) {
+			return "LPG Snippet H";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV9) {
+			return "mv9";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV10) {
+			return "mv10";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV11) {
+			return "mv11";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV12) {
+			return "mv12";			
+		} else if ($arg0 == self::DETAIL_LEVEL_MV13) {
+			return "mv13";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV14) {
+			return "mv14";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV15) {
+			return "mv15";
 		} else {
 			return "Unknown";
 		}
@@ -1690,6 +1811,58 @@ class ReportBasicForm {
 			return "c3";
 		} else if ($arg0 == self::DETAIL_LEVEL_C4) {
 			return "c4";
+		} else if ($arg0 == self::DETAIL_LEVEL_C5) {
+			return "c5";
+		} else if ($arg0 == self::DETAIL_LEVEL_C6) {
+			return "c6";
+		} else if ($arg0 == self::DETAIL_LEVEL_C7) {
+			return "c7";
+		} else if ($arg0 == self::DETAIL_LEVEL_C8) {
+			return "c8";
+		} else if ($arg0 == self::DETAIL_LEVEL_C9) {
+			return "c9";
+		} else if ($arg0 == self::DETAIL_LEVEL_C10) {
+			return "c10";
+		} else if ($arg0 == self::DETAIL_LEVEL_C11) {
+			return "c11";
+		} else if ($arg0 == self::DETAIL_LEVEL_C12) {
+			return "c12";			
+		} else if ($arg0 == self::DETAIL_LEVEL_C13) {
+			return "c13";
+		} else if ($arg0 == self::DETAIL_LEVEL_C14) {
+			return "c14";
+		} else if ($arg0 == self::DETAIL_LEVEL_C15) {
+			return "c15";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV1) {
+			return "LPG Snippet A";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV2) {
+			return "LPG Snippet B";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV3) {
+			return "LPG Snippet C";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV4) {
+			return "LPG Snippet D";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV5) {
+			return "LPG Snippet E";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV6) {
+			return "LPG Snippet F";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV7) {
+			return "LPG Snippet G";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV8) {
+			return "LPG Snippet H";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV9) {
+			return "mv9";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV10) {
+			return "mv10";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV11) {
+			return "mv11";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV12) {
+			return "mv12";			
+		} else if ($arg0 == self::DETAIL_LEVEL_MV13) {
+			return "mv13";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV14) {
+			return "mv14";
+		} else if ($arg0 == self::DETAIL_LEVEL_MV15) {
+			return "mv15";
 		} else {
 			return "Unknown";
 		}

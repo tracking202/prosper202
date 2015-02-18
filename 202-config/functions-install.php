@@ -122,6 +122,32 @@ class INSTALL {
 				  `c2_id` bigint(20) NOT NULL,
 				  `c3_id` bigint(20) NOT NULL,
 				  `c4_id` bigint(20) NOT NULL,
+				  `c5_id` bigint(20) NOT NULL,
+				  `c6_id` bigint(20) NOT NULL,
+				  `c7_id` bigint(20) NOT NULL,
+				  `c8_id` bigint(20) NOT NULL,
+				  `c9_id` bigint(20) NOT NULL,
+				  `c10_id` bigint(20) NOT NULL,
+				  `c11_id` bigint(20) NOT NULL,
+				  `c12_id` bigint(20) NOT NULL,
+				  `c13_id` bigint(20) NOT NULL,
+				  `c14_id` bigint(20) NOT NULL,
+				  `c15_id` bigint(20) NOT NULL,
+				  `mv1_id` bigint(20) NOT NULL,
+				  `mv2_id` bigint(20) NOT NULL,
+				  `mv3_id` bigint(20) NOT NULL,
+				  `mv4_id` bigint(20) NOT NULL,
+				  `mv5_id` bigint(20) NOT NULL,
+				  `mv6_id` bigint(20) NOT NULL,
+				  `mv7_id` bigint(20) NOT NULL,
+				  `mv8_id` bigint(20) NOT NULL,
+				  `mv9_id` bigint(20) NOT NULL,
+				  `mv10_id` bigint(20) NOT NULL,
+				  `mv11_id` bigint(20) NOT NULL,
+				  `mv12_id` bigint(20) NOT NULL,
+				  `mv13_id` bigint(20) NOT NULL,
+				  `mv14_id` bigint(20) NOT NULL,
+				  `mv15_id` bigint(20) NOT NULL,
 				  PRIMARY KEY (`click_id`)
 				) ENGINE=MyISAM DEFAULT CHARSET=latin1
 		";
@@ -163,6 +189,266 @@ class INSTALL {
 		  `c4` varchar(50) NOT NULL,
 		  PRIMARY KEY (`c4_id`),
 		  UNIQUE KEY `c4` (`c4`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create c5 table
+		$sql = "CREATE TABLE `202_tracking_c5` (
+		  `c5_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c5` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c5_id`),
+		  UNIQUE KEY `c5` (`c5`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create c6 table
+		$sql = "CREATE TABLE `202_tracking_c6` (
+		  `c6_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c6` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c6_id`),
+		  UNIQUE KEY `c6` (`c6`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create c7 table
+		$sql = "CREATE TABLE `202_tracking_c7` (
+		  `c7_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c7` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c7_id`),
+		  UNIQUE KEY `c7` (`c7`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create c8 table
+		$sql = "CREATE TABLE `202_tracking_c8` (
+		  `c8_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c8` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c8_id`),
+		  UNIQUE KEY `c8` (`c8`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create c9 table
+		$sql = "CREATE TABLE `202_tracking_c9` (
+		  `c9_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c9` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c9_id`),
+		  UNIQUE KEY `c9` (`c9`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create c10 table
+		$sql = "CREATE TABLE `202_tracking_c10` (
+		  `c10_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c10` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c10_id`),
+		  UNIQUE KEY `c10` (`c10`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create c11 table
+		$sql = "CREATE TABLE `202_tracking_c11` (
+		  `c11_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c11` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c11_id`),
+		  UNIQUE KEY `c11` (`c11`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create c12 table
+		$sql = "CREATE TABLE `202_tracking_c12` (
+		  `c12_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c12` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c12_id`),
+		  UNIQUE KEY `c12` (`c12`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create c13 table
+		$sql = "CREATE TABLE `202_tracking_c13` (
+		  `c13_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c13` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c13_id`),
+		  UNIQUE KEY `c13` (`c13`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create c14 table
+		$sql = "CREATE TABLE `202_tracking_c14` (
+		  `c14_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c14` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c14_id`),
+		  UNIQUE KEY `c14` (`c14`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create c15 table
+		$sql = "CREATE TABLE `202_tracking_c15` (
+		  `c15_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `c15` varchar(50) NOT NULL,
+		  PRIMARY KEY (`c15_id`),
+		  UNIQUE KEY `c15` (`c15`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv1 table
+		$sql = "CREATE TABLE `202_tracking_mv1` (
+		  `mv1_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv1` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv1_id`),
+		  UNIQUE KEY `mv1` (`mv1`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create mv2 table
+		$sql = "CREATE TABLE `202_tracking_mv2` (
+		  `mv2_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv2` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv2_id`),
+		  UNIQUE KEY `mv2` (`mv2`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create mv3 table
+		$sql = "CREATE TABLE `202_tracking_mv3` (
+		  `mv3_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv3` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv3_id`),
+		  UNIQUE KEY `mv3` (`mv3`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create mv4 table
+		$sql = "CREATE TABLE `202_tracking_mv4` (
+		  `mv4_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv4` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv4_id`),
+		  UNIQUE KEY `mv4` (`mv4`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create mv5 table
+		$sql = "CREATE TABLE `202_tracking_mv5` (
+		  `mv5_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv5` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv5_id`),
+		  UNIQUE KEY `mv5` (`mv5`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create mv6 table
+		$sql = "CREATE TABLE `202_tracking_mv6` (
+		  `mv6_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv6` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv6_id`),
+		  UNIQUE KEY `mv6` (`mv6`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);
+
+		//create mv7 table
+		$sql = "CREATE TABLE `202_tracking_mv7` (
+		  `mv7_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv7` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv7_id`),
+		  UNIQUE KEY `mv7` (`mv7`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv8 table
+		$sql = "CREATE TABLE `202_tracking_mv8` (
+		  `mv8_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv8` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv8_id`),
+		  UNIQUE KEY `mv8` (`mv8`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv9 table
+		$sql = "CREATE TABLE `202_tracking_mv9` (
+		  `mv9_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv9` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv9_id`),
+		  UNIQUE KEY `mv9` (`mv9`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv10 table
+		$sql = "CREATE TABLE `202_tracking_mv10` (
+		  `mv10_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv10` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv10_id`),
+		  UNIQUE KEY `mv10` (`mv10`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv11 table
+		$sql = "CREATE TABLE `202_tracking_mv11` (
+		  `mv11_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv11` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv11_id`),
+		  UNIQUE KEY `mv11` (`mv11`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv12 table
+		$sql = "CREATE TABLE `202_tracking_mv12` (
+		  `mv12_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv12` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv12_id`),
+		  UNIQUE KEY `mv12` (`mv12`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv13 table
+		$sql = "CREATE TABLE `202_tracking_mv13` (
+		  `mv13_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv13` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv13_id`),
+		  UNIQUE KEY `mv13` (`mv13`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv14 table
+		$sql = "CREATE TABLE `202_tracking_mv14` (
+		  `mv14_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv14` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv14_id`),
+		  UNIQUE KEY `mv14` (`mv14`)
+		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+		";
+		$result = _mysql_query($sql);		
+
+		//create mv15 table
+		$sql = "CREATE TABLE `202_tracking_mv15` (
+		  `mv15_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `mv15` varchar(50) NOT NULL,
+		  PRIMARY KEY (`mv15_id`),
+		  UNIQUE KEY `mv15` (`mv15`)
 		) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
 		";
 		$result = _mysql_query($sql);
@@ -1113,7 +1399,60 @@ $sql="ALTER TABLE `202_tracking_c3` CHANGE COLUMN `c3` `c3` VARCHAR(350) NOT NUL
 			$result = _mysql_query($sql);
 $sql="ALTER TABLE `202_tracking_c4` CHANGE COLUMN `c4` `c4` VARCHAR(350) NOT NULL;";
 			$result = _mysql_query($sql);			
-			
+$sql="ALTER TABLE `202_tracking_c5` CHANGE COLUMN `c5` `c5` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c6` CHANGE COLUMN `c6` `c6` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c7` CHANGE COLUMN `c7` `c7` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c8` CHANGE COLUMN `c8` `c8` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);	
+$sql="ALTER TABLE `202_tracking_c9` CHANGE COLUMN `c9` `c9` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c10` CHANGE COLUMN `c10` `c10` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c11` CHANGE COLUMN `c11` `c11` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c12` CHANGE COLUMN `c12` `c12` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);				
+$sql="ALTER TABLE `202_tracking_c13` CHANGE COLUMN `c13` `c13` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c14` CHANGE COLUMN `c14` `c14` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_c15` CHANGE COLUMN `c15` `c15` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+
+$sql="ALTER TABLE `202_tracking_mv1` CHANGE COLUMN `mv1` `mv1` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv2` CHANGE COLUMN `mv2` `mv2` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv3` CHANGE COLUMN `mv3` `mv3` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv4` CHANGE COLUMN `mv4` `mv4` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);			
+$sql="ALTER TABLE `202_tracking_mv5` CHANGE COLUMN `mv5` `mv5` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv6` CHANGE COLUMN `mv6` `mv6` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv7` CHANGE COLUMN `mv7` `mv7` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv8` CHANGE COLUMN `mv8` `mv8` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);	
+$sql="ALTER TABLE `202_tracking_mv9` CHANGE COLUMN `mv9` `mv9` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv10` CHANGE COLUMN `mv10` `mv10` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv11` CHANGE COLUMN `mv11` `mv11` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv12` CHANGE COLUMN `mv12` `mv12` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);				
+$sql="ALTER TABLE `202_tracking_mv13` CHANGE COLUMN `mv13` `mv13` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv14` CHANGE COLUMN `mv14` `mv14` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+$sql="ALTER TABLE `202_tracking_mv15` CHANGE COLUMN `mv15` `mv15` VARCHAR(350) NOT NULL;";
+			$result = _mysql_query($sql);
+
 	}
 
 
