@@ -76,7 +76,6 @@ $rule_sql = "SELECT ru.id as rule_id,
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = ru.redirect_campaign
 				WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'"; 
 $rule_row = foreach_memcache_mysql_fetch_assoc($db, $rule_sql);
-
 if (!$rotator_row) die();
 
 AUTH::set_timezone($rotator_row['user_timezone']);
@@ -258,7 +257,7 @@ foreach ($rule_row as $rule) {
 		$count++;
 
 	}
-
+	
 	//If any of the rules maches, redirect to the redirect type (url or campaign)
 	if ($count == count($rotate)) {
 		$default = false;
@@ -283,7 +282,6 @@ if ($default == true) {
 				}
 			}
 		}
-
 	header('location: '.$default);
 	die();
 }
@@ -300,7 +298,6 @@ $mysql['rule_id'] = $db->real_escape_string($rule['rule_id']);
 $mysql['ppc_account'] = $db->real_escape_string($ppc_account);
 $mysql['cpc'] = $db->real_escape_string($cpc);
 $mysql['click_time'] = time();
-
 
 /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
 //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
@@ -393,7 +390,7 @@ $c4 = str_replace('%20',' ',$c4);
 $c4_id = INDEXES::get_c4_id($db, $c4);
 $mysql['c4_id'] = $db->real_escape_string($c4_id);
 
-$device_id = PLATFORMS::get_device_info($db);
+$device_id = PLATFORMS::get_device_info($db,$detect,$_GET['ua']);
 $mysql['platform_id'] = $db->real_escape_string($device_id['platform']); 
 $mysql['browser_id'] = $db->real_escape_string($device_id['browser']);
 $mysql['device_id'] = $db->real_escape_string($device_id['device']);
@@ -429,6 +426,26 @@ if ($device_id['type'] == '4') {
 	$mysql['click_filtered'] = $db->real_escape_string($click_filtered);
 }
 
+if($_GET[lpr]!=''){
+	$click_sql1 = "	SELECT 	202_clicks.click_id,keyword,keyword_id
+					FROM 		202_clicks
+					LEFT JOIN	202_clicks_advance USING (click_id)
+					LEFT JOIN 	202_ips USING (ip_id) 
+					LEFT JOIN 	202_keywords USING (keyword_id) 
+					WHERE 	202_ips.ip_address='".$ip_address."'
+					AND		202_clicks.user_id='".$user_id."'  
+					AND		202_clicks.click_time >= '30'
+					ORDER BY 	202_clicks.click_id DESC 
+					LIMIT 		1";
+	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
+	$click_row1 = $click_result1->fetch_assoc();
+
+	$mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
+	$keyword = $db->real_escape_string($keyword);
+	$keyword_id = $db->real_escape_string($click_row1['keyword_id']);
+	$mysql['keyword_id'] = $db->real_escape_string($keyword_id);
+}
+else{
 //ok we have the main data, now insert this row
 $click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
 $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql); 
@@ -436,14 +453,14 @@ $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 //now gather the info for the advance click insert
 $click_id = $db->insert_id;
 $mysql['click_id'] = $db->real_escape_string($click_id); 
-
+}
 $mysql['click_alp'] = 0;
 
 $mysql['rotator_id'] = $db->real_escape_string($rotator_id); 
 $mysql['user_id'] = $db->real_escape_string($user_id);
 
 //ok we have the main data, now insert this row
-$click_sql = "INSERT INTO   202_clicks
+$click_sql = "REPLACE INTO   202_clicks
 			  SET           	click_id='".$mysql['click_id']."',
 							user_id = '".$mysql['user_id']."',   
 							aff_campaign_id = '".$mysql['aff_campaign_id']."',   
@@ -459,7 +476,7 @@ $click_sql = "INSERT INTO   202_clicks
 $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);   
 
 	//ok we have the main data, now insert this row
-	$click_sql = "INSERT INTO   202_clicks_spy
+	$click_sql = "REPLACE INTO   202_clicks_spy
 				  SET           	click_id='".$mysql['click_id']."',
 								user_id = '".$mysql['user_id']."',   
 								aff_campaign_id = '".$mysql['aff_campaign_id']."',   
@@ -473,7 +490,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 	$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);   
 
 //now we have the click's advance data, now insert this row
-$click_sql = "INSERT INTO   202_clicks_advance
+$click_sql = "REPLACE INTO   202_clicks_advance
 			  SET           click_id='".$mysql['click_id']."',
 							text_ad_id='".$mysql['text_ad_id']."',
 							keyword_id='".$mysql['keyword_id']."',
@@ -489,7 +506,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 
 //insert the tracking data
 $click_sql = "
-	INSERT INTO
+	REPLACE INTO
 		202_clicks_tracking
 	SET
 		click_id='".$mysql['click_id']."',
@@ -513,7 +530,7 @@ if ($rule['aff_campaign_cloaking'] == 1) {
 }
 
 //ok we have our click recorded table, now lets insert theses
-$click_sql = "INSERT INTO   202_clicks_record
+$click_sql = "REPLACE INTO   202_clicks_record
 			  SET           click_id='".$mysql['click_id']."',
 							click_id_public='".$mysql['click_id_public']."',
 							click_cloaking='".$mysql['click_cloaking']."',
@@ -559,7 +576,7 @@ $click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
 
 //insert this
-$click_sql = "INSERT INTO   202_clicks_site
+$click_sql = "REPLACE INTO   202_clicks_site
 			  SET           click_id='".$mysql['click_id']."',
 							click_referer_site_url_id='".$mysql['click_referer_site_url_id']."',
 							click_outbound_site_url_id='".$mysql['click_outbound_site_url_id']."',

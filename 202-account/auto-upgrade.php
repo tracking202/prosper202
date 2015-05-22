@@ -4,17 +4,6 @@ include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user();
 
-function temp_exists() {
-	if (is_dir($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/')) {
-		return true;
-	} else {
-		if (@mkdir($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/', 0755)) {
-			return true;
-		} else {
-			return false;
-		}
-	}
-}
 
 	$rss = fetch_rss('http://my.tracking202.com/clickserver/currentversion/');
 	if ( isset($rss->items) && 0 != count($rss->items) ) {

@@ -39,7 +39,7 @@ GA_googleFetchAds();
 <!-- Loading Flat UI -->
 <link href="/202-css/css/flat-ui.css" rel="stylesheet">
 <!-- Loading Custom CSS -->
-<link href="/202-css/custom.css" rel="stylesheet">
+<link href="/202-css/custom.min.css" rel="stylesheet">
 
 <script src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
 <script src="/202-js/bootstrap.min.js"></script>

@@ -18,8 +18,7 @@ $mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
 		} else { ?>
 		
 		<select class="form-control input-sm" name="ppc_account_id" id="ppc_account_id">			
-			<option value=""> -- </option> <?
-		
+			<option value=""> -- </option> <?php 		
 			while ($ppc_account_row = $ppc_account_result->fetch_array(MYSQL_ASSOC)) {
 	
 				$html['ppc_account_id'] = htmlentities($ppc_account_row['ppc_account_id'], ENT_QUOTES, 'UTF-8');

@@ -30,7 +30,7 @@ switch ($_GET['case']) {
 		if (!file_exists($file)) {
 			template_top('Upload Revenue Reports',NULL,NULL,NULL); 
 			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import<br/>or you have already succesfully uploaded it.</small></div>';
+			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import<br/>or you have already successfully uploaded it.</small></div>';
 			template_bottom();
 			die();
 		}
@@ -40,7 +40,7 @@ switch ($_GET['case']) {
 		about_revenue_upload();
 			echo '<div class="row">
 					<div class="col-xs-12">
-						<form enctype="multipart/form-data" action="/tracking202/update/upload.php" method="get">';
+						<form enctype="application/x-www-form-urlencoded" action="/tracking202/update/upload.php" method="get">';
 					echo '<input type="hidden" name="case" value="2"/>';
 					echo '<input type="hidden" name="file" value="'.$_GET['file'].'"/>';
 				echo '<table class="table table-bordered" id="stats-table">';
@@ -89,7 +89,7 @@ switch ($_GET['case']) {
 		if (!file_exists($file)) {
 			template_top('Upload Revenue Reports',NULL,NULL,NULL); 
 			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import or you have already succesfully uploaded it.</small></div>';
+			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import or you have already successfully uploaded it.</small></div>';
 			template_bottom();
 			die();
 		}

@@ -52,7 +52,7 @@ AUTH::require_user();
 	</div>
 </div>
 
-<?
+<?php 
 
 $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 

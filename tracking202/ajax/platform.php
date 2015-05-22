@@ -7,8 +7,7 @@ AUTH::require_user();
 
 <select class="form-control input-sm" name="platform_id" id="platform_id">
     <option value="0"> -- </option>
-	<?
-		$platform_sql = "SELECT *
+	<?php 		$platform_sql = "SELECT *
                         FROM    202_platforms
                         GROUP BY `platform_name` ORDER BY `platform_name` ASC";
         $platform_result = $db->query($platform_sql) or record_mysql_error($platform_sql);

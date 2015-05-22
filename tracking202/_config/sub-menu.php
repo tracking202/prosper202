@@ -2,15 +2,15 @@
   <div class="col-xs-12" id="sub-menu">
     <ul class="breadcrumb">
             <?php if ($navigation[2] == 'setup') { ?>
-              <li <?php if ($navigation[3] == 'ppc_accounts.php' or !$navigation[3]) { echo 'class="active"'; } ?>><a href="/tracking202/setup/ppc_accounts.php">#1 Traffic Sources</a></li>
+              <li <?php if ($navigation[3] == 'ppc_accounts.php' or !$navigation[3]) { echo 'class="active"'; } ?>><a href="/tracking202/setup/ppc_accounts.php">#1 Traffic</a></li>
               <li <?php if ($navigation[3] == 'aff_networks.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/aff_networks.php">#2 Categories</a></li>
               <li <?php if ($navigation[3] == 'aff_campaigns.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/aff_campaigns.php">#3 Campaigns</a></li>
               <li <?php if ($navigation[3] == 'landing_pages.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/landing_pages.php">#4 Landing Pages</a></li>
-              <li <?php if ($navigation[3] == 'text_ads.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/text_ads.php">#5 Text Ads</a></li>
-              <li <?php if ($navigation[3] == 'rotator.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/rotator.php">#6 Rotator</a></li> 
-              <li <?php switch($navigation[3]) { case "get_landing_code.php":  case "get_simple_landing_code.php":  case "get_adv_landing_code.php": echo 'class="active"'; break; } ?>><a href="/tracking202/setup/get_landing_code.php">#7 Get LP Code</a></li> 
-              <li <?php if ($navigation[3] == 'get_trackers.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/get_trackers.php">#8 Get Links</a></li> 
-              <li <?php if ($navigation[3] == 'get_postback.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/get_postback.php">#9 Get Postback/Pixel</a></li> 
+              <li <?php if ($navigation[3] == 'text_ads.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/text_ads.php">#5 Creative</a></li>
+              <li <?php if ($navigation[3] == 'rotator.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/rotator.php">#6 Rotator/Testing</a></li> 
+              <li <?php switch($navigation[3]) { case "get_landing_code.php":  case "get_simple_landing_code.php":  case "get_adv_landing_code.php": echo 'class="active"'; break; } ?>><a href="/tracking202/setup/get_landing_code.php">#7 LP Code</a></li> 
+              <li <?php if ($navigation[3] == 'get_trackers.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/get_trackers.php">#8 Tracking Links</a></li> 
+              <li <?php if ($navigation[3] == 'get_postback.php') { echo 'class="active"'; } ?>><a href="/tracking202/setup/get_postback.php">#9 Postbacks & Pixels</a></li> 
               
             <?php } ?>
 

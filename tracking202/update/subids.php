@@ -57,8 +57,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
     	$success = true;
 	
-	//this deletes all this users cached data to the old result sets, we want new stuff because they just updated old clicks
-	//memcache_delete_user_keys();
 }
 
 //show the template

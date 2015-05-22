@@ -1091,7 +1091,79 @@ $sql="ALTER TABLE `202_tracking_c4` CHANGE COLUMN `c4` `c4` VARCHAR(350) NOT NUL
 			$result = _mysqli_query($sql);
 			$mysql_version = '1.8.4';
 		}
+		
+		//upgrade from 1.8.4 to 1.8.5
+		if ($mysql_version == '1.8.4') {
+		    $sql = "UPDATE 202_version SET version='1.8.5'; ";
+		    $result = _mysqli_query($sql);
+		    $mysql_version = '1.8.5';
+		}	
 
+		//upgrade from 1.8.5 to 1.8.6
+		if ($mysql_version == '1.8.5') {
+		    $sql = "UPDATE 202_version SET version='1.8.6'; ";
+		    $result = _mysqli_query($sql);
+		    $mysql_version = '1.8.6';
+		}
+		
+		//upgrade from 1.8.6 to 1.8.7
+		if ($mysql_version == '1.8.6') {
+		    $sql = "UPDATE 202_version SET version='1.8.7'; ";
+		    $result = _mysqli_query($sql);
+		    $mysql_version = '1.8.7';
+		}
+
+		//upgrade from 1.8.7 to 1.8.8
+		if ($mysql_version == '1.8.7') {
+		    $sql = "UPDATE 202_version SET version='1.8.8'; ";
+		    $result = _mysqli_query($sql);
+		    $mysql_version = '1.8.8';
+		}
+
+		//upgrade from 1.8.8 to 1.8.9
+		if ($mysql_version == '1.8.8') {
+		    $sql = "UPDATE 202_version SET version='1.8.9'; ";
+		    $result = _mysqli_query($sql);
+		    $mysql_version = '1.8.9';
+		}
+
+		//upgrade from 1.8.9 to 1.8.10
+		if ($mysql_version == '1.8.9') {
+		    $sql = "UPDATE 202_version SET version='1.8.10'; ";
+		    $result = _mysqli_query($sql);
+		    $mysql_version = '1.8.10';
+		}
+
+		//upgrade from 1.8.10 to 1.8.11
+		if ($mysql_version == '1.8.10') {
+		    $sql = "UPDATE 202_version SET version='1.8.11'; ";
+		    $result = _mysqli_query($sql);
+		    $mysql_version = '1.8.11';
+		}
+
+		//upgrade from 1.8.11 to 1.8.12
+		if ($mysql_version == '1.8.11') {
+
+            $sql = "ALTER TABLE 202_users_pref ADD COLUMN `user_daily_email` char(2) NOT NULL DEFAULT '07'";
+            $result = _mysqli_query($sql);
+            
+            $sql = "SELECT user_timezone, install_hash, user_daily_email FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_id = 1";
+            $result = _mysqli_query($sql);
+            $row = $result->fetch_assoc();
+
+            registerDailyEmail($row['user_daily_email'], $row['user_timezone'], $row['install_hash']);
+            
+            $sql = "UPDATE 202_version SET version='1.8.12'";
+            $result = _mysqli_query($sql);
+            $mysql_version = '1.8.12';
+        }
+        
+        //upgrade from 1.8.12 to 1.8.13
+        if ($mysql_version == '1.8.12') {
+            $sql = "UPDATE 202_version SET version='1.8.13'; ";
+            $result = _mysqli_query($sql);
+            $mysql_version = '1.8.13';
+        }
 		return true;
 	}
 }

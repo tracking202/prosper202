@@ -91,6 +91,14 @@ margin-right: 0px;
   border: none;
 }
 
+.nav-tabs > li {
+  margin-bottom: 0px;
+}
+
+.nav-tabs > li.active > a, .nav-tabs > li.active > a:hover, .nav-tabs > li.active > a:focus {
+  background-color: white;
+}
+
 #second-nav > li.active > a{
   border-color: #EBEBEB;
   color: #267da8;
@@ -556,6 +564,10 @@ small, .small {
   background-color: #267da8;
 }
 
+.modal-open {
+    overflow: scroll;
+}
+
 .modal-dialog {
   left: 0px;
 }
@@ -748,4 +760,42 @@ small, .small {
 
 #changelog_accordion .panel-heading > a:hover{
   color: inherit;
+}
+
+.modal-backdrop.in {
+  z-index: 1;
+}
+
+.modal.in .modal-dialog {
+  z-index: 2;
+}
+
+.upgradeToProOverlay {
+  display: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.upgradeToProOverlayBackground {
+  height: 100%;
+  width: 100%;
+  background-color: #000;
+  opacity: 0.7;
+  position: absolute;
+}
+
+.upgradeToProOverlayButton{
+  z-index: 1;
+  position: absolute;
+}
+
+.bootstrap-switch-primary {
+  color: #1d950c;
+  background-color: #bdc3c7;
+  border-color: #bdc3c7;
+}
+
+.bootstrap-switch-primary~.bootstrap-switch-handle-off:before {
+  background-color: #1d950c;
+  border-color: #1d950c;
 }

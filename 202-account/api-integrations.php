@@ -82,7 +82,7 @@ template_top('API Integrations',NULL,NULL,NULL);
 			</div>
 			<div class="col-xs-8">
 			<?php if($change_cb_key) { ?>
-				<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> Your Clickbank secret key was changed succesfully.</small></div>
+				<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> Your Clickbank secret key was changed successfully.</small></div>
 			<?php } ?>
 			<?php if($error['cb_key']) { ?>
 				<div class="error" style="text-align:right"><small><span class="fui-alert"></span> <?php echo $error['cb_key'];?></small></div>
@@ -99,13 +99,13 @@ template_top('API Integrations',NULL,NULL,NULL);
 					</div>
 				</div>
 			</div>
-			<div class="col-xs-12">
+			<!--<div class="col-xs-12">
 				<div class="panel panel-default account_left">
 					<div class="panel-body">
 					    <iframe width="100%" height="auto" src="//www.youtube.com/embed/M6zo3XuExL0" frameborder="0" allowfullscreen></iframe>
 					</div>
 				</div>			
-			</div>
+			</div>-->
 		</div>
 	</div>
 
@@ -152,6 +152,59 @@ template_top('API Integrations',NULL,NULL,NULL);
 		</div>
 	</div>
 </div>
+<div class="row account upgradeToProContainer">
+<div class="upgradeToProOverlay" style="height:278px; width: 981px;">
+	<div class="upgradeToProOverlayBackground"></div>
+	<a href="http://click202.com/tracking202/redirect/dl.php?t202id=8151295&t202kw=slack" target="_blank" class="btn btn-lg btn-p202 upgradeToProOverlayButton" style="margin-top: 127px; margin-left:344px;" id="upgradeSlack">This is a Prosper202 Pro Feature: Upgrade Now To Access!</a>
+</div>	
+	<div class="col-xs-12">
+		<div class="row">
+			<div class="col-xs-4">
+				<h6><span><img src="/202-img/slack.png"></span> Slack Integration</h6>
+			</div>
+			<div class="col-xs-8">
+									</div>
+		</div>
+	</div>
+	<div class="col-xs-4">
+		<div class="row">
+			<div class="col-xs-12">
+				<div class="panel panel-default account_left">
+					<div class="panel-body">
+					    If you wish to send notifications into Slack enter your <strong>Slack</strong> incoming webhook url. To receive notifications from Slack, use the <strong>Prosper202</strong> Incoming Webhook URL.
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
 
+	<div class="col-xs-8">
+		<strong><small>Prosper202 Incoming Webhook URL Is:</small></strong><br>
+		<div class="row">
+
+			<form class="form-horizontal" role="form" method="post" action="">
+
+			<div class="col-xs-9">
+
+				<small>
+					<em><?php echo $strProtocol.''.getTrackingDomain();?>/tracking202/static/slack.php</em>
+				</small>
+
+					<div class="form-group" style="margin-top: 20px;">
+						<label for="user_slack_incoming_webhook" class="col-xs-12 control-label" style="text-align:left">Slack Incoming Webhook URL:</label>
+						<div class="col-xs-12">
+						    <input type="text" class="form-control input-sm" id="user_slack_incoming_webhook" name="user_slack_incoming_webhook" value="">
+						</div>
+						 <div class="col-xs-6">
+						 <br>
+						<button class="btn btn-xs btn-p202 btn-block" type="submit">Update Webhook Url</button>				
+					</div>
+					</div>
+			</div>
+
+			</form>
+		</div>
+	</div>
+</div>
 
 <?php template_bottom();

@@ -1,7 +1,5 @@
 $(document).ready(function() {
 
-    $("[data-toggle='switch']").wrap('<div class="switch" />').parent().bootstrapSwitch();
-
 	$('#cb_status').click(function(){
     	$.post("/202-account/api-integrations.php/?cb_status=1", function(data) {
 			$( "#cb_verified" ).hide().html(data).fadeIn("slow");
@@ -23,7 +21,7 @@ $(document).ready(function() {
 	    }
 	});
 
-	$('input[name=maxmind-isp]').on("toggle", function(){
+	$('input[name=maxmind-isp]').on("change.radiocheck", function(){
         var checkbox = $(this);
         $.post("/202-account/administration.php", { maxmind: checkbox.val()})
 		  .done(function(data) {

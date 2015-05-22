@@ -104,8 +104,7 @@ AUTH::require_user();
 	}
 	
 	
-	?><small><em><u>Make sure you test out all the links to make sure they work yourself before running them live.</u></em></small><?
-	
+	?><small><em><u>Make sure you test out all the links to make sure they work yourself before running them live.</u></em></small><?php 	
 	
 	if ($_POST['method_of_promotion'] == 'directlink') { 
 		

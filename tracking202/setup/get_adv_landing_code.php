@@ -25,7 +25,7 @@ template_top($server_row,'Get Advanced Landing Page Code',NULL,NULL,NULL);  ?>
 			    <label for="landing_page_id" class="col-xs-5 control-label" style="text-align: left;">Landing Page:</label>
 			    <div class="col-xs-6">
 			    	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id">					
-						<option value="0"> -- </option> <?
+						<option value="0"> -- </option> <?php
 						$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 						$landing_page_sql = "SELECT * FROM 202_landing_pages WHERE user_id='".$mysql['user_id']."' AND landing_page_type='1' AND landing_page_deleted='0'";
 						$landing_page_result = $db->query($landing_page_sql); // or record_mysql_error($landing_page_sql);
@@ -83,7 +83,7 @@ template_top($server_row,'Get Advanced Landing Page Code',NULL,NULL,NULL);  ?>
 <div class="row">
 	<div class="col-xs-12">
 		<div class="panel panel-default">
-			<div class="panel-heading"><center>Simple Landing Page Tracking Codes</center></div>
+			<div class="panel-heading"><center>Advanced Landing Page Tracking Codes</center></div>
 			<div class="panel-body" id="tracking-links" style="opacity: 0.5;">
 				<center><small>Click <em>"Get Landing Page Codes"</em> to get tracking codes.</small></center>
 			</div>

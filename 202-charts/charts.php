@@ -15,6 +15,12 @@ function InsertChart( $flash_file, $library_path, $php_source, $width=400, $heig
 	$php_source=urlencode($php_source);
 	$library_path=urlencode($library_path);
 
+	/*if (!isset($_COOKIE['hideChartUpgrade'])) {
+		$display = "style='display:none'";
+	} else {
+		$display = "style='display:block'";
+	}*/
+
 	$html="<OBJECT classid='clsid:D27CDB6E-AE6D-11cf-96B8-444553540000' codebase='http://download.macromedia.com/pub/shockwave/cabs/flash/swflash.cab#version=6,0,0,0' ";
 	$html.="WIDTH=".$width." HEIGHT=".$height." id='charts' ALIGN=''>";
 	$u=(strpos ($flash_file,"?")===false)? "?" : ((substr($flash_file, -1)==="&")? "":"&");

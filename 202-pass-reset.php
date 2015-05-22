@@ -54,7 +54,7 @@
 
 
 
-//if password was changed succesfully
+//if password was changed successfully
 if ($success == true) { 
 	
 	_die("<center><small>Congratulations, your password has been reset.<br/>You can now <a href=\"/202-login.php\">login</a> with your new password.</small></center>");

@@ -38,8 +38,7 @@ AUTH::require_user();
 			</a>
 		</div>
 	</div>
-	<?
-	} 
+	<?php 	} 
 	
 //set the timezone for the user, to display dates in their timezone
 	AUTH::set_timezone($_SESSION['user_timezone']);
@@ -68,8 +67,7 @@ AUTH::require_user();
 		</thead>
 		<tbody>
 		 
-		<?
-	
+		<?php 	
 	
 //If this is spy view, the last clicks in the last 5 seconds go into a hidden div, then it is made visible with a scriptialouc affect, so this div contains the clicks iwthin the last 5 seconds
 	if ($_GET['spy'] == 1) { 
@@ -78,10 +76,8 @@ AUTH::require_user();
 
 //if there is no clicks to display let them know :(
 	if ($click_result->num_rows == 0) { 
-		?><div style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">You have no data to display with your above filters currently.</div><?
-		if ($_GET['spy'] == 1) { 
-			?><div style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">The spy view only shows clicks activity within the past 24 hours.</div><?
-		}        
+		?><div style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">You have no data to display with your above filters currently.</div><?php 		if ($_GET['spy'] == 1) { 
+			?><div style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">The spy view only shows clicks activity within the past 24 hours.</div><?php 		}        
 	}    
 	
 //now display all the clicks
@@ -245,7 +241,7 @@ AUTH::require_user();
 			$x--;
 		}     
 									 
-		$ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'],$click_row['ppc_account_name']); 
+		$ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'],$click_row['ppc_account_name'],$html['referer_host']); 
         
         if (!$click_row['type_name']) {
             $html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: '.$html['browser_name'].'<br/> Platform: '.$html['platform_name'].' <br/>Device: '.$html['device_name'].'"><img title="'.$click_row['type_name'].'" src="/202-img/icons/platforms/other.png"/></span></span>';
@@ -287,7 +283,13 @@ AUTH::require_user();
 				<td class="ip"><?php echo $html['ip_address']; ?></td>
 				<td class="ppc"><?php echo $ppc_network_icon; ?></td>
 				<td class="aff"><?php echo $html['aff_campaign_name']; ?></td>
-				<td class="referer_big"><?php if($html['referer']) {printf('<a href="%s" target="_new" title="Referer">%s</a>',$html['referer'],$html['referer_host']);} else { echo "-";}?><?php  ?></td>
+				<td class="referer_big">
+					<?php if($html['referer']) {
+						$parsed = parse_url($html['referer']);
+						if (empty($parsed['scheme'])) {
+						    $html['referer'] = 'http://' . $html['referer'];
+						}
+					printf('<a href="%s" target="_new" title="Referer">%s</a>',$html['referer'],$html['referer_host']);} else { echo "-";}?><?php  ?></td>
 				<td class="ad"><?php if($html['text_ad_name']) echo $html['text_ad_name']; else echo "-";?></td>
 				<td class="referer">
 					<?php if ($html['referer'] != '') { printf('<a href="%s" target="_new"><img src="/202-img/icons/16x16/control_end_blue.png" alt="Referer" title="Referer: %s"/></a>',$html['referer'],$html['referer']); } ?>

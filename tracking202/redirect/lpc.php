@@ -2,6 +2,9 @@
 
 //run script   
 $mysql['landing_page_id_public'] = $db->real_escape_string($_GET['lpip']);
+if(isset($_GET['202vars'])){
+	$mysql['202vars'] = base64_decode($db->real_escape_string($_GET['202vars']));
+}
 
 $tracker_sql = "SELECT  aff_campaign_name,
 						  aff_campaign_rotate,
@@ -20,7 +23,17 @@ $html['aff_campaign_name'] = htmlentities($tracker_row['aff_campaign_name'], ENT
 
 //modify the redirect site url to go through another cloaked link
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
+
+// get the click id
+$click_id=$_COOKIE['tracking202subid'];
+
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_id);
+
+if(isset($mysql['202vars'])){
+	
+	$redirect_site_url = setPrePopVars($mysql['202vars'],$redirect_site_url,false);
+}
+
 ?>
 
 <html>

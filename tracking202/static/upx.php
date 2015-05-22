@@ -1,4 +1,4 @@
-<?
+<?php
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/class-snoopy.php');
@@ -170,10 +170,8 @@ if($mysql['ppc_account_id']){
 			    $snoopy->fetchtext($pixel_url);
 			    header('HTTP/1.1 202 Accepted', true, 202);
 			    header('Content-Type: application/json');
-			    $response = array('error' => false, 'code' => 202, 'msg' => 'Postback succesfull');
+			    $response = array('error' => false, 'code' => 202, 'msg' => 'Postback successful');
 			    print_r(json_encode($response));
-			    print_r(json_encode($tokens));
-			   
 			    echo $pixel_url;
 			}
 			break;

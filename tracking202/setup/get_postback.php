@@ -13,7 +13,7 @@ $unSecuredPostBackUrl = 'http://'. getTrackingDomain() .'/tracking202/static/gpb
 $unSecuredPostBackUrl_2 = 'http://'. getTrackingDomain() .'/tracking202/static/gpb.php?amount=&subid=';
 
 //universal pixel
-$unSecuredUniversalPixel = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .'/tracking202/static/upx.php?amount=" />';
+$unSecuredUniversalPixel = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .'/tracking202/static/upx.php?amount=" seamless></iframe>';
 
 $unSecuredUniversalPixelJS = '
 <script>
@@ -26,7 +26,7 @@ $unSecuredUniversalPixelJS = '
  	load("http://'. getTrackingDomain() .'/tracking202/static/upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\'], "upxif");
  }(document, "script"));</script>
 <noscript>
- 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .'/tracking202/static/upx.php?amount=&cid= seamless></iframe>
+ 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .'/tracking202/static/upx.php?amount=&cid=" seamless></iframe>
 </noscript>';
 
 ?>
@@ -59,15 +59,15 @@ $unSecuredUniversalPixelJS = '
 				<label class="col-xs-2 control-label" style="text-align: left;">Get Pixel Code For:</label>
 
 				<div class="col-xs-10" style="margin-top: 15px;">
-					<label class="radio" style="line-height: 0.5;">
+					<label class="radio">
 	            		<input type="radio" name="pixel_type" value="0" data-toggle="radio" checked="">
 	            			Simple Pixel (only one click can be tracked simultaneously)
 	          		</label>
-	          		<label class="radio" style="line-height: 0.5;">
+	          		<label class="radio">
 	            		<input type="radio" name="pixel_type" value="1" data-toggle="radio">
 	            			Advanced Pixel (multiple clicks can be tracked simultaneously)
 	          		</label>
-	          		<label class="radio" style="line-height: 0.5;">
+	          		<label class="radio">
 	            		<input type="radio" name="pixel_type" value="2" data-toggle="radio">
 	            			Universal Smart Pixel (Tracks 202 conversions, and intelligently fires 3rd party pixels as needed)
 	          		</label>
@@ -80,14 +80,14 @@ $unSecuredUniversalPixelJS = '
 				<div class="col-xs-10" style="margin-top: 15px;">
 					<div class="row">
 						<div class="col-xs-2">
-							<label class="radio" style="line-height: 0.5;">
+							<label class="radio">
 		            			<input type="radio" name="secure_type" value="0" data-toggle="radio" checked="">
 		            				No <span class="label label-primary">http://</span>
 		          			</label>
 						</div>
 
 						<div class="col-xs-2">
-							<label class="radio" style="line-height: 0.5;">
+							<label class="radio">
 			            		<input type="radio" name="secure_type" value="1" data-toggle="radio">
 			            			Yes <span class="label label-primary">https://</span>
 			          		</label>
@@ -100,7 +100,7 @@ $unSecuredUniversalPixelJS = '
 				<label class="col-xs-2 control-label" for="amount_value" style="text-align: left;">Amount:</label>
 				<div class="col-xs-4" style="margin-top: 10px;">
 					<input class="form-control input-sm" type="text" name="amount_value" id="amount_value"/>
-					<span class="help-block" style="font-size: 10px;">(enter an amount to override the affiliate campaign default)</span>
+					<span class="help-block" style="font-size: 10px;">Enter an amount to override the affiliate campaign default</span>
 				</div>
 			</div>
 
@@ -125,6 +125,15 @@ $unSecuredUniversalPixelJS = '
 			    </div>
 
 		    </div>
+		    	        <div class="form-group" style="margin-bottom: 0px;">
+				<label class="col-xs-2 control-label" for="amount_value" style="text-align: left;">Subid:</label>
+				<div class="col-xs-4" style="margin-top: 10px;">
+				<input class="form-control input-sm" type="text" name="subid_value" id="subid_value"/>	
+		
+					<span class="help-block" style="font-size: 10px;">Enter a subid value for the network you are working with, e.g.<br><br> <span class="label label-primary" style="font-size: 10px;">%subid1%</span>, <span class="label label-primary" style="font-size: 10px;">#s1#</span> , <span class="label label-primary" style="font-size: 10px;">{aff_sub}</span>
+				</div>
+			</div>
+			
 		</form>
 	</div>
 </div>
@@ -218,14 +227,15 @@ $unSecuredUniversalPixelJS = '
 
 <script type="text/javascript">
 $(document).ready(function() {
-    $("#secure-pixels input:radio").on("toggle", function () {
-    	$(this).radio("check");
+    $("#secure-pixels input:radio").on("change.radiocheck", function () {
 		change_pixel_data();
     });
 
     $('#amount_value').keyup(function () { change_pixel_data(); });
-
+    $('#subid_value').keyup(function () { change_pixel_data(); });
 	load_aff_network_id();
+
+	
 });
 
 function change_pixel_data(){

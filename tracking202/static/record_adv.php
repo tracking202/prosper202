@@ -75,8 +75,6 @@ switch ($user_row['user_keyword_searched_or_bidded']) {
 			$keyword = $db->real_escape_string($_GET['OVKEY']);   
 		} elseif ($_GET['t202kw']) { 
 			$keyword = $db->real_escape_string($_GET['t202kw']);  
-		} elseif ($referer_query['p']) { 
-			$keyword = $db->real_escape_string($referer_query['p']);
 		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
 			$keyword = $db->real_escape_string($_GET['target_passthrough']);   
 		} else { //if this is a zango, or more keyword
@@ -87,8 +85,6 @@ switch ($user_row['user_keyword_searched_or_bidded']) {
 		#try to get the searched keyword
 		if ($referer_query['q']) { 
 			$keyword = $db->real_escape_string($referer_query['q']);
-		} elseif ($referer_query['p']) { 
-			$keyword = $db->real_escape_string($referer_query['p']);
 		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
 			$keyword = $db->real_escape_string($_GET['OVRAW']);   
 		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
@@ -151,7 +147,8 @@ $mysql['c4_id'] = $db->real_escape_string($c4_id);
 $ip_id = INDEXES::get_ip_id($db, $_SERVER['HTTP_X_FORWARDED_FOR']);
 $mysql['ip_id'] = $db->real_escape_string($ip_id);     
 
-$device_id = PLATFORMS::get_device_info($db);
+//$device_id = PLATFORMS::get_device_info($db);
+$device_id = PLATFORMS::get_device_info($db,$detect,$_GET['ua']);
 $mysql['platform_id'] = $db->real_escape_string($device_id['platform']); 
 $mysql['browser_id'] = $db->real_escape_string($device_id['browser']);
 $mysql['device_id'] = $db->real_escape_string($device_id['device']);

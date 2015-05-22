@@ -13,7 +13,6 @@ template_top('Account Overview',NULL,NULL,NULL);   ?>
 </div>
 
 <?php display_calendar('/tracking202/ajax/account_overview.php', true, false, true, false, true, true);    ?>
-
 	<script type="text/javascript">
 		 loadContent('/tracking202/ajax/account_overview.php',null);
 	</script>

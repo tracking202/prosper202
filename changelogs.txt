@@ -1,5 +1,61 @@
 Release notes
 
+Version 1.8.13
+--Fixed Bug: Clickbank IPN wasn't tracking sales 
+
+Version 1.8.12
+--New: Daily Email Reports
+--New: 1-click upgrade to Pro after purchase
+--Fixed Bug: Graph overlay fix 
+--Fixed Bug: Bing devex Keyword fix
+--Update: Improved Bot detection
+
+Version 1.8.11
+--Fixed Bug: Filtering via keyword, ip, or referer doesn't cause an error
+--Fixed Bug: 1-Click Update correctly finds new updates.
+--Update: Landing pages track traffic better via finger printing
+--Update: Improved browser detection
+--Update: Improved GEO Detection
+--Update: ClickBank IPN support for version 6
+--Update: Removed Unneeded API keys
+--Update: Removed ClickServer Managment Page
+--Update: Removed Offers202
+--Update: Removed Tracking domain
+
+Version 1.8.10
+--Fixed Bug: Advanced landing pages showed a query error when using built in outbound link.
+--Update: Templates now use UTF 8.
+
+Version 1.8.9
+--Fixed Bug: On Admin Screen, if you had a lot of clicks you would see an out of memory error.
+--Fixed Bug: Debug code removed from code.
+--Improved: Better query for url look ups.
+--Improved: Device finger printing to redirect users when cookies are removed.
+
+Version 1.8.8
+--Fixed bug: Outbound clicks on ALP were not being recorded in database.
+--Fixed bug: Campaign not showing for rotators.
+--Fixed typo: On Advanced Landing Page setup.
+--Fixed typo: Text Ads setup.
+
+Version 1.8.7
+--Fixed bug: Cookie error for landing pages. Where subids were not being passed.
+--Fixed bug: Prosper202 didn't notice an auto updated system initially.
+--Fixed bug: Versions were not being compared correctly for changelogs.
+
+Version 1.8.6
+--Fixed bug: Error messages where set_time_limit is not allowed
+--Fixed typo: Extra < on landing page screen
+
+Version 1.8.5
+--New: Prosper202 will pass extra variables from your tracking links on to the campaign link. This makes it easier to pre-pop offers.
+--Improved support for new traffic sources.
+--Minor speed improvement for users with large databases.
+--Added Missing Robots.txt.
+--Fixed Javascript bug on the pixel page.
+--Fixed formula for payout.
+--Fixed formatting for the iframe pixel.
+
 Version 1.8.4
 --Internet Explorer cookie javascript issue fixed.
 --New redesigned Rotator.

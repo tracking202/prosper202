@@ -7,8 +7,7 @@ AUTH::require_user();
 
 <select class="form-control input-sm" name="region_id" id="region_id">
     <option value="0"> -- </option>
-	<?
-		$region_sql = "SELECT *
+	<?php 		$region_sql = "SELECT *
                         FROM    202_locations_region
                         GROUP BY `region_name` ORDER BY `region_name` ASC";
         $region_result = $db->query($region_sql) or record_mysql_error($region_sql);

@@ -7,7 +7,8 @@ $user_sql = "SELECT maxmind_isp FROM 202_users_pref WHERE user_id='".$mysql['use
 $user_result = $db->query($user_sql);
 $user_row = $user_result->fetch_assoc();
 
-	$campaigns_sql = "SELECT aff_campaign_id, aff_campaign_name FROM 202_aff_campaigns WHERE user_id = '".$mysql['user_id']."' AND `aff_campaign_deleted`=0";
+	$campaigns_sql = "SELECT aff_campaign_id, aff_campaign_name FROM 202_aff_campaigns LEFT JOIN  202_aff_networks using(aff_network_id) WHERE 202_aff_campaigns.user_id = '".$mysql['user_id']."' AND `aff_campaign_deleted`=0 AND `aff_network_deleted`=0 AND 202_aff_networks.user_id = 202_aff_campaigns.user_id";
+	
 	$campaigns_result = $db->query($campaigns_sql);
 	$campaigns = array();
 
@@ -21,8 +22,7 @@ if (isset($_POST['get_rotators']) && isset($_POST['rotator_id']) && $_POST['get_
 	
 	<select class="form-control input-sm" name="tracker_rotator">
 	    <option value=""> -- </option>
-		<?
-			$rotator_sql = "SELECT *
+		<?php 			$rotator_sql = "SELECT *
 	                        FROM    202_rotators
 	                        WHERE user_id='".$mysql['user_id']."'
 	                        ORDER BY `id` ASC";
@@ -51,7 +51,7 @@ if (isset($_GET['autocomplete']) && isset($_GET['type']) && isset($_GET['query']
 
 	header("Content-type: application/json; charset=utf-8");
 
-	$data = rotator_data($_GET['query'], $_GET['type']);
+	$data = rotator_data(urlencode($_GET['query']), $_GET['type']);
 	print_r($data);
 }
 
@@ -270,6 +270,10 @@ if (isset($_POST['add_more_rules']) && $_POST['add_more_rules'] == true) { ?>
 				            Inactive
 				        </label>
 					</div>
+					<div class="form-group" style="float:right; margin-right: 25px;">
+						<label class="checkbox" for="splittest" style="margin-bottom: 12px;padding-left: 32px;">
+						<input type="checkbox" id="splittest" name="splittest" data-toggle="checkbox">Split test</label>
+					</div>
 				</div>
 			</div>
 
@@ -355,8 +359,8 @@ if (isset($_POST['add_more_rules']) && $_POST['add_more_rules'] == true) { ?>
 
 	<script type="text/javascript">
 		$(document).ready(function() {
-			$('[data-toggle="radio"]').radio();
-			$('[data-toggle="checkbox"]').checkbox();
+			$('[data-toggle="radio"]').radiocheck();
+			$('[data-toggle="checkbox"]').radiocheck();
 		});
 	</script>
 
@@ -407,7 +411,7 @@ if (isset($_POST['rule_defaults']) && $_POST['rule_defaults'] == true && isset($
 
 				<script type="text/javascript">
 					$(document).ready(function() {
-						$('[data-toggle="radio"]').radio();
+						$('[data-toggle="radio"]').radiocheck();
 					});
 				</script>
 
@@ -440,6 +444,10 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 								            <input type="checkbox" id="inactive" name="inactive" data-toggle="checkbox">
 								            Inactive
 								        </label>
+									</div>
+									<div class="form-group" style="float:right; margin-right: 25px;">
+										<label class="checkbox" for="splittest" style="margin-bottom: 12px;padding-left: 32px;">
+										<input type="checkbox" id="splittest" name="splittest" data-toggle="checkbox">Split test</label>
 									</div>
 								</div>
 							</div>
@@ -528,8 +536,8 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 					<script type="text/javascript">
 						$(document).ready(function() {
 							rotator_tags_autocomplete('tag', 'country');
-							$('[data-toggle="checkbox"]').checkbox();
-							$('input[name=redirect_type]').radio();
+							$('[data-toggle="checkbox"]').radiocheck();
+							$('input[name=redirect_type]').radiocheck();
 						});
 					</script>
 
@@ -552,6 +560,10 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 								            <input type="checkbox" id="inactive" name="inactive" data-toggle="checkbox" <?php if($rule_row['status'] == false) echo "checked"?>>
 								            Inactive
 								        </label>
+									</div>
+									<div class="form-group" style="float:right; margin-right: 25px;">
+										<label class="checkbox" for="splittest" style="margin-bottom: 12px;padding-left: 32px;">
+										<input type="checkbox" id="splittest" name="splittest" data-toggle="checkbox">Split test</label>
 									</div>
 								</div>
 							</div>
@@ -726,8 +738,8 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 
 					<script type="text/javascript">
 					$(document).ready(function() {
-						$('[data-toggle="checkbox"]').checkbox();
-						$('[data-toggle="radio"]').radio();
+						$('[data-toggle="checkbox"]').radiocheck();
+						$('[data-toggle="radio"]').radiocheck();
 					});
 					</script>
 	<?php }

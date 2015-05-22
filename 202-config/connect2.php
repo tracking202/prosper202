@@ -1,6 +1,7 @@
 <?php
+use UAParser\Parser;
 
-$version = '1.8.4';
+$version = '1.8.13';
 
 @ini_set('auto_detect_line_endings', TRUE);
 @ini_set('register_globals', 0);
@@ -18,7 +19,7 @@ include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/geo/inc/geoipcity.inc');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/geo/inc/geoipregionvars.php');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/vendor/autoload.php');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/Mobile_Detect.php');
-use UAParser\Parser;
+
 
 //try to connect to memcache server
 if ( ini_get('memcache.default_port') ) { 
@@ -39,9 +40,7 @@ function _mysqli_query($db, $sql) {
 //our own die, that will display the them around the error message
 function _die($message) { 
 
-	//info_top();
 	echo $message;
-	//info_bottom();
 	die();
 }
 
@@ -256,14 +255,19 @@ function setClickIdCookie($click_id,$campaign_id=0) {
 
 class PLATFORMS {
 		
-	    function get_device_info($db){
+	    function get_device_info($db, $detect, $ua_string=''){
 
 	    	global $memcacheWorking, $memcache;
 	    	$detect = new Mobile_Detect;
-	    	$ua = $detect->getUserAgent();
 
+	    	if($ua_string!='')
+	    		$ua=$detect->setUserAgent($ua_string);
+	    	else
+	    		$ua = $detect->getUserAgent();
+			
 			//If Cache working
 			if ($memcacheWorking) {
+				
 				$device_info = $memcache->get(md5("user-agent" . $ua . systemHash()));
 
 				if (!$device_info) {
@@ -287,9 +291,10 @@ class PLATFORMS {
 	    }
 
 	    function parseUserAgentInfo($db, $detect){
-
+			
 	    		$parser = Parser::create();
-	    		$result = $parser->parse($detect->getUserAgent());
+	    			$result = $parser->parse($detect->getUserAgent());
+	    	
 				//If is not mobile or tablet
 				if( !$detect->isMobile() && !$detect->isTablet() ){
 
@@ -300,7 +305,7 @@ class PLATFORMS {
 							$result->device->family = "Bot";
 							break;
 						//Is Desktop
-						case 'Other':
+						case 'Other': 
 							$type = "1";
 							$result->device->family = "Desktop";
 							break;
@@ -315,12 +320,17 @@ class PLATFORMS {
 					}
 				}
 
+				if (PLATFORMS::botCheck($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+					$type = "4";
+					$result->device->family = "Bot";
+				}
+
 				//Select from DB and return ID's
 				$mysql['browser'] = $db->real_escape_string($result->ua->family);
 				$mysql['platform'] = $db->real_escape_string($result->os->family);
 				$mysql['device'] = $db->real_escape_string($result->device->family);
 				$mysql['device_type'] = $db->real_escape_string($type);
-
+				
 				//Get browser ID
 				$browser_sql = "SELECT browser_id FROM 202_browsers WHERE browser_name='".$mysql['browser']."'";
 				$browser_result = _mysqli_query($db, $browser_sql);
@@ -362,6 +372,79 @@ class PLATFORMS {
 				$data = array('browser' => $browser_id, 'platform' => $platform_id, 'device' => $device_id, 'type' => $device_type);
 				return $data;
 	    }
+
+	    function botCheck($ip) {
+	
+			global $memcacheWorking, $memcache;
+
+			if ($memcacheWorking) {
+				$getFromCache = $memcache->get(md5("bot-ip" . $ua . systemHash()));
+			} else {
+				$getFromCache = false;
+			}
+			
+
+			if (!$getFromCache) {
+
+				$ranges = array(
+					'199.60.28.0/24',
+					'199.103.122.0/24',
+					'192.197.157.0/24',
+					'207.68.128.0/18',
+					'157.54.0.0/15',
+					'157.56.0.0/14',
+					'157.60.0.0/16',
+					'70.32.128.0/19',
+					'172.253.0.0/16',
+					'173.194.0.0/16',
+					'209.85.128.0/17',
+					'72.14.192.0/18',
+					'66.249.64.0/19',
+					'108.177.0.0/17',
+					'64.233.160.0/19',
+					'66.102.0.0/20',
+					'216.239.32.0/19',
+					'203.208.60.0/24', 
+					'66.249.64.0/19', 
+					'72.14.199.0/24', 
+					'209.85.238.0/24',
+					'204.236.235.245', 
+					'75.101.186.145',
+					'31.13.97.0/24', 
+					'31.13.99.0/24', 
+					'31.13.100.0/24',
+					'66.220.144.0/20', 
+					'69.63.189.0/24', 
+					'69.63.190.0/24', 
+					'69.171.224.0/20', 
+					'69.171.240.0/21', 
+					'69.171.248.0/24', 
+					'173.252.73.0/24', 
+					'173.252.74.0/24', 
+					'173.252.77.0/24', 
+					'173.252.100.0/22', 
+					'173.252.104.0/21', 
+					'173.252.112.0/24'
+				);
+
+				foreach ($ranges as $key => $value) {
+					list($subnet, $mask) = explode('/', $value);
+			   		
+			   		if ((ip2long($ip) & ~((1 << (32 - $mask)) - 1) ) == ip2long($subnet))
+				    { 	
+				    	if ($memcacheWorking) {
+				    		$memcache->set( md5("ip-bot" . $ip . systemHash()), true, false);
+				    	}
+
+				        return true;
+				    }
+
+			    	return false;
+				}
+			} 
+
+			return true;
+		}
     }
 
 class INDEXES {
@@ -408,20 +491,23 @@ class INDEXES {
 		} else {
 
 			$country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='".$mysql['country_code']."'";
+
 			$country_result = _mysqli_query($db, $country_sql);
 			$country_row = $country_result->fetch_assoc(); 
 			if ($country_row) {
 				//if this country already exists, return the location_country_id for it.
 				$country_id = $country_row['country_id'];
+
+				return $country_id;  
 				
-				return $country_id;    
 			} else {
 				//else if this  doesn't exist, insert the new countryrow, and return the_id for this new row we found 
 				$country_sql = "INSERT INTO 202_locations_country SET country_code='".$mysql['country_code']."', country_name='".$mysql['country_name']."'";
 				$country_result = _mysqli_query($db, $country_sql) ; //($ip_sql);
 				$country_id = $db->insert_id;
-				
+
 				return $country_id;    
+				
 			}
 		}
 	}
@@ -743,7 +829,7 @@ class INDEXES {
 
 				} else {
 
-					$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."'";
+					$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."' limit 1";
 					$site_url_result = _mysqli_query($db, $site_url_sql);
 					$site_url_row = $site_url_result->fetch_assoc();
 					if ($site_url_row) {
@@ -764,7 +850,7 @@ class INDEXES {
 
 			} else {
 
-				$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."'";
+				$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_domain_id='".$mysql['site_domain_id']."' and site_url_address='".$mysql['site_url_address']."' limit 1";
 				$site_url_result = _mysqli_query($db, $site_url_sql);
 				$site_url_row = $site_url_result->fetch_assoc();
 
@@ -1104,22 +1190,6 @@ function memcache_set_user_key($sql) {
 }
 
 
-function memcache_delete_user_keys() {
-
-	/*global $memcache;
-
-	$user_id = $_SESSION['user_id'];
-	
-	$queryKeys = explode(",", $memcache -> get($user_id));
-	
-	foreach ($queryKeys as $deletedKey) {
-		if ($deletedKey != '') { 
-			$memcache -> delete($deletedKey);
-		}
-	}*/
-
-}
-
 
 function memcache_mysql_fetch_assoc($db, $sql, $allowCaching = 1, $minutes = 5 ) {
 	
@@ -1283,6 +1353,60 @@ function setPCIdCookie($click_id_public) {
 
 function setOutboundCookie($outbound_site_url) {
 	setcookie('tracking202outbound',$outbound_site_url,0,'/', $_SERVER['SERVER_NAME']);
+}
+
+function getPrePopVars($vars){
+	$urlvars = '';
+	$stoplist = array (
+			'subid',
+			'c1',
+			'c2',
+			'c3',
+			'c4',
+			't202kw',
+			't202id',
+			'acip',
+			'202v',
+			'202vars',
+			'lpip',
+			'pci'
+	);
+	
+	foreach ( $vars as $key => $value ) {
+		if (! in_array ( $key, $stoplist )) {
+			$urlvars .= $key . "=" . $value . "&";
+		}
+	}
+
+	return $urlvars;
+}
+
+function setPrePopVars($urlvars,$redirect_site_url,$b64=false){
+	
+	if(isset($urlvars)&&$urlvars!=''){
+		
+		//remove & at the end of the string
+		$urlvars=rtrim($urlvars,'&');
+		if($b64){
+			$urlvars= "202vars=".base64_encode($urlvars); 
+		}
+		if(!parse_url ($redirect_site_url,PHP_URL_QUERY)){
+	
+			//if there is no query url the add a ? to thecVars but before doing that remove case where there may be a ? at the end of the url and nothing else
+			$redirect_site_url = rtrim($redirect_site_url,'?');
+	
+			//remove the & from thecVars and put a ? in fron t of it
+	
+			$redirect_site_url .="?".$urlvars;
+	
+		}
+		else {
+	
+			$redirect_site_url .="&".$urlvars;
+	
+		}}
+		return $redirect_site_url;
+	
 }
 
 function record_mysql_error($db, $sql) {

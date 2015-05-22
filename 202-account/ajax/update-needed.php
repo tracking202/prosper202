@@ -9,10 +9,10 @@ if ($_SESSION['update_needed'] == true) { ?>
   		<a style="margin-left:10px; margin-right:5px;" href="/202-account/auto-upgrade.php" class="btn btn-xs btn-warning">1-Click Upgrade</a>
   		<small>or</small>
 	    <a style="margin-left:5px" href="http://prosper.tracking202.com/apps/download/?rd=cs202-NA==" class="btn btn-xs btn-warning">Manual upgrade</a>
-	    <small><a href="#changelogs" id="see_changelogs" data-toggle="modal" data-target="#changelogs" style="color:#428bca; font-weight:normal">see changelogs</a></small>
+	    <small><a href="#" class="seechangelogs" style="color:#428bca; font-weight:normal">see changelogs</a></small>
 	</div>
 
-	<div id="changelogs" class="modal fade" role="dialog" aria-hidden="true">
+	<div id="thechangelogs" class="modal fade" role="dialog" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
@@ -55,3 +55,9 @@ if ($_SESSION['update_needed'] == true) { ?>
     </div>
 </div>
 <?php } ?>
+<script>
+$(".seechangelogs").click(function(e) {
+	e.preventDefault();
+	$('#thechangelogs').modal();
+});
+				  </script>

@@ -26,9 +26,8 @@ class DeviceParser extends AbstractParser
         list($regex, $matches) = $this->tryMatch($this->regexes['device_parsers'], $userAgent);
 
         if ($matches) {
-            $device->family = $this->replaceString($regex, 'device_replacement', $matches[1]);
+            $device->family = trim($this->replaceString2($regex, 'device_replacement', $matches));
         }
-
         return $device;
     }
 }

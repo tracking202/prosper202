@@ -175,7 +175,7 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
 						<?php } ?>
 						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> You deletion was successful. You have succesfully removed a landing page.
+							<span class="fui-check-inverted"></span> You deletion was successful. You have successfully removed a landing page.
 						<?php } ?>
 						
 					</small>
@@ -204,11 +204,11 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Landing Page Type <span class="fui-info" data-toggle="tooltip" title="A Simple Landing Page is a landing page that only has one offer associated with it. Where as an Advanced Landing Page is a landing page that can run several offers on it. An example would be a retail landing page where you have outgoing links to several different products."></span></label>
 
 				<div class="col-xs-8" style="margin-top: 10px;">
-					<label class="radio" style="line-height: 0.5;">
+					<label class="radio">
 	            		<input type="radio" name="landing_page_type" id="landing_page_type1" value="0" data-toggle="radio" <?php if ($html['landing_page_type'] == '0' or !$html['landing_page_type']) { echo 'checked'; }?>>
 	            			Simple (One Offer on the page)
 	          		</label>
-	          		<label class="radio" style="line-height: 0.5;">
+	          		<label class="radio">
 	            		<input type="radio" name="landing_page_type" id="landing_page_type2" value="1" data-toggle="radio" <?php if ($html['landing_page_type'] == '1') { echo 'checked'; }?>>
 	            			Advanced (Mutiple Offers on the page)
 	          		</label>
@@ -281,7 +281,7 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 	                $landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 	                
 	                if ($landing_page_result->num_rows == 0 ) { 
-		                ?><li>You have no advanced landing page.</li><?
+		                ?><li>You have no advanced landing page.</li><?php
 		            }
 
 	                while ($landing_page_row = $landing_page_result->fetch_array(MYSQL_ASSOC)) {
@@ -301,7 +301,7 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 		                $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
 		                $aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
 		                if ($aff_network_result->num_rows == 0 ) { 
-		                    ?><li>You have no simple landing page.</li><?
+		                    ?><li>You have no simple landing page.</li><?php
 		                }
 		                
 		                while ($aff_network_row = $aff_network_result->fetch_array(MYSQL_ASSOC)) {
@@ -310,7 +310,7 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 		                    
 		                    printf('<li>%s</li>', $html['aff_network_name']);
 		                    
-		                    ?><ul><?
+		                    ?><ul><?php
 		                                        
 		                        //print out the individual accounts per each PPC network
 		                        $mysql['aff_network_id'] = $db->real_escape_string($aff_network_row['aff_network_id']);
@@ -343,7 +343,7 @@ template_top($server_row,'Landing Page Setup',NULL,NULL,NULL);  ?>
 		                            ?></ul><?php                        
 		                        } 
 		                    
-		                    ?></ul><?
+		                    ?></ul><?php
 		                    
 		                } 
 		            ?>

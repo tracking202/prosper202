@@ -22,8 +22,7 @@ $mysql['aff_network_id'] = $db->real_escape_string($_POST['aff_network_id']);
         <?php } else { ?>
 		
 			<select class="form-control input-sm" name="aff_campaign_id" id="aff_campaign_id" onchange="load_text_ad_id(this.value); if($('#landing_page_style_type')){load_landing_page( $('#aff_campaign_id option:selected').val(), 0, $('input:radio[name=landing_page_type]:checked').val()?$('input:radio[name=landing_page_type]:checked').val():'landingpage');} if($('#unsecure_pixel').length != 0) { change_pixel_data();}">
-            <option value="0"> -- </option> <?
-        
+            <option value="0"> -- </option> <?php         
 			while ($aff_campaign_row = $aff_campaign_result->fetch_array(MYSQL_ASSOC)) {
     
                 $html['aff_campaign_id'] = htmlentities($aff_campaign_row['aff_campaign_id'], ENT_QUOTES, 'UTF-8');

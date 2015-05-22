@@ -22,11 +22,11 @@ template_top('Update CPC',NULL,NULL,NULL);  ?>
 				<label class="col-xs-5 control-label" style="text-align: left;" id="width-tooltip">Adjust CPC For:</label>
 
 				<div class="col-xs-7" style="margin-top: 15px;">
-					<label class="radio" style="line-height: 0.5;">
+					<label class="radio">
 	            		<input type="radio" name="tracker_type" value="0" data-toggle="radio" checked="">
 	            			Direct Link or Landing Page
 	          		</label>
-	          		<label class="radio" style="line-height: 0.5;">
+	          		<label class="radio">
 	            		<input type="radio" name="tracker_type" value="1" data-toggle="radio">
 	            			Advanced Landing Page Setup
 	          		</label>

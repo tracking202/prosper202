@@ -24,15 +24,15 @@ template_top($server_row,'Get Trackers',NULL,NULL,NULL);  ?>
 				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Get Text Ad Code For:</label>
 
 				<div class="col-xs-8" style="margin-top: 15px;">
-					<label class="radio" style="line-height: 0.5;">
+					<label class="radio">
 	            		<input type="radio" name="tracker_type" value="0" data-toggle="radio" checked="">
 	            			Direct Link Setup, or Simple Landing Page Setup
 	          		</label>
-	          		<label class="radio" style="line-height: 0.5;">
+	          		<label class="radio">
 	            		<input type="radio" name="tracker_type" value="1" data-toggle="radio">
 	            			Advanced Landing Page Setup
 	          		</label>
-	          		<label class="radio" style="line-height: 0.5;">
+	          		<label class="radio">
 	            		<input type="radio" name="tracker_type" value="2" data-toggle="radio">
 	            			Smart Rotator
 	          		</label>

@@ -7,8 +7,7 @@ AUTH::require_user();
 
 <select class="form-control input-sm" name="device_id" id="device_id">
     <option value="0"> -- </option>
-	<?
-		$device_sql = "SELECT *
+	<?php 		$device_sql = "SELECT *
                         FROM    202_device_types
                         ORDER BY `type_name` ASC";
         $device_result = $db->query($device_sql) or record_mysql_error($device_sql);

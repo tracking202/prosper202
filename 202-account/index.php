@@ -41,38 +41,38 @@ template_top();  ?>
   <div class="row">
   	<div class="col-xs-12 apps">
   		<h6 class="h6-home">My Applications <span class="glyphicon glyphicon-folder-open home-icons"></span></h6>
-  			<div class="row">
-  				<div class="col-xs-2">
-  					<a href="/tracking202/"><img src="/202-img/new/icons/shield.svg"></a>
-  				</div>
-  				<div class="col-xs-10">
-  					<a href="/tracking202/">Prosper202 ClickServer</a><br/><span>Advanced affiliate conversion tracking & optimization software.</span>
-  				</div>
-  			</div>
-  			<div class="row app-row">
-  				<div class="col-xs-2">
-  					<a href="../202-Mobile"><img src="/202-img/new/icons/iphone.svg" style="margin-left: 8px;"></a>
-  				</div>
-  				<div class="col-xs-10">
-  					<a href="../202-Mobile">Mobile202</a><br/><span>View your stats with mobile version of Tracking202</span>
-  				</div>
-  			</div>
-  			<div class="row app-row">
-  				<div class="col-xs-2">
-  					<a href="/202-resources/"><img src="/202-img/new/icons/basket.svg"></a>
-  				</div>
-  				<div class="col-xs-10">
-  					<a href="/202-resources/">Resources202</a><br/><span>Discover more applications to help you sell.</span>
-  				</div>
-  			</div>
-  			<div class="row app-row">
-  				<div class="col-xs-2">
-  					<a href="/offers202/"><img src="/202-img/new/icons/search.svg"></a>
-  				</div>
-  				<div class="col-xs-10">
-  					<a href="/offers202/">Offers202</a><br/><span>Search for offers across many affiliate networks.</span>
-  				</div>
-  			</div>
+        <div class="row">
+          <div class="col-xs-2">
+            <a href="/tracking202/"><img src="/202-img/new/icons/shield.svg"></a>
+          </div>
+          <div class="col-xs-10">
+            <a href="/tracking202/">Prosper202 ClickServer</a><br/><span>Advanced affiliate conversion tracking & optimization software.</span>
+          </div>
+        </div>
+         <div class="row app-row">
+          <div class="col-xs-2">
+            <a href="/202-appstore"><img src="/202-img/new/icons/building.svg"></a>
+          </div>
+          <div class="col-xs-10">
+            <a href="/202-appstore">AppStore202</a><br/><span>Download New Extensions and Apps to enhance Prosper202.</span>
+          </div>
+        </div>
+        <div class="row app-row">
+          <div class="col-xs-2">
+            <a href="../202-Mobile"><img src="/202-img/new/icons/responsive.svg" style="margin-left: 8px;"></a>
+          </div>
+          <div class="col-xs-10">
+            <a href="../202-Mobile">Mobile202</a><br/><span>View your stats with mobile version of Prosper202</span>
+          </div>
+        </div>
+        <div class="row app-row">
+          <div class="col-xs-2">
+            <a href="/202-resources/"><img src="/202-img/new/icons/basket.svg"></a>
+          </div>
+          <div class="col-xs-10">
+            <a href="/202-resources/">Resources202</a><br/><span>Discover more applications to help you sell.</span>
+          </div>
+        </div>
   	</div>
   </div>
 

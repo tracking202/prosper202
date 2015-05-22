@@ -98,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$mysql['cache_time'] = $db->real_escape_string($_POST['user_cached_reports']);
 			$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string($_POST['user_keyword_searched_or_bidded']);
 			$mysql['user_tracking_domain'] = $db->real_escape_string($_POST['user_tracking_domain']);
-
+			$mysql['user_daily_email'] = $db->real_escape_string($_POST['user_daily_email']);
 			$user_sql = "
 				UPDATE
 					`202_users` 
@@ -116,7 +116,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				SET
 					`user_keyword_searched_or_bidded`='".$mysql['user_keyword_searched_or_bidded']."',
 					`user_tracking_domain`='".$mysql['user_tracking_domain']."',
-					`cache_time`='".$mysql['cache_time']."'
+					`cache_time`='".$mysql['cache_time']."',
+					`user_daily_email`='".$mysql['user_daily_email']."'
 				WHERE
 					`user_id`='".$mysql['user_id']."'
 			";
@@ -124,6 +125,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$html['cache_time'] = $mysql['cache_time'];
 
 			$update_profile = true;
+
+			registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $html['install_hash']);
 
 			//set the  session's user_timezone
 			$_SESSION['user_timezone'] = $_POST['user_timezone'];
@@ -339,6 +342,39 @@ $strProtocol = 'http://';
 				</div>
 
 				<div class="form-group">
+				    <label for="user_daily_email" class="col-xs-4 control-label">Daily Email Report: </label>
+				    <div class="col-xs-8">
+				      <select class="form-control input-sm" id="user_daily_email" name="user_daily_email">
+				        <option value="" <?php if ($html['user_daily_email'] == '') echo 'selected';?>>Never</option>
+						<option value="00" <?php if ($html['user_daily_email'] == '00') echo 'selected';?>>12AM</option>
+						<option value="01" <?php if ($html['user_daily_email'] == '01') echo 'selected';?>>1AM</option>
+						<option value="02" <?php if ($html['user_daily_email'] == '02') echo 'selected';?>>2AM</option>
+						<option value="03" <?php if ($html['user_daily_email'] == '03') echo 'selected';?>>3AM</option>
+						<option value="04" <?php if ($html['user_daily_email'] == '04') echo 'selected';?>>4AM</option>
+						<option value="05" <?php if ($html['user_daily_email'] == '05') echo 'selected';?>>5AM</option>
+						<option value="06" <?php if ($html['user_daily_email'] == '06') echo 'selected';?>>6AM</option>
+						<option value="07" <?php if ($html['user_daily_email'] == '07') echo 'selected';?>>7AM</option>
+						<option value="08" <?php if ($html['user_daily_email'] == '08') echo 'selected';?>>8AM</option>
+						<option value="09" <?php if ($html['user_daily_email'] == '09') echo 'selected';?>>9AM</option>
+						<option value="10" <?php if ($html['user_daily_email'] == '10') echo 'selected';?>>10AM</option>
+						<option value="11" <?php if ($html['user_daily_email'] == '11') echo 'selected';?>>11AM</option>
+						<option value="12" <?php if ($html['user_daily_email'] == '12') echo 'selected';?>>12PM</option>
+						<option value="13" <?php if ($html['user_daily_email'] == '13') echo 'selected';?>>13PM</option>
+						<option value="14" <?php if ($html['user_daily_email'] == '14') echo 'selected';?>>14PM</option>
+						<option value="15" <?php if ($html['user_daily_email'] == '15') echo 'selected';?>>15PM</option>
+						<option value="16" <?php if ($html['user_daily_email'] == '16') echo 'selected';?>>16PM</option>
+						<option value="17" <?php if ($html['user_daily_email'] == '17') echo 'selected';?>>17PM</option>
+						<option value="18" <?php if ($html['user_daily_email'] == '18') echo 'selected';?>>18PM</option>
+						<option value="19" <?php if ($html['user_daily_email'] == '19') echo 'selected';?>>19PM</option>
+						<option value="20" <?php if ($html['user_daily_email'] == '20') echo 'selected';?>>20PM</option>
+						<option value="21" <?php if ($html['user_daily_email'] == '21') echo 'selected';?>>21PM</option>
+						<option value="22" <?php if ($html['user_daily_email'] == '22') echo 'selected';?>>22PM</option>
+						<option value="23" <?php if ($html['user_daily_email'] == '23') echo 'selected';?>>23PM</option>
+					  </select>
+				    </div>
+				</div>
+				
+				<div class="form-group">
 				    <label for="user_cached_reports" class="col-xs-4 control-label">Cache reports every: <span class="fui-info" style="font-size: 12px;" data-toggle="tooltip" title="If you have memcache installed and working, it will cache reports for fast output. Select how often stats will be cached and updated!"></span></label>
 				    <div class="col-xs-8">
 				      <select class="form-control input-sm" id="user_cached_reports" name="user_cached_reports" <?php if (!$memcacheWorking) echo "disabled";?>>
@@ -407,12 +443,9 @@ $strProtocol = 'http://';
 					</div>
 				</div>
 
-				<div class="form-group">
-				    <label for="user_tracking_domain" class="col-xs-4 control-label">Tracking Domain:</label>
-				    <div class="col-xs-8">
-				    	<input type="text" class="form-control input-sm" id="user_tracking_domain" name="user_tracking_domain" value="<?php echo $html['user_tracking_domain']; ?>">
-					</div>
-				</div>
+			
+				    	<input type="hidden" class="form-control input-sm" id="user_tracking_domain" name="user_tracking_domain" value="<?php echo $html['user_tracking_domain']; ?>">
+				
 
 				<div class="form-group">
 				    <div class="col-xs-8 col-xs-offset-4">
@@ -430,7 +463,7 @@ $strProtocol = 'http://';
 
 <div class="row account">
 	<div class="col-xs-12">
-		<h6>Prosper202 App API keys</h6>
+		<h6>Prosper202 App API keys (Optional)</h6>
 	</div>
 	<div class="col-xs-4">
 		<div class="panel panel-default account_left">
@@ -471,84 +504,10 @@ $strProtocol = 'http://';
 	<div class="col-xs-12"></div>
 </div>
 
-<div class="row account">
-	<div class="col-xs-12">
-		<h6>Prosper202 ClickServer API Key</h6>
-	</div>
-	<div class="col-xs-4">
-		<div class="panel panel-default account_left">
-			<div class="panel-body">
-			    Update your Prosper202 ClickServer API Key. Warning: NEVER share your Prosper202 ClickServer API key with anyone!
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-8">
-		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
-		<input type="hidden" name="update_clickserver_api_key" value="1" />
-		<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<div class="form-group <?php if($error['clickserver_api_key']) echo "has-error";?>">
-				<label for="clickserver_api_key" class="col-xs-4 control-label">My ClickServer API Key:
-					<?php if($error['clickserver_api_key']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['clickserver_api_key']; ?>"></span> <?php } ?>
-				</label>
-				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="clickserver_api_key" name="clickserver_api_key" value="<?php echo $html['clickserver_api_key']; ?>">
-				</div>
-			</div>
-
-			<div class="form-group">
-				<div class="col-xs-8 col-xs-offset-4">
-					<button class="btn btn-md btn-p202 btn-block" type="submit">Update API Key</button>					
-				</div>
-			</div>
-		</form>
-	</div>
-</div>
-
 <div class="row form_seperator">
 	<div class="col-xs-12"></div>
 </div>
 
-<div class="row account">
-	<div class="col-xs-12">
-		<h6>My Tracking202 Developer Key</h6>
-	</div>
-	<div class="col-xs-4">
-		<div class="panel panel-default account_left">
-			<div class="panel-body">
-			    Use this to activate Offers202. If you do not know your developer api key, you may get it <a href="http://developers.tracking202.com">here</a>.
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-8">
-		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
-		<input type="hidden" name="change_user_api_key" value="1" />
-		<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<div class="form-group <?php if($error['user_api_key']) echo "has-error";?>">
-				<label for="user_api_key" class="col-xs-4 control-label">My Tracking202 API Key:
-					<?php if($error['user_api_key']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_api_key']; ?>"></span> <?php } ?>
-				</label>
-				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="user_api_key" name="user_api_key" value="<?php echo $html['user_api_key']; ?>">
-				</div>
-			</div>
-
-			<div class="form-group">
-				<div class="col-xs-8 col-xs-offset-4">
-				<?php if ($_SESSION['user_api_key']) { ?>
-					<div class="col-xs-6" style="padding-left: 0px;">
-						<button class="btn btn-md btn-p202 btn-block" type="submit">Update API Key</button>
-					</div>
-					<div class="col-xs-6" style="padding-right: 0px;">
-						<button class="btn btn-md btn-p202 btn-block" onclick="window.location='?remove_user_api_key=1'; return false;">Delete Api Key</button>
-					</div>					
-				<?php } else { ?>
-					<button class="btn btn-md btn-p202 btn-block" type="submit">Update API Key</button>
-				<?php } ?>
-				</div>
-			</div>
-		</form>
-	</div>
-</div>
 
 <div class="row form_seperator">
 	<div class="col-xs-12"></div>

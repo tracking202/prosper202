@@ -7,8 +7,7 @@ AUTH::require_user();
 
 <select class="form-control input-sm" name="browser_id" id="browser_id">
     <option value="0"> -- </option>
-	<?
-		$browser_sql = "SELECT *
+	<?php 		$browser_sql = "SELECT *
                         FROM    202_browsers
                         GROUP BY `browser_name` ORDER BY `browser_name` ASC";
         $browser_result = $db->query($browser_sql) or record_mysql_error($browser_sql);

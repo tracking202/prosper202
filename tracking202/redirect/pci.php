@@ -35,13 +35,13 @@ delay_sql($db, $click_sql);
 if ($click_row['click_cloaking'] == 1) { 
 	$cloaking_on = true;
 	$mysql['site_url_id'] = $db->real_escape_string($click_row['click_cloaking_site_url_id']);
-	$site_url_sql = "SELECT site_url_address FROM 202_site_urls WHERE site_url_id='".$mysql['site_url_id']."'";
+	$site_url_sql = "SELECT site_url_address FROM 202_site_urls WHERE site_url_id='".$mysql['site_url_id']."' limit 1";
 	$site_url_row = memcache_mysql_fetch_assoc($db, $site_url_sql);
 	$cloaking_site_url = $site_url_row['site_url_address'];
 } else {
 	$cloaking_on = false;
 	$mysql['site_url_id'] = $db->real_escape_string($click_row['click_redirect_site_url_id']);
-	$site_url_sql = "SELECT site_url_address FROM 202_site_urls WHERE site_url_id='".$mysql['site_url_id']."'";
+	$site_url_sql = "SELECT site_url_address FROM 202_site_urls WHERE site_url_id='".$mysql['site_url_id']."' limit 1";
 	$site_url_row = memcache_mysql_fetch_assoc($db, $site_url_sql);
 	$redirect_site_url = $site_url_row['site_url_address'];  	
 }

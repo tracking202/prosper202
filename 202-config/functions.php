@@ -76,18 +76,19 @@ function info_top() { ?>
   
 <link rel="shortcut icon" href="/202-img/favicon.gif" type="image/ico"/> 
 <!-- Loading Bootstrap -->
-<link href="/202-css/css/bootstrap.min.css" rel="stylesheet"/>
+<link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet"/>
 <!-- Loading Flat UI -->
-<link href="/202-css/css/flat-ui.css" rel="stylesheet"/>
+<link href="/202-css/css/flat-ui-pro.min.css" rel="stylesheet"/>
 <!-- Loading Custom CSS -->
-<link href="/202-css/custom.css" rel="stylesheet"/>
+<link href="/202-css/custom.min.css" rel="stylesheet"/>
 <!--[if lt IE 9]>
       <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
       <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
 <![endif]-->
 <!-- Load JS here -->
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
-    <script src="/202-js/bootstrap.min.js"></script>
+    <script src="https://code.jquery.com/jquery-1.11.2.min.js"></script>
+    <script type="text/javascript" src="https://code.jquery.com/ui/1.11.2/jquery-ui.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
 <script type='text/javascript'>
 var googletag=googletag||{};googletag.cmd=googletag.cmd||[];(function(){var e=document.createElement("script");e.async=true;e.type="text/javascript";var t="https:"==document.location.protocol;e.src=(t?"https:":"http:")+"//www.googletagservices.com/tag/js/gpt.js";var n=document.getElementsByTagName("script")[0];n.parentNode.insertBefore(e,n)})()
 </script>
@@ -160,6 +161,19 @@ return $text;
 }
 
 
+function temp_exists() {
+	if (is_dir($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/')) {
+		return true;
+	} else {
+		if (@mkdir($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/', 0755)) {
+			return true;
+		} else {
+			return false;
+		}
+	}
+}
+
+
 function update_needed () { 
 	
 	global $version;
@@ -172,7 +186,113 @@ function update_needed () {
 			$latest_version = $item['title'];
 			//if current version, is older than the latest version, return true for an update is now needed.
 			if (version_compare($version, $latest_version) == '-1') {
-				return true;
+
+				if ($item['autoupgrade'] == 'true') {
+					$decimals = explode('.', $latest_version);
+					$versionCount = count($decimals);
+
+					$lastDecimal = substr($latest_version, strrpos($latest_version, '.') + 1);
+
+					if ($versionCount == 2) {
+						$calcVersion = ($decimals[0] - 1).'.9.9';
+
+					} else if ($versionCount == 3){
+						if ($lastDecimal == '1') {
+							if ($decimals[1] == '0') {
+								$calcVersion = $decimals[0].'.0';
+							} else {
+								$calcVersion = $decimals[0].'.'.$decimals[1].'.0';
+							}
+						} else if ($lastDecimal == '0'){
+							$calcVersion = $decimals[0].'.'.($decimals[1] - 1).'.9';
+						} else {
+							$calcVersion = $decimals[0].'.'.$decimals[1].'.'.($lastDecimal - 1);
+						}
+					}
+
+					if ($calcVersion == $version) {
+						//Auto upgrade without user confirmation
+						$GetUpdate = @file_get_contents($item['link']);
+						if ($GetUpdate) {
+						
+							if (temp_exists()) {
+								$downloadUpdate = @file_put_contents($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/prosper202_'.$latest_version.'.zip', $GetUpdate);
+								if ($downloadUpdate) {
+									$zip = @zip_open($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/prosper202_'.$latest_version.'.zip');
+
+										if ($zip)
+										{	
+
+										    while ($zip_entry = @zip_read($zip))
+										    {
+										    	$thisFileName = zip_entry_name($zip_entry);
+
+										    	if (substr($thisFileName,-1,1) == '/') {
+										    		if (is_dir($_SERVER['DOCUMENT_ROOT']. '/'.$thisFileName)) {
+										    		} else {
+											    		if(@mkdir($_SERVER['DOCUMENT_ROOT']. '/'.$thisFileName, 0755, true)) {
+											    		} else {
+											    		}
+											    	}
+										    		
+										    	} else {
+										    		$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
+										    		$file_ext = array_pop(explode(".", $thisFileName));
+
+											    	if($updateThis = @fopen($_SERVER['DOCUMENT_ROOT'].'/'.$thisFileName, 'wb')) {
+											    		fwrite($updateThis, $contents);
+						                            	fclose($updateThis);
+						                            	unset($contents);	                      
+											    	} else {
+											    		$log .= "Can't update file:" . $thisFileName . "! Operation aborted";
+											    	}
+										    		
+										    	}
+
+										    	$FilesUpdated = true;
+										    }
+
+											zip_close($zip);
+										}
+
+								} else {
+									$FilesUpdated = false;
+								}
+
+							} else {
+								$FilesUpdated = false;
+							}
+
+						} else {
+							$FilesUpdated = false;
+						}
+
+						if ($FilesUpdated == true) {
+
+							include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-upgrade.php');
+
+							if (UPGRADE::upgrade_databases(null) == true) {
+								$version = $latest_version;
+								$upgrade_done = true;	
+							} else {
+								$upgrade_done = false;	
+							}
+						}
+
+						if ($upgrade_done) {
+							return false;
+						} else {
+							return true;
+						}
+
+					} else {
+						return true;
+					}
+
+				} else {
+					return true;
+				}
+
 			} else {
 				return false;
 			}

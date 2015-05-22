@@ -980,20 +980,17 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 		
 		if ($user_row['user_pref_referer']) { 
 			$mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
-			$click_sql .=   " AND 2sd.site_domain_host LIKE CONVERT( _utf8 '%".$mysql['user_pref_referer']."%' USING latin1 )
-							COLLATE latin1_swedish_ci ";    
+			$click_sql .=   " AND 2sd.site_domain_host LIKE '%".$mysql['user_pref_referer']."%'";    
 		}
 		
 		if ($user_row['user_pref_keyword']) { 
 			$mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
-			$click_sql .=   " AND 2k.keyword LIKE CONVERT( _utf8 '%".$mysql['user_pref_keyword']."%' USING latin1 )
-							COLLATE latin1_swedish_ci ";    
+			$click_sql .=   " AND 2k.keyword LIKE'%".$mysql['user_pref_keyword']."%'";    
 		}
 		
 		if ($user_row['user_pref_ip']) { 
 			$mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
-			$click_sql .=   " AND 2i.ip_address LIKE CONVERT( _utf8 '%".$mysql['user_pref_ip']."%' USING latin1 )
-							COLLATE latin1_swedish_ci ";    
+			$click_sql .=   " AND 2i.ip_address LIKE '%".$mysql['user_pref_ip']."%'";    
 		}
 
 		if ($user_row['user_pref_device_id']) { 
@@ -1178,7 +1175,7 @@ function display_suggestion($suggestion_row) {
 				<?php if ($comments > 0) { ?>
 					<div class="comment2">
 						<ul> 
-							<li> <?
+							<li> <?php
 								$mysql['suggestion_id'] = $db->real_escape_string($suggestion_row['suggestion_id']);
 								$suggestion2_sql = "SELECT * FROM suggestions WHERE suggestion_reply_to_id='".$mysql['suggestion_id']."'";
 								$suggestion2_result = _mysqli_query($suggestion2_sql) ; //($suggestion2_sql);
@@ -2098,7 +2095,7 @@ class INDEXES {
 					$mysql['site_url_address'] = $db->real_escape_string($site_url_address);
 					$mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
 
-					$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."'";
+					$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."' limit 1";
 					$site_url_result = _mysqli_query($site_url_sql);
 					$site_url_row = $site_url_result->fetch_assoc();
 					if ($site_url_row) {
@@ -2125,7 +2122,7 @@ class INDEXES {
 				$mysql['site_url_address'] = $db->real_escape_string($site_url_address);
 				$mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
 
-				$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."'";
+				$site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url_address='".$mysql['site_url_address']."' limit 1";
 				$site_url_result = _mysqli_query($site_url_sql);
 				$site_url_row = $site_url_result->fetch_assoc();
 				if ($site_url_row) {
@@ -2486,7 +2483,29 @@ function showChart ($chart, $chartWidth, $chartHeight) {
 	$chart_result = _mysqli_query($chart_sql) ; //($chart_sql);
 	$chart_id = $db->insert_id;
 
-	$url['chart_id'] = urlencode($chart_id);                                                                                                       
+	$url['chart_id'] = urlencode($chart_id);
+	if (!isset($_COOKIE['hideChartUpgrade'])){
+
+		echo '<div class="modal fade" id="chartsUpgradeModal" tabindex="-1" role="dialog" aria-labelledby="chartsUpgradeModalLabel" aria-hidden="true">
+				<div class="modal-dialog">
+				<div class="modal-content">
+					<div class="modal-header">
+		        		<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+		        		<h4 class="modal-title" id="chartsUpgradeModalLabel">NEW HTML5 charts</h4>
+		      		</div>
+		      		<div class="modal-body">
+		        		<img src="/202-img/chart.png" style="width: 100%;">
+		      		</div>
+		      		<div class="modal-footer">
+		        		<a href="http://click202.com/tracking202/redirect/dl.php?t202id=8151295&t202kw=graph" target="_blank" class="btn btn-p202">This is a Prosper202 Pro Feature: Upgrade Now To Access!</a>
+		      		</div>
+		    	</div>
+				</div>
+		</div>';
+
+		echo '<script>$("#chartsUpgradeModal").modal();</script>';
+	}
+	
 	echo InsertChart ( '/202-charts/charts.swf', 
 					   '/202-charts/charts_library', 
 					   '/202-charts/showChart.php?chart_id='.$url['chart_id'],
@@ -2920,7 +2939,7 @@ function runBreakdown($user_pref) {
 	showChart ($chart, $chartWidth, $chartHeight+40) ;
 
 	
-	?><div style="padding: 3px 0px;"></div><?
+	?><div style="padding: 3px 0px;"></div><?php
 }
 
 
@@ -3328,7 +3347,7 @@ function runHourly($user_pref) {
 	showChart ($chart, $chartWidth-20, $chartHeight+40) ;
 
 	
-	?><div style="padding: 3px 0px;"></div><?
+	?><div style="padding: 3px 0px;"></div><?php
 }
 
 function runWeekly($user_pref) {
@@ -3710,7 +3729,7 @@ function runWeekly($user_pref) {
 	showChart ($chart, $chartWidth-20, $chartHeight+40) ;
 
 	
-	?><div style="padding: 3px 0px;"></div><?
+	?><div style="padding: 3px 0px;"></div><?php
 	
 }
 
@@ -4321,5 +4340,27 @@ function changelog(){
 	return json_decode($result, true);
 }
 
+function registerDailyEmail($time, $timezone, $hash){
+	$protocol = stripos($_SERVER['SERVER_PROTOCOL'],'https') === true ? 'https://' : 'http://';
+	$domain = $protocol.''.getTrackingDomain();
+	$domain = base64_encode($domain);
+
+	$date = new DateTime($time.':00:00', new DateTimeZone($timezone));
+	$date->setTimezone(new DateTimeZone('America/Los_Angeles'));
+
+	//Initiate curl
+	$ch = curl_init();
+	// Set the url
+	curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/api/v2/'.$hash.'/'.$domain.'/'.$date->format('H'));
+	// Disable SSL verification
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	// Will return the response, if false it print the response
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	// Execute
+	$result = curl_exec($ch);
+
+	//close connection
+	curl_close($ch);
+}
 
 ?>

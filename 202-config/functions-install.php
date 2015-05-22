@@ -127,6 +127,7 @@ class INSTALL {
   `cb_key` VARCHAR(250) NOT NULL,
   `cb_verified` tinyint(1) NOT NULL default '0',
   `maxmind_isp` tinyint(1) NOT NULL default '0',
+  `user_daily_email` char(2) NOT NULL DEFAULT '07',
   PRIMARY KEY (`user_id`)
 ) ENGINE=InnoDB ;
 ";
@@ -328,7 +329,7 @@ class INSTALL {
 		  `landing_page_id` mediumint(8) unsigned NOT NULL,
 		  `ppc_account_id` mediumint(8) unsigned NOT NULL,
 		  `click_cpc` decimal(7,5) NOT NULL,
-		  `click_payout` decimal(6,2) NOT NULL,
+		  `click_payout` decimal(10,5) NOT NULL,
 		  `click_lead` tinyint(1) NOT NULL DEFAULT '0',
 		  `click_filtered` tinyint(1) NOT NULL DEFAULT '0',
 		  `click_bot` tinyint(1) NOT NULL DEFAULT '0',

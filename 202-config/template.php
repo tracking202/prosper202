@@ -17,7 +17,7 @@ function template_top($title = 'Prosper202 ClickServer') { global $navigation; g
 <meta name="copyright" content="Prosper202, Inc" />
 <meta name="author" content="Prosper202, Inc" />
 <meta name="MSSmartTagsPreventParsing" content="TRUE"/>
-
+<meta charset="utf-8"> 
 <meta name="robots" content="noindex, nofollow" />
 <meta http-equiv="Content-Script-Type" content="text/javascript" />
 <meta http-equiv="Content-Style-Type" content="text/css" />
@@ -25,11 +25,11 @@ function template_top($title = 'Prosper202 ClickServer') { global $navigation; g
   
 <link rel="shortcut icon" href="/202-img/favicon.gif" type="image/ico"/> 
 <!-- Loading Bootstrap -->
-<link href="/202-css/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet">
 <!-- Loading Flat UI -->
-<link href="/202-css/css/flat-ui.css" rel="stylesheet">
+<link href="/202-css/css/flat-ui-pro.min.css" rel="stylesheet">
 <!-- Loading Font Awesome -->
-<link href="https://netdna.bootstrapcdn.com/font-awesome/4.0.3/css/font-awesome.css" rel="stylesheet">
+<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css" rel="stylesheet">
 <!-- Loading Tags Input CSS -->
 <link href="/202-css/css/bootstrap-tokenfield.min.css" rel="stylesheet">
 <link href="/202-css/css/tokenfield-typeahead.min.css" rel="stylesheet">
@@ -40,12 +40,10 @@ function template_top($title = 'Prosper202 ClickServer') { global $navigation; g
       <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
 <![endif]-->
 <!-- Load JS here -->
-<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
-<script type="text/javascript" src="https://code.jquery.com/ui/1.10.3/jquery-ui.js"></script>
-<script type="text/javascript" src="/202-js/jquery-ui-1.10.3.custom.min.js"></script>
-<script type="text/javascript" src="/202-js/bootstrap.min.js"></script>
-<script type="text/javascript" src="/202-js/flatui-radio.js"></script>
-<script type="text/javascript" src="/202-js/flatui-checkbox.js"></script>
+<script type="text/javascript" src="https://code.jquery.com/jquery-1.11.2.min.js"></script>
+<script type="text/javascript" src="https://code.jquery.com/ui/1.11.2/jquery-ui.min.js"></script>
+<script type="text/javascript" src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
+<script type="text/javascript" src="/202-js/flat-ui-pro.min.js"></script>
 <script type="text/javascript" src="/202-js/jquery.validate.min.js"></script>
 <script type="text/javascript" src="/202-js/bootstrap-tokenfield.min.js"></script>
 <script type="text/javascript" src="/202-js/typeahead.bundle.js"></script>
@@ -62,10 +60,12 @@ case "202-account": ?>
 <script type="text/javascript" src="/202-js/home.js"></script>
 <?php } ?>
 
-<script type="text/javascript" src="/202-js/bootstrap-switch.js"></script>
-<script type="text/javascript" src="/202-js/account.min.js"></script>
+<script type="text/javascript" src="/202-js/account.js"></script>
 <?php break; } ?>
-
+    <script type="text/javascript">
+      window.heap=window.heap||[],heap.load=function(t,e){window.heap.appid=t,window.heap.config=e;var a=document.createElement("script");a.type="text/javascript",a.async=!0,a.src=("https:"===document.location.protocol?"https:":"http:")+"//cdn.heapanalytics.com/js/heap-"+t+".js";var n=document.getElementsByTagName("script")[0];n.parentNode.insertBefore(a,n);for(var o=function(t){return function(){heap.push([t].concat(Array.prototype.slice.call(arguments,0)))}},p=["clearEventProperties","identify","setEventProperties","track","unsetEventProperty"],c=0;c<p.length;c++)heap[p[c]]=o(p[c])};
+      heap.load("236490414");
+    </script>
 </head>
 <body>
 
@@ -85,9 +85,9 @@ case "202-account": ?>
 	  		<nav class="navbar navbar-default" role="navigation">
 				<ul class="nav navbar-nav">
 					<li <?php if (($navigation[1] == '202-account') AND !$navigation[2]) { echo 'class="active";'; } ?>><a href="/202-account/" id="HomePage">Home</a></li>			      
-				    <li <?php if ($navigation[1] == 'tracking202') { echo 'class="active";'; } ?>><a href="/tracking202/" id="ClickServerPage">Prosper202 ClickServer</a></li>
-				    <li <?php if ($navigation[1] == 'offers202') { echo 'class="active";'; } ?>><a href="/offers202/" id="Offers202Page">Offers202</a></li>
-				    <li <?php if ($navigation[1] == '202-resources') { echo 'class="active";'; } ?>><a href="/202-resources/" id="ResourcesPage">Featured Resources</a></li>
+				    <li <?php if ($navigation[1] == 'tracking202') { echo 'class="active";'; } ?>><a href="/tracking202/" id="ClickServerPage">Prosper202 CS</a></li>
+				    <li <?php if ($navigation[1] == '202-appstore') { echo 'class="active";'; } ?>><a href="/202-appstore/" id="AppStorePage" >App Store <span class="fui-star-2"></span></a> </li> 
+				    <li <?php if ($navigation[2] == 'upgrade-to-pro.php') { echo 'class="active";'; } ?>><a href="/202-account/upgrade-to-pro.php" id="UpgradeToProPage">Upgrade To Pro</a></li>				    
 				</ul>
 				<ul class="nav navbar-nav navbar-right">
 					<li id="account-dropdown" class="dropdown <?php if ($navigation[1] == '202-account' AND $navigation[2]) { echo 'active'; } ?>">
@@ -96,9 +96,11 @@ case "202-account": ?>
 					    <ul class="dropdown-menu">
 					        <li <?php if ($navigation[2] == 'account.php') { echo 'class="active";'; } ?>><a href="/202-account/account.php" id="PersonalSettingsPage">Personal Settings</a></li>
 					        <li <?php if ($navigation[2] == 'vip-perks.php') { echo 'class="active";'; } ?>><a href="/202-account/vip-perks.php" id="VIPPerksPage">VIP Perks Profile</a> <?php if($user_data['vip_perks_status']) echo '<span class="label label-important" id="notification-perks">1</span>';?></li>
-					        <li <?php if ($navigation[2] == 'clickservers.php') { echo 'class="active";'; } ?>><a href="/202-account/clickservers.php" id="ClickServerManagementPage">ClickServer Management</a></li>
 					        <li <?php if ($navigation[2] == 'api-integrations.php') { echo 'class="active";'; } ?>><a href="/202-account/api-integrations.php" id="3rdPartyAPIPage">3rd Party API Integrations</a></li>
+					        <li <?php if ($navigation[2] == 'conversion-logs.php') { echo 'class="active";'; } ?>><a href="/202-account/conversion-logs.php" id="ConversionLogsPage">Conversion Logs</a></li>
+					        <li <?php if ($navigation[2] == 'user-management.php') { echo 'class="active";'; } ?>><a href="/202-account/user-management.php" id="UserManagementPage">User Management</a></li>
 					        <li <?php if ($navigation[2] == 'administration.php') { echo 'class="active";'; } ?>><a href="/202-account/administration.php" id="SettingsPage">Settings<span class="fui-gear icon-navbar"></span></a></li>
+					        <li <?php if ($navigation[1] == '202-resources') { echo 'class="active";'; } ?>><a href="/202-resources/" id="ResourcesPage">Featured Resources</a></li>
 					        <li <?php if ($navigation[2] == 'help.php') { echo 'class="active";'; } ?>><a href="/202-account/help.php" id="HelpPage">Help<span class="fui-question icon-navbar"></span></a></li>
 					    </ul>
 					</li>		      
@@ -259,6 +261,5 @@ case "202-account": ?>
       </div>
 <!-- End survey modal -->
 <?php } ?>
-
 </body>
 <?php } ?>

@@ -1,4 +1,4 @@
-<?
+<?php
 include_once ($_SERVER ['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user ();
@@ -136,6 +136,7 @@ if ($_GET ['edit_aff_campaign_id']) {
 						 FROM   	`202_aff_campaigns`
 						 WHERE  	`aff_campaign_id`='" . $mysql ['aff_campaign_id'] . "'
 						 AND    		`user_id`='" . $mysql ['user_id'] . "'";
+	
 	$aff_campaign_result = $db->query ( $aff_campaign_sql ) or record_mysql_error ( $aff_campaign_sql );
 	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 	
@@ -171,7 +172,7 @@ template_top ( 'Affiliate Campaigns Setup', NULL, NULL, NULL );
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
 						<?php } ?>
 						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> You deletion was successful. You have succesfully removed a campaign.
+							<span class="fui-check-inverted"></span> You deletion was successful. You have successfully removed a campaign.
 						<?php } ?>
 						
 					</small>
@@ -211,7 +212,7 @@ template_top ( 'Affiliate Campaigns Setup', NULL, NULL, NULL );
 				<div class="col-xs-6">
 				    <select class="form-control input-sm" name="aff_network_id" id="aff_network_id">
 				    	<option value="">--</option>
-				    	<?
+				    	<?php
 								$mysql ['user_id'] = $db->real_escape_string ( $_SESSION ['user_id'] );
 								$aff_network_sql = "
 										SELECT *
@@ -249,13 +250,13 @@ template_top ( 'Affiliate Campaigns Setup', NULL, NULL, NULL );
 			<label class="col-xs-4 control-label" style="text-align: left;">Rotate Urls:</label>
 
 				<div class="col-xs-2" style="margin-top: 10px;">
-					<label class="radio" style="line-height: 0.5;">
+					<label class="radio">
 	            		<input type="radio" name="aff_campaign_rotate" id="aff_campaign_rotate1" value="0" data-toggle="radio" <?php if ($html ['aff_campaign_rotate'] == 0) echo 'checked';?>>
 	            			No
 	          		</label>
 	          	</div>
 	          	<div class="col-xs-2" style="margin-top: 10px;">
-		            <label class="radio" style="line-height: 0.5;">
+		            <label class="radio">
 		            	<input type="radio" name="aff_campaign_rotate" id="aff_campaign_rotate2" value="1" data-toggle="radio" <?php if ($html ['aff_campaign_rotate'] == 1) echo 'checked';?>>
 		            		Yes
 		            </label>
@@ -280,7 +281,7 @@ template_top ( 'Affiliate Campaigns Setup', NULL, NULL, NULL );
 				</div>
 			</div>
 
-			<div id="rotateUrls" <?if ($html ['aff_campaign_rotate'] == 0) echo 'style="display:none;"';?> >
+			<div id="rotateUrls" <?php if ($html ['aff_campaign_rotate'] == 0) echo 'style="display:none;"';?> >
 				<div id="rotateUrl2" class="form-group <?php if($error['aff_campaign_url_2']) echo "has-error";?>" style="margin-bottom: 0px;">
 					<label class="col-xs-4 control-label" for="aff_campaign_url_2" style="text-align: left;">Rotate Url #2:</label>
 					<div class="col-xs-6">
@@ -351,12 +352,13 @@ template_top ( 'Affiliate Campaigns Setup', NULL, NULL, NULL );
 			<div class="panel-heading">My Campaigns</div>
 			<div class="panel-body">
 				<ul>        
-					<?
+					<?php
 					$mysql ['user_id'] = $db->real_escape_string ( $_SESSION ['user_id'] );
 					$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='" . $mysql ['user_id'] . "' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
+				
 					$aff_network_result = $db->query ( $aff_network_sql ) or record_mysql_error ( $aff_network_sql );
 					if ($aff_network_result->num_rows == 0) {
-						?><li>You have not added any networks.</li><?
+						?><li>You have not added any networks.</li><?php
 					}
 					
 					while ( $aff_network_row = $aff_network_result->fetch_array (MYSQL_ASSOC) ) {
@@ -365,11 +367,11 @@ template_top ( 'Affiliate Campaigns Setup', NULL, NULL, NULL );
 						
 						printf ( '<li><strong>%s</strong></li>', $html ['aff_network_name'] );
 						
-						?><ul style="margin-top: 0px;"><?
+						?><ul style="margin-top: 0px;"><?php
 						
 						//print out the individual accounts per each PPC network
 						$mysql ['aff_network_id'] = $db->real_escape_string ( $aff_network_row ['aff_network_id'] );
-						$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_network_id`='" . $mysql ['aff_network_id'] . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
+						$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `user_id`='" . $mysql ['user_id'] . "' AND `aff_network_id`='" . $mysql ['aff_network_id'] . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
 						$aff_campaign_result = $db->query ( $aff_campaign_sql ) or record_mysql_error ( $aff_campaign_sql );
 						
 						while ( $aff_campaign_row = $aff_campaign_result->fetch_array (MYSQL_ASSOC) ) {
@@ -386,7 +388,7 @@ template_top ( 'Affiliate Campaigns Setup', NULL, NULL, NULL );
 						
 						}
 						
-						?></ul><?
+						?></ul><?php
 					
 					}
 					?>

@@ -7,8 +7,7 @@ AUTH::require_user();
 
 <select class="form-control input-sm" name="country_id" id="country_id">
     <option value="0"> -- </option>
-	<?
-		$country_sql = "SELECT *
+	<?php 		$country_sql = "SELECT *
                         FROM    202_locations_country
                         GROUP BY `country_name` ORDER BY `country_name` ASC";
         $country_result = $db->query($country_sql) or record_mysql_error($country_sql);

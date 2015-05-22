@@ -251,8 +251,7 @@ AUTH::require_user();
 				</tr>
 			<?php } ?>
 
-			<?
-				$total_payout = $total_payout + $default_stats_row['payout'];
+			<?php 				$total_payout = $total_payout + $default_stats_row['payout'];
 				$rows = $rows + 1;
 				$total_payout = @round(($total_payout/$rows),2);	
 				$html['total_clicks'] = htmlentities(number_format($total_clicks), ENT_QUOTES, 'UTF-8');

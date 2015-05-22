@@ -251,7 +251,7 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
 						<?php } ?>
 						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your deletion was successful. You have succesfully removed an account.
+							<span class="fui-check-inverted"></span> Your deletion was successful. You have successfully removed an account.
 						<?php } ?>
 					</small>
 				</div>
@@ -272,7 +272,7 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 		<div class="row">
 			<div class="col-xs-12">
 				<small><strong>Add Traffic Source</strong></small><br/>
-				<span class="infotext">What Traffic Sources do you use? Some examples include, Facebook, Plentyoffish, BingAds, & Google Adwords.</span>
+				<span class="infotext">What Traffic Sources do you use? Some examples include, Facebook, Twitter Ads, BingAds, & Google Adwords.</span>
 				
 				<form method="post" action="<?php echo $_SERVER['REDIRECT_URL']; ?>" class="form-inline" role="form" style="margin:15px 0px;">
 				  <div class="form-group <?php if($error['ppc_network_name']) echo "has-error";?>">
@@ -290,7 +290,7 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 
 			<div class="col-xs-12" style="margin-top: 15px;">
 				<small><strong>Add Traffic Source Accounts and Pixels</strong></small><br/>
-				<span class="infotext">What accounts to do you have with each Traffic Source? For instance, if you have two Facebook accounts, you can add them both here. This way you can track how individual accounts on each source are doing.</span>
+				<span class="infotext">What accounts to do you have with each Traffic Source? For instance, if you have two Facebook accounts, you can add them both here. This way you can track how individual accounts on each source are doing. Only enter a pixel type and pixel code if you want to fire a conversion in your traffic source when your Prosper202 pixel fires.</span>
 				
 				<form style="margin:15px 0px;" method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" class="form-horizontal" role="form">
 				  <div class="form-group <?php if($error['ppc_network_id']) echo "has-error"; ?>" style="margin-bottom: 0px;">
@@ -329,11 +329,11 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 				  </div>
 
 				  <div class="form-group" style="margin-bottom: 0px;">
-				    <label for="pixel_type_id" class="col-xs-4 control-label" style="text-align: left;">Pixel Type:</label> <span class="fui-info" style="font-size: 12px;" data-toggle="tooltip" title="" data-original-title="Optional: Select the type of pixel this traffic source uses"></span>
+				    <label for="pixel_type_id" class="col-xs-4 control-label" style="text-align: left;">Pixel Type (Optional):</label> <span class="fui-info" style="font-size: 12px;" data-toggle="tooltip" title="" data-original-title="Optional: Select the type of pixel this traffic source uses"></span>
 				    <div class="col-xs-5">
 				      <select class="form-control input-sm" name="pixel_type_id" id="pixel_type_id">
 				      <option value="">---</option>
-				      <?
+				      <?php
 						$ppc_network_sql = "SELECT * FROM `202_pixel_types`";
 						$ppc_network_result = _mysqli_query($ppc_network_sql) ; //($ppc_network_sql);
 						while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQL_ASSOC)) {
@@ -357,7 +357,7 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 				  </div>
 
 				   <div class="form-group" style="margin-bottom: 0px;">
-				    <label for="pixel_code" class="col-xs-4 control-label" style="text-align: left;">Pixel Code:</label> <span class="fui-info" style="font-size: 12px;" data-toggle="tooltip" title="" data-original-title="Optional: Ifyou selected a Pixel Type abouve then enter the code for the pixel here. For all pixel tymes, except for Raw, simply type in the url value of the src"></span>
+				    <label for="pixel_code" class="col-xs-4 control-label" style="text-align: left;">Pixel Code (Optional):</label> <span class="fui-info" style="font-size: 12px;" data-toggle="tooltip" title="" data-original-title="Optional: Ifyou selected a Pixel Type abouve then enter the code for the pixel here. For all pixel tymes, except for Raw, simply type in the url value of the src"></span>
 				    <div class="col-xs-5">
 						<textarea class="form-control" name="pixel_code" id="pixel_code" rows="3"><?php echo $selected['pixel_code']; ?></textarea>				    
 						<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'];?>">
@@ -398,7 +398,7 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 			if ($ppc_network_result->num_rows == 0 ) {
 				?>
 				<li>You have not added any networks.</li>
-				<?
+				<?php
 			}
 
 			while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQL_ASSOC)) {
@@ -406,11 +406,11 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 				//print out the PPC networks
 				$html['ppc_network_name'] = htmlentities($ppc_network_row['ppc_network_name'], ENT_QUOTES, 'UTF-8');
 				$url['ppc_network_id'] = urlencode($ppc_network_row['ppc_network_id']);
-				printf('<li>%s - <a href="?edit_ppc_network_id=%s">edit</a> - <a href="?delete_ppc_network_id=%s" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Traffic Source?\');">remove</a></li>', $html['ppc_network_name'],$url['ppc_network_id'],$url['ppc_network_id']);
+				printf('<li>%s - <a href="?edit_ppc_network_id=%s">edit</a> - <a href="#" class="upgradeToProNeeded">variables</a> - <a href="?delete_ppc_network_id=%s" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Traffic Source?\');">remove</a></li>', $html['ppc_network_name'],$url['ppc_network_id'],$url['ppc_network_id']);
 
 				?>
 				<ul style="margin-top: 0px;">
-				<?
+				<?php
 
 				//print out the individual accounts per each PPC network
 				$mysql['ppc_network_id'] = $db->real_escape_string($ppc_network_row['ppc_network_id']);
@@ -428,7 +428,7 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 
 				?>
 				</ul>
-				<?
+				<?php
 
 			} ?>
 			</ul>
@@ -437,4 +437,62 @@ template_top('Traffic Sources',NULL,NULL,NULL); ?>
 	</div>
 </div>
 
+<!-- Variables modal -->
+<div class="modal fade" id="upgradeToProModal" tabindex="-1" role="dialog" aria-labelledby="upgradeToProModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content upgradeToProContainer">
+    	<div class="upgradeToProOverlay" style="height:253px; width: 610px; margin-top:5px; margin-left:5px;">
+			<div class="upgradeToProOverlayBackground"></div>
+			<a href="http://click202.com/tracking202/redirect/dl.php?t202id=8151295&t202kw=variables-modal" target="_blank" class="btn btn-lg btn-p202 upgradeToProOverlayButton" style="margin-top: 104px; margin-left:159px;" id="upgradeVariables">This is a Prosper202 Pro Feature: Upgrade Now To Use!</a>
+		</div>
+      <div class="modal-header">
+        <button type="button" class="close fui-cross" data-dismiss="modal" aria-hidden="true"></button>
+        <h4 class="modal-title" id="myModalLabel">Add Custom Variables</h4>
+      </div>
+      <div class="modal-body">
+            <div class="row">
+	            <div class="col-xs-12"></div>
+	            	<div class="row">
+		            	<div class="col-xs-4"><small>Name <i class="fa fa-question-circle variables-info-pop" data-content="Variable name in report" data-placement="top" data-toggle="popover" data-container="body" data-original-title="" title=""></i></small></div>
+		            	<div class="col-xs-4"><small>Parameter <i class="fa fa-question-circle variables-info-pop" data-content="Parameter in url. Example: p202.com?parameter=[[placeholder]]" data-placement="top" data-toggle="popover" data-container="body" data-original-title="" title=""></i></small></div>
+		            	<div class="col-xs-4"><small>Placeholder <i class="fa fa-question-circle variables-info-pop" data-content="Placeholder in url. Example: p202.com?parameter=[[placeholder]]" data-placement="top" data-toggle="popover" data-container="body" data-original-title="" title=""></i></small></div>
+	            	</div>
+	            	<div class="row form_seperator" style="margin-bottom: 5px;margin-top: 5px;margin-right: 0px;"><div class="col-xs-12"></div></div>
+	            	<div class="row">
+		            	<form method="post" class="form-inline" role="form">
+		            	<input type="hidden" id="ppc_network_id" name="ppc_network_id" value="">
+			            	<div class="col-xs-12" id="variable-group">            
+				            	<div class="row var-field-group" style="margin-bottom: 10px;" data-var-id="">
+				                <div class="col-xs-4">
+				                    <div class="form-group">
+				                        <label for="name" class="sr-only">Name</label>
+				                        <input type="text" class="form-control input-sm" name="name">
+				                    </div>
+				                </div>
+				                <div class="col-xs-4">
+				                    <div class="form-group">
+				                        <label for="parameter" class="sr-only">Parameter</label>
+				                        <input type="text" class="form-control input-sm" name="parameter">
+				                    </div>
+				                </div>
+				                <div class="col-xs-4">
+				                    <div class="form-group">
+				                        <label for="placeholder" class="sr-only">Placeholder</label>
+				                        <input type="text" class="form-control input-sm" name="placeholder">
+				                    </div>
+				                </div>
+				            </div>
+				        </div>
+						<div class="col-xs-12 text-right"><small style="margin-right: 13px;"><a href="#" id="add_more_variables"><i class="fa fa-plus"></i> add more</a></small></div>	
+				        </form>    
+	            	</div>
+	            </div>
+            </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+        <button type="button" data-loading-text="Loading..." autocomplete="off" class="btn btn-primary">Add variables</button>
+      </div>      
+    </div>
+  </div>
+</div>
 <?php template_bottom();

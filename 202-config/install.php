@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if ((strlen($_POST['user_pass']) < 6) OR (strlen($_POST['user_pass']) > 35)) { $error['user_pass'] .= '<div class="error">Your passwords must be at least 6 characters long</div>'; }
 	if ($_POST['user_pass'] != $_POST['verify_user_pass']) { $error['user_pass'] .= '<div class="error">Your passwords did not match, please try again</div>'; }
     
-	//print_r_html($error); 
+
 	//if no error occured, lets create the user account
 	if (!$error) { 
 		
@@ -66,6 +66,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		//update user preference table   
 		$user_sql = "INSERT INTO 202_users_pref SET user_id='".$mysql['user_id']."'";
 		$user_result = _mysqli_query($user_sql);
+		
+		registerDailyEmail('07', $mysql['user_timezone'], $hash);
 			
 		//if this worked, show them the succes screen
 		$success = true;
@@ -140,7 +142,7 @@ if (!$success) {
 	<?php if ($mysqlversion < 5.1) { 
 		//warning this mysql doesn't have horizontal partitioning ?>
 		<br/><span class="infotext"><span class="label label-important">Warning:</span> Recommended MySQL 5.1 or later, not detected.<br/>You are about to install Prosper202 on a server that does not have MySQL 5.1. You can run the application just fine without MySQL 5.1, however, MySQL 5.1 has a horizontal partitioning feature that dramatically increases the speed that large click reports are generated. If you are an affiliate pushing over 5,000 clicks or more per day, we highly recommend you install Prosper202 on a dedicated server that has MySQL 5.1 or newer installed on it. You may continue installing Prosper202 without MySQL 5.1, but once you have around 250,000 clicks recorded in your database, you will start to notice a significant reduction in speed that your click reports are generated.  If you are someone not pushing heavy volume yet, you are probably fine without MySQL 5.1 for now, but you should look to upgrade to a dedicated server with MySQL 5.1 at a later time.</span>
-		<?
+		<?php
 	} ?>
 	
 	<h6>Create your account</h6>

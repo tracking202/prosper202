@@ -110,7 +110,20 @@ abstract class AbstractParser
 
         return str_replace('$1', $string, $regex[$key]);
     }
-
+    
+    protected function replaceString2($regex, $key, $string)
+    {
+        if (!isset($regex[$key])) {
+            // echo "$string ";
+            return $string[1];
+        }
+        $dfamily=$regex[$key];
+        for($i=1;$i<count($string);$i++){
+            $dfamily=str_replace("$".$i, $string[$i], $dfamily);
+        }
+        return $dfamily;
+        //
+    }
     /**
      * @return string
      */

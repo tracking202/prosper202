@@ -6,4 +6,10 @@ if ($_SESSION['toolbar'] == 'true')
 else
 	$redir_url = '/';		
 session_destroy();
+
+if (isset($_COOKIE['hideChartUpgrade'])) {
+	unset($_COOKIE['hideChartUpgrade']);
+	setcookie('hideChartUpgrade', '', 1, '/');
+}
+
 header('location: '.$redir_url);

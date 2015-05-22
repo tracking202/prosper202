@@ -384,8 +384,7 @@ AUTH::require_user();
 						<td> - </td>
 						<td> - </td>
 						<td> - </td>
-					</tr><?
-				
+					</tr><?php 				
 				}
 			}	
 		}		
@@ -420,8 +419,7 @@ AUTH::require_user();
 	</div>
 
 	<div class="col-xs-12">
-		<?
-		/*  BELOW IS ALMOST THE EXACT SAME CODE 
+		<?php 		/*  BELOW IS ALMOST THE EXACT SAME CODE 
 			AS THE ABOVE, BUT IT DOES IT PER EACH 
 			AFFILIATE CAMPAIGN AND BREAKS IT DOWN 
 			PER PPC ACCOUNT */
@@ -508,8 +506,7 @@ AUTH::require_user();
 						<th>ROI</th>
 				    </tr>
 				</thead> 
-			<?
-				
+			<?php 				
 			//ON THE FIRST RUN, GET THE TOTAL OF NO PPC ACCOUNTS, and then FOR THE INDIV PPC ACCOUNTS	
 				//mysql escape the vars
 					$mysql['aff_campaign_id'] = $db->real_escape_string($info_row['aff_campaign_id']);

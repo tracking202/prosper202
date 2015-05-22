@@ -27,13 +27,12 @@ if (isset($_POST['maxmind'])) {
 }
 
 template_top('Administration',NULL,NULL,NULL);  
-$click_sql = "SELECT * FROM 202_clicks";
-		$click_result = _mysqli_query($click_sql);
-		$clicks = $click_result->num_rows;
-		$click_sql = "SELECT * FROM 202_clicks_total";
-		$click_result = _mysqli_query($click_sql);
-		$click_row = $click_result->fetch_assoc();
-		$clicks += $click_row['click_count'];
+$click_sql = "SELECT count(*) as clicks FROM 202_clicks";
+		$click_row = memcache_mysql_fetch_assoc($click_sql);
+		$clicks = $click_row['clicks'];
+		$click_sql = "SELECT count(*) clicks FROM 202_clicks_total";
+		$click_row = memcache_mysql_fetch_assoc($click_sql);
+		$clicks += $click_row['clicks'];
 
 
 if (isset($_POST['database_management'])) {
@@ -104,7 +103,7 @@ function database_size() {
 				    	<p>PHP Version: <span class="pull-right"><?php echo phpversion(); ?></span></p>
 				    	<p>MySQL Version: <span class="pull-right">
 				    	<?php
-						   $mysql_version = mysqli_get_client_info();
+						   $mysql_version = mysqli_get_server_info($db);
 						   $html['mysql_version'] = htmlentities($mysql_version, ENT_QUOTES, 'UTF-8');
 						   echo $html['mysql_version']; ?></span>
 						</p>

@@ -7,8 +7,7 @@ AUTH::require_user();
 
 <select class="form-control input-sm" name="isp_id" id="isp_id">
     <option value="0"> -- </option>
-	<?
-		$isp_sql = "SELECT *
+	<?php 		$isp_sql = "SELECT *
                         FROM    202_locations_isp
                         GROUP BY `isp_name` ORDER BY `isp_name` ASC";
         $isp_result = $db->query($isp_sql) or record_mysql_error($isp_sql);

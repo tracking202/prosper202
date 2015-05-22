@@ -62,7 +62,7 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 	<div class="col-xs-12">
 		<div class="row">
 			<div class="col-xs-5">
-				<h6>Smart Rotator Setup</h6>
+				<h6>Smart Rotator & Split Testing Setup</h6>
 			</div>
 			<div class="col-xs-7">
 				<div class="error pull-right" id="form_erors" style="display: none;margin-top: 20px;">
@@ -77,7 +77,7 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
 						<?php } ?>
 						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your deletion was successful. You have succesfully removed a rotator.
+							<span class="fui-check-inverted"></span> Your deletion was successful. You have successfully removed a rotator.
 						<?php } ?>
 					</small>
 				</div>
@@ -85,7 +85,7 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 		</div>
 	</div>
 	<div class="col-xs-12">
-		<small>Setup Smart Rotator, to rotate visitors, based on defined rules you set.</small>
+		<small>Setup Smart Rotator and Split Tests based on rules you set.</small>
 	</div>
 </div>
 
@@ -109,15 +109,15 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 
 	<div class="col-xs-5">
 		<div class="panel panel-default">
-			<div class="panel-heading">My Smart Rotators</div>
+			<div class="panel-heading">My Smart Rotators & Split Tests</div>
 			<div class="panel-body">
 			<ul>
-			<?
+			<?php
 				$mysql ['user_id'] = $db->real_escape_string ( $_SESSION ['user_id'] );
 				$sql = "SELECT * FROM `202_rotators` WHERE `user_id`='" . $mysql ['user_id'] . "' ORDER BY `name` ASC";
 				$result = $db->query ( $sql ) or record_mysql_error ( $sql );
 				if ($result->num_rows == 0) {
-					?><li>You have not added any rotator.</li><?
+					?><li>You have not added any rotator.</li><?php
 				}
 							
 				while ( $row = $result->fetch_array (MYSQL_ASSOC) ) {
@@ -129,7 +129,7 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 					$rule_sql = "SELECT * FROM `202_rotator_rules` WHERE `rotator_id`='" . $row['id'] . "' ORDER BY `id` ASC";
 					$rule_result = $db->query ( $rule_sql ) or record_mysql_error ( $rule_sql );
 					if ($rule_result->num_rows == 0) {
-						?><ul><li>You have not added any rules.</li></ul><?
+						?><ul><li>You have not added any rules.</li></ul><?php
 					} else { 
 						echo "<ul>";
 						while ($rule_row = $rule_result->fetch_array()) { 
@@ -233,6 +233,10 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 				            <input type="checkbox" id="inactive" name="inactive" data-toggle="checkbox">
 				            Inactive
 				        </label>
+					</div>
+					<div class="form-group" style="float:right; margin-right: 25px;">
+						<label class="checkbox" for="splittest" style="margin-bottom: 12px;padding-left: 32px;">
+						<input type="checkbox" id="splittest" name="splittest" data-toggle="checkbox">Split test</label>
 					</div>
 				</div>
 			</div>
@@ -344,5 +348,23 @@ $(document).ready(function() {
             </div>
         </div>
     </div>
+</div>
+
+<!-- Upgrade Modal -->
+<div class="modal fade" id="upgradeToProModal" tabindex="-1" role="dialog" aria-labelledby="upgradeToProModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <h4 class="modal-title" id="myModalLabel">Upgrade to Prosper202 Pro!</h4>
+      </div>
+      <div class="modal-body">
+        To enable the new split tester, upgrade to Prosper202 Pro!
+      </div>
+      <div class="modal-footer">
+        <a href="http://click202.com/tracking202/redirect/dl.php?t202id=8151295&t202kw=splittester" target="_blank" class="btn btn-p202" id="upgradeSplitTester">Upgrade Now To Use!</a>
+      </div>
+    </div>
+  </div>
 </div>
 <?php template_bottom();

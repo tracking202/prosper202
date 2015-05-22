@@ -1,5 +1,5 @@
 <?php 
-
+$vars=$_GET;
 #only allow numeric t202ids
 $lpip = $_GET['lpip']; 
 if (!is_numeric($lpip)) die();
@@ -49,7 +49,23 @@ if ($usedCachedRedirect==true) {
 				}	else {
 					$new_url = str_replace("[[c4]]", "p202c4", $new_url);
 				}
-			
+				
+				if (isset ( $urlvars ) && $urlvars != '') {
+					// remove & at the end of the string
+					$urlvars = rtrim ( $urlvars, '&' );
+					if (! parse_url ( $new_url, PHP_URL_QUERY )) {
+						
+						// if there is no query url the add a ? to url but before doing that remove case where there may be a ? at the end of the url and nothing else
+						$new_url = rtrim ( $new_url, '?' );
+						
+						// remove the & from url and put a ? in fron t of it
+						
+						$new_url .= "?" . $urlvars;
+					} else {
+						
+						$new_url .= "&" . $urlvars;
+				}
+			}
 			
 				header('location: '. $new_url); 
 				die();
@@ -76,7 +92,7 @@ $tracker_sql = "SELECT 202_landing_pages.user_id,
 				WHERE   202_landing_pages.landing_page_id_public='".$mysql['landing_page_id_public']."'
 				AND     202_aff_campaigns.aff_campaign_id = 202_landing_pages.aff_campaign_id";
 $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
-											   
+
 if (!$tracker_row) { die(); }
 
 if ($memcacheWorking) {  
@@ -104,6 +120,7 @@ if ($_GET['t202id']) {
 							click_cloaking
 					FROM    202_trackers
 					WHERE   tracker_id_public='".$mysql['tracker_id_public']."'";   
+	
 	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
 	if ($tracker_row2) {
 		$tracker_row = array_merge($tracker_row,$tracker_row2);
@@ -163,16 +180,23 @@ $update_sql = "
 		click_id='".$mysql['click_id']."'";
 delay_sql($db, $update_sql);
 
-//$redirect_site_url = $redirect_site_url . $click_id;
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 
 $click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url); 
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
 
-//now we've recorded, now lets redirect them
+
+
+//get and prep extra stuff for pre-pop or data passing
+
+$urlvars = getPrePopVars($vars);
+
+
 if ($cloaking_on == true) {
 	//if cloaked, redirect them to the cloaked site. 
-	header('location: '.$cloaking_site_url);    
+	header('location: '.setPrePopVars($urlvars,$cloaking_site_url,true));
 } else {
-	header('location: '.$redirect_site_url);        
-}
+	
+	header('location: '.setPrePopVars($urlvars,$redirect_site_url,false));
+} 
+die();

@@ -206,7 +206,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
 						<?php } ?>
 						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> You deletion was successful. You have succesfully removed a landing page.
+							<span class="fui-check-inverted"></span> You deletion was successful. You have successfully removed a landing page.
 						<?php } ?>
 						
 					</small>
@@ -235,11 +235,11 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Text Ad For: </label>
 
 				<div class="col-xs-8" style="margin-top: 10px;">
-					<label class="radio" style="line-height: 0.5;">
+					<label class="radio">
 	            		<input type="radio" name="text_ad_type" id="text_ad_type1" value="0" data-toggle="radio" <?php if ($html['text_ad_type'] == '0' or !$html['text_ad_type']) { echo 'checked'; }?>>
 	            			Direct Link Setup, or Simple Landing Page Setup
 	          		</label>
-	          		<label class="radio" style="line-height: 0.5;">
+	          		<label class="radio">
 	            		<input type="radio" name="text_ad_type" id="text_ad_type2" value="1" data-toggle="radio" <?php if ($html['text_ad_type'] == '1') { echo 'checked'; } ?>>
 	            			Advanced Landing Page Setup
 	          		</label>
@@ -248,7 +248,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 
 	        <div id="aff-campaign-div" <?php if ($html['text_ad_type'] == '1') { echo 'style="display:none;"'; } ?>>
 		        <div class="form-group <?php if($error['aff_campaign_id']) echo "has-error";?>" style="margin-bottom: 0px;">
-		        	<label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Affiliate Network:</label>
+		        	<label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Category:</label>
 		        	<div class="col-xs-6" style="margin-top: 10px;">
 		        		<img id="aff_network_id_div_loading" class="loading" src="/202-img/loader-small.gif"/>
 	                	<div id="aff_network_id_div"></div>
@@ -256,7 +256,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 		        </div>
 
 		        <div id="aff-campaign-group" class="form-group <?php if($error['aff_campaign_id']) echo "has-error";?>" style="margin-bottom: 0px;">
-		        	<label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Affiliate Campaign:</label>
+		        	<label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Campaign:</label>
 		        	<div class="col-xs-6" style="margin-top: 10px;">
 		        		<img id="aff_campaign_id_div_loading" class="loading" src="/202-img/loader-small.gif" style="display: none;"/>
 	                    <div id="aff_campaign_id_div">
@@ -370,7 +370,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 							}
 
 						?></ul>
-					<?	} ?>
+					<?php	} ?>
 				</ul>
 			</div>
 		</div>
@@ -383,7 +383,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 					$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
 					$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
 					if ($aff_network_result->num_rows == 0 ) { 
-						?><li>You have not added any networks.</li><?
+						?><li>You have not added any networks.</li><?php
 					}
 					
 					while ($aff_network_row = $aff_network_result->fetch_array(MYSQL_ASSOC)) {
@@ -392,7 +392,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 						
 						printf('<li>%s</li>', $html['aff_network_name']);
 						
-						?><ul style="margin-top: 0px;"><?
+						?><ul style="margin-top: 0px;"><?php
 											
 							//print out the individual accounts per each PPC network
 							$mysql['aff_network_id'] = $db->real_escape_string($aff_network_row['aff_network_id']);
@@ -422,10 +422,10 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 										
 									}
 
-								?></ul><?						
+								?></ul><?php						
 							} 
 						
-						?></ul><?
+						?></ul><?php
 						
 					} ?>
 				</ul>

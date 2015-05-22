@@ -139,8 +139,6 @@ switch ($user_row['user_keyword_searched_or_bidded']) {
 			$keyword = $db->real_escape_string($_GET['utm_source']);  
 		} elseif ($_GET['t202kw']) { 
 			$keyword = $db->real_escape_string($_GET['t202kw']);  
-		} elseif ($referer_query['p']) { 
-			$keyword = $db->real_escape_string($referer_query['p']);
 		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
 			$keyword = $db->real_escape_string($_GET['target_passthrough']);   
 		} else { //if this is a zango, or more keyword
@@ -151,8 +149,6 @@ switch ($user_row['user_keyword_searched_or_bidded']) {
 		#try to get the searched keyword
 		if ($referer_query['q']) { 
 			$keyword = $db->real_escape_string($referer_query['q']);
-		} elseif ($referer_query['p']) { 
-			$keyword = $db->real_escape_string($referer_query['p']);
 		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
 			$keyword = $db->real_escape_string($_GET['OVRAW']);   
 		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
@@ -212,7 +208,8 @@ $c4 = str_replace('%20',' ',$c4);
 $c4_id = INDEXES::get_c4_id($db, $c4);
 $mysql['c4_id'] = $db->real_escape_string($c4_id);
 
-$device_id = PLATFORMS::get_device_info($db);
+//$device_id = PLATFORMS::get_device_info($db);
+$device_id = PLATFORMS::get_device_info($db,$detect,$_GET['ua']);
 $mysql['platform_id'] = $db->real_escape_string($device_id['platform']); 
 $mysql['browser_id'] = $db->real_escape_string($device_id['browser']);
 $mysql['device_id'] = $db->real_escape_string($device_id['device']);
@@ -433,10 +430,13 @@ $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 //set the cookie
 setClickIdCookie($mysql['click_id'],$mysql['aff_campaign_id']);
 
+//get and prep extra stuff for pre-pop or data passing
+$urlvars = getPrePopVars($_GET);
+
 //now we've recorded, now lets redirect them
 if ($cloaking_on == true) {
 	//if cloaked, redirect them to the cloaked site. 
-	header('location: '.$cloaking_site_url);    
+	header('location: '.setPrePopVars($urlvars,$cloaking_site_url,true));
 } else {
-	header('location: '.$redirect_site_url);        
+	header('location: '.setPrePopVars($urlvars,$redirect_site_url,false));
 } 

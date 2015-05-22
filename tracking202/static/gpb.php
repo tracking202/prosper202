@@ -1,4 +1,4 @@
-<?
+<?php
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/class-snoopy.php');
@@ -121,15 +121,13 @@ $account_id_sql="SELECT 202_clicks.ppc_account_id
 $account_id_result = $db->query($account_id_sql);
 $account_id_row = $account_id_result->fetch_assoc();
 $mysql['ppc_account_id'] = $db->real_escape_string($account_id_row['ppc_account_id']);
-//$mysql['ppc_account_id']=1; //commenut out in live
+
 if($mysql['ppc_account_id']){
 	$pixel_sql='SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels WHERE 202_ppc_account_pixels.ppc_account_id='.$mysql['ppc_account_id'];
-	//"SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels LEFT JOIN 202_clicks ON 202_clicks.ppc_account_id=202_ppc_account_pixels.ppc_account_id WHERE 202_ppc_account_pixels.ppc_account_id=".$mysql['ppc_account_id'];
-    
+	
 	$pixel_result = $db->query($pixel_sql);
 
 	$pixel_result_row = $pixel_result->fetch_assoc();
-	//$pixel_result_row = memcache_mysql_fetch_assoc($pixel_sql);
 	$mysql['pixel_type_id'] = $db->real_escape_string($pixel_result_row['pixel_type_id']);
 	if ($mysql['pixel_type_id'] == 5) {
 		$mysql['pixel_code'] = stripslashes($pixel_result_row['pixel_code']);
@@ -142,7 +140,7 @@ if($mysql['ppc_account_id']){
    
 	switch ($mysql['pixel_type_id']) {
 		case 1:
-
+			header('HTTP/1.1 202 Accepted', true, 202);
 			foreach($pixel_urls as $pixel_url){
 			  if(isset($pixel_url))
 			    $pixel_url=replaceTokens($pixel_url,$tokens);
@@ -151,19 +149,21 @@ if($mysql['ppc_account_id']){
 
 			break;
 		case 2:
-
+			header('HTTP/1.1 202 Accepted', true, 202);
 	        foreach($pixel_urls as $pixel_url){
 			  if(isset($pixel_url))
 			    $pixel_url=replaceTokens($pixel_url,$tokens);
+			 
 			    echo "<iframe src='{$pixel_url}' height='0' width='0'></iframe>\n";  
 			}
 
 			break;
 		case 3:
-
+			header('HTTP/1.1 202 Accepted', true, 202);
 	        foreach($pixel_urls as $pixel_url){
 			  if(isset($pixel_url))
 			   $pixel_url=replaceTokens($pixel_url,$tokens);
+			  
 			   echo "<script async src='{$pixel_url}'></script>\n";
 			}
 
@@ -178,11 +178,9 @@ if($mysql['ppc_account_id']){
 			    $snoopy->fetchtext($pixel_url);
 			    header('HTTP/1.1 202 Accepted', true, 202);
 			    header('Content-Type: application/json');
-			    $response = array('error' => false, 'code' => 202, 'msg' => 'Postback succesfull');
+			    $response = array('error' => false, 'code' => 202, 'msg' => 'Postback successful');
 			    print_r(json_encode($response));
-			    print_r(json_encode($tokens));
 
-			    echo $pixel_url;
 			}
 			break;
 
@@ -237,8 +235,3 @@ if (is_numeric($mysql['click_id'])) {
 	";
 	delay_sql($db, $click_sql);
 }
-
-	header('HTTP/1.1 202 Accepted', true, 202);
-	header('Content-Type: application/json');
-	$response = array('error' => false, 'code' => 202, 'msg' => 'Postback succesfull');
-	print_r(json_encode($response));

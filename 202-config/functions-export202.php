@@ -1,6 +1,4 @@
-<?
-
-
+<?php
 //function get file extension
 function getFileExtension($str) {
 	$i = strrpos($str,".");

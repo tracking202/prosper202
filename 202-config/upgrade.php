@@ -46,8 +46,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		<small>Changelogs:</small>
 			<div class="panel-group" id="changelog_accordion" style="margin-top:10px;">
 			  <?php $change_logs = changelog();
+			  
 			  foreach ($change_logs as $logs) {
-			  	if ($logs['version'] >= $version) {?>
+			  	if (version_compare(PROSPER202::mysql_version(),$logs['version'],'<')) {?>
 			  		<div class="panel panel-default">
 	                    <div class="panel-heading">
 	                    <a data-toggle="collapse" data-parent="#changelog_accordion" href="#release_<?php echo str_replace('.', '', $logs['version']);?>">
@@ -56,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	                      </h4>
 	                    </a>  
 	                    </div>
-	                    <div id="release_<?php echo str_replace('.', '', $logs['version']);?>" class="panel-collapse collapse">
+	                    <div id="release_<?php echo str_replace('.', '', $logs['version']);?>" class="panel-collapse in">
 	                      <div class="panel-body">
 	                      	<ul id="list">
 	                      <?php foreach ($logs['logs'] as $log) { ?>

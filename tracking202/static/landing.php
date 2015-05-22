@@ -30,6 +30,7 @@ function t202Init(){
 	var target_passthrough = t202GetVar('target_passthrough');
 	var keyword = t202GetVar('keyword');
 	var referer = document.referrer;
+	var utm_source = t202GetVar('utm_source');
 	var resolution = screen.width+'x'+screen.height;
 	var language = navigator.appName=='Netscape'?navigator.language:navigator.browserLanguage; 
 	language = language.substr(0,2); 
@@ -46,6 +47,7 @@ function t202Init(){
 		+ "&c4="					+ t202Enc(c4)
 		+ "&target_passthrough="	+ t202Enc(target_passthrough)
 		+ "&keyword="				+ t202Enc(keyword)
+		+ "&utm_source="			+ t202Enc(utm_source)
 		+ "&referer="   			+ t202Enc(referer)
 		+ "&resolution="			+ t202Enc(resolution)
 		+ "&language="				+ t202Enc(language);
@@ -114,7 +116,6 @@ function createCookie(name,value,days) {
 	}
 	else var expires = "";
 	document.cookie = name+"="+value+expires+"; path=/";
-
 }
 
 function readCookie(name) {

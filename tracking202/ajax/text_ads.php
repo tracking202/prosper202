@@ -21,7 +21,7 @@ AUTH::require_user();
 		} else { ?>
 		
 			<select class="form-control input-sm" id="text_ad_id" name="text_ad_id" onchange="load_ad_preview(this.value);">					
-			<option value="0"> -- </option> <?
+			<option value="0"> -- </option> <?php
 		
 				while ($text_ad_row = $text_ad_result->fetch_array(MYSQL_ASSOC)) {
 		

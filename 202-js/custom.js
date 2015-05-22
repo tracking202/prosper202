@@ -1,5 +1,10 @@
 $(document).ready(function() {
 
+	$('[data-toggle="radio"]').radiocheck();
+	$('[data-toggle="checkbox"]').radiocheck();
+	$('[data-toggle="tooltip"]').tooltip();
+	$('[data-toggle="dropdown"]').dropdown();
+
 	var validator = $("#survey-form").validate({
 	  	    ignore:[],
 	  	    focusCleanup: true,
@@ -24,8 +29,22 @@ $(document).ready(function() {
 		});
 	});
 
-	//tooltips int
-	$("[data-toggle=tooltip]").tooltip();
+	$(".upgradeToProNeeded").click(function(e) {
+		e.preventDefault();
+		$('#upgradeToProModal').modal();
+	});
+
+	$("#splittest").on("change.radiocheck", function () {
+		$('#upgradeToProModal').modal();
+    });
+
+	$("div.upgradeToProContainer").hover(
+	  function() {
+	    $(this).find("div.upgradeToProOverlay").show();
+	  }, function() {
+	    $(this).find("div.upgradeToProOverlay").hide();
+	  }
+	);
 
 	//show/hide help text
 	$("#help-text-trigger").click(function() {
@@ -38,9 +57,8 @@ $(document).ready(function() {
 	});
 
 	//Campaign rotator No/Yes
-	$(":radio[name=aff_campaign_rotate]").on("toggle", function () {
+	$(":radio[name=aff_campaign_rotate]").on("change.radiocheck", function () {
 		var element = $("#rotateUrls");
-        $(this).radio("check");
         
         if ($(this).val() == 1) {
         	element.show();
@@ -50,10 +68,9 @@ $(document).ready(function() {
     });
 
 	//Direct/Simple/Advanced landing page radio buttons
-    $("#radio-select input:radio").on("toggle", function () {
+    $("#radio-select input:radio").on("change.radiocheck", function () {
 		var element = $("#aff-campaign-div");
 		var lp_element = $("#lp_landing_page");
-        $(this).radio("check");
         
         if ($(this).val() == 0) {
         	element.show();
@@ -100,8 +117,7 @@ $(document).ready(function() {
 	});
 
     //Tracker type select on Get Links
-	$("#tracker-type input:radio").on("toggle", function () {
-        $(this).radio("check");
+	$("#tracker-type input:radio").on("change.radiocheck", function () {
         var element1 = $('#tracker_aff_network');
         var element2 = $('#tracker_aff_campaign');
         var element3 = $('#tracker_method_of_promotion');
@@ -151,8 +167,7 @@ $(document).ready(function() {
     });
 
 	//Pixel Type select
-	$("#pixel-type input:radio").on("toggle", function () {
-		$(this).radio("check");
+	$("#pixel-type input:radio").on("change.radiocheck", function () {
 		var pixel_type = $(this).val();
 
 		var element1 = $('#pixel_type_simple_id');
@@ -272,7 +287,7 @@ $(document).ready(function() {
 		}
 	});
 
-	$("#survey-form :radio").on("toggle", function () {
+	$("#survey-form :radio").on("change.radiocheck", function () {
 		$(this).prop('checked', true);
     });
 
@@ -425,6 +440,10 @@ $(document).ready(function() {
 
 });
 
+$(document).on('hidden.bs.modal', '#chartsUpgradeModal', function() {
+	document.cookie = "hideChartUpgrade=7300; path=/";
+});
+
 //Rotator redirect type
 $(document).on('toggle', '#redirect_type_radio input:radio', function() {
 	$(this).radio("check");
@@ -494,6 +513,10 @@ $(document).on('click', '#rule_details', function(e) {
 		.done(function(data) {
 		  	$('.modal-body').html(data);
 	});
+});
+
+$(document).on('change.radiocheck', '#splittest', function() {
+	$('#upgradeToProModal').modal();
 });
 
 //On rule type change, generate new autocomplate
@@ -830,13 +853,13 @@ function pixel_data_changed(trackingDomain) {
 		var pixel_code = '<img height="1" width="1" border="0" style="display: none;" src="{{0}}://' + trackingDomain + '/tracking202/static/gpx.php?amount={{1}}" />';
 		var pixel_code_2 = '<img height="1" width="1" border="0" style="display: none;" src="{{0}}://' + trackingDomain + '/tracking202/static/gpx.php?amount={{1}}&cid={{2}}" />';
 		
-		var postback_code = '{{0}}://' + trackingDomain + '/tracking202/static/gpb.php?amount={{1}}&subid=';
-		var postback_code_2 = '{{0}}://' + trackingDomain + '/tracking202/static/gpb.php?amount={{1}}&cid={{2}}&subid=';
+		var postback_code = '{{0}}://' + trackingDomain + '/tracking202/static/gpb.php?amount={{1}}&subid={{3}}';
+		var postback_code_2 = '{{0}}://' + trackingDomain + '/tracking202/static/gpb.php?amount={{1}}&cid={{2}}&subid={{3}}';
 		
-		var universal_pixel_code = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{{0}}://' + trackingDomain + '/tracking202/static/upx.php?amount={{1}}" />';
-		var universal_pixel_code_2 = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="=" scrolling="no" src="{{0}}://' + trackingDomain + '/tracking202/static/upx.php?amount={{1}}&cid={{2}}" />';
+		var universal_pixel_code = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{{0}}://' + trackingDomain + '/tracking202/static/upx.php?amount={{1}}" seamless></iframe>';
+		var universal_pixel_code_2 = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="=" scrolling="no" src="{{0}}://' + trackingDomain + '/tracking202/static/upx.php?amount={{1}}&cid={{2}}" seamless></iframe>';
 
-		var universal_pixel_code_js = '<script>\n var vars202={amount:"",cid:""};(function(d, s) {\n 	var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n 		if (d.getElementById(id)) {return;}\n 		if202 = d.createElement("iframe");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = "no";if202.noResize = true;\n 		upxf.parentNode.insertBefore(if202, upxf);\n 	};\n 	load("{{0}}://' + trackingDomain + '/tracking202/static/upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\'], "upxif");\n }(document, "script"));</\script>\n<noscript>\n 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{{0}}://' + trackingDomain + '/tracking202/static/upx.php?amount={{1}}&cid= seamless></iframe>\n</noscript>';
+		var universal_pixel_code_js = '<script>\n var vars202={amount:"{{1}}",cid:""};(function(d, s) {\n 	var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n 		if (d.getElementById(id)) {return;}\n 		if202 = d.createElement("iframe");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = "no";if202.noResize = true;\n 		upxf.parentNode.insertBefore(if202, upxf);\n 	};\n 	load("{{0}}://' + trackingDomain + '/tracking202/static/upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\'], "upxif");\n }(document, "script"));</\script>\n<noscript>\n 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{{0}}://' + trackingDomain + '/tracking202/static/upx.php?amount={{1}}&cid= seamless></iframe>\n</noscript>';
 
 		var secureTypeValue = $("input[name=secure_type]:checked").val();
 
@@ -847,20 +870,29 @@ function pixel_data_changed(trackingDomain) {
 		
 		var amount_value = $('#amount_value').val();
 		var campaign_id_value = '';
-		campaign_id_value = $('#aff_campaign_id').val();
+		var subid_value = $('#subid_value').val()
+		if($('#aff_campaign_id').val()!='0')
+			campaign_id_value = $('#aff_campaign_id').val();
 		
 		$('#unsecure_pixel').val(pixel_code.replace('{{0}}',http_val).replace('{{1}}',amount_value));
 		$('#unsecure_pixel_2').val(pixel_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
-		$('#unsecure_postback').val(postback_code.replace('{{0}}',http_val).replace('{{1}}',amount_value));
-		$('#unsecure_postback_2').val(postback_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
+		$('#unsecure_postback').val(postback_code.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{3}}',subid_value));
+		$('#unsecure_postback_2').val(postback_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value).replace('{{3}}',subid_value));
 
 		$('#unsecure_universal_pixel').val(universal_pixel_code.replace('{{0}}',http_val).replace('{{1}}',amount_value));
 		$('#unsecure_universal_pixel_2').val(universal_pixel_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
+		
+		var find = '{{0}}';
+		var re = new RegExp(find, 'g');
+
+		//str = str.replace(re, '');
+	//	$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace((re,http_val).replace('{{1}}',amount_value,'gi').replace('{{2}}',campaign_id_value,'gi'));
+		//$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace('{{0}}',http_val)).replace('{{0}}',http_val));//.replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
+		$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace('{{0}}',http_val).replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));//.replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
 }
 
 function loadContent(page, offset, order){
 	var element = $("#m-content");
-	element.css("opacity", "0.5");
 	var chartWidth = element.width();
 
 	$.post(page, { offset: offset, order: order, chartWidth:chartWidth})
@@ -903,8 +935,7 @@ function set_user_prefs(page, offset) {
 
 	$.post("/tracking202/ajax/set_user_prefs.php", $("#user_prefs").serialize(true))
 		.done(function(data) {
-		  	loadContent(page, offset);
-		  	element.css("opacity", "1"); 
+		  	loadContent(page, offset); 
 		});
 }
 

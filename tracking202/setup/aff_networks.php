@@ -1,4 +1,4 @@
-<?
+<?php
 include_once ($_SERVER ['DOCUMENT_ROOT'] . '/202-config/connect.php');
 
 AUTH::require_user ();
@@ -105,13 +105,13 @@ template_top ( 'Campaign Category Setup', NULL, NULL, NULL );
 						<?php } ?>
 						<?php if ($add_success == true) { ?>
 								<?php if($editing == true) { ?>
-									<span class="fui-check-inverted"></span> Your submission was successful. You have succesfully edited category.
+									<span class="fui-check-inverted"></span> Your submission was successful. You have successfully edited category.
 								<?php } else { ?>
-									<span class="fui-check-inverted"></span> Your submission was successful. You have succesfully added a category to your account.
+									<span class="fui-check-inverted"></span> Your submission was successful. You have successfully added a category to your account.
 								<?php } ?>
 						<?php } ?>
 						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> You have succesfully deleted a category from your account.
+							<span class="fui-check-inverted"></span> You have successfully deleted a category from your account.
 						<?php } ?>
 						
 					</small>
@@ -149,12 +149,12 @@ template_top ( 'Campaign Category Setup', NULL, NULL, NULL );
 			<div class="panel-heading">My Campaign Categories</div>
 			<div class="panel-body">
 				<ul>		
-					<?
+					<?php
 					$mysql ['user_id'] = $db->real_escape_string ( $_SESSION ['user_id'] );
 					$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='" . $mysql ['user_id'] . "' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
 					$aff_network_result = $db->query ( $aff_network_sql ) or record_mysql_error ( $aff_network_sql );
 					if ($aff_network_result->num_rows == 0) {
-						?><li>You have not added any networks.</li><?
+						?><li>You have not added any networks.</li><?php
 					}
 					
 					while ( $aff_network_row = $aff_network_result->fetch_array (MYSQL_ASSOC) ) {

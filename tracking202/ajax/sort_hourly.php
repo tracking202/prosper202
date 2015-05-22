@@ -241,7 +241,7 @@ AUTH::require_user();
 			$html['ctr'] = htmlentities(round($stats_total['click_throughs']/$stats_total['clicks']*100, 2) . '%', ENT_QUOTES, 'UTF-8');  
 			$html['leads'] = htmlentities($stats_total['leads'], ENT_QUOTES, 'UTF-8');  
 			$html['su_ratio'] = htmlentities(round($stats_total['leads']/$stats_total['clicks']*100, 2) . '%', ENT_QUOTES, 'UTF-8');     
-			$html['payout'] =  htmlentities(dollar_format(($stats_total['payout']/$stats_total['leads'])), ENT_QUOTES, 'UTF-8');   
+			$html['payout'] =  htmlentities(dollar_format(($stats_total['income']/$stats_total['leads'])), ENT_QUOTES, 'UTF-8');   
 			$html['epc'] =  htmlentities(dollar_format(($stats_total['income']/$stats_total['clicks'])), ENT_QUOTES, 'UTF-8');
 			$html['cpc'] =  htmlentities(dollar_format(($stats_total['cost']/$stats_total['clicks']), $cpv), ENT_QUOTES, 'UTF-8');
 			$html['income'] =  htmlentities(dollar_format(($stats_total['income'])), ENT_QUOTES, 'UTF-8');
