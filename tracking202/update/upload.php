@@ -1,7 +1,13 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php
+include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
 
 AUTH::require_user();
 
+if (!$userObj->hasPermission("access_to_update_section")) {
+	header('location: '.get_absolute_url().'tracking202/');
+	die();
+}
 
 function about_revenue_upload() { 
 
@@ -40,7 +46,7 @@ switch ($_GET['case']) {
 		about_revenue_upload();
 			echo '<div class="row">
 					<div class="col-xs-12">
-						<form enctype="application/x-www-form-urlencoded" action="/tracking202/update/upload.php" method="get">';
+						<form enctype="application/x-www-form-urlencoded" action="'.get_absolute_url().'tracking202/update/upload.php" method="get">';
 					echo '<input type="hidden" name="case" value="2"/>';
 					echo '<input type="hidden" name="file" value="'.$_GET['file'].'"/>';
 				echo '<table class="table table-bordered" id="stats-table">';
@@ -79,7 +85,7 @@ switch ($_GET['case']) {
 			$file = $_GET['file'];
 			template_top('Upload Revenue Reports',NULL,NULL,NULL); 
 			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>You forgot to check the subid and the commission column, <a href="/tracking202/update/upload.php?case=1&file='.$file.'">please try again</a></small></div>';
+			echo '<div class="error"><small><span class="fui-alert"></span>You forgot to check the subid and the commission column, <a href="'.get_absolute_url().'tracking202/update/upload.php?case=1&file='.$file.'">please try again</a></small></div>';
 			template_bottom();
 			die();
 			
@@ -97,6 +103,9 @@ switch ($_GET['case']) {
 		$click_payouts = array();
 		
 		$handle = fopen($file, 'rb'); 
+		
+		$de = new DataEngine();
+		
 		while ($row = @fgetcsv($handle, 100000, ",")) {
 			
 			#store all the subid values and payouts
@@ -129,6 +138,8 @@ switch ($_GET['case']) {
 						click_id='" . $mysql['click_id'] ."'
 						AND user_id='".$mysql['user_id']."'
 				";
+				
+				$de->setDirtyHour($mysql['click_id']);
 				$update_result = _mysqli_query($update_sql);
 			}
 		}
@@ -192,7 +203,7 @@ switch ($_GET['case']) {
 				fwrite($newHandle, $data);
 				fclose($newHandle);
 				
-				header('location: /tracking202/update/upload.php?case=1&file='.$file); die();
+				header('location: '.get_absolute_url().'tracking202/update/upload.php?case=1&file='.$file); die();
 			}
 		}
 		
@@ -208,7 +219,7 @@ switch ($_GET['case']) {
 		 
 		<div class="row">
 			<div class="col-xs-12">
-				<form enctype="multipart/form-data" action="/tracking202/update/upload.php" method="post" class="form-horizontal" role="form">
+				<form enctype="multipart/form-data" action="<?php echo get_absolute_url();?>tracking202/update/upload.php" method="post" class="form-horizontal" role="form">
 					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" /> 
 					<div class="col-xs-3">
 						<label for="csv">Upload Commission Report:</label>

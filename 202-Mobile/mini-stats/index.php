@@ -1,7 +1,8 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+<?php 
+include_once(substr(dirname( __FILE__ ), 0,-22) . '/202-config/connect.php');
 AUTH::require_user('toolbar');
 AUTH::set_timezone($_SESSION['user_timezone']);
-include_once('202-ministats.php');
+include_once(dirname( __FILE__ ) . '/202-ministats.php');
 ?>
 
 
@@ -35,71 +36,86 @@ GA_googleFetchAds();
 <meta name="robots" content="noindex, nofollow" />
 
 <!-- Loading Bootstrap -->
-<link href="/202-css/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/css/bootstrap.min.css" rel="stylesheet">
 <!-- Loading Flat UI -->
-<link href="/202-css/css/flat-ui.css" rel="stylesheet">
+<link href="<?php echo get_absolute_url();?>202-css/css/flat-ui-pro.min.css" rel="stylesheet">
 <!-- Loading Custom CSS -->
-<link href="/202-css/custom.min.css" rel="stylesheet">
+<link href="<?php echo get_absolute_url();?>202-css/custom.min.css" rel="stylesheet">
 
 <script src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
-<script src="/202-js/bootstrap.min.js"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/js/bootstrap.min.js"></script>
 
 
 </head>
 <body onload="setTimeout(function() { window.scrollTo(0, 1) }, 1);" id="ministats" class="ministats">
 	<div class="container" style="width: 100%;">
 	<div class="main_wrapper">
-		<center><img src="/202-img/prosper202.png"></center>
+		<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
 		<div class="main">
 			<div class="row">
 	  		<div class="col-xs-12">
 	  			<center><small>202 Mini Account Overview</small></center>
+	  			<?php if(isset($_GET['dni']) && $_GET['dni'] == true) {
+	  				echo '<br><center><small><span style="color:#1D950C; font-weight:bold;">Your campaign saved successfully!</span></small></center>';
+	  			} ?>
 	  			<table class="table table-bordered" id="stats-table" style="margin-top:10px;">
 				<thead>
 				</thead>
 				<tbody>
 					<tr style="background-color: #f2fbfa;">
 						<td>Clicks</td>
-						<td><strong><?php echo $html['total_clicks']; ?></strong></td>
+						<td><strong><?php echo $clicks_row['clicks']; ?></strong></td>
+					</tr>
+					<tr>
+						<td>Click Throughs</td>
+						<td><strong><?php echo $clicks_row['click_out']; ?></strong></td>
+					</tr>
+					<tr style="background-color: #f2fbfa;">
+						<td>CTR</td>
+						<td><strong><?php echo @round($clicks_row['ctr'],$decimal); ?>%</strong></td>
 					</tr>
 					<tr>
 						<td>Leads</td>
-						<td><strong><?php echo $html['total_leads']; ?></strong></td>
+						<td><strong><?php echo $clicks_row['leads']; ?></strong></td>
 					</tr>
 					<tr style="background-color: #f2fbfa;">
-						<td>S/U</td>
-						<td><strong><?php echo $html['total_su_ratio']; ?></strong></td>
+						<td>Avg S/U</td>
+						<td><strong><?php echo @round($clicks_row['su_ratio'],$decimal); ?>%</strong></td>
 					</tr>
 					<tr>
-						<td>EPC</td>
-						<td><strong><?php echo $html['total_epc']; ?></strong></td>
+						<td>Avg Payout</td>
+						<td><strong><?php echo dollar_format($clicks_row['payout'], $cpv); ?></strong></td>
 					</tr>
 					<tr style="background-color: #f2fbfa;">
-						<td>CPC</td>
-						<td><strong><?php echo $html['total_avg_cpc']; ?></strong></td>
+						<td>Avg EPC</td>
+						<td><strong><?php echo dollar_format($clicks_row['epc'], $cpv); ?></strong></td>
 					</tr>
 					<tr>
+						<td>Avg CPC</td>
+						<td><strong><?php echo dollar_format($clicks_row['cpc'], $cpv); ?></strong></td>
+					</tr>
+					<tr style="background-color: #f2fbfa;">
 						<td>Income</td>
-						<td><strong><?php echo $html['total_income']; ?></strong></td>
+						<td><strong><?php echo dollar_format($clicks_row['income'], $cpv); ?></strong></td>
 					</tr>
-					<tr style="background-color: #f2fbfa;">
+					<tr>
 						<td>Cost</td>
-						<td><strong>(<?php echo $html['total_cost']; ?>)</strong></td>
+						<td><strong>(<?php echo dollar_format($clicks_row['cost'], $cpv); ?>)</strong></td>
 					</tr>
 					<tr>
 						<td>Net</td>
-						<td><strong><span class="label label-<?php if ($total_net > 0) { echo 'primary'; } elseif ($total_net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['total_net']; ?></span></strong></td>
+						<td><strong><span class="label label-<?php if ($clicks_row['net'] > 0) { echo 'primary'; } elseif ($clicks_row['net'] < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo dollar_format($clicks_row['net'], $cpv); ?></span></strong></td>
 					</tr>
 					<tr style="background-color: #f2fbfa;">
 						<td>ROI</td>
-						<td><strong><span class="label label-<?php if ($total_net > 0) { echo 'primary'; } elseif ($total_net < 0) { echo 'important'; } else { echo 'default'; } ?>">(<?php echo $html['total_roi']; ?>)</span></strong></td>
+						<td><strong><span class="label label-<?php if ($clicks_row['net'] > 0) { echo 'primary'; } elseif ($clicks_row['net'] < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo dollar_format($clicks_row['roi'], $cpv); ?></span></strong></td>
 					</tr>
 				<tbody>
 					
 				</table>
 				<center><span class="infotext">Stats are updated every 10 seconds.</span></center><br/>
 
-				<center><span class="infotext"><a href="/202-account">Main website</a></span></center>
+				<center><span class="infotext"><a href="<?php echo get_absolute_url();?>202-account">Main website</a></span></center>
 	  		</div>
 		</div>
 		</div>

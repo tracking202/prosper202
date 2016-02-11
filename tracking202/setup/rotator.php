@@ -1,6 +1,21 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+<?php include_once(substr(dirname( __FILE__ ), 0,-18) . '/202-config/connect.php');
 
 AUTH::require_user();
+
+if (!$userObj->hasPermission("access_to_setup_section")) {
+	header('location: '.get_absolute_url().'tracking202/');
+	die();
+}
+
+$slack = false;
+$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
+$user_results = $db->query($user_sql);
+$user_row = $user_results->fetch_assoc();
+
+if (!empty($user_row['url'])) 
+	$slack = new Slack($user_row['url']);
 
 if ($_POST['edit_rotator']) {
 		$editing = true;
@@ -30,39 +45,51 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 		$result = $db->query($sql);
 		$rotator_id = $db->insert_id;
 
-		$sql = "UPDATE 202_rotators SET tracker_id='".rand(1,9) . $rotator_id . rand(1,9)."' WHERE id='".$rotator_id."'";
+		$sql = "UPDATE 202_rotators SET public_id='".rand(1,9) . $rotator_id . rand(1,9)."' WHERE id='".$rotator_id."'";
 		$result = $db->query($sql);
 		$add_success = true;
+
+		if ($slack)
+			$slack->push('rotator_created', array('name' => $_POST['rotator_name'], 'user' => $user_row['username']));
 	}
 }
 
 if (isset($_GET['delete_rotator_id'])) {
 
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-	$mysql['rotator_id'] = $db->real_escape_string($_GET['delete_rotator_id']);
+	if ($userObj->hasPermission("remove_rotator")) {
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+		$mysql['rotator_id'] = $db->real_escape_string($_GET['delete_rotator_id']);
 
-	$delete_sql = "DELETE FROM 202_rotators WHERE id='".$mysql['rotator_id']."' AND user_id='".$mysql['user_id']."'";
+		$delete_sql = "DELETE FROM 202_rotators WHERE id='".$mysql['rotator_id']."' AND user_id='".$mysql['user_id']."'";
 
-	if (_mysqli_query($delete_sql)) {
-		$rule_sql = "DELETE FROM 202_rotator_rules WHERE rotator_id='".$mysql['rotator_id']."'";
+		if (_mysqli_query($delete_sql)) {
+			$rule_sql = "DELETE FROM 202_rotator_rules WHERE rotator_id='".$mysql['rotator_id']."'";
 
-		if (_mysqli_query($rule_sql)) {
-		 	$criteria_sql = "DELETE FROM 202_rotator_rules_criteria WHERE rotator_id='".$mysql['rotator_id']."'";
-		 	if (_mysqli_query($criteria_sql)) {
-		 		$delete_success = true;
-		 	}
-		 } 
+			if (_mysqli_query($rule_sql)) {
+			 	$criteria_sql = "DELETE FROM 202_rotator_rules_criteria WHERE rotator_id='".$mysql['rotator_id']."'";
+			 	if (_mysqli_query($criteria_sql)) {
+			 		$delete_success = true;
+			 		if ($slack)
+						$slack->push('rotator_deleted', array('name' => $_GET['delete_rotator_name'], 'user' => $user_row['username']));
+			 	}
+			 } 
+		}
+	} else {
+		header('location: '.get_absolute_url().'tracking202/setup/rotator.php');
 	}
+	
 }
 
 
-template_top('Smart Rotator',NULL,NULL,NULL); ?>
+template_top('Smart Redirector',NULL,NULL,NULL); ?>
+
+
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
 		<div class="row">
 			<div class="col-xs-5">
-				<h6>Smart Rotator & Split Testing Setup</h6>
+				<h6>Smart Redirector Setup</h6>
 			</div>
 			<div class="col-xs-7">
 				<div class="error pull-right" id="form_erors" style="display: none;margin-top: 20px;">
@@ -77,7 +104,7 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
 						<?php } ?>
 						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your deletion was successful. You have successfully removed a rotator.
+							<span class="fui-check-inverted"></span> Your deletion was successful. You have successfully removed a redirector.
 						<?php } ?>
 					</small>
 				</div>
@@ -85,7 +112,7 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 		</div>
 	</div>
 	<div class="col-xs-12">
-		<small>Setup Smart Rotator and Split Tests based on rules you set.</small>
+		<small>Setup Smart Redirector, to redirect visitors based on rules you define.</small>
 	</div>
 </div>
 
@@ -95,13 +122,13 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 
 <div class="row">
 	<div class="col-xs-7">
-		<small><strong>Add New Smart Rotator</strong></small><br/>
-		<span class="infotext">Give a name for your rotator.</span>
+		<small><strong>Add New Smart Redirector</strong></small><br/>
+		<span class="infotext">Give a name for your redirector.</span>
 				
 		<form method="post" action="" class="form-inline" role="form" style="margin:15px 0px;">
 			<div class="form-group">
-				<label class="sr-only" for="rotator_name">Smart Rotator</label>
-				<input type="text" class="form-control input-sm" id="rotator_name" name="rotator_name" placeholder="Rotator name">
+				<label class="sr-only" for="rotator_name">Smart Redirector</label>
+				<input type="text" class="form-control input-sm" id="rotator_name" name="rotator_name" placeholder="Redirector name">
 			</div>
 			<button type="submit" class="btn btn-xs btn-p202" id="addRotator">Add</button>
 		</form>
@@ -109,22 +136,35 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 
 	<div class="col-xs-5">
 		<div class="panel panel-default">
-			<div class="panel-heading">My Smart Rotators & Split Tests</div>
+			<div class="panel-heading">My Smart Redirectors</div>
+			
 			<div class="panel-body">
-			<ul>
+	  	<script type="text/javascript">
+			var is_ssl = ("https:" == document.location.protocol);
+			var asset_url = is_ssl ? "https://ads.tracking202.com/prosper202-redirector/" : "<?php echo TRACKING202_ADS_URL; ?>/prosper202-redirector/";
+			document.write(unescape("%3Ciframe%20src%3D%22"+asset_url+"%22%20scrolling%3D%22no%22%20frameborder%3D%220%22%20height%3D%22240%22%3E%20%3C%2Fiframe%3E"));
+		</script>
+		   		
+			<div id="filterRotators">
+			<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
+			<ul class="list">
 			<?php
 				$mysql ['user_id'] = $db->real_escape_string ( $_SESSION ['user_id'] );
 				$sql = "SELECT * FROM `202_rotators` WHERE `user_id`='" . $mysql ['user_id'] . "' ORDER BY `name` ASC";
 				$result = $db->query ( $sql ) or record_mysql_error ( $sql );
 				if ($result->num_rows == 0) {
-					?><li>You have not added any rotator.</li><?php
+					?><li>You have not added any redirectors.</li><?php
 				}
 							
-				while ( $row = $result->fetch_array (MYSQL_ASSOC) ) {
+				while ( $row = $result->fetch_array (MYSQLI_ASSOC) ) {
 					$html ['name'] = htmlentities ( $row ['name'], ENT_QUOTES, 'UTF-8' );
 					$html ['id'] = htmlentities ( $row ['id'], ENT_QUOTES, 'UTF-8' );
-									
-					printf ( '<li>%s - <a href="?delete_rotator_id=%s">remove</a></li>', $html ['name'], $html ['id'] );
+					
+					if ($userObj->hasPermission("remove_rotator")) {
+						printf ( '<li><span class="filter_rotator_name">%s</span> - <a href="?delete_rotator_id=%s&delete_rotator_name=%s">remove</a></li>', $html ['name'], $html ['id'], $html ['name'] );
+					} else {
+						printf ( '<li><span class="filter_rotator_name">%s</span></li>', $html ['name']);
+					}				
 									
 					$rule_sql = "SELECT * FROM `202_rotator_rules` WHERE `rotator_id`='" . $row['id'] . "' ORDER BY `id` ASC";
 					$rule_result = $db->query ( $rule_sql ) or record_mysql_error ( $rule_sql );
@@ -152,6 +192,7 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 				?> 
 			</ul>
 			</div>
+			</div>
 		</div>
 	</div>
 </div>
@@ -162,8 +203,8 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 
 <div class="row">
 	<div class="col-xs-12">
-		<small><strong>Add Rule to Your Smart Rotator</strong></small><br/>
-		<span class="infotext">Select rotator, to add new rule. You can add as many rules as you want, for each rotator.</span>
+		<small><strong>Add Rule to Your Smart Redirector</strong></small><br/>
+		<span class="infotext">Select redirector, to add new rule. You can add as many rules as you want, for each redirector.</span>
 	</div>
 </div>
 
@@ -172,13 +213,13 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 			<div class="col-xs-4">
 				<div class="form-group">
 					<img id="rules_loading" class="loading" src="/202-img/loader-small.gif" style="display:none;right: -20px;top: 10px;"/>
-					<label for="rotator_id" style="margin-right:5px;">Select rotator: </label>
+					<label for="rotator_id" style="margin-right:5px;">Select redirector: </label>
 					<select class="form-control input-sm" name="rotator_id" style="min-width: 130px;">
 						<option value="0">--</option>
 						<?php  $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 						$rotator_sql = "SELECT * FROM `202_rotators` WHERE `user_id`='".$mysql['user_id']."' ORDER BY `name` ASC";
 						$rotator_result = _mysqli_query($rotator_sql) ; 
-						while ($rotator_row = $rotator_result->fetch_array(MYSQL_ASSOC)) {
+						while ($rotator_row = $rotator_result->fetch_array(MYSQLI_ASSOC)) {
 
 							$html['rotator_name'] = htmlentities($rotator_row['name'], ENT_QUOTES, 'UTF-8');
 							$html['rotator_id'] = htmlentities($rotator_row['id'], ENT_QUOTES, 'UTF-8');
@@ -193,15 +234,12 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 			<div id="defaults_container" style="opacity:0.5">
 				<div class="col-xs-4">
 					<label for="default_type" class="col-xs-5 control-label">Defaults to: </label>
-					<label class="radio radio-inline">
-						<input type="radio" name="default_type" id="default_type1" value="campaign" data-toggle="radio" disabled checked="">
-						Campaign
-					</label>
-						
-					<label class="radio radio-inline">
-						<input type="radio" name="default_type" id="default_type2" value="url" data-toggle="radio" disabled>
-						URL
-					</label>
+					<select class="form-control input-sm" name="default_type" id="default_type_select" disabled>
+						<option value="">Campaign</option>
+						<option value="">Landing Page</option>
+						<option value="">Url</option>
+						<!--<option value="">Auto Monetizer</option>-->
+					</select>
 				</div>
 
 				<div class="col-xs-4" id="default_campaign_select">
@@ -279,7 +317,7 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 
 					<div class="col-xs-2" style="margin-left: -18px; margin-top: 10px;">
 						<div class="form-group">
-							<img id="addmore_criteria_loading" class="loading" src="/202-img/loader-small.gif" style="display:none; position: absolute; top: 4px; left: -20px;">
+							<img id="addmore_criteria_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif" style="display:none; position: absolute; top: 4px; left: -20px;">
 							<button id="add_more_criteria" class="btn btn-xs btn-default" disabled><span class="fui-plus"></span> Add more criteria</button>
 						</div>
 					</div>
@@ -292,23 +330,20 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 			<div class="row">
 						<div class="col-xs-4">
 							<label for="redirect_type" style="margin-left: -15px;" class="col-xs-5 control-label">Redirects to: </label>
-							<label class="radio radio-inline">
-								<input type="radio" name="redirect_type" id="redirect_type1" value="campaign" data-toggle="radio" disabled checked="">
-								Campaign
-							</label>
-								
-							<label class="radio radio-inline">
-								<input type="radio" name="redirect_type" id="redirect_type2" value="url" data-toggle="radio" disabled>
-								URL
-							</label>
+							<select class="form-control input-sm" name="redirect_type" id="redirect_type_select" disabled>
+								<option value="">Campaign</option>
+								<option value="">Landing Page</option>
+								<option value="">Url</option>
+								<!--<option value="">Auto Monetizer</option>-->
+							</select>
 						</div>
 
-						<div class="col-xs-4" id="redirect_campaign_select">
+						<div class="col-xs-4" id="redirect_campaign_select" style="margin-left: -3%">
 							<select class="form-control input-sm" name="redirect_campaign" style="width: 100%;" disabled>
 								<option value="">--</option>
 							</select>
 						</div>
-						<div class="col-xs-8" id="redirect_url_input" style="display:none; width: 64.5%;">	
+						<div class="col-xs-8" id="redirect_url_input" style="display:none; width: 64.5%;">
 							<div class="input-group input-group-sm">
 									<span class="input-group-addon"><i class="fa fa-globe"></i></span>
 									<input name="redirect_url" class="form-control" type="text" placeholder="http://" disabled>
@@ -319,8 +354,11 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 	</div>	
 </div>
 <div class="row">
-	<div class="col-xs-12 text-right" style="margin-top:15px;">
-		<img id="addmore_loading" class="loading" src="/202-img/loader-small.gif" style="display: none; position: static;">
+	<div class="col-xs-7" style="margin-top:15px;">
+		<span class="infotext">*If you want to split-test all visitors, select at least one criteria and type: <i><b>ALL</b></i> as value and hit <i><b>Enter</b></i>.</span>
+	</div>
+	<div class="col-xs-5 text-right" style="margin-top:15px;">
+		<img id="addmore_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif" style="display: none; position: static;">
 		<button id="add_more_rules" class="btn btn-xs btn-default" disabled><span class="fui-plus"></span> Add more rules</button>
 		<button class="btn btn-xs btn-p202" id="post_rules" disabled>Save rules</button>
 	</div>
@@ -331,6 +369,14 @@ template_top('Smart Rotator',NULL,NULL,NULL); ?>
 <script type="text/javascript">
 $(document).ready(function() {
 	rotator_tags_autocomplete('tag', 'country');
+	var rotatorOptions = {
+	    valueNames: ['filter_adv_lp_name'],
+	    plugins: [
+	      ListFuzzySearch()
+	    ]
+	};
+
+	var filterRotators = new List('filterRotators', rotatorOptions);
 });
 </script>
 
@@ -348,23 +394,5 @@ $(document).ready(function() {
             </div>
         </div>
     </div>
-</div>
-
-<!-- Upgrade Modal -->
-<div class="modal fade" id="upgradeToProModal" tabindex="-1" role="dialog" aria-labelledby="upgradeToProModalLabel" aria-hidden="true">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
-        <h4 class="modal-title" id="myModalLabel">Upgrade to Prosper202 Pro!</h4>
-      </div>
-      <div class="modal-body">
-        To enable the new split tester, upgrade to Prosper202 Pro!
-      </div>
-      <div class="modal-footer">
-        <a href="http://click202.com/tracking202/redirect/dl.php?t202id=8151295&t202kw=splittester" target="_blank" class="btn btn-p202" id="upgradeSplitTester">Upgrade Now To Use!</a>
-      </div>
-    </div>
-  </div>
 </div>
 <?php template_bottom();

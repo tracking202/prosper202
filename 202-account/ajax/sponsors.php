@@ -1,7 +1,5 @@
 <?php
-
-
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');    
+include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');    
 
 AUTH::require_user();
 
@@ -11,6 +9,7 @@ $json = json_decode($json, true);
 
 
 $sponsors = $json['sponsors'];
+if (!$sponsors) die();
 foreach ($sponsors as $sponsor) { 
 	
 	$html = array_map('htmlentities', $sponsor);

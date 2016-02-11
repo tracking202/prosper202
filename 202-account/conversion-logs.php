@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -7,12 +7,21 @@ AUTH::require_user();
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+$user_sql = "SELECT user_time_register FROM 202_users WHERE user_id=".$mysql['user_id'];
+$user_result = _mysqli_query($user_sql);
+$user_row = $user_result->fetch_assoc();
+
+$campaign_sql = "SELECT aff_campaign_id, aff_campaign_name FROM 202_aff_campaigns WHERE user_id=".$mysql['user_id']." AND aff_campaign_deleted = '0'";
+$campaign_result = _mysqli_query($campaign_sql);
 
 $time = grab_timeframe();   
 $html['from'] = date('m/d/Y - G:i', $time['from']);
 $html['to'] = date('m/d/Y - G:i', $time['to']);
 $mysql['to'] = $db->real_escape_string($time['to']);
 $mysql['from'] = $db->real_escape_string($time['from']);
+
+$logs_sql = "SELECT 2ca.aff_campaign_name, 2l.click_id, 2l.click_time, 2l.conv_time, 2l.time_difference, 2l.ip, 2l.pixel_type, 2l.user_agent FROM 202_conversion_logs AS 2l LEFT JOIN 202_aff_campaigns AS 2ca ON (2l.campaign_id = 2ca.aff_campaign_id) WHERE 2l.user_id=".$mysql['user_id']." AND 2l.click_time >= ".$mysql['from']." AND 2l.click_time < ".$mysql['to'];
+$logs_result = _mysqli_query($logs_sql);
 
 //show the template
 template_top('Conversion Logs',NULL,NULL,NULL); ?>
@@ -22,11 +31,7 @@ template_top('Conversion Logs',NULL,NULL,NULL); ?>
 	</div>
 </div> 
 
-<div class="row upgradeToProContainer" style="margin-bottom: 15px;">
-<div class="upgradeToProOverlay" style="height:391px; width: 981px; margin-top:-15px;">
-	<div class="upgradeToProOverlayBackground"></div>
-	<a href="http://click202.com/tracking202/redirect/dl.php?t202id=8151295&t202kw=conversionlogs" target="_blank" class="btn btn-lg btn-p202 upgradeToProOverlayButton" style="margin-top: 170px; margin-left:344px;" id="upgradeConversionLogs">This is a Prosper202 Pro Feature: Upgrade Now To Access!</a>
-</div>
+<div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
 	<div id="preferences-wrapper">
 		<span style="position: absolute; font-size:12px;"><span class="fui-search"></span> Refine your search: </span>
@@ -76,6 +81,9 @@ template_top('Conversion Logs',NULL,NULL,NULL); ?>
 				<label for="to">Campaign: </label>
 				<select class="form-control input-sm" name="logs_campaign" id="logs_campaign">
 					<option value="0"> -- </option>
+					<?php while ($campaign_row = $campaign_result->fetch_assoc()) { ?>
+						<option value="<?php echo $campaign_row['aff_campaign_id'];?>"><?php echo $campaign_row['aff_campaign_name'];?></option>
+					<?php } ?>
 				</select>
 				<button id="get-logs" style="width: 130px;" type="submit" class="btn btn-xs btn-info">Get Logs</button>
 			</div>
@@ -83,13 +91,16 @@ template_top('Conversion Logs',NULL,NULL,NULL); ?>
 		</form>
 	</div>	   
 </div>
-
-
-<div id="logs_table">
-<div class="col-xs-6" style="margin-top: 10px; margin-bottom: 10px;">
-	<span class="infotext"><div class="results">Results: <b>3</b></div></span>
 </div>
 
+<div id="logs_table">
+<div class="row" style="margin-top: 10px; margin-bottom: 10px;">
+	<div class="col-xs-6">
+		<span class="infotext"><?php printf('<div class="results">Results <b>%s</b></div>',$logs_result->num_rows);  ?></span>
+	</div>
+</div>
+
+<div class="row">
 	<div class="col-xs-12">
 	<table class="table table-bordered" id="stats-table">
 		<thead>
@@ -104,49 +115,124 @@ template_top('Conversion Logs',NULL,NULL,NULL); ?>
 		    </tr>
 		</thead>
 		<tbody>
+		<?php while ($logs_row = $logs_result->fetch_assoc()) { ?>
 			<tr>
-				<td>34754</td>
-				<td>HostNine Web Hosting</td>
-				<td><?php echo date('m/d/y g:ia', time() - 86400);?></td>
-				<td><?php echo date('m/d/y g:ia', time() - 21600);?></td>
-				<td>6 hours</td>
-				<td>168.143.157.235</td>
-				<td>Pixel</td>
+				<td><?php echo $logs_row['click_id'];?></td>
+				<td><?php echo $logs_row['aff_campaign_name'];?></td>
+				<td><?php echo date('m/d/y g:ia', $logs_row['click_time']);?></td>
+				<td><?php echo date('m/d/y g:ia', $logs_row['conv_time']);?></td>
+				<td><?php echo $logs_row['time_difference'];?></td>
+				<td><?php echo $logs_row['ip'];?></td>
+				<td><?php if ($logs_row['pixel_type'] == '1') { 
+							  echo "Pixel";
+						  } else if ($logs_row['pixel_type'] == '2') {
+						  	  echo "Postback";
+						  } else if ($logs_row['pixel_type'] == '3') {
+						  	  echo "Universal Pixel";
+						  } 
+					?>
+				</td>
 				<tr>
 					<td colspan="2">User agent:</td>
-					<td colspan="6"><code style="white-space: inherit;">Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36</code></td>
+					<td colspan="6"><code style="white-space: inherit;"><?php echo $logs_row['user_agent'];?></code></td>
 				</tr>
 			</tr>
-			<tr>
-				<td>34635</td>
-				<td>Simple Forex Tester</td>
-				<td><?php echo date('m/d/y g:ia', time() - 85700);?></td>
-				<td><?php echo date('m/d/y g:ia', time() - 45600);?></td>
-				<td>4 hours</td>
-				<td>184.14.147.200</td>
-				<td>Pixel</td>
-				<tr>
-					<td colspan="2">User agent:</td>
-					<td colspan="6"><code style="white-space: inherit;">Mozilla/5.0 (Windows NT 6.2) AppleWebKit/535.7 (KHTML, like Gecko) Comodo_Dragon/16.1.1.0 Chrome/16.0.912.63</code></td>
-				</tr>
-			</tr>
-			<tr>
-				<td>32475</td>
-				<td>Popcorn TV (DK) (Incentive)</td>
-				<td><?php echo date('m/d/y g:ia', time() - 95700);?></td>
-				<td><?php echo date('m/d/y g:ia', time() - 55600);?></td>
-				<td>7 hours</td>
-				<td>92.466.445.33</td>
-				<td>Pixel</td>
-				<tr>
-					<td colspan="2">User agent:</td>
-					<td colspan="6"><code style="white-space: inherit;">Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10; rv:33.0) Gecko/20100101 Firefox/33.0</code></td>
-				</tr>
-			</tr>
+		<?php } ?>
 		</tbody>
 	</table>
 	</div>
+</div>						
 </div>
-</div>
+
+<script type="text/javascript">
+	
+function set_user_pref_time_predefined() {
+
+	var element = $('#user_pref_time_predefined');
+
+	if (element.val() == 'today') {
+		<?php $time['from'] = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
+			$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+
+	if (element.val() == 'yesterday') {
+		<?php $time['from'] = mktime(0,0,0,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
+			$time['to'] = mktime(23,59,59,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400)); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+
+	if (element.val() == 'last7') {
+		<?php $time['from'] = mktime(0,0,0,date('m',time()-86400*7),date('d',time()-86400*7),date('Y',time()-86400*7));
+			$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+
+	if (element.val() == 'last14') {
+		<?php $time['from'] = mktime(0,0,0,date('m',time()-86400*14),date('d',time()-86400*14),date('Y',time()-86400*14));
+			$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+
+	if (element.val() == 'last30') {
+		<?php $time['from'] = mktime(0,0,0,date('m',time()-86400*30),date('d',time()-86400*30),date('Y',time()-86400*30));
+			$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+
+	if (element.val() == 'thismonth') {
+		<?php $time['from'] = mktime(0,0,0,date('m',time()),1,date('Y',time()));
+			$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+
+	if (element.val() == 'lastmonth') {
+		<?php $time['from'] = mktime(0,0,0,date('m',time()-2629743),1,date('Y',time()-2629743));
+			$time['to'] = mktime(23,59,59,date('m',time()-2629743),getLastDayOfMonth(date('m',time()-2629743), date('Y',time()-2629743)),date('Y',time()-2629743)); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+
+	if (element.val() == 'thisyear') {
+		<?php $time['from'] = mktime(0,0,0,1,1,date('Y',time()));
+			$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+
+	if (element.val() == 'lastyear') {
+		<?php $time['from'] = mktime(0,0,0,1,1,date('Y',time()-31556926));
+			$time['to'] = mktime(0,0,0,12,getLastDayOfMonth(date('m',time()-31556926), date('Y',time()-31556926)),date('Y',time()-31556926)); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+			
+	if (element.val() == 'alltime') {
+		<?php  
+		$time['from'] = $user_row['user_time_register'];
+				
+		$time['from'] = mktime(0,0,0,date('m',$time['from']),date('d',$time['from']),date('Y',$time['from']));  
+		$time['to'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time())); ?>
+
+		$('#from').val('<?php echo date('m/d/y - G:i',$time['from']); ?>');
+		$('#to').val('<?php echo date('m/d/y - G:i',$time['to']); ?>');
+	}
+}
+</script> 
 <?php template_bottom($server_row);
     

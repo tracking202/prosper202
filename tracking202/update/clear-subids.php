@@ -1,6 +1,11 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php'); 
 
 AUTH::require_user();
+
+if (!$userObj->hasPermission("access_to_update_section")) {
+	header('location: '.get_absolute_url().'tracking202/');
+	die();
+}
 
 template_top('Clear Subids',NULL,NULL,NULL);  ?>
 
@@ -29,7 +34,7 @@ template_top('Clear Subids',NULL,NULL,NULL);  ?>
 			<div id="tracker_aff_campaign" class="form-group" style="margin-bottom: 0px;">
 		        <label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Affiliate Campaign:</label>
 		        <div class="col-xs-6" style="margin-top: 10px;">
-		        	<img id="aff_campaign_id_div_loading" class="loading" src="/202-img/loader-small.gif" style="display: none;"/>
+		        	<img id="aff_campaign_id_div_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif" style="display: none;"/>
 			        <div id="aff_campaign_id_div">
 			            <select class="form-control input-sm" id="aff_campaign_id" disabled="">
 			                <option>--</option>

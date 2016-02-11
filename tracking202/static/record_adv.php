@@ -1,7 +1,8 @@
 <?php header("Pragma: no-cache");
 header("Expires: -1"); 
 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
 
 $landing_page_id_public = $_GET['lpip'];
 $mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
@@ -15,11 +16,14 @@ $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 $mysql['user_id'] = $db->real_escape_string($tracker_row['user_id']);
 $user_sql = "SELECT 		user_timezone, 
 							user_keyword_searched_or_bidded,
+                            user_pref_referer_data,
+                            user_pref_dynamic_bid,
 							maxmind_isp 
 			   FROM 		202_users 
 			   LEFT JOIN	202_users_pref USING (user_id)
 			   WHERE 		202_users.user_id='".$mysql['user_id']."'";
 $user_row = memcache_mysql_fetch_assoc($db, $user_sql);
+$mysql['user_pref_dynamic_bid'] = $db->real_escape_string($user_row['user_pref_dynamic_bid']);
 
 //now this sets it
 AUTH::set_timezone($user_row['user_timezone']);
@@ -32,15 +36,19 @@ if ($_GET['t202id']) {
 
 	$tracker_sql2 = "
 		SELECT
-			text_ad_id,
-			ppc_account_id,
-			click_cpc,
-			click_cloaking,
-			aff_campaign_id
+			tr.text_ad_id,
+			tr.ppc_account_id,
+			tr.click_cpc,
+			tr.click_cloaking,
+			tr.aff_campaign_id,
+			2cv.ppc_variable_ids,
+			2cv.parameters
 		FROM
-			202_trackers
+			202_trackers AS tr
+			LEFT JOIN 202_ppc_accounts AS 2ppc USING (ppc_account_id)
+			LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)		
 		WHERE
-			tracker_id_public='".$mysql['tracker_id_public']."'";   
+			tr.tracker_id_public='".$mysql['tracker_id_public']."'";   
 	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
 	if ($tracker_row2) {
 		$tracker_row = array_merge($tracker_row,$tracker_row2);
@@ -54,7 +62,18 @@ if ($_GET['t202id']) {
 $mysql['user_id'] = $db->real_escape_string($tracker_row['user_id']);
 $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
 $mysql['ppc_account_id'] = $db->real_escape_string($tracker_row['ppc_account_id']);
-$mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
+// set cpc use dynamic variable if set or the default if not
+if (isset ( $_GET ['t202b'] ) && $mysql['user_pref_dynamic_bid'] == '1') {
+    $_GET ['t202b']=ltrim($_GET ['t202b'],'$');
+    if(is_numeric ( $_GET ['t202b'] )){
+        $bid = number_format ( $_GET ['t202b'], 5, '.', '' );
+        $mysql ['click_cpc'] = $db->real_escape_string ( $bid );
+    }
+    else{
+        $mysql ['click_cpc'] = $db->real_escape_string ( $tracker_row ['click_cpc'] );
+    }
+} else
+    $mysql ['click_cpc'] = $db->real_escape_string ( $tracker_row ['click_cpc'] );
 $mysql['click_payout'] = $db->real_escape_string($tracker_row['aff_campaign_payout']);
 $mysql['click_time'] = time();
 $mysql['landing_page_id'] = $db->real_escape_string($tracker_row['landing_page_id']);
@@ -120,6 +139,15 @@ switch ($user_row['user_keyword_searched_or_bidded']) {
 		}
 		break;
 }
+
+if (substr($keyword, 0, 8) == 't202var_') {
+	$t202var = substr($keyword, strpos($keyword, "_") + 1);
+
+	if (isset($_GET[$t202var])) {
+		$keyword = $_GET[$t202var];
+	}
+}
+
 $keyword = str_replace('%20',' ',$keyword);  
 $keyword_id = INDEXES::get_keyword_id($db, $keyword); 
 $mysql['keyword_id'] = $db->real_escape_string($keyword_id); 
@@ -144,6 +172,84 @@ $c4 = str_replace('%20',' ',$c4);
 $c4_id = INDEXES::get_c4_id($db, $c4);
 $mysql['c4_id'] = $db->real_escape_string($c4_id);
 
+$mysql['gclid']= $db->real_escape_string($_GET['gclid']);
+
+
+$custom_var_ids = array();
+
+$ppc_variable_ids = explode(',', $tracker_row['ppc_variable_ids']);
+$parameters = explode(',', $tracker_row['parameters']);
+
+foreach ($parameters as $key => $value) {
+	$variable = $db->real_escape_string($_GET[$value]);
+
+	if (isset($variable) && $variable != '') {
+		$variable = str_replace('%20',' ',$variable);
+		$variable_id = INDEXES::get_variable_id($db, $variable, $ppc_variable_ids[$key]);
+		$custom_var_ids[] = $variable_id;
+	} 
+}
+
+//utm_source
+$utm_source = $db->real_escape_string($_GET['utm_source']);
+if(isset($utm_source) && $utm_source != '')
+{
+    $utm_source = str_replace('%20',' ',$utm_source);
+    $utm_source_id = INDEXES::get_utm_id($db, $utm_source, 'utm_source');
+}
+else{
+    $utm_source_id=0;
+}
+$mysql['utm_source_id']=$db->real_escape_string($utm_source_id);
+
+//utm_medium
+$utm_medium = $db->real_escape_string($_GET['utm_medium']);
+if(isset($utm_medium) && $utm_medium != '')
+{
+    $utm_medium = str_replace('%20',' ',$utm_medium);
+    $utm_medium_id = INDEXES::get_utm_id($db, $utm_medium, 'utm_medium');
+}
+else{
+    $utm_medium_id=0;
+}
+$mysql['utm_medium_id']=$db->real_escape_string($utm_medium_id);
+
+//utm_campaign
+$utm_campaign = $db->real_escape_string($_GET['utm_campaign']);
+if(isset($utm_campaign) && $utm_campaign != '')
+{
+    $utm_campaign = str_replace('%20',' ',$utm_campaign);
+    $utm_campaign_id = INDEXES::get_utm_id($db, $utm_campaign, 'utm_campaign');
+}
+else{
+    $utm_campaign_id=0;
+}
+$mysql['utm_campaign_id']=$db->real_escape_string($utm_campaign_id);
+
+//utm_term
+$utm_term = $db->real_escape_string($_GET['utm_term']);
+if(isset($utm_term) && $utm_term != '')
+{
+    $utm_term = str_replace('%20',' ',$utm_term);
+    $utm_term_id = INDEXES::get_utm_id($db, $utm_term, 'utm_term');
+}
+else{
+    $utm_term_id=0;
+}
+$mysql['utm_term_id']=$db->real_escape_string($utm_term_id);
+
+//utm_content
+$utm_content = $db->real_escape_string($_GET['utm_content']);
+if(isset($utm_content) && $utm_content != '')
+{
+    $utm_content = str_replace('%20',' ',$utm_content);
+    $utm_content_id = INDEXES::get_utm_id($db, $utm_content, 'utm_content');
+}
+else{
+    $utm_content_id=0;
+}
+$mysql['utm_content_id']=$db->real_escape_string($utm_content_id);
+
 $ip_id = INDEXES::get_ip_id($db, $_SERVER['HTTP_X_FORWARDED_FOR']);
 $mysql['ip_id'] = $db->real_escape_string($ip_id);     
 
@@ -160,13 +266,29 @@ if ($device_id['type'] == '4') {
 $mysql['click_in'] = 1;
 $mysql['click_out'] = 0;
 
-//now lets get variables for clicks site
-//so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google.... 
-if ($referer_query['url']) { 
-	$click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
-} else {
-	$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_GET['referer']);
+// if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
+if ($user_row['user_pref_referer_data'] == 't202ref') {
+    if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
+        $mysql['t202ref']= $db->real_escape_string($_GET['t202ref']);
+        $click_referer_site_url_id = INDEXES::get_site_url_id($db, $mysql['t202ref']);
+    } else { //if not found revert to what we usually do
+        if ($referer_query['url']) {
+            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+        } else {
+            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_GET['referer']);
+        }
+    }
+} else { //user wants the real referer first
+
+    // now lets get variables for clicks site
+    // so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
+    if ($referer_query['url']) {
+        $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+    } else {
+        $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_GET['referer']);
+    }
 }
+
 $mysql['click_referer_site_url_id'] = $db->real_escape_string($click_referer_site_url_id); 
 
 
@@ -228,6 +350,35 @@ $click_sql = "INSERT INTO   202_clicks
 							click_alp = '".$mysql['click_alp']."',   
 							click_time = '".$mysql['click_time']."'"; 
 $click_result = $db->query($click_sql) or record_mysql_error($click_sql);
+
+
+$total_vars = count($custom_var_ids);
+
+if ($total_vars > 0) {
+
+	$variables = implode (",", $custom_var_ids);
+	$variable_set_id = INDEXES::get_variable_set_id($db, $variables);
+
+	$mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);  
+
+	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('".$mysql['click_id']."', '".$mysql['variable_set_id']."')";
+	$var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+} else {
+	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('".$mysql['click_id']."',0)";
+	$var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+}
+
+
+// insert gclid and utm vars
+$click_sql = "INSERT INTO   202_google
+			  SET           	click_id='".$mysql['click_id']."',
+							gclid = '".$mysql['gclid']."',
+                            utm_source_id = '".$mysql['utm_source_id']."',
+                            utm_medium_id = '".$mysql['utm_medium_id']."',
+utm_campaign_id = '".$mysql['utm_campaign_id']."',
+utm_term_id = '".$mysql['utm_term_id']."',
+utm_content_id = '".$mysql['utm_content_id']."'";
+$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 
 //ok we have the main data, now insert this row
 $click_sql = "INSERT INTO  202_clicks_spy
@@ -304,45 +455,20 @@ $click_sql = "INSERT INTO   202_clicks_site
 							click_redirect_site_url_id='".$mysql['click_redirect_site_url_id']."'";
 $click_result = $db->query($click_sql) or record_mysql_error($click_sql); 
 
-//update the click summary table if this is a 'real click'
-#if ($click_filtered == 0) {
-	
-	$now = time();
-
-	$today_day = date('j', time());
-	$today_month = date('n', time());
-	$today_year = date('Y', time());
-
-	//the click_time is recorded in the middle of the day
-	$click_time = mktime(12,0,0,$today_month,$today_day,$today_year);
-	$mysql['click_time'] = $db->real_escape_string($click_time);
-
-	//check to make sure this click_summary doesn't already exist
-	$check_sql = "SELECT  *
-				  FROM    202_summary_overview
-				  WHERE user_id='".$mysql['user_id']."'
-				  AND     landing_page_id='".$mysql['landing_page_id']."'
-				  AND     ppc_account_id='".$mysql['ppc_account_id']."'
-				  AND     click_time='".$mysql['click_time']."'";
-	$check_result = $db->query($check_sql) or record_mysql_error($check_sql);
-	$check_count = $check_result->num_rows;      
-
-	//if this click summary hasn't been recorded do this now
-	if ($check_count == 0 ) {
-
-		$insert_sql = "INSERT INTO 202_summary_overview
-					   	SET         user_id='".$mysql['user_id']."',
-								   landing_page_id='".$mysql['landing_page_id']."',
-								   ppc_account_id='".$mysql['ppc_account_id']."',
-								   click_time='".$mysql['click_time']."'";
-		$insert_result = $db->query($insert_sql);
-	}  
-#}
 
 //set the cookie
 setClickIdCookie($mysql['click_id'],$mysql['aff_campaign_id']);
 //set the PCI Cookie
 setPCIdCookie($mysql['click_id_public']);
+
+//set dirty hour
+$de = new DataEngine();
+$data=($de->setDirtyHour($mysql['click_id']));
+
+if (isset($_COOKIE['p202_ipx'])) {
+	$mysql['p202_ipx'] = $db->real_escape_string($_COOKIE['p202_ipx']);
+	$db->query("UPDATE 202_clicks_impressions SET click_id = '".$mysql['click_id']."' WHERE impression_id = '".$mysql['p202_ipx']."'");
+}
 
 ?> 
 

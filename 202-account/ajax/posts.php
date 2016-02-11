@@ -1,7 +1,7 @@
 <?php
 
-
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');    
+include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');    
+include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/functions-rss.php');
 
 AUTH::require_user();
 

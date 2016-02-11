@@ -1,13 +1,26 @@
 <?php
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php');
 
 AUTH::require_user();
+
+$slack = false;
+$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
+$user_results = $db->query($user_sql);
+$user_row = $user_results->fetch_assoc();
+$username = $user_row['username'];
+
+if (!empty($user_row['url'])) 
+	$slack = new Slack($user_row['url']);
 
 if (isset($_POST['add_rest_api_key'])) {
 	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 	$mysql['rest_api_key'] = $db->real_escape_string($_POST['rest_api_key']);
 	$key_sql = "INSERT INTO 202_api_keys SET user_id='".$mysql['user_id']."', api_key = '".$mysql['rest_api_key']."', created_at='".time()."'";
 	$key_result = $db->query($key_sql);
+
+	if($slack)
+		$slack->push('user_added_app_api_key', array('user' => $username));
 	die();
 }
 
@@ -16,6 +29,10 @@ if (isset($_POST['remove_rest_api_key'])) {
 	$mysql['rest_api_key'] = $db->real_escape_string($_POST['rest_api_key']);
 	$key_sql = "DELETE FROM 202_api_keys WHERE api_key='".$mysql['rest_api_key']."'";
 	$key_result = $db->query($key_sql);
+
+	if($slack)
+		$slack->push('user_removed_app_api_key', array('user' => $username));
+
 	die();
 }
 
@@ -25,7 +42,7 @@ if ($_GET['remove_user_stats202_app_key']) {
 	$sql = "UPDATE 202_users SET user_stats202_app_key='' WHERE user_id='".$mysql['user_id']."'";
 	$result = $db->query($sql);
 	$_SESSION['user_stats202_app_key'] = '';
-	header('location: /202-account/account.php');
+	header('location: '.get_absolute_url().'202-account/account.php');
 	die();
 }
 
@@ -35,101 +52,223 @@ if ($_GET['remove_user_api_key']) {
 	$sql = "UPDATE 202_users SET user_api_key='' WHERE user_id='".$mysql['user_id']."'";
 	$result = $db->query($sql);
 	$_SESSION['user_api_key'] = '';
-	header('location: /202-account/account.php');
+	header('location: '.get_absolute_url().'202-account/account.php');
 	die();
 }
 
 
 
 //get all of the user data
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-$user_sql = "	SELECT 	*
+if (!$userObj->hasPermission("access_to_personal_settings")) {
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+	$user_sql = "SELECT 	user_email
+				 FROM   	`202_users` 
+				 WHERE  	`user_id`='".$mysql['user_id']."'";
+} else {
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$user_sql = "SELECT 	*
 				 FROM   	`202_users` 
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='".$mysql['user_id']."'";
+}
+
 $user_result = $db->query($user_sql);
 $user_row = $user_result->fetch_assoc();
 $html = array_map('htmlentities', $user_row);
 
 //make it hide most of the api keys
 $hideChars = 22;
-for ($x = 0; $x < $hideChars; $x++) $hiddenPart .= '*';
-if ($html['user_api_key']) $html['user_api_key'] = $hiddenPart . substr($html['user_api_key'], $hideChars, 99);
-if ($html['user_stats202_app_key']) $html['user_stats202_app_key'] = $hiddenPart . substr($html['user_stats202_app_key'], $hideChars, 99);
-if ($html['clickserver_api_key']) $html['clickserver_api_key'] = $hiddenPart . substr($html['clickserver_api_key'], $hideChars, 99);
+
+if ($userObj->hasPermission("access_to_personal_settings")) {
+	for ($x = 0; $x < $hideChars; $x++) $hiddenPart .= '*';
+	if ($html['user_api_key']) $html['user_api_key'] = $hiddenPart . substr($html['user_api_key'], $hideChars, 99);
+	if ($html['user_stats202_app_key']) $html['user_stats202_app_key'] = $hiddenPart . substr($html['user_stats202_app_key'], $hideChars, 99);
+	if ($html['clickserver_api_key']) $html['clickserver_api_key'] = $hiddenPart . substr($html['clickserver_api_key'], $hideChars, 99);
+}
+
 
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if ($_POST['update_profile'] == '1') {
 
-			
 		if ($_POST['token'] != $_SESSION['token']){ $error['token'] = 'You must use our forms to submit data.';  }
-			
-		//check user_email
 		if (check_email_address($_POST['user_email']) == false) { $error['user_email'] = 'Please enter a valid email address'; }
-		if (!$error['user_email_invalid']) {
-			$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-			$count_sql = "	SELECT 	*
-						  	FROM  		`202_users` 
-						  	WHERE 	`user_email` = '" . $mysql['user_email'] ."' 
-						  	AND   		`user_id`!='".$mysql['user_id']."'";
-			$count_result = $db->query($count_sql);
-			if ($count_result->num_rows > 0) {
-				$error['user_email'] .= 'That email address is already being used.';
+
+		if ($userObj->hasPermission("access_to_personal_settings")) {
+			//check user_email
+			if (!$error['user_email_invalid']) {
+				$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
+				$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+				$count_sql = "	SELECT 	*
+							  	FROM  		`202_users` 
+							  	WHERE 	`user_email` = '" . $mysql['user_email'] ."' 
+							  	AND   		`user_id`!='".$mysql['user_id']."'";
+				$count_result = $db->query($count_sql);
+				if ($count_result->num_rows > 0) {
+					$error['user_email'] .= 'That email address is already being used.';
+				}
 			}
-		}
 
-		switch ($_POST['user_keyword_searched_or_bidded']) {
+			switch ($_POST['user_keyword_searched_or_bidded']) {
 
-			case "searched":
-			case "bidded":
-				break;
-			default:
-				$error['user_keyword_searched_or_bidded'] = 'You must select your keyword preference.';
-				break;
-		}
+				case "searched":
+				case "bidded":
+					break;
+				default:
+					$error['user_keyword_searched_or_bidded'] = 'You must select your keyword preference.';
+					break;
+			}
 
-		if (!$error) {
+			switch ($_POST['user_referer']) {
+			
+			    case "browser":
+			    case "t202ref":
+			        break;
+			    default:
+			        $error['user_referer'] = 'You must select your referer preference.';
+			        break;
+			}
+			
+			if (!$error) {
 
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-			$mysql['user_timezone'] = $db->real_escape_string($_POST['user_timezone']);
-			$mysql['cache_time'] = $db->real_escape_string($_POST['user_cached_reports']);
-			$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string($_POST['user_keyword_searched_or_bidded']);
-			$mysql['user_tracking_domain'] = $db->real_escape_string($_POST['user_tracking_domain']);
-			$mysql['user_daily_email'] = $db->real_escape_string($_POST['user_daily_email']);
-			$user_sql = "
-				UPDATE
-					`202_users` 
-				SET
-					`user_email`='".$mysql['user_email']."',
-					`user_timezone`='".$mysql['user_timezone']."'
-				WHERE
-					`user_id`='".$mysql['user_id']."'
-			";
-			$user_result = $db->query($user_sql);
+				$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+				$mysql['user_timezone'] = $db->real_escape_string($_POST['user_timezone']);
+				$mysql['user_daily_email'] = $db->real_escape_string($_POST['user_daily_email']);
+				$mysql['cache_time'] = $db->real_escape_string($_POST['user_cached_reports']);
+				$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string($_POST['user_keyword_searched_or_bidded']);
+				$mysql['user_referer'] = $db->real_escape_string($_POST['user_referer']);
+				$mysql['cloak_referer'] = $db->real_escape_string($_POST['cloak_referer']);
+				$mysql['user_pref_dynamic_bid'] = $db->real_escape_string($_POST['user_bid']);
+				$mysql['user_tracking_domain'] = $db->real_escape_string($_POST['user_tracking_domain']);
+				
+				$user_sql = "
+					UPDATE
+						`202_users` 
+					SET
+						`user_email`='".$mysql['user_email']."',
+						`user_timezone`='".$mysql['user_timezone']."'
+					WHERE
+						`user_id`='".$mysql['user_id']."'
+				";
+				$user_result = $db->query($user_sql);
 
-			$user_sql = "
-				UPDATE
-					`202_users_pref`
-				SET
-					`user_keyword_searched_or_bidded`='".$mysql['user_keyword_searched_or_bidded']."',
-					`user_tracking_domain`='".$mysql['user_tracking_domain']."',
-					`cache_time`='".$mysql['cache_time']."',
-					`user_daily_email`='".$mysql['user_daily_email']."'
-				WHERE
-					`user_id`='".$mysql['user_id']."'
-			";
-			$user_result = $db->query($user_sql);
-			$html['cache_time'] = $mysql['cache_time'];
+				$user_sql = "
+					UPDATE
+						`202_users_pref`
+					SET
+						`user_keyword_searched_or_bidded`='".$mysql['user_keyword_searched_or_bidded']."',
+						`user_pref_referer_data`='".$mysql['user_referer']."',
+						`user_tracking_domain`='".$mysql['user_tracking_domain']."',
+						`cache_time`='".$mysql['cache_time']."',
+						`user_pref_cloak_referer`='".$mysql['cloak_referer']."',
+						`user_pref_dynamic_bid`='".$mysql['user_pref_dynamic_bid']."',    
+						`user_daily_email`='".$mysql['user_daily_email']."'
+					WHERE
+						`user_id`='".$mysql['user_id']."'
+				";	
+			
+					
+				$user_result = $db->query($user_sql);
+				$html['cache_time'] = $mysql['cache_time'];
 
-			$update_profile = true;
+				$update_profile = true;
 
-			registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $html['install_hash']);
+				registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $html['install_hash']);
+				
+				//set the  session's user_timezone
+				$_SESSION['user_timezone'] = $_POST['user_timezone'];
 
-			//set the  session's user_timezone
-			$_SESSION['user_timezone'] = $_POST['user_timezone'];
+				if ($slack) {
+					if ($_POST['user_timezone'] != $user_row['user_timezone']) {
+						$slack->push('user_time_zone_changed', array('user' => $username, 'old_zone' => $user_row['user_timezone'], 'new_zone' => $_POST['user_timezone']));
+					}
+
+					if ($_POST['user_cached_reports'] != $user_row['cache_time']) {
+						$slack->push('user_cache_time_changed', array('user' => $username, 'old_time' => $user_row['cache_time'], 'new_time' => $_POST['user_cached_reports']));
+					}
+
+					if ($_POST['user_keyword_searched_or_bidded'] != $user_row['user_keyword_searched_or_bidded']) {
+						
+						if ($user_row['user_keyword_searched_or_bidded'] == 'bidded') {
+							$from_type = 'Pickup Bidded Keyword';
+						} else {
+							$from_type = 'Pickup Searched Keyword';
+						}
+
+						if ($_POST['user_referer'] == 't202ref') {
+							$to_type = 'Pickup Bidded Keyword';
+						} else {
+							$to_type = 'Pickup Searched Keyword';
+						}
+
+						$slack->push('user_keyword_preference_changed', array('user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type));
+					}
+
+					if ($_POST['user_referer'] != $user_row['user_pref_referer_data']) {
+						
+						if ($user_row['user_pref_referer_data'] == 't202ref') {
+							$from_type = 'Pickup Referer from t202ref variable';
+						} else {
+							$from_type = 'Pickup Referer from browser';
+						}
+
+						if ($_POST['user_referer'] == 't202ref') {
+							$to_type = 'Pickup Referer from t202ref variable';
+						} else {
+							$to_type = 'Pickup Referer from browser';
+						}
+
+						$slack->push('user_referer_changed', array('user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type));
+					}
+
+					if ($_POST['cloak_referer'] != $user_row['user_pref_cloak_referer']) {
+						
+						if ($user_row['user_pref_cloak_referer'] == 'origin') {
+							$from_type = 'Show Prosper202 Domain';
+						} else {
+							$from_type = 'Show Blank Referer';
+						}
+
+						if ($_POST['user_referer'] == 'origin') {
+							$tom_type = 'Show Prosper202 Domain';
+						} else {
+							$to_type = 'Show Blank Referer';
+						}
+
+						$slack->push('user_pref_cloak_referer_changed', array('user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type));
+					}
+
+					if ($_POST['user_email'] != $user_row['user_email']) {
+							$slack->push('user_email_changed', array('user' => $username, 'old_email' => $user_row['user_email'], 'new_email' => $_POST['user_email']));
+					}
+				}
+
+			}
+		} else {
+			if (!$error['user_email_invalid']) {
+				$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
+				$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+				$count_sql = "	SELECT 	*
+							  	FROM  		`202_users` 
+							  	WHERE 	`user_email` = '" . $mysql['user_email'] ."' 
+							  	AND   		`user_id`!='".$mysql['user_id']."'";
+				$count_result = $db->query($count_sql);
+				if ($count_result->num_rows > 0) {
+					$error['user_email'] .= 'That email address is already being used.';
+				}
+
+				if (!$error) {
+					$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+					$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
+					$sql = "UPDATE 202_users SET user_email = '".$mysql['user_email']."' WHERE user_id = '".$mysql['user_id']."'";
+					$result = $db->query($sql);
+					$update_profile = true;
+
+					if ($slack)
+						$slack->push('user_email_changed', array('user' => $username, 'old_email' => $user_row['user_email'], 'new_email' => $_POST['user_email']));
+				}
+			}
 		}
 	}
 
@@ -139,9 +278,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($_POST['token'] != $_SESSION['token']) { $error['token'] = 'You must use our forms to submit data.';  }
 
 		if (!preg_match('/\*/', $_POST['clickserver_api_key'])) {
-			if (!clickserver_api_key_validate($_POST['clickserver_api_key'])) { $error['clickserver_api_key'] = 'This API Key appears invalid.'; }
+			if (!clickserver_api_key_validate($_POST['clickserver_api_key']) && $mysql['clickserver_api_key'] !='') { $error['clickserver_api_key'] = 'This API Key appears invalid.'; }
 
-			if (!$error) {
+			if (!$error || $mysql['clickserver_api_key'] =='') {
 					
 				$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 				$mysql['clickserver_api_key'] = $db->real_escape_string($_POST['clickserver_api_key']);
@@ -151,6 +290,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$user_result = $db->query($user_sql);
 
 				$update_clickserver_api_key_done = true;
+
+				if($slack) {
+					if ($_POST['clickserver_api_key'] != $user_row['clickserver_api_key']) {
+						$slack->push('user_updated_clickserver_api_key', array('user' => $username));
+					}
+				}
 					
 			}
 		}
@@ -213,7 +358,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		//check to to see if old user_pass is correct
 		$user_pass = salt_user_pass($_POST['user_pass']);		
 		$mysql['user_pass'] = $db->real_escape_string($user_pass);
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
 
 		$user_sql = "	SELECT 	*
 					FROM   		`202_users`
@@ -228,7 +373,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			$user_pass = salt_user_pass($_POST['new_user_pass']);
 			$mysql['user_pass'] = $db->real_escape_string($user_pass);
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
 
 			$user_sql = "	UPDATE 	`202_users`
 							SET    		`user_pass`='".$mysql['user_pass']."'
@@ -259,6 +404,14 @@ $strProtocol = 'https://';
 $strProtocol = 'http://';
 }
 
+//update new values from the db
+$user_sql = "	SELECT 	*
+				 FROM   	`202_users`
+				 LEFT JOIN	`202_users_pref` USING (user_id)
+				 WHERE  	`202_users`.`user_id`='".$mysql['user_id']."'";
+$user_result = $db->query($user_sql);
+$user_row = $user_result->fetch_assoc();
+$html = array_map('htmlentities', $user_row);
 ?>
  
 <div class="row account">
@@ -302,6 +455,7 @@ $strProtocol = 'http://';
 			<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
 			<input type="hidden" name="update_profile" value="1" />
 			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+				<?php if($userObj->hasPermission("access_to_personal_settings")) { ?>
 				<div class="form-group">
 				    <label for="user_timezone" class="col-xs-4 control-label">* Time zone (GMT):</label>
 				    <div class="col-xs-8">
@@ -346,36 +500,36 @@ $strProtocol = 'http://';
 				    <div class="col-xs-8">
 				      <select class="form-control input-sm" id="user_daily_email" name="user_daily_email">
 				        <option value="" <?php if ($html['user_daily_email'] == '') echo 'selected';?>>Never</option>
-						<option value="00" <?php if ($html['user_daily_email'] == '00') echo 'selected';?>>12AM</option>
-						<option value="01" <?php if ($html['user_daily_email'] == '01') echo 'selected';?>>1AM</option>
-						<option value="02" <?php if ($html['user_daily_email'] == '02') echo 'selected';?>>2AM</option>
-						<option value="03" <?php if ($html['user_daily_email'] == '03') echo 'selected';?>>3AM</option>
-						<option value="04" <?php if ($html['user_daily_email'] == '04') echo 'selected';?>>4AM</option>
-						<option value="05" <?php if ($html['user_daily_email'] == '05') echo 'selected';?>>5AM</option>
-						<option value="06" <?php if ($html['user_daily_email'] == '06') echo 'selected';?>>6AM</option>
-						<option value="07" <?php if ($html['user_daily_email'] == '07') echo 'selected';?>>7AM</option>
-						<option value="08" <?php if ($html['user_daily_email'] == '08') echo 'selected';?>>8AM</option>
-						<option value="09" <?php if ($html['user_daily_email'] == '09') echo 'selected';?>>9AM</option>
-						<option value="10" <?php if ($html['user_daily_email'] == '10') echo 'selected';?>>10AM</option>
-						<option value="11" <?php if ($html['user_daily_email'] == '11') echo 'selected';?>>11AM</option>
-						<option value="12" <?php if ($html['user_daily_email'] == '12') echo 'selected';?>>12PM</option>
-						<option value="13" <?php if ($html['user_daily_email'] == '13') echo 'selected';?>>13PM</option>
-						<option value="14" <?php if ($html['user_daily_email'] == '14') echo 'selected';?>>14PM</option>
-						<option value="15" <?php if ($html['user_daily_email'] == '15') echo 'selected';?>>15PM</option>
-						<option value="16" <?php if ($html['user_daily_email'] == '16') echo 'selected';?>>16PM</option>
-						<option value="17" <?php if ($html['user_daily_email'] == '17') echo 'selected';?>>17PM</option>
-						<option value="18" <?php if ($html['user_daily_email'] == '18') echo 'selected';?>>18PM</option>
-						<option value="19" <?php if ($html['user_daily_email'] == '19') echo 'selected';?>>19PM</option>
-						<option value="20" <?php if ($html['user_daily_email'] == '20') echo 'selected';?>>20PM</option>
-						<option value="21" <?php if ($html['user_daily_email'] == '21') echo 'selected';?>>21PM</option>
-						<option value="22" <?php if ($html['user_daily_email'] == '22') echo 'selected';?>>22PM</option>
-						<option value="23" <?php if ($html['user_daily_email'] == '23') echo 'selected';?>>23PM</option>
+						<option value="00" <?php if ($html['user_daily_email'] == '00') echo 'selected';?>>12 AM</option>
+						<option value="01" <?php if ($html['user_daily_email'] == '01') echo 'selected';?>>1  AM</option>
+						<option value="02" <?php if ($html['user_daily_email'] == '02') echo 'selected';?>>2  AM</option>
+						<option value="03" <?php if ($html['user_daily_email'] == '03') echo 'selected';?>>3  AM</option>
+						<option value="04" <?php if ($html['user_daily_email'] == '04') echo 'selected';?>>4  AM</option>
+						<option value="05" <?php if ($html['user_daily_email'] == '05') echo 'selected';?>>5 AM</option>
+						<option value="06" <?php if ($html['user_daily_email'] == '06') echo 'selected';?>>6 AM</option>
+						<option value="07" <?php if ($html['user_daily_email'] == '07') echo 'selected';?>>7 AM</option>
+						<option value="08" <?php if ($html['user_daily_email'] == '08') echo 'selected';?>>8 AM</option>
+						<option value="09" <?php if ($html['user_daily_email'] == '09') echo 'selected';?>>9 AM</option>
+						<option value="10" <?php if ($html['user_daily_email'] == '10') echo 'selected';?>>10 AM</option>
+						<option value="11" <?php if ($html['user_daily_email'] == '11') echo 'selected';?>>11 AM</option>
+						<option value="12" <?php if ($html['user_daily_email'] == '12') echo 'selected';?>>12 PM</option>
+						<option value="13" <?php if ($html['user_daily_email'] == '13') echo 'selected';?>>1 PM</option>
+						<option value="14" <?php if ($html['user_daily_email'] == '14') echo 'selected';?>>2 PM</option>
+						<option value="15" <?php if ($html['user_daily_email'] == '15') echo 'selected';?>>3 PM</option>
+						<option value="16" <?php if ($html['user_daily_email'] == '16') echo 'selected';?>>4 PM</option>
+						<option value="17" <?php if ($html['user_daily_email'] == '17') echo 'selected';?>>5 PM</option>
+						<option value="18" <?php if ($html['user_daily_email'] == '18') echo 'selected';?>>6 PM</option>
+						<option value="19" <?php if ($html['user_daily_email'] == '19') echo 'selected';?>>7 PM</option>
+						<option value="20" <?php if ($html['user_daily_email'] == '20') echo 'selected';?>>8 PM</option>
+						<option value="21" <?php if ($html['user_daily_email'] == '21') echo 'selected';?>>9 PM</option>
+						<option value="22" <?php if ($html['user_daily_email'] == '22') echo 'selected';?>>10 PM</option>
+						<option value="23" <?php if ($html['user_daily_email'] == '23') echo 'selected';?>>11 PM</option>
 					  </select>
 				    </div>
 				</div>
-				
+
 				<div class="form-group">
-				    <label for="user_cached_reports" class="col-xs-4 control-label">Cache reports every: <span class="fui-info" style="font-size: 12px;" data-toggle="tooltip" title="If you have memcache installed and working, it will cache reports for fast output. Select how often stats will be cached and updated!"></span></label>
+				    <label for="user_cached_reports" class="col-xs-4 control-label">Cache reports every: <span class="fui-info-circle" style="font-size: 12px;" data-toggle="tooltip" title="If you have memcache installed and working, it will cache reports for fast output. Select how often stats will be cached and updated!"></span></label>
 				    <div class="col-xs-8">
 				      <select class="form-control input-sm" id="user_cached_reports" name="user_cached_reports" <?php if (!$memcacheWorking) echo "disabled";?>>
 						<option
@@ -419,6 +573,46 @@ $strProtocol = 'http://';
 						</select>
 				    </div>
 				</div>
+				
+				<div class="form-group">
+				    <label for="user_dataengine_reports" class="col-xs-4 control-label">Generate reports every: <span class="fui-info-circle" style="font-size: 12px;" data-toggle="tooltip" title="How should the DataEngine generate reports? The more frequent you run this, the more fresh your reports are. However it will add extra load to your servers"></span></label>
+				    <div class="col-xs-8">
+				      <select class="form-control input-sm" id="user_dataengine_reports" name="user_dataengine_reports" >
+						
+						<option
+							<?php if ($html['cache_time'] == '60') { echo 'selected=""'; } ?>
+								value="60">1 minute</option>
+						
+						<option
+							<?php if ($html['cache_time'] == '300') { echo 'selected=""'; } ?>
+								value="300">5 minutes</option>
+								
+								<option
+							<?php if ($html['cache_time'] == '600') { echo 'selected=""'; } ?>
+								value="300">10 minutes</option>
+							<?php
+								$min_min = 20;
+								$max_min = 55;
+
+								do {
+									$sec = $min_min*60;
+									if ($html['cache_time'] == $sec){
+										echo '<option value="'.$sec.'" selected="">'.$min_min.' minutes</option>';
+									} else {
+										echo '<option value="'.$sec.'">'.$min_min.' minutes</option>';
+									}
+
+									$min_min = $min_min + 10;
+
+								} while ($min_min <= $max_min);
+
+							?>
+							<option
+							<?php if ($html['cache_time'] == '3600') { echo 'selected=""'; } ?>
+								value="3600">1 hour</option>
+						</select>
+				    </div>
+				</div>				
 
 				<div class="form-group">
 				    <label for="user_keyword_searched_or_bidded" class="col-xs-4 control-label">* Keyword Preference:</label>
@@ -433,7 +627,46 @@ $strProtocol = 'http://';
 						</select>
 					</div>
 				</div>
-
+				<div class="form-group">
+				    <label for="user_referer" class="col-xs-4 control-label">* Cost Data Preference:</label>
+				    <div class="col-xs-8">
+				    	<select class="form-control input-sm" name="user_bid" id="user_bid">
+							<option
+							<?php if ($html['user_pref_dynamic_bid'] == '0') { echo 'selected=""'; } ?>
+								value="0">Pickup Bid from setup data</option>
+							<option
+							<?php if ($html['user_pref_dynamic_bid'] == '1') { echo 'selected=""'; } ?>
+								value="1">Pickup Bid dynamically from t202b variable</option>
+						</select>
+					</div>
+				</div>
+				<div class="form-group">
+				    <label for="user_referer" class="col-xs-4 control-label">* Referer Preference:</label>
+				    <div class="col-xs-8">
+				    	<select class="form-control input-sm" name="user_referer" id="user_referer">
+							<option
+							<?php if ($html['user_pref_referer_data'] == 'browser') { echo 'selected=""'; } ?>
+								value="browser">Pickup Referer from browser</option>
+							<option
+							<?php if ($html['user_pref_referer_data'] == 't202ref') { echo 'selected=""'; } ?>
+								value="t202ref">Pickup Referer from t202ref variable</option>
+						</select>
+					</div>
+				</div>
+				<div class="form-group">
+				    <label for="cloak_referer" class="col-xs-4 control-label">* Cloaked Referer:</label>
+				    <div class="col-xs-8">
+				    	<select class="form-control input-sm" name="cloak_referer" id="cloak_referer">
+							<option
+							<?php if ($html['user_pref_cloak_referer'] == 'origin') { echo 'selected=""'; } ?>
+								value="origin">Show Prosper202 Domain</option>
+							<option
+							<?php if ($html['user_pref_cloak_referer'] == 'never') { echo 'selected=""'; } ?>
+								value="never">Show Blank Referer</option>
+						</select>
+					</div>
+				</div>
+				<?php } ?>
 				<div class="form-group <?php if($error['user_email']) echo "has-error";?>">
 				    <label for="user_email" class="col-xs-4 control-label">* Email: 
 				    	<?php if($error['user_email']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_email']; ?>"></span> <?php } ?>
@@ -443,10 +676,14 @@ $strProtocol = 'http://';
 					</div>
 				</div>
 
-			
-				    	<input type="hidden" class="form-control input-sm" id="user_tracking_domain" name="user_tracking_domain" value="<?php echo $html['user_tracking_domain']; ?>">
-				
-
+				<?php if($userObj->hasPermission("access_to_personal_settings")) { ?>
+				<div class="form-group">
+				    <label for="user_tracking_domain" class="col-xs-4 control-label">Tracking Domain:</label>
+				    <div class="col-xs-8">
+				    	<input type="text" class="form-control input-sm" id="user_tracking_domain" name="user_tracking_domain" value="<?php echo $html['user_tracking_domain']; ?>">
+					</div>
+				</div>
+				<?php } ?>
 				<div class="form-group">
 				    <div class="col-xs-8 col-xs-offset-4">
 						<button class="btn btn-md btn-p202 btn-block" type="submit">Update profile</button>					
@@ -461,9 +698,10 @@ $strProtocol = 'http://';
 	<div class="col-xs-12"></div>
 </div>
 
+<?php if($userObj->hasPermission("access_to_personal_settings")) { ?>
 <div class="row account">
 	<div class="col-xs-12">
-		<h6>Prosper202 App API keys (Optional)</h6>
+		<h6>Prosper202 App API keys</h6>
 	</div>
 	<div class="col-xs-4">
 		<div class="panel panel-default account_left">
@@ -503,7 +741,40 @@ $strProtocol = 'http://';
 <div class="row form_seperator">
 	<div class="col-xs-12"></div>
 </div>
+<!-- 
+<div class="row account">
+	<div class="col-xs-12">
+		<h6>Prosper202 ClickServer API Key</h6>
+	</div>
+	<div class="col-xs-4">
+		<div class="panel panel-default account_left">
+			<div class="panel-body">
+			    Update your Prosper202 ClickServer API Key. Warning: NEVER share your Prosper202 ClickServer API key with anyone!
+			</div>
+		</div>
+	</div>
+	<div class="col-xs-8">
+		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
+		<input type="hidden" name="update_clickserver_api_key" value="1" />
+		<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+			<div class="form-group <?php if($error['clickserver_api_key']) echo "has-error";?>">
+				<label for="clickserver_api_key" class="col-xs-4 control-label">My ClickServer API Key:
+					<?php if($error['clickserver_api_key']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['clickserver_api_key']; ?>"></span> <?php } ?>
+				</label>
+				<div class="col-xs-8">
+					<input type="text" class="form-control input-sm" id="clickserver_api_key" name="clickserver_api_key" value="<?php echo $html['clickserver_api_key']; ?>">
+				</div>
+			</div>
 
+			<div class="form-group">
+				<div class="col-xs-8 col-xs-offset-4">
+					<button class="btn btn-md btn-p202 btn-block" type="submit">Update API Key</button>					
+				</div>
+			</div>
+		</form>
+	</div>
+</div>
+ -->
 <div class="row form_seperator">
 	<div class="col-xs-12"></div>
 </div>
@@ -512,6 +783,7 @@ $strProtocol = 'http://';
 <div class="row form_seperator">
 	<div class="col-xs-12"></div>
 </div>
+<?php } ?>
 
 <div class="row account">
 	<div class="col-xs-12">

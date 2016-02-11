@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php'); 
 
 //run script   
 $mysql['click_id_public'] = $db->real_escape_string($_GET['pci']);
@@ -8,11 +8,13 @@ $mysql['202vars'] = base64_decode($db->real_escape_string($_GET['202vars']));
 $tracker_sql = "
 	SELECT
 		aff_campaign_name,
-		site_url_address
+		site_url_address,
+		user_pref_cloak_referer
 	FROM
-		202_clicks, 202_clicks_record, 202_clicks_site, 202_site_urls, 202_aff_campaigns
+		202_clicks, 202_clicks_record, 202_clicks_site, 202_site_urls, 202_aff_campaigns,202_users_pref
 	WHERE
 		202_clicks.aff_campaign_id = 202_aff_campaigns.aff_campaign_id
+		AND 202_users_pref.user_id = 1
 		AND 202_clicks.click_id = 202_clicks_record.click_id
 		AND 202_clicks_record.click_id_public='".$mysql['click_id_public']."'
 		AND 202_clicks_record.click_id = 202_clicks_site.click_id 
@@ -20,6 +22,7 @@ $tracker_sql = "
 ";
 
 $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+$referrer = $tracker_row['user_pref_cloak_referer'];
 
 if (!$tracker_row) {
 	$action_site_url = "/202-404.php";
@@ -57,12 +60,14 @@ if(isset($mysql['202vars'])&&$mysql['202vars']!=''){
 	<head>
 		<title><?php echo $html['aff_campaign_name']; ?></title>
 		<meta name="robots" content="noindex">
+		<meta name="referrer" content="<?php echo $referrer; ?>">
 		<meta http-equiv="refresh" content="0; url=<?php echo $redirect_site_url; ?>">
 	</head>
 	<body>
 	
 		<form name="form1" id="form1" method="get" action="<?php echo $action_site_url; ?>">
 			<input type="hidden" name="q" value="<?php echo $redirect_site_url; ?>"/>
+			<input type="hidden" name="r" value="<?php echo $referrer; ?>"/>
 		</form>
 		<script type="text/javascript">
 			document.form1.submit();

@@ -1,4 +1,5 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
 
 $mysql['click_id_public'] = $db->real_escape_string($_GET['pci']);
 
@@ -28,7 +29,7 @@ $mysql['click_out'] = '1';
 $click_sql = "UPDATE    202_clicks_record
 			  SET       click_out='".$mysql['click_out']."'
 			  WHERE     click_id='".$mysql['click_id']."'";
-delay_sql($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 
 
 //see if cloaking was turned on
@@ -49,6 +50,10 @@ if ($click_row['click_cloaking'] == 1) {
 
 //set the cookie
 setClickIdCookie($mysql['click_id'],$mysql['aff_campaign_id']);
+
+//set dirty hour
+$de = new DataEngine();
+$data=($de->setDirtyHour($mysql['click_id']));
 	
 //now we've updated, lets redirect
 if ($cloaking_on == true) {

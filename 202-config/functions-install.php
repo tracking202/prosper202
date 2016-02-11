@@ -1,4 +1,5 @@
 <?php
+include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
 
 class INSTALL {
 
@@ -8,6 +9,20 @@ class INSTALL {
     	$db = $database->getConnection();
 
 		$php_version = PROSPER202::php_version();
+
+		//Try to disable mysql strict mode
+		$sql = "SET @@global.sql_mode= ''";
+		$result = _mysqli_query($sql);
+		
+		$partition_start = time();
+		$partition_end = strtotime('+3 years', $partition_start);
+
+		$sql = "SELECT PLUGIN_NAME as Name, PLUGIN_STATUS as Status FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_TYPE='STORAGE ENGINE' AND PLUGIN_NAME='partition' AND PLUGIN_STATUS='ACTIVE'";
+        $result = _mysqli_query($sql);
+        
+        if ($result->num_rows != 1) {
+            $mysql_partitioning_fail = 1;
+        }
 
 		//create the new mysql version table
 		$sql = "CREATE TABLE IF NOT EXISTS `202_version` (
@@ -65,71 +80,84 @@ class INSTALL {
 
 		//create users table
 		$sql = "CREATE TABLE IF NOT EXISTS `202_users` (
-  `user_id` mediumint(8) unsigned NOT NULL auto_increment,
-  `user_name` varchar(50) NOT NULL,
-  `user_pass` char(32) NOT NULL,
-  `user_email` varchar(100) NOT NULL,
-  `user_timezone` varchar(50) NOT NULL default 'Pacific/Pitcairn',
-  `user_time_register` int(10) unsigned NOT NULL,
-  `user_pass_key` varchar(255) NOT NULL,
-  `user_pass_time` int(10) unsigned NOT NULL,
-  `user_api_key` varchar(255) NOT NULL,
-  `user_stats202_app_key` varchar(255) NOT NULL,
-  `user_last_login_ip_id` bigint(20) unsigned NOT NULL,
-  `clickserver_api_key` varchar(255) NOT NULL,
-  `install_hash` varchar(255) NOT NULL,
-  `user_hash` varchar(255) NOT NULL,
-  `modal_status` int(1) NOT NULL,
-  `vip_perks_status` int(1) NOT NULL,
-  PRIMARY KEY  (`user_id`),
-  KEY `user_name` (`user_name`,`user_pass`),
-  KEY `user_pass_key` (`user_pass_key`(5)),
-  KEY `user_last_login_ip_id` (`user_last_login_ip_id`)
-) ENGINE=InnoDB  ;
-";
+          `user_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+          `user_fname` varchar(50) DEFAULT NULL,
+          `user_lname` varchar(50) DEFAULT NULL,
+          `user_name` varchar(50) NOT NULL,
+          `user_pass` char(32) NOT NULL,
+          `user_email` varchar(100) NOT NULL,
+          `user_timezone` varchar(50) NOT NULL DEFAULT 'America/Los_Angeles',
+          `user_time_register` int(10) unsigned NOT NULL,
+          `user_pass_key` varchar(255) DEFAULT NULL,
+          `user_pass_time` int(10) unsigned DEFAULT NULL,
+          `user_api_key` varchar(255) DEFAULT NULL,
+          `user_stats202_app_key` varchar(255) DEFAULT NULL,
+          `user_last_login_ip_id` bigint(20) unsigned DEFAULT NULL,
+          `clickserver_api_key` varchar(255) DEFAULT NULL,
+          `install_hash` varchar(255) NOT NULL,
+          `user_hash` varchar(255) NOT NULL,
+          `modal_status` int(1) DEFAULT NULL,
+          `vip_perks_status` int(1) DEFAULT NULL,
+          `user_active` int(1) NOT NULL DEFAULT '1',
+          `user_deleted` int(1) NOT NULL DEFAULT '0',
+		  `secret_key` char(48) DEFAULT NULL,
+          `user_mods_lb` tinyint(1) unsigned NOT NULL DEFAULT '0',		    
+	       PRIMARY KEY (`user_id`),
+		   UNIQUE KEY `user_name_2` (`user_name`),
+		   KEY `user_name` (`user_name`,`user_pass`),
+		   KEY `user_pass_key` (`user_pass_key`(5)),
+		   KEY `user_last_login_ip_id` (`user_last_login_ip_id`)
+           ) ENGINE=InnoDB  ;
+        ";  
 		$result = _mysqli_query($sql);
 
-		//create users table
+		//create user prefs table
 		$sql = "CREATE TABLE IF NOT EXISTS `202_users_pref` (
   `user_id` mediumint(8) unsigned NOT NULL,
   `user_pref_limit` tinyint(3) unsigned NOT NULL DEFAULT '50',
-  `user_pref_show` varchar(25) NOT NULL,
-  `user_pref_time_from` int(10) unsigned NOT NULL,
-  `user_pref_time_to` int(10) unsigned NOT NULL,
+  `user_pref_show` varchar(25) DEFAULT NULL,
+  `user_pref_time_from` int(10) unsigned DEFAULT NULL,
+  `user_pref_time_to` int(10) unsigned DEFAULT NULL,
   `user_pref_time_predefined` varchar(25) NOT NULL DEFAULT 'today',
-  `user_pref_adv` tinyint(1) NOT NULL,
-  `user_pref_ppc_network_id` mediumint(8) unsigned NOT NULL,
-  `user_pref_ppc_account_id` mediumint(8) unsigned NOT NULL,
-  `user_pref_aff_network_id` mediumint(8) unsigned NOT NULL,
-  `user_pref_aff_campaign_id` mediumint(8) unsigned NOT NULL,
-  `user_pref_text_ad_id` mediumint(8) unsigned NOT NULL,
-  `user_pref_method_of_promotion` varchar(25) NOT NULL,
-  `user_pref_landing_page_id` mediumint(8) unsigned NOT NULL,
-  `user_pref_country_id` tinyint(3) unsigned NOT NULL,
-  `user_pref_region_id` tinyint(3) unsigned NOT NULL,
-  `user_pref_device_id` tinyint(3) unsigned NOT NULL,
-  `user_pref_browser_id` tinyint(3) unsigned NOT NULL,
-  `user_pref_platform_id` tinyint(3) unsigned NOT NULL,
-  `user_pref_isp_id` tinyint(3) unsigned NOT NULL,
-  `user_pref_ip` varchar(100) NOT NULL,
-  `user_pref_referer` varchar(100) NOT NULL,
-  `user_pref_keyword` varchar(100) NOT NULL,
+  `user_pref_adv` tinyint(1) DEFAULT NULL,
+  `user_pref_ppc_network_id` mediumint(8) unsigned DEFAULT NULL,
+  `user_pref_ppc_account_id` mediumint(8) unsigned DEFAULT NULL,
+  `user_pref_aff_network_id` mediumint(8) unsigned DEFAULT NULL,
+  `user_pref_aff_campaign_id` mediumint(8) unsigned DEFAULT NULL,
+  `user_pref_text_ad_id` mediumint(8) unsigned DEFAULT NULL,
+  `user_pref_method_of_promotion` varchar(25) DEFAULT NULL,
+  `user_pref_landing_page_id` mediumint(8) unsigned DEFAULT NULL,
+  `user_pref_country_id` tinyint(3) unsigned DEFAULT NULL,
+  `user_pref_region_id` tinyint(3) unsigned DEFAULT NULL,
+  `user_pref_device_id` tinyint(3) unsigned DEFAULT NULL,
+  `user_pref_browser_id` tinyint(3) unsigned DEFAULT NULL,
+  `user_pref_platform_id` tinyint(3) unsigned DEFAULT NULL,
+  `user_pref_isp_id` tinyint(3) unsigned DEFAULT NULL,
+  `user_pref_ip` varchar(100) DEFAULT NULL,
+  `user_pref_dynamic_bid` tinyint(1) NOT NULL DEFAULT '0',
+  `user_pref_referer` varchar(100) DEFAULT NULL,
+  `user_pref_keyword` varchar(100) DEFAULT NULL,
   `user_pref_breakdown` varchar(100) NOT NULL DEFAULT 'day',
   `user_pref_chart` varchar(255) NOT NULL DEFAULT 'net',
   `user_cpc_or_cpv` char(3) NOT NULL DEFAULT 'cpc',
   `user_keyword_searched_or_bidded` varchar(255) NOT NULL DEFAULT 'searched',
+  `user_pref_referer_data` varchar(10) NOT NULL DEFAULT 'browser',
   `user_tracking_domain` varchar(255) NOT NULL DEFAULT '',
-  `user_pref_group_2` tinyint(3) NOT NULL,
-  `user_pref_group_3` tinyint(3) NOT NULL,
-  `user_pref_group_4` tinyint(3) NOT NULL,
-  `user_pref_group_1` tinyint(3) NOT NULL,
-  `cache_time` VARCHAR(4) NOT NULL DEFAULT '0',
-  `cb_key` VARCHAR(250) NOT NULL,
-  `cb_verified` tinyint(1) NOT NULL default '0',
-  `maxmind_isp` tinyint(1) NOT NULL default '0',
+  `user_pref_group_2` tinyint(3) DEFAULT NULL,
+  `user_pref_group_3` tinyint(3) DEFAULT NULL,
+  `user_pref_group_4` tinyint(3) DEFAULT NULL,
+  `user_pref_group_1` tinyint(3) DEFAULT NULL,
+  `cache_time` varchar(4) NOT NULL DEFAULT '0',
+  `cb_key` varchar(250) DEFAULT NULL,
+  `cb_verified` tinyint(1) NOT NULL DEFAULT '0',
+  `maxmind_isp` tinyint(1) NOT NULL DEFAULT '0',
+  `chart_time_range` char(10) DEFAULT 'days',
+  `user_slack_incoming_webhook` text DEFAULT NULL,
+  `user_pref_cloak_referer` varchar(11) DEFAULT 'origin',
+  `auto_cron` tinyint(1) NOT NULL DEFAULT '0',
   `user_daily_email` char(2) NOT NULL DEFAULT '07',
   PRIMARY KEY (`user_id`)
-) ENGINE=InnoDB ;
+) ENGINE=InnoDB;
 ";
 		$result = _mysqli_query($sql);
 
@@ -145,41 +173,123 @@ class INSTALL {
 		";
 		$result = _mysqli_query($sql);
 
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_clicks_tracking` PARTITION BY RANGE (click_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
+
+		$sql = "CREATE TABLE `202_conversion_logs` (
+		  `conv_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+		  `click_id` bigint(20) unsigned NOT NULL,
+		  `campaign_id` mediumint(8) unsigned NOT NULL,
+		  `user_id` mediumint(8) unsigned NOT NULL,
+		  `click_time` int(10) NOT NULL,
+		  `conv_time` int(10) NOT NULL,
+		  `time_difference` text NOT NULL,
+		  `ip` varchar(15) NOT NULL DEFAULT '',
+		  `pixel_type` int(11) unsigned NOT NULL,
+		  `user_agent` text NOT NULL,
+		  PRIMARY KEY (`conv_id`),
+		  KEY `click_id` (`click_id`),
+		  KEY `user_id` (`user_id`),
+		  KEY `campaign_id` (`campaign_id`)
+		) ENGINE=InnoDB";
+		$result = _mysqli_query($sql);
+
 		//create c1 table
 		$sql = "CREATE TABLE IF NOT EXISTS `202_tracking_c1` (
 		  `c1_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-		  `c1` varchar(50) NOT NULL,
-		  PRIMARY KEY (`c1_id`)
+		  `c1` varchar(350) NOT NULL,
+		  PRIMARY KEY (`c1_id`),
+		  KEY `c1` (`c1`) KEY_BLOCK_SIZE=350
 		) ENGINE=InnoDB AUTO_INCREMENT=1 ;
 		";
 		$result = _mysqli_query($sql);
+
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_tracking_c1` PARTITION BY RANGE (c1_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
 
 		//create c2 table
 		$sql = "CREATE TABLE IF NOT EXISTS `202_tracking_c2` (
 		  `c2_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-		  `c2` varchar(50) NOT NULL,
-		  PRIMARY KEY (`c2_id`)
+		  `c2` varchar(350) NOT NULL,
+		  PRIMARY KEY (`c2_id`),
+		  KEY `c2` (`c2`) KEY_BLOCK_SIZE=350
 		) ENGINE=InnoDB AUTO_INCREMENT=1 ;
 		";
 		$result = _mysqli_query($sql);
+
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_tracking_c2` PARTITION BY RANGE (c2_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
 
 		//create c3 table
 		$sql = "CREATE TABLE IF NOT EXISTS `202_tracking_c3` (
 		  `c3_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-		  `c3` varchar(50) NOT NULL,
-		  PRIMARY KEY (`c3_id`)
+		  `c3` varchar(350) NOT NULL,
+		  PRIMARY KEY (`c3_id`),
+		  KEY `c3` (`c3`) KEY_BLOCK_SIZE=350
 		) ENGINE=InnoDB AUTO_INCREMENT=1 ;
 		";
 		$result = _mysqli_query($sql);
 
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_tracking_c3` PARTITION BY RANGE (c3_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
+
 		//create c4 table
 		$sql = "CREATE TABLE IF NOT EXISTS `202_tracking_c4` (
 		  `c4_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-		  `c4` varchar(50) NOT NULL,
-		  PRIMARY KEY (`c4_id`)
+		  `c4` varchar(350) NOT NULL,
+		  PRIMARY KEY (`c4_id`),
+		  KEY `c4` (`c4`) KEY_BLOCK_SIZE=350
 		) ENGINE=InnoDB AUTO_INCREMENT=1 ;
 		";
 		$result = _mysqli_query($sql);
+
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_tracking_c4` PARTITION BY RANGE (c4_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
 
 		//export202 - information schema
 
@@ -227,7 +337,7 @@ class INSTALL {
 				  `export_keyword_destination_url` varchar(255) NOT NULL,
 				  PRIMARY KEY (`export_keyword_id`),
 				  KEY `export_session_id` (`export_session_id`),
-				  KEY `export_campaign_id` (`export_campaign_id`),
+				  KEY `export_campaign_id` (`export_campaign_id`), 
 				  KEY `export_adgroup_id` (`export_adgroup_id`),
 				  KEY `export_keyword_match` (`export_keyword_match`)
 				) ENGINE=InnoDB   ;";
@@ -270,17 +380,17 @@ class INSTALL {
 
 		$sql ="CREATE TABLE IF NOT EXISTS `202_aff_campaigns` (
 				  `aff_campaign_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
-				  `aff_campaign_id_public` int(10) unsigned NOT NULL,
+				  `aff_campaign_id_public` int(10) unsigned DEFAULT NULL,
 				  `user_id` mediumint(8) unsigned NOT NULL,
 				  `aff_network_id` mediumint(8) unsigned NOT NULL,
 				  `aff_campaign_deleted` tinyint(1) NOT NULL DEFAULT '0',
 				  `aff_campaign_name` varchar(50) NOT NULL,
 				  `aff_campaign_url` text NOT NULL,
-				  `aff_campaign_url_2` text NOT NULL,
-				  `aff_campaign_url_3` text NOT NULL,
-				  `aff_campaign_url_4` text NOT NULL,
-				  `aff_campaign_url_5` text NOT NULL,
-				  `aff_campaign_payout` decimal(5,2) NOT NULL,
+				  `aff_campaign_url_2` text DEFAULT NULL,
+				  `aff_campaign_url_3` text DEFAULT NULL,
+				  `aff_campaign_url_4` text DEFAULT NULL,
+				  `aff_campaign_url_5` text DEFAULT NULL,
+				  `aff_campaign_payout` decimal(8,2) NOT NULL,
 				  `aff_campaign_cloaking` tinyint(1) NOT NULL DEFAULT '0',
 				  `aff_campaign_time` int(10) unsigned NOT NULL,
 				  `aff_campaign_rotate` tinyint(1) NOT NULL DEFAULT '0',
@@ -295,6 +405,7 @@ class INSTALL {
 
 		$sql ="CREATE TABLE IF NOT EXISTS `202_aff_networks` (
   `aff_network_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
+  `dni_network_id` mediumint(8) DEFAULT NULL,
   `user_id` mediumint(8) unsigned NOT NULL,
   `aff_network_name` varchar(50) NOT NULL,
   `aff_network_deleted` tinyint(1) NOT NULL DEFAULT '0',
@@ -302,7 +413,8 @@ class INSTALL {
   PRIMARY KEY (`aff_network_id`),
   KEY `user_id` (`user_id`),
   KEY `aff_network_deleted` (`aff_network_deleted`),
-  KEY `aff_network_name` (`aff_network_name`(5))
+  KEY `aff_network_name` (`aff_network_name`(5)),
+  KEY `dni_network_id` (`dni_network_id`)
 ) ENGINE=InnoDB  ;";
 		$result = _mysqli_query($sql);
 
@@ -313,11 +425,17 @@ class INSTALL {
 ) ENGINE=InnoDB  ;";
 		$result = _mysqli_query($sql);
 
-		$sql ="CREATE TABLE IF NOT EXISTS `202_charts` (
-  `chart_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
-  `chart_xml` mediumtext NOT NULL,
-  PRIMARY KEY (`chart_id`)
-) ENGINE=InnoDB  ;";
+		$sql ="CREATE TABLE `202_charts` (
+  `user_id` mediumint(8) unsigned NOT NULL,
+  `data` text NOT NULL,
+  `chart_time_range` varchar(255) NOT NULL DEFAULT '',
+  KEY `user_id` (`user_id`)
+) ENGINE=InnoDB;";
+		$result = _mysqli_query($sql);
+
+		$sql ="INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`)
+			   VALUES
+			   (1, 'a:3:{i:0;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:6:\"clicks\";}i:1;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:9:\"click_out\";}i:2;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:5:\"leads\";}}', 'days');";
 		$result = _mysqli_query($sql);
 
 		//this is partitioned from 2012-01-01 to 2014-12-31 for mysql 5.1 users
@@ -329,7 +447,7 @@ class INSTALL {
 		  `landing_page_id` mediumint(8) unsigned NOT NULL,
 		  `ppc_account_id` mediumint(8) unsigned NOT NULL,
 		  `click_cpc` decimal(7,5) NOT NULL,
-		  `click_payout` decimal(10,5) NOT NULL,
+		  `click_payout` decimal(11,5) NOT NULL,
 		  `click_lead` tinyint(1) NOT NULL DEFAULT '0',
 		  `click_filtered` tinyint(1) NOT NULL DEFAULT '0',
 		  `click_bot` tinyint(1) NOT NULL DEFAULT '0',
@@ -348,93 +466,24 @@ class INSTALL {
 		  KEY `landing_page_id` (`landing_page_id`),
 		  KEY `overview_index2` (`user_id`,`click_filtered`,`landing_page_id`,`aff_campaign_id`),
 		  KEY `rotator_id` (`rotator_id`)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8;";
+		) ENGINE=InnoDB";
 		$result = _mysqli_query($sql);
 
-		//run the alter table to setup partioning if they have mysql 5.1 or greater
-		$sql = "/*!50100 ALTER TABLE `202_clicks`
-					PARTITION BY RANGE (click_time) (
-					PARTITION p32 VALUES LESS THAN (1326578400) ENGINE = MyISAM,
-					PARTITION p33 VALUES LESS THAN (1327788000) ENGINE = MyISAM,
-					PARTITION p34 VALUES LESS THAN (1328997600) ENGINE = MyISAM,
-					PARTITION p35 VALUES LESS THAN (1330207200) ENGINE = MyISAM,
-					PARTITION p36 VALUES LESS THAN (1331416800) ENGINE = MyISAM,
-					PARTITION p37 VALUES LESS THAN (1332626400) ENGINE = MyISAM,
-					PARTITION p38 VALUES LESS THAN (1333832400) ENGINE = MyISAM,
-					PARTITION p39 VALUES LESS THAN (1335042000) ENGINE = MyISAM,
-					PARTITION p40 VALUES LESS THAN (1336251600) ENGINE = MyISAM,
-					PARTITION p41 VALUES LESS THAN (1337461200) ENGINE = MyISAM,
-					PARTITION p42 VALUES LESS THAN (1338670800) ENGINE = MyISAM,
-					PARTITION p43 VALUES LESS THAN (1339880400) ENGINE = MyISAM,
-					PARTITION p44 VALUES LESS THAN (1341090000) ENGINE = MyISAM,
-					PARTITION p45 VALUES LESS THAN (1342299600) ENGINE = MyISAM,
-					PARTITION p46 VALUES LESS THAN (1343509200) ENGINE = MyISAM,
-					PARTITION p47 VALUES LESS THAN (1344718800) ENGINE = MyISAM,
-					PARTITION p48 VALUES LESS THAN (1345928400) ENGINE = MyISAM,
-					PARTITION p49 VALUES LESS THAN (1347138000) ENGINE = MyISAM,
-					PARTITION p50 VALUES LESS THAN (1348347600) ENGINE = MyISAM,
-					PARTITION p51 VALUES LESS THAN (1349557200) ENGINE = MyISAM,
-					PARTITION p52 VALUES LESS THAN (1350766800) ENGINE = MyISAM,
-					PARTITION p53 VALUES LESS THAN (1351980000) ENGINE = MyISAM,
-					PARTITION p54 VALUES LESS THAN (1353189600) ENGINE = MyISAM,
-					PARTITION p55 VALUES LESS THAN (1354399200) ENGINE = MyISAM,
-					PARTITION p56 VALUES LESS THAN (1355608800) ENGINE = MyISAM,
-					PARTITION p57 VALUES LESS THAN (1356818400) ENGINE = MyISAM,
-					PARTITION p58 VALUES LESS THAN (1358028000) ENGINE = MyISAM,
-					PARTITION p59 VALUES LESS THAN (1359237600) ENGINE = MyISAM,
-					PARTITION p60 VALUES LESS THAN (1360447200) ENGINE = MyISAM,
-					PARTITION p70 VALUES LESS THAN (1361656800) ENGINE = MyISAM,
-					PARTITION p71 VALUES LESS THAN (1362866400) ENGINE = MyISAM,
-					PARTITION p72 VALUES LESS THAN (1364076000) ENGINE = MyISAM,
-					PARTITION p73 VALUES LESS THAN (1365282000) ENGINE = MyISAM,
-					PARTITION p74 VALUES LESS THAN (1366491600) ENGINE = MyISAM,
-					PARTITION p75 VALUES LESS THAN (1367701200) ENGINE = MyISAM,
-					PARTITION p76 VALUES LESS THAN (1368910800) ENGINE = MyISAM,
-					PARTITION p77 VALUES LESS THAN (1370120400) ENGINE = MyISAM,
-					PARTITION p78 VALUES LESS THAN (1371330000) ENGINE = MyISAM,
-					PARTITION p79 VALUES LESS THAN (1372539600) ENGINE = MyISAM,
-					PARTITION p80 VALUES LESS THAN (1373749200) ENGINE = MyISAM,
-					PARTITION p81 VALUES LESS THAN (1374958800) ENGINE = MyISAM,
-					PARTITION p82 VALUES LESS THAN (1376168400) ENGINE = MyISAM,
-					PARTITION p83 VALUES LESS THAN (1377378000) ENGINE = MyISAM,
-					PARTITION p84 VALUES LESS THAN (1378587600) ENGINE = MyISAM,
-					PARTITION p85 VALUES LESS THAN (1379797200) ENGINE = MyISAM,
-					PARTITION p86 VALUES LESS THAN (1381006800) ENGINE = MyISAM,
-					PARTITION p87 VALUES LESS THAN (1382216400) ENGINE = MyISAM,
-					PARTITION p88 VALUES LESS THAN (1383429600) ENGINE = MyISAM,
-					PARTITION p89 VALUES LESS THAN (1384639200) ENGINE = MyISAM,
-					PARTITION p90 VALUES LESS THAN (1385848800) ENGINE = MyISAM,
-					PARTITION p91 VALUES LESS THAN (1387058400) ENGINE = MyISAM,
-					PARTITION p92 VALUES LESS THAN (1388268000) ENGINE = MyISAM,
-					PARTITION p93 VALUES LESS THAN (1389477600) ENGINE = MyISAM,
-					PARTITION p94 VALUES LESS THAN (1390687200) ENGINE = MyISAM,
-					PARTITION p95 VALUES LESS THAN (1391896800) ENGINE = MyISAM,
-					PARTITION p96 VALUES LESS THAN (1393106400) ENGINE = MyISAM,
-					PARTITION p97 VALUES LESS THAN (1394316000) ENGINE = MyISAM,
-					PARTITION p98 VALUES LESS THAN (1395525600) ENGINE = MyISAM,
-					PARTITION p99 VALUES LESS THAN (1396731600) ENGINE = MyISAM,
-					PARTITION p100 VALUES LESS THAN (1397941200) ENGINE = MyISAM,
-					PARTITION p101 VALUES LESS THAN (1399150800) ENGINE = MyISAM,
-					PARTITION p102 VALUES LESS THAN (1400360400) ENGINE = MyISAM,
-					PARTITION p103 VALUES LESS THAN (1401570000) ENGINE = MyISAM,
-					PARTITION p104 VALUES LESS THAN (1402779600) ENGINE = MyISAM,
-					PARTITION p105 VALUES LESS THAN (1403989200) ENGINE = MyISAM,
-					PARTITION p106 VALUES LESS THAN (1405198800) ENGINE = MyISAM,
-					PARTITION p107 VALUES LESS THAN (1406408400) ENGINE = MyISAM,
-					PARTITION p108 VALUES LESS THAN (1407618000) ENGINE = MyISAM,
-					PARTITION p109 VALUES LESS THAN (1408827600) ENGINE = MyISAM,
-					PARTITION p110 VALUES LESS THAN (1410037200) ENGINE = MyISAM,
-					PARTITION p111 VALUES LESS THAN (1411246800) ENGINE = MyISAM,
-					PARTITION p112 VALUES LESS THAN (1412456400) ENGINE = MyISAM,
-					PARTITION p113 VALUES LESS THAN (1413666000) ENGINE = MyISAM,
-					PARTITION p114 VALUES LESS THAN (1414879200) ENGINE = MyISAM,
-					PARTITION p115 VALUES LESS THAN (1416088800) ENGINE = MyISAM,
-					PARTITION p116 VALUES LESS THAN (1417298400) ENGINE = MyISAM,
-					PARTITION p117 VALUES LESS THAN (1418508000) ENGINE = MyISAM,
-					PARTITION p118 VALUES LESS THAN (1419717600) ENGINE = MyISAM,
-					PARTITION p119 VALUES LESS THAN (1420927200) ENGINE = MyISAM,
-					PARTITION p120 VALUES LESS THAN MAXVALUE ENGINE = MyISAM) */;";
-		$result = $db->query($sql); #don't throw error if the partitioning doesn't work
+		if (!$mysql_partitioning_fail) {
+			$partition_time = $partition_start;
+			$sql = "/*!50100 ALTER TABLE `202_clicks` PARTITION BY RANGE (click_time) (";
+			$p_count = 0;
+			for ($i=0; $partition_time <= $partition_end; $i++) { 
+				if ($i > 0) {
+					$partition_time = strtotime('+1 week', $partition_time);
+				}
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".$partition_time.") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
 
 		$sql ="CREATE TABLE IF NOT EXISTS `202_clicks_advance` (
   `click_id` bigint(20) unsigned NOT NULL,
@@ -454,6 +503,18 @@ class INSTALL {
   KEY `ip_id` (`ip_id`)
 ) ENGINE=InnoDB ;";
 		$result = _mysqli_query($sql);
+
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_clicks_advance` PARTITION BY RANGE (click_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
 
 		$sql ="CREATE TABLE IF NOT EXISTS `202_clicks_counter` (
   `click_id` bigint(20) unsigned NOT NULL auto_increment,
@@ -477,6 +538,18 @@ class INSTALL {
 ) ENGINE=InnoDB ;";
 		$result = _mysqli_query($sql);
 
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_clicks_record` PARTITION BY RANGE (click_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
+
 		$sql ="CREATE TABLE IF NOT EXISTS `202_clicks_site` (
   `click_id` bigint(20) unsigned NOT NULL,
   `click_referer_site_url_id` bigint(20) unsigned NOT NULL,
@@ -489,6 +562,18 @@ class INSTALL {
 ) ENGINE=InnoDB ;";
 		$result = _mysqli_query($sql);
 
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_clicks_site` PARTITION BY RANGE (click_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
+
 		$sql ="CREATE TABLE IF NOT EXISTS `202_clicks_spy` (
   `click_id` bigint(20) unsigned NOT NULL,
   `user_id` mediumint(8) unsigned NOT NULL,
@@ -496,7 +581,7 @@ class INSTALL {
   `landing_page_id` mediumint(8) unsigned NOT NULL,
   `ppc_account_id` mediumint(8) unsigned NOT NULL,
   `click_cpc` decimal(4,2) NOT NULL,
-  `click_payout` decimal(6,2) NOT NULL,
+  `click_payout` decimal(8,2) NOT NULL,
   `click_lead` tinyint(1) NOT NULL default '0',
   `click_filtered` tinyint(1) NOT NULL default '0',
   `click_bot` tinyint(1) NOT NULL default '0',
@@ -532,21 +617,46 @@ class INSTALL {
 ) ENGINE=InnoDB  ;";
 		$result = _mysqli_query($sql);
 
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_ips` PARTITION BY RANGE (ip_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
+
 		$sql ="CREATE TABLE IF NOT EXISTS `202_keywords` (
   `keyword_id` bigint(20) unsigned NOT NULL auto_increment,
-  `keyword` varchar(50) NOT NULL,
+  `keyword` varchar(150) NOT NULL,
   PRIMARY KEY  (`keyword_id`),
-  KEY `keyword` (`keyword`(10))
-) ENGINE=InnoDB  ;";
+  KEY `keyword` (`keyword`(150))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;";
 		$result = _mysqli_query($sql);
+
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_keywords` PARTITION BY RANGE (keyword_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
 
 		$sql ="CREATE TABLE IF NOT EXISTS `202_landing_pages` (
   `landing_page_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
   `user_id` mediumint(8) unsigned NOT NULL,
-  `landing_page_id_public` int(10) unsigned NOT NULL,
+  `landing_page_id_public` int(10) unsigned DEFAULT NULL,
   `aff_campaign_id` mediumint(8) unsigned NOT NULL,
   `landing_page_nickname` varchar(50) NOT NULL,
   `landing_page_url` varchar(255) NOT NULL,
+  `leave_behind_page_url` varchar(255) DEFAULT '',
   `landing_page_deleted` tinyint(1) NOT NULL DEFAULT '0',
   `landing_page_time` int(10) unsigned NOT NULL,
   `landing_page_type` tinyint(1) NOT NULL DEFAULT '0',
@@ -558,7 +668,7 @@ class INSTALL {
   KEY `landing_page_type` (`landing_page_type`)
 ) ENGINE=InnoDB  ;";
 		$result = _mysqli_query($sql);
-
+				
 		$sql ="
 CREATE TABLE IF NOT EXISTS `202_last_ips` (
   `user_id` mediumint(9) NOT NULL,
@@ -654,18 +764,42 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
   `site_domain_host` varchar(100) NOT NULL,
   PRIMARY KEY  (`site_domain_id`),
   KEY `site_domain_host` (`site_domain_host`(10))
-) ENGINE=InnoDB  ;";
+) ENGINE=InnoDB";
 		$result = _mysqli_query($sql);
 
-		$sql ="CREATE TABLE IF NOT EXISTS `202_site_urls` (
-  `site_url_id` bigint(20) unsigned NOT NULL auto_increment,
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_site_domains` PARTITION BY RANGE (site_domain_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
+
+		$sql ="CREATE TABLE `202_site_urls` (
+  `site_url_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `site_domain_id` bigint(20) unsigned NOT NULL,
   `site_url_address` text NOT NULL,
-  PRIMARY KEY  (`site_url_id`),
-  KEY `site_domain_id` (`site_domain_id`),
-  KEY `site_url_address` (`site_url_address`(75))
-) ENGINE=InnoDB  ;";
+  PRIMARY KEY (`site_url_id`),
+  KEY `site_url_address` (`site_url_address`(350)),
+  KEY `site_domain_id` (`site_domain_id`,`site_url_address`(350))
+) ENGINE=InnoDB";
 		$result = _mysqli_query($sql);
+
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_site_urls` PARTITION BY RANGE (site_url_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
 
 		$sql ="CREATE TABLE IF NOT EXISTS `202_sort_breakdowns` (
 		  `sort_breakdown_id` int(10) unsigned NOT NULL auto_increment,
@@ -701,7 +835,6 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
 		) ENGINE=InnoDB  ;";
 		$result = _mysqli_query($sql);
 
-		//this is partitioned from 2009-07-01 to 2011-07-01 for mysql 5.1 users
 		$sql ="CREATE TABLE IF NOT EXISTS `202_summary_overview` (
 				  `user_id` mediumint(8) unsigned NOT NULL,
 				  `aff_campaign_id` mediumint(8) unsigned NOT NULL,
@@ -718,61 +851,61 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
 
 		$sql ="/*!50100 ALTER TABLE `202_summary_overview`
 					PARTITION BY RANGE (click_time) (
-					PARTITION p32 VALUES LESS THAN (1247641200) ENGINE = MyISAM,
-					PARTITION p33 VALUES LESS THAN (1248850800) ENGINE = MyISAM,
-					PARTITION p34 VALUES LESS THAN (1250060400) ENGINE = MyISAM,
-					PARTITION p35 VALUES LESS THAN (1251270000) ENGINE = MyISAM,
-					PARTITION p36 VALUES LESS THAN (1252479600) ENGINE = MyISAM,
-					PARTITION p37 VALUES LESS THAN (1253689200) ENGINE = MyISAM,
-					PARTITION p38 VALUES LESS THAN (1254898800) ENGINE = MyISAM,
-					PARTITION p39 VALUES LESS THAN (1256108400) ENGINE = MyISAM,
-					PARTITION p40 VALUES LESS THAN (1257318000) ENGINE = MyISAM,
-					PARTITION p41 VALUES LESS THAN (1258527600) ENGINE = MyISAM,
-					PARTITION p42 VALUES LESS THAN (1259737200) ENGINE = MyISAM,
-					PARTITION p43 VALUES LESS THAN (1260946800) ENGINE = MyISAM,
-					PARTITION p44 VALUES LESS THAN (1262156400) ENGINE = MyISAM,
-					PARTITION p45 VALUES LESS THAN (1263366000) ENGINE = MyISAM,
-					PARTITION p46 VALUES LESS THAN (1264575600) ENGINE = MyISAM,
-					PARTITION p47 VALUES LESS THAN (1265785200) ENGINE = MyISAM,
-					PARTITION p48 VALUES LESS THAN (1266994800) ENGINE = MyISAM,
-					PARTITION p49 VALUES LESS THAN (1268204400) ENGINE = MyISAM,
-					PARTITION p50 VALUES LESS THAN (1269414000) ENGINE = MyISAM,
-					PARTITION p51 VALUES LESS THAN (1270623600) ENGINE = MyISAM,
-					PARTITION p52 VALUES LESS THAN (1271833200) ENGINE = MyISAM,
-					PARTITION p53 VALUES LESS THAN (1273042800) ENGINE = MyISAM,
-					PARTITION p54 VALUES LESS THAN (1274252400) ENGINE = MyISAM,
-					PARTITION p55 VALUES LESS THAN (1275462000) ENGINE = MyISAM,
-					PARTITION p56 VALUES LESS THAN (1276671600) ENGINE = MyISAM,
-					PARTITION p57 VALUES LESS THAN (1277881200) ENGINE = MyISAM,
-					PARTITION p58 VALUES LESS THAN (1279090800) ENGINE = MyISAM,
-					PARTITION p59 VALUES LESS THAN (1280300400) ENGINE = MyISAM,
-					PARTITION p60 VALUES LESS THAN (1281510000) ENGINE = MyISAM,
-					PARTITION p61 VALUES LESS THAN (1282719600) ENGINE = MyISAM,
-					PARTITION p62 VALUES LESS THAN (1283929200) ENGINE = MyISAM,
-					PARTITION p63 VALUES LESS THAN (1285138800) ENGINE = MyISAM,
-					PARTITION p64 VALUES LESS THAN (1286348400) ENGINE = MyISAM,
-					PARTITION p65 VALUES LESS THAN (1287558000) ENGINE = MyISAM,
-					PARTITION p66 VALUES LESS THAN (1288767600) ENGINE = MyISAM,
-					PARTITION p67 VALUES LESS THAN (1289977200) ENGINE = MyISAM,
-					PARTITION p68 VALUES LESS THAN (1291186800) ENGINE = MyISAM,
-					PARTITION p69 VALUES LESS THAN (1292396400) ENGINE = MyISAM,
-					PARTITION p70 VALUES LESS THAN (1293606000) ENGINE = MyISAM,
-					PARTITION p71 VALUES LESS THAN (1294815600) ENGINE = MyISAM,
-					PARTITION p72 VALUES LESS THAN (1296025200) ENGINE = MyISAM,
-					PARTITION p73 VALUES LESS THAN (1297234800) ENGINE = MyISAM,
-					PARTITION p74 VALUES LESS THAN (1298444400) ENGINE = MyISAM,
-					PARTITION p75 VALUES LESS THAN (1299654000) ENGINE = MyISAM,
-					PARTITION p76 VALUES LESS THAN (1300863600) ENGINE = MyISAM,
-					PARTITION p77 VALUES LESS THAN (1302073200) ENGINE = MyISAM,
-					PARTITION p78 VALUES LESS THAN (1303282800) ENGINE = MyISAM,
-					PARTITION p79 VALUES LESS THAN (1304492400) ENGINE = MyISAM,
-					PARTITION p80 VALUES LESS THAN (1305702000) ENGINE = MyISAM,
-					PARTITION p81 VALUES LESS THAN (1306911600) ENGINE = MyISAM,
-					PARTITION p82 VALUES LESS THAN (1308121200) ENGINE = MyISAM,
-					PARTITION p83 VALUES LESS THAN (1309330800) ENGINE = MyISAM,
-					PARTITION p84 VALUES LESS THAN (1310540400) ENGINE = MyISAM,
-					PARTITION p85 VALUES LESS THAN MAXVALUE ENGINE = MyISAM) */;";
-		$result = $db->query($sql); #dont throw error if this doesn't work
+					PARTITION p32 VALUES LESS THAN (1247641200) ENGINE = InnoDB,
+					PARTITION p33 VALUES LESS THAN (1248850800) ENGINE = InnoDB,
+					PARTITION p34 VALUES LESS THAN (1250060400) ENGINE = InnoDB,
+					PARTITION p35 VALUES LESS THAN (1251270000) ENGINE = InnoDB,
+					PARTITION p36 VALUES LESS THAN (1252479600) ENGINE = InnoDB,
+					PARTITION p37 VALUES LESS THAN (1253689200) ENGINE = InnoDB,
+					PARTITION p38 VALUES LESS THAN (1254898800) ENGINE = InnoDB,
+					PARTITION p39 VALUES LESS THAN (1256108400) ENGINE = InnoDB,
+					PARTITION p40 VALUES LESS THAN (1257318000) ENGINE = InnoDB,
+					PARTITION p41 VALUES LESS THAN (1258527600) ENGINE = InnoDB,
+					PARTITION p42 VALUES LESS THAN (1259737200) ENGINE = InnoDB,
+					PARTITION p43 VALUES LESS THAN (1260946800) ENGINE = InnoDB,
+					PARTITION p44 VALUES LESS THAN (1262156400) ENGINE = InnoDB,
+					PARTITION p45 VALUES LESS THAN (1263366000) ENGINE = InnoDB,
+					PARTITION p46 VALUES LESS THAN (1264575600) ENGINE = InnoDB,
+					PARTITION p47 VALUES LESS THAN (1265785200) ENGINE = InnoDB,
+					PARTITION p48 VALUES LESS THAN (1266994800) ENGINE = InnoDB,
+					PARTITION p49 VALUES LESS THAN (1268204400) ENGINE = InnoDB,
+					PARTITION p50 VALUES LESS THAN (1269414000) ENGINE = InnoDB,
+					PARTITION p51 VALUES LESS THAN (1270623600) ENGINE = InnoDB,
+					PARTITION p52 VALUES LESS THAN (1271833200) ENGINE = InnoDB,
+					PARTITION p53 VALUES LESS THAN (1273042800) ENGINE = InnoDB,
+					PARTITION p54 VALUES LESS THAN (1274252400) ENGINE = InnoDB,
+					PARTITION p55 VALUES LESS THAN (1275462000) ENGINE = InnoDB,
+					PARTITION p56 VALUES LESS THAN (1276671600) ENGINE = InnoDB,
+					PARTITION p57 VALUES LESS THAN (1277881200) ENGINE = InnoDB,
+					PARTITION p58 VALUES LESS THAN (1279090800) ENGINE = InnoDB,
+					PARTITION p59 VALUES LESS THAN (1280300400) ENGINE = InnoDB,
+					PARTITION p60 VALUES LESS THAN (1281510000) ENGINE = InnoDB,
+					PARTITION p61 VALUES LESS THAN (1282719600) ENGINE = InnoDB,
+					PARTITION p62 VALUES LESS THAN (1283929200) ENGINE = InnoDB,
+					PARTITION p63 VALUES LESS THAN (1285138800) ENGINE = InnoDB,
+					PARTITION p64 VALUES LESS THAN (1286348400) ENGINE = InnoDB,
+					PARTITION p65 VALUES LESS THAN (1287558000) ENGINE = InnoDB,
+					PARTITION p66 VALUES LESS THAN (1288767600) ENGINE = InnoDB,
+					PARTITION p67 VALUES LESS THAN (1289977200) ENGINE = InnoDB,
+					PARTITION p68 VALUES LESS THAN (1291186800) ENGINE = InnoDB,
+					PARTITION p69 VALUES LESS THAN (1292396400) ENGINE = InnoDB,
+					PARTITION p70 VALUES LESS THAN (1293606000) ENGINE = InnoDB,
+					PARTITION p71 VALUES LESS THAN (1294815600) ENGINE = InnoDB,
+					PARTITION p72 VALUES LESS THAN (1296025200) ENGINE = InnoDB,
+					PARTITION p73 VALUES LESS THAN (1297234800) ENGINE = InnoDB,
+					PARTITION p74 VALUES LESS THAN (1298444400) ENGINE = InnoDB,
+					PARTITION p75 VALUES LESS THAN (1299654000) ENGINE = InnoDB,
+					PARTITION p76 VALUES LESS THAN (1300863600) ENGINE = InnoDB,
+					PARTITION p77 VALUES LESS THAN (1302073200) ENGINE = InnoDB,
+					PARTITION p78 VALUES LESS THAN (1303282800) ENGINE = InnoDB,
+					PARTITION p79 VALUES LESS THAN (1304492400) ENGINE = InnoDB,
+					PARTITION p80 VALUES LESS THAN (1305702000) ENGINE = InnoDB,
+					PARTITION p81 VALUES LESS THAN (1306911600) ENGINE = InnoDB,
+					PARTITION p82 VALUES LESS THAN (1308121200) ENGINE = InnoDB,
+					PARTITION p83 VALUES LESS THAN (1309330800) ENGINE = InnoDB,
+					PARTITION p84 VALUES LESS THAN (1310540400) ENGINE = InnoDB,
+					PARTITION p85 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+		//$result = $db->query($sql); #dont throw error if this doesn't work
 
 		$sql ="CREATE TABLE IF NOT EXISTS `202_text_ads` (
   `text_ad_id` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
@@ -804,12 +937,20 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
   `ppc_account_id` mediumint(8) unsigned NOT NULL,
   `landing_page_id` mediumint(8) unsigned NOT NULL,
   `rotator_id` int(11) unsigned NOT NULL,
-  `click_cpc` decimal(7,5) NOT NULL,
+  `click_cpc` decimal(7,5) DEFAULT NULL,
+  `click_cpa` decimal(7,5) DEFAULT NULL,
   `click_cloaking` tinyint(1) NOT NULL,
   `tracker_time` int(10) unsigned NOT NULL,
   PRIMARY KEY (`tracker_id`),
   KEY `tracker_id_public` (`tracker_id_public`)
 ) ENGINE=InnoDB  ;";
+		$result = _mysqli_query($sql);
+
+		$sql ="CREATE TABLE `202_cpa_trackers` (
+  `click_id` bigint(20) unsigned NOT NULL,
+  `tracker_id_public` int(11) unsigned NOT NULL,
+  KEY `tracker_id` (`tracker_id_public`)
+) ENGINE=InnoDB;";
 		$result = _mysqli_query($sql);
 
 		$sql ="CREATE TABLE IF NOT EXISTS `202_rotations` (
@@ -879,15 +1020,6 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
 		$result = _mysqli_query($sql);
 
 			
-$sql="ALTER TABLE `202_tracking_c1` CHANGE COLUMN `c1` `c1` VARCHAR(350) NOT NULL;";
-			$result = _mysqli_query($sql);
-$sql="ALTER TABLE `202_tracking_c2` CHANGE COLUMN `c2` `c2` VARCHAR(350) NOT NULL;";
-			$result = _mysqli_query($sql);
-$sql="ALTER TABLE `202_tracking_c3` CHANGE COLUMN `c3` `c3` VARCHAR(350) NOT NULL;";
-			$result = _mysqli_query($sql);
-$sql="ALTER TABLE `202_tracking_c4` CHANGE COLUMN `c4` `c4` VARCHAR(350) NOT NULL;";
-			$result = _mysqli_query($sql);
-
 $sql="CREATE TABLE IF NOT EXISTS `202_api_keys` (
   `user_id` mediumint(8) unsigned NOT NULL,
   `api_key` varchar(250) NOT NULL DEFAULT '',
@@ -895,28 +1027,30 @@ $sql="CREATE TABLE IF NOT EXISTS `202_api_keys` (
 ) ENGINE=InnoDB ;";
 $result = _mysqli_query($sql);
 
-$sql="CREATE TABLE `202_rotators` (
+$sql="CREATE TABLE IF NOT EXISTS `202_rotators` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `public_id` int(11) NOT NULL,
   `user_id` int(11) NOT NULL,
   `name` varchar(255) NOT NULL DEFAULT '',
   `default_url` text,
   `default_campaign` int(11) DEFAULT NULL,
+  `default_lp` int(11) DEFAULT NULL,
+  `auto_monetizer` char(4) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;";
+) ENGINE=InnoDB";
 $result = _mysqli_query($sql);
 
-$sql="CREATE TABLE `202_rotator_rules` (
+$sql="CREATE TABLE IF NOT EXISTS  `202_rotator_rules` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `rotator_id` int(11) NOT NULL,
   `rule_name` varchar(255) NOT NULL DEFAULT '',
+  `splittest` tinyint(1) NOT NULL DEFAULT '0',
   `status` int(11) DEFAULT NULL,
-  `redirect_url` text,
-  `redirect_campaign` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;";
+) ENGINE=InnoDB";
 $result = _mysqli_query($sql);
 
-$sql="CREATE TABLE `202_rotator_rules_criteria` (
+$sql="CREATE TABLE IF NOT EXISTS  `202_rotator_rules_criteria` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `rotator_id` int(11) NOT NULL,
   `rule_id` int(11) NOT NULL,
@@ -924,11 +1058,407 @@ $sql="CREATE TABLE `202_rotator_rules_criteria` (
   `statement` varchar(50) NOT NULL DEFAULT '',
   `value` text NOT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;";
+) ENGINE=InnoDB";
 $result = _mysqli_query($sql);
 
-			
+$sql="CREATE TABLE `202_dirty_hours` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `ppc_account_id` mediumint(8) unsigned NOT NULL DEFAULT '0',
+  `aff_campaign_id` mediumint(8) unsigned NOT NULL DEFAULT '0',
+  `user_id` mediumint(8) unsigned NOT NULL,
+  `click_time_from` int(10) unsigned NOT NULL,
+  `click_time_to` int(10) unsigned NOT NULL,
+  `deleted` bit(1) NOT NULL DEFAULT b'0',
+  `processed` bit(1) NOT NULL DEFAULT b'0',
+  `ppc_network_id` mediumint(8) unsigned DEFAULT '0',
+  `aff_network_id` mediumint(8) unsigned DEFAULT '0',
+  `landing_page_id` mediumint(8) unsigned NOT NULL,
+  `keyword_id` bigint(20) unsigned DEFAULT '0',
+  `utm_medium_id` bigint(20) unsigned DEFAULT '0',
+  `utm_source_id` bigint(20) unsigned DEFAULT '0',
+  `utm_campaign_id` bigint(20) unsigned DEFAULT '0',
+  `utm_term_id` bigint(20) unsigned DEFAULT '0',
+  `utm_content_id` bigint(20) unsigned DEFAULT '0',
+  `text_ad_id` mediumint(8) unsigned DEFAULT '0',
+  `click_referer_site_url_id` bigint(20) unsigned DEFAULT '0',
+  `country_id` bigint(20) unsigned DEFAULT '0',
+  `region_id` bigint(20) unsigned DEFAULT '0',
+  `city_id` bigint(20) unsigned DEFAULT '0',
+  `isp_id` bigint(20) unsigned DEFAULT '0',
+  `browser_id` bigint(20) unsigned DEFAULT '0',
+  `device_id` bigint(20) unsigned DEFAULT '0',
+  `platform_id` bigint(20) unsigned DEFAULT '0',
+  `ip_id` bigint(20) unsigned DEFAULT '0',
+  `c1_id` bigint(20) unsigned DEFAULT '0',
+  `c2_id` bigint(20) unsigned DEFAULT '0',
+  `c3_id` bigint(20) unsigned DEFAULT '0',
+  `c4_id` bigint(20) unsigned DEFAULT '0',
+  `variable_set_id` varchar(255) DEFAULT '0',
+  `click_filtered` tinyint(1) NOT NULL DEFAULT '0',
+  `click_bot` tinyint(1) NOT NULL DEFAULT '0',
+  `click_alp` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`ppc_account_id`,`aff_campaign_id`,`user_id`,`click_time_from`,`click_time_to`),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql="CREATE TABLE IF NOT EXISTS `202_dataengine` (
+  `user_id` mediumint(8) unsigned NOT NULL,
+  `click_id` bigint(20) unsigned NOT NULL,
+  `click_time` int(10) NOT NULL DEFAULT '0',
+  `ppc_network_id` mediumint(8) unsigned DEFAULT '0',
+  `ppc_account_id` mediumint(8) unsigned NOT NULL,
+  `aff_network_id` mediumint(8) unsigned DEFAULT '0',
+  `aff_campaign_id` mediumint(8) unsigned DEFAULT '0',
+  `landing_page_id` mediumint(8) unsigned NOT NULL,
+  `keyword_id` bigint(20) unsigned DEFAULT '0',
+  `utm_medium_id` bigint(20) unsigned DEFAULT '0',
+  `utm_source_id` bigint(20) unsigned DEFAULT '0',
+  `utm_campaign_id` bigint(20) unsigned DEFAULT '0',
+  `utm_term_id` bigint(20) unsigned DEFAULT '0',
+  `utm_content_id` bigint(20) unsigned DEFAULT '0',
+  `text_ad_id` mediumint(8) unsigned DEFAULT '0',
+  `click_referer_site_url_id` bigint(20) unsigned DEFAULT NULL,
+  `country_id` bigint(20) unsigned DEFAULT '0',
+  `region_id` bigint(20) unsigned DEFAULT '0',
+  `city_id` bigint(20) unsigned DEFAULT '0',
+  `isp_id` bigint(20) unsigned DEFAULT '0',
+  `browser_id` bigint(20) unsigned DEFAULT '0',
+  `device_id` bigint(20) unsigned DEFAULT '0',
+  `platform_id` bigint(20) unsigned DEFAULT '0',
+  `ip_id` bigint(20) unsigned DEFAULT NULL,
+  `c1_id` bigint(20) unsigned DEFAULT '0',
+  `c2_id` bigint(20) unsigned DEFAULT '0',
+  `c3_id` bigint(20) unsigned DEFAULT '0',
+  `c4_id` bigint(20) unsigned DEFAULT '0',
+  `variable_set_id` varchar(255) CHARACTER SET latin1 DEFAULT '0',
+  `rotator_id` bigint(20) unsigned DEFAULT '0',
+  `rule_id` bigint(20) unsigned DEFAULT '0',
+  `rule_redirect_id` bigint(20) unsigned DEFAULT '0',
+  `click_lead` tinyint(1) NOT NULL DEFAULT '0',
+  `click_filtered` tinyint(1) NOT NULL DEFAULT '0',
+  `click_bot` tinyint(1) NOT NULL DEFAULT '0',
+  `click_alp` tinyint(1) NOT NULL DEFAULT '0',
+  `clicks` bigint(21) NOT NULL DEFAULT '0',
+  `click_out` decimal(25,0) DEFAULT NULL,
+  `leads` decimal(25,0) DEFAULT NULL,
+  `payout` decimal(8,2) NOT NULL,
+  `income` decimal(35,5) DEFAULT NULL,
+  `cost` decimal(29,5) DEFAULT NULL,
+  PRIMARY KEY (`click_id`,`click_time`),
+  KEY `user_id` (`user_id`,`click_time`),
+  KEY `dataenginejob` (`click_time`,`ppc_network_id`,`aff_network_id`,`keyword_id`,`click_referer_site_url_id`,`country_id`,`region_id`,`city_id`,`browser_id`,`device_id`,`platform_id`,`ip_id`,`c1_id`,`c2_id`,`c3_id`,`c4_id`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+if (!$mysql_partitioning_fail) {
+	$partition_time = $partition_start;
+	$sql = "/*!50100 ALTER TABLE `202_dataengine` PARTITION BY RANGE (click_time) (";
+	for ($i=0; $partition_time <= $partition_end; $i++) { 
+		if ($i > 0) {
+			$partition_time = strtotime('+1 week', $partition_time);
+		}
+		$sql .= "PARTITION p".$i." VALUES LESS THAN (".$partition_time.") ENGINE = InnoDB,";
+		$p_count = $i;
 	}
+	$p_count = $p_count + 1;
+	$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+	$result = $db->query($sql);
+}
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_dataengine_job` (
+              `time_from` int(10) unsigned NOT NULL DEFAULT '0',
+              `time_to` int(10) unsigned NOT NULL DEFAULT '0',
+              `processing` tinyint(1) NOT NULL DEFAULT '0',
+              `processed` tinyint(1) NOT NULL DEFAULT '0'
+            ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql="CREATE TABLE IF NOT EXISTS `202_google` (
+  `click_id` bigint(20) unsigned NOT NULL,
+  `gclid` varchar(150) NOT NULL,
+  `utm_source_id` bigint(20) unsigned NOT NULL,
+  `utm_medium_id` bigint(20) unsigned NOT NULL,
+  `utm_campaign_id` bigint(20) unsigned NOT NULL,
+  `utm_term_id` bigint(20) unsigned NOT NULL,
+  `utm_content_id` bigint(20) unsigned NOT NULL,
+  PRIMARY KEY (`click_id`,`gclid`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql="CREATE TABLE IF NOT EXISTS `202_utm_campaign` (
+  `utm_campaign_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `utm_campaign` varchar(350) NOT NULL DEFAULT '',
+  PRIMARY KEY (`utm_campaign_id`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql="CREATE TABLE IF NOT EXISTS `202_utm_content` (
+  `utm_content_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `utm_content` varchar(350) NOT NULL DEFAULT '',
+  PRIMARY KEY (`utm_content_id`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql="CREATE TABLE IF NOT EXISTS `202_utm_medium` (
+  `utm_medium_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `utm_medium` varchar(350) NOT NULL DEFAULT '',
+  PRIMARY KEY (`utm_medium_id`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql="CREATE TABLE IF NOT EXISTS `202_utm_source` (
+  `utm_source_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `utm_source` varchar(350) NOT NULL DEFAULT '',
+  PRIMARY KEY (`utm_source_id`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql="CREATE TABLE IF NOT EXISTS `202_utm_term` (
+  `utm_term_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `utm_term` varchar(350) NOT NULL DEFAULT '',
+  PRIMARY KEY (`utm_term_id`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_permissions` (
+        `permission_id` int(11) NOT NULL AUTO_INCREMENT,
+        `permission_description` varchar(50) NOT NULL,
+        PRIMARY KEY (`permission_id`)
+        ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "INSERT INTO `202_permissions` (`permission_id`, `permission_description`)
+        VALUES
+        (1, 'add_users'),
+        (2, 'add_edit_delete_admin'),
+        (3, 'remove_traffic_source'),
+        (4, 'remove_traffic_source_account'),
+        (5, 'remove_campaign_category'),
+        (6, 'remove_campaign'),
+        (7, 'remove_landing_page'),
+        (8, 'remove_text_ad'),
+        (9, 'remove_rotator'),
+        (10, 'remove_rotator_criteria'),
+        (11, 'remove_rotator_rule'),
+        (12, 'access_to_campaign_data'),
+        (13, 'delete_individual_subids'),
+        (14, 'access_to_setup_section'),
+        (15, 'access_to_update_section'),
+        (16, 'access_to_personal_settings'),
+        (17, 'access_to_vip_perks'),
+        (18, 'access_to_clickservers'),
+        (19, 'access_to_api_integrations'),
+        (20, 'access_to_settings'),
+        (21, 'remove_tracker');";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_roles` (
+       `role_id` int(11) NOT NULL AUTO_INCREMENT,
+       `role_name` varchar(50) NOT NULL,
+       PRIMARY KEY (`role_id`)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "INSERT INTO `202_roles` (`role_id`, `role_name`)
+        VALUES
+        (1, 'Super user'),
+        (2, 'Admin'),
+        (3, 'Campaign manager'),
+        (4, 'Campaign optimizer'),
+        (5, 'Campaign viewer');";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_role_permission` (
+       `role_id` int(11) NOT NULL,
+       `permission_id` int(11) NOT NULL,
+       KEY `role_id` (`role_id`),
+       KEY `permission_id` (`permission_id`),
+       CONSTRAINT `202_role_permission_ibfk_1` FOREIGN KEY (`role_id`) REFERENCES `202_roles` (`role_id`),
+       CONSTRAINT `202_role_permission_ibfk_2` FOREIGN KEY (`permission_id`) REFERENCES `202_permissions` (`permission_id`)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "INSERT INTO `202_role_permission` (`role_id`, `permission_id`)
+        VALUES
+        (1, 1),
+        (1, 2),
+        (1, 3),
+        (1, 4),
+        (1, 5),
+        (1, 6),
+        (1, 7),
+        (1, 8),
+        (1, 9),
+        (1, 10),
+        (1, 11),
+        (1, 12),
+        (1, 13),
+        (1, 14),
+        (1, 15),
+        (1, 16),
+        (1, 17),
+        (1, 18),
+        (1, 19),
+        (1, 20),
+        (1, 21),
+        (2, 1),
+        (2, 3),
+        (2, 4),
+        (2, 5),
+        (2, 6),
+        (2, 7),
+        (2, 8),
+        (2, 9),
+        (2, 10),
+        (2, 11),
+        (2, 12),
+        (2, 13),
+        (2, 14),
+        (2, 15),
+        (2, 16),
+        (2, 17),
+        (2, 18),
+        (2, 19),
+        (2, 20),
+        (2, 21),
+        (3, 12),
+        (3, 14),
+        (3, 15),
+        (4, 12);";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_user_role` (
+       `user_id` mediumint(8) unsigned NOT NULL,
+       `role_id` int(11) NOT NULL,
+       KEY `user_id` (`user_id`),
+       KEY `role_id` (`role_id`),
+       CONSTRAINT `202_user_role_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `202_users` (`user_id`),
+       CONSTRAINT `202_user_role_ibfk_2` FOREIGN KEY (`role_id`) REFERENCES `202_roles` (`role_id`)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_custom_variables` (
+       `custom_variable_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+       `ppc_variable_id` bigint(20) unsigned NOT NULL,
+       `variable` varchar(350) NOT NULL DEFAULT '',
+       PRIMARY KEY (`custom_variable_id`),
+       KEY `variable` (`variable`(255)),
+       KEY `ppc_variable_id` (`ppc_variable_id`)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_clicks_variable` (
+       `click_id` bigint(20) unsigned NOT NULL,
+       `variable_set_id` bigint(20) unsigned NOT NULL,
+       KEY `custom_variable_id` (`variable_set_id`),
+       KEY `click_id` (`click_id`)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_clicks_variable` PARTITION BY RANGE (click_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_ppc_network_variables` (
+       `ppc_variable_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+       `ppc_network_id` mediumint(8) NOT NULL,
+       `name` varchar(255) NOT NULL DEFAULT '',
+       `parameter` varchar(255) NOT NULL DEFAULT '',
+       `placeholder` varchar(255) NOT NULL DEFAULT '',
+       `deleted` tinyint(1) NOT NULL DEFAULT '0',
+       PRIMARY KEY (`ppc_variable_id`),
+       KEY ppc_network_id (ppc_network_id,deleted)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_variable_sets` (
+       `variable_set_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+       `variables` varchar(255) NOT NULL DEFAULT '',
+       KEY `custom_variable_id` (`variables`),
+       KEY `click_id` (`variable_set_id`)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE `202_cronjob_logs` (
+        `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+        `last_execution_time` int(10) unsigned NOT NULL,
+        PRIMARY KEY (`id`)
+        ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE `202_clicks_rotator` (
+       `click_id` bigint(20) unsigned NOT NULL,
+       `rotator_id` bigint(20) unsigned NOT NULL,
+       `rule_id` bigint(20) unsigned NOT NULL,
+       `rule_redirect_id` bigint(20) unsigned NOT NULL,
+       PRIMARY KEY (`click_id`)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+		if (!$mysql_partitioning_fail) {
+			$sql = "/*!50100 ALTER TABLE `202_clicks_rotator` PARTITION BY RANGE (click_id) (";
+			$p_count = 0;
+			for ($i=1; $i <= 100; $i++) { 
+				$sql .= "PARTITION p".$i." VALUES LESS THAN (".(500000 * $i).") ENGINE = InnoDB,";
+				$p_count = $i;
+			}
+			$p_count = $p_count + 1;
+			$sql .= "PARTITION p".$p_count." VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
+			$result = $db->query($sql);
+		}
+
+
+$sql = "CREATE TABLE `202_rotator_rules_redirects` (
+       `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+       `rule_id` int(11) NOT NULL,
+       `redirect_url` text,
+       `redirect_campaign` int(11) DEFAULT NULL,
+       `redirect_lp` int(11) DEFAULT NULL,
+       `auto_monetizer` char(4) DEFAULT NULL,
+       `weight` char(3) DEFAULT '0',
+       `name` text NOT NULL,
+       PRIMARY KEY (`id`)
+       ) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "CREATE TABLE IF NOT EXISTS `202_dni_networks` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `user_id` mediumint(8) unsigned NOT NULL,
+  `networkId` varchar(255) NOT NULL DEFAULT '',
+  `shortDescription` varchar(255) NOT NULL,
+  `favIcon` varchar(255) NOT NULL,
+  `apiKey` varchar(255) NOT NULL,
+  `affiliateId` int(11) unsigned DEFAULT NULL,
+  `name` varchar(255) NOT NULL DEFAULT '',
+  `type` varchar(255) NOT NULL DEFAULT '',
+  `time` int(10) unsigned NOT NULL,
+  `processed` smallint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `networkId` (`networkId`)
+) ENGINE=InnoDB";
+$result = _mysqli_query($sql);
+
+$sql = "
+	CREATE TABLE `202_auth_keys` (
+	  `user_id` mediumint(8) NOT NULL,
+	  `auth_key` varchar(64) NOT NULL,
+	  `expires` int(11) NOT NULL,
+	  KEY `202_auth_keys_user_id_auth_key` (`user_id`,`auth_key`),
+	  KEY `202_auth_keys_expires` (`expires`)
+	)";
+$result = _mysqli_query($sql);
+
+
+	}	
 
 
 }

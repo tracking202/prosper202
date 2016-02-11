@@ -1,11 +1,12 @@
 <?php
-
-$version = '1.8.13';
+$version = '1.9.28';
 
 DEFINE('TRACKING202_API_URL', 'http://api.tracking202.com');
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'http://ads.tracking202.com');
 
+DEFINE('ROOT_PATH', substr(dirname( __FILE__ ), 0,-10));
+DEFINE('CONFIG_PATH', dirname( __FILE__ ));
 @ini_set('auto_detect_line_endings', TRUE);
 @ini_set('register_globals', 0);
 @ini_set('display_errors', 'On');
@@ -22,44 +23,55 @@ if(!$_SESSION['user_timezone'])
 
 mysqli_report(MYSQLI_REPORT_STRICT);
 
-//set navigation variable 
-$navigation = $_SERVER['REQUEST_URI']; 
-$navigation = explode('/', $navigation); 
-	
-foreach( $navigation as $key => $row ) {    
+$install_path = substr(ROOT_PATH,strlen($_SERVER['DOCUMENT_ROOT']));
+if ($install_path === '/') {
+	$navigation = $_SERVER['REQUEST_URI'];
+} else {
+	$navigation = substr($_SERVER['REQUEST_URI'],strlen($install_path));
+	$navigation = '/'.$navigation;
+}
+
+$navigation = explode('/', $navigation);
+foreach($navigation as $key => $row ) {    
 	$split_chars = preg_split('/\?{1}/',$navigation[$key],-1,PREG_SPLIT_OFFSET_CAPTURE); 
 	$navigation[$key] = $split_chars[0][0];
-}   
+}  
+//get the real ip
+ switch(true){
+      case (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) : $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_FORWARDED_FOR']; break;
+      case (!empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP'])) : $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_CLUSTER_CLIENT_IP']; break;
+      case (!empty($_SERVER['HTTP_X_SUCURI_CLIENTIP'])) : $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_SUCURI_CLIENTIP']; break;
+      case (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) : $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_CF_CONNECTING_IP']; break;
+      case (!empty($_SERVER['HTTP_X_REAL_IP'])) : $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_REAL_IP']; break;
+      case (!empty($_SERVER['HTTP_CLIENT_IP'])) : $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_CLIENT_IP']; break;
+            default : $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['REMOTE_ADDR'];
+    }
 
-$_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['REMOTE_ADDR'];
+include_once(ROOT_PATH  . '/202-config.php');
+include_once(CONFIG_PATH . '/sessions.php'); 
+include_once(CONFIG_PATH . '/functions.php');
+include_once(CONFIG_PATH . '/template.php');
 
-
-//include mysql settings
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/sessions.php'); 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/template.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-install.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-upgrade.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-auth.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-export202.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-tracking202.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-tracking202api.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-rss.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/l10n.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/formatting.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/class-curl.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/class-xmltoarray.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-charts/charts.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/ReportSummaryForm.class.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/geo/inc/geoipcity.inc');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/geo/inc/geoipregionvars.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/vendor/autoload.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/Mobile_Detect.php');
+//include_once(CONFIG_PATH . '/functions-upgrade.php');
+include_once(CONFIG_PATH . '/functions-auth.php');
+//include_once(CONFIG_PATH . '/functions-export202.php');
+include_once(CONFIG_PATH . '/functions-tracking202.php');
+include_once(CONFIG_PATH . '/functions-tracking202api.php');
+include_once(CONFIG_PATH . '/functions-rss.php');
+include_once(CONFIG_PATH . '/l10n.php');
+include_once(CONFIG_PATH . '/formatting.php');
+include_once(CONFIG_PATH . '/class-curl.php');
+include_once(CONFIG_PATH . '/class-xmltoarray.php');
+//include_once(CONFIG_PATH . '/geo/inc/geoipcity.inc');
+//include_once(CONFIG_PATH . '/geo/inc/geoipregionvars.php');
+//include_once(CONFIG_PATH . '/vendor/autoload.php');
+//include_once(CONFIG_PATH . '/Mobile_Detect.php');
+include_once(CONFIG_PATH . '/Role.class.php');
+include_once(CONFIG_PATH . '/User.class.php');
+include_once(CONFIG_PATH . '/Slack.class.php');
 
 //try to connect to memcache server
 if ( ini_get('memcache.default_port') ) { 
-	
 	$memcacheInstalled = true;
 	$memcache = new Memcache;
 	if ( @$memcache->connect($mchost, 11211) ) $memcacheWorking = true;
@@ -108,7 +120,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 	} 
 	
 	//run the cronjob checker
-	include_once($_SERVER['DOCUMENT_ROOT'] . '/202-cronjobs/index.php'); 
+//	include_once(ROOT_PATH . '/202-cronjobs/index.php'); 
 }
 
 //set token to prevent CSRF attacks
@@ -127,7 +139,7 @@ if ($skip_upgrade == false) {
 	
 		//if we need upgrade, and its not already on the upgrade screen, redirect to the upgrade screen
 		if ((upgrade_needed() == true) and (($navigation[1] != '202-config') and ($navigation[2] != 'upgrade.php'))) {
-			header('location: /202-config/upgrade.php'); die();
+			header('location: '.get_absolute_url().'202-config/upgrade.php'); die();
 		}	
 	}
 }
@@ -137,6 +149,8 @@ switch ($navigation[1]) {
 	case "offers202":
 	case "alerts202":
 	case "stats202":
-		if (@ini_get('safe_mode')) { header('location: /202-account/disable-safe-mode.php'); die();  }
+		if (@ini_get('safe_mode')) { header('location: '.get_absolute_url().'202-account/disable-safe-mode.php'); die();  }
 		break;
 }
+
+$userObj = new User($_SESSION['user_own_id']);

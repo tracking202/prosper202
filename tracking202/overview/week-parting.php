@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -12,10 +12,10 @@ template_top('Hourly Overview',NULL,NULL,NULL);  ?>
 	</div>
 </div>
 
-<?php display_calendar('/tracking202/ajax/sort_weekly.php', true, true, true, false, true, true); ?>    
+<?php display_calendar(get_absolute_url().'tracking202/ajax/sort_weekly.php', true, true, true, false, true, true); ?>    
 
 <script type="text/javascript">
-   loadContent('/tracking202/ajax/sort_weekly.php',null);
+   loadContent('<?php echo get_absolute_url();?>tracking202/ajax/sort_weekly.php',null);
 </script>
 
 <?php template_bottom();

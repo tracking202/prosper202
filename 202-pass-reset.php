@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(dirname( __FILE__ ) . '/202-config/connect.php'); 
 
 
 
@@ -57,12 +57,12 @@
 //if password was changed successfully
 if ($success == true) { 
 	
-	_die("<center><small>Congratulations, your password has been reset.<br/>You can now <a href=\"/202-login.php\">login</a> with your new password.</small></center>");
+	_die("<center><small>Congratulations, your password has been reset.<br/>You can now <a href=\"".get_absolute_url()."202-login.php\">login</a> with your new password.</small></center>");
  } 
  
  if ($error['user_pass_key']) {
 	
- 	_die("<center><small>".$error['user_pass_key'] ."<br/>Please use the <a href=\"/202-lost-pass.php\">password retrieval tool</a> to get a new password reset key.</small></center>");
+ 	_die("<center><small>".$error['user_pass_key'] ."<br/>Please use the <a href=\"".get_absolute_url()."202-lost-pass.php\">password retrieval tool</a> to get a new password reset key.</small></center>");
  }
 				
 //else if none of the above, show the code to reset! ?>

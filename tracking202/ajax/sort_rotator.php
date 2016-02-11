@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -37,7 +37,7 @@ AUTH::require_user();
 			<table class="table table-bordered" id="stats-table">
 				<thead>
 				<tr style="background-color: #f2fbfa;">
-					<th colspan="2" style="text-align:left">Rotator</th>
+					<th colspan="2" style="text-align:left" class="no-sort">Rotator</th>
 					<th>Clicks</th>
 					<th>Leads</th>
 					<th>S/U</th>
@@ -57,7 +57,7 @@ AUTH::require_user();
 				$stats_total['clicks'] = 0;
 				$stats_total['leads'] = 0;
 
-			while ($rotator_row = $info_result->fetch_array(MYSQL_ASSOC)) {
+			while ($rotator_row = $info_result->fetch_array(MYSQLI_ASSOC)) {
 				$rotator_totals_sql = "SELECT 
 											 COUNT(*) AS clicks, 
 											 SUM(2c.click_lead) AS leads, 
@@ -71,7 +71,7 @@ AUTH::require_user();
 				$rotator_totals_sql .= $click_filtered;
 				$rotator_totals_sql .= " AND click_time >= '".$mysql['from']."' AND click_time <= '".$mysql['to']."'";
 				$rotator_totals_result = $db->query($rotator_totals_sql) or record_mysql_error($rotator_totals_sql);
-				$rotator_totals_row = $rotator_totals_result->fetch_array(MYSQL_ASSOC);
+				$rotator_totals_row = $rotator_totals_result->fetch_array(MYSQLI_ASSOC);
 
 				//clicks
 				$clicks = 0;
@@ -134,9 +134,20 @@ AUTH::require_user();
 				$html['rotator_income'] = htmlentities(dollar_format($income, $cpv), ENT_QUOTES, 'UTF-8');
 				$html['rotator_cost'] = htmlentities(dollar_format($cost, $cpv), ENT_QUOTES, 'UTF-8');
 				$html['rotator_net'] = htmlentities(dollar_format($net, $cpv), ENT_QUOTES, 'UTF-8');
-				$html['rotator_roi'] = htmlentities($roi.'%', ENT_QUOTES, 'UTF-8'); ?>
+				$html['rotator_roi'] = htmlentities($roi.'%', ENT_QUOTES, 'UTF-8');
+				$html['rotator_cost_wrapper'] = '('.$html['rotator_cost'].')'; 
 
-				<tr style="background-color: #F8F8F8;">
+				if (!$userObj->hasPermission("access_to_campaign_data")) {
+					$html['rotator_clicks'] = '?';
+					$html['rotator_leads'] = '?';
+					$html['rotator_income'] = '?';
+					$html['rotator_cost_wrapper'] = '?';
+					$html['rotator_net'] = '?';
+				}
+
+				?>
+
+				<tr style="background-color: #F8F8F8;" class="no-sort">
 					<td colspan="2" style="text-align:left; padding-left:10px;"><strong><?php echo $html['rotator_name'];?></strong></td>
 					<td><?php echo $html['rotator_clicks']; ?></td>
 					<td><?php echo $html['rotator_leads']; ?></td> 
@@ -145,7 +156,7 @@ AUTH::require_user();
 					<td><?php echo $html['rotator_epc']; ?></td>
 					<td><?php echo $html['rotator_avg_cpc']; ?></td>
 					<td><?php echo $html['rotator_income']; ?></td>
-					<td>(<?php echo $html['rotator_cost']; ?>)</td>
+					<td><?php echo $html['rotator_cost_wrapper']; ?></td>
 					<td><span class="label label-<?php if ($net > 0) { echo 'primary'; } elseif ($net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['rotator_net'] ; ?></span></td>
 					<td><span class="label label-<?php if ($net > 0) { echo 'primary'; } elseif ($net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['rotator_roi'] ; ?></span></td>
 
@@ -186,8 +197,18 @@ AUTH::require_user();
 										$html['rule_income'] = htmlentities(dollar_format($rule_stats_row['income'], $cpv), ENT_QUOTES, 'UTF-8');
 										$html['rule_cost'] = htmlentities(dollar_format($rule_stats_row['cost'], $cpv), ENT_QUOTES, 'UTF-8');
 										$html['rule_net'] = htmlentities(dollar_format($rule_net, $cpv), ENT_QUOTES, 'UTF-8');
-										$html['rule_roi'] = htmlentities($rule_roi .'%', ENT_QUOTES, 'UTF-8');?>
+										$html['rule_roi'] = htmlentities($rule_roi .'%', ENT_QUOTES, 'UTF-8');
+										$html['rule_cost_wrapper'] = '('.$html['rule_cost'].')'; 
 
+										if (!$userObj->hasPermission("access_to_campaign_data")) {
+											$html['rule_clicks'] = '?';
+											$html['rule_leads'] = '?';
+											$html['rule_income'] = '?';
+											$html['rule_cost_wrapper'] = '?';
+											$html['rule_net'] = '?';
+										}
+
+										?>
 									<tr>
 										<td colspan="2" style="text-align:left; padding-left:20px;"><?php echo $html['rule_name'];?> (<a style="cursor:pointer" id="rule_details" data-id="<?php echo $rule_row['id'];?>" data-toggle="modal" data-target="#rule_values_modal">details</a>)</td>
 										<td><?php echo $html['rule_clicks']; ?></td>
@@ -197,7 +218,7 @@ AUTH::require_user();
 										<td><?php echo $html['rule_epc']; ?></td>
 										<td><?php echo $html['rule_avg_cpc']; ?></td>
 										<td><?php echo $html['rule_income']; ?></td>
-										<td>(<?php echo $html['rule_cost']; ?>)</td>
+										<td><?php echo $html['rule_cost_wrapper']; ?></td>
 										<td><span class="label label-<?php if ($rule_net > 0) { echo 'primary'; } elseif ($rule_net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['rule_net'] ; ?></span></td>
 										<td><span class="label label-<?php if ($rule_net > 0) { echo 'primary'; } elseif ($rule_net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['rule_roi'] ; ?></span></td>
 									</tr>
@@ -233,9 +254,21 @@ AUTH::require_user();
 										$html['default_income'] = htmlentities(dollar_format($default_stats_row['income'], $cpv), ENT_QUOTES, 'UTF-8');
 										$html['default_cost'] = htmlentities(dollar_format($default_stats_row['cost'], $cpv), ENT_QUOTES, 'UTF-8');
 										$html['default_net'] = htmlentities(dollar_format($default_net, $cpv), ENT_QUOTES, 'UTF-8');
-										$html['default_roi'] = htmlentities($default_roi .'%', ENT_QUOTES, 'UTF-8'); ?>
+										$html['default_roi'] = htmlentities($default_roi .'%', ENT_QUOTES, 'UTF-8'); 
 
-										<tr>
+										$html['default_cost_wrapper'] = '('.$html['default_cost'].')'; 
+
+										if (!$userObj->hasPermission("access_to_campaign_data")) {
+											$html['default_clicks'] = '?';
+											$html['default_leads'] = '?';
+											$html['default_income'] = '?';
+											$html['default_cost_wrapper'] = '?';
+											$html['default_net'] = '?';
+										}
+
+										?>
+
+										<tr class="no-sort">
 											<td colspan="2" style="text-align:left; padding-left:20px;">Defaults</td>
 											<td><?php echo $html['default_clicks']; ?></td>
 											<td><?php echo $html['default_leads']; ?></td>
@@ -244,7 +277,7 @@ AUTH::require_user();
 											<td><?php echo $html['default_epc']; ?></td>
 											<td><?php echo $html['default_avg_cpc']; ?></td>
 											<td><?php echo $html['default_income']; ?></td>
-											<td>(<?php echo $html['default_cost']; ?>)</td>
+											<td><?php echo $html['default_cost_wrapper']; ?></td>
 											<td><span class="label label-<?php if ($default_net > 0) { echo 'primary'; } elseif ($default_net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['default_net'] ; ?></span></td>
 											<td><span class="label label-<?php if ($default_net > 0) { echo 'primary'; } elseif ($default_net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['default_roi'] ; ?></span></td>
 										</tr>
@@ -264,9 +297,20 @@ AUTH::require_user();
 				$html['total_cost'] =  htmlentities(dollar_format($total_cost, $cpv), ENT_QUOTES, 'UTF-8');
 				$html['total_net'] = htmlentities(dollar_format($total_net, $cpv), ENT_QUOTES, 'UTF-8');
 				$html['total_roi'] = htmlentities($total_roi . '%', ENT_QUOTES, 'UTF-8');
+
+				$html['total_cost_wrapper'] = '('.$html['total_cost'].')'; 
+
+				if (!$userObj->hasPermission("access_to_campaign_data")) {
+					$html['total_clicks'] = '?';
+					$html['total_leads'] = '?';
+					$html['total_income'] = '?';
+					$html['total_cost_wrapper'] = '?';
+					$html['total_net'] = '?';
+				}
+
 				?>
 
-				<tr style="background-color: #F8F8F8;" id="totals">
+				<tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
 					<td colspan="2" style="text-align:left; padding-left:10px"><strong>Totals for report</strong></td>
 					<td><strong><?php echo $html['total_clicks']; ?></strong></td>
 					<td><strong><?php echo $html['total_leads']; ?></strong></td>
@@ -275,7 +319,7 @@ AUTH::require_user();
 					<td><strong><?php echo $html['total_epc']; ?></strong></td>
 					<td><strong><?php echo $html['total_cpc']; ?></strong></td>
 					<td><strong><?php echo $html['total_income']; ?></strong></td>
-					<td><strong>(<?php echo $html['total_cost']; ?>)</strong></td>
+					<td><strong><?php echo $html['total_cost_wrapper']; ?></strong></td>
 					<td><span class="label label-<?php if ($total_net > 0) { echo 'primary'; } elseif ($total_net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['total_net']; ?></span></td>
 					<td><span class="label label-<?php if ($total_net > 0) { echo 'primary'; } elseif ($total_net < 0) { echo 'important'; } else { echo 'default'; } ?>"><?php echo $html['total_roi']; ?></span></td>
 				</tr>

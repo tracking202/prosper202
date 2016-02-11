@@ -1,21 +1,21 @@
 <?php
 
 //include functions
-require_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions.php');
+require_once(dirname( __FILE__ ) . '/functions.php');
 
 
 //check to see if the sample config file exists
-if (!file_exists($_SERVER['DOCUMENT_ROOT'] . '/202-config-sample.php')) {
+if (!file_exists(substr(dirname( __FILE__ ), 0,-10) . '/202-config-sample.php')) {
 	_die('Sorry, I need a 202-config-sample.php file to work from. Please re-upload this file from your Prosper202 installation.');
 }
 
 
 //lets make a new config file
-$configFile = file($_SERVER['DOCUMENT_ROOT'].'/202-config-sample.php');
+$configFile = file(substr(dirname( __FILE__ ), 0,-10).'/202-config-sample.php');
 
 
 //check to see if the directory is writable
-if ( !is_writable($_SERVER['DOCUMENT_ROOT'] . '/')) {
+if ( !is_writable(substr(dirname( __FILE__ ), 0,-10) . '/')) {
 	_die("Sorry, I can't write to the directory. You'll have to either change the permissions on your Prosper202 directory or create your 202-config.php manually.");
 }
 
@@ -40,7 +40,7 @@ switch($step) {
 		info_top();
 ?>
 <div class="main col-xs-7 install">
-<center><img src="/202-img/prosper202.png"></center>
+<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
 	<small>Welcome to Prosper202. Before getting started, we need some information about your database. You will need to know the following items before proceeding.</small>
 	<br></br>
 	<small><ul>
@@ -67,7 +67,7 @@ switch($step) {
 		?>
 	</p>
 	<div class="main col-xs-7 install">
-	<center><img src="/202-img/prosper202.png"></center>
+	<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
 	<small>Enter your database connection details. If you're not sure about these, contact your host</small>
 
 	<form method="post" action="setup-config.php?step=2" class="form-horizontal" role="form" style="margin-top:10px;">
@@ -155,7 +155,7 @@ switch($step) {
 	}
 
 
-	$handle = fopen($_SERVER['DOCUMENT_ROOT'] . '/202-config.php', 'w');
+	$handle = fopen(substr(dirname( __FILE__ ), 0,-10) . '/202-config.php', 'w');
 
 	foreach ($configFile as $line_num => $line) {
 		switch (substr($line,0,7)) {
@@ -179,7 +179,7 @@ switch($step) {
 		}
 	}
 	fclose($handle);
-	chmod($_SERVER['DOCUMENT_ROOT'] . '/202-config.php', 0666);
+	chmod(substr(dirname( __FILE__ ), 0,-10) . '/202-config.php', 0666);
 	
 	_die("<p>All right sparky! You've made it through this part of the installation. Prosper202 can now communicate with your database. If you are ready, go ahead and <a class='btn btn-xs btn-p202' href=\"install.php\">run the install!</a></p>");
 	break;

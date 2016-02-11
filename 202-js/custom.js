@@ -1,5 +1,4 @@
 $(document).ready(function() {
-
 	$('[data-toggle="radio"]').radiocheck();
 	$('[data-toggle="checkbox"]').radiocheck();
 	$('[data-toggle="tooltip"]').tooltip();
@@ -29,22 +28,10 @@ $(document).ready(function() {
 		});
 	});
 
-	$(".upgradeToProNeeded").click(function(e) {
-		e.preventDefault();
-		$('#upgradeToProModal').modal();
-	});
-
-	$("#splittest").on("change.radiocheck", function () {
-		$('#upgradeToProModal').modal();
+	$(":radio[name=autocron]").on("change.radiocheck", function () {
+		var autocron = $(this).val();
+		$.post("/202-account/administration.php", {autocron: autocron});
     });
-
-	$("div.upgradeToProContainer").hover(
-	  function() {
-	    $(this).find("div.upgradeToProOverlay").show();
-	  }, function() {
-	    $(this).find("div.upgradeToProOverlay").hide();
-	  }
-	);
 
 	//show/hide help text
 	$("#help-text-trigger").click(function() {
@@ -203,10 +190,10 @@ $(document).ready(function() {
 	    	var id = $(this).attr("id");
 
 	    	if (id == "from") {
-	    		$(this).val(datetext+" - 0:00");
+	    		$(this).val(datetext);
 	    		unset_user_pref_time_predefined();
 	    	} else {
-	    		$(this).val(datetext+" - 23:59");
+	    		$(this).val(datetext);
 	    		unset_user_pref_time_predefined();
 	    	}
 	    },
@@ -308,9 +295,13 @@ $(document).ready(function() {
 		  .done(function(data) {
 		  	var html = $(data);
 		  	var select = html.filter('.rule_added').find('#tags_select').find('input');
-		  	html.find('.rules').attr('id', 'rule_' + select_id);
+		  	html.find('.rules').attr('id', select_id);
 		  	html.find('#rule_name').attr('name', 'rule_name_' + select_id);
 		  	html.find('input[type=radio]').attr('name', 'redirect_type_' + select_id);
+		  	html.find('div.inactive input[type=checkbox]').attr('name', 'inactive_' + select_id);
+		  	html.find('div.splittest input[type=checkbox]').attr('name', 'splittest_' + select_id);
+		  	html.find('div.splittest label.checkbox').attr('for', 'splittest_' + select_id);
+		  	html.find('div.splittest input[type=checkbox]').attr('id', 'splittest_' + select_id);
 		  	id = 'tag_input_' + select_id;
 		  	select.attr('id', id);
 
@@ -330,36 +321,91 @@ $(document).ready(function() {
 
 		var rules = [];
 		var rotator_id = $('select[name=rotator_id]').val();
-		var default_type = $(':radio[name=default_type]:checked').val();
+		var default_type = $('select[name=default_type]').val();
 		var defaults;
 
 		if (default_type == 'campaign') {
 			defaults = $('select[name=default_campaign]').val();
 		} else if (default_type == 'url') {
 			defaults = $('input[name=default_url]').val();
+		} else if (default_type == 'lp') {
+			defaults = $('select[name=default_lp]').val();
+		} else if (default_type == 'monetizer') {
+			defaults = 'true';
 		}
 
-		$('.rules').each(function(){
-			var rule_id = $(this).data("rule-id");
-			var rule_name = $(this).find('#rule_name').val();
-			var inactive = $(this).find(':checkbox[name=inactive]');
-			if(inactive.is(':checked')) {status = 'inactive';} else {status = 'active';}
-
-			var redirect_type = $(this).find(':radio:checked').val();
-			var redirects;
-			var criteria = [];
-
-			if (redirect_type == 'campaign') {
-				redirects = $(this).find('select[name=redirect_campaign]').val();
-			} else if (redirect_type == 'url') {
-				redirects = $(this).find('input[name=redirect_url]').val();
+		$('.rules').each(function(ruleI, ruleObj){
+			var rule_id = $(ruleObj).data("rule-id");
+			var select_id;
+			
+			if (rule_id == 'none') {
+				select_id = $(ruleObj).attr("id");
+			} else {
+				select_id = $(ruleObj).data("rule-id");
 			}
 
-			$(this).find('.criteria').each(function() {
-				var criteria_id = $(this).data("criteria-id");
-			    var type = $(this).find('select[name=rule_type]').val();
-				var statement = $(this).find('select[name=rule_statement]').val();
-				var value = $(this).find('input[name=value]').tokenfield('getTokensList', ',', false, false);
+			var rule_name = $(ruleObj).find('#rule_name').val();
+			var inactive = $(ruleObj).find(':checkbox[name=inactive_'+ select_id +']');
+			var split = $(ruleObj).find(':checkbox[name=splittest_'+ select_id +']');
+			if(inactive.is(':checked')) {status = 'inactive';} else {status = 'active';}
+			if(split.is(':checked')) {splittest = true;} else {splittest = false;}
+			var redirects = [];
+			var criteria = [];
+			var redirect_type;
+			var redirect;
+			var weight;
+
+			if (splittest) {
+				$(ruleObj).find('#splittest-redirects > div.row').each(function(redirectI, redirectObj) {
+
+					var redirect_id = $(redirectObj).data("redirect-id");
+					redirect_type = $(redirectObj).find('#redirect_type_select').val();
+
+					if (redirect_type == 'campaign') {
+						redirect = $(redirectObj).find('select[name=redirect_campaign]').val();
+					} else if (redirect_type == 'url') {
+						redirect = $(redirectObj).find('input[name=redirect_url]').val();
+					} else if (redirect_type == 'lp') {
+						redirect = $(redirectObj).find('select[name=redirect_lp]').val();
+					} else if (redirect_type == 'monetizer') {
+						redirect = 'true';
+					}
+
+					weight = $(redirectObj).find('input[name=split_weight]').val();
+
+					redirects.push({
+						id: redirect_id,
+				        type: redirect_type,
+				        value: redirect,
+				        weight: weight
+				    });
+				});
+			} else {
+				var redirect_id = $(ruleObj).find('#simple-redirect').data("redirect-id");
+				redirect_type = $(ruleObj).find('#redirect_type_select').val();
+
+				if (redirect_type == 'campaign') {
+					redirect = $(ruleObj).find('select[name=redirect_campaign]').val();
+				} else if (redirect_type == 'url') {
+					redirect = $(ruleObj).find('input[name=redirect_url]').val();
+				} else if (redirect_type == 'lp') {
+					redirect = $(ruleObj).find('select[name=redirect_lp]').val();
+				} else if (redirect_type == 'monetizer') {
+					redirect = 'true';
+				}
+
+				redirects.push({
+					id: redirect_id,
+				    type: redirect_type,
+				    value: redirect
+				});
+			}
+
+			$(ruleObj).find('.criteria').each(function(criteriaI, criteriaObj) {
+				var criteria_id = $(criteriaObj).data("criteria-id");
+			    var type = $(criteriaObj).find('select[name=rule_type]').val();
+				var statement = $(criteriaObj).find('select[name=rule_statement]').val();
+				var value = $(criteriaObj).find('input[name=value]').tokenfield('getTokensList', ',', false, false);
 
 				criteria.push({
 					criteria_id: criteria_id,
@@ -373,11 +419,14 @@ $(document).ready(function() {
 				rule_id: rule_id,
 		        rule_name: rule_name,
 		        status: status,
-		        redirect_type: redirect_type,
+		        split: splittest,
 		        redirects: redirects,
 		        criteria: criteria
 		    });
 		});
+
+		console.log(rules);
+
 		$.post("/tracking202/ajax/rotator.php", 
 			{
 				post_rules: 1,  
@@ -388,7 +437,7 @@ $(document).ready(function() {
 			})
 
 		  	.done(function(data) {
-		  		
+		  		console.log(data);
 		  		var result = $.trim(data);
 		  		if (result == 'ERROR') {
 		  			$('#form_response').hide();
@@ -398,7 +447,7 @@ $(document).ready(function() {
 		  		} else if(result == 'DONE') {
 		  			window.location = "/tracking202/setup/rotator.php?rules_added=1";
 		  		}
-		});  
+		}); 
 	});
 
 	$('select[name=rotator_id]').change(function () {
@@ -437,39 +486,266 @@ $(document).ready(function() {
 		  	$('.modal-body').html(data);
 		});
 	})
+	
+	//triger add new offer function on ADV LP page
+	$("#app-placeholder").click(function() {
+		show_api_needed_message();
+	});
 
+	//Cost type
+	$(":radio[name=cost_type]").on("change.radiocheck", function () {
+		var cpc = $("#cpc_costs");
+		var cpa = $("#cpa_costs"); 
+        
+        if ($(this).val() == 'cpc') {
+        	cpc.show();
+        	cpa.hide();
+        } else {
+        	cpa.show();
+        	cpc.hide();
+        }
+    });
+
+	$(".delete_tracker").click(function(e) {
+		e.preventDefault();
+		var obj = $(this);
+		var id = obj.data('id');
+		if (confirm('Are you sure you want to delete tracker? Cant be undone!')) {
+			$.post("/tracking202/ajax/delete_tracker.php", {tracker_id: id})
+			  .done(function(data) {
+			  	obj.parent().remove();
+			});
+	    }
+	});
+
+	$(".custom.variables").click(function(e) {
+		e.preventDefault();
+		var obj = $("#variable-group");
+		var ppc_network_id = $(this).data('id');
+		$(this).text('loading...');
+		$.post("/tracking202/ajax/custom_variables.php", {get_vars: true, ppc_network_id: ppc_network_id})
+			.done(function(data) {
+			  	obj.html(data);
+			  	if ($('.old-variable').length > 0) {
+			  		$("#add_variables_form_submit").text("Update variables");
+			  	} else {
+			  		$("#add_variables_form_submit").text("Add variables");
+			  	}
+		});
+		$('#ppc_network_id').val(ppc_network_id);
+		$('.variables_validate_alert').hide();
+		$('#variablesModel').modal();
+		$(this).text('variables');
+	});
+
+	$("#add_more_variables").click(function(e) {
+		e.preventDefault();
+		var obj = $("#variable-group");
+		$.post("/tracking202/ajax/custom_variables.php", {add_more_variables: true})
+			.done(function(data) {
+			  	obj.append(data);
+		});
+	});
+
+	$("#add_variables_form_submit").click(function(e) {
+		e.preventDefault();
+		var $btn = $(this).button('loading')
+		var var_id;
+		var vars = [];
+
+		$('.var-field-group').each(function(){
+			var_id = false;
+			if ($(this).data("var-id")) {
+				var_id = $(this).data("var-id");
+			}
+
+			vars.push({
+				id: var_id,
+				name: $(this).find('input[name=name]').val(),
+			    parameter: $(this).find('input[name=parameter]').val(),
+			    placeholder: $(this).find('input[name=placeholder]').val()
+			});
+		});
+
+		if (vars.length == 0) {
+			$.post("/tracking202/ajax/custom_variables.php", {delete_vars: true, ppc_network_id: $('#ppc_network_id').val()})
+				.done(function(data) {
+					$('.variables_validate_alert').hide();
+					$btn.button('reset')
+					$('#variablesModel').modal('hide');
+			});
+		} else {
+			$.post("/tracking202/ajax/custom_variables.php", {post_vars: true, ppc_network_id: $('#ppc_network_id').val(), vars: vars})
+				.done(function(data) {
+					$('.variables_validate_alert').hide();
+					
+					if (data == 'VALIDATION FAILD!') {
+						$btn.button('reset')
+						$('.variables_validate_alert').show();
+					} else if (data == 'DONE!') {
+						$btn.button('reset')
+						$('#variablesModel').modal('hide');
+					}
+			});
+		}
+	});
+
+	$("#add_more_pixels").click(function(e) {
+		var $btn = $(this);
+    	$btn.button('loading');
+		e.preventDefault();
+		$.post("/tracking202/ajax/add_more_pixels.php")
+		  .done(function(data) {
+		  	$(".pixel-container").append(data);
+		  	$btn.button('reset');
+		});
+	});
+	
 });
 
-$(document).on('hidden.bs.modal', '#chartsUpgradeModal', function() {
-	document.cookie = "hideChartUpgrade=7300; path=/";
+$(document).on('change.radiocheck', '.splittest-checkbox', function() {
+	var container = $(this).parents().eq(4);
+	var obj1 = container.find('#simple-redirect');
+	var obj2 = container.find('#splittest-redirects');
+
+	if ($(this).is(':checked')) {
+		obj1.hide();
+		obj2.show();
+	} else {
+		obj1.show();
+		obj2.hide();
+	}
+});
+
+$(document).on('click', '.remove_variable', function() {
+	$(this).parents().eq(2).remove();
+});
+
+$(document).on('click', '#build_chart', function() {
+	$('#buildChartModal').modal();
+});
+
+$(document).on('change', ':radio[name=chart_time_range]', function() {
+	var element = $('#chart');
+	element.css("opacity", "0.5");
+	$.post("/tracking202/ajax/charts.php", {chart_time_range: $(':radio[name=chart_time_range]:checked').val()})
+		.done(function(data) {
+			var chart = new Highcharts.Chart({
+				chart: {
+					renderTo: 'chart',	
+		            type: 'line'
+		        },
+		        title: {
+		            text: data.title
+		        },
+		        xAxis: {
+		            categories: data.categories
+		        },
+		        plotOptions: {
+		            line: {
+		                dataLabels: {
+		                    enabled: true
+		                }
+		            }
+		        },
+		        series: data.json.series
+			});
+			element.css("opacity", "1");
+	});
+});
+
+$(document).on('click', '#add_more_chart_data_type', function(e) {
+	e.preventDefault();
+	var obj = $('#build_chart_form').find('.col-xs-12:first').clone();
+	obj.append('<span class="small"><a href="#" class="remove_chart_data_type" style="color:#a1a6a9"><i class="fa fa-close"></i></a></span>');
+	obj.appendTo('#build_chart_form');
+});
+
+$(document).on('click', '.remove_chart_data_type', function(e) {
+	e.preventDefault();
+	$(this).parents().eq(1).remove();
+});
+
+$(document).on('click', '#build_chart_form_submit', function() {
+	var levels = [];
+	var types = [];
+
+	$(':input[name="data_level[]"]').each(function() {
+		levels.push({
+			id: $(this).val()
+		});
+	});
+
+	$(':input[name="data_type[]"]').each(function() {
+		types.push({
+			type: $(this).val()
+		});
+	});
+
+	$.post("/tracking202/ajax/charts.php", {levels: levels, types: types})
+		.done(function(data) {
+			$('#buildChartModal').modal('hide');
+			set_user_prefs('/tracking202/ajax/account_overview.php');
+	});
+	
 });
 
 //Rotator redirect type
-$(document).on('toggle', '#redirect_type_radio input:radio', function() {
-	$(this).radio("check");
-    var redirect_campaign = $(this).parents().eq(2).find('#redirect_campaign_select');
-    var redirect_url = $(this).parents().eq(2).find('#redirect_url_input');
-
+$(document).on('change', '#redirect_type_select', function() {
+    var redirect_campaign = $(this).parents().eq(1).find('#redirect_campaign_select');
+    var redirect_lp = $(this).parents().eq(1).find('#redirect_lp_select');
+    var redirect_url = $(this).parents().eq(1).find('#redirect_url_input');
+    var monetizer = $(this).parents().eq(1).find('#redirect_monetizer');
+    
     if ($(this).val() == 'campaign') {
     	redirect_campaign.show();
     	redirect_url.hide();
-    } else if ($(this).val() == 'url') {
+    	redirect_lp.hide();
+    	monetizer.hide();
+    } else if ($(this).val() == 'lp') {
+    	redirect_lp.show();
+    	redirect_campaign.hide();
+    	redirect_url.hide();
+    	monetizer.hide();
+    } else if($(this).val() == 'url') {
     	redirect_url.show();
     	redirect_campaign.hide();
+    	redirect_lp.hide();
+    	monetizer.hide();
+    } else if ($(this).val() == 'monetizer') {
+    	monetizer.show();
+    	redirect_campaign.hide();
+    	redirect_lp.hide();
+    	redirect_url.hide();
     }
 });
 
 //Rotator defaults type
-$(document).on('toggle', '#defaults_type_radio input:radio', function() {
-	$(this).radio("check");
+$(document).on('change', '#default_type_select', function() {
     var redirect_campaign = $('#default_campaign_select');
     var redirect_url = $('#default_url_input');
+    var redirect_lp = $('#default_lp_select');
+    var auto_monetizer = $('#default_monetizer');
 
     if ($(this).val() == 'campaign') {
     	redirect_campaign.show();
     	redirect_url.hide();
+    	redirect_lp.hide();
+    	auto_monetizer.hide();
     } else if ($(this).val() == 'url') {
     	redirect_url.show();
+    	redirect_campaign.hide();
+    	redirect_lp.hide();
+    	auto_monetizer.hide();
+    } else if($(this).val() == 'lp') {
+    	redirect_lp.show();
+    	redirect_url.hide();
+    	redirect_campaign.hide();
+    	auto_monetizer.hide();
+    } else if ($(this).val() == 'monetizer') {
+    	auto_monetizer.show();
+    	redirect_lp.hide();
+    	redirect_url.hide();
     	redirect_campaign.hide();
     }
 });
@@ -495,6 +771,21 @@ $(document).on('click', '#add_more_criteria', function() {
 		}); 
 });
 
+$(document).on('click', '#add_more_redirects', function() {
+		var loading = $(this).parent().find('img');
+		var container = $(this).parents().eq(3);
+		loading.show();
+		$.post("/tracking202/ajax/rotator.php", {add_more_redirects: 1})
+		  .done(function(data) {
+		  	container.append(data);
+		  	loading.hide();
+		}); 
+});
+
+$(document).on('click', '#remove_redirect', function() {
+	$(this).parent().remove();
+});
+
 //Remove rule
 $(document).on('click', '#remove_rule', function() {
 	$(this).parents().eq(2).remove();
@@ -513,10 +804,6 @@ $(document).on('click', '#rule_details', function(e) {
 		.done(function(data) {
 		  	$('.modal-body').html(data);
 	});
-});
-
-$(document).on('change.radiocheck', '#splittest', function() {
-	$('#upgradeToProModal').modal();
 });
 
 //On rule type change, generate new autocomplate
@@ -574,6 +861,22 @@ $(document).on('change', 'select[name=rule_type]', function() {
 			rotator_tags_autocomplete_devices(select_id);
 	  	break;
 	}
+});
+
+$(document).on('change.radiocheck', '.offer-type-radio', function(e) {
+	if ($(this).val() == 'campaign') {
+		$(this).parents().eq(4).find('.campaign_select').show();
+		$(this).parents().eq(4).find('.rotator_select').hide();
+	} else if ($(this).val() == 'rotator') {
+		$(this).parents().eq(4).find('.rotator_select').show();
+		$(this).parents().eq(4).find('.campaign_select').hide();
+	}
+	
+});
+
+$(document).on('click', '#remove_pixel', function(e) {
+	e.preventDefault();
+	$(this).parents().eq(2).remove();
 });
 
 // Load affiliate networks
@@ -760,12 +1063,12 @@ function load_text_ad_id(aff_campaign_id, text_ad_id) {
 }
 
 //Load adv lp text ads
-function load_adv_text_ad_id(landing_page_id) {
+function load_adv_text_ad_id(landing_page_id, text_ad_id) {
 	var element = $("#text_ad_id_div");
     
 		$('#text_ad_id_div_loading').show();
 
-		$.post("/tracking202/ajax/adv_text_ads.php", {landing_page_id: landing_page_id})
+		$.post("/tracking202/ajax/adv_text_ads.php", {landing_page_id: landing_page_id, text_ad_id: text_ad_id})
 		  .done(function(data) {
 		  	$('#text_ad_id_div_loading').hide();
 		  	element.html(data);
@@ -892,7 +1195,7 @@ function pixel_data_changed(trackingDomain) {
 }
 
 function loadContent(page, offset, order){
-	var element = $("#m-content");
+	var element = $('#m-content');
 	var chartWidth = element.width();
 
 	$.post(page, { offset: offset, order: order, chartWidth:chartWidth})
@@ -929,14 +1232,15 @@ function eraseCookie(name) {
 	createCookie(name,"",-1);
 }
 
-function set_user_prefs(page, offset) { 
+function set_user_prefs(page, offset) {     
 	var element = $('#m-content');
-	element.css("opacity", "0.5");
+	element.html('<div class="loading-stats"><span class="infotext">Loading stats...</span> <img src="/202-img/loader-small.gif"></div>');
+	
 
 	$.post("/tracking202/ajax/set_user_prefs.php", $("#user_prefs").serialize(true))
 		.done(function(data) {
 		  	loadContent(page, offset); 
-		});
+		});	
 }
 
 function unset_user_pref_time_predefined() {
@@ -1019,3 +1323,68 @@ function rotator_tags_autocomplete_devices(selector){
 	elt.tokenfield('setTokens', [{value: 'bot', label: 'Bot'}, {value: 'mobile', label: 'Mobile'}, {value: 'tablet', label: 'Tablet'} , {value: 'desktop', label: 'Desktop'}]);
 
 }
+
+
+function subid_autocomplete(selector){
+	var elt = $('#' + selector);
+
+	var tags = new Bloodhound({
+	  local: [{value: '#s2#', label: 'Cake Marketing'}, {value: '{aff_sub}', label: 'HasOffers'}, {value: 'xxC1xx', label: 'HitPath'} , {value: '[=SID=]', label: 'LinkTrust'}],
+	  datumTokenizer: function(d) {
+	    return Bloodhound.tokenizers.whitespace(d.value); 
+	  },
+	  queryTokenizer: Bloodhound.tokenizers.whitespace    
+	});
+
+	tags.initialize();
+	
+	elt.tokenfield({
+	  createTokensOnBlur: true,
+	  typeahead: {
+	  	displayKey: 'label',
+	    source: tags.ttAdapter()
+	  }
+	});
+
+	elt.tokenfield('setTokens', [{value: '#s2#', label: 'Cake Marketing'}, {value: '{aff_sub}', label: 'HasOffers'}, {value: 'xxC1xx', label: 'HitPath'} , {value: '[=SID=]', label: 'LinkTrust'}]);
+
+}
+
+function show_api_needed_message(){
+	$('#myModal').modal('show');
+}
+
+
+function autocomplete_names(selector, type){
+	var elt = $('#' + selector);
+
+	var tags = new Bloodhound({
+	  remote: 'http://my.tracking202.com/api/v2/'+ type +'/%QUERY',
+	  datumTokenizer: function(d) { 
+	      return Bloodhound.tokenizers.whitespace(d.val); 
+	  },
+	  queryTokenizer: Bloodhound.tokenizers.whitespace,
+	  limit: 10
+	});
+
+	tags.initialize();
+
+  	elt.on('tokenfield:initialize', function (e) {
+	    elt.parent().find('.token').remove();
+	})
+
+  	.tokenfield({
+	  createTokensOnBlur: true,
+	  limit: 1,
+	  typeahead: {
+	  	displayKey: 'label',
+	    source: tags.ttAdapter()
+	  }
+	});
+
+	$(".tt-hint").css('width', '100%');
+	$(".tt-hint").css('top', '5px');
+	$(".tt-input").css('top', '5px');
+}
+
+

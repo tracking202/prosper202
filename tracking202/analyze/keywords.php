@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+<?php include_once(substr(dirname( __FILE__ ), 0,-20) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -14,10 +14,10 @@ template_top('Analyze Your Keywords',NULL,NULL,NULL); ?>
 	</div>
 </div>
 
-<?php display_calendar('/tracking202/ajax/sort_keywords.php', true, true, true, true, true, true); ?>
+<?php display_calendar(get_absolute_url().'tracking202/ajax/sort_keywords.php', true, true, true, true, true, true); ?>
 
 <script type="text/javascript">
-   loadContent('/tracking202/ajax/sort_keywords.php',null);
+   loadContent('<?php echo get_absolute_url();?>tracking202/ajax/sort_keywords.php',null);
 </script>
 
 <?php  template_bottom();

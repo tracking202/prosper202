@@ -6,7 +6,7 @@ $tracker_id = $_GET['t202id'];
 if (!is_numeric($tracker_id)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config.php'); 
 
 $usedCachedRedirect = false;
 if (!$db) $usedCachedRedirect = true;
@@ -26,7 +26,8 @@ if ($usedCachedRedirect==true) {
 	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
 }
 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
 
 //grab tracker data
 $mysql['tracker_id_public'] = $db->real_escape_string($tracker_id);
@@ -36,6 +37,8 @@ $rotator_sql = "SELECT  tr.user_id,
 						tr.click_cpc,
 						rt.default_url,
 						rt.default_campaign,
+						rt.default_lp,
+						rt.auto_monetizer,
 						ca.aff_campaign_id,
 						ca.aff_campaign_rotate,
 					    ca.aff_campaign_url,
@@ -47,10 +50,13 @@ $rotator_sql = "SELECT  tr.user_id,
 					    ca.aff_campaign_cloaking,
 						ur.user_timezone,
 					   	up.user_keyword_searched_or_bidded,
-					   	up.maxmind_isp
+                        up.user_pref_dynamic_bid,
+					   	up.maxmind_isp,
+					   	lp.landing_page_url
 				FROM    202_trackers AS tr
 				LEFT JOIN 202_rotators AS rt ON rt.id = tr.rotator_id
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rt.default_campaign
+				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
 				LEFT JOIN 202_users AS ur ON ur.user_id = tr.user_id
 				LEFT JOIN 202_users_pref AS up ON up.user_id = tr.user_id
 				WHERE   tracker_id_public='".$mysql['tracker_id_public']."'"; 
@@ -60,21 +66,9 @@ $user_keyword_searched_or_bidded = $db->real_escape_string($rotator_row['user_ke
 
 //grab rules data
 $mysql['rotator_id'] = $db->real_escape_string($rotator_row['rotator_id']);
-$rule_sql = "SELECT ru.id as rule_id,
-					   ru.redirect_url,
-					   ru.redirect_campaign,
-					   ca.aff_campaign_id,
-					   ca.aff_campaign_rotate,
-					   ca.aff_campaign_url,
-					   ca.aff_campaign_url_2,
-					   ca.aff_campaign_url_3,
-					   ca.aff_campaign_url_4,
-					   ca.aff_campaign_url_5,
-					   ca.aff_campaign_payout,
-					   ca.aff_campaign_cloaking
-				FROM 202_rotator_rules AS ru
-				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = ru.redirect_campaign
-				WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'"; 
+$rule_sql = "SELECT ru.id as rule_id
+			 FROM 202_rotator_rules AS ru
+			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'"; 
 $rule_row = foreach_memcache_mysql_fetch_assoc($db, $rule_sql);
 if (!$rotator_row) die();
 
@@ -82,8 +76,10 @@ AUTH::set_timezone($rotator_row['user_timezone']);
 
 $ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
 
-if ($rotator_row['maxmind'] == '1') {
+if ($rotator_row['maxmind_isp'] == '1') {
 	$IspData = getIspData($ip_address);
+	$IspData = explode(',', $IspData);
+	$IspData = $IspData[0];
 } else {
 	$IspData = null;
 }
@@ -120,6 +116,15 @@ if( !$detect->isMobile() && !$detect->isTablet() ){
 	}
 }
 
+// set cpc use dynamic variable if set or the default if not
+if (isset ( $_GET ['t202b'] ) && $rotator_row['user_pref_dynamic_bid'] == '1') {
+    $_GET ['t202b']=ltrim($_GET ['t202b'],'$');
+    if(is_numeric ( $_GET ['t202b'] )){
+        $bid = number_format ( $_GET ['t202b'], 5, '.', '' );
+        $rotator_row ['click_cpc'] = $db->real_escape_string ( $bid );
+    }
+} 
+
 $default = false;
 
 foreach ($rule_row as $rule) {
@@ -146,122 +151,173 @@ foreach ($rule_row as $rule) {
 
 		$values = explode(',', $criteria['value']);
 
-		switch ($criteria['type']) {
-			case 'country':
-				$country = $GeoData['country']."(".$GeoData['country_code'].")";
-
-				if ($statement) {
-					if (in_array($country, $values)) {
-						$rotate[] = true;
-					}
-				} else {
-					if (!in_array($country, $values)) {
-						$rotate[] = true;
-					}
-				}
-					
-			break;
+		if (in_array('ALL', $values) || in_array('all', $values)) {
 			
-			case 'region':
-				$region = $GeoData['region']."(".$GeoData['country_code'].")";
+			$rotate[] = true;
+
+		} else {
+
+			switch ($criteria['type']) {
+				case 'country':
+					$country = $GeoData['country']."(".$GeoData['country_code'].")";
+
+					if ($statement) {
+						if (in_array($country, $values)) {
+							$rotate[] = true;
+						}
+					} else {
+						if (!in_array($country, $values)) {
+							$rotate[] = true;
+						}
+					}
+						
+				break;
 				
-				if ($statement) {
-					if (in_array($region, $values)) {
-						$rotate[] = true;
+				case 'region':
+					$region = $GeoData['region']."(".$GeoData['country_code'].")";
+					
+					if ($statement) {
+						if (in_array($region, $values)) {
+							$rotate[] = true;
+						}
+					} else {
+						if (!in_array($region, $values)) {
+							$rotate[] = true;
+						}
 					}
-				} else {
-					if (!in_array($region, $values)) {
-						$rotate[] = true;
-					}
-				}
 
-			break;
+				break;
 
-			case 'city':
-				$city = $GeoData['city']."(".$GeoData['country_code'].")";
-				
-				if ($statement) {
-					if (in_array($city, $values)) {
-						$rotate[] = true;
+				case 'city':
+					$city = $GeoData['city']."(".$GeoData['country_code'].")";
+					
+					if ($statement) {
+						if (in_array($city, $values)) {
+							$rotate[] = true;
+						}
+					} else {
+						if (!in_array($city, $values)) {
+							$rotate[] = true;
+						}
 					}
-				} else {
-					if (!in_array($city, $values)) {
-						$rotate[] = true;
-					}
-				}
-			break;
+				break;
 
-			case 'isp':
-				
-				if ($statement) {
-					if (in_array($IspData, $values)) {
-						$rotate[] = true;
+				case 'isp':
+					
+					if ($statement) {
+						if (in_array($IspData, $values)) {
+							$rotate[] = true;
+						}
+					} else {
+						if (!in_array($IspData, $values)) {
+							$rotate[] = true;
+						}
 					}
-				} else {
-					if (!in_array($IspData, $values)) {
-						$rotate[] = true;
-					}
-				}
-			break;
+				break;
 
-			case 'ip':
-				if ($statement) {
-					if (in_array($ip_address, $values)) {
-						$rotate[] = true;
+				case 'ip':
+					if ($statement) {
+						if (in_array($ip_address, $values)) {
+							$rotate[] = true;
+						}
+					} else {
+						if (!in_array($ip_address, $values)) {
+							$rotate[] = true;
+						}
 					}
-				} else {
-					if (!in_array($ip_address, $values)) {
-						$rotate[] = true;
-					}
-				}
 
-			break;
+				break;
 
-			case 'platform':
-				if ($statement) {
-					if (in_array($result->os->family, $values)) {
-						$rotate[] = true;
+				case 'platform':
+					if ($statement) {
+						if (in_array($result->os->family, $values)) {
+							$rotate[] = true;
+						}
+					} else {
+						if (!in_array($result->os->family, $values)) {
+							$rotate[] = true;
+						}
 					}
-				} else {
-					if (!in_array($result->os->family, $values)) {
-						$rotate[] = true;
-					}
-				}
-			break;
+				break;
 
-			case 'device':
-				if ($statement) {
-					if (in_array(strtolower($result->device->family), $values)) {
-						$rotate[] = true;
+				case 'device':
+					if ($statement) {
+						if (in_array(strtolower($result->device->family), $values)) {
+							$rotate[] = true;
+						}
+					} else {
+						if (!in_array(strtolower($result->device->family), $values)) {
+							$rotate[] = true;
+						}
 					}
-				} else {
-					if (!in_array(strtolower($result->device->family), $values)) {
-						$rotate[] = true;
-					}
-				}
-			break;
+				break;
 
-			case 'browser':
-				if ($statement) {
-					if (in_array($result->ua->family, $values)) {
-						$rotate[] = true;
+				case 'browser':
+					if ($statement) {
+						if (in_array($result->ua->family, $values)) {
+							$rotate[] = true;
+						}
+					} else {
+						if (!in_array($result->ua->family, $values)) {
+							$rotate[] = true;
+						}
 					}
-				} else {
-					if (!in_array($result->ua->family, $values)) {
-						$rotate[] = true;
-					}
-				}
-			break;
+				break;
+			}
 		}
 
 		$count++;
 
 	}
 	
-	//If any of the rules maches, redirect to the redirect type (url or campaign)
+	//If any of the rules maches, redirect to the redirect type.
 	if ($count == count($rotate)) {
+		$rule_redirects_sql = "SELECT rur.id,
+					   rur.redirect_url,
+					   rur.redirect_campaign,
+					   rur.redirect_lp,
+					   rur.auto_monetizer,
+					   rur.weight,
+					   ca.aff_campaign_id,
+					   ca.aff_campaign_rotate,
+					   ca.aff_campaign_url,
+					   ca.aff_campaign_url_2,
+					   ca.aff_campaign_url_3,
+					   ca.aff_campaign_url_4,
+					   ca.aff_campaign_url_5,
+					   ca.aff_campaign_payout,
+					   ca.aff_campaign_cloaking,
+					   lp.landing_page_url,
+		               lp.landing_page_id
+				FROM 202_rotator_rules_redirects AS rur
+				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
+				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
+				WHERE rule_id='".$mysql['rule_id']."'"; 
+		$rule_redirects_row = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+		$redirects = array();
+		$redirect_values = array();
+
+		foreach ($rule_redirects_row as $rule_redirect_row) {
+			
+			if ($rule_redirect_row['redirect_campaign'] != null) {
+				$redirects[] = array('rule_id' => $mysql['rule_id'], 'redirect_id' => $rule_redirect_row['id'], 'type' => 'campaign', 'aff_campaign_url' => $rule_redirect_row['aff_campaign_url'], 'aff_campaign_url_2' => $rule_redirect_row['aff_campaign_url_2'], 'aff_campaign_url_3' => $rule_redirect_row['aff_campaign_url_3'], 'aff_campaign_url_4' => $rule_redirect_row['aff_campaign_url_4'], 'aff_campaign_url_5' => $rule_redirect_row['aff_campaign_url_5'], 'weight' => $rule_redirect_row['weight'], 'aff_campaign_id' => $rule_redirect_row['aff_campaign_id'], 'aff_campaign_payout' => $rule_redirect_row['aff_campaign_payout'], 'aff_campaign_cloaking' => $rule_redirect_row['aff_campaign_cloaking']);
+			} else if($rule_redirect_row['redirect_url'] != null) {
+				$redirects[] = array('rule_id' => $mysql['rule_id'], 'redirect_id' => $rule_redirect_row['id'], 'type' => 'url', 'redirect_url' => $rule_redirect_row['redirect_url'], 'weight' => $rule_redirect_row['weight'], 'aff_campaign_id' => $rule_redirect_row['aff_campaign_id'], 'aff_campaign_payout' => $rule_redirect_row['aff_campaign_payout'], 'aff_campaign_cloaking' => $rule_redirect_row['aff_campaign_cloaking']);
+			} else if ($rule_redirect_row['redirect_lp'] != null) {
+				$redirects[] = array('rule_id' => $mysql['rule_id'], 'redirect_id' => $rule_redirect_row['id'], 'type' => 'lp', 'landing_page_id' => $rule_redirect_row['landing_page_id'],'landing_page_url' => $rule_redirect_row['landing_page_url'], 'weight' => $rule_redirect_row['weight'], 'aff_campaign_id' => $rule_redirect_row['aff_campaign_id'], 'aff_campaign_payout' => $rule_redirect_row['aff_campaign_payout'], 'aff_campaign_cloaking' => $rule_redirect_row['aff_campaign_cloaking']);
+			} else if ($rule_redirect_row['auto_monetizer'] != null) {
+				$redirects[] = array('rule_id' => $mysql['rule_id'], 'redirect_id' => $rule_redirect_row['id'], 'type' => 'monetizer', 'monetizer_url' => 'http://prosper202.com', 'weight' => $rule_redirect_row['weight'], 'aff_campaign_id' => $rule_redirect_row['aff_campaign_id'], 'aff_campaign_payout' => $rule_redirect_row['aff_campaign_payout'], 'aff_campaign_cloaking' => $rule_redirect_row['aff_campaign_cloaking']);
+			}
+		}
+
+		if (count($rule_redirects_row) > 1) {
+			$redirect_array = $redirects[getSplitTestValue($redirects)];
+		} else {
+			$redirect_array = $redirects[0];
+		}
+
 		$default = false;
-		$redirect = redirect_process($db, $rule, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
+		$redirect = redirect_process($db, $redirect_array, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
 		header('location: '.$redirect);
 		die();
 	} else {
@@ -290,14 +346,15 @@ if ($default == true) {
 
 //Redirect process function
 function redirect_process($db, $rule, $ppc_account, $cpc, $rotator_id, $GeoData, $ip_address, $user_id, $IspData, $keyword_type){
-
+$mysql['click_time'] = time();
 $mysql['aff_campaign_id'] = $db->real_escape_string($rule['aff_campaign_id']);
 $mysql['click_cpc'] = $db->real_escape_string($rule['click_cpc']);
 $mysql['click_payout'] = $db->real_escape_string($rule['aff_campaign_payout']);
 $mysql['rule_id'] = $db->real_escape_string($rule['rule_id']);
+$mysql['rule_redirect_id'] = $db->real_escape_string($rule['redirect_id']);
 $mysql['ppc_account'] = $db->real_escape_string($ppc_account);
 $mysql['cpc'] = $db->real_escape_string($cpc);
-$mysql['click_time'] = time();
+$mysql['landing_page_id'] = $db->real_escape_string($rule['landing_page_id']);
 
 /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
 //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
@@ -312,12 +369,8 @@ switch ($keyword_type) {
 	      #try to get the bidded keyword first
 		if ($_GET['OVKEY']) { //if this is a Y! keyword
 			$keyword = $db->real_escape_string($_GET['OVKEY']);   
-		} elseif ($_GET['utm_source']) { 
-			$keyword = $db->real_escape_string($_GET['utm_source']);  
-		} elseif ($_GET['t202kw']) { 
+		}  elseif ($_GET['t202kw']) { 
 			$keyword = $db->real_escape_string($_GET['t202kw']);  
-		} elseif ($referer_query['p']) { 
-			$keyword = $db->real_escape_string($referer_query['p']);
 		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
 			$keyword = $db->real_escape_string($_GET['target_passthrough']);   
 		} else { //if this is a zango, or more keyword
@@ -328,8 +381,6 @@ switch ($keyword_type) {
 		#try to get the searched keyword
 		if ($referer_query['q']) { 
 			$keyword = $db->real_escape_string($referer_query['q']);
-		} elseif ($referer_query['p']) { 
-			$keyword = $db->real_escape_string($referer_query['p']);
 		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
 			$keyword = $db->real_escape_string($_GET['OVRAW']);   
 		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
@@ -364,6 +415,14 @@ switch ($keyword_type) {
 			$keyword = $db->real_escape_string($_GET['t202kw']);
 		}
 		break;
+}
+
+if (substr($keyword, 0, 8) == 't202var_') {
+	$t202var = substr($keyword, strpos($keyword, "_") + 1);
+
+	if (isset($_GET[$t202var])) {
+		$keyword = $_GET[$t202var];
+	}
 }
 
 $keyword = str_replace('%20',' ',$keyword);      
@@ -426,7 +485,7 @@ if ($device_id['type'] == '4') {
 	$mysql['click_filtered'] = $db->real_escape_string($click_filtered);
 }
 
-if($_GET[lpr]!=''){
+if($_GET['lpr']!='') {
 	$click_sql1 = "	SELECT 	202_clicks.click_id,keyword,keyword_id
 					FROM 		202_clicks
 					LEFT JOIN	202_clicks_advance USING (click_id)
@@ -439,7 +498,6 @@ if($_GET[lpr]!=''){
 					LIMIT 		1";
 	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
 	$click_row1 = $click_result1->fetch_assoc();
-
 	$mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
 	$keyword = $db->real_escape_string($keyword);
 	$keyword_id = $db->real_escape_string($click_row1['keyword_id']);
@@ -463,7 +521,8 @@ $mysql['user_id'] = $db->real_escape_string($user_id);
 $click_sql = "REPLACE INTO   202_clicks
 			  SET           	click_id='".$mysql['click_id']."',
 							user_id = '".$mysql['user_id']."',   
-							aff_campaign_id = '".$mysql['aff_campaign_id']."',   
+							aff_campaign_id = '".$mysql['aff_campaign_id']."',
+							 landing_page_id = '".$mysql['landing_page_id']."',   
 							ppc_account_id = '".$mysql['ppc_account']."',   
 							click_cpc = '".$mysql['cpc']."',   
 							click_payout = '".$mysql['click_payout']."',   
@@ -471,8 +530,9 @@ $click_sql = "REPLACE INTO   202_clicks
 							click_filtered = '".$mysql['click_filtered']."',
 							click_bot = '".$mysql['click_bot']."',
 							click_time = '".$mysql['click_time']."',
-							rotator_id = '".$mysql['rotator_id']."',
-							rule_id = '".$mysql['rule_id']."'"; 
+                            rotator_id = '".$mysql['rotator_id']."',
+                            rule_id = '".$mysql['rule_redirect_id']."'"; 
+
 $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);   
 
 	//ok we have the main data, now insert this row
@@ -488,7 +548,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 								click_alp = '".$mysql['click_alp']."',
 								click_time = '".$mysql['click_time']."'"; 
 	$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);   
-
+	
 //now we have the click's advance data, now insert this row
 $click_sql = "REPLACE INTO   202_clicks_advance
 			  SET           click_id='".$mysql['click_id']."',
@@ -514,6 +574,16 @@ $click_sql = "
 		c2_id = '".$mysql['c2_id']."',
 		c3_id = '".$mysql['c3_id']."',
 		c4_id = '".$mysql['c4_id']."'";
+$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+
+$click_sql = "
+	REPLACE INTO
+		202_clicks_rotator
+	SET
+		click_id='".$mysql['click_id']."',
+		rotator_id='".$mysql['rotator_id']."',
+		rule_id='".$mysql['rule_id']."',
+		rule_redirect_id = '".$mysql['rule_redirect_id']."'";
 $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 
 
@@ -555,22 +625,26 @@ $mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_s
 if ($cloaking_on == true) {
 	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;      
 }
-
 if ($rule['aff_campaign_id'] != null) {
 	//rotate the urls
 	$redirect_site_url = rotateTrackerUrl($db, $rule);
 } else {
-	if ($rule['default_url'] != null) {
-		$redirect_site_url = $rule['default_url'];
-	} elseif($rule['redirect_url'] != null) {
+	if ($rule['type'] == 'url') {
 		$redirect_site_url = $rule['redirect_url'];
+	} else if($rule['type'] == 'campaign') {
+		$redirect_site_url = $rule['aff_campaign_url'];
+	} else if ($rule['type'] == 'lp') {
+		$redirect_site_url = $rule['landing_page_url'];
+	} else if ($rule['type'] == 'auto_monetizer') {
+		$redirect_site_url = "http://prosper202.com";
+	} else if ($rule['default_url'] != null) {
+		$redirect_site_url = $rule['default_url'];
+	} else if ($rule['default_lp'] != null) {
+		$redirect_site_url = $rule['landing_page_url'];
 	}
-	
 }
 
-
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_id);
-
 
 $click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url); 
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
@@ -583,53 +657,23 @@ $click_sql = "REPLACE INTO   202_clicks_site
 							click_redirect_site_url_id='".$mysql['click_redirect_site_url_id']."'";
 $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);   
 
-//update the click summary table 
-
-	$now = time();
-
-	$today_day = date('j', time());
-	$today_month = date('n', time());
-	$today_year = date('Y', time());
-
-	//the click_time is recorded in the middle of the day
-	$click_time = mktime(12,0,0,$today_month,$today_day,$today_year);
-	$mysql['click_time'] = $db->real_escape_string($click_time);
-
-	//check to make sure this click_summary doesn't already exist
-	$check_sql = "SELECT  *
-				  FROM    202_summary_overview
-				  WHERE   user_id='".$mysql['user_id']."'
-				  AND     aff_campaign_id='".$mysql['aff_campaign_id']."'
-				  AND     ppc_account_id='".$mysql['ppc_account']."'
-				  AND     click_time='".$mysql['click_time']."'";
-	$check_result = $db->query($check_sql) or record_mysql_error($db, $check_sql);
-	$check_count = $check_result->num_rows;      
-
-
-	//if this click summary hasn't been recorded do this now
-	if ($check_count == 0 ) {
-
-		$insert_sql = "INSERT INTO 202_summary_overview
-					   SET         user_id='".$mysql['user_id']."',
-								   aff_campaign_id='".$mysql['aff_campaign_id']."',
-								   ppc_account_id='".$mysql['ppc_account']."',
-								   click_time='".$mysql['click_time']."'";
-		$insert_result = $db->query($insert_sql);
-	}  
- 
-
 	if ($rule['aff_campaign_id'] != null) {
 		//set the cookie
 		setClickIdCookie($mysql['click_id'],$rule['aff_campaign_id']);
 	}
 
+	//set dirty hour
+	$de = new DataEngine();
+	$data = $de->setDirtyHour($mysql['click_id']);
 
+	$urlvars = getPrePopVars($_GET);
+	
 	//now we've recorded, now lets redirect them
 	if ($cloaking_on == true) {
 		//if cloaked, redirect them to the cloaked site. 
-		return $cloaking_site_url;  
+		return setPrePopVars($urlvars,$cloaking_site_url,true);  
 	} else {
-		return $redirect_site_url;       
+		return setPrePopVars($urlvars,$redirect_site_url,false);       
 	} 
 
 }

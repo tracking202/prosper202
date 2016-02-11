@@ -1,6 +1,5 @@
 <?php
-
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');    
+include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');    
 
 AUTH::require_user();
 
@@ -23,7 +22,7 @@ AUTH::require_user();
  	
  	if ($counter < 20) {?>
  		
-	 	<h4><a href="http://meetup.tracking202.com" target="_blank"><img src="/202-img/meetup_logo.png"/ class="news_icon"></a> <a href='<?php echo ($html['link']); ?>'  target="_blank"><?php echo $html['title']; ?></a> - <?php echo $html['time']; ?></h4>
+	 	<h4><a href="http://meetup.tracking202.com" target="_blank"></a> <a href='<?php echo ($html['link']); ?>'  target="_blank"><?php echo $html['title']; ?></a> - <?php echo $html['time']; ?></h4>
 		<p><?php echo $html['description']; ?></p><?php  
  	}
 }

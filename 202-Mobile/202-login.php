@@ -1,6 +1,7 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php 
+include_once(substr(dirname( __FILE__ ), 0,-11) . '/202-config/connect.php'); 
 if( AUTH::logged_in() ) {
-	header('location: /202-Mobile/mini-stats');
+	header('location: '.get_absolute_url().'202-Mobile/mini-stats');
 }
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
@@ -79,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$_SESSION['user_timezone'] = $user_row['user_timezone']; 
 		$_SESSION['toolbar'] = 'true';
 		//redirect to account scree
-		header('location: /202-Mobile/mini-stats');
+		header('location: '.get_absolute_url().'202-Mobile/mini-stats');
 	}
 		
 	$html['user_name'] = htmlentities($_POST['user_name'], ENT_QUOTES, 'UTF-8');
@@ -103,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <meta name="viewport" content = "width=device-width ,  user-scalable=no">
 
  
-<link href="/202-css/toolbar.css" rel="stylesheet" type="text/css"/>
+<link href="<?php echo get_absolute_url();?>202-css/toolbar.css" rel="stylesheet" type="text/css"/>
 </head>
 <body>
 
@@ -112,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		<table cellspacing="0" cellpadding="5">
 			<tr>
-				<td colspan="2" style="text-align: center;" ><a href="http://prosper202.com" target="_blank"><img src="/202-img/prosper202.png"/></a><br/></td>
+				<td colspan="2" style="text-align: center;" ><a href="http://prosper202.com" target="_blank"><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"/></a><br/></td>
 			</tr>
 			<tr>
 				<td>	<form method="post" action="">
@@ -135,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 				<td>
 					<input id="user_pass" type="password" name="user_pass"/>
-					<!-- <span id="forgot_pass"><br>(<a href="/202-lost-pass.php">I forgot my password/username</a>)</a> -->
+					<!-- <span id="forgot_pass"><br>(<a href="<?php echo get_absolute_url();?>202-lost-pass.php">I forgot my password/username</a>)</a> -->
 				</td>
 			</tr>
 			<tr>

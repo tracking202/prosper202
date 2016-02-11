@@ -1,6 +1,7 @@
 <?php
 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');    
+include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');    
+include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/functions-rss.php');
 
 AUTH::require_user();
 
@@ -9,7 +10,7 @@ $rss = fetch_rss( TRACKING202_RSS_URL .'/prosper202/alerts');
 if ( isset($rss->items) && 0 != count($rss->items) ) {
  	$rss->items = array_slice($rss->items, 0, 3);
 }
-
+if (!$rss) die("");
 foreach ($rss->items as $item ) { 
 	//check if this alert is already marked as seen
 	$mysql['prosper_alert_id'] = $db->real_escape_string($item['prosper_alert_id']);

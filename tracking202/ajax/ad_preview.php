@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -13,9 +13,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if ($text_ad_result->num_rows == 0) { ?>
 
-		<div class="panel panel-default" style="opacity:0.5; border-color: #3498db; margin-bottom:0px">
-			<div class="panel-body">
-				<span id="ad-preview-headline">Luxury Cruise to Mars</span><br/>
+		<div class="panel panel-default" style="opacity:0.5; border-color: #3498db; margin-bottom:0px; width: 220px">
+			<div class="panel-body" style="width: 220px">
+				<span id="ad-preview-headline">aLuxury Cruise to Mars</span><br/>
 				<span id="ad-preview-body">Visit the Red Planet in style. Low-gravity fun for everyone!</span><br/>
 				<span id="ad-preview-url">www.example.com</span>
 			</div>
@@ -28,8 +28,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$html['text_ad_description'] = htmlentities($text_ad_row['text_ad_description'], ENT_QUOTES, 'UTF-8');
 		$html['text_ad_display_url'] = htmlentities($text_ad_row['text_ad_display_url'], ENT_QUOTES, 'UTF-8'); ?>
 
-		<div class="panel panel-default" style="border-color: #3498db; margin-bottom:0px">
-			<div class="panel-body">
+		<div class="panel panel-default" style="border-color: #3498db; margin-bottom:0px; width:220px">
+			<div class="panel-body" style="width: 220px">
 				<span id="ad-preview-headline"><?php echo $html['text_ad_headline']; ?></span><br/>
 				<span id="ad-preview-body"><?php echo $html['text_ad_description']; ?></span><br/>
 				<span id="ad-preview-url"><?php echo $html['text_ad_display_url']; ?></span>

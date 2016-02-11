@@ -1,4 +1,5 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php
+include_once(substr(dirname( __FILE__ ), 0,-14) . '/202-config/connect.php'); 
 
 AUTH::require_user(); 
 
@@ -25,7 +26,7 @@ template_top('Prosper202 ClickServer App Store');  ?>
 			curl_close($ch);
 
 			$data = json_decode($result, true);
-
+if($data){
 		foreach ($data['deals'] as $deal) { ?>
 				<h6><?php echo $deal['title'];?></h6>
 				<div class="row">
@@ -41,5 +42,8 @@ template_top('Prosper202 ClickServer App Store');  ?>
 			<div class="row form_seperator" style="margin-top:15px;">
 				<div class="col-xs-12"></div>
 			</div>
-		<?php } ?>
+		<?php }}
+		else{
+		    echo "Sorry Resources Feed Not Found: Please try again later";
+		} ?>
 <?php template_bottom(); ?>

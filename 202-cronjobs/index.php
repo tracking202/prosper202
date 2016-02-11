@@ -1,4 +1,6 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-13) . '/202-config/connect.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-13) . '/202-config/class-dataengine.php');
+set_time_limit(0);
 
 //heres the psuedo cronjobs
 if (RunSecondsCronjob() == true) { 
@@ -44,6 +46,10 @@ function RunDailyCronjob() {
 		$click_sql = "DELETE FROM 202_clicks_spy WHERE click_time < $from";
 		$click_result = _mysqli_query($click_sql);
 		
+		//Clear out the 202_clicks_counter table
+		//we want to keep our SPY TABLE, low
+		$click_sql = "DELETE FROM 202_clicks_counter";
+		$click_result = _mysqli_query($click_sql);
 		
 		//clear the last 24 hour ip addresses
 		$last_ip_sql = "DELETE FROM 202_last_ips WHERE time < $from";
@@ -52,8 +58,8 @@ function RunDailyCronjob() {
 		
 		/* -------- THIS CLEARS OUT THE CHART TABLE --------- */	
 		
-		$chart_sql = "DELETE FROM 202_charts";
-		$chart_result = _mysqli_query($chart_sql);
+		//$chart_sql = "DELETE FROM 202_charts";
+		//$chart_result = _mysqli_query($chart_sql);
 		//$chart_count = mysql_affected_rows(); */
 		
 		/* -------- NOW DELETE ALL THE OLD CRONJOB ENTRIES STUFF --------- */	
@@ -65,6 +71,9 @@ function RunDailyCronjob() {
 	}  else {
 		return false;	
 	}
+
+	$log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, ".time().")";
+	$log_result = _mysqli_query($log_sql);
 }
 
 
@@ -101,6 +110,9 @@ function RunHourlyCronJob() {
 	}  else {
 		return false;	
 	}
+
+	$log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, ".time().")";
+	$log_result = _mysqli_query($log_sql);
 }
 
 
@@ -163,6 +175,14 @@ function RunSecondsCronjob() {
 		//delete all old delayed sqls
 		$delayed_sql = "DELETE FROM 202_delayed_sqls WHERE delayed_time <=".time();
 		$delayed_result = _mysqli_query($delayed_sql);
+
+		$log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, ".time().")";
+		$log_result = _mysqli_query($log_sql);
+
+		$de = new DataEngine();
+		$de->processDirtyHours();
+
+		$de->processClickUpgrade();
 
 		
 		return true;

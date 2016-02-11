@@ -1,7 +1,6 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
-
 
 ?>
 
@@ -12,7 +11,7 @@ AUTH::require_user();
                         ORDER BY `type_name` ASC";
         $device_result = $db->query($device_sql) or record_mysql_error($device_sql);
 
-        while ($device_row = $device_result->fetch_array(MYSQL_ASSOC)) {
+        while ($device_row = $device_result->fetch_array(MYSQLI_ASSOC)) {
             
             $html['type_name'] = htmlentities($device_row['type_name'], ENT_QUOTES, 'UTF-8');
             $html['type_id'] = htmlentities($device_row['type_id'], ENT_QUOTES, 'UTF-8');

@@ -1,7 +1,7 @@
 <?php
 
 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php');
 
 AUTH::require_user();
 $user_data = get_user_data_feedback($_SESSION['user_id']);
@@ -78,7 +78,7 @@ $survey_data = getSurveyData($user_data['install_hash']);
         </form>
     		<div class="col-xs-12" style="margin-top:15px;">
                 <div class="row">
-                    <img class="loading" style="left: -25px; top: 12px; display:none" id="perks-loading" src="/202-img/loader-small.gif">
+                    <img class="loading" style="left: -25px; top: 12px; display:none" id="perks-loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif">
         			<button class="btn btn-md btn-p202 btn-block" id="survey-form-submit">Submit answers</button>
                 </div>					
     		</div>

@@ -1,10 +1,15 @@
 <?php
-
+include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
 //our own die, that will display the them around the error message
+
+function get_absolute_url() {
+	return substr(substr(dirname( __FILE__ ), 0,-10),strlen($_SERVER['DOCUMENT_ROOT']));
+}
+
 function _die($message) { 
 
 	info_top();
-	echo '<div class="main col-xs-7"><center><img src="/202-img/prosper202.png"></center>';
+	echo '<div class="main col-xs-7"><center><img src="'.get_absolute_url().'202-img/prosper202.png"></center>';
 	echo $message;
 	echo '</div>';
 	info_bottom();
@@ -17,7 +22,7 @@ function _mysqli_query($sql) {
 	$database = DB::getInstance();
 	$db = $database->getConnection();
 
-	$result = $db->query($sql) or die($db->error . '<br/><br/>' . $sql);
+	$result = @$db->query($sql);
 	return $result;
 	
 }
@@ -74,13 +79,13 @@ function info_top() { ?>
 <meta http-equiv="Content-Style-Type" content="text/css" />
 <meta http-equiv="imagetoolbar" content="no"/>
   
-<link rel="shortcut icon" href="/202-img/favicon.gif" type="image/ico"/> 
+<link rel="shortcut icon" href="../202-img/favicon.gif" type="image/ico"/> 
 <!-- Loading Bootstrap -->
 <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet"/>
 <!-- Loading Flat UI -->
-<link href="/202-css/css/flat-ui-pro.min.css" rel="stylesheet"/>
+<link href="<?php echo get_absolute_url();?>202-css/css/flat-ui-pro.min.css" rel="stylesheet"/>
 <!-- Loading Custom CSS -->
-<link href="/202-css/custom.min.css" rel="stylesheet"/>
+<link href="<?php echo get_absolute_url();?>202-css/custom.min.css" rel="stylesheet"/>
 <!--[if lt IE 9]>
       <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
       <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
@@ -160,12 +165,11 @@ $text = preg_replace($search, '', $document);
 return $text;
 }
 
-
 function temp_exists() {
-	if (is_dir($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/')) {
+	if (is_dir(dirname( __FILE__ ). '/temp/')) {
 		return true;
 	} else {
-		if (@mkdir($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/', 0755)) {
+		if (@mkdir(dirname( __FILE__ ). '/temp/', 0755)) {
 			return true;
 		} else {
 			return false;
@@ -175,10 +179,10 @@ function temp_exists() {
 
 
 function update_needed () { 
-	
+
 	global $version;
 
-	 $rss = fetch_rss('http://my.tracking202.com/clickserver/currentversion/');
+	 $rss = fetch_rss('http://my.tracking202.com/clickserver/currentversion/pro/');
 	 if ( isset($rss->items) && 0 != count($rss->items) ) {
 			 
 		$rss->items = array_slice($rss->items, 0, 1) ;
@@ -186,6 +190,11 @@ function update_needed () {
 			$latest_version = $item['title'];
 			//if current version, is older than the latest version, return true for an update is now needed.
 			if (version_compare($version, $latest_version) == '-1') {
+
+				if (!is_writable(dirname( __FILE__ ). '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
+					$_SESSION['auto_upgraded_not_possible'] = true;
+					return true;
+				}
 
 				if ($item['autoupgrade'] == 'true') {
 					$decimals = explode('.', $latest_version);
@@ -216,9 +225,9 @@ function update_needed () {
 						if ($GetUpdate) {
 						
 							if (temp_exists()) {
-								$downloadUpdate = @file_put_contents($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/prosper202_'.$latest_version.'.zip', $GetUpdate);
+								$downloadUpdate = @file_put_contents(dirname( __FILE__ ). '/temp/prosper202_'.$latest_version.'.zip', $GetUpdate);
 								if ($downloadUpdate) {
-									$zip = @zip_open($_SERVER['DOCUMENT_ROOT']. '/202-config/temp/prosper202_'.$latest_version.'.zip');
+									$zip = @zip_open(dirname( __FILE__ ). '/temp/prosper202_'.$latest_version.'.zip');
 
 										if ($zip)
 										{	
@@ -228,9 +237,9 @@ function update_needed () {
 										    	$thisFileName = zip_entry_name($zip_entry);
 
 										    	if (substr($thisFileName,-1,1) == '/') {
-										    		if (is_dir($_SERVER['DOCUMENT_ROOT']. '/'.$thisFileName)) {
+										    		if (is_dir(substr(dirname( __FILE__ ), 0,-10). '/'.$thisFileName)) {
 										    		} else {
-											    		if(@mkdir($_SERVER['DOCUMENT_ROOT']. '/'.$thisFileName, 0755, true)) {
+											    		if(@mkdir(substr(dirname( __FILE__ ), 0,-10). '/'.$thisFileName, 0755, true)) {
 											    		} else {
 											    		}
 											    	}
@@ -239,7 +248,7 @@ function update_needed () {
 										    		$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
 										    		$file_ext = array_pop(explode(".", $thisFileName));
 
-											    	if($updateThis = @fopen($_SERVER['DOCUMENT_ROOT'].'/'.$thisFileName, 'wb')) {
+											    	if($updateThis = @fopen(substr(dirname( __FILE__ ), 0,-10).'/'.$thisFileName, 'wb')) {
 											    		fwrite($updateThis, $contents);
 						                            	fclose($updateThis);
 						                            	unset($contents);	                      
@@ -269,7 +278,7 @@ function update_needed () {
 
 						if ($FilesUpdated == true) {
 
-							include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/functions-upgrade.php');
+							include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
 
 							if (UPGRADE::upgrade_databases(null) == true) {
 								$version = $latest_version;
@@ -305,4 +314,63 @@ function update_needed () {
 function iphone() {
 	if ($_GET['iphone']) { return true; }
 	if(preg_match("/iphone/i",$_SERVER["HTTP_USER_AGENT"])) { return true; } else { return false; }
+}
+
+function returnRanges($fromdate, $todate, $type) {
+	switch ($type) {
+		case 'days':
+			$set = 'P1D';
+			$add = 'day';
+			break;
+		
+		case 'hours':
+			$set = 'PT1H';
+			$add = 'hour';
+			break;
+	}
+
+    return new \DatePeriod(
+        $fromdate,
+        new \DateInterval($set),
+        $todate->modify('+1 '.$add)
+    );
+}
+
+//function get file extension
+function getFileExtension($str) {
+    $i = strrpos($str,".");
+    if (!$i) { return ""; }
+
+    $l = strlen($str) - $i;
+    $ext = substr($str,$i+1,$l);
+
+    return $ext;
+}
+
+function getPath($path)
+{
+    $url = "http".(!empty($_SERVER['HTTPS'])?"s":"").
+        "://".$_SERVER['SERVER_NAME'].$_SERVER['REQUEST_URI'];
+    $dirs = explode('/', trim(preg_replace('/\/+/', '/', $path), '/'));
+    foreach ($dirs as $key => $value)
+        if (empty($value))  unset($dirs[$key]);
+    $parsedUrl = parse_url($url);
+    $pathUrl = explode('/', trim($parsedUrl['path'], '/'));
+    foreach ($pathUrl as $key => $value)
+        if (empty($value))  unset($pathUrl[$key]);
+    $count = count($pathUrl);
+    foreach ($dirs as $key => $dir)
+        if ($dir === '..')
+            if ($count > 0)
+                array_pop($pathUrl);
+            else
+                throw new Exception('Wrong Path');
+        else if ($dir !== '.')
+            if (preg_match('/^(\w|\d|\.| |_|-)+$/', $dir)) {
+                $pathUrl[] = $dir;
+                ++$count;
+            }
+            else
+                throw new Exception('Not Allowed Char');
+    return $parsedUrl['scheme'].'://'.$parsedUrl['host'].'/'.implode('/', $pathUrl);
 }

@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -12,7 +12,7 @@ AUTH::require_user();
                         GROUP BY `isp_name` ORDER BY `isp_name` ASC";
         $isp_result = $db->query($isp_sql) or record_mysql_error($isp_sql);
 
-        while ($isp_row = $isp_result->fetch_array(MYSQL_ASSOC)) {
+        while ($isp_row = $isp_result->fetch_array(MYSQLI_ASSOC)) {
             
             $html['isp_name'] = htmlentities($isp_row['isp_name'], ENT_QUOTES, 'UTF-8');
             $html['isp_id'] = htmlentities($isp_row['isp_id'], ENT_QUOTES, 'UTF-8');

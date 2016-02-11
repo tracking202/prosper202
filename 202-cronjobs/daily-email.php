@@ -1,6 +1,5 @@
 <?php
-	
-	include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+	include_once(substr(dirname( __FILE__ ), 0,-13) . '/202-config/connect.php'); 
 
 	$hash = "SELECT install_hash FROM 202_users WHERE user_id = '1'";
 	$result = $db->query($hash);
@@ -9,7 +8,7 @@
 	if ($row['install_hash'] != $_GET['hash']) {
 		die("Unautorized!");
 	}
-	
+
     $database = DB::getInstance();
 	$db = $database->getConnection();
 	
@@ -29,13 +28,13 @@
 	
 	$time['from_yesterday'] = mktime(0,0,0,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
 	$time['to_yesterday'] = mktime(23,59,59,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
-
+		
 	$sql_today = "SELECT 
 			2ca.aff_campaign_id,
 			2ca.aff_campaign_name,
 			COUNT(*) AS clicks,
 			SUM(2cr.click_out) AS click_throughs,
-			(COUNT(*)/SUM(2cr.click_out))*100 AS ctr,
+			(SUM(2cr.click_out)/COUNT(*))*100 AS ctr,
 			SUM(2c.click_lead) AS leads,
 			(SUM(2c.click_lead)/COUNT(*))*100 as su_ratio,
 			SUM(2c.click_payout*2c.click_lead) AS income,
@@ -93,6 +92,7 @@
 	if ($result_yesterday->num_rows > 0) {
 		while ($row_yesterday = $result_yesterday->fetch_assoc()) {
 			$difference = array();
+
 			foreach ($row_yesterday as $key => $value) {
 				if ($key == 'aff_campaign_id' || $key == 'aff_campaign_name') {
 					continue;
@@ -103,7 +103,7 @@
 				$math = 0;
 
 				if ($today_value != $value) {
-					$math = @round((1 - $today_value / ($today_value + $value)) * 100, 0);
+					$math = @round((($today_value - $value) / $value * 100),2);
 				}
 				
 				if ($math != 0) {
@@ -115,13 +115,15 @@
 		}
 	}
 
-	if (count($data) > 0) {
-		$curl = curl_init('http://my.tracking202.com/api/v2/send-daily-email-lite');
+	if (count($data['campaigns']) > 0) {
+		$curl = curl_init('http://my.tracking202.com/api/v2/send-daily-email');
 		curl_setopt($curl, CURLOPT_HEADER, false);
 		curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($curl, CURLOPT_HTTPHEADER, array("Content-type: application/json"));
 		curl_setopt($curl, CURLOPT_POST, true);
 		curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($data, true));
 		$response = curl_exec($curl);
+		print_r(json_decode($response));
 	}
+	
 ?>	

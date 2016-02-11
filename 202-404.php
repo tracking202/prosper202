@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); ?>
+<?php include_once(dirname( __FILE__ ) . '/202-config/connect.php'); ?>
 
 <?php info_top(); ?>
 <div class="row">
@@ -8,7 +8,7 @@
 	<center><span class="infotext">You may have clicked an expired link or mistyped the web address you were looking for.</span></center>
 	
 		<ul>
-		  <li><a href="/">Return home</a></li>
+		  <li><a href="<?php echo get_absolute_url();?>">Return home</a></li>
 		  <li><a href="javascript:history.back();">Go back to the previous page</a></li>
 		</ul>
 </div>

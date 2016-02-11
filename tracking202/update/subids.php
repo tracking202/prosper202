@@ -1,6 +1,11 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
-
+<?php include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
 AUTH::require_user();
+
+if (!$userObj->hasPermission("access_to_update_section")) {
+	header('location: '.get_absolute_url().'tracking202/');
+	die();
+}
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
@@ -52,6 +57,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					AND user_id='".$mysql['user_id']."'
 			";
 			$update_result = $db->query($update_sql) or die(mysql_error($update_sql));
+
+			$de = new DataEngine();
+			$de->setDirtyHour($mysql['click_id']);
 		}
 	} 
 	
@@ -79,7 +87,7 @@ template_top('Update Subids'); ?>
 		</div>
 	</div>
 	<div class="col-xs-12">
-		<small>Here is where you can update your income for tracking202, by importing your subids from your affiliate marketing reports.</small>
+		<small>Here is where you can update your income for Prosper202, by importing your subids from your affiliate marketing reports.</small>
 	</div>
 </div>
 

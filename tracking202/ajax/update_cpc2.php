@@ -1,10 +1,8 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
-
-
-	AUTH::set_timezone($_SESSION['user_timezone']);
+AUTH::set_timezone($_SESSION['user_timezone']);
 	
 //check variables
 
@@ -158,6 +156,8 @@ AUTH::require_user();
 //if there was an error terminate, or else just continue to run
 	if ($error) { die(); } 
 	
+	$de = array();
+
 // update regular clicks
 	$sql = "UPDATE  202_clicks LEFT JOIN 202_clicks_advance USING (click_id) 
 						   LEFT JOIN 202_clicks_site USING (click_id) 
@@ -178,12 +178,40 @@ AUTH::require_user();
 	} if ($mysql['ppc_network_id']) { 
 		$sql .= " AND 202_ppc_networks.ppc_network_id='".$mysql['ppc_network_id']."' ";    
 	} if ($mysql['ppc_account_id']) { 
-		$sql .= " AND 202_clicks.ppc_account_id='".$mysql['ppc_account_id']."' ";    
+		$sql .= " AND 202_clicks.ppc_account_id='".$mysql['ppc_account_id']."' ";
 	} 
 	
 	$sql .= $mysql['method_of_promotion'];    
-	$sql .= " AND click_time >=' ".$mysql['from']."' AND click_time <= '".$mysql['to']."'"; 
+	$sql .= " AND click_time >=' ".$mysql['from']."' AND click_time <= '".$mysql['to']."'";
 	$result = $db->query($sql) or record_mysql_error($sql);
-	
+	$clicks_updated = $db->affected_rows;
 
-	echo '<p style="text-align: center; font-weight: bold;">'.$db->affected_rows . ' clicks updated.</p>';
+	if ($mysql['aff_campaign_id']) { $de['aff_campaign_id'] = $mysql['aff_campaign_id']; } else { $de['aff_campaign_id'] = 0; }
+	if ($mysql['ppc_account_id']) { $de['ppc_account_id'] = $mysql['ppc_account_id']; } else { $de['ppc_account_id'] = 0; }
+
+    $de['user_id'] = $mysql['user_id'];
+    $de['click_time_from'] = $mysql['from'];
+    $de['click_time_to'] = $mysql['to'];
+
+	$dirty_hours_sql = "INSERT IGNORE INTO 
+						202_dirty_hours 
+						SET 
+						ppc_account_id = '".$de['ppc_account_id']."', 
+						aff_campaign_id = '".$de['aff_campaign_id']."',
+						user_id = '".$de['user_id']."',
+						click_time_from = '".$de['click_time_from']."',
+						click_time_to = '".$de['click_time_to']."'";
+
+	if ($mysql['aff_network_id']) { 
+		$dirty_hours_sql .= ", aff_network_id = '".$mysql['aff_network_id']."'";
+	} if ($mysql['text_ad_id']) {
+		$dirty_hours_sql .= ", text_ad_id = '".$mysql['text_ad_id']."'"; 
+	} if ($mysql['landing_page_id']) { 
+		$dirty_hours_sql .= ", landing_page_id = '".$mysql['landing_page_id']."'"; 
+	} if ($mysql['ppc_network_id']) { 
+		$dirty_hours_sql .= ", ppc_network_id = '".$mysql['ppc_network_id']."'";   
+	}
+
+    $db->query($dirty_hours_sql);
+
+	echo '<p style="text-align: center; font-weight: bold;">'.$clicks_updated . ' clicks updated.</p>';

@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
 	
@@ -16,14 +16,15 @@ AUTH::require_user();
 
 //if from or to, validate, and if validated, set it accordingly
 
-	if  ((!$_POST['from']) and (!$_POST['to'])) { 
+	if  ((!$_POST['from']) || (!$_POST['to'])) { 
 		$error['time'] = '<div class="error"><small><span class="fui-alert"></span>Please enter in the dates from and to like this <strong>mm/dd/yyyy</strong></small></div>';      
-	}
+	} else {
 		$clean['from'] = mktime(0,0,0,$from_month,$from_day,$from_year);
 		$html['from'] = date('m/d/y g:ia', $clean['from']);  
 	                                                                                                             
 		$clean['to'] = mktime(23,59,59,$to_month,$to_day,$to_year); 
-		$html['to'] = date('m/d/y g:ia', $clean['to']);             
+		$html['to'] = date('m/d/y g:ia', $clean['to']);
+	}             
 
 //set mysql variables
 	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);	

@@ -5,7 +5,8 @@ $lpip = $_GET['lpip'];
 if (!is_numeric($lpip)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
 
 $usedCachedRedirect = false; 
 if (!$db) $usedCachedRedirect = true;
@@ -166,6 +167,7 @@ if ($cloaking_on == true) {
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row); 
 $click_id = $_COOKIE['tracking202subid_a_'.$tracker_row['aff_campaign_id']];
+
 $mysql['click_id'] = $db->real_escape_string($click_id);
 $mysql['click_out'] = 1;
 
@@ -178,7 +180,12 @@ $update_sql = "
 		click_cloaking='".$mysql['click_cloaking']."'
 	WHERE
 		click_id='".$mysql['click_id']."'";
-delay_sql($db, $update_sql);
+$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+//delay_sql($db, $update_sql);
+
+//set dirty hour
+$de = new DataEngine();
+$data=($de->setDirtyHour($mysql['click_id']));
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 

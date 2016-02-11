@@ -1,6 +1,6 @@
 <?php
 ini_set('memory_limit', '64M');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
+include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php');
 
 AUTH::require_user();
 

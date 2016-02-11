@@ -1,7 +1,6 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
-
 
 ?>
 
@@ -11,7 +10,7 @@ AUTH::require_user();
 		$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
         $aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
 
-        while ($aff_network_row = $aff_network_result->fetch_array(MYSQL_ASSOC)) {
+        while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
             
             $html['aff_network_name'] = htmlentities($aff_network_row['aff_network_name'], ENT_QUOTES, 'UTF-8');
             $html['aff_network_id'] = htmlentities($aff_network_row['aff_network_id'], ENT_QUOTES, 'UTF-8');

@@ -1,6 +1,12 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
 
 AUTH::require_user();
+
+if (!$userObj->hasPermission("access_to_update_section") || !$userObj->hasPermission("delete_individual_subids")) {
+	header('location: '.get_absolute_url().'tracking202/');
+	die();
+}
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
@@ -13,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
 	foreach( $subids as $key => $click_id ) {
 		$mysql['click_id'] = $db->real_escape_string($click_id);
-		
+
 		$click_sql = "
 			SELECT 2c.click_id 
 			FROM
@@ -47,6 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				AND user_id='".$mysql['user_id']."'
 		";
 		$update_result = $db->query($update_sql) or die(mysql_error($update_sql));
+
+		$de = new DataEngine();
+		$de->setDirtyHour($mysql['click_id']);
 	} 
 	
     $success = true;

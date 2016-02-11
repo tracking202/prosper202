@@ -1,8 +1,6 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
-
-
 ?>
 
 <select class="form-control input-sm" name="platform_id" id="platform_id">
@@ -12,7 +10,7 @@ AUTH::require_user();
                         GROUP BY `platform_name` ORDER BY `platform_name` ASC";
         $platform_result = $db->query($platform_sql) or record_mysql_error($platform_sql);
 
-        while ($platform_row = $platform_result->fetch_array(MYSQL_ASSOC)) {
+        while ($platform_row = $platform_result->fetch_array(MYSQLI_ASSOC)) {
 
             $html['platform_name'] = htmlentities($platform_row['platform_name'], ENT_QUOTES, 'UTF-8');
             $html['platform_id'] = htmlentities($platform_row['platform_id'], ENT_QUOTES, 'UTF-8');

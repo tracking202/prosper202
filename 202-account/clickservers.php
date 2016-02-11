@@ -1,8 +1,8 @@
 <?php
 
 
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/clickserver_api_management.php');
+include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php');
+include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/clickserver_api_management.php');
 
 AUTH::require_user();
 
@@ -38,7 +38,6 @@ template_top('ClickServer Management',NULL,NULL,NULL);
 		<div class="panel panel-default account_left">
 			<div class="panel-body">
 				A complete list of all domains activated with your Prosper202 ClickServer API Key. From here you can activate and de-activate domains.
-				<!-- <br></br><a href="http://my.tracking202.com/202-login.php?rd=cs202-Mw==" target="_blank" class="btn btn-xs btn-info btn-block" type="submit">Get More Activations</a> -->
 			</div>
 		</div>
 	</div>
@@ -114,7 +113,7 @@ $(document).ready(function() {
         data['method'] = method;
 
         $.ajax({
-	        url : "/202-config/clickserver_api_management.php",
+	        url : "../202-config/clickserver_api_management.php",
 	        type: "POST",
 	        data: data,
 	        cache: false,
@@ -130,7 +129,7 @@ $(document).ready(function() {
 
 	                } else {
 	                    if("<?php echo $_SERVER['HTTP_HOST'];?>" == clid){
-                            window.location.href = "/202-account/signout.php";
+                            window.location.href = "../202-account/signout.php";
                         }
 
                         if (method == 'activate') {

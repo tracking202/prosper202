@@ -1,18 +1,16 @@
 <?php
 
 //include mysql settings
-include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php');
-
+include_once(dirname( __FILE__ ) . '/connect.php');
+include_once(dirname( __FILE__ ) . '/functions-install.php');
 
 //check to see if this is already installed, if so dob't do anything
 	if (  is_installed() == true) {
-		
+	    
 		_die("<h6>Already Installed</h6>
-			  <small>You appear to have already installed Prosper202. To reinstall please clear your old database tables first.</small>"); 	
+			  <small>You appear to have already installed Prosper202. To reinstall please clear your old database tables first. <a href='".get_absolute_url()."202-login.php'>Login Now</a></small>"); 	
 	 
 	}
-
-
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
 	
@@ -67,8 +65,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$user_sql = "INSERT INTO 202_users_pref SET user_id='".$mysql['user_id']."'";
 		$user_result = _mysqli_query($user_sql);
 		
+		$role_sql = "INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (1, 1);";
+		$role_result = _mysqli_query($role_sql);
+
+		$cron = callAutoCron('register');
+
+		if ($cron['status'] == 'success') {
+		    $sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '1'";
+		    $result = _mysqli_query($sql);
+		}
+
 		registerDailyEmail('07', $mysql['user_timezone'], $hash);
-			
+
 		//if this worked, show them the succes screen
 		$success = true;
 		 
@@ -105,39 +113,15 @@ if (!$success) {
 		$version_error['curl'] = 'Prosper202 requires CURL to be installed.';
 	}  
 	
+	if ($version_error) {
+		header("Location: /202-config/requirements.php");
+	}
 
 	info_top(); ?>
 	<div class="main col-xs-7 install">
-	<center><img src="/202-img/prosper202.png"></center>
+	<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
 	<h6>Welcome</h6>
 	<small>Welcome to the five minute Prosper202 installation process! You may want to browse the <a href="http://prosper202.com/apps/docs/">ReadMe documentation</a> at your leisure. Otherwise, just fill in the information below and you'll be on your way to using the most powerful internet marketing applications in the world.</small>
-
-	<h6>System Configuration</h6>
-	<div class="row" style="margin-bottom: 10px;">
-	  <div class="col-xs-3"><span class="label label-default">PHP Version:</span></div>
-	  <div class="col-xs-9"><span class="label label-<?php if ($version_error['phpversion']) {echo "important";} else {echo "primary";}?>"><?php echo phpversion(); ?></span></div>
-	</div>
-
-	<div class="row">
-	  <div class="col-xs-3"><span class="label label-default">MySQL Version:</span></div>
-	  <div class="col-xs-9"><span class="label label-<?php if ($version_error['mysqlversion']) {echo "important";} else {echo "primary";}?>"><?php echo $html['mysqlversion'] ;?></span></div>
-	</div>
-
-	<?php if($version_error){ ?>
-		<div class="row">
-		  	<?php if ($version_error['phpversion']) { ?>
-				<br><div class="col-xs-12"><span class="label label-important"><?php echo $version_error['phpversion'];?></span></div>
-			<?php } ?>
-			<?php if ($version_error['mysqlversion']) { ?>
-				<br><div class="col-xs-12"><span class="label label-important"><?php echo $version_error['mysqlversion'];?></span></div>
-			<?php } ?>
-
-			<?php if ($version_error['curl']) { ?>
-				<br><div class="col-xs-12"><span class="label label-important">CURL</span></div>
-			<?php } ?>
-		</div>
-
-	<?php info_bottom(); die();} ?>
 
 	<?php if ($mysqlversion < 5.1) { 
 		//warning this mysql doesn't have horizontal partitioning ?>
@@ -226,9 +210,9 @@ if ($success) {
 	
 	info_top(); ?>
 	<div class="main col-xs-7 install">
-	<center><img src="/202-img/prosper202.png"></center>
+	<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
 		<h6>Success!</h6>
-		<small>Prosper202 has been installed. Now you can <a href="/202-login.php">log in</a> with your <strong>username</strong> <code><?php echo $html['user_name']; ?></code> and <strong>password</strong> <code><?php echo $html['user_pass']; ?></code>.</small><br></br>
+		<small>Prosper202 has been installed. Now you can <a href="<?php echo get_absolute_url();?>202-login.php">log in</a> with your <strong>username</strong> <code><?php echo $html['user_name']; ?></code> and <strong>password</strong> <code><?php echo $html['user_pass']; ?></code>.</small><br></br>
 		<div class="row" style="margin-bottom: 10px;">
 		  <div class="col-xs-3"><span class="label label-default">Username:</span></div>
 		  <div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_name']; ?></span></div>
@@ -239,7 +223,7 @@ if ($success) {
 		</div>
 		<div class="row" style="margin-bottom: 10px;">
 		  <div class="col-xs-3"><span class="label label-default">Login address:</span></div>
-		  <div class="col-xs-9"><small><?php printf('<a href="/202-login.php">%s/202-login.php</a>',$_SERVER['SERVER_NAME']); ?></small></div>
+		  <div class="col-xs-9"><small><?php printf('<a href="%s202-login.php">%s202-login.php</a>',get_absolute_url(),$_SERVER['SERVER_NAME'].get_absolute_url()); ?></small></div>
 		</div>
 
 		<p><small>Were you expecting more steps? Sorry thats it!</small></p>

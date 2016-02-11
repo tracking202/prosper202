@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
 	
@@ -22,7 +22,7 @@ AUTH::require_user();
 		
 			<select class="form-control input-sm" id="text_ad_id" name="text_ad_id" onchange="load_ad_preview(this.value);">					
 			<option value="0"> -- </option> <?php 		
-				while ($text_ad_row = $text_ad_result->fetch_array(MYSQL_ASSOC)) {
+				while ($text_ad_row = $text_ad_result->fetch_array(MYSQLI_ASSOC)) {
 		
 					$html['text_ad_id'] = htmlentities($text_ad_row['text_ad_id'], ENT_QUOTES, 'UTF-8');
 					$html['text_ad_name'] = htmlentities($text_ad_row['text_ad_name'], ENT_QUOTES, 'UTF-8');
@@ -37,5 +37,4 @@ AUTH::require_user();
 		
 				} ?>
 			</select> 
-		<?php }   
- 
+		<?php }

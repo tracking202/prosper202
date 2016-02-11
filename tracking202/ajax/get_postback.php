@@ -1,10 +1,9 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 	//require authenticated user
 	AUTH::require_user(); 
 	if ($_POST['aff_campaign_id'] == '') { $error['aff_campaign_id'] = '<div class="error">Please select a campaign</div>'; } 
 	if ($error) { echo $error['aff_campaign_id']; die(); }
-		
 		
 	//run the code
 	$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
@@ -16,10 +15,10 @@
 	$html['aff_campaign_name'] = htmlentities($aff_campaign_row['aff_campaign_name']);
 	
 	//the pixel
-	$pixel = '<img height="1" width="1" border="0" style="display: none;" src="http://'.$_SERVER['SERVER_NAME'].'/tracking202/static/px.php?acip='.$html['aff_campaign_id_public'].'"/>';
+	$pixel = '<img height="1" width="1" border="0" style="display: none;" src="http://'.$_SERVER['SERVER_NAME'].get_absolute_url().'tracking202/static/px.php?acip='.$html['aff_campaign_id_public'].'"/>';
 	
 	//post back url
-	$postback = 'http://'.$_SERVER['SERVER_NAME'].'/tracking202/static/pb.php?acip='.$html['aff_campaign_id_public'].'&subid=';
+	$postback = 'http://'.$_SERVER['SERVER_NAME'].get_absolute_url().'tracking202/static/pb.php?acip='.$html['aff_campaign_id_public'].'&subid=';
 	
 	
 	printf('<b>Tracking Pixel For '. $html['aff_campaign_name'].'</b>

@@ -1,7 +1,6 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
-
 
 ?>
 
@@ -12,7 +11,7 @@ AUTH::require_user();
                         GROUP BY `country_name` ORDER BY `country_name` ASC";
         $country_result = $db->query($country_sql) or record_mysql_error($country_sql);
 
-        while ($country_row = $country_result->fetch_array(MYSQL_ASSOC)) {
+        while ($country_row = $country_result->fetch_array(MYSQLI_ASSOC)) {
             
             $html['country_name'] = htmlentities($country_row['country_name'], ENT_QUOTES, 'UTF-8');
             $html['country_id'] = htmlentities($country_row['country_id'], ENT_QUOTES, 'UTF-8');

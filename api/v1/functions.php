@@ -27,7 +27,7 @@ function runReports($db, $vars, $user, $timezone){
 
 	date_default_timezone_set($timezone);
 
-	$report_types = array('keywords', 'text_ads', 'referers', 'ips', 'countries', 'cities', 'carriers', 'landing_pages'); //report types
+	$report_types = array('keywords','wtkeywords', 'text_ads', 'referers', 'ips', 'countries', 'cities', 'carriers', 'landing_pages', 'get_data_for_wp', 'wp_create_lp', 'wp_update_lp'); //report types
 
 	if (in_array($vars['type'], $report_types))
 	{	
@@ -69,6 +69,9 @@ function runReports($db, $vars, $user, $timezone){
 		    case 'keywords':
 				return reportQuery($db, "keywords", "keyword_id", "keyword", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
 				break;
+            case 'wtkeywords':
+				return reportQuery($db, "wtkeywords", "keyword_id", "keyword", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
+				break;
 
 			case 'text_ads':
 				return reportQuery($db, "text_ads", "text_ad_id", "text_ad_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
@@ -101,6 +104,18 @@ function runReports($db, $vars, $user, $timezone){
 			case 'landing_pages':
 				return reportQuery($db, "landing_pages", "landing_page_id", "landing_page", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
 				break;
+
+			case 'get_data_for_wp':
+				return getDataForWP($db, $user);
+				break;
+
+			case 'wp_create_lp':
+				return wpCreateLp($db, $user);
+				break;
+
+			case 'wp_update_lp':
+				return wpUpdateLp($db, $user);
+				break;				
 		}
 
 	} else {
@@ -108,6 +123,141 @@ function runReports($db, $vars, $user, $timezone){
 	}
 	
 }
+
+function getDataForWP($db, $user) {
+	$data = array();
+	$slp = array();
+	$alp = array();
+	$campaigns = array();
+	$mysql['user_id'] = $db->real_escape_string($user);
+	
+	$sql = "SELECT landing_page_id_public, landing_page_nickname, landing_page_type, aff_campaign_id_public, aff_campaign_name FROM 202_landing_pages LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) WHERE 202_landing_pages.user_id='".$mysql['user_id']."' AND landing_page_deleted='0'";
+	$result = $db->query($sql);
+
+	while ($row = $result->fetch_assoc()) {
+		if ($row['landing_page_type'] == 0) {
+			$slp[] = array('landing_page_id_public' => $row['landing_page_id_public'], 'landing_page_nickname' => $row['landing_page_nickname'], 'aff_campaign_name' => $row['aff_campaign_name']);
+		} else if ($row['landing_page_type'] == 1) {
+			$alp[] = array('landing_page_id_public' => $row['landing_page_id_public'], 'landing_page_nickname' => $row['landing_page_nickname']);
+		}
+	}
+
+	$sql = "SELECT aff_campaign_id_public, aff_campaign_name FROM `202_aff_campaigns` WHERE `user_id`='" . $mysql ['user_id'] . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
+	$result = $db->query($sql);
+	while ($row = $result->fetch_assoc()) {
+		$campaigns[] = $row;
+	}
+
+	$data[] = array('slp' => $slp, 'alp' => $alp, 'campaigns' => $campaigns);
+
+	return $data;
+}
+
+function wpCreateLp($db, $user) {
+	if (isset($_GET['page_type']) && isset($_GET['page_title']) && isset($_GET['page_url'])) {
+		$title = $_GET['page_title'];
+		if (strlen($title) > 45) {
+			$title = substr($_GET['page_title'], 0, 41);
+			$title = substr($title, 0, strrpos($title, ' ')) . " ...";
+		}
+		$title = '[WP] '.$title;
+		$mysql['landing_page_nickname'] = $db->real_escape_string($title);
+		$mysql['landing_page_url'] = $db->real_escape_string($_GET['page_url']);
+		$mysql['user_id'] = $db->real_escape_string($user);
+		$mysql['landing_page_time'] = time();
+
+		if ($_GET['page_type'] == 'alp') {
+			$sql = "INSERT INTO `202_landing_pages` 
+					SET 
+					aff_campaign_id = '0',
+					landing_page_nickname = '".$mysql['landing_page_nickname']."',
+					landing_page_url = '".$mysql['landing_page_url']."',
+					landing_page_type = '1',
+					user_id = '".$mysql['user_id']."',
+					landing_page_time = '".$mysql['landing_page_time']."'";
+			$result = $db->query($sql);
+			$insert_id = $db->insert_id;
+		} else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
+			$mysql['aff_campaign_id_public'] = $db->real_escape_string($_GET['slp_page_campaign']);
+
+			$sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public = '".$mysql['aff_campaign_id_public']."' AND user_id = '".$mysql['user_id']."'";
+			$result = $db->query($sql);
+			
+			if ($result->num_rows > 0) {
+				$aff_campaign_id = $result->fetch_assoc();
+				$sql = "INSERT INTO `202_landing_pages` 
+						SET 
+						aff_campaign_id = '".$aff_campaign_id['aff_campaign_id']."',
+						landing_page_nickname = '".$mysql['landing_page_nickname']."',
+						landing_page_url = '".$mysql['landing_page_url']."',
+						landing_page_type = '0',
+						user_id = '".$mysql['user_id']."',
+						landing_page_time = '".$mysql['landing_page_time']."'";
+				$result = $db->query($sql);
+				$insert_id = $db->insert_id;
+			}
+		}
+
+		$landing_page_id_public = rand(1,9) . $insert_id . rand(1,9);
+		$landing_page_sql = "UPDATE `202_landing_pages` SET `landing_page_id_public`='".$landing_page_id_public."' WHERE `landing_page_id`='".$insert_id."'";
+		$landing_page_result = $db->query($landing_page_sql);
+
+		if ($landing_page_result) {
+			return array('error' => '0', 'lp_pid' => $landing_page_id_public);
+		} else {
+			return array('error' => '1');
+		}
+	} else {
+		return array('error' => true);
+	}
+}
+
+function wpUpdateLp($db, $user) {
+	if (isset($_GET['page_type']) && isset($_GET['page_title']) && isset($_GET['page_url']) && isset($_GET['lp_pid'])) {
+		$title = $_GET['page_title'];
+		if (strlen($title) > 45) {
+			$title = substr($_GET['page_title'], 0, 41);
+			$title = substr($title, 0, strrpos($title, ' ')) . " ...";
+		}
+		$title = '[WP] '.$title;
+		$mysql['landing_page_nickname'] = $db->real_escape_string($title);
+		$mysql['landing_page_url'] = $db->real_escape_string($_GET['page_url']);
+		$mysql['landing_page_id_public'] = $db->real_escape_string($_GET['lp_pid']);
+		$mysql['user_id'] = $db->real_escape_string($user);
+
+		if ($_GET['page_type'] == 'alp') {
+			$sql = "UPDATE `202_landing_pages` 
+					SET 
+					aff_campaign_id = '0',
+					landing_page_nickname = '".$mysql['landing_page_nickname']."',
+					landing_page_url = '".$mysql['landing_page_url']."',
+					landing_page_type = '1',
+					user_id = '".$mysql['user_id']."'
+					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."'";
+			$result = $db->query($sql);
+			return array('error' => '0');
+		} else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
+			$mysql['aff_campaign_id_public'] = $db->real_escape_string($_GET['slp_page_campaign']);
+
+			$sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public = '".$mysql['aff_campaign_id_public']."' AND user_id = '".$mysql['user_id']."'";
+			$result = $db->query($sql);
+			if ($result->num_rows > 0) {
+				$aff_campaign_id = $result->fetch_assoc();
+				$sql = "UPDATE `202_landing_pages` 
+					SET 
+					aff_campaign_id = '".$aff_campaign_id['aff_campaign_id']."',
+					landing_page_nickname = '".$mysql['landing_page_nickname']."',
+					landing_page_url = '".$mysql['landing_page_url']."',
+					landing_page_type = '0',
+					user_id = '".$mysql['user_id']."'
+					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."'";
+				$result = $db->query($sql);
+				return array('error' => '0');
+			}
+		}
+	}
+}
+
 
 function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid = null, $c1 = null, $c2 = null, $c3 = null, $c4 = null){
 
@@ -145,6 +295,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 									 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2lp.landing_page_id = 2c.landing_page_id)";
 				} else {
 					//If any other report type
+if($type='wtkeywords')
+$report_sql .= " LEFT OUTER JOIN 202_keywords AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+else
 					$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
 				}
 
@@ -174,9 +327,13 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 				
 				//If ISP/Carriers report type 
 				if($type == "locations_isp"){ $report_sql .= " AND 2ca.$select_id >= 1"; }
+
+				//WT hack for keyword report type
+				if($type == "wtkeywords"){ $report_sql .= " AND 2l.keyword LIKE 'WT%'"; }
 				
 				//If landing pages report type
 				if($type == "landing_pages"){ $report_sql .= " GROUP BY 2c.landing_page_id"; } else { $report_sql .= " GROUP BY 2l.$select_id"; }
+
 	$report_result = $db->query($report_sql);
 	$rows = $report_result->num_rows;
 	if ($rows > 0) {
@@ -199,7 +356,10 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 							LEFT OUTER JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id)
 							LEFT OUTER JOIN 202_site_domains AS 2l ON (2l.site_domain_id = 2su.site_domain_id)";
 					   } else {
-					   		$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+					   		if($type=='wtkeywords')
+$report_sql .= " LEFT OUTER JOIN 202_keywords AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+else
+$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
 					   }
 
 					   //If any of C1-C4 variables are set
@@ -375,7 +535,8 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 	} else {
 		$totals = array();
 	}
-
+if($type=='wtkeywords')
+$type='keywords';
 	return array("date_range" => $date, $type => $data, "totals" => $totals);
 	
 }

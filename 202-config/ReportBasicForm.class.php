@@ -33,6 +33,17 @@ class ReportBasicForm {
 	const DETAIL_LEVEL_PLATFORM = 22;
 	const DETAIL_LEVEL_REGION = 23;
 	const DETAIL_LEVEL_DEVICE_TYPE = 24;
+	const DETAIL_LEVEL_UTM_CAMPAIGN = 25;
+	const DETAIL_LEVEL_UTM_CONTENT = 26;
+	const DETAIL_LEVEL_UTM_MEDIUM = 27;
+	const DETAIL_LEVEL_UTM_SOURCE = 28;
+	const DETAIL_LEVEL_UTM_TERM = 29;
+	//const DETAIL_LEVEL_CUSTOM_VAR_PARAMETER = 30;
+	//const DETAIL_LEVEL_CUSTOM_VAR_VALUE = 31;
+	const DETAIL_LEVEL_ROTATOR = 32;
+	const DETAIL_LEVEL_ROTATOR_RULE = 33;
+	const DETAIL_LEVEL_ROTATOR_RULE_REDIRECT = 34;
+	
 
 	const DETAIL_GROUP_NONE = 0;
 
@@ -82,7 +93,7 @@ class ReportBasicForm {
 	const DETAIL_INTERVAL_HOUR = 4;
 
 	private static $DISPLAY_LEVEL_ARRAY = array(self::DISPLAY_LEVEL_TITLE,self::DISPLAY_LEVEL_CLICK_COUNT,self::DISPLAY_LEVEL_LEAD_COUNT,self::DISPLAY_LEVEL_SU,self::DISPLAY_LEVEL_PAYOUT,self::DISPLAY_LEVEL_EPC,self::DISPLAY_LEVEL_CPC,self::DISPLAY_LEVEL_INCOME,self::DISPLAY_LEVEL_COST,self::DISPLAY_LEVEL_NET,self::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_COUNTRY,ReportBasicForm::DETAIL_LEVEL_REGION,ReportBasicForm::DETAIL_LEVEL_CITY,ReportBasicForm::DETAIL_LEVEL_ISP,ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME,ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE,ReportBasicForm::DETAIL_LEVEL_BROWSER,ReportBasicForm::DETAIL_LEVEL_PLATFORM,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4);
+	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_COUNTRY,ReportBasicForm::DETAIL_LEVEL_REGION,ReportBasicForm::DETAIL_LEVEL_CITY,ReportBasicForm::DETAIL_LEVEL_ISP,ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME,ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE,ReportBasicForm::DETAIL_LEVEL_BROWSER,ReportBasicForm::DETAIL_LEVEL_PLATFORM,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT,ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM,ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE,ReportBasicForm::DETAIL_LEVEL_UTM_TERM,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ReportBasicForm::DETAIL_LEVEL_ROTATOR,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT);
 	private static $SORT_LEVEL_ARRAY = array(self::SORT_NAME,self::SORT_CLICK,self::SORT_LEAD,self::SORT_SU,self::SORT_PAYOUT,self::SORT_EPC,self::SORT_CPC,self::SORT_INCOME,self::SORT_COST,self::SORT_NET,self::SORT_ROI);
 	
 	private static $DETAIL_INTERVAL_ARRAY = array(self::DETAIL_INTERVAL_DAY,self::DETAIL_INTERVAL_WEEK,self::DETAIL_INTERVAL_MONTH);
@@ -1667,6 +1678,16 @@ class ReportBasicForm {
 			return "Platform";
 		} else if ($arg0 == self::DETAIL_LEVEL_IP) {
 			return "IP";
+		} else if ($arg0 == self::DETAIL_LEVEL_UTM_CAMPAIGN) {
+			return "Utm_campaign";
+		} else if ($arg0 == self::DETAIL_LEVEL_UTM_CONTENT) {
+			return "Utm_content";
+		} else if ($arg0 == self::DETAIL_LEVEL_UTM_MEDIUM) {
+			return "Utm_medium";
+		} else if ($arg0 == self::DETAIL_LEVEL_UTM_SOURCE) {
+			return "Utm_source";
+		} else if ($arg0 == self::DETAIL_LEVEL_UTM_TERM) {
+			return "Utm_term";
 		} else if ($arg0 == self::DETAIL_LEVEL_C1) {
 			return "c1";
 		} else if ($arg0 == self::DETAIL_LEVEL_C2) {
@@ -1675,6 +1696,16 @@ class ReportBasicForm {
 			return "c3";
 		} else if ($arg0 == self::DETAIL_LEVEL_C4) {
 			return "c4";
+		} /*else if ($arg0 == self::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER) {
+			return "Custom Variable Name";
+		} else if ($arg0 == self::DETAIL_LEVEL_CUSTOM_VAR_VALUE) {
+			return "Custom Variable Value";
+		}*/ else if ($arg0 == self::DETAIL_LEVEL_ROTATOR) {
+			return "Rotator";
+		} else if ($arg0 == self::DETAIL_LEVEL_ROTATOR_RULE) {
+			return "Rotator Rule";
+		} else if ($arg0 == self::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT) {
+			return "Rotator Rule Redirect";
 		} else {
 			return "Unknown";
 		}
@@ -1714,7 +1745,7 @@ class ReportBasicForm {
 		} else if ($arg0 == self::DETAIL_LEVEL_ISP) {
 			return "ISP/Carrier";
 		} else if ($arg0 == self::DETAIL_LEVEL_DEVICE_NAME) {
-			return "Device nameaaa";
+			return "Device name";
 		} else if ($arg0 == self::DETAIL_LEVEL_DEVICE_TYPE) {
 			return "Device type";
 		} else if ($arg0 == self::DETAIL_LEVEL_BROWSER) {
@@ -1731,7 +1762,11 @@ class ReportBasicForm {
 			return "c3";
 		} else if ($arg0 == self::DETAIL_LEVEL_C4) {
 			return "c4";
-		} else {
+		} /*else if ($arg0 == self::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER) {
+			return "Custom Variable Name";
+		} else if ($arg0 == self::DETAIL_LEVEL_CUSTOM_VAR_VALUE) {
+			return "Custom Variable Value";
+		}*/ else {
 			return "Unknown";
 		}
 	}

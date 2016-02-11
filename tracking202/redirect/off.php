@@ -19,12 +19,13 @@ elseif (isset($_COOKIE['tracking202pci']))
 
 if (! is_numeric($acip))
     die();
-
-include_once ($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');
+include_once (substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
 
 if(isset($_COOKIE['tracking202subid'])) { //if there's a cookie use it
     $click_id = $_COOKIE['tracking202subid'];
 }
+
 else { //if not find the list clicks id of the ip within a 30 day range
     $mysql['user_id'] = 1;
     $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
@@ -42,7 +43,6 @@ else { //if not find the list clicks id of the ip within a 30 day range
 
     $click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
     $click_row1 = $click_result1->fetch_assoc();
-
     $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
     $click_id = $mysql['click_id'];
     $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id']);
@@ -98,6 +98,7 @@ if ($usedCachedRedirect == true) {
             $urlvars = getPrePopVars($urlvarslist);
             
             $new_url = setPrePopVars($urlvars, $redirect_site_url, false);
+       
             header('location: ' . $new_url);
             die();
         }
@@ -121,7 +122,6 @@ if ($vars[1] == '' && $pci == '') {
 						    WHERE 	aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
 						    AND 202_aff_campaigns.user_id=1";
     $aff_campaign_row = memcache_mysql_fetch_assoc($db, $aff_campaign_sql);
-    
     if (empty($aff_campaign_row['aff_campaign_url'])) {
         die();
     } // if there is no aff_url to redirect to DIE!
@@ -226,7 +226,6 @@ $info_sql = "
 ";
 
 $info_row = memcache_mysql_fetch_assoc($db, $info_sql);
-
 // cache the url for later use if db is down
 if ($memcacheWorking) {
     
@@ -259,7 +258,8 @@ $update_sql = "
 		2c.click_id='" . $mysql['click_id'] . "'
 ";
 // this function delays the sql, because UPDATING is very very slow
-delay_sql($db, $update_sql);
+//delay_sql($db, $update_sql);
+$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
 
 $mysql['click_out'] = 1;
 
@@ -282,7 +282,8 @@ $update_sql = "
 	WHERE
 		click_id='" . $mysql['click_id'] . "'
 ";
-delay_sql($db, $update_sql);
+//delay_sql($db, $update_sql);
+$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
 
 $outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
 $click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
@@ -308,7 +309,8 @@ $update_sql = "
 	WHERE
 		click_id='" . $mysql['click_id'] . "'
 ";
-delay_sql($db, $update_sql);
+//delay_sql($db, $update_sql);
+$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
 
 // alright now the updates,
 // WE WANT TO DELAY THESES UPDATES, in a MYSQL DATBASES? Or else the UPDATES lag the server, the UPDATES have to wait until it locks to update the server
@@ -337,7 +339,6 @@ $today_year = date('Y', time());
 // the click_time is recorded in the middle of the day
 $click_time = mktime(12, 0, 0, $today_month, $today_day, $today_year);
 $mysql['click_time'] = $db->real_escape_string($click_time);
-
 // check to make sure this click_summary doesn't already exist
 $check_sql = "SELECT  *
 				  FROM    202_summary_overview
@@ -362,12 +363,15 @@ if ($check_count == 0) {
 
 // set the cookie
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
-
 // NOW LETS REDIRECT
-
 $urlvars = getPrePopVars($urlvarslist);
 
 $redirect_site_url = setPrePopVars($urlvars, $redirect_site_url, false);
+
+
+//set dirty hour
+$de = new DataEngine();
+$data=($de->setDirtyHour($mysql['click_id']));
 
 if ($cloaking_on == true) {
     
@@ -402,8 +406,9 @@ if ($cloaking_on == true) {
 <?php
 
 } else {
-
-    // if cloaking is turned off, php header redirect out   
+    
+    // if cloaking is turned off, php header redirect out
+   
     header('location: ' . $redirect_site_url);
     die();
 }

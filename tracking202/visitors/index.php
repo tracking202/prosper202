@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -14,10 +14,10 @@ template_top('Visitor History',NULL,NULL,NULL); ?>
 	</div>
 </div> 
 
-<?php display_calendar('/tracking202/ajax/click_history.php', true, true, true, true, false, true, false); ?> 
+<?php display_calendar(get_absolute_url().'tracking202/ajax/click_history.php', true, true, true, true, false, true, false); ?> 
     
 <script type="text/javascript">
-   loadContent('/tracking202/ajax/click_history.php',null);
+   loadContent('<?php echo get_absolute_url();?>tracking202/ajax/click_history.php',null);
 </script>
 
 

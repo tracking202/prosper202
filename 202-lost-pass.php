@@ -1,4 +1,4 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(dirname( __FILE__ ) . '/202-config/connect.php'); 
 
 
 
@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 <p>To reset your password visit the following address, otherwise just ignore this email and nothing will happen.</p>
 
-<p><a href=\"http://".$_SERVER['SERVER_NAME']."/202-pass-reset.php?key=$user_pass_key\">http://".$_SERVER['SERVER_NAME']."/202-pass-reset.php?key=$user_pass_key</a></p>";
+<p><a href=\"http://".$_SERVER['SERVER_NAME']."/202-pass-reset.php?key=$user_pass_key\">http://".$_SERVER['SERVER_NAME'].get_absolute_url()."202-pass-reset.php?key=$user_pass_key</a></p>";
 		
 		$from = "propser202@".$_SERVER['SERVER_NAME'];
 		
@@ -83,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	<div class="row">
 	<div class="main col-xs-4">
 	  	<center><img src="202-img/prosper202.png"></center>
-		<center><span class="infotext">Please enter your username and e-mail address.<br/>You will receive a new password via e-mail to <a href="/202-login.php">login</a> with.</span></center>
+		<center><span class="infotext">Please enter your username and e-mail address.<br/>You will receive a new password via e-mail to <a href="<?php echo get_absolute_url();?>202-login.php">login</a> with.</span></center>
 		<form class="form-signin form-horizontal" role="form" method="post" action="">
 		      <div class="form-group <?php if ($error['user']) echo "has-error";?>">
 		      <?php if ($error['user']) { ?>

@@ -1,6 +1,11 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-18) . '/202-config/connect.php'); 
 
 AUTH::require_user();
+
+if (!$userObj->hasPermission("access_to_setup_section")) {
+	header('location: '.get_absolute_url().'tracking202/');
+	die();
+}
 
 template_top($server_row,'Get Landing Page Code',NULL,NULL,NULL);  ?>
 
@@ -19,14 +24,11 @@ template_top($server_row,'Get Landing Page Code',NULL,NULL,NULL);  ?>
 
 <div class="row">
 	<div class="col-xs-4 col-xs-offset-1">
-		<a href="/tracking202/setup/get_simple_landing_code.php" class="btn btn-info btn-block">Simple Landing Page</a>
+		<a href="<?php echo get_absolute_url();?>tracking202/setup/get_simple_landing_code.php" class="btn btn-info btn-block">Simple Landing Page</a>
 	</div>
 	<div class="col-xs-4 col-xs-offset-2">
-		<a href="/tracking202/setup/get_adv_landing_code.php" class="btn btn-info btn-block">Advanced Landing Page</a>
+		<a href="<?php echo get_absolute_url();?>tracking202/setup/get_adv_landing_code.php" class="btn btn-info btn-block">Advanced Landing Page</a>
 	</div>
 </div>
-
-
-
 		
 <?php template_bottom($server_row);

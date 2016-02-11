@@ -35,7 +35,7 @@ class DB {
 		global $dbpass;
 		global $dbname;
 		
-		$this->_connection = new mysqli($dbhost, $dbuser, $dbpass, $dbname);
+		@$this->_connection = new mysqli($dbhost, $dbuser, $dbpass, $dbname);
 	}
  
 	// Magic method clone is empty to prevent duplication of connection

@@ -1,18 +1,28 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user(); 
 
-if ($_SESSION['update_needed'] == true) { ?>
+if ($_SESSION['auto_upgraded_not_possible'] == true) { ?>
 	<div class="alert" style="padding: 0px 33px 0px 20px;">
 	    <button type="button" class="close fui-cross" data-dismiss="alert"></button>
   		<small>A new version of Prosper202 is available!</small>
-  		<a style="margin-left:10px; margin-right:5px;" href="/202-account/auto-upgrade.php" class="btn btn-xs btn-warning">1-Click Upgrade</a>
+  		<small><p>Your /202-config/ directory is not writable or PHP zip extension is disabled.</p></small>
+  		<small><p>Resolve this issue to use 1-Click auto upgrade function!</p></small>
   		<small>or</small>
-	    <a style="margin-left:5px" href="http://prosper.tracking202.com/apps/download/?rd=cs202-NA==" class="btn btn-xs btn-warning">Manual upgrade</a>
-	    <small><a href="#" class="seechangelogs" style="color:#428bca; font-weight:normal">see changelogs</a></small>
+	    <a style="margin-left:5px" href="http://my.tracking202.com/clickserver/download/latest/pro" class="btn btn-xs btn-warning">Manual upgrade</a>
+	    <small><a href="#changelogs" id="see_changelogs" data-toggle="modal" data-target="#changelogs" style="color:#428bca; font-weight:normal">see changelogs</a></small>
+	</div>
+<?php } else if($_SESSION['update_needed'] == true) { ?>
+	<div class="alert" style="padding: 0px 33px 0px 20px;">
+	    <button type="button" class="close fui-cross" data-dismiss="alert"></button>
+  		<small>A new version of Prosper202 is available!</small>
+  		<a style="margin-left:10px; margin-right:5px;" href="<?php echo get_absolute_url();?>202-account/auto-upgrade.php" class="btn btn-xs btn-warning">1-Click Upgrade</a>
+  		<small>or</small>
+	    <a style="margin-left:5px" href="http://my.tracking202.com/clickserver/download/latest/pro" class="btn btn-xs btn-warning">Manual upgrade</a>
+	    <small><a href="#changelogs" id="see_changelogs" data-toggle="modal" data-target="#changelogs" style="color:#428bca; font-weight:normal">see changelogs</a></small>
 	</div>
 
-	<div id="thechangelogs" class="modal fade" role="dialog" aria-hidden="true">
+	<div id="changelogs" class="modal fade" role="dialog" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
@@ -55,9 +65,3 @@ if ($_SESSION['update_needed'] == true) { ?>
     </div>
 </div>
 <?php } ?>
-<script>
-$(".seechangelogs").click(function(e) {
-	e.preventDefault();
-	$('#thechangelogs').modal();
-});
-				  </script>

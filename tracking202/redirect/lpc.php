@@ -1,4 +1,5 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
 
 //run script   
 $mysql['landing_page_id_public'] = $db->real_escape_string($_GET['lpip']);
@@ -25,9 +26,13 @@ $html['aff_campaign_name'] = htmlentities($tracker_row['aff_campaign_name'], ENT
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 
 // get the click id
-$click_id=$_COOKIE['tracking202subid'];
+$mysql['click_id']=$db->real_escape_string($_COOKIE['tracking202subid']);
 
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_id);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
+
+//set dirty hour
+$de = new DataEngine();
+$data=($de->setDirtyHour($mysql['click_id']));
 
 if(isset($mysql['202vars'])){
 	

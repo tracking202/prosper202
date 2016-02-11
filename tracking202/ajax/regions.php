@@ -1,8 +1,6 @@
-<?php include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
+<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 
 AUTH::require_user();
-
-
 ?>
 
 <select class="form-control input-sm" name="region_id" id="region_id">
@@ -12,7 +10,7 @@ AUTH::require_user();
                         GROUP BY `region_name` ORDER BY `region_name` ASC";
         $region_result = $db->query($region_sql) or record_mysql_error($region_sql);
 
-        while ($region_row = $region_result->fetch_array(MYSQL_ASSOC)) {
+        while ($region_row = $region_result->fetch_array(MYSQLI_ASSOC)) {
             
             $html['region_name'] = htmlentities($region_row['region_name'], ENT_QUOTES, 'UTF-8');
             $html['region_id'] = htmlentities($region_row['region_id'], ENT_QUOTES, 'UTF-8');
