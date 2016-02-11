@@ -1,5 +1,23 @@
 Release notes
 
+Version 1.9.29
+	-- New: Performance Optimizations for Direct Links
+	-- New: Support for PHP 7
+	-- New: Quick Activation of DNI Networks
+	-- New: Global Postback url accepts POST data
+	-- New: [[sourceid]] token to pass ppc account id for better source tracking and segmentation by the network
+	-- New: Filter by subid
+	-- New: Inline Help documentation links
+	-- New: Easy link to premium Maxmind database purchase
+	-- New: API Endpoint For ClickServer Version
+	-- Fixed: Advanced Landing pages on step 4 listed alphabetically
+	-- Fixed: Timezone for GMT 0 + works correctly
+	-- Fixed: Document Roots that are symlinks are correctly detected
+	-- Fixed: Chart data displays correctly
+	-- Fixed: Chart customization modal closes correctly
+	-- Fixed: List of landing pages displayed correctly
+	-- Fixed: Autocron was not registering correctly
+	
 Version 1.9.28
 -- Fixed: Group overview reporting on all ppc networks even when only one network was selected
 -- Fixed: New landing pages were not being saved
