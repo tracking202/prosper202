@@ -1397,6 +1397,9 @@ class UPGRADE
         // upgrade from 1.9.4 to 1.9.5
         if ($mysql_version == '1.9.4') {
             
+            $sql = "ALTER TABLE 202_users ENGINE = INNODB";
+            $result = _mysqli_query($sql);
+            
             $sql = "ALTER TABLE 202_users_pref 
                     ADD COLUMN `user_pref_cloak_referer` varchar(11) DEFAULT 'origin',
                     ADD COLUMN `user_slack_incoming_webhook` text NOT NULL";
