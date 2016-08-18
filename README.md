@@ -3,6 +3,8 @@ Prosper202 v1.9.29 ClickServer
 
 Prosper202 provides pay per click affiliate marketers with leading edge self hosted ppc software! The only effect this software will have on your bottom line is a positive one.
 
+Version 1.9.37 is the most recent and up to date version of Prosper202 Pro. It's still open source but only available with a paid subscription. Sign up at: http://join.tracking202.com
+
 Release Notes
 =============
 <b>Version 1.9.29</b>
