@@ -1231,16 +1231,16 @@ function confirmAlert(text){
 }
 
 function pixel_data_changed(trackingDomain) {
-		var pixel_code = '<img height="1" width="1" border="0" style="display: none;" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/gpx.php?amount={{1}}" />';
-		var pixel_code_2 = '<img height="1" width="1" border="0" style="display: none;" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/gpx.php?amount={{1}}&cid={{2}}" />';
+		var pixel_code = '<img height="1" width="1" border="0" style="display: none;" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/gpx.php?amount={{1}}&subid={{3}}" />';
+		var pixel_code_2 = '<img height="1" width="1" border="0" style="display: none;" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/gpx.php?amount={{1}}&cid={{2}}&subid={{3}}" />';
 		
 		var postback_code = '{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/gpb.php?amount={{1}}&subid={{3}}';
 		var postback_code_2 = '{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/gpb.php?amount={{1}}&cid={{2}}&subid={{3}}';
 		
-		var universal_pixel_code = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/upx.php?amount={{1}}" seamless></iframe>';
-		var universal_pixel_code_2 = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="=" scrolling="no" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/upx.php?amount={{1}}&cid={{2}}" seamless></iframe>';
+		var universal_pixel_code = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/upx.php?amount={{1}}&subid={{3}}" seamless></iframe>';
+		var universal_pixel_code_2 = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="=" scrolling="no" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/upx.php?amount={{1}}&cid={{2}}&subid={{3}}" seamless></iframe>';
 
-		var universal_pixel_code_js = '<script>\n var vars202={amount:"{{1}}",cid:""};(function(d, s) {\n 	var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n 		if (d.getElementById(id)) {return;}\n 		if202 = d.createElement("iframe");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = "no";if202.noResize = true;\n 		upxf.parentNode.insertBefore(if202, upxf);\n 	};\n 	load("{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\'], "upxif");\n }(document, "script"));</\script>\n<noscript>\n 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/upx.php?amount={{1}}&cid= seamless></iframe>\n</noscript>';
+		var universal_pixel_code_js = '<script>\n var vars202={amount:"{{1}}",cid:"",subid:"{{3}}"};(function(d, s) {\n 	var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n 		if (d.getElementById(id)) {return;}\n 		if202 = d.createElement("iframe");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = "no";if202.noResize = true;\n 		upxf.parentNode.insertBefore(if202, upxf);\n 	};\n 	load("{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\']+"&subid="+vars202[\'subid\'], "upxif");\n }(document, "script"));</\script>\n<noscript>\n 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="{{0}}://' + trackingDomain + '<?php echo get_absolute_url();?>tracking202/static/upx.php?amount={{1}}&cid=&subid={{3}} seamless></iframe>\n</noscript>';
 
 		var secureTypeValue = $("input[name=secure_type]:checked").val();
 
@@ -1255,13 +1255,13 @@ function pixel_data_changed(trackingDomain) {
 		if($('#aff_campaign_id').val()!='0')
 			campaign_id_value = $('#aff_campaign_id').val();
 		
-		$('#unsecure_pixel').val(pixel_code.replace('{{0}}',http_val).replace('{{1}}',amount_value));
-		$('#unsecure_pixel_2').val(pixel_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
+		$('#unsecure_pixel').val(pixel_code.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{3}}',subid_value));
+		$('#unsecure_pixel_2').val(pixel_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value).replace('{{3}}',subid_value));
 		$('#unsecure_postback').val(postback_code.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{3}}',subid_value));
 		$('#unsecure_postback_2').val(postback_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value).replace('{{3}}',subid_value));
 
-		$('#unsecure_universal_pixel').val(universal_pixel_code.replace('{{0}}',http_val).replace('{{1}}',amount_value));
-		$('#unsecure_universal_pixel_2').val(universal_pixel_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
+		$('#unsecure_universal_pixel').val(universal_pixel_code.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{3}}',subid_value));
+		$('#unsecure_universal_pixel_2').val(universal_pixel_code_2.replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value).replace('{{3}}',subid_value));
 		
 		var find = '{{0}}';
 		var re = new RegExp(find, 'g');
@@ -1269,7 +1269,7 @@ function pixel_data_changed(trackingDomain) {
 		//str = str.replace(re, '');
 	//	$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace((re,http_val).replace('{{1}}',amount_value,'gi').replace('{{2}}',campaign_id_value,'gi'));
 		//$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace('{{0}}',http_val)).replace('{{0}}',http_val));//.replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
-		$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace('{{0}}',http_val).replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));//.replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
+		$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace('{{0}}',http_val).replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value).replace('{{3}}',subid_value).replace('{{3}}',subid_value));//.replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
 }
 
 function loadContent(page, offset, order){
