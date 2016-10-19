@@ -10,28 +10,28 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 template_top('Pixel And Postback URLs');
 
 //the pixels
-$unSecuredPixel = '<img height="1" width="1" border="0" style="display: none;" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpx.php?amount=" />';
-$unSecuredPixel_2 = '<img height="1" width="1" border="0" style="display: none;" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpx.php?amount=&cid=" />';
+$unSecuredPixel = '<img height="1" width="1" border="0" style="display: none;" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpx.php?amount=&subid=" />';
+$unSecuredPixel_2 = '<img height="1" width="1" border="0" style="display: none;" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpx.php?amount=&cid=&subid=" />';
 
 //post back urls
 $unSecuredPostBackUrl = 'http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpb.php?amount=&subid=';
 $unSecuredPostBackUrl_2 = 'http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpb.php?amount=&subid=';
 
 //universal pixel
-$unSecuredUniversalPixel = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount=" seamless></iframe>';
+$unSecuredUniversalPixel = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount=&subid=" seamless></iframe>';
 
 $unSecuredUniversalPixelJS = '
 <script>
- var vars202={amount:"",cid:""};(function(d, s) {
+ var vars202={amount:"",cid:"",subid:""};(function(d, s) {
  	var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
  		if (d.getElementById(id)) {return;}
  		if202 = d.createElement("iframe");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = "no";if202.noResize = true;
  		upxf.parentNode.insertBefore(if202, upxf);
  	};
- 	load("http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\'], "upxif");
+ 	load("http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\']+"&subid="+vars202[\'subid\'], "upxif");
  }(document, "script"));</script>
 <noscript>
- 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount=&cid=" seamless></iframe>
+ 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount=&cid=&subid=" seamless></iframe>
 </noscript>';
 
 ?>
