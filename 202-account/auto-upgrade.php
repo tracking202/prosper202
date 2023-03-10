@@ -1,13 +1,14 @@
 <?php
-ini_set('memory_limit', '-1');
-include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php');
-include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/functions-upgrade.php');
-include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/functions-rss.php');
-include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/class-dataengine.php');
+include_once(str_repeat("../", 1).'202-config/connect.php');
+include_once(str_repeat("../", 1).'202-config/functions-upgrade.php');
+include_once(str_repeat("../", 1).'202-config/functions-rss.php');
+include_once(str_repeat("../", 1).'202-config/class-dataengine.php');
 
 AUTH::require_user();
 
-	$rss = fetch_rss('http://my.tracking202.com/clickserver/currentversion/pro/');
+ini_set('memory_limit', '-1');
+
+	$rss = fetch_rss('https://my.tracking202.com/clickserver/currentversion/paid/');
 	if ( isset($rss->items) && 0 != count($rss->items) ) {
 			 
 		$rss->items = array_slice($rss->items, 0, 1) ;
@@ -25,9 +26,9 @@ AUTH::require_user();
 	}
 
 
-if ($_POST['start_upgrade'] == '1') {
+if (($_POST['start_upgrade'] == '1') == false) {
 
-	if (version_compare(PROSPER202::mysql_version(), '1.9.3', '<')) {
+	if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
 
 		$date = DateTime::createFromFormat('d-m-Y', $_POST['date_from']);
 		if(!$date) {
@@ -39,10 +40,21 @@ if ($_POST['start_upgrade'] == '1') {
 	} else {
 		$time_from = '';
 	}
+
+	//Do check for landing page upgrade to ssl 
+	$ssl_upgrade = '1'; //default to upgrade ssl
+
+	if (version_compare(PROSPER202::prosper202_version(), '1.9.55', '<')) {
+		if(isset($_POST['lp_ssl']) && $_POST['lp_ssl'] == 0)
+		{
+			$ssl_upgrade = '0';  //set to no upgrade if users doesn't want it
+		}
+		
+	}
 	
 	if (!$error) {
 		
-		$GetUpdate = @file_get_contents($download_link);
+		$GetUpdate = @getData($download_link);
 		$log = "Downloading new update...\n";
 
 		if ($GetUpdate) {
@@ -117,8 +129,10 @@ if ($_POST['start_upgrade'] == '1') {
 		}
 
 		if ($FilesUpdated == true) {
-
-			include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/functions-upgrade.php');
+			if (function_exists('apc_clear_cache')) {
+				apc_clear_cache('user'); 
+			}
+			include_once( str_repeat("../", 1).'202-config/functions-upgrade.php');
 
 			$log .= "-------------------------------------------------------------------------------------\n";
 			$log .= "\nUpgrading database...\n";
@@ -126,7 +140,7 @@ if ($_POST['start_upgrade'] == '1') {
 			if (UPGRADE::upgrade_databases($time_from) == true) {
 				$log .= "Upgrade done!\n";
 				$version = $latest_version;
-				$upgrade_done = true;	
+				$upgrade_done = true;
 			} else {
 				$log .= "Database upgrade failed! Please try again!\n";
 				$upgrade_done = false;	
@@ -135,7 +149,7 @@ if ($_POST['start_upgrade'] == '1') {
 	}
 }
 
-if ($update_needed == true) { info_top();
+if ($update_needed == true){ info_top();
 
 	if (!function_exists('zip_open')) {
 	    _die("<h6>PHP Zip module missing</h6>
@@ -145,7 +159,7 @@ if ($update_needed == true) { info_top();
 <div class="main col-xs-7 install">
 	<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
 	<h6>1-Click Prosper202 Upgrade</h6>
-	<small>A new Prosper202 version is available. You can auto upgrade your installation or do it manually, by downloading the latest version at <a href="http://my.tracking202.com/clickserver/download/latest/pro" target="_blank">Prosper202.com</a>. Version details are below.</small>
+	<small>A new Prosper202 version is available. You can auto upgrade your installation or do it manually, by downloading the latest version at <a href="https://my.tracking202.com/clickserver/download/latest/paid" target="_blank">Prosper202.com</a>. Version details are below.</small>
 		<br><br/>
 		<div class="row" style="margin-bottom: 10px;">
 		  <div class="col-xs-3"><span class="label label-default">Current version:</span></div>
@@ -199,13 +213,30 @@ if($upgrade_done != true) { ?>
 	<br>
 		<form method="post" action="" class="form-inline">
 				<input type="hidden" name="start_upgrade" value="1"/>
-				<?php if(version_compare(PROSPER202::mysql_version(), '1.9.3', '<')) { ?>
+				<?php if(version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) { ?>
 					<div class="form-group">
 					    <label for="date_from">Choose a date from which to process clicks for new Data Engine:</label>
 					    <input type="text" class="form-control input-sm" id="date_from" name="date_from" placeholder="dd-mm-yyyy">
 					</div>
 					<br></br>
 				<?php } ?>
+				<?php if(version_compare(PROSPER202::prosper202_version(), '1.9.55', '<')) {?>
+				<div class="form-group">
+					Google Chrome 80+ requires all landing pages to be HTTPS, or your tracking won't work. Can Prosper202 automatically upgrade your old landing page URLs to HTTPS?<br/>
+					<br></br>
+					<div class="form-group" >
+						<label for="lp_ssl"  class="radio-inline" style="line-height:1.3">
+							<input type="radio" name="lp_ssl"  id="lp_ssl_yes" value="1" Checked> Yes
+						</label>
+					</div>
+					<div class="form-group">						
+						<label for="lp_ssl_no" class="radio-inline" style="line-height:1.3">
+							<input type="radio" name="lp_ssl" id="lp_ssl_no" value="0"> No
+						</label>
+					</div>
+				</div>
+				<br></br>
+			<?php } ?>	
 				<button class="btn btn-lg btn-p202 btn-block" type="submit">Upgrade Prosper202<span class="fui-check-inverted pull-right"></span></button>
 		</form>
 	<br>
@@ -213,7 +244,7 @@ if($upgrade_done != true) { ?>
 	Also make sure PHP has write permissions.</i></span>
 <?php } else { unset($_SESSION['user_id']); ?>
 	<h6>Success!</h6>
-	<small>Prosper202 has been upgraded! You can now <a href="<?php echo get_absolute_url();?>202-account/signout.php">log in</a>.</small>
+	<small>Prosper202 has been upgraded! You can now <a href="<?php echo get_absolute_url();?>202-account/signout.php">Log In</a>.</small>
 
 <?php } ?>
 </div>
@@ -223,9 +254,8 @@ if($upgrade_done != true) { ?>
 	});
 </script>
 <?php info_bottom(); } else {
-
 	_die("<h6>Already Upgraded</h6>
-			<small>Your Prosper202 version $version is already upgraded.</small>" );
+			<small>Your Prosper202 version $version is already upgraded.</small> <a href='./'> Log In Again</a>" );
 } ?>
 
 

@@ -3,8 +3,14 @@
 //include mysql settings
 include_once(dirname( __FILE__ ) . '/connect.php');
 include_once(dirname( __FILE__ ) . '/functions-install.php');
+if(isset($_COOKIE['user_api'])){
+$html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
+}
+else{
+    header("Location: ".get_absolute_url()."202-config/get_apikey.php");    
+}
 
-//check to see if this is already installed, if so dob't do anything
+//check to see if this is already installed, if so don't do anything
 	if (  is_installed() == true) {
 	    
 		_die("<h6>Already Installed</h6>
@@ -38,6 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
 		$mysql['user_name'] = $db->real_escape_string($_POST['user_name']);
 		$mysql['user_timezone'] = $db->real_escape_string($_POST['user_timezone']);
+		$mysql['p202_customer_api_key'] = $db->real_escape_string($_POST['user_api']);
 		$mysql['user_time_register'] = $db->real_escape_string(time());
 		
 		//md5 the user pass with salt
@@ -55,7 +62,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					    					user_timezone='".$mysql['user_timezone']."',
 					    					user_time_register='".$mysql['user_time_register']."',
 					    					install_hash='".$hash."',
-					    					user_hash='".$user_hash."'";
+					    					user_hash='".$user_hash."',
+		                                    p202_customer_api_key ='".$mysql['p202_customer_api_key']."'";
 		$user_result = _mysqli_query($user_sql);
 		
 		$user_id = $db->insert_id;
@@ -77,6 +85,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		registerDailyEmail('07', $mysql['user_timezone'], $hash);
 
+		// create partitions after everything else is setup. In case of failure user can still login and use Prosper202
+		INSTALL::install_database_partitions();
+		
 		//if this worked, show them the succes screen
 		$success = true;
 		 
@@ -87,6 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$html['user_email'] = htmlentities($_POST['user_email'], ENT_QUOTES, 'UTF-8');
 	$html['user_name'] = htmlentities($_POST['user_name'], ENT_QUOTES, 'UTF-8');
 	$html['user_pass'] = htmlentities($_POST['user_pass'], ENT_QUOTES, 'UTF-8');
+	$html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
 }
 
 
@@ -96,18 +108,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 if (!$success) {
 
-	$mysqlversion = $db->server_info;
-	$html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
-
 	$phpversion = phpversion(); 
-	if ($phpversion < 5.3) { 
-		$version_error['phpversion'] = 'Prosper202 requires PHP 5.3, or newer.';
+	if ($phpversion < 5.4) { 
+		$version_error['phpversion'] = 'Prosper202 requires PHP 5.4, or newer.';
 	}
 
-	$mysqlversion = substr($mysqlversion,0,3);
-	if ($mysqlversion < 5) { 
-		$version_error['mysqlversion'] = 'Prosper202 requires MySQL 5.0, or newer.';
+    // Get Database version
+	$mysqlversion = $db->server_info;
+	if (preg_match('/-(10\..+)-MariaDB/i', $mysqlversion, $match)) {
+	    // Support For MariaDB
+	    $mysqlversion = $match[1];
+	    $dbwording="MariaDB >= 10.0.12";
+	    if ((version_compare($mysqlversion, '10.0.12') < 0)) {
+	        $version_error['mysqlversion'] = 'Prosper202 requires MariaDB 10.0.12, or newer.';
+	    }
 	}
+	else{
+	    $dbwording="MySQL >= 5.6";
+	    if ((version_compare($mysqlversion, '5.6') < 0)) {
+	        $version_error['mysqlversion'] = 'Prosper202 requires MySQL 5.6, or newer.';
+	    }
+	     
+	}
+	
+	$html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
 
 	if (!function_exists('curl_version')) { 
 		$version_error['curl'] = 'Prosper202 requires CURL to be installed.';
@@ -121,19 +145,18 @@ if (!$success) {
 	<div class="main col-xs-7 install">
 	<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
 	<h6>Welcome</h6>
-	<small>Welcome to the five minute Prosper202 installation process! You may want to browse the <a href="http://prosper202.com/apps/docs/">ReadMe documentation</a> at your leisure. Otherwise, just fill in the information below and you'll be on your way to using the most powerful internet marketing applications in the world.</small>
-
-	<?php if ($mysqlversion < 5.1) { 
-		//warning this mysql doesn't have horizontal partitioning ?>
-		<br/><span class="infotext"><span class="label label-important">Warning:</span> Recommended MySQL 5.1 or later, not detected.<br/>You are about to install Prosper202 on a server that does not have MySQL 5.1. You can run the application just fine without MySQL 5.1, however, MySQL 5.1 has a horizontal partitioning feature that dramatically increases the speed that large click reports are generated. If you are an affiliate pushing over 5,000 clicks or more per day, we highly recommend you install Prosper202 on a dedicated server that has MySQL 5.1 or newer installed on it. You may continue installing Prosper202 without MySQL 5.1, but once you have around 250,000 clicks recorded in your database, you will start to notice a significant reduction in speed that your click reports are generated.  If you are someone not pushing heavy volume yet, you are probably fine without MySQL 5.1 for now, but you should look to upgrade to a dedicated server with MySQL 5.1 at a later time.</span>
-		<?php
-	} ?>
+	<small>Welcome to the five minute Prosper202 installation process!  Just fill in the information below, and you'll be on your way to using the most powerful internet marketing applications in the world.</small>
+	<br><br>
+	<small>Need Extra Help? Check out our <a href="http://support.tracking202.com/" target="_blank">ReadMe documentation</a>.</small>
 	
 	<h6>Create your account</h6>
 	<small>Please provide the following information. Don't worry, you can always change these settings later.</small>
 	<br><br>
-		<form method="post" action="" class="form-horizontal" role="form">
-			<div class="form-group <?php if ($error['user_email']) echo "has-error";?>">
+		<form method="post" action="" class="form-horizontal" role="form" id="install-prosper202">
+
+			      <input type="hidden" class="form-control input-sm" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" >
+
+		    <div class="form-group <?php if ($error['user_email']) echo "has-error";?>">
 			    <label for="user_email" class="col-xs-4 control-label"><strong>Your Email:</strong></label>
 			    <div class="col-xs-8">
 			      <input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email']; ?>">
@@ -145,18 +168,7 @@ if (!$success) {
 			    <div class="col-xs-8">
 			      <?php
 			
-					function formatOffset($offset) {
-				        $hours = $offset / 3600;
-				        $remainder = $offset % 3600;
-				        $sign = $hours > 0 ? '+' : '-';
-				        $hour = (int) abs($hours);
-				        $minutes = (int) abs($remainder / 60);
-
-				        if ($hour == 0 AND $minutes == 0) {
-				            $sign = ' ';
-				        }
-				        return $sign . str_pad($hour, 2, '0', STR_PAD_LEFT) .':'. str_pad($minutes,2, '0');
-					}
+					
 
 					$utc = new DateTimeZone('UTC');
 					$dt = new DateTime('now', $utc);
@@ -196,8 +208,14 @@ if (!$success) {
 			    </div>
 			</div>
 
-			<button class="btn btn-lg btn-p202 btn-block" type="submit">Install Prosper202<span class="fui-check-inverted pull-right"></span></button>
+			<button class="btn btn-lg btn-p202 btn-block" type="submit">Install Prosper202 ClickServer<span class="fui-check-inverted pull-right"></span></button>
+<script type="text/javascript">
+$('form#install-prosper202').submit(function(){
+    $(this).find(':input[type=submit]').prop('disabled', true);
+    $('body').css( 'cursor', 'wait' );
+});
 
+					</script>
 		</form>
 		</div>
 	<?php info_bottom(); 
@@ -212,7 +230,7 @@ if ($success) {
 	<div class="main col-xs-7 install">
 	<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
 		<h6>Success!</h6>
-		<small>Prosper202 has been installed. Now you can <a href="<?php echo get_absolute_url();?>202-login.php">log in</a> with your <strong>username</strong> <code><?php echo $html['user_name']; ?></code> and <strong>password</strong> <code><?php echo $html['user_pass']; ?></code>.</small><br></br>
+		<small>Prosper202 has been installed. Now you can <a href="<?php echo get_absolute_url();?>202-login.php">log in</a>.</small><br></br>
 		<div class="row" style="margin-bottom: 10px;">
 		  <div class="col-xs-3"><span class="label label-default">Username:</span></div>
 		  <div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_name']; ?></span></div>

@@ -1,8 +1,6 @@
 <?php
-
-
-include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php');
-include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/clickserver_api_management.php');
+include_once(str_repeat("../", 1).'202-config/connect.php');
+include_once(str_repeat("../", 1).'202-config/clickserver_api_management.php');
 
 AUTH::require_user();
 

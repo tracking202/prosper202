@@ -1,7 +1,7 @@
 <?php 
+include_once(str_repeat("../", 1).'202-config/connect.php');
+include_once(str_repeat("../", 1).'202-config/class-dataengine.php');
 
-include_once(substr(dirname( __FILE__ ), 0,-13) . '/202-config/connect.php'); 
-include_once(substr(dirname( __FILE__ ), 0,-13) . '/202-config/class-dataengine.php');
 set_time_limit(0);
 
 $snippet = "";

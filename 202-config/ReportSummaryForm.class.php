@@ -16,10 +16,10 @@ class ReportSummaryForm extends ReportBasicForm {
 	// +-----------------------------------------------------------------------+
 	// | CONSTANTS                                                             |
 	// +-----------------------------------------------------------------------+
-	const DEBUG = MO_DEBUG;
+	const DEBUG = 'MO_DEBUG';
 
 	private static $DISPLAY_LEVEL_ARRAY = array(ReportBasicForm::DISPLAY_LEVEL_TITLE,ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT,ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT,ReportBasicForm::DISPLAY_LEVEL_SU,ReportBasicForm::DISPLAY_LEVEL_PAYOUT,ReportBasicForm::DISPLAY_LEVEL_EPC,ReportBasicForm::DISPLAY_LEVEL_CPC,ReportBasicForm::DISPLAY_LEVEL_INCOME,ReportBasicForm::DISPLAY_LEVEL_COST,ReportBasicForm::DISPLAY_LEVEL_NET,ReportBasicForm::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_COUNTRY,ReportBasicForm::DETAIL_LEVEL_REGION,ReportBasicForm::DETAIL_LEVEL_CITY,ReportBasicForm::DETAIL_LEVEL_ISP,ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME,ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE,ReportBasicForm::DETAIL_LEVEL_BROWSER,ReportBasicForm::DETAIL_LEVEL_PLATFORM,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT,ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM,ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE,ReportBasicForm::DETAIL_LEVEL_UTM_TERM,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ReportBasicForm::DETAIL_LEVEL_ROTATOR,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT);
+	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_COUNTRY,ReportBasicForm::DETAIL_LEVEL_REGION,ReportBasicForm::DETAIL_LEVEL_CITY,ReportBasicForm::DETAIL_LEVEL_ISP,ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME,ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE,ReportBasicForm::DETAIL_LEVEL_BROWSER,ReportBasicForm::DETAIL_LEVEL_PLATFORM,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT,ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM,ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE,ReportBasicForm::DETAIL_LEVEL_UTM_TERM,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ReportBasicForm::DETAIL_LEVEL_ROTATOR,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT,ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS,ReportBasicForm::DETAIL_LEVEL_PUBLISHERS);
 	private static $SORT_LEVEL_ARRAY = array(ReportBasicForm::SORT_NAME,ReportBasicForm::SORT_CLICK,ReportBasicForm::SORT_LEAD,ReportBasicForm::SORT_SU,ReportBasicForm::SORT_PAYOUT,ReportBasicForm::SORT_EPC,ReportBasicForm::SORT_CPC,ReportBasicForm::SORT_INCOME,ReportBasicForm::SORT_COST,ReportBasicForm::SORT_NET,ReportBasicForm::SORT_ROI);
 	
 	// +-----------------------------------------------------------------------+
@@ -100,6 +100,7 @@ class ReportSummaryForm extends ReportBasicForm {
 	 * @param RevenueReportGroupForm
 	 */
 	function setReportData($arg0) {
+	 
 		$this->report_data = $arg0;
 	}
 	
@@ -182,6 +183,10 @@ class ReportSummaryForm extends ReportBasicForm {
 			return "rule_id";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT) {
 			return "rule_redirect_id";
+		} else if($arg0 == ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS) {
+			return "transaction_id";
+		} else if($arg0 == ReportBasicForm::DETAIL_LEVEL_PUBLISHERS) {
+			return "publisher_id";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_INTERVAL) {
 			return "interval_id";
 		} else {
@@ -260,6 +265,10 @@ class ReportSummaryForm extends ReportBasicForm {
 			return "ReportSummaryRotatorRuleForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT) {
 			return "ReportSummaryRotatorRuleRedirectForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS) {
+			return "ReportSummaryTransactionsForm";
+		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_PUBLISHERS) {
+			return "ReportSummaryPublishersForm";
 		} else if ($arg0 == ReportBasicForm::DETAIL_LEVEL_INTERVAL) {
 			return "ReportSummaryIntervalForm";
 		} else {
@@ -291,12 +300,69 @@ class ReportSummaryForm extends ReportBasicForm {
 		}
 		$detail_list = '';
 		if(count($detail_key_array)>0) {
-			$detail_list = 'GROUP BY ' . implode(',', $detail_key_array);
+			$detail_key_array_wrapped=array_map(array($this, 'wrapGroupBy'),$detail_key_array);
+		    $detail_list = 'GROUP BY ' . implode(',', $detail_key_array_wrapped);
 		}
 
 		return $detail_list;
 	}
 	
+	function wrapGroupBy($gb){
+	    switch ($gb) {
+	        case 'ppc_network_id':
+	        $gb='2pn.'.$gb;
+	        break;
+	        case 'ppc_account_id':
+	        case 'landing_page_id':
+	        case 'keyword_id':
+	        case 'text_ad_id':
+	        case 'country_id':
+	        case 'region_id':
+            case 'city_id':
+            case 'isp_id':
+            case 'device_id':
+            case 'browser_id':
+            case 'platform_id':
+			case 'ip_id':
+                $gb='2c.'.$gb;
+                $groupby_null='0';
+				break;
+			case 'c1':
+			$gb='2tc1.'.$gb;
+				$groupby_null='0';
+				break;
+			case 'c2':
+			$gb='2tc2.'.$gb;
+				$groupby_null='0';
+				break;
+			case 'c3':
+			$gb='2tc3.'.$gb;
+				$groupby_null='0';
+				break;
+			case 'c4':
+				$gb='2tc4.'.$gb;
+				$groupby_null='0';
+				break;	
+            case 'utm_campaign_id':
+            case 'utm_content_id':
+            case 'utm_medium_id':
+            case 'utm_source_id':
+            case 'utm_term_id':
+            case 'utm_campaign_id': {                
+                $gb='2u'.substr($gb, 4, 3).".".$gb;
+                $groupby_null='0';
+                break;
+            }  
+            case 'transaction_id':
+                $groupby_null='';
+                break;
+	        default:
+	            $groupby_null='0';
+	        break;
+	    }
+	   // return "IFNULL(".$gb.", '".$groupby_null."')";
+	   return "IF(".$gb." is null or ".$gb." = '0', '', ".$gb.")";
+	}
 	
 	/**
 	 * Returns query in a string
@@ -306,15 +372,22 @@ class ReportSummaryForm extends ReportBasicForm {
 
 		$database = DB::getInstance();
 		$db = $database->getConnection(); 
-
+		
+		if($_SESSION['publisher']==false){ //user is able to see all camapigns
+		    $user_id_query = " != '0' ";
+		}
+		else{
+		    $user_id_query = " = '" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
+		}
+		
 		$info_sql = '';
 		//select regular setup
 		$info_sql .= "
-			SELECT
+			SELECT SQL_CALC_FOUND_ROWS
 		";
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK)) {
 			$info_sql .= "
-				2pn.ppc_network_id,
+				2pn.ppc_network_id as ppc_network_id,
 				2pn.ppc_network_name,
 			";
 		}
@@ -416,9 +489,19 @@ class ReportSummaryForm extends ReportBasicForm {
 		}
 
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
+
+			if(isset($_SESSION['ipv6'])){
+				 $inet6_ntoa='inet6_ntoa'; //decodes for display etc
+				 $inet6_aton='inet6_aton'; //encodes for db
+			}
+			else{
+				 $inet6_ntoa='';
+				 $inet6_aton='';    
+			}
+
 			$info_sql .= "
 				2c.ip_id,
-				2i.ip_address AS ip_name,
+				IFNULL(".$inet6_ntoa."(2i6.ip_address),2i.ip_address) AS ip_name,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REDIRECT)) {
@@ -429,52 +512,56 @@ class ReportSummaryForm extends ReportBasicForm {
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN)) {
 			$info_sql .= "
-				2c.utm_campaign_id,
+			IF(2c.utm_campaign_id is null or 2c.utm_campaign_id = '0', '', 2c.utm_campaign_id) AS utm_campaign_id,
 				2ucam.utm_campaign,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT)) {
 			$info_sql .= "
-				2c.utm_content_id,
+			IF(2c.utm_content_id is null or 2c.utm_content_id = '0', '', 2c.utm_content_id) AS utm_content_id,
 				2ucon.utm_content,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM)) {
 			$info_sql .= "
-				2c.utm_medium_id,
+			IF(2c.utm_medium_id is null or 2c.utm_medium_id = '0', '', 2c.utm_medium_id) AS utm_medium_id,
 				2umed.utm_medium,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE)) {
 			$info_sql .= "
-				2c.utm_source_id,
+			IF(2c.utm_source_id is null or 2c.utm_source_id = '0', '', 2c.utm_source_id) AS utm_source_id,
 				2usou.utm_source,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_TERM)) {
 			$info_sql .= "
-				2c.utm_term_id,
+			IF(2c.utm_term_id is null or 2c.utm_term_id = '0', '', 2c.utm_term_id) AS utm_term_id,
 				2uter.utm_term,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C1)) {
 			$info_sql .= "
-				2tc1.c1,
+			IF(2tc1.c1 is null, '', 2tc1.c1) AS c1,
+			IF(2c.c1_id is null or 2c.c1_id= '0', '', 2c.c1_id) AS c1_id,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C2)) {
 			$info_sql .= "
-				2tc2.c2,
+            IF(2tc2.c2 is null, '', 2tc2.c2) AS c2,
+			IF(2c.c2_id is null or 2c.c2_id= '0', '', 2c.c2_id) AS c2_id,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C3)) {
 			$info_sql .= "
-				2tc3.c3,
+            2c.c3_id,
+			IF(c3 is null or c3 = '0', '', c3) AS c3,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)) {
 			$info_sql .= "
-				2tc4.c4,
+			2c.c4_id,
+			IF(c4 is null or c4 = '0', '', c4) AS c4,
 			";
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR)) {
@@ -495,6 +582,26 @@ class ReportSummaryForm extends ReportBasicForm {
 				2rrr.name as rule_redirect_name,
 			";
 		}
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
+			$info_sql .= "
+				2cl.click_id as sub_id,
+			    CASE
+                    WHEN 2cl.transaction_id IS NULL OR 2cl.transaction_id = ''
+                    THEN ''
+                    ELSE 2cl.transaction_id
+                END as transaction_id,
+				
+				2cl.conv_id,
+			";
+		}
+
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
+		    $info_sql .= "
+		        2u.user_id as publisher_id,
+				CONCAT('(',CONCAT_WS(' ', coalesce(2u.user_fname, 'Admin'), coalesce(2u.user_lname, 'User')) ,') - ', 2u.user_name) AS publisher_name,
+			";
+		}
+				
 		$info_sql .= "
 				SUM(2c.clicks) AS clicks,
 				SUM(2c.click_out) AS click_out,
@@ -587,10 +694,17 @@ class ReportSummaryForm extends ReportBasicForm {
 		}
 
 		if ($user_row['user_pref_ip']) {
-			$mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
-			$info_sql .= "INNER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id AND 2i.ip_address ='" . $mysql['user_pref_ip'] . "')";
+		    $mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
+		    
+		    $ip_address=(ipAddress($mysql['user_pref_ip']));
+		    $mysql['ip_id']=$db->real_escape_string(INDEXES::get_ip_id($ip_address));
+		    
+			$info_sql .= "INNER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id AND 2c.ip_id ='" . $mysql['ip_id'] . "')";
+			$info_sql .= "INNER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
+			
 		} else if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
 			$info_sql .= "LEFT OUTER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN)) {
@@ -641,13 +755,27 @@ class ReportSummaryForm extends ReportBasicForm {
 			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules_redirects AS 2rrr ON (2c.rule_redirect_id = 2rrr.id)";
 		}
 
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
+			$info_sql .= "LEFT OUTER JOIN 202_conversion_logs AS 2cl ON (2c.click_id = 2cl.click_id)";
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
+		    $info_sql .= "LEFT OUTER JOIN 202_users AS 2u ON (2c.user_id = 2u.user_id)";
+		}
+		
 		$info_sql .= "
 			WHERE
-				2c.user_id='" . $user_id . "'
+				2c.user_id" . $user_id_query . "
 				AND 2c.click_time >= " . $this->getStartTime() . "
 				AND 2c.click_time <= " . $this->getEndTime() . " ";
 		;
 
+		if ($user_row['user_pref_subid']) {
+		    $mysql['user_pref_subid'] = $db->real_escape_string($user_row['user_pref_subid']);
+		    $info_sql .= "
+				AND 2c.click_id='".$mysql['user_pref_subid']."'
+			";
+		}
 	
 		if ($user_row['user_pref_show'] == 'real') {
 		    $info_sql .= "
@@ -663,7 +791,7 @@ class ReportSummaryForm extends ReportBasicForm {
 			";
 		} else if ($user_row['user_pref_show'] == 'leads') {
 		    $info_sql .= "
-				AND 2c.click_lead=1
+				AND 2c.click_lead!=0
 			";
 		}
 		if ($user_row['user_pref_country_id']) {
@@ -690,7 +818,7 @@ class ReportSummaryForm extends ReportBasicForm {
 		if ($user_row['user_pref_device_id']) {
 		    $mysql['user_pref_device_id'] = $db->real_escape_string($user_row['user_pref_device_id']);
 		    $info_sql .= "
-				AND 2c.device_id='".$mysql['user_pref_device_id']."'
+				AND 2dt.type_id='".$mysql['user_pref_device_id']."'
 			";
 		}
 		
@@ -750,12 +878,17 @@ class ReportSummaryForm extends ReportBasicForm {
 		} else if ($user_row['user_pref_ppc_network_id'] == '16777215') {
 		    $info_sql.= " AND 2c.ppc_network_id IS NULL ";
 		} else if ($user_row['user_pref_ppc_network_id'] != '0' && !empty($user_row['user_pref_ppc_network_id'])) { 
-		    $info_sql.= " AND 2c.ppc_network_id=".$user_row['user_pref_ppc_network_id']." ";
+		    $info_sql.= " AND 2pn.ppc_network_id=".$user_row['user_pref_ppc_network_id']." ";
 		    $info_sql.= " AND 2pn.ppc_network_deleted = 0 ";
 		
 		} else if ($user_row['user_pref_ppc_network_id'] == '0') {
 		    //$info_sql.= " AND COALESCE(2pn.ppc_network_deleted,0) = 0 ";
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
+			//$info_sql.= " AND 2c.click_lead != 0 ";
 		}	
+
 		$info_sql .= $this->getGroupBy();
 		return $info_sql;
 	}
@@ -765,6 +898,7 @@ class ReportSummaryForm extends ReportBasicForm {
 	 * @return String
 	 */
 	function getRowHeaderHtml($tr_class = "") {
+		
 		$html_val = "";
 		
 		$html_val .= "<tr class=\"" . $tr_class . "\" style=\"background-color: #f2fbfa;\">";
@@ -859,16 +993,16 @@ class ReportSummaryForm extends ReportBasicForm {
 			ReportBasicForm::echoCell("Interval Range");
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK)) {
-			ReportBasicForm::echoCell("PPC Network Id");
-			ReportBasicForm::echoCell("PPC Network Name");
+			ReportBasicForm::echoCell("Traffic Source Id");
+			ReportBasicForm::echoCell("Traffic Source Name");
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT)) {
-			ReportBasicForm::echoCell("PPC Account Id");
-			ReportBasicForm::echoCell("PPC Account Name");
+			ReportBasicForm::echoCell("Traffic Source Account Id");
+			ReportBasicForm::echoCell("Traffic Source Account Name");
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK)) {
-			ReportBasicForm::echoCell("Affiliate Network Id");
-			ReportBasicForm::echoCell("Affiliate Network Name");
+			ReportBasicForm::echoCell("Category Id");
+			ReportBasicForm::echoCell("Category Name");
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_CAMPAIGN)) {
 			ReportBasicForm::echoCell("Campaign Id");
@@ -929,6 +1063,7 @@ class ReportSummaryForm extends ReportBasicForm {
 			ReportBasicForm::echoCell("IP Name");
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C1)) {
+			ReportBasicForm::echoCell("c1 Id");
 			ReportBasicForm::echoCell("c1");
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN)) {
@@ -963,6 +1098,14 @@ class ReportSummaryForm extends ReportBasicForm {
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT)) {
 			ReportBasicForm::echoCell("Rotator Rule Redirect");
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
+			ReportBasicForm::echoCell("Transaction ID");
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
+		    ReportBasicForm::echoCell("Publisher/User");
 		}
 		/*if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER)) {
 			ReportBasicForm::echoCell("Custom Variable Name");
@@ -1006,12 +1149,11 @@ class ReportSummaryForm extends ReportBasicForm {
 	 * @return String
 	 */
 	function getRowHtml($row,$tr_class = "") {
-
 		global $userObj;
 		
 		$hideDate = false;
 		
-		if (!$userObj->hasPermission("access_to_campaign_data")) {
+		if (!$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
 			$hideDate = true;
 		}
 
@@ -1074,22 +1216,22 @@ class ReportSummaryForm extends ReportBasicForm {
 				
 			} else if (ReportBasicForm::DISPLAY_LEVEL_PAYOUT==$display_item_key) {
 				
-				$html_val .= "<td>$". number_format($row->getPayout(),2) ."</td>";
+				$html_val .= "<td>". dollar_format($row->getPayout(), $this->currency) ."</td>";
 
 			} else if (ReportBasicForm::DISPLAY_LEVEL_EPC==$display_item_key) {
-				$html_val .= "<td>$"
-					. number_format($row->getEpc(),2) .
+				$html_val .= "<td>"
+					. dollar_format($row->getEpc(), $this->currency) .
 				"</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CPC==$display_item_key) {
 
-				$html_val .= "<td>$". number_format($row->getCpc(),2) ."</td>";
+				$html_val .= "<td>". dollar_format($row->getCpc(), $this->currency) ."</td>";
 
 			} else if (ReportBasicForm::DISPLAY_LEVEL_INCOME==$display_item_key) {
 
 				if ($hideDate) {
 					$html_val .= '<td class="m-row4">?</td>';
 				} else {
-					$html_val .= '<td class="m-row4">$'. number_format($row->getIncome(),2) ."</td>";
+					$html_val .= '<td class="m-row4">'. dollar_format($row->getIncome(), $this->currency) ."</td>";
 				}
 
 			} else if (ReportBasicForm::DISPLAY_LEVEL_COST==$display_item_key) {
@@ -1097,7 +1239,7 @@ class ReportSummaryForm extends ReportBasicForm {
 				if ($hideDate) {
 					$html_val .= '<td class="m-row4">?</td>';
 				} else {
-					$html_val .= '<td class="m-row4">$'. number_format($row->getCost(),2) ."</td>";
+					$html_val .= '<td class="m-row4">'. dollar_format($row->getCost(), $this->currency) ."</td>";
 				}
 
 			} else if (ReportBasicForm::DISPLAY_LEVEL_NET==$display_item_key) {
@@ -1112,7 +1254,7 @@ class ReportSummaryForm extends ReportBasicForm {
 					} else {
 						$html_val .= '<td class="m-row_zero">';
 					}
-					$html_val .= '$' . number_format($row->getNet(),2) . '</td>';
+					$html_val .= dollar_format($row->getNet(), $this->currency) . '</td>';
 				}
 
 			} else if (ReportBasicForm::DISPLAY_LEVEL_ROI==$display_item_key) {
@@ -1138,6 +1280,7 @@ class ReportSummaryForm extends ReportBasicForm {
 	 * @return String
 	 */
 	function getPrintRowHtml($row,$tr_class = "") {
+
 		$html_val = "";
 		
 		$html_val .= "<tr class=\"" . $tr_class . "\">";
@@ -1213,7 +1356,7 @@ class ReportSummaryForm extends ReportBasicForm {
 		
 		$hideDate = false;
 		
-		if (!$userObj->hasPermission("access_to_campaign_data")) {
+		if (!$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
 			$hideDate = true;
 		}
 
@@ -1307,6 +1450,7 @@ class ReportSummaryForm extends ReportBasicForm {
 			ReportBasicForm::echoCell($row->getUtmTerm());
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C1)) {
+			ReportBasicForm::echoCell($row->getC1Id());
 			ReportBasicForm::echoCell($row->getC1());
 		}
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C2)) {
@@ -1336,7 +1480,14 @@ class ReportSummaryForm extends ReportBasicForm {
 		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE)) {
 			ReportBasicForm::echoCell($row->getRuleRedirectName());
 		}
-		
+
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
+			ReportBasicForm::echoCell($row->getTransactionIDName());
+		}
+
+		if($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
+		    ReportBasicForm::echoCell($row->getPublisherIDName());
+		}
 		foreach($this->getDisplay() AS $display_item_key) {
 			if (ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT==$display_item_key) {
 				if ($hideDate) {
@@ -1438,7 +1589,7 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm {
 	 */
 	function getTitle() {
 		if ($this->getName()=='') {
-			return '[No PPC Network]';
+			return '[No Traffic Source]';
 		}
 		return $this->getName();
 	}
@@ -1449,7 +1600,7 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm {
 	 */
 	function getPrintTitle() {
 		if ($this->getName()=='') {
-			return '[No PPC Network]';
+			return '[No Traffic Source]';
 		}
 		return $this->getName();
 	}
@@ -1483,7 +1634,7 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm {
 	 */
 	function getTitle() {
 		if ($this->getName()=='') {
-			return '[No PPC Account]';
+			return '[No Traffic Source Account]';
 		}
 		return $this->getName();
 	}
@@ -1494,7 +1645,7 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm {
 	 */
 	function getPrintTitle() {
 		if ($this->getName()=='') {
-			return '[No PPC Account]';
+			return '[No Traffic Source Account]';
 		}
 		return $this->getName();
 	}
@@ -1528,7 +1679,7 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm {
 	 */
 	function getTitle() {
 		if ($this->getName()=='') {
-			return '[No Affiliate Network]';
+			return '[No Category]';
 		}
 		return $this->getName();
 	}
@@ -1539,7 +1690,7 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm {
 	 */
 	function getPrintTitle() {
 		if ($this->getName()=='') {
-			return '[No Affiliate Network]';
+			return '[No Category]';
 		}
 		return $this->getName();
 	}
@@ -2208,7 +2359,7 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm {
 	 */
 	function getTitle() {
 		if ($this->getName()=='') {
-			return '[No Campaign]';
+			return '[Advanced Landing Page/Smart Redirector Campaign]';
 		}
 		return $this->getName();
 	}
@@ -2219,7 +2370,7 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm {
 	 */
 	function getPrintTitle() {
 		if ($this->getName()=='') {
-			return '[No Campaign]';
+			return '[Landing Page/Smart Redirector Campaign]';
 		}
 		return $this->getName();
 	}
@@ -2804,7 +2955,7 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm {
 	 */
 	function getTitle() {
 		if ($this->getName()=='') {
-			return '[Default redirect]';
+			//return '[Default redirect1]';
 		}
 		return $this->getName();
 	}
@@ -2815,10 +2966,90 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm {
 	 */
 	function getPrintTitle() {
 		if ($this->getName()=='') {
-			return '[Default redirect]';
+			return '[Default redirect2]';
 		}
 		return $this->getName();
 	}
+}
+
+class ReportSummaryTransactionsForm extends ReportSummaryTotalForm {
+	/**
+	 * Alias for getC4
+	 * @return integer
+	 */
+	function getId() {
+		return $this->getConvId();
+	}
+	
+	/**
+	 * Alias for getC4
+	 * @return integer
+	 */
+	function getName() {
+		return $this->getTransactionIDName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getTitle() {
+	    if ($this->getName()=='') {
+	        return '[No Transaction ID]';
+	    }
+		return $this->getName();
+	}
+	
+	/**
+	 * Alias for getName()
+	 * @return string
+	 */
+	function getPrintTitle() {
+	    if ($this->getName()=='') {
+	        return '[No Transaction ID]';
+	    }	    
+		return $this->getName();
+	}
+}
+
+class ReportSummaryPublishersForm extends ReportSummaryTotalForm {
+    /**
+     * Alias for getPublisherId
+     * @return integer
+     */
+    function getId() {
+        return $this->getPublisherId();
+    }
+
+    /**
+     * Alias for getPublisherIDName
+     * @return integer
+     */
+    function getName() {
+        return $this->getPublisherIDName();
+    }
+
+    /**
+     * Alias for getName()
+     * @return string
+     */
+    function getTitle() {
+        if ($this->getName()=='') {
+            return '[No Publisher/User]';
+        }
+        return $this->getName();
+    }
+
+    /**
+     * Alias for getName()
+     * @return string
+     */
+    function getPrintTitle() {
+        if ($this->getName()=='') {
+            return '[No Publisher/User]';
+        }
+        return $this->getName();
+    }
 }
 
 
@@ -2890,11 +3121,19 @@ class ReportSummaryTotalForm {
 	private $redirect_name;
 	private $ip_id;
 	private $ip_name;
+	private $c1_id;
 	private $c1;
-	private $c1_name;
+	private $c2_id;
 	private $c2;
+	private $c3_id;
 	private $c3;
+	private $c4_id;
 	private $c4;
+	private $utm_campaign;
+	private $utm_content;
+	private $utm_medium;
+	private $utm_source;
+	private $utm_term;
 	private $interval_id;
 	private $interval_name;
 	private $formatted_interval_name;
@@ -2909,6 +3148,10 @@ class ReportSummaryTotalForm {
 	private $net;
 	private $roi;
 	private $click_out;
+	private $sub_id;
+	private $conv_id;
+	private $transaction_id;
+	private $publisher_name;
 	
 	private $detail_id;
 	private $parent_class;
@@ -3251,7 +3494,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setKeywordName($arg0) {
-		$this->keyword_name = $arg0;
+		$this->keyword_name = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 	
 	/**
@@ -3327,7 +3570,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setRefererName($arg0) {
-		$this->referer_name = $arg0;
+		$this->referer_name = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 	
 	/**
@@ -3636,7 +3879,7 @@ class ReportSummaryTotalForm {
 
 
 	/**
-	 * Returns the isp_id
+	 * Returns the platform_id
 	 * @return integer
 	 */
 	function getPlatformId() {
@@ -3647,7 +3890,7 @@ class ReportSummaryTotalForm {
 	}
 	
 	/**
-	 * Sets the city_id
+	 * Sets the platform_id
 	 * @param integer
 	 */
 	function setPlatformId($arg0) {
@@ -3748,7 +3991,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setAffiliateCampaignName($arg0) {
-		$this->affiliate_campaign_name = $arg0;
+		$this->affiliate_campaign_name = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 	
 	/**
@@ -3767,7 +4010,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setUtmCampaign($arg0) {
-		$this->utm_campaign = $arg0;
+		$this->utm_campaign = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -3786,7 +4029,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setUtmContent($arg0) {
-		$this->utm_content = $arg0;
+		$this->utm_content = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -3805,7 +4048,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setUtmMedium($arg0) {
-		$this->utm_medium = $arg0;
+		$this->utm_medium = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -3843,7 +4086,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setUtmTerm($arg0) {
-		$this->utm_term = $arg0;
+		$this->utm_term = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 
 	function getCustomVariableName() {
@@ -3855,7 +4098,7 @@ class ReportSummaryTotalForm {
 
 
 	function setCustomVariableName($arg0) {
-		$this->custom_variable_name = $arg0;
+		$this->custom_variable_name = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 
 	function getCustomVariableValue() {
@@ -3867,9 +4110,29 @@ class ReportSummaryTotalForm {
 
 
 	function setCustomVariableValue($arg0) {
-		$this->custom_variable_value = $arg0;
+		$this->custom_variable_value = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 
+
+
+	/**
+	 * Returns the c1_id
+	 * @return integer
+	 */
+	function getC1Id() {
+		if (is_null($this->c1_id)) {
+			$this->c1_id = 0;
+		}
+		return $this->c1_id;
+	}
+	
+	/**
+	 * Sets the c1_id
+	 * @param integer
+	 */
+	function setC1Id($arg0) {
+		$this->c1_id = $arg0;
+	}
 
 	/**
 	 * Returns the c1
@@ -3877,7 +4140,7 @@ class ReportSummaryTotalForm {
 	 */
 	function getC1() {
 		if (is_null($this->c1)) {
-			$this->c1 = 0;
+			$this->c1 = '';
 		}
 		return $this->c1;
 	}
@@ -3887,15 +4150,34 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setC1($arg0) {
-		$this->c1 = $arg0;
+		$this->c1 = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 	
+	/**
+	 * Returns the c2_id
+	 * @return integer
+	 */
+	function getC2Id() {
+		if (is_null($this->c2_id) || $this->c2_id =='') {
+			$this->c2_id = 0;
+		}
+		return $this->c2_id;
+	}
+	
+	/**
+	 * Sets the c2_id
+	 * @param integer
+	 */
+	function setC2Id($arg0) {
+		$this->c2_id = $arg0;
+	}
+
 	/**
 	 * Returns the c2
 	 * @return string
 	 */
 	function getC2() {
-		if (is_null($this->c2)) {
+		if (is_null($this->c2) || $this->c2 =='') {
 			$this->c2 = '';
 		}
 		return $this->c2;
@@ -3906,7 +4188,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setC2($arg0) {
-		$this->c2 = $arg0;
+		$this->c2 = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 	
 	/**
@@ -3925,7 +4207,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setC3($arg0) {
-		$this->c3 = $arg0;
+		$this->c3 = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 	
 	/**
@@ -3944,7 +4226,7 @@ class ReportSummaryTotalForm {
 	 * @param string
 	 */
 	function setC4($arg0) {
-		$this->c4 = $arg0;
+		$this->c4 = htmlspecialchars($arg0, ENT_QUOTES);
 	}
 	
 	/**
@@ -4009,7 +4291,7 @@ class ReportSummaryTotalForm {
 
 
 	/**
-	 * Sets the c4
+	 * Returns the Rule redirect ID
 	 * @param string
 	 */
 	function setRuleRedirectId($arg0) {
@@ -4021,12 +4303,12 @@ class ReportSummaryTotalForm {
 	}
 
 	/**
-	 * Returns the c4
+	 * Returns the Rule Redirect Name
 	 * @return string
 	 */
 	function getRuleRedirectName() {
-		if (is_null($this->rule_redirect_name)) {
-			$this->rule_redirect_name = '[Default redirect]';
+		if (($this->rule_redirect_name=='')) {
+			//$this->rule_redirect_name = '[Default redirect]';
 		}
 		return $this->rule_redirect_name;
 	}
@@ -4038,6 +4320,66 @@ class ReportSummaryTotalForm {
 		return $this->rule_redirect_id;
 	}
 
+	/**
+	 * Returns the Transaction ID Name
+	 * @return string
+	 */
+	function getTransactionIDName() {
+	    if (is_null($this->transaction_id)) {
+	        $this->transaction_id = '[No Transaction ID]';
+	    }
+	    return $this->transaction_id;
+	}
+
+	function setPublisherName($arg0) {
+	    //ump($arg0);
+		return $this->publisher_name = $arg0;
+	}
+	
+	function getPublisherIDName() {
+	    if (is_null($this->publisher_name)) {
+	        $this->publisher_name = '[No Publisher/User]';
+	    }
+	    return $this->publisher_name;
+	}
+	
+	function setPublisherId($arg0) {
+	    $this->publisher_id = htmlspecialchars($arg0, ENT_QUOTES);
+	}
+	
+	function getConvId() {
+		return $this->conv_id;
+	}
+	
+	function setConvId($arg0) {
+	    $this->conv_id = $arg0;
+	}
+	
+	function getSubId() {
+		return $this->sub_id;
+	}
+
+	function setSubId($arg0) {
+		$this->sub_id = $arg0;
+	}
+
+	function getTransactionId() {
+	    if (is_null($this->transaction_id)) {
+	        $this->transaction_id = 0;
+	    }
+	    return $this->transaction_id;
+	}
+	
+	function setTransactionId($arg0) {
+	    $this->transaction_id = htmlspecialchars($arg0, ENT_QUOTES);
+	}
+
+	function getPublisherId() {
+	    return $this->publisher_id;
+	}
+	
+
+	
 	/**
 	 * Returns the interval_id
 	 * @return integer
@@ -4287,12 +4629,14 @@ class ReportSummaryTotalForm {
 	 * @param $arg0
 	 */
 	function populate($arg0) {
-		if (is_array($arg0)) {
+	  if (is_array($arg0)) {
+		 
 			// Attempt to populate the form
 			foreach ($arg0 as $key => $value) {
 				if (is_array($value)) {
-					$entry = preg_replace("/_([a-zA-Z0-9])/e","strtoupper('\\1')",$key);
+					$entry = preg_replace_callback("/_([a-zA-Z0-9])/",function($m){return strtoupper($m[1]);},$key);
 					if (is_callable(array($this, 'add' . ucfirst($entry)),false, $callableName)) {
+					    
 						foreach ($value as $key2 => $value1) {
 							if (is_string($value1)) {
 								$this->{'add' . ucfirst($entry)}(trim($value1), $key2);
@@ -4301,7 +4645,7 @@ class ReportSummaryTotalForm {
 							}
 						}
 					} else {
-						$entry = preg_replace("/_([a-zA-Z0-9])/e","strtoupper('\\1')",$key);
+						$entry = preg_replace_callback("/_([a-zA-Z0-9])/",function($m){return strtoupper($m[1]);},$key);
 						if (is_callable(array($this, 'set' . ucfirst($entry)),false, $callableName)) {
 							if (is_string($value)) {
 								$this->{'set' . ucfirst($entry)}(trim($value));
@@ -4311,10 +4655,12 @@ class ReportSummaryTotalForm {
 						}
 					}
 				} else {
-					$entry = preg_replace("/_([a-zA-Z0-9])/e","strtoupper('\\1')",$key);
+				    
+					$entry = preg_replace_callback("/_([a-zA-Z0-9])/",function($m){return strtoupper($m[1]);},$key);
 					if (is_callable(array($this, 'set' . ucfirst($entry)),false, $callableName)) {
-						if (is_string($value)) {
-							$this->{'set' . ucfirst($entry)}(trim($value));
+
+					    if (is_string($value)) {
+					        $this->{'set' . ucfirst($entry)}(trim($value));
 						} else {
 							$this->{'set' . ucfirst($entry)}($value);
 						}
@@ -4330,8 +4676,12 @@ class ReportSummaryTotalForm {
 		} // End is_array($arg0)
 		
 		if ($this->getChildKey() != "") {
+		    
+		 //   return;
 			if (array_key_exists($this->getChildKey(), $arg0)) {
+			    
 				$tmp_array = $this->getChildArray();
+				
 				$index = (!is_null($arg0[$this->getChildKey()])) ? $arg0[$this->getChildKey()] : 0;
 				if (array_key_exists($index, $tmp_array)) {
 					$child_tracking_form = $tmp_array[$index];
@@ -4351,7 +4701,8 @@ class ReportSummaryTotalForm {
 	 */
 	function getClicks() {
 		$counter = 1;
-		if (count($this->getChildArray()) > 0) {
+		
+		if (count($this->getChildArray()) > 0 && $this->clicks=='') {
 			$ret_val = 0;
 			foreach ($this->getChildArray() as $child_item) {
 				/*
@@ -4377,6 +4728,7 @@ class ReportSummaryTotalForm {
 	 * @param integer
 	 */
 	function setClicks($arg0) {
+		
 		$this->clicks += $arg0;
 	}
 
@@ -4575,7 +4927,7 @@ class ReportSummaryTotalForm {
 	 * @return string
 	 */
 	function getTitle() {
-		return 'Grand Total';
+		return 'Page Total';
 	}
 	
 	/**
@@ -4583,7 +4935,7 @@ class ReportSummaryTotalForm {
 	 * @return string
 	 */
 	function getPrintTitle() {
-		return 'Grand Total';
+		return 'Page Total';
 	}
 }
 ?>

@@ -1,5 +1,5 @@
 <?php 
-include_once(substr(dirname( __FILE__ ), 0,-13) . '/202-config/connect.php'); 
+include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user(); 
 
@@ -108,7 +108,7 @@ if ($html['clickserver_api_key']!=''){?>
 </div>
 <div class="row demo-tiles">
 <span id="app-placeholder">
-    <img src="http://tracking202-static.s3.amazonaws.com/img-appstore.png">
+    <img src="https://tracking202-static.s3.amazonaws.com/img-appstore.png">
 </span>
 </div>
  <?php     
@@ -124,7 +124,7 @@ else{
 			// Will return the response, if false it print the response
 			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 			// Set the url
-			curl_setopt($ch, CURLOPT_URL, 'http://my.tracking202.com/feed/appstore/');
+			curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/feed/appstore/');
 			// Execute
 			$result=curl_exec($ch);
 			curl_close($ch);

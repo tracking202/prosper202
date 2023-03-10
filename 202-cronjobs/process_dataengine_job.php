@@ -1,6 +1,7 @@
 <?php
-include_once (substr(dirname( __FILE__ ), 0,-13) . '/202-config/connect.php');
-include_once (substr(dirname( __FILE__ ), 0,-13) . '/202-config/class-dataengine.php');
+include_once(str_repeat("../", 1).'202-config/connect.php');
+include_once(str_repeat("../", 1).'202-config/class-dataengine.php');
+
 set_time_limit(0);
 
 /*
@@ -22,7 +23,7 @@ if ($result->num_rows) {
         
         for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i = $i + 3599) {
             $nextval = $i + 3599;
-            $urls[] = 'http://' . getTrackingDomain() .get_absolute_url(). '/202-cronjobs/dej.php?s=' . $i . '&e=' . $nextval;
+            $urls[] = 'http://' . getTrackingDomain() .get_absolute_url(). '202-cronjobs/dej.php?s=' . $i . '&e=' . $nextval;
         }
 
       

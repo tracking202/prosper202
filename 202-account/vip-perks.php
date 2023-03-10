@@ -1,9 +1,8 @@
 <?php
-
-
-include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php');
+include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user();
+
 $user_data = get_user_data_feedback($_SESSION['user_id']);
 template_top('VIP Perks Profile',NULL,NULL,NULL);
 $survey_data = getSurveyData($user_data['install_hash']);
@@ -22,7 +21,7 @@ $survey_data = getSurveyData($user_data['install_hash']);
 			<div class="panel-body">
 			    Wouldn't you love to have new campaign opportunities, private campaigns, business relationships, discounts and special offers and more handed to you? Now you can with the Prosper202 VIP Perk program. <br></br>
 
-				Fill out your profile information to customize your Prosper202 VIP Perks experience. The information will be used to uniquely match you up with coupons, discounts, and enhanced payouts or exclusive offers from top Affiliate Networks, Ad Networks, Affiliate Tools, Hosting providers and more.
+				Fill out your profile information to customize your Prosper202 VIP Perks experience. The information will be used to uniquely match you up with coupons, discounts, and enhanced payouts or exclusive offers.
 			</div>
 		</div>
 	</div>

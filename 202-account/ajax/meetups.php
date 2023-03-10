@@ -1,10 +1,10 @@
 <?php
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');    
+include_once(str_repeat("../", 2).'202-config/connect.php');
 
 AUTH::require_user();
 
  #Meetup202 Global Calendar
- $json = @file_get_contents( TRACKING202_RSS_URL . '/meetup202/events.php?type=json');
+ $json = @getData( TRACKING202_RSS_URL . '/meetup202/events.php?type=json');
  $items = json_decode($json, true);
  $items = $items['value']['items'];
  $counter = 0;

@@ -1,4 +1,5 @@
-<?php include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php'); 
+<?php 
+include_once(str_repeat("../", 1).'202-config/connect.php'); 
 
 AUTH::require_user();
 
@@ -52,7 +53,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
      $mysql['user_email'] = $db->real_escape_string(trim ( $_POST ['user_email'] ));
     if (empty ( $mysql['user_email'] )) {
         $error ['user_email'] = '<div class="error help-block">Enter an email address.</div>';
-    }
+	}else{
+		$check_user_email="select user_name,user_id from 202_users where user_email='".$mysql['user_email']."'";
+        $check_user_email_result = _mysqli_query($check_user_email);
+		$user_email_row=$check_user_email_result->fetch_array(MYSQLI_ASSOC);
+
+        if($check_user_email_result->num_rows != 0){
+            $error ['user_email'] = '<div class="error help-block">The email you entered already exists.</div>';
+        }
+	}
+	
 
      $mysql['user_name'] = $db->real_escape_string(trim ( $_POST ['user_name'] ));
     if (empty ( $mysql['user_name'] )) {
@@ -96,15 +106,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $mysql['user_active'] = 0;
     else
         $mysql['user_active'] = 1;
-    
-/*     if($editing === true){
-        $password_sql="select user_id from 202_users where user_pass='".$mysql['user_pass']."' AND user_id='".$mysql['form_user_id']."'";
-        $pass_result = _mysqli_query($password_sql);
-        if($pass_result->num_rows == 0){
-            $error ['user_password'] = '<div class="error help-block">You entered an invalid password.</div>';
-        }
-       
-    } */
 
     if (!$error) {
 
@@ -134,6 +135,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					`user_hash`='".$user_hash."',
 				    `modal_status`='".$user_row2['modal_status']."',
 					`vip_perks_status`='".$user_row2['vip_perks_status']."',";
+				    
+				    if(function_exists('random_bytes')){
+				        $user_public_publisher_id = createId(5);
+				        $user_sql .= "`user_public_publisher_id`= '".$user_public_publisher_id."', ";
+				    }
                 }
 					$user_sql .= "`user_active`='".$mysql['user_active']."'";
 								  
@@ -147,9 +153,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 	$user_id = $db->insert_id;
 
                 	$role_sql = "INSERT INTO 202_user_role SET user_id = '".$user_id."', role_id = '".$mysql['user_role']."'";
+                	$pref_sql = "INSERT INTO 202_users_pref SET user_id = '".$user_id."'";
                 }
  				
  				$role_result = _mysqli_query($role_sql);
+ 				$pref_result = _mysqli_query($pref_sql);
+ 				
                 $add_success = true;
                	
                	switch ($_POST['user_role']) {
@@ -167,7 +176,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
                 	case '5':
                 		$role = 'Campaign viewer';
-                		break;		
+                		break;	
+
+                		case '6':
+                		    $role = 'Publisher';
+                		    break;
                 }
 
                 if ($slack) {
@@ -183,9 +196,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 }
 
-if ($editing == true) {
+if ($editing == true ) {
     $mysql['user_id'] = $db->real_escape_string(trim(filter_input(INPUT_GET, 'edit_user_id', FILTER_SANITIZE_NUMBER_INT)));
     $user_sql_edit = "SELECT user_fname,user_lname,user_name,user_id,user_email,user_time_register,user_active,role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id=".$mysql['user_id'];
+    
     $user_result_edit = _mysqli_query($user_sql_edit);
     $user_row_edit = $user_result_edit->fetch_assoc();
     
@@ -231,7 +245,11 @@ if ($deleting == true) {
 
             case '5':
                 $role = 'Campaign viewer';
-                break;		
+                break;	
+
+            case '6':
+                $role = 'Publisher';
+                    break;
         }
 
         $slack->push('user_management_user', array('user' => $username, 'type' => 'Removed', 'username' => $row['user_name'], 'role' => $role));
@@ -240,6 +258,10 @@ if ($deleting == true) {
     header('location: '.get_absolute_url().'202-account/user-management.php');
 
 }
+if(empty($html)){
+	$html = array_map ( 'htmlentities', $mysql );
+}
+
 
 //show the template
 template_top('User Management',NULL,NULL,NULL); ?>
@@ -292,7 +314,7 @@ template_top('User Management',NULL,NULL,NULL); ?>
 				  <div class="form-group <?php if($error['user_password']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 				    <label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">Password:</label>
 				    <div class="col-xs-5">
-				      <input type="password" class="form-control input-sm" id="user_password" name="user_password" value="<?php echo $html['ppc_account_name']; ?>">
+				      <input type="password" class="form-control input-sm" id="user_password" name="user_password" value="<?php echo $html['user_password']; ?>">
 				    	<?php echo $error['user_password']; ?>
 				    </div>
 				    
@@ -300,12 +322,13 @@ template_top('User Management',NULL,NULL,NULL); ?>
 				  <div class="form-group <?php if($error['user_password2']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 				    <label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">Retype Password:</label>
 				    <div class="col-xs-5">
-				      <input type="password" class="form-control input-sm" id="user_password2" name="user_password2" value="<?php echo $html['ppc_account_name']; ?>">
+				      <input type="password" class="form-control input-sm" id="user_password2" name="user_password2" value="<?php echo $html['user_password2']; ?>">
 				    	<?php echo $error['user_password2']; ?>
 				    </div>
 				    
 				  </div>
-				  <?php  } ?>
+				  <?php  }
+				   ?>
 
 				  <div class="form-group" style="margin-bottom: 0px;">
 					 	<label for="user_role" class="col-xs-4 control-label" style="text-align: left;">Role:</label>
@@ -315,6 +338,9 @@ template_top('User Management',NULL,NULL,NULL); ?>
 						 		<option value="3" <?php if($html['role_id'] == '3') echo "selected";?>>Campaign manager</option>
 						 		<option value="4" <?php if($html['role_id'] == '4') echo "selected";?>>Campaign optimizer</option>
 						 		<option value="5" <?php if($html['role_id'] == '5') echo "selected";?>>Campaign viewer</option>
+						 		<?php if(function_exists('random_bytes')){?>
+						 		<option value="6" <?php if($html['role_id'] == '6') echo "selected";?>>Publisher</option>
+						 		<?php }?>
 						 	</select>
 						 	<?php echo $error['user_role']; ?>
 					    </div>    
@@ -367,7 +393,7 @@ template_top('User Management',NULL,NULL,NULL); ?>
 			}
 
 			while ($user_row = $user_result ->fetch_array(MYSQLI_ASSOC)) {
-				//print out the PPC networks
+				//print out the Traffic Sources
 				if($user_row['user_fname']){
 				    $html['user_display_name'] = htmlentities($user_row['user_fname'], ENT_QUOTES, 'UTF-8');
 				    if($user_row['user_lname']){
@@ -385,10 +411,10 @@ template_top('User Management',NULL,NULL,NULL); ?>
 					if (!$userObj->hasPermission("add_edit_delete_admin")) {
 						printf('<li>%s</li>', $html['user_display_name']);
 					} else {
-						printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Traffic Source?\');">remove</a></li>', $html['user_display_name'],$url['user_id'],$url['user_id']);
+						printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This User?\');">remove</a></li>', $html['user_display_name'],$url['user_id'],$url['user_id']);
 					}
 				} else {
-					printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Traffic Source?\');">remove</a></li>', $html['user_display_name'],$url['user_id'],$url['user_id']);
+					printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This User?\');">remove</a></li>', $html['user_display_name'],$url['user_id'],$url['user_id']);
 				}
 				
 				?>
@@ -401,6 +427,7 @@ template_top('User Management',NULL,NULL,NULL); ?>
 		</div>
 	</div>
 </div>
+
 <script type="text/javascript">
 (function ($) {
 	$('[data-toggle="switch"]').bootstrapSwitch();

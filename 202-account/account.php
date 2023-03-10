@@ -1,7 +1,10 @@
 <?php
-include_once(substr(dirname( __FILE__ ), 0,-12) . '/202-config/connect.php');
+include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user();
+
+$utc = new DateTimeZone('UTC');
+$dt = new DateTime('now', $utc);
 
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
@@ -36,6 +39,19 @@ if (isset($_POST['remove_rest_api_key'])) {
 	die();
 }
 
+if ($_GET['customers_api_key']) {
+	$mysql['p202_customer_api_key'] = $db->real_escape_string(base64_decode($_GET['customers_api_key']));
+	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+	$validate = validateCustomersApiKey($mysql['p202_customer_api_key']);
+	if ($validate['code'] != 200) {
+		$error['p202_customer_api_key_invalid'] = "API key is not valid. Check your key and try again!";
+	}
+	if (!$error) {
+		$db->query("UPDATE 202_users SET p202_customer_api_key = '".$mysql['p202_customer_api_key']."' WHERE user_id = '".$mysql['user_id']."'");
+		$change_p202_customer_api_key = true;
+	}	
+}
+
 //if they want to remove their stats202 app key on file, do so
 if ($_GET['remove_user_stats202_app_key']) {
 	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
@@ -46,12 +62,13 @@ if ($_GET['remove_user_stats202_app_key']) {
 	die();
 }
 
-//if they want to remove their stats202 app key on file, do so
+//if they want to remove their user api key on file, do so
 if ($_GET['remove_user_api_key']) {
 	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_api_key='' WHERE user_id='".$mysql['user_id']."'";
 	$result = $db->query($sql);
 	$_SESSION['user_api_key'] = '';
+	$_SESSION['user_cirrus_link'] = '';
 	header('location: '.get_absolute_url().'202-account/account.php');
 	die();
 }
@@ -103,7 +120,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$count_sql = "	SELECT 	*
 							  	FROM  		`202_users` 
 							  	WHERE 	`user_email` = '" . $mysql['user_email'] ."' 
-							  	AND   		`user_id`!='".$mysql['user_id']."'";
+								AND   		`user_id`!='".$mysql['user_id']."'
+								AND user_deleted != 1";
 				$count_result = $db->query($count_sql);
 				if ($count_result->num_rows > 0) {
 					$error['user_email'] .= 'That email address is already being used.';
@@ -139,9 +157,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string($_POST['user_keyword_searched_or_bidded']);
 				$mysql['user_referer'] = $db->real_escape_string($_POST['user_referer']);
 				$mysql['cloak_referer'] = $db->real_escape_string($_POST['cloak_referer']);
+				$mysql['user_pref_ad_settings'] = $db->real_escape_string($_POST['user_pref_ad_settings']);
 				$mysql['user_pref_dynamic_bid'] = $db->real_escape_string($_POST['user_bid']);
 				$mysql['user_tracking_domain'] = $db->real_escape_string($_POST['user_tracking_domain']);
-				
+				$mysql['user_pref_privacy'] = $db->real_escape_string($_POST['user_pref_privacy']);
+
 				$user_sql = "
 					UPDATE
 						`202_users` 
@@ -162,30 +182,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						`user_tracking_domain`='".$mysql['user_tracking_domain']."',
 						`cache_time`='".$mysql['cache_time']."',
 						`user_pref_cloak_referer`='".$mysql['cloak_referer']."',
-						`user_pref_dynamic_bid`='".$mysql['user_pref_dynamic_bid']."',    
+						`user_pref_dynamic_bid`='".$mysql['user_pref_dynamic_bid']."', 
+						`user_pref_ad_settings`='".$mysql['user_pref_ad_settings']."',
+						`user_pref_privacy`='".$mysql['user_pref_privacy']."',    
 						`user_daily_email`='".$mysql['user_daily_email']."'
 					WHERE
 						`user_id`='".$mysql['user_id']."'
 				";	
-			
-					
+
 				$user_result = $db->query($user_sql);
-				$html['cache_time'] = $mysql['cache_time'];
-
 				$update_profile = true;
-
+				$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 				registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $html['install_hash']);
 				
+				//try to set non expiring cache for values that are used in redirects
+				 if ($memcacheWorking) {
+				        setCache(md5('user_id_'.$tid.systemHash()), $mysql['user_id'], 0);
+				        setCache(md5('user_timezone_'.$tid.systemHash()), $mysql['user_timezone'], 0);
+				        setCache(md5('user_keyword_searched_or_bidded_'.$tid.systemHash()), $mysql['user_keyword_searched_or_bidded'], 0);
+				        setCache(md5('user_referer_'.$tid.systemHash()), $mysql['user_referer'], 0);
+				        setCache(md5('cloak_referer_'.$tid.systemHash()), $mysql['cloak_referer'], 0);
+				        setCache(md5('user_pref_dynamic_bid_'.$tid.systemHash()), $mysql['user_pref_dynamic_bid'], 0);
+				        setCache(md5('user_pref_privacy_'.$tid.systemHash()), $mysql['user_pref_privacy'], 0);
+				    } 
+				}
+
 				//set the  session's user_timezone
 				$_SESSION['user_timezone'] = $_POST['user_timezone'];
 
 				if ($slack) {
 					if ($_POST['user_timezone'] != $user_row['user_timezone']) {
 						$slack->push('user_time_zone_changed', array('user' => $username, 'old_zone' => $user_row['user_timezone'], 'new_zone' => $_POST['user_timezone']));
-					}
-
-					if ($_POST['user_cached_reports'] != $user_row['cache_time']) {
-						$slack->push('user_cache_time_changed', array('user' => $username, 'old_time' => $user_row['cache_time'], 'new_time' => $_POST['user_cached_reports']));
 					}
 
 					if ($_POST['user_keyword_searched_or_bidded'] != $user_row['user_keyword_searched_or_bidded']) {
@@ -272,13 +299,55 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
+	if ($_POST['update_account_currency'] == '1') {
+	    
+		if ($_POST['token'] != $_SESSION['token']) { $error['token'] = 'You must use our forms to submit data.';  }
+		$mysql['account_currency'] = $db->real_escape_string($_POST['account_currency']);
+
+		if (!$error) {
+			$user_sql = "
+					UPDATE
+						`202_users_pref`
+					SET
+						`user_account_currency`='".$mysql['account_currency']."'
+					WHERE
+						`user_id`='".$mysql['user_id']."'
+				";	
+			$user_result = $db->query($user_sql);
+		}
+
+		if ($user_row['user_account_currency'] != $_POST['account_currency']) {
+			$sql = "SELECT aff_campaign_id, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout FROM 202_aff_campaigns WHERE aff_campaign_deleted = 0";
+			$result = $db->query($sql);
+			if ($result->num_rows > 0) {
+				while ($row = $result->fetch_assoc()) {
+
+					if ($row['aff_campaign_foreign_payout'] == '0.00') {
+						$payout = getForeignPayout($_POST['account_currency'], $row['aff_campaign_currency'], $row['aff_campaign_payout']);
+						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_foreign_payout = '".$row['aff_campaign_payout']."', aff_campaign_payout = '".$payout['exchange_payout']."'");
+					} else {
+						if ($_POST['account_currency'] == $row['aff_campaign_currency']) {
+							$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '".$row['aff_campaign_foreign_payout']."', aff_campaign_foreign_payout = '0.00'");
+						} else {
+							$payout = getForeignPayout($_POST['account_currency'], $row['aff_campaign_currency'], $row['aff_campaign_foreign_payout']);
+							$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '".$payout['exchange_payout']."'");
+						}
+					}
+				}
+			}
+		}
+
+		$update_profile = true;
+	}
 
 	if ($_POST['update_clickserver_api_key'] == '1') {
 
 		if ($_POST['token'] != $_SESSION['token']) { $error['token'] = 'You must use our forms to submit data.';  }
-
+		
+		$mysql['clickserver_api_key'] = $db->real_escape_string($_POST['clickserver_api_key']);
+		
 		if (!preg_match('/\*/', $_POST['clickserver_api_key'])) {
-			if (!clickserver_api_key_validate($_POST['clickserver_api_key']) && $mysql['clickserver_api_key'] !='') { $error['clickserver_api_key'] = 'This API Key appears invalid.'; }
+			if (!clickserver_api_key_validate($mysql['clickserver_api_key']) && $mysql['clickserver_api_key'] !='') { $error['clickserver_api_key'] = 'This API Key appears invalid.'; }
 
 			if (!$error || $mysql['clickserver_api_key'] =='') {
 					
@@ -321,6 +390,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					
 				//set the  session's user_api_key
 				$_SESSION['user_api_key'] = $_POST['user_api_key'];
+				$_SESSION['user_cirrus_link'] = $_POST['user_api_key'];
 			}
 		}
 	}
@@ -343,6 +413,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				//set the  session's user_api_key
 				$_SESSION['user_stats202_app_key'] = $_POST['user_stats202_app_key'];
 			}
+		}
+	}
+
+	if ($_POST['update_p202_customer_api_key'] == '1') {
+		if ($_POST['token'] != $_SESSION['token']) { $error['token'] = 'You must use our forms to submit data.';  }
+		$mysql['p202_customer_api_key'] = $db->real_escape_string($_POST['p202_customer_api_key']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+		$validate = validateCustomersApiKey($_POST['p202_customer_api_key']);
+		if ($validate['code'] != 200 && $mysql['p202_customer_api_key'] != '') {
+			$error['p202_customer_api_key_invalid'] = "API key is not valid. Check your key and try again!";
+		}
+		if (!$error) {
+			$db->query("UPDATE 202_users SET p202_customer_api_key = '".$mysql['p202_customer_api_key']."' WHERE user_id = '".$mysql['user_id']."'");
+			$change_p202_customer_api_key = true;
 		}
 	}
 
@@ -387,14 +471,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	$html = array_merge($html, array_map('htmlentities', $_POST));
 
-}
+
 
 
 $html['user_id'] = htmlentities($_SESSION['user_id'], ENT_QUOTES, 'UTF-8');
 $html['user_username'] = htmlentities($_SESSION['user_username'], ENT_QUOTES, 'UTF-8');
 
-//check to see if this user has stats202 enabled
-$_SESSION['stats202_enabled'] = AUTH::is_valid_app_key('stats202', $_SESSION['user_api_key'], $_SESSION['user_stats202_app_key']);
 
 template_top('Personal Settings',NULL,NULL,NULL);  
 
@@ -438,7 +520,10 @@ $html = array_map('htmlentities', $user_row);
 					<?php } ?>
 
 					<?php if ($error) { ?>
-						<div class="error" style="text-align:right"><small><span class="fui-alert"></span> <?php echo $error['token'] . $error['user_email'] . $error['clickserver_api_key'] . $error['user_api_key'] . $error['user_pass']; ?></small></div>
+						<div class="error" style="text-align:right"><small><span class="fui-alert"></span> <?php echo $error['token'] . $error['user_email'] . $error['clickserver_api_key'] . $error['user_api_key'] . $error['user_pass'] . $error['p202_customer_api_key_invalid']; ?></small></div>
+					<?php } ?>
+					<?php if ($change_p202_customer_api_key) { ?>
+						<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> Your submission was successful. Your Prosper202 customer API key have been saved.</small></div>
 					<?php } ?>
 				</div>
 			</div>
@@ -460,23 +545,6 @@ $html = array_map('htmlentities', $user_row);
 				    <label for="user_timezone" class="col-xs-4 control-label">* Time zone (GMT):</label>
 				    <div class="col-xs-8">
 				      <?php
-			
-						function formatOffset($offset) {
-					        $hours = $offset / 3600;
-					        $remainder = $offset % 3600;
-					        $sign = $hours > 0 ? '+' : '-';
-					        $hour = (int) abs($hours);
-					        $minutes = (int) abs($remainder / 60);
-
-					        if ($hour == 0 AND $minutes == 0) {
-					            $sign = ' ';
-					        }
-					        return $sign . str_pad($hour, 2, '0', STR_PAD_LEFT) .':'. str_pad($minutes,2, '0');
-						}
-
-						$utc = new DateTimeZone('UTC');
-						$dt = new DateTime('now', $utc);
-
 						echo '<select class="form-control input-sm" name="user_timezone" id="user_timezone">';
 						foreach(DateTimeZone::listIdentifiers() as $tz) {
 						    $current_tz = new DateTimeZone($tz);
@@ -527,93 +595,7 @@ $html = array_map('htmlentities', $user_row);
 					  </select>
 				    </div>
 				</div>
-
-				<div class="form-group">
-				    <label for="user_cached_reports" class="col-xs-4 control-label">Cache reports every: <span class="fui-info-circle" style="font-size: 12px;" data-toggle="tooltip" title="If you have memcache installed and working, it will cache reports for fast output. Select how often stats will be cached and updated!"></span></label>
-				    <div class="col-xs-8">
-				      <select class="form-control input-sm" id="user_cached_reports" name="user_cached_reports" <?php if (!$memcacheWorking) echo "disabled";?>>
-						<option
-							<?php if ($html['cache_time'] == '0') { echo 'selected=""'; } ?>
-								value="0">don't cache</option>
-						<option
-							<?php if ($html['cache_time'] == '60') { echo 'selected=""'; } ?>
-								value="60">1 minute</option>
-						<option
-							<?php if ($html['cache_time'] == '120') { echo 'selected=""'; } ?>
-								value="120">2 minutes</option>
-						<option
-							<?php if ($html['cache_time'] == '180') { echo 'selected=""'; } ?>
-								value="180">3 minutes</option>
-						<option
-							<?php if ($html['cache_time'] == '240') { echo 'selected=""'; } ?>
-								value="240">4 minutes</option>
-						<option
-							<?php if ($html['cache_time'] == '300') { echo 'selected=""'; } ?>
-								value="300">5 minutes</option>
-							<?php
-								$min_min = 10;
-								$max_min = 55;
-
-								do {
-									$sec = $min_min*60;
-									if ($html['cache_time'] == $sec){
-										echo '<option value="'.$sec.'" selected="">'.$min_min.' minutes</option>';
-									} else {
-										echo '<option value="'.$sec.'">'.$min_min.' minutes</option>';
-									}
-
-									$min_min = $min_min + 5;
-
-								} while ($min_min <= $max_min);
-
-							?>
-							<option
-							<?php if ($html['cache_time'] == '3600') { echo 'selected=""'; } ?>
-								value="3600">hour</option>
-						</select>
-				    </div>
-				</div>
 				
-				<div class="form-group">
-				    <label for="user_dataengine_reports" class="col-xs-4 control-label">Generate reports every: <span class="fui-info-circle" style="font-size: 12px;" data-toggle="tooltip" title="How should the DataEngine generate reports? The more frequent you run this, the more fresh your reports are. However it will add extra load to your servers"></span></label>
-				    <div class="col-xs-8">
-				      <select class="form-control input-sm" id="user_dataengine_reports" name="user_dataengine_reports" >
-						
-						<option
-							<?php if ($html['cache_time'] == '60') { echo 'selected=""'; } ?>
-								value="60">1 minute</option>
-						
-						<option
-							<?php if ($html['cache_time'] == '300') { echo 'selected=""'; } ?>
-								value="300">5 minutes</option>
-								
-								<option
-							<?php if ($html['cache_time'] == '600') { echo 'selected=""'; } ?>
-								value="300">10 minutes</option>
-							<?php
-								$min_min = 20;
-								$max_min = 55;
-
-								do {
-									$sec = $min_min*60;
-									if ($html['cache_time'] == $sec){
-										echo '<option value="'.$sec.'" selected="">'.$min_min.' minutes</option>';
-									} else {
-										echo '<option value="'.$sec.'">'.$min_min.' minutes</option>';
-									}
-
-									$min_min = $min_min + 10;
-
-								} while ($min_min <= $max_min);
-
-							?>
-							<option
-							<?php if ($html['cache_time'] == '3600') { echo 'selected=""'; } ?>
-								value="3600">1 hour</option>
-						</select>
-				    </div>
-				</div>				
-
 				<div class="form-group">
 				    <label for="user_keyword_searched_or_bidded" class="col-xs-4 control-label">* Keyword Preference:</label>
 				    <div class="col-xs-8">
@@ -654,6 +636,22 @@ $html = array_map('htmlentities', $user_row);
 					</div>
 				</div>
 				<div class="form-group">
+				    <label for="user_referer" class="col-xs-4 control-label">* GDPR & Privacy:</label>
+				    <div class="col-xs-8">
+				    	<select class="form-control input-sm" name="user_pref_privacy" id="user_pref_privacy">
+							<option
+							<?php if ($html['user_pref_privacy'] == 'disabled') { echo 'selected=""'; } ?>
+								value="disabled">Disabled</option>
+						<option
+							<?php if ($html['user_pref_privacy'] == 'eu') { echo 'selected=""'; } ?>
+								value="eu">Enabled for European Traffic</option>	
+							<option
+							<?php if ($html['user_pref_privacy'] == 'all') { echo 'selected=""'; } ?>
+								value="all">Enabled for All Traffic</option>
+						</select>
+					</div>
+				</div>
+				<div class="form-group">
 				    <label for="cloak_referer" class="col-xs-4 control-label">* Cloaked Referer:</label>
 				    <div class="col-xs-8">
 				    	<select class="form-control input-sm" name="cloak_referer" id="cloak_referer">
@@ -666,7 +664,23 @@ $html = array_map('htmlentities', $user_row);
 						</select>
 					</div>
 				</div>
-				<?php } ?>
+                <div class="form-group">
+				    <label for="cloak_referer" class="col-xs-4 control-label">* Ad Settings:</label>
+				    <div class="col-xs-8">
+				    	<select class="form-control input-sm" name="user_pref_ad_settings" id="user_pref_ad_settings">
+							<option
+							<?php if ($html['user_pref_ad_settings'] == 'show_all') { echo 'selected=""'; } ?>
+								value="show_all">Show All Ads</option>
+							<option
+							<?php if ($html['user_pref_ad_settings'] == 'hide_login') { echo 'selected=""'; } ?>
+								value="hide_login">Hide Ads On Login Screen</option>
+							<option
+							<?php if ($html['user_pref_ad_settings'] == 'hide_all') { echo 'selected=""'; } ?>
+								value="hide_all">Hide All Ads</option>	
+						</select>
+					</div>
+				</div>
+				<?php } //closing brace for permissions check ?>
 				<div class="form-group <?php if($error['user_email']) echo "has-error";?>">
 				    <label for="user_email" class="col-xs-4 control-label">* Email: 
 				    	<?php if($error['user_email']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_email']; ?>"></span> <?php } ?>
@@ -699,6 +713,68 @@ $html = array_map('htmlentities', $user_row);
 </div>
 
 <?php if($userObj->hasPermission("access_to_personal_settings")) { ?>
+<div class="row account">
+	<div class="col-xs-12">
+		<h6>Account currency</h6>
+	</div>
+	<div class="col-xs-4">
+		<div class="panel panel-default account_left">
+			<div class="panel-body">
+			    Here you can change your account currency and have your data converted to new currency (paid feature).
+			</div>
+		</div>
+	</div>
+	<div class="col-xs-8">
+		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
+		<input type="hidden" name="update_account_currency" value="1" />
+		<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+		<div class="form-group">
+			<label for="account_currency" class="col-xs-4 control-label">Account currency:</label>
+				    <div class="col-xs-8">
+				    	<select class="form-control input-sm" name="account_currency" id="account_currency">
+							  <option value="USD" <?php if ($html['user_account_currency'] == 'USD') echo 'selected=""'; ?>>U.S. Dollar</option>
+							  <option value="AUD" <?php if ($html['user_account_currency'] == 'AUD') echo 'selected=""'; ?>>Australian Dollar</option>
+							  <option value="BRL" <?php if ($html['user_account_currency'] == 'BRL') echo 'selected=""'; ?>>Brazilian Real</option>
+							  <option value="CAD" <?php if ($html['user_account_currency'] == 'CAD') echo 'selected=""'; ?>>Canadian Dollar</option>
+							  <option value="CZK" <?php if ($html['user_account_currency'] == 'CZK') echo 'selected=""'; ?>>Czech Koruna</option>
+							  <option value="DKK" <?php if ($html['user_account_currency'] == 'DKK') echo 'selected=""'; ?>>Danish Krone</option>
+							  <option value="EUR" <?php if ($html['user_account_currency'] == 'EUR') echo 'selected=""'; ?>>Euro</option>
+							  <option value="HKD" <?php if ($html['user_account_currency'] == 'HKD') echo 'selected=""'; ?>>Hong Kong Dollar</option>
+							  <option value="HUF" <?php if ($html['user_account_currency'] == 'HUF') echo 'selected=""'; ?>>Hungarian Forint</option>
+							  <option value="ILS" <?php if ($html['user_account_currency'] == 'ILS') echo 'selected=""'; ?>>Israeli New Sheqel</option>
+							  <option value="JPY" <?php if ($html['user_account_currency'] == 'JPY') echo 'selected=""'; ?>>Japanese Yen</option>
+							  <option value="MYR" <?php if ($html['user_account_currency'] == 'MYR') echo 'selected=""'; ?>>Malaysian Ringgit</option>
+							  <option value="MXN" <?php if ($html['user_account_currency'] == 'MXN') echo 'selected=""'; ?>>Mexican Peso</option>
+							  <option value="NOK" <?php if ($html['user_account_currency'] == 'NOK') echo 'selected=""'; ?>>Norwegian Krone</option>
+							  <option value="NZD" <?php if ($html['user_account_currency'] == 'NZD') echo 'selected=""'; ?>>New Zealand Dollar</option>
+							  <option value="PHP" <?php if ($html['user_account_currency'] == 'PHP') echo 'selected=""'; ?>>Philippine Peso</option>
+							  <option value="PLN" <?php if ($html['user_account_currency'] == 'PLN') echo 'selected=""'; ?>>Polish Zloty</option>
+							  <option value="GBP" <?php if ($html['user_account_currency'] == 'GBP') echo 'selected=""'; ?>>Pound Sterling</option>
+							  <option value="SGD" <?php if ($html['user_account_currency'] == 'SGD') echo 'selected=""'; ?>>Singapore Dollar</option>
+							  <option value="SEK" <?php if ($html['user_account_currency'] == 'SEK') echo 'selected=""'; ?>>Swedish Krona</option>
+							  <option value="CHF" <?php if ($html['user_account_currency'] == 'CHF') echo 'selected=""'; ?>>Swiss Franc</option>
+							  <option value="TWD" <?php if ($html['user_account_currency'] == 'TWD') echo 'selected=""'; ?>>Taiwan New Dollar</option>
+							  <option value="THB" <?php if ($html['user_account_currency'] == 'THB') echo 'selected=""'; ?>>Thai Baht</option>
+							  <option value="TRY" <?php if ($html['user_account_currency'] == 'TRY') echo 'selected=""'; ?>>Turkish Lira</option>
+							  <option value="CNY" <?php if ($html['user_account_currency'] == 'CNY') echo 'selected=""'; ?>>Chinese Yuan</option>
+							  <option value="INR" <?php if ($html['user_account_currency'] == 'INR') echo 'selected=""'; ?>>Indian Rupee</option>
+							  <option value="RUB" <?php if ($html['user_account_currency'] == 'RUB') echo 'selected=""'; ?>>Russian ruble</option>
+						</select>
+					</div>
+		</div>
+		<div class="form-group">
+			<div class="col-xs-8 col-xs-offset-4">
+				<button class="btn btn-md btn-p202 btn-block" type="submit">Update account currency</button>					
+			</div>
+		</div>
+		</form>
+	</div>
+</div>
+
+<div class="row form_seperator">
+	<div class="col-xs-12"></div>
+</div>
+
 <div class="row account">
 	<div class="col-xs-12">
 		<h6>Prosper202 App API keys</h6>
@@ -741,44 +817,36 @@ $html = array_map('htmlentities', $user_row);
 <div class="row form_seperator">
 	<div class="col-xs-12"></div>
 </div>
-<!-- 
+
 <div class="row account">
 	<div class="col-xs-12">
-		<h6>Prosper202 ClickServer API Key</h6>
+		<h6>Prosper202 Customer API Key</h6>
 	</div>
 	<div class="col-xs-4">
 		<div class="panel panel-default account_left">
 			<div class="panel-body">
-			    Update your Prosper202 ClickServer API Key. Warning: NEVER share your Prosper202 ClickServer API key with anyone!
+			    If you want to use special mods and paid features built into Prosper202, sign up <a href="https://my.tracking202.com/api/customers/register">here</a>, fill out yout billing information, receive and insert your API key here.
 			</div>
 		</div>
 	</div>
 	<div class="col-xs-8">
 		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
-		<input type="hidden" name="update_clickserver_api_key" value="1" />
+		<input type="hidden" name="update_p202_customer_api_key" value="1" />
 		<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<div class="form-group <?php if($error['clickserver_api_key']) echo "has-error";?>">
-				<label for="clickserver_api_key" class="col-xs-4 control-label">My ClickServer API Key:
-					<?php if($error['clickserver_api_key']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['clickserver_api_key']; ?>"></span> <?php } ?>
-				</label>
-				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="clickserver_api_key" name="clickserver_api_key" value="<?php echo $html['clickserver_api_key']; ?>">
-				</div>
+		<div class="form-group">
+			<label for="p202_customer_api_key" class="col-xs-4 control-label">API key:</label>
+			<div class="col-xs-8">
+				<input type="text" class="form-control input-sm" id="p202_customer_api_key" name="p202_customer_api_key" value="<?php echo $html['p202_customer_api_key']; ?>">
 			</div>
-
-			<div class="form-group">
-				<div class="col-xs-8 col-xs-offset-4">
-					<button class="btn btn-md btn-p202 btn-block" type="submit">Update API Key</button>					
-				</div>
+		</div>
+		<div class="form-group">
+			<div class="col-xs-8 col-xs-offset-4">
+				<button class="btn btn-md btn-p202 btn-block" type="submit">Update API key</button>					
 			</div>
+		</div>
 		</form>
 	</div>
 </div>
- -->
-<div class="row form_seperator">
-	<div class="col-xs-12"></div>
-</div>
-
 
 <div class="row form_seperator">
 	<div class="col-xs-12"></div>

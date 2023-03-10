@@ -1,5 +1,5 @@
 <?php
-	include_once(substr(dirname( __FILE__ ), 0,-13) . '/202-config/connect.php'); 
+include_once(str_repeat("../", 1).'202-config/connect.php'); 
 
 	$hash = "SELECT install_hash FROM 202_users WHERE user_id = '1'";
 	$result = $db->query($hash);
@@ -19,8 +19,8 @@
 	if (!$user_row['user_daily_email']) {
 		die();
 	}
-
-	$data = array('to' => $user_row['user_email'], 'domain' => getTrackingDomain(), 'campaigns' => array());
+    $domain = rtrim($protocol . '' . getTrackingDomain(). get_absolute_url(), '/');
+	$data = array('to' => $user_row['user_email'], 'domain' => $domain, 'campaigns' => array());
 	$ids = array();
 
 	$time['from_today'] = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
@@ -116,7 +116,7 @@
 	}
 
 	if (count($data['campaigns']) > 0) {
-		$curl = curl_init('http://my.tracking202.com/api/v2/send-daily-email');
+		$curl = curl_init('https://my.tracking202.com/api/v2/send-daily-email');
 		curl_setopt($curl, CURLOPT_HEADER, false);
 		curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($curl, CURLOPT_HTTPHEADER, array("Content-type: application/json"));

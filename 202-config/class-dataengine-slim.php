@@ -1,5 +1,5 @@
 <?php
- if(!$_SESSION['user_timezone'])
+ if(!isset($_SESSION['user_timezone']))
 {
     date_default_timezone_set('GMT');
 } else {
@@ -24,8 +24,8 @@ class DataEngine
         } catch (Exception $e) {
             self::$db = false;
         }
-        $this->mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_id']);
-        //make sure mysql uses the timezone choses by the user
+       // $this->mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_id']);
+        //make sure mysql uses the timezone chosen by the user
 
         $timezone = new DateTimeZone(date_default_timezone_get()); // Get default system timezone to create a new DateTimeZone object
         $offset = $timezone->getOffset(new DateTime()); // Offset in seconds to UTC
@@ -40,25 +40,36 @@ class DataEngine
     // dirty hours by clicks id: This function marks the hour range that the click happened in for updating reports
     function setDirtyHour($click_id)
     {
-       // echo $click_id."      ";
-        global $db, $dbGlobalLink;
-        if(!isset($click_id) || $click_id=='') {  //if not find the list clicks id of the ip within a 30 day range
-            $mysql['user_id'] = 1;
-            $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
+        global $ip_address, $db, $dbGlobalLink;
+
+       if(!isset($click_id) || $click_id=='') {  //if not find the list clicks id of the ip within a 30 day range
+        $mysql['user_id'] = 1;
+        //if there is no native ipv6 support use php version
+        if($inet6_ntoa == '' && $ip_address->type == 'ipv6'){
+            //encode ip address
+            $mysql['ip_address'] = inet6_aton($db->real_escape_string($ip_address->address)); //use encoded var to compare
+        }else{
+            //do nothing. The built in mysql function will be used
+            $mysql['ip_address'] = $db->real_escape_string($ip_address->address);
+        }
+            
             $daysago = time() - 86400; // 24 hours
-            $click_sql1 = "     SELECT  202_clicks.click_id
-                                        FROM            202_clicks
-                                        LEFT JOIN       202_clicks_advance USING (click_id)
-                                        LEFT JOIN       202_ips USING (ip_id)
-                                        WHERE   202_ips.ip_address='".$mysql['ip_address']."'
-                                        AND             202_clicks.user_id='".$mysql['user_id']."'
-                                        AND             202_clicks.click_time >= '".$daysago."'
-                                        ORDER BY        202_clicks.click_id DESC
-                                        LIMIT           1";
-    
-            $click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
+            
+            $click_sql1 = 'SELECT  202_clicks.click_id
+                           FROM            202_clicks
+                           LEFT JOIN       202_clicks_advance USING (click_id)
+                           LEFT JOIN       202_ips USING (ip_id)
+                           LEFT JOIN       202_ips_v6 ON (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci)
+                           WHERE           IFNULL('.$inet6_ntoa.'(202_ips_v6.ip_address),202_ips.ip_address)="'.$mysql['ip_address'].'"
+                           AND             202_clicks.user_id="'.$mysql['user_id'].'"
+                           AND             202_clicks.click_time >= "'.$daysago.'"
+                           ORDER BY        202_clicks.click_id DESC
+                           LIMIT           1';
+
+    $click_result1 = $db->query($click_sql1) or record_mysql_error($db,$click_sql1);
             $click_row1 = $click_result1->fetch_assoc();
             //empy  $mysql array
+
             unset($mysql);
             $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
             $click_id = $mysql['click_id'];
@@ -152,7 +163,7 @@ cost)
 2cr.click_out AS click_out, 
 2c.click_lead AS leads, 
 2c.click_payout AS payout, 
-(2c.click_payout*2c.click_lead) AS income, 
+IF (2c.click_lead>0,2c.click_payout,0) AS income, 
 2c.click_cpc AS cost 
 FROM 202_clicks AS 2c 
 LEFT OUTER JOIN 202_clicks_record AS 2cr ON (2c.click_id = 2cr.click_id) 
@@ -187,7 +198,8 @@ on duplicate key update
 click_lead=values(click_lead),
 click_bot=values(click_bot),
 click_out=values(click_out),
-click_filtered=values(click_filtered),    
+click_filtered=values(click_filtered), 
+landing_page_id=values(landing_page_id),    
 leads=values(leads),
 payout=values(payout),
 income=values(income),

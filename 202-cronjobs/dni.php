@@ -1,5 +1,5 @@
 <?php 
-include_once(substr(dirname( __FILE__ ), 0,-13) . '/202-config/connect.php'); 
+include_once(str_repeat("../", 1).'202-config/connect.php');
 
 if (isset($_GET['hash']) && isset($_GET['dni'])) {
 	$mysql['networkId'] = $db->real_escape_string($_GET['dni']);
@@ -23,7 +23,7 @@ if (isset($_GET['hash']) && isset($_GET['dni'])) {
 	            )
 			);
 
-			$curl = curl_init('http://my.tracking202.com/api/v2/dni/iron/offers/cache/all');
+			$curl = curl_init('https://my.tracking202.com/api/v2/dni/iron/offers/cache/all');
 			curl_setopt($curl, CURLOPT_HEADER, false);
 			curl_setopt($curl, CURLOPT_RETURNTRANSFER, false);
 			curl_setopt($curl, CURLOPT_HTTPHEADER, array("Content-type: application/json"));

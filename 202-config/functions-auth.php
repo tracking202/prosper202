@@ -26,60 +26,77 @@ class AUTH {
 		if (AUTH::logged_in() == false) {
 			if($auth_type=="toolbar")
 				$_SESSION['toolbar'] = 'true';
-				//echo "what";
-			die(include_once(substr(dirname( __FILE__ ), 0,-10). '/202-access-denied.php'));
+
+			die(include_once(realpath(__DIR__ . '/../').'/202-access-denied.php')); //go up one level
 		}
 		AUTH::set_timezone($_SESSION['user_timezone']);  
+		AUTH::require_valid_api_key();
 	}
 	
 	function require_valid_api_key() { 
-
-		$user_api_key = $_SESSION['user_api_key'];
-		if (AUTH::is_valid_api_key($user_api_key) == false) {
-			header('location: '.get_absolute_url().'202-account/api-key-required.php'); die();
+	    $user_sql = "SELECT user_pref_ad_settings, p202_customer_api_key from 202_users_pref left join 202_users ON (202_users_pref.user_id = 202_users.user_id) WHERE 202_users_pref.user_id='1'";
+	    $user_result = _mysqli_query($user_sql);
+	    if($user_result){
+	       $user_row = $user_result->fetch_assoc();
+	       $user_api_key = $user_row['p202_customer_api_key'];
+	    }else{
+	        $user_api_key = '';
+	    }		
+	
+		if (AUTH::is_valid_api_key($user_api_key) == false || $user_api_key == '') {
+			header('location: '.get_absolute_url().'api-key-required.php'); die();
 		}
 	}
-	
-	function require_valid_app_key($appName, $user_api_key, $user_app_key) { 
-		if (AUTH::is_valid_app_key($appName, $user_api_key, $user_app_key) == false) {
-			header('location: '.get_absolute_url().'202-account/app-key-required.php'); die();
-		}
-	}
-	
+		
 	
 	//this checks if this api key is valid
 	function is_valid_api_key($user_api_key) { 
-		$url = TRACKING202_API_URL . "/auth/isValidApiKey?apiKey=$user_api_key";
-		
-		//check the tracking202 api authentication server
-		$xml = getUrl($url);
-		$isValidApiKey = convertXmlIntoArray($xml);
-		$isValidApiKey = $isValidApiKey['isValidApiKey'];
-		
-		//returns true or false if it is a valid key
-		if ($isValidApiKey['isValid'] == 'true') 	return true;
-		else 									return false;
-	}
-	
-	//this checks if the application key is valid
-	function is_valid_app_key($appName, $user_api_key, $user_app_key) {
-		if($user_app_key!='') {
-			switch ($appName) {
-				case "stats202": // check to make sure this is a valid stats202 app key
-					$url = TRACKING202_API_URL . "/auth/isValidStats202AppKey?apiKey=$user_api_key&stats202AppKey=$user_app_key";
-					$xml = getUrl($url); 
-					$isValidStats202AppKey = convertXmlIntoArray($xml);
-					$isValidStats202AppKey = $isValidStats202AppKey['isValidStats202AppKey'];
-					
-					if ($isValidStats202AppKey['isValid'] == 'true') {
-						return true;
-					} else {
-						return false;
-					}
-				break;
-			}
-		}
-		return false;
+
+    //only check once per session speed up ui 	    
+	if(isset($_SESSION['valid_key']) && $_SESSION['valid_key'] == true){
+        return true;
+    }	    
+	    
+		    $post = array();
+    $post['key'] = $user_api_key;
+    $fields = http_build_query($post);
+
+    // Initiate curl
+    $ch = curl_init();
+    // Set the url
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
+    // Disable SSL verification
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    // Will return the response, if false it print the response
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Set to post
+    curl_setopt($ch, CURLOPT_POST, 1);
+    // Set post fields
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+    // Execute
+    $result = curl_exec($ch);
+
+    if (curl_errno($ch)) {
+        // echo 'error:' . curl_error($c);
+    }
+    // close connection
+    curl_close($ch);
+
+	$api_validate= json_decode($result, true);
+	     
+	        if($api_validate['msg']=="Key valid"){
+	            //update the api key
+	            $user_sql = "	UPDATE 	202_users
+						SET		p202_customer_api_key='".$mysql['user_api']."'
+					 	WHERE 	user_name='".$mysql['user_name']."'
+						AND     		user_pass='".$mysql['user_pass']."'";
+	            $user_result = _mysqli_query($user_sql);
+	            $_SESSION['valid_key'] = true;
+	            return true;
+	        }
+	        else{
+	            return false;
+	        }
 	}
 	
 	
@@ -140,6 +157,7 @@ class AUTH {
 					$_SESSION['user_id'] = 1;
 					$_SESSION['user_own_id'] = $user_row['user_id'];
 					$_SESSION['user_api_key'] = $user_row['user_api_key'];
+					$_SESSION['user_cirrus_link'] = $user_row['user_api_key'];
 					$_SESSION['user_stats202_app_key'] = $user_row['user_stats202_app_key'];
 					$_SESSION['user_timezone'] = $user_row['user_timezone'];
 

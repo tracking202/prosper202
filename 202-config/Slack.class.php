@@ -130,6 +130,9 @@ class Slack {
       'cb_key_updated' => '#[user] entered a new ClickBank Secret Key',
       'cb_key_verified' => 'Your ClickBank Notification URL has been verified',
       'user_slack_incoming_webhook_updated' => '#[user] entered a new Slack Incoming Webhook URL',
+      'zaxaa_api_signature_updated' => '#[user] entered a new Zaxaa API Signature',
+	  'jvzoo_secret_key_updated' => '#[user] entered a new JVZoo Secret Key',
+	  'ipqs_api_key_updated' => '#[user] entered a new IPQualityScore API Key',
 
       //User Management
       'user_management_user' => '#[user] [type] a Prosper202 ClickServer User: #[username] ([role])',

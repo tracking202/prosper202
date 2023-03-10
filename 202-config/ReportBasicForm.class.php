@@ -43,7 +43,8 @@ class ReportBasicForm {
 	const DETAIL_LEVEL_ROTATOR = 32;
 	const DETAIL_LEVEL_ROTATOR_RULE = 33;
 	const DETAIL_LEVEL_ROTATOR_RULE_REDIRECT = 34;
-	
+	const DETAIL_LEVEL_TRANSACTIONS = 35;
+	const DETAIL_LEVEL_PUBLISHERS = 36;	
 
 	const DETAIL_GROUP_NONE = 0;
 
@@ -93,7 +94,7 @@ class ReportBasicForm {
 	const DETAIL_INTERVAL_HOUR = 4;
 
 	private static $DISPLAY_LEVEL_ARRAY = array(self::DISPLAY_LEVEL_TITLE,self::DISPLAY_LEVEL_CLICK_COUNT,self::DISPLAY_LEVEL_LEAD_COUNT,self::DISPLAY_LEVEL_SU,self::DISPLAY_LEVEL_PAYOUT,self::DISPLAY_LEVEL_EPC,self::DISPLAY_LEVEL_CPC,self::DISPLAY_LEVEL_INCOME,self::DISPLAY_LEVEL_COST,self::DISPLAY_LEVEL_NET,self::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_COUNTRY,ReportBasicForm::DETAIL_LEVEL_REGION,ReportBasicForm::DETAIL_LEVEL_CITY,ReportBasicForm::DETAIL_LEVEL_ISP,ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME,ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE,ReportBasicForm::DETAIL_LEVEL_BROWSER,ReportBasicForm::DETAIL_LEVEL_PLATFORM,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT,ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM,ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE,ReportBasicForm::DETAIL_LEVEL_UTM_TERM,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ReportBasicForm::DETAIL_LEVEL_ROTATOR,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT);
+	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK,ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT,ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK,ReportBasicForm::DETAIL_LEVEL_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,ReportBasicForm::DETAIL_LEVEL_KEYWORD,ReportBasicForm::DETAIL_LEVEL_TEXT_AD,ReportBasicForm::DETAIL_LEVEL_REFERER,ReportBasicForm::DETAIL_LEVEL_COUNTRY,ReportBasicForm::DETAIL_LEVEL_REGION,ReportBasicForm::DETAIL_LEVEL_CITY,ReportBasicForm::DETAIL_LEVEL_ISP,ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME,ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE,ReportBasicForm::DETAIL_LEVEL_BROWSER,ReportBasicForm::DETAIL_LEVEL_PLATFORM,ReportBasicForm::DETAIL_LEVEL_IP,ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN,ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT,ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM,ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE,ReportBasicForm::DETAIL_LEVEL_UTM_TERM,ReportBasicForm::DETAIL_LEVEL_C1,ReportBasicForm::DETAIL_LEVEL_C2,ReportBasicForm::DETAIL_LEVEL_C3,ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ReportBasicForm::DETAIL_LEVEL_ROTATOR,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE,ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT,ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS,ReportBasicForm::DETAIL_LEVEL_PUBLISHERS);
 	private static $SORT_LEVEL_ARRAY = array(self::SORT_NAME,self::SORT_CLICK,self::SORT_LEAD,self::SORT_SU,self::SORT_PAYOUT,self::SORT_EPC,self::SORT_CPC,self::SORT_INCOME,self::SORT_COST,self::SORT_NET,self::SORT_ROI);
 	
 	private static $DETAIL_INTERVAL_ARRAY = array(self::DETAIL_INTERVAL_DAY,self::DETAIL_INTERVAL_WEEK,self::DETAIL_INTERVAL_MONTH);
@@ -116,8 +117,8 @@ class ReportBasicForm {
 
 	private static $FILTER_OPERATION_ARRAY = array(self::FILTER_OPERATION_GREATER_THAN_OR_EQUAL_TO, self::FILTER_OPERATION_GREATER_THAN, self::FILTER_OPERATION_LESS_THAN_OR_EQUAL_TO, self::FILTER_OPERATION_LESS_THAN, self::FILTER_OPERATION_EQUAL_TO, self::FILTER_OPERATION_NOT_EQUAL_TO);
 
-	const DATE_FORM_ISO = "c";
-	const DATE_FORM_MDY = "m/d/Y";
+	const DATE_FORM_ISO = 'c';
+	const DATE_FORM_MDY = 'm/d/Y';
 	const DATE_OPTION_RANGE = 0;
 	const DATE_OPTION_TOD = 1;
 	const DATE_OPTION_YES = 2;
@@ -263,7 +264,7 @@ class ReportBasicForm {
 	 */
 	function getAccountUserList() {
 		if (is_null($this->account_user_list)) {
-			$this->account_user_list = $this->getContext()->getController()->getForm("Bloosky", "AccountUserList");
+			$this->account_user_list = $this->getContext()->getController()->getForm("Blue Terra", "AccountUserList");
 		}
 		return $this->account_user_list;
 	}
@@ -284,7 +285,7 @@ class ReportBasicForm {
 	 */
 	function getAdvertiserList() {
 		if (is_null($this->advertiser_list)) {
-			$this->advertiser_list = $this->getContext()->getController()->getForm("Bloosky", "ReportingAdvertiserList");
+			$this->advertiser_list = $this->getContext()->getController()->getForm("Blue Terra", "ReportingAdvertiserList");
 		}
 		return $this->advertiser_list;
 	}
@@ -305,7 +306,7 @@ class ReportBasicForm {
 	 */
 	function getPublisherList() {
 		if (is_null($this->publisher_list)) {
-			$this->publisher_list = $this->getContext()->getController()->getForm("Bloosky", "ReportingPublisherList");
+			$this->publisher_list = $this->getContext()->getController()->getForm("Blue Terra", "ReportingPublisherList");
 		}
 		return $this->publisher_list;
 	}
@@ -326,7 +327,7 @@ class ReportBasicForm {
 	 */
 	function getOfferList() {
 		if (is_null($this->offer_list)) {
-			$this->offer_list = $this->getContext()->getController()->getForm("Bloosky", "ReportingOfferListNew");
+			$this->offer_list = $this->getContext()->getController()->getForm("Blue Terra", "ReportingOfferListNew");
 		}
 		return $this->offer_list;
 	}
@@ -367,7 +368,7 @@ class ReportBasicForm {
 	 */
 	function getDomainList() {
 		if (is_null($this->domain_list)) {
-			$this->domain_list = $this->getContext()->getController()->getForm('Bloosky', 'ReportingDomainList');
+			$this->domain_list = $this->getContext()->getController()->getForm('Blue Terra', 'ReportingDomainList');
 		}
 		return $this->domain_list;
 	}
@@ -1643,11 +1644,11 @@ class ReportBasicForm {
 		if ($arg0 == self::DETAIL_LEVEL_NONE) {
 			return "None";
 		} else if ($arg0 == self::DETAIL_LEVEL_PPC_NETWORK) {
-			return "PPC Network";
+			return "Traffic Source";
 		} else if ($arg0 == self::DETAIL_LEVEL_PPC_ACCOUNT) {
-			return "PPC Account";
+			return "Traffic Source Account";
 		} else if ($arg0 == self::DETAIL_LEVEL_AFFILIATE_NETWORK) {
-			return "Affiliate Network";
+			return "Category";
 		} else if ($arg0 == self::DETAIL_LEVEL_CAMPAIGN) {
 			return "Campaign";
 		} else if ($arg0 == self::DETAIL_LEVEL_LANDING_PAGE) {
@@ -1706,6 +1707,10 @@ class ReportBasicForm {
 			return "Rotator Rule";
 		} else if ($arg0 == self::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT) {
 			return "Rotator Rule Redirect";
+		} else if ($arg0 == self::DETAIL_LEVEL_TRANSACTIONS) {
+			return "Transaction ID";
+		} else if ($arg0 == self::DETAIL_LEVEL_PUBLISHERS) {
+			return "Publisher/User";
 		} else {
 			return "Unknown";
 		}
@@ -1719,11 +1724,11 @@ class ReportBasicForm {
 		if ($arg0 == self::DETAIL_LEVEL_NONE) {
 			return "None";
 		} else if ($arg0 == self::DETAIL_LEVEL_PPC_NETWORK) {
-			return "PPC Network";
+			return "Traffic Source";
 		} else if ($arg0 == self::DETAIL_LEVEL_PPC_ACCOUNT) {
-			return "PPC Account";
+			return "Traffic Source Account";
 		} else if ($arg0 == self::DETAIL_LEVEL_AFFILIATE_NETWORK) {
-			return "Aff Network";
+			return "Category";
 		} else if ($arg0 == self::DETAIL_LEVEL_CAMPAIGN) {
 			return "Campaign";
 		} else if ($arg0 == self::DETAIL_LEVEL_LANDING_PAGE) {
@@ -2016,6 +2021,14 @@ class ReportBasicForm {
 	 */
 	function setEndTime($arg0) {
 		$this->end_time = $arg0;
+	}
+
+	/**
+	 * Sets account currency
+	 * @param string
+	 */
+	function setAccountCurrency($arg0) {
+		$this->currency = $arg0;
 	}
 	
 	/**
@@ -2379,6 +2392,7 @@ class ReportBasicForm {
 		if(count($this->getReportData()->getChildArray()) > 0) {
 			$report_string .= $this->getReportHtml($title);
 		} else {
+		    //$report_string .= $this->getReportHtml($title);
 			$report_string .= $this->getEmptyReportHtml($title);
 		}
 		$report_string .= '</div>';
@@ -2423,38 +2437,41 @@ class ReportBasicForm {
 		$report_string .= '<div class="report_overflow" '.(($this->isDisplayTypeTable()) ? 'style="border: 0;"' : '').'>';
 
 		$report_string .= '<table class="table table-bordered" id="stats-table" style="margin-top:10px;">';
-		$report_string .= '<thead><tr style="background-color: #F8F8F8;">';
+		$report_string .= '<thead>';
+		/*$report_string .= '<tr style="background-color: #F8F8F8;">';
 		$report_string .= '<th colspan="'.$colspan.'">';
 		$report_string .= '<div>'.$title.' for '.date('m/d/Y', strtotime($this->getStartDate())).' to '.date('m/d/Y', strtotime($this->getEndDate())).'</div>';
 		$report_string .= '<div>'.$this->getRanOn();
 		$report_string .= '</div>';
 		$report_string .= '</th>';
-		$report_string .= '</tr></thead>';
+		$report_string .= '</tr>';*/
+		$report_string .= $this->getRowHeaderHtml('sub2');
+		$report_string .= '</thead>';
 
 		/* If we are display totals at the bottom, show the grand total in the table foot */
-		if($this->getDisplayTotalPosition()) {
-			$report_string .= '<tfoot '.(($this->isDisplayTypeTable()) ? 'class="group"' : '').'>';
+		if(!$this->getDisplayTotalPosition()) {
+			$report_string .= '<tfoot '.(($this->isDisplayTypeTable()) ? 'class="group"' : '').' style="background-color: #DFDFDF;">';
+		//	$report_string .= $this->getRowHeaderHtml('sub2');
+			$report_string .= $this->getRowHtml($this->getReportData(), '');
 			$report_string .= $this->getRowHeaderHtml('sub2');
-			$report_string .= $this->getRowHtml($this->getReportData(), 'sub');
 			$report_string .= '</tfoot>';
 		}
 
 		$report_string .= $this->getOuterTBody();
 		$num_details = count($this->getDetails());
 		$num_in_report = count($this->getReportData()->getChildArray());
-
-		/* If we're not display totals at the bottom, show the grand total now */
+		/* If we're not display totals at the bottom, show the grand total now 
 		if(!$this->getDisplayTotalPosition()) {
 			$report_string .= $this->getInnerTBody();
 			$report_string .= $this->getRowHeaderHtml('sub2');
 			$report_string .= $this->getRowHtml($this->getReportData(), 'sub');
 			$report_string .= $this->getInnerTBodyClosing();
-		}
-
+		}*/
+        
 		foreach($this->getReportData()->getChildArrayBySort() as $key => $data) {
 			if(($num_details > 1 && $this->getDisplayType() == self::DISPLAY_TYPE_TABLE) || $key == 0) {
 				$report_string .= $this->getInnerTBody();
-				$report_string .= $this->getRowHeaderHtml('sub2');
+			//	$report_string .= $this->getRowHeaderHtml('sub2');
 			}
 
 			$class = false;
