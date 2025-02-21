@@ -1,8 +1,14 @@
-# Prosper202 v1.9.55 ClickServer
+# Prosper202 v1.9.56 ClickServer
 
 Prosper202 provides pay per click affiliate marketers with leading edge self hosted ppc software! The only effect this software will have on your bottom line is a positive one.
 
 # Release Notes
+
+<b>Version 1.9.55</b>
+
+<ul>
+<li>Add support for PHP 8</li>
+</ul>
 
 <b>Version 1.9.55</b>
 
