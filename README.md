@@ -4,7 +4,7 @@ Prosper202 provides pay per click affiliate marketers with leading edge self hos
 
 # Release Notes
 
-<b>Version 1.9.55</b>
+<b>Version 1.9.56</b>
 
 <ul>
 <li>Add support for PHP 8</li>
