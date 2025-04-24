@@ -101,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					    					user_timezone='" . $mysql['user_timezone'] . "',
 					    					user_time_register='" . $mysql['user_time_register'] . "',
 					    					install_hash='" . $hash . "',
-					    					user_hash='" . $user_hash . "',
+					 	    					user_hash='" . $user_hash . "',
 		                                    p202_customer_api_key ='" . $mysql['p202_customer_api_key'] . "'";
 		$user_result = _mysqli_query($user_sql);
 
