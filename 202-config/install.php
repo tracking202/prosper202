@@ -74,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	//if no error occurred, let's create the user account
-	if (!$error) {
+	if (empty($error['user_email']) && empty($error['user_name']) && empty($error['user_pass'])) {
 
 		//no error, so now setup all of the mysql database structures
 		$installer = new INSTALL();
@@ -131,12 +131,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$success = true;
 	}
 
-
-
-	$html['user_email'] = htmlentities($_POST['user_email'], ENT_QUOTES, 'UTF-8');
-	$html['user_name'] = htmlentities($_POST['user_name'], ENT_QUOTES, 'UTF-8');
-	$html['user_pass'] = htmlentities($_POST['user_pass'], ENT_QUOTES, 'UTF-8');
+	// Always set the HTML values from POST data when it exists
+	if (isset($_POST['user_email'])) {
+		$html['user_email'] = htmlentities($_POST['user_email'], ENT_QUOTES, 'UTF-8');
+	}
+	if (isset($_POST['user_name'])) {
+		$html['user_name'] = htmlentities($_POST['user_name'], ENT_QUOTES, 'UTF-8');
+	}
 	$html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
+	// Don't store password in HTML for security reasons
 }
 
 
@@ -180,6 +183,17 @@ if (!$success) {
 	}
 
 	info_top(); ?>
+	<style>
+		.error {
+			color: #a94442;
+			background-color: #f2dede;
+			border: 1px solid #ebccd1;
+			padding: 5px 10px;
+			border-radius: 4px;
+			margin-top: 5px;
+			font-size: 12px;
+		}
+	</style>
 	<div class="main col-xs-7 install">
 		<center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
 		<h6>Welcome</h6>
@@ -198,6 +212,7 @@ if (!$success) {
 				<label for="user_email" class="col-xs-4 control-label"><strong>Your Email:</strong></label>
 				<div class="col-xs-8">
 					<input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email']; ?>">
+					<?php if ($error['user_email']) echo $error['user_email']; ?>
 				</div>
 			</div>
 
@@ -251,7 +266,8 @@ if (!$success) {
 			<div class="form-group <?php if ($error['user_name']) echo "has-error"; ?>">
 				<label for="user_name" class="col-xs-4 control-label"><strong>Username:</strong></label>
 				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="user_name" name="user_name">
+					<input type="text" class="form-control input-sm" id="user_name" name="user_name" value="<?php echo $html['user_name']; ?>">
+					<?php if ($error['user_name']) echo $error['user_name']; ?>
 				</div>
 			</div>
 
@@ -259,6 +275,10 @@ if (!$success) {
 				<label for="user_pass" class="col-xs-4 control-label"><strong>Password:</strong></label>
 				<div class="col-xs-8">
 					<input type="password" class="form-control input-sm" id="user_pass" name="user_pass">
+					<?php
+					// Only show password errors once, at the top password field
+					if ($error['user_pass']) echo $error['user_pass'];
+					?>
 				</div>
 			</div>
 
