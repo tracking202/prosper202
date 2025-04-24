@@ -3,6 +3,25 @@
 //include mysql settings
 include_once(dirname(__FILE__) . '/connect.php');
 include_once(dirname(__FILE__) . '/functions-install.php');
+
+// Initialize the success variable to false by default
+$success = false;
+
+// Initialize $html array elements to prevent undefined array key warnings
+$html = [
+	'user_email' => '',
+	'user_name' => '',
+	'user_pass' => '',
+	'user_api' => ''
+];
+
+// Initialize $error array elements to prevent undefined array key warnings
+$error = [
+	'user_email' => '',
+	'user_name' => '',
+	'user_pass' => ''
+];
+
 if (isset($_COOKIE['user_api'])) {
 	$html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
 } else {
@@ -58,7 +77,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (!$error) {
 
 		//no error, so now setup all of the mysql database structures
-		INSTALL::install_databases();
+		$installer = new INSTALL();
+		$installer->install_databases();
 
 		$mysql['user_email'] = $db->real_escape_string($_POST['user_email'] ?? '');
 		$mysql['user_name'] = $db->real_escape_string($_POST['user_name'] ?? '');
@@ -105,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		registerDailyEmail('07', $mysql['user_timezone'], $hash);
 
 		// create partitions after everything else is setup. In case of failure user can still login and use Prosper202
-		INSTALL::install_database_partitions();
+		$installer->install_database_partitions();
 
 		//if this worked, show them the succes screen
 		$success = true;
@@ -125,6 +145,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 //only show install setup, if it, of course, isn't install already.
 
 if (!$success) {
+	// Initialize $version_error array
+	$version_error = [];
 
 	$phpversion = phpversion();
 	if ($phpversion < 5.4) {
@@ -200,6 +222,29 @@ if (!$success) {
 					}
 					echo '</select>';
 					?>
+					<script type="text/javascript">
+						// Function to detect user's timezone and select it in dropdown
+						(function() {
+							try {
+								// Get user's timezone using Intl API
+								const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+								console.log("Detected timezone: " + userTimezone);
+
+								// Find and select the user's timezone in the dropdown
+								const timezoneSelector = document.getElementById('user_timezone');
+								if (timezoneSelector) {
+									for (let i = 0; i < timezoneSelector.options.length; i++) {
+										if (timezoneSelector.options[i].value === userTimezone) {
+											timezoneSelector.selectedIndex = i;
+											break;
+										}
+									}
+								}
+							} catch (e) {
+								console.error("Error detecting timezone: " + e.message);
+							}
+						})();
+					</script>
 				</div>
 			</div>
 
