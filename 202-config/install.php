@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$user_hash = intercomHash($hash);
 
 		//insert this user
-		$user_sql = "  	INSERT INTO 	202_users
+		$user_sql = "  		INSERT IGNORE INTO  202_users
 					    	SET				user_email='" . $mysql['user_email'] . "',
 					    		 			user_name='" . $mysql['user_name'] . "',
 					    					user_pass='" . $mysql['user_pass'] . "',
