@@ -32,6 +32,10 @@ if (!isset($_SESSION['user_timezone']) || empty($_SESSION['user_timezone'])) {
 // Check if mysqli extension is loaded before calling mysqli_report
 if (function_exists('mysqli_report')) {
     mysqli_report(MYSQLI_REPORT_STRICT);
+} else {
+    // Polyfill or alternative error handling if mysqli_report isn't available
+    error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED);
+    @ini_set('display_errors', 'On');
 }
 
 $install_path = substr(ROOT_PATH, strlen($_SERVER['DOCUMENT_ROOT']));
