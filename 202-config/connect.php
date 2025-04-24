@@ -14,7 +14,7 @@ if ($_SERVER['SERVER_NAME'] == '_') {
 
 DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
 DEFINE('CONFIG_PATH', dirname(__FILE__));
-@ini_set('auto_detect_line_endings', TRUE);
+// @ini_set('auto_detect_line_endings', TRUE); // Deprecated in PHP 8.1+, safe to remove
 @ini_set('register_globals', 0);
 @ini_set('display_errors', 'On');
 @ini_set('error_reporting', 6135);
@@ -183,11 +183,41 @@ function inet6_aton($ip)
 
 try {
     $database = DB::getInstance();
+
+    // Check if getInstance() returned null (connection failed)
+    if ($database === null) {
+        // Throw an exception to be caught by the catch block below
+        // Retrieve the last error if possible, otherwise use a generic message
+        $last_error = error_get_last();
+        $error_message = $last_error ? $last_error['message'] : 'Unknown connection error during DB initialization.';
+        throw new Exception("Database connection failed during initialization: " . $error_message);
+    }
+
     $db = $database->getConnection();
-    // Error handling
+
+    // Check for connection errors on the mysqli object itself (redundant if constructor throws, but safe)
+    if ($db === null || $db->connect_error) {
+        $errno = $db ? $db->connect_errno : 'N/A';
+        $error = $db ? $db->connect_error : 'DB object is null';
+        throw new Exception("MySQL Connection Error ({$errno}): {$error}");
+    }
+
+    // Initialize $dbro as well
+    $dbro = $database->getConnectionro();
+    if ($dbro === null || $dbro->connect_error) {
+        $errno = $dbro ? $dbro->connect_errno : 'N/A';
+        $error = $dbro ? $dbro->connect_error : 'DB RO object is null';
+        // Decide if this is fatal or just a warning
+        error_log("Read-only DB Connection Error ({$errno}): {$error}");
+        // Potentially allow the script to continue if read-only connection is not critical
+    }
 } catch (Exception $e) {
+    // Capture the specific exception message
+    $db_error_msg = $e->getMessage();
+
     _die("<h6>Error establishing a database connection</h6>
 			<p><small>This either means that the username and password information in your <code>202-config.php</code> file is incorrect or we can't contact the database server. This could mean your host's database server is down.</small></p>
+            <p><strong style='color: red;'>Error Details: {$db_error_msg}</strong></p>
 			<small>
 			<ul> 
 				<li>Are you sure you have the correct username and password?</li>
@@ -199,6 +229,12 @@ try {
 			<p><small>If you're unsure what these terms mean you should probably contact your host. If you still need help you can always visit the <a href='http://support.tracking202.com'>Prosper202 Support Center</a>.</small></p>
 		");
 }
+
+// Initialize $skip_upgrade to false before it is used to avoid undefined variable warning
+$skip_upgrade = false;
+
+// Initialize $stopSessions to false by default
+$stopSessions = false;
 
 //stop the sessions if this is a redirect or a javascript placement, we were recording sessions on every hit when we don't need it on
 if ($navigation[1] == 'tracking202') {
@@ -265,7 +301,12 @@ switch ($navigation[1]) {
         break;
 }
 
-$userObj = new User($_SESSION['user_own_id']);
+// Skip user initialization during installation
+if (strpos($_SERVER['PHP_SELF'], '202-config/install.php') === false) {
+    $userObj = new User($_SESSION['user_own_id'] ?? null);
+} else {
+    $userObj = null;
+}
 
 if (!$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
