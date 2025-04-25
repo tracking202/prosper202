@@ -130,6 +130,7 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
     if (extension_loaded('memcached') && class_exists('Memcached')) {
         $whatCache = 'memcached';
         $memcacheInstalled = true;
+        /** @var Memcached $memcache */
         $memcache = new Memcached();
         if (@$memcache->addserver($mchost, 11211))
             $memcacheWorking = true;
