@@ -3,7 +3,7 @@
 class PROSPER202
 {
 
-    function prosper202_version()
+    public static function prosper202_version()
     {
         $database = DB::getInstance();
         $db = $database->getConnection();
