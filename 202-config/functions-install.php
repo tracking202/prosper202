@@ -29,6 +29,22 @@ class INSTALL
     $sql = "INSERT INTO 202_version SET version='$php_version'";
     $result = _mysqli_query($sql);
 
+    // Create user_data_feedback table for storing user feedback and settings
+    $sql = "CREATE TABLE IF NOT EXISTS `user_data_feedback` (
+          `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+          `user_id` mediumint(8) unsigned NOT NULL,
+          `install_hash` varchar(255) NOT NULL DEFAULT '',
+          `user_email` varchar(100) NOT NULL DEFAULT '',
+          `user_hash` varchar(255) NOT NULL DEFAULT '',
+          `time_stamp` int(10) unsigned NOT NULL,
+          `api_key` varchar(255) DEFAULT NULL,
+          `vip_perks_status` tinyint(1) NOT NULL DEFAULT '0',
+          `modal_status` tinyint(1) NOT NULL DEFAULT '0',
+          PRIMARY KEY (`id`),
+          UNIQUE KEY `user_id` (`user_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+    $result = _mysqli_query($sql);
+
     //create sessions table
     $sql = "CREATE TABLE IF NOT EXISTS `202_sessions` (
 				  `session_id` varchar(100) NOT NULL DEFAULT '',
