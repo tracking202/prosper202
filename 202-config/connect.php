@@ -22,6 +22,36 @@ DEFINE('CONFIG_PATH', dirname(__FILE__));
 // @ini_set('safe_mode', 'Off');
 @ini_set('set_time_limit', 0);
 
+if (!class_exists('Memcache')) {
+    class Memcache
+    {
+        public function connect($host, $port)
+        {
+            return false;
+        }
+        public function set($key, $value, $flag = false, $exp = 0)
+        {
+            return false;
+        }
+    }
+}
+
+// Add polyfill for Memcached if the extension isn't installed
+if (!class_exists('Memcached')) {
+    class Memcached
+    {
+        public function __construct() {}
+        public function addServer($host, $port)
+        {
+            return false;
+        }
+        public function set($key, $value, $exp = 0)
+        {
+            return false;
+        }
+    }
+}
+
 // Use null coalescing operator to handle undefined array index
 if (!isset($_SESSION['user_timezone']) || empty($_SESSION['user_timezone'])) {
     date_default_timezone_set('GMT');
@@ -88,7 +118,9 @@ switch (true) {
 
 $tempip = explode(",", $_SERVER['HTTP_X_FORWARDED_FOR']);
 $_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
-$ip_address = ipAddress($_SERVER['HTTP_X_FORWARDED_FOR']);
+
+// Store the IP address temporarily, we'll pass it to ipAddress() after functions.php is included
+$temp_ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
 
 if (file_exists(ROOT_PATH  . '202-config.php')) {
     include_once(ROOT_PATH  . '202-config.php');
@@ -100,6 +132,8 @@ include_once(ROOT_PATH  . '202-config.php');
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
+// Now that functions.php is included, we can use ipAddress()
+$ip_address = ipAddress($temp_ip_address);
 include_once(CONFIG_PATH . '/template.php');
 
 include_once(CONFIG_PATH . '/functions-auth.php');
@@ -114,6 +148,13 @@ include_once(CONFIG_PATH . '/class-xmltoarray.php');
 include_once(CONFIG_PATH . '/Role.class.php');
 include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');
+include_once(CONFIG_PATH . '/functions-timeframe.php');
+include_once(CONFIG_PATH . '/functions-db.php');
+include_once(CONFIG_PATH . '/functions-indexes.php');
+include_once(CONFIG_PATH . '/functions-icons.php');
+include_once(CONFIG_PATH . '/functions-api.php');
+include_once(CONFIG_PATH . '/functions-utils.php');
+include_once(CONFIG_PATH . '/functions-empty.php');
 
 $whatCache = false;
 
@@ -121,6 +162,7 @@ $whatCache = false;
 if (extension_loaded('memcache') && class_exists('Memcache')) {
     $whatCache = 'memcache';
     $memcacheInstalled = true;
+    /** @var Memcache $memcache */
     $memcache = new Memcache();
     if (@$memcache->connect($mchost, 11211))
         $memcacheWorking = true;
@@ -153,23 +195,8 @@ function setCache($key, $value, $exp = null)
     }
 }
 
-function ipAddress($ip_address)
-{
-    $ip = new stdClass;
-
-    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-        $ip->address = $ip_address;
-        if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            $ip->type = 'ipv4';
-        } else {
-            $ip->type = 'ipv6';
-        }
-    } else {
-        $ip->type = 'invalid';
-    }
-
-    return $ip;
-}
+// ipAddress() function has been moved to functions.php - using that implementation instead
+// to avoid duplicate function declaration errors
 
 function inet6_ntoa($ip)
 {
