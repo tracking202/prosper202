@@ -144,7 +144,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $auth = new AUTH();
     $auth->set_timezone($_SESSION['user_timezone']);
 
-    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string($_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
     $user_result = _mysqli_query($user_sql);
     $user_row = $user_result->fetch_assoc();
@@ -524,8 +524,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                             <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
                                                                                 echo 'text-align:left;';
                                                                             } ?> <?php if ($show_bottom == false) {
-                                                                                                                                            echo 'display:none;';
-                                                                                                                                        } ?>">
+                                                                                        echo 'display:none;';
+                                                                                    } ?>">
                                 <label>Group By: </label>
                                 <div class="form-group">
                                     <label class="sr-only" for="user_pref_limit">Date</label> <select
@@ -591,8 +591,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                         <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
                                                                             echo 'text-align:left;';
                                                                         } ?> <?php if ($show_bottom == false) {
-                                                                                                                                        echo 'display:none;';
-                                                                                                                                    } ?>">
+                                                                                    echo 'display:none;';
+                                                                                } ?>">
                             <label>Display: </label>
                             <div class="form-group">
                                 <label class="sr-only" for="user_pref_limit">Date</label> <select class="form-control input-sm" name="user_pref_limit" id="user_pref_limit" style="width: auto; <?php if ($show_limit == false) {
@@ -855,11 +855,13 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'alltime') {
                 <?php
                 // for the time from, do something special select the exact date this user was registered and use that :)
-                $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-                $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
-                $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
-                $user_row = $user_result->fetch_assoc();
-                $time['from'] = $user_row['user_time_register'];
+                if (isset($_SESSION['user_id'])) {
+                    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+                    $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
+                    $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
+                    $user_row = $user_result->fetch_assoc();
+                    $time['from'] = $user_row['user_time_register'];
+                }
 
                 $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
                 $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
@@ -916,7 +918,7 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
     $auth->set_timezone($_SESSION['user_timezone']);
     $filterEngine = new FilterEngine;
 
-    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string($_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
     $user_result = _mysqli_query($user_sql);
     $user_row = $user_result->fetch_assoc();
@@ -1299,8 +1301,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                             <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
                                                                                 echo 'text-align:left;';
                                                                             } ?> <?php if ($show_bottom == false) {
-                                                                                                                                            echo 'display:none;';
-                                                                                                                                        } ?>">
+                                                                                        echo 'display:none;';
+                                                                                    } ?>">
                                 <label>Group By: </label>
                                 <div class="form-group">
                                     <label class="sr-only" for="user_pref_limit">Date</label> <select
@@ -1361,8 +1363,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                             <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
                                                                                 echo 'text-align:left;';
                                                                             } ?> <?php if ($show_bottom == false) {
-                                                                                                                                            echo 'display:none;';
-                                                                                                                                        } ?>">
+                                                                                        echo 'display:none;';
+                                                                                    } ?>">
                                 <label>Filter: </label>
                                 <div class="form-group">
                                     <label class="sr-only" for="user_pref_show">Date</label>
@@ -1384,8 +1386,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                             <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
                                                                                 echo 'text-align:left;';
                                                                             } ?> <?php if ($show_bottom == false) {
-                                                                                                                                            echo 'display:none;';
-                                                                                                                                        } ?>">
+                                                                                        echo 'display:none;';
+                                                                                    } ?>">
                                 <label>Filter: </label>
                                 <div class="form-group">
                                     <label class="sr-only" for="user_pref_show">Date</label>
@@ -1407,8 +1409,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                             <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
                                                                                 echo 'text-align:left;';
                                                                             } ?> <?php if ($show_bottom == false) {
-                                                                                                                                            echo 'display:none;';
-                                                                                                                                        } ?>">
+                                                                                        echo 'display:none;';
+                                                                                    } ?>">
                                 <label>Filter: </label>
                                 <div class="form-group">
                                     <label class="sr-only" for="user_pref_show">Date</label>
@@ -1430,8 +1432,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                             <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
                                                                                 echo 'text-align:left;';
                                                                             } ?> <?php if ($show_bottom == false) {
-                                                                                                                                            echo 'display:none;';
-                                                                                                                                        } ?>">
+                                                                                        echo 'display:none;';
+                                                                                    } ?>">
                                 <label>Avg CPC: </label>
                                 <div class="form-group">
                                     <label class="sr-only" for="user_pref_show">Date</label> <input
@@ -1456,8 +1458,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                         <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
                                                                             echo 'text-align:left;';
                                                                         } ?> <?php if ($show_bottom == false) {
-                                                                                                                                        echo 'display:none;';
-                                                                                                                                    } ?>">
+                                                                                    echo 'display:none;';
+                                                                                } ?>">
                             <label>Display: </label>
                             <div class="form-group">
                                 <label class="sr-only" for="user_pref_limit">Date</label> <select class="form-control input-sm" name="user_pref_limit" id="user_pref_limit" style="width: auto; <?php if ($show_limit == false) {
@@ -1720,11 +1722,13 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'alltime') {
                 <?php
                 // for the time from, do something special select the exact date this user was registered and use that :)
-                $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-                $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
-                $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
-                $user_row = $user_result->fetch_assoc();
-                $time['from'] = $user_row['user_time_register'];
+                if (isset($_SESSION['user_id'])) {
+                    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+                    $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
+                    $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
+                    $user_row = $user_result->fetch_assoc();
+                    $time['from'] = $user_row['user_time_register'];
+                }
 
                 $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
                 $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
@@ -1779,7 +1783,7 @@ function grab_timeframe()
     $database = DB::getInstance();
     $db = $database->getConnection();
 
-    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string($_SESSION['user_id']) : 0;
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
     $user_row = $user_result->fetch_assoc();
@@ -1832,11 +1836,13 @@ function grab_timeframe()
     if ($user_row['user_pref_time_predefined'] == 'alltime') {
 
         // for the time from, do something special select the exact date this user was registered and use that :)
-        $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-        $user2_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
-        $user2_result = $db->query($user2_sql) or record_mysql_error($user2_sql);
-        $user2_row = $user2_result->fetch_assoc();
-        $time['from'] = $user2_row['user_time_register'];
+        if (isset($_SESSION['user_id'])) {
+            $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+            $user2_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
+            $user2_result = $db->query($user2_sql) or record_mysql_error($user2_sql);
+            $user2_row = $user2_result->fetch_assoc();
+            $time['from'] = $user2_row['user_time_register'];
+        }
 
         $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
         $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
@@ -1889,7 +1895,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 
 
     // grab user preferences
-    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string($_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql); // ($user_sql);
     $user_row = $user_result->fetch_assoc();
