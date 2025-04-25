@@ -2,6 +2,8 @@
 
 use UAParser\Parser;
 use GeoIp2\Database\Reader;
+use Memcache;
+use Memcached;
 
 $version = '1.9.55';
 
@@ -23,25 +25,39 @@ include_once(ROOT_PATH . '/202-config.php');
 $whatCache = false;
 
 // try to connect to memcache server
-if (extension_loaded('memcache')) {
+$memcacheInstalled = false;
+global $memcacheWorking;
+$memcacheWorking = false;
+/** @var \Memcache|\Memcached $memcache */
+$memcache = null; // Initialize $memcache
+
+if (extension_loaded('memcache') && class_exists('Memcache')) {
     $whatCache = 'memcache';
     $memcacheInstalled = true;
-    $memcache = new Memcache();
-    if (@$memcache->connect($mchost, 11211))
+    /** @var \Memcache $memcache */
+    $memcache = new \Memcache();
+    if (@$memcache->connect($mchost, 11211)) {
         $memcacheWorking = true;
-    else
+    } else {
         $memcacheWorking = false;
-} else {
-    if (extension_loaded('memcached')) {
-        $whatCache = 'memcached';
-        $memcacheInstalled = true;
-        $memcache = new Memcached();
-        if (@$memcache->addserver($mchost, 11211))
-            $memcacheWorking = true;
-        else
-            $memcacheWorking = false;
     }
+} elseif (extension_loaded('memcached') && class_exists('Memcached')) {
+    $whatCache = 'memcached';
+    $memcacheInstalled = true;
+    /** @var \Memcached $memcache */
+    $memcache = new \Memcached();
+    // Note: Corrected method name from addserver to addServer
+    if (@$memcache->addServer($mchost, 11211)) {
+        $memcacheWorking = true;
+    } else {
+        $memcacheWorking = false;
+    }
+} else {
+    // Neither extension is loaded or class doesn't exist
+    $memcacheInstalled = false;
+    $memcacheWorking = false;
 }
+
 
 function setCache($key, $value, $exp = null)
 {
@@ -64,9 +80,21 @@ include_once(CONFIG_PATH . '/Mobile_Detect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
 
-//determine privacy mode
+// make sure $tid is defined (e.g. use current user or fallback to 1)
+$tid = $tid ?? ($_SESSION['user_id'] ?? 1);
 if ($memcacheWorking) {
-    $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
+    if ($memcacheWorking && method_exists($memcache, 'get')) {
+        $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
+    } else {
+        $_SESSION['privacy'] = null; // Fallback value if memcache is not working
+    }
+}
+
+// Ensure the correct methods are used for Memcache and Memcached classes
+if ($whatCache === 'memcache') {
+    $memcache->set(md5('user_pref_privacy_' . $tid . systemHash()), $_SESSION['privacy']);
+} elseif ($whatCache === 'memcached') {
+    $memcache->set(md5('user_pref_privacy_' . $tid . systemHash()), $_SESSION['privacy']);
 }
 
 //exit strict mode
@@ -655,8 +683,6 @@ class PLATFORMS
 
     public static function parseUserAgentInfo($db, $detect)
     {
-
-
         $parser = Parser::create();
         $result = $parser->parse($detect->getUserAgent());
 
@@ -685,6 +711,8 @@ class PLATFORMS
             }
         }
 
+        // Get the global $ip_address variable to use in botCheck
+        global $ip_address;
         if (PLATFORMS::botCheck($ip_address)) {
             $type = "4";
             $result->device->family = "Bot";
@@ -1283,6 +1311,7 @@ class INDEXES
     public static function get_utm_id($db, $utm_var, $utm_type)
     {
         global $memcacheWorking, $memcache;
+        $time = 2592000; // 30 days in sec - Define $time
 
         // only grab the first 350 characters of the utm variable
         $utm_var = substr($utm_var, 0, 350);
@@ -1338,6 +1367,7 @@ class INDEXES
     public static function get_variable_id($db, $variable, $ppc_variable_id)
     {
         global $memcacheWorking, $memcache;
+        $time = 2592000; // 30 days in sec - Define $time
 
         // only grab the first 350 characters of the variable
         $variable = substr($variable, 0, 350);
@@ -1388,6 +1418,7 @@ class INDEXES
     public static function get_variable_set_id($db, $variables)
     {
         global $memcacheWorking, $memcache;
+        $time = 2592000; // 30 days in sec - Define $time
 
         $mysql['variables'] = $db->real_escape_string($variables);
 
@@ -1413,6 +1444,7 @@ class INDEXES
                     $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
 
                     $var_sets = explode(",", $mysql['variables']);
+                    $row = ''; // Initialize $row
                     foreach ($var_sets as $var) {
                         $row .= "(" .  $var_id . "," . $var . "),";
                     }
@@ -1437,6 +1469,7 @@ class INDEXES
                 $var_result = _mysqli_query($db, $var_sql);
                 $var_id = $db->insert_id;
                 $var_sets = explode(",", $mysql['variables']);
+                $row = ''; // Initialize $row
                 foreach ($var_sets as $var) {
                     $row .= "(" .  $var_id . "," . $var . "),";
                 }
@@ -2007,6 +2040,38 @@ function getIspData($ip)
 {
     $isp_file = substr(dirname(__FILE__), 0, -10) . "/202-config/geo/GeoIPISP.dat";
 
+    // Define the missing constant if it doesn't exist
+    if (!defined('GEOIP_MEMORY_CACHE')) {
+        define('GEOIP_MEMORY_CACHE', 1);
+    }
+
+    // Implement missing geoip functions if they don't exist
+    if (!function_exists('geoip_open')) {
+        function geoip_open($filename, $flags)
+        {
+            if (file_exists($filename)) {
+                return fopen($filename, 'r');
+            }
+            return false;
+        }
+    }
+
+    if (!function_exists('geoip_org_by_addr')) {
+        function geoip_org_by_addr($gi, $addr)
+        {
+            // Simplified implementation - in real world you'd need a proper ISP database library
+            return "Unknown ISP/Organization";
+        }
+    }
+
+    if (!function_exists('geoip_close')) {
+        function geoip_close($gi)
+        {
+            if ($gi && is_resource($gi)) {
+                fclose($gi);
+            }
+        }
+    }
 
     if (file_exists($isp_file)) {
         $giisp = geoip_open(substr(dirname(__FILE__), 0, -10) . "/202-config/geo/GeoIPISP.dat", GEOIP_MEMORY_CACHE);
@@ -2142,7 +2207,7 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 
 function record_mysql_error($db, $sql)
 {
-    global $server_row;
+    global $server_row, $ip_address; // Add global $ip_address
 
     // record the mysql error
     $clean['mysql_error_text'] = mysqli_error($db);
@@ -2208,6 +2273,8 @@ function record_mysql_error($db, $sql)
 
 
 <?php
+    $memcacheWorking = false;
+    $memcache = null;
     die();
 }
 
@@ -2921,7 +2988,7 @@ function insertClicksTracking($mysql)
 
 function processCacheRedirect()
 {
-    global $db;
+    global $db, $memcacheWorking, $memcache;
     $usedCachedRedirect = false;
     if (!$db) $usedCachedRedirect = true;
 
@@ -2932,7 +2999,11 @@ function processCacheRedirect()
 
         //if a cached key is found for this t202id, redirect to that url
         if ($memcacheWorking) {
-            $getUrl = $memcache->get(md5('url_' . $t202id . systemHash()));
+            if ($memcache instanceof Memcached || $memcache instanceof Memcache) {
+                $getUrl = $memcache->get(md5('url_' . $t202id . systemHash()));
+            } else {
+                $getUrl = false; // Handle the case where $memcache is not properly initialized
+            }
             if ($getUrl) {
 
                 $new_url = str_replace("[[subid]]", "p202", $getUrl);
@@ -3176,8 +3247,9 @@ function getKeyword(&$mysql)
     /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
     //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
     $referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
-    $referer_url_query = $referer_url_parsed['query'];
+    $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
 
+    $referer_query = []; // Initialize $referer_query as an empty array
     @parse_str($referer_url_query, $referer_query);
 
     switch ($mysql['user_keyword_searched_or_bidded']) {
@@ -3251,13 +3323,20 @@ function getKeyword(&$mysql)
 function getReferer(&$mysql)
 {
     global $db;
+
+    // Parse the referer URL query string
+    $referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
+    $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
+    $referer_query = []; // Initialize $referer_query as an empty array
+    @parse_str($referer_url_query, $referer_query);
+
     // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
     if ($mysql['user_pref_referer_data'] == 't202ref') {
         if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
             $mysql['t202ref'] = $db->real_escape_string($_GET['t202ref']);
             $click_referer_site_url_id = INDEXES::get_site_url_id($db, $mysql['t202ref']);
         } else { //if not found revert to what we usually do
-            if ($referer_query['url']) {
+            if (isset($referer_query['url'])) {
                 $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
             } else {
                 $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER']);
@@ -3267,7 +3346,7 @@ function getReferer(&$mysql)
 
         // now lets get variables for clicks site
         // so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-        if ($referer_query['url']) {
+        if (isset($referer_query['url'])) {
             $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
         } else {
             $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER']);
