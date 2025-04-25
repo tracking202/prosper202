@@ -94,41 +94,63 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$user_hash = intercomHash($hash);
 
 		//insert this user
-		$user_sql = "  		INSERT IGNORE INTO  202_users
-					    	SET				user_email='" . $mysql['user_email'] . "',
-					    		 			user_name='" . $mysql['user_name'] . "',
-					    					user_pass='" . $mysql['user_pass'] . "',
-					    					user_timezone='" . $mysql['user_timezone'] . "',
-					    					user_time_register='" . $mysql['user_time_register'] . "',
-					    					install_hash='" . $hash . "',
-					 	    					user_hash='" . $user_hash . "',
-		                                    p202_customer_api_key ='" . $mysql['p202_customer_api_key'] . "'";
+		$user_sql = "INSERT IGNORE INTO 202_users
+					SET	user_email='" . $mysql['user_email'] . "',
+						user_name='" . $mysql['user_name'] . "',
+						user_pass='" . $mysql['user_pass'] . "',
+						user_timezone='" . $mysql['user_timezone'] . "',
+						user_time_register='" . $mysql['user_time_register'] . "',
+						install_hash='" . $hash . "',
+						user_hash='" . $user_hash . "',
+						p202_customer_api_key='" . $mysql['p202_customer_api_key'] . "'";
 		$user_result = _mysqli_query($user_sql);
 
+		// Get the user_id of the newly inserted user or the existing user with the same username
 		$user_id = $db->insert_id;
-		$mysql['user_id'] = $db->real_escape_string($user_id);
 
-		//update user preference table   
-		$user_sql = "INSERT INTO 202_users_pref SET user_id='" . $mysql['user_id'] . "'";
-		$user_result = _mysqli_query($user_sql);
-
-		$role_sql = "INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (1, 1);";
-		$role_result = _mysqli_query($role_sql);
-
-		$cron = callAutoCron('register');
-
-		if ($cron['status'] == 'success') {
-			$sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '1'";
-			$result = _mysqli_query($sql);
+		// If insert_id is 0 (because the user already existed due to INSERT IGNORE), get the user_id manually
+		if ($user_id == 0) {
+			$check_sql = "SELECT user_id FROM 202_users WHERE user_name='" . $mysql['user_name'] . "'";
+			$check_result = _mysqli_query($check_sql);
+			if ($check_result && $check_result->num_rows > 0) {
+				$check_row = $check_result->fetch_assoc();
+				$user_id = $check_row['user_id'];
+			}
 		}
 
-		registerDailyEmail('07', $mysql['user_timezone'], $hash);
+		// Only proceed if we have a valid user_id
+		if ($user_id > 0) {
+			$mysql['user_id'] = $db->real_escape_string($user_id);
 
-		// create partitions after everything else is setup. In case of failure user can still login and use Prosper202
-		$installer->install_database_partitions();
+			// Update user preference table - use INSERT IGNORE to handle duplicates
+			$user_sql = "INSERT IGNORE INTO 202_users_pref SET user_id='" . $mysql['user_id'] . "'";
+			$user_result = _mysqli_query($user_sql);
 
-		//if this worked, show them the succes screen
-		$success = true;
+			// Insert user role - use the actual user_id, not a hardcoded value
+			$role_sql = "INSERT IGNORE INTO `202_user_role` (`user_id`, `role_id`) VALUES ('" . $mysql['user_id'] . "', 1)";
+			$role_result = _mysqli_query($role_sql);
+
+			$cron = callAutoCron('register');
+
+			if ($cron['status'] == 'success') {
+				$sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '" . $mysql['user_id'] . "'";
+				$result = _mysqli_query($sql);
+			}
+
+			// Add null check before accessing array offset on line 120
+			if (isset($mysql['user_timezone']) && isset($hash)) {
+				registerDailyEmail('07', $mysql['user_timezone'], $hash);
+			}
+
+			// create partitions after everything else is setup
+			$installer->install_database_partitions();
+
+			//if this worked, show them the success screen
+			$success = true;
+		} else {
+			// If we couldn't get a valid user_id, show an error
+			$error['general'] = '<div class="error">Failed to create user account. Please try again with a different username.</div>';
+		}
 	}
 
 	// Always set the HTML values from POST data when it exists
@@ -204,6 +226,7 @@ if (!$success) {
 		<h6>Create your account</h6>
 		<small>Please provide the following information. Don't worry, you can always change these settings later.</small>
 		<br><br>
+		<?php if (isset($error['general'])) echo $error['general']; ?>
 		<form method="post" action="" class="form-horizontal" role="form" id="install-prosper202">
 
 			<input type="hidden" class="form-control input-sm" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>">
