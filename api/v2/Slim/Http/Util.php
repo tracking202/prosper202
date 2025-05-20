@@ -58,7 +58,7 @@ class Util
      */
     public static function stripSlashesIfMagicQuotes($rawData, $overrideStripSlashes = null)
     {
-        $strip = is_null($overrideStripSlashes) ? get_magic_quotes_gpc() : $overrideStripSlashes;
+        $strip = is_null($overrideStripSlashes) ? ini_get('magic_quotes_gpc') : $overrideStripSlashes;
         if ($strip) {
             return self::stripSlashes($rawData);
         } else {
@@ -92,38 +92,16 @@ class Util
      */
     public static function encrypt($data, $key, $iv, $settings = array())
     {
-        if ($data === '' || !extension_loaded('mcrypt')) {
+        if ($data === '') {
             return $data;
         }
 
-        //Merge settings with defaults
         $defaults = array(
-            'algorithm' => MCRYPT_RIJNDAEL_256,
-            'mode' => MCRYPT_MODE_CBC
+            'cipher' => 'AES-256-CBC'
         );
         $settings = array_merge($defaults, $settings);
 
-        //Get module
-        $module = mcrypt_module_open($settings['algorithm'], '', $settings['mode'], '');
-
-        //Validate IV
-        $ivSize = mcrypt_enc_get_iv_size($module);
-        if (strlen($iv) > $ivSize) {
-            $iv = substr($iv, 0, $ivSize);
-        }
-
-        //Validate key
-        $keySize = mcrypt_enc_get_key_size($module);
-        if (strlen($key) > $keySize) {
-            $key = substr($key, 0, $keySize);
-        }
-
-        //Encrypt value
-        mcrypt_generic_init($module, $key, $iv);
-        $res = @mcrypt_generic($module, $data);
-        mcrypt_generic_deinit($module);
-
-        return $res;
+        return openssl_encrypt($data, $settings['cipher'], $key, OPENSSL_RAW_DATA, $iv);
     }
 
     /**
@@ -142,39 +120,17 @@ class Util
      */
     public static function decrypt($data, $key, $iv, $settings = array())
     {
-        if ($data === '' || !extension_loaded('mcrypt')) {
+        if ($data === '') {
             return $data;
         }
 
-        //Merge settings with defaults
         $defaults = array(
-            'algorithm' => MCRYPT_RIJNDAEL_256,
-            'mode' => MCRYPT_MODE_CBC
+            'cipher' => 'AES-256-CBC'
         );
         $settings = array_merge($defaults, $settings);
 
-        //Get module
-        $module = mcrypt_module_open($settings['algorithm'], '', $settings['mode'], '');
-
-        //Validate IV
-        $ivSize = mcrypt_enc_get_iv_size($module);
-        if (strlen($iv) > $ivSize) {
-            $iv = substr($iv, 0, $ivSize);
-        }
-
-        //Validate key
-        $keySize = mcrypt_enc_get_key_size($module);
-        if (strlen($key) > $keySize) {
-            $key = substr($key, 0, $keySize);
-        }
-
-        //Decrypt value
-        mcrypt_generic_init($module, $key, $iv);
-        $decryptedData = @mdecrypt_generic($module, $data);
-        $res = rtrim($decryptedData, "\0");
-        mcrypt_generic_deinit($module);
-
-        return $res;
+        $decrypted = openssl_decrypt($data, $settings['cipher'], $key, OPENSSL_RAW_DATA, $iv);
+        return rtrim($decrypted, "\0");
     }
 
     /**

@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					click_id='" . $mysql['click_id'] ."'
 					AND user_id='".$mysql['user_id']."'
 			";
-			$update_result = $db->query($update_sql) or die(mysql_error($update_sql));
+                        $update_result = $db->query($update_sql) or die($db->error);
 			
 			$update_sql = "
 				UPDATE
@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					click_id='" . $mysql['click_id'] ."'
 					AND user_id='".$mysql['user_id']."'
 			";
-			$update_result = $db->query($update_sql) or die(mysql_error($update_sql));
+                        $update_result = $db->query($update_sql) or die($db->error);
 
 			$de = new DataEngine();
 			$de->setDirtyHour($mysql['click_id']);

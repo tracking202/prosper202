@@ -48,7 +48,7 @@ function _c($text, $domain = 'default') {
 }
 
 // Return the plural form.
-function __ngettext($single, $plural, $number, $domain = 'default') {
+function _ngettext($single, $plural, $number, $domain = 'default') {
 	global $l10n;
 
 	if (isset($l10n[$domain])) {

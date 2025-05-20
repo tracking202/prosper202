@@ -13,10 +13,11 @@ if($_SERVER['SERVER_NAME']=='_'){
 DEFINE('ROOT_PATH', substr(dirname( __FILE__ ), 0,-10));
 DEFINE('CONFIG_PATH', dirname( __FILE__ ));
 @ini_set('auto_detect_line_endings', TRUE);
-@ini_set('register_globals', 0);
+// Deprecated in PHP 5.4
+// @ini_set('register_globals', 0);
 @ini_set('display_errors', 'On');
 @ini_set('error_reporting', 6135);
-@ini_set('safe_mode', 'Off');
+// @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
 @ini_set('set_time_limit', 0);
 
 if(!$_SESSION['user_timezone'])
@@ -212,12 +213,12 @@ if ($skip_upgrade == false) {
 }
 
 //if safe mode is turned on, and the user is trying to use offers202, stats202 or alerts202, show the error page
-switch ($navigation[1]) { 
-	case "offers202":
-	case "alerts202":
-	case "stats202":
-		if (@ini_get('safe_mode')) { header('location: '.get_absolute_url().'202-account/disable-safe-mode.php'); die();  }
-		break;
+switch ($navigation[1]) {
+        case "offers202":
+        case "alerts202":
+        case "stats202":
+                // safe_mode directive removed as of PHP 5.4
+                break;
 }
 
 $userObj = new User($_SESSION['user_own_id']);

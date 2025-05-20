@@ -257,10 +257,10 @@ function addslashes_gpc($gpc)
 {
 	global $wpdb;
 
-	// get_magic_quotes_gpc() is deprecated since PHP 7.4, so check if it exists first
-	if (function_exists('get_magic_quotes_gpc') && get_magic_quotes_gpc()) {
-		$gpc = stripslashes($gpc);
-	}
+        // Normalize input when magic quotes are enabled
+        if (ini_get('magic_quotes_gpc')) {
+                $gpc = stripslashes($gpc);
+        }
 
 	return $wpdb->escape($gpc);
 }
@@ -294,19 +294,19 @@ function human_time_diff($from, $to = '')
 		if ($mins <= 1) {
 			$mins = 1;
 		}
-		$since = sprintf(__ngettext('%s min', '%s mins', $mins), $mins);
+          $since = sprintf(_ngettext('%s min', '%s mins', $mins), $mins);
 	} else if (($diff <= 86400) && ($diff > 3600)) {
 		$hours = round($diff / 3600);
 		if ($hours <= 1) {
 			$hour = 1;
 		}
-		$since = sprintf(__ngettext('%s hour', '%s hours', $hours), $hours);
+          $since = sprintf(_ngettext('%s hour', '%s hours', $hours), $hours);
 	} elseif ($diff >= 86400) {
 		$days = round($diff / 86400);
 		if ($days <= 1) {
 			$days = 1;
 		}
-		$since = sprintf(__ngettext('%s day', '%s days', $days), $days);
+          $since = sprintf(_ngettext('%s day', '%s days', $days), $days);
 	}
 	return $since;
 }
