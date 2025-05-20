@@ -1,0 +1,22 @@
+{
+  "name": "prosper202/prosper202",
+  "description": "Prosper202 ClickServer - Self-hosted tracking platform",
+  "type": "project",
+  "require": {
+    "php": ">=8.3",
+    "ua-parser/uap-php": "^3.9"
+  },
+  "autoload": {
+    "psr-4": {
+      "Prosper202\\": "202-config/",
+      "Tracking202\\": "tracking202/"
+    }
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^9.5"
+  },
+  "scripts": {
+    "test": "phpunit"
+  },
+  "minimum-stability": "stable"
+}
