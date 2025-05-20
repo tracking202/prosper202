@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
-include_once(dirname( __FILE__ ) . '/202-config/connect.php'); ?>
+include_once(dirname( __FILE__ ) . '/202-config/connect.php');
+
+http_response_code(404);
+?>
 
 <?php info_top(); ?>
 <div class="row">
