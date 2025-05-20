@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 /**
  * Slim - a micro PHP 5 framework
@@ -31,6 +32,7 @@ declare(strict_types=1);
  * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
+
 namespace Slim\Http;
 
 /**
@@ -406,9 +408,9 @@ class Util
      */
     private static function getIv($expires, $secret)
     {
-        $data1 = hash_hmac('sha1', 'a'.$expires.'b', $secret);
-        $data2 = hash_hmac('sha1', 'z'.$expires.'y', $secret);
+        $data1 = hash_hmac('sha1', 'a' . $expires . 'b', $secret);
+        $data2 = hash_hmac('sha1', 'z' . $expires . 'y', $secret);
 
-        return pack("h*", $data1.$data2);
+        return pack("h*", $data1 . $data2);
     }
 }
