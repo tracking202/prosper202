@@ -16,10 +16,10 @@ include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
 	}
 	
 	
-	$phpversion = phpversion();
-	if ($phpversion < 5.4) {
-	    $version_error['phpversion'] = 'Prosper202 requires PHP 5.4, or newer.';
-	}
+        $phpVersion = PHP_VERSION;
+        if (version_compare($phpVersion, '8.3', '<')) {
+            $version_error['phpversion'] = 'Prosper202 requires PHP 8.3, or newer.';
+        }
 	
     // Get Database version
 	$mysqlversion = $db->server_info;
@@ -80,10 +80,10 @@ include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
 		</tr>
 	</thead>
 	<tbody>
-		<tr>
-			<td>PHP >= 5.6</td>
-			<td><span class="label label-<?php if ($version_error['phpversion']) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php echo phpversion(); ?></span></td>
-		</tr>
+                <tr>
+                        <td>PHP >= 8.3</td>
+                        <td><span class="label label-<?php if ($version_error['phpversion']) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php echo phpversion(); ?></span></td>
+                </tr>
 		<tr>
 			<td>MySQL >= 5.6</td>
 			<td><span class="label label-<?php if ($version_error['mysqlversion']) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php echo $html['mysqlversion'] ;?></span></td>
