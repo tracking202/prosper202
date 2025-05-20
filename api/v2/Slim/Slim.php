@@ -306,8 +306,8 @@ class Slim
             'cookies.httponly' => false,
             // Encryption
             'cookies.secret_key' => 'CHANGE_ME',
-            'cookies.cipher' => MCRYPT_RIJNDAEL_256,
-            'cookies.cipher_mode' => MCRYPT_MODE_CBC,
+            'cookies.cipher' => 'AES-256-CBC',
+            'cookies.cipher_mode' => '',
             // HTTP
             'http.version' => '1.1',
             // Routing

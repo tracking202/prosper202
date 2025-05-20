@@ -43,7 +43,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				click_id='" . $mysql['click_id'] ."'
 				AND user_id='".$mysql['user_id']."'
 		";
-		$update_result = $db->query($update_sql) or die(mysql_error($update_sql));
+                try {
+                    $update_result = $db->query($update_sql);
+                } catch (Exception $e) {
+                    error_log("Database query failed: " . $e->getMessage());
+                    $success = false;
+                    continue;
+                }
 		
 		$update_sql = "
 			UPDATE 202_clicks_spy
@@ -54,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				click_id='" . $mysql['click_id'] ."'
 				AND user_id='".$mysql['user_id']."'
 		";
-		$update_result = $db->query($update_sql) or die(mysql_error($update_sql));
+                $update_result = $db->query($update_sql) or die($db->error);
 
 		$de = new DataEngine();
 		$de->setDirtyHour($mysql['click_id']);

@@ -248,10 +248,10 @@ function CronJobLastExecution($datetime) {
 						   echo getMYSQLVersion($db); ?></span>
 						</p>
 						<p>
-							PHP Safe Mode <span class="fui-info-circle" style="font-size: 10px;"
-								data-toggle="tooltip"
-								title="PHP Safe Mode needs to be turned off in order for Stats202, Offers202 or Alerts202 to work. You will have to contact your web host to have them disable it."></span><span
-								class="pull-right"><?php if (@ini_get('safe_mode')) echo '<span class="label label-important">On</span> - this should be turned off.'; else echo 'Off'; ?></span>
+                                                        PHP Safe Mode <span class="fui-info-circle" style="font-size: 10px;"
+                                                                data-toggle="tooltip"
+                                                                title="PHP Safe Mode was removed in PHP 5.4."></span><span
+                                                                class="pull-right">N/A</span>
 						</p>
 						<p>
 							Memcache Installed <span class="fui-info-circle"

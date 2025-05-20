@@ -151,14 +151,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$pixel_type_result = _mysqli_query($pixel_type_sql);
 				$pixel_type_row = $pixel_type_result->fetch_assoc();
 
-				if (get_magic_quotes_gpc()) {
-
-					$mysql['pixel_code'] = $db->real_escape_string(trim($_POST['pixel_code'][$key]));
-					
-				} else {
-					
-					$mysql['pixel_code'] = $db->real_escape_string(trim(addslashes($_POST['pixel_code'][$key])));
-				}
+                                $pixelCode = trim($_POST['pixel_code'][$key]);
+                                if (ini_get('magic_quotes_gpc')) {
+                                        $pixelCode = stripslashes($pixelCode);
+                                }
+                                $mysql['pixel_code'] = $db->real_escape_string($pixelCode);
 
 				if($mysql['pixel_code']!="" && $mysql['pixel_type_id']!=""){
 

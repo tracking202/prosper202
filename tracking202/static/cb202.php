@@ -14,15 +14,20 @@ $user_row = $user_results->fetch_assoc();
 if (!empty($user_row['url'])) 
     $slack = new Slack($user_row['url']);
 
-if(function_exists("mcrypt_encrypt")) {
+if (function_exists('openssl_decrypt')) {
     $message = json_decode(file_get_contents('php://input'));
     $encrypted = $message->{'notification'};
     $iv = $message->{'iv'};
-    $decrypted = trim(mcrypt_decrypt(MCRYPT_RIJNDAEL_128,
-                 substr(sha1($user_row['cb_key']), 0, 32),
-                 base64_decode($encrypted),
-                 MCRYPT_MODE_CBC,
-                 base64_decode($iv)), "\0..\32");
+    $decrypted = trim(
+        openssl_decrypt(
+            base64_decode($encrypted),
+            'AES-128-CBC',
+            substr(sha1($user_row['cb_key']), 0, 32),
+            OPENSSL_RAW_DATA,
+            base64_decode($iv)
+        ),
+        "\0..\32"
+    );
     $order = json_decode($decrypted, true);
 
     if ($order['transactionType'] == 'TEST') {

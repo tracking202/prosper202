@@ -358,10 +358,11 @@ class MagpieRSS
 
 	function error($errormsg, $lvl = E_USER_WARNING)
 	{
-		// append PHP's error message if track_errors enabled
-		if (isset($php_errormsg)) {
-			$errormsg .= " ($php_errormsg)";
-		}
+               // append PHP's error message if available
+               $lastError = error_get_last();
+               if ($lastError !== null) {
+                       $errormsg .= ' (' . $lastError['message'] . ')';
+               }
 		if (MAGPIE_DEBUG) {
 			trigger_error($errormsg, $lvl);
 		} else {
@@ -641,15 +642,15 @@ class RSSCache
 	var $MAX_AGE	= 43200;  		// when are files stale, default twelve hours
 	var $ERROR 		= '';			// accumulate error messages
 
-	function RSSCache($base = '', $age = '')
-	{
-		if ($base) {
-			$this->BASE_CACHE = $base;
-		}
-		if ($age) {
-			$this->MAX_AGE = $age;
-		}
-	}
+       public function __construct($base = '', $age = '')
+       {
+               if ($base) {
+                       $this->BASE_CACHE = $base;
+               }
+               if ($age) {
+                       $this->MAX_AGE = $age;
+               }
+       }
 
 	/*=======================================================================*\
 	Function:	set
@@ -762,10 +763,11 @@ class RSSCache
 \*=======================================================================*/
 	function error($errormsg, $lvl = E_USER_WARNING)
 	{
-		// append PHP's error message if track_errors enabled
-		if (isset($php_errormsg)) {
-			$errormsg .= " ($php_errormsg)";
-		}
+               // append PHP's error message if available
+               $lastError = error_get_last();
+               if ($lastError !== null) {
+                       $errormsg .= ' (' . $lastError['message'] . ')';
+               }
 		$this->ERROR = $errormsg;
 		if (MAGPIE_DEBUG) {
 			trigger_error($errormsg, $lvl);
