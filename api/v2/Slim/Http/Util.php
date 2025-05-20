@@ -60,12 +60,11 @@ class Util
      */
     public static function stripSlashesIfMagicQuotes($rawData, $overrideStripSlashes = null)
     {
-        $strip = is_null($overrideStripSlashes) ? ini_get('magic_quotes_gpc') : $overrideStripSlashes;
-        if ($strip) {
+        // Magic quotes are removed in PHP 8+, so we only strip if explicitly requested
+        if ($overrideStripSlashes === true) {
             return self::stripSlashes($rawData);
-        } else {
-            return $rawData;
         }
+        return $rawData;
     }
 
     /**
