@@ -101,7 +101,18 @@ class Util
         );
         $settings = array_merge($defaults, $settings);
 
-        return openssl_encrypt($data, $settings['cipher'], $key, OPENSSL_RAW_DATA, $iv);
+        $cipher = $settings['cipher'];
+        $ivLength = openssl_cipher_iv_length($cipher);
+        if (strlen($iv) !== $ivLength) {
+            throw new \InvalidArgumentException("Invalid IV length for cipher $cipher. Expected $ivLength bytes.");
+        }
+
+        $keyLength = strlen($key);
+        if (($cipher === 'AES-256-CBC' && $keyLength !== 32) || ($cipher === 'AES-128-CBC' && $keyLength !== 16)) {
+            throw new \InvalidArgumentException("Invalid key length for cipher $cipher. Expected " . ($cipher === 'AES-256-CBC' ? 32 : 16) . " bytes.");
+        }
+
+        return openssl_encrypt($data, $cipher, $key, OPENSSL_RAW_DATA, $iv);
     }
 
     /**
