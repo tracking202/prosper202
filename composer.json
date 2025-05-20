@@ -9,7 +9,9 @@
   "autoload": {
     "psr-4": {
       "Prosper202\\": "202-config/",
-      "Tracking202\\": "tracking202/"
+      "Tracking202\\": "tracking202/",
+      "Prosper202Interfaces\\": "202-interfaces/",
+      "Api\\": "api/"
     }
   },
   "require-dev": {
