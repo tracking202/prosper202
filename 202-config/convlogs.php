@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-function addConversionLog($click_id, $txid, $campaign_id, $click_payout_added, $user_id, $click_time, $ip, $user_agent, $conv_time = null, $type)
+function addConversionLog($click_id, $txid, $campaign_id, $click_payout_added, $user_id, $click_time, $ip, $user_agent, $type, $conv_time = null)
 {
     $database = DB::getInstance();
     $db = $database->getConnection();
