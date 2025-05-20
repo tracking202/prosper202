@@ -257,12 +257,7 @@ function addslashes_gpc($gpc)
 {
 	global $wpdb;
 
-	// Normalize input when magic quotes are enabled
-	// get_magic_quotes_gpc() is deprecated since PHP 7.4, so check if it exists first
-	if (function_exists('get_magic_quotes_gpc') && get_magic_quotes_gpc()) {
-		$gpc = stripslashes($gpc);
-	}
-
+	// Magic quotes are removed in PHP 8+, so no need to check for them
 	return $wpdb->escape($gpc);
 }
 
