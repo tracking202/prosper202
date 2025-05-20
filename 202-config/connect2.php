@@ -2146,7 +2146,7 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 
 function record_mysql_error($db, $sql)
 {
-    global $server_row;
+    global $server_row, $ip_address;
     
     // record the mysql error
     $clean['mysql_error_text'] = mysqli_error($db);
