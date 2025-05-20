@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 /**
  * @author Dick Munroe (munroe@csworks.com)
@@ -71,16 +72,16 @@ class curl
 	 * @var array
 	 */
 
-	var $m_caseless ;
+	var $m_caseless;
 
 	/**
 	 * The handle for the current curl session.
 	 *
 	 * @access private
-	 * @var resource
+	 * @var CurlHandle|null
 	 */
 
-	var $m_handle ;
+	var $m_handle;
 
 	/**
 	 * The parsed contents of the HTTP header if one happened in the
@@ -112,7 +113,7 @@ class curl
 	 * @var mixed
 	 */
 
-	var $m_header ;
+	var $m_header;
 
 	/**
 	 * Current setting of the curl options.
@@ -121,7 +122,7 @@ class curl
 	 * @var mixed
 	 */
 
-	var $m_options ;
+	var $m_options;
 
 	/**
 	 * Status information for the last executed http request.  Includes the errno and error
@@ -138,7 +139,7 @@ class curl
 	 * @var mixed
 	 */
 
-	var $m_status ;
+	var $m_status;
 
 	/**
 	 * Collection of headers when curl follows redirections as per CURLOPTION_FOLLOWLOCATION.
@@ -148,7 +149,7 @@ class curl
 	 * @var array
 	 */
 
-	var $m_followed ;
+	var $m_followed;
 
 	/**
 	 * curl class constructor
@@ -164,30 +165,35 @@ class curl
 	 * @param string $theURL [optional] the URL to be accessed by this instance of the class.
 	 */
 
-	function curl($theURL=null)
-	  {
-		if (!function_exists('curl_init'))
-		  {
-			trigger_error('PHP was not built with --with-curl, rebuild PHP to use the curl class.',
-						  E_USER_ERROR) ;
-		  }
+	// PHP4-style constructor replaced with __construct for PHP 7+
+	function __construct($theURL = null)
+	{
+		if (!function_exists('curl_init')) {
+			trigger_error(
+				'PHP was not built with --with-curl, rebuild PHP to use the curl class.',
+				E_USER_ERROR
+			);
+		}
 
-		$this->m_handle = curl_init() ;
+		$this->m_handle = curl_init();
+		if ($this->m_handle === false) {
+			$this->m_handle = null;
+			trigger_error('Failed to initialize cURL handle.', E_USER_ERROR);
+		}
 
-		$this->m_caseless = null ;
-		$this->m_header = null ;
-		$this->m_options = null ;
-		$this->m_status = null ;
-		$this->m_followed = null ;
+		$this->m_caseless = null;
+		$this->m_header = null;
+		$this->m_options = null;
+		$this->m_status = null;
+		$this->m_followed = null;
 
-		if (!empty($theURL))
-		  {
-			$this->setopt(CURLOPT_URL, $theURL) ;
-		  }
-		
-		$this->setopt(CURLOPT_HEADER, false) ; 
-		$this->setopt(CURLOPT_RETURNTRANSFER, true) ;
-	  }
+		if (!empty($theURL)) {
+			$this->setopt(CURLOPT_URL, $theURL);
+		}
+
+		$this->setopt(CURLOPT_HEADER, false);
+		$this->setopt(CURLOPT_RETURNTRANSFER, true);
+	}
 
 	/**
 	 * Free the resources associated with the curl session.
@@ -196,10 +202,12 @@ class curl
 	 */
 
 	function close()
-	  {
-		curl_close($this->m_handle) ;
-		$this->m_handle = null ;
-	  }
+	{
+		if ($this->m_handle instanceof CurlHandle || (is_resource($this->m_handle) && get_resource_type($this->m_handle) === 'curl')) {
+			curl_close($this->m_handle);
+			$this->m_handle = null;
+		}
+	}
 
 	/**
 	 * Execute the curl request and return the result.
@@ -213,53 +221,48 @@ class curl
 	 */
 
 	function exec()
-	  {
-		$theReturnValue = curl_exec($this->m_handle) ;
+	{
+		$theReturnValue = curl_exec($this->m_handle);
 
-		$this->m_status = curl_getinfo($this->m_handle) ;
-		$this->m_status['errno'] = curl_errno($this->m_handle) ;
-		$this->m_status['error'] = curl_error($this->m_handle) ;
+		$this->m_status = curl_getinfo($this->m_handle);
+		$this->m_status['errno'] = curl_errno($this->m_handle);
+		$this->m_status['error'] = curl_error($this->m_handle);
 
 		//
 		// Collect headers espesically if CURLOPT_FOLLOWLOCATION set.
 		// Parse out the http header (from last one if any).
 		//
 
-		$this->m_header = null ;
+		$this->m_header = null;
 
 		//
 		// If there has been a curl error, just return a null string.
 		//
 
-		if ($this->m_status['errno'])
-		{
-		  return '' ;
+		if ($this->m_status['errno']) {
+			return '';
 		}
 
-		if ($this->getOption(CURLOPT_HEADER))
-		  {
+		if ($this->getOption(CURLOPT_HEADER)) {
 
-			$this->m_followed = array() ;
-			$rv = $theReturnValue ;
+			$this->m_followed = array();
+			$rv = $theReturnValue;
 
-			while (count($this->m_followed) <= $this->m_status['redirect_count'])
-			  {
-				$theArray = preg_split("/(\r\n){2,2}/", $rv, 2) ;
+			while (count($this->m_followed) <= $this->m_status['redirect_count']) {
+				$theArray = preg_split("/(\r\n){2,2}/", $rv, 2);
 
-				$this->m_followed[] = $theArray[0] ;
+				$this->m_followed[] = $theArray[0];
 
-				$rv = $theArray[1] ;
-			  }
+				$rv = $theArray[1];
+			}
 
-			$this->parseHeader($theArray[0]) ;
+			$this->parseHeader($theArray[0]);
 
-			return $theArray[1] ;
-		  }
-		else
-		  {
-			return $theReturnValue ;
-		  }
-	  }
+			return $theArray[1];
+		} else {
+			return $theReturnValue;
+		}
+	}
 
 	/**
 	 * Returns the parsed http header.
@@ -272,35 +275,28 @@ class curl
 	 * @returns mixed
 	 */
 
-	function getHeader($theHeader=null)
-	  {
+	function getHeader($theHeader = null)
+	{
 		//
 		// There can't be any headers to check if there weren't any headers
 		// returned (happens in the event of errors).
 		//
 
-		if (empty($this->m_header))
-		{
-		  return false ;
+		if (empty($this->m_header)) {
+			return false;
 		}
 
-		if (empty($theHeader))
-		  {
-			return $this->m_header ;
-		  }
-		else
-		  {
-			$theHeader = strtoupper($theHeader) ;
-			if (isset($this->m_caseless[$theHeader]))
-			  {
-				return $this->m_header[$this->m_caseless[$theHeader]] ;
-			  }
-			else
-			  {
-				return false ;
-			  }
-		  }
-	  }
+		if (empty($theHeader)) {
+			return $this->m_header;
+		} else {
+			$theHeader = strtoupper($theHeader);
+			if (isset($this->m_caseless[$theHeader])) {
+				return $this->m_header[$this->m_caseless[$theHeader]];
+			} else {
+				return false;
+			}
+		}
+	}
 
 	/**
 	 * Returns the current setting of the request option.  If no
@@ -311,14 +307,13 @@ class curl
 	 */
 
 	function getOption($theOption)
-	  {
-		if (isset($this->m_options[$theOption]))
-		  {
-			return $this->m_options[$theOption] ;
-		  }
+	{
+		if (isset($this->m_options[$theOption])) {
+			return $this->m_options[$theOption];
+		}
 
-		return null ;
-	  }
+		return null;
+	}
 
 	/**
 	 * Did the last curl exec operation have an error?
@@ -328,16 +323,13 @@ class curl
 	 */
 
 	function hasError()
-	  {
-		if (isset($this->m_status['error']))
-		  {
-			return (empty($this->m_status['error']) ? false : $this->m_status['error']) ;
-		  }
-		else
-		  {
-			return false ;
-		  }
-	  }
+	{
+		if (isset($this->m_status['error'])) {
+			return (empty($this->m_status['error']) ? false : $this->m_status['error']);
+		} else {
+			return false;
+		}
+	}
 
 	/**
 	 * Parse an HTTP header.
@@ -357,34 +349,31 @@ class curl
 	 */
 
 	function parseHeader($theHeader)
-	  {
-		$this->m_caseless = array() ;
+	{
+		$this->m_caseless = array();
 
-		$theArray = preg_split("/(\r\n)+/", $theHeader) ;
+		$theArray = preg_split("/(\r\n)+/", $theHeader);
 
 		//
 		// Ditch the HTTP status line.
 		//
 
-		if (preg_match('/^HTTP/', $theArray[0]))
-		  {
-			$theArray = array_slice($theArray, 1) ;
-		  }
+		if (preg_match('/^HTTP/', $theArray[0])) {
+			$theArray = array_slice($theArray, 1);
+		}
 
-		foreach ($theArray as $theHeaderString)
-		  {
-			$theHeaderStringArray = preg_split("/\s*:\s*/", $theHeaderString, 2) ;
+		foreach ($theArray as $theHeaderString) {
+			$theHeaderStringArray = preg_split("/\s*:\s*/", $theHeaderString, 2);
 
-			$theCaselessTag = strtoupper($theHeaderStringArray[0]) ;
+			$theCaselessTag = strtoupper($theHeaderStringArray[0]);
 
-			if (!isset($this->m_caseless[$theCaselessTag]))
-			  {
-				$this->m_caseless[$theCaselessTag] = $theHeaderStringArray[0] ;
-			  }
+			if (!isset($this->m_caseless[$theCaselessTag])) {
+				$this->m_caseless[$theCaselessTag] = $theHeaderStringArray[0];
+			}
 
-			$this->m_header[$this->m_caseless[$theCaselessTag]][] = $theHeaderStringArray[1] ;
-		  }
-	  }
+			$this->m_header[$this->m_caseless[$theCaselessTag]][] = $theHeaderStringArray[1];
+		}
+	}
 
 	/**
 	 * Return the status information of the last curl request.
@@ -397,24 +386,18 @@ class curl
 	 * @returns mixed
 	 */
 
-	function getStatus($theField=null)
-	  {
-		if (empty($theField))
-		  {
-			return $this->m_status ;
-		  }
-		else
-		  {
-			if (isset($this->m_status[$theField]))
-			  {
-				return $this->m_status[$theField] ;
-			  }
-			else
-			  {
-				return false ;
-			  }
-		  }
-	  }
+	function getStatus($theField = null)
+	{
+		if (empty($theField)) {
+			return $this->m_status;
+		} else {
+			if (isset($this->m_status[$theField])) {
+				return $this->m_status[$theField];
+			} else {
+				return false;
+			}
+		}
+	}
 
 	/**
 	 * Set a curl option.
@@ -425,10 +408,10 @@ class curl
 	 */
 
 	function setopt($theOption, $theValue)
-	  {
-		@curl_setopt($this->m_handle, $theOption, $theValue) ;
-		$this->m_options[$theOption] = $theValue ;
-	  }
+	{
+		@curl_setopt($this->m_handle, $theOption, $theValue);
+		$this->m_options[$theOption] = $theValue;
+	}
 
 	/**
 	 * @desc Post string as an array
@@ -439,15 +422,14 @@ class curl
 
 	function &fromPostString(&$thePostString)
 	{
-		$return = array() ;
-		$fields = explode('&', $thePostString) ;
-		foreach($fields as $aField)
-		{
-			$xxx = explode('=', $aField) ;
-			$return[$xxx[0]] = urldecode($xxx[1]) ;
+		$return = array();
+		$fields = explode('&', $thePostString);
+		foreach ($fields as $aField) {
+			$xxx = explode('=', $aField);
+			$return[$xxx[0]] = urldecode($xxx[1]);
 		}
 
-		return $return ;
+		return $return;
 	}
 
 	/**
@@ -462,33 +444,26 @@ class curl
 	 */
 
 	function &asPostString(&$theData, $theName = NULL)
-	  {
-		$thePostString = '' ;
-		$thePrefix = $theName ;
+	{
+		$thePostString = '';
+		$thePrefix = $theName;
 
-		if (is_array($theData))
-		{
-		  foreach ($theData as $theKey => $theValue)
-		  {
-			if ($thePrefix === NULL)
-		{
-			  $thePostString .= '&' . curl::asPostString($theValue, $theKey) ;
-		}
-		else
-			{
-			  $thePostString .= '&' . curl::asPostString($theValue, $thePrefix . '[' . $theKey . ']') ;
+		if (is_array($theData)) {
+			foreach ($theData as $theKey => $theValue) {
+				if ($thePrefix === NULL) {
+					$thePostString .= '&' . curl::asPostString($theValue, $theKey);
+				} else {
+					$thePostString .= '&' . curl::asPostString($theValue, $thePrefix . '[' . $theKey . ']');
+				}
 			}
-		  }
-		}
-		else
-		{
-		  $thePostString .= '&' . urlencode((string)$thePrefix) . '=' . urlencode($theData) ;
+		} else {
+			$thePostString .= '&' . urlencode((string)$thePrefix) . '=' . urlencode($theData);
 		}
 
-		$xxx =& substr($thePostString, 1) ;
+		$xxx = &substr($thePostString, 1);
 
-		return $xxx ;
-	  }
+		return $xxx;
+	}
 
 	/**
 	 * Returns the followed headers lines, including the header of the retrieved page.
@@ -501,18 +476,15 @@ class curl
 	 */
 
 	function getFollowedHeaders()
-	  {
-		$theHeaders = array() ;
-		if ($this->m_followed)
-		  {
-			foreach ( $this->m_followed as $aHeader )
-			  {
-				$theHeaders[] = explode( "\r\n", $aHeader ) ;
-			  } ;
-			return $theHeaders ;
-		  }
+	{
+		$theHeaders = array();
+		if ($this->m_followed) {
+			foreach ($this->m_followed as $aHeader) {
+				$theHeaders[] = explode("\r\n", $aHeader);
+			};
+			return $theHeaders;
+		}
 
-		return $theHeaders ;
-	  }
+		return $theHeaders;
+	}
 }
-?>
