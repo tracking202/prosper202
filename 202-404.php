@@ -4,6 +4,7 @@ include_once(dirname( __FILE__ ) . '/202-config/connect.php');
 
 http_response_code(404);
 info_top();
+?>
 <div class="row">
 <div class="main col-xs-6">
 	<center><img src="202-img/prosper202.png"></center>
