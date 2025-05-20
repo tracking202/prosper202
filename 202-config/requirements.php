@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 //include mysql settings
 include_once(dirname( __FILE__ ) . '/connect.php');
 

@@ -1,4 +1,5 @@
-<?php 
+<?php
+declare(strict_types=1);
 $time_start = microtime(true);
 set_time_limit(0);
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 

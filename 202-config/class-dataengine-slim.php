@@ -1,5 +1,6 @@
 <?php
- if(!isset($_SESSION['user_timezone']))
+declare(strict_types=1);
+if(!isset($_SESSION['user_timezone']))
 {
     date_default_timezone_set('GMT');
 } else {

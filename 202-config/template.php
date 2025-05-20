@@ -1,4 +1,5 @@
-<?php  
+<?php
+declare(strict_types=1);
 ob_start();
 
 function template_top($title = 'Prosper202 ClickServer') { global $navigation; global $version; global $userObj;

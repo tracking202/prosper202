@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 /*
  * Project:     MagpieRSS: a simple RSS integration tool
  * File:        A compiled file for RSS syndication

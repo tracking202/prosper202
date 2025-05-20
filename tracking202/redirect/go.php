@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 $vars=@explode(" ",base64_decode($_GET['202v']));
 
 if(isset($vars[1])){

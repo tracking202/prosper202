@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config.php'); 
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/api/v1/functions.php');

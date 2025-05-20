@@ -1,4 +1,5 @@
-<?php 
+<?php
+declare(strict_types=1);
 $vars=$_GET;
 #only allow numeric t202ids
 $lpip = $_GET['lpip']; 

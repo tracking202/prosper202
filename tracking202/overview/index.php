@@ -1,4 +1,5 @@
-<?php 
+<?php
+declare(strict_types=1);
 include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php'); 
 
 AUTH::require_user();

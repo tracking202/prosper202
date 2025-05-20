@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if ($_POST['clickserver_id']) {
 		$api_key = base64_decode($_POST['api_key']);

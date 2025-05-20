@@ -1,5 +1,5 @@
-<?php 
-
+<?php
+declare(strict_types=1);
 //if the 202-config.php doesn't exist, we need to build one
 if ( !file_exists( dirname( __FILE__ ) . '/202-config.php') ) {
 	

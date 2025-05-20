@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 include_once (ROOT_PATH . '/202-interfaces/FraudDetectionInterface.php');
 
 class FraudDetectionIPQS implements FraudDetectionInterface

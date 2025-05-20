@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 function wptexturize($text) {
 	global $wp_cockneyreplace;
 	$next = true;

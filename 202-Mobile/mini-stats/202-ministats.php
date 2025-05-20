@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 //grab the users date range preferences
 $time = grab_timeframe();
 $mysql['to'] = $db->real_escape_string($time['to']);

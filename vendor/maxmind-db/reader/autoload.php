@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 /**
  * PSR-4 autoloader implementation for the MaxMind\DB namespace.
  * First we define the 'mmdb_autoload' function, and then we register

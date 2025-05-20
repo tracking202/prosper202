@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 $version = '1.9.55';
 
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');

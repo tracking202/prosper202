@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php');
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-snoopy.php');

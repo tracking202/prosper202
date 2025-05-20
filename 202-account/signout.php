@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 include_once(str_repeat("../", 1).'202-config/connect.php');
 
 if ($_SESSION['toolbar'] == 'true')

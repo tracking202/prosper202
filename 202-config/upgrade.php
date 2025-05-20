@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 ignore_user_abort(true);
 set_time_limit(0);
 //include mysql settings

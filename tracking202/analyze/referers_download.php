@@ -1,5 +1,5 @@
-<?php 
-
+<?php
+declare(strict_types=1);
 header("Content-type: application/octet-stream");
 
 # replace excelfile.xls with whatever you want the filename to default to
@@ -8,7 +8,7 @@ header("Pragma: no-cache");
 header("Expires: -1");
 
 include_once(substr(dirname( __FILE__ ), 0,-20) . '/202-config/connect.php');
-include_once(substr(dirname( __FILE__ ), 0,-20) . '/202-config/class-dataengine.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-20) . '/202-config/class-dataengine.php');
 
 AUTH::require_user();
 

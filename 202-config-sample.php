@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 // ** MySQL settings** //
 $dbname = 'putyourdbnamehere'; // The name of the database
 $dbuser = 'usernamehere'; // Your MySQL username

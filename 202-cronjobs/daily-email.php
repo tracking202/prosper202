@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 include_once(str_repeat("../", 1).'202-config/connect.php'); 
 
 	$hash = "SELECT install_hash FROM 202_users WHERE user_id = '1'";

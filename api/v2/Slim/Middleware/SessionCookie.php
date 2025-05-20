@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 /**
  * Slim - a micro PHP 5 framework
  *

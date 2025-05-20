@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 use UAParser\Parser;
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.

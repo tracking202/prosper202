@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 /**
  * @author Dick Munroe (munroe@csworks.com)
  * @copyright copyright @ 2004-2007, Dick Munroe, released under the GPL.

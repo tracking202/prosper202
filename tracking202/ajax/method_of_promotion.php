@@ -1,4 +1,6 @@
-<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
+<?php
+declare(strict_types=1);
+include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 //switch methoud of promotion based on if users is on a page with the refin box or not

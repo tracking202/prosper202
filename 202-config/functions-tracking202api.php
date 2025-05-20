@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 function getUrl($url, $requestType = 'GET', $timeout = 30) {
 	
 	$curl = new curl();

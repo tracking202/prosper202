@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 namespace Symfony\Component\Console\CommandLoader;
 
 use Symfony\Component\Console\Command\Command;

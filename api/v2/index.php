@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 require '/Slim/Slim.php';
 \Slim\Slim::registerAutoloader();
 

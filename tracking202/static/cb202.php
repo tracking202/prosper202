@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php');
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
 

@@ -1,4 +1,6 @@
-<?php ob_start();
+<?php
+declare(strict_types=1);
+ob_start();
 include_once(str_repeat("../", 1).'202-config/connect.php');
 include_once(str_repeat("../", 1).'202-config/class-dataengine.php');
 

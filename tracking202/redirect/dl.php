@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 #only allow numeric t202ids
 $t202id = $_GET['t202id']; 
 if (!is_numeric($t202id)) die();

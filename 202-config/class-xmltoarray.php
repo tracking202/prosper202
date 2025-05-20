@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 /* 
 * XMLToArray Generator Class 
 * @author  :  MA Razzaque Rupom <rupom_315@yahoo.com>, <rupom.bd@gmail.com> 

@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 /**
  * ReportSummaryForm contains methods to work with the report summaries.
  *  

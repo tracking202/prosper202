@@ -1,4 +1,6 @@
-<?php header("Pragma: no-cache");
+<?php
+declare(strict_types=1);
+header("Pragma: no-cache");
 header("Expires: -1"); 
 
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php'); 

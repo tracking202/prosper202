@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 use GuzzleHttp\json_decode;
 include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
 //our own die, that will display the them around the error message

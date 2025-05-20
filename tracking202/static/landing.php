@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 use UAParser\Parser;
 header('Content-type: application/javascript');
 header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');

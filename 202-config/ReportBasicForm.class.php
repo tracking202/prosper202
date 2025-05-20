@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 /**
  * ReportBasicForm contains methods to work with the advertiser_bounty_summary table.
  *  

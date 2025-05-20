@@ -1,4 +1,6 @@
-<?php include_once(dirname( __FILE__ ) . '/202-config/connect.php'); 
+<?php
+declare(strict_types=1);
+include_once(dirname( __FILE__ ) . '/202-config/connect.php');
 //Check if user is on the toolbar, if so send them to the toolbar login page
 
 if ($_SESSION['toolbar'] == 'true')

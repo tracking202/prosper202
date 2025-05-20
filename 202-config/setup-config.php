@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 //include functions
 require_once(dirname( __FILE__ ) . '/functions.php');
 

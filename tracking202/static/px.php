@@ -1,4 +1,6 @@
-<?php include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php'); 
+<?php
+declare(strict_types=1);
+include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php');
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
 	
 //get the aff_camapaign_id

@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 /*************************************************
 
 Snoopy - the PHP net client

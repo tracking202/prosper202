@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 /**
  * Get time zone
  * @param string $country

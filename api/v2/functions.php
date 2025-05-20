@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 function getAuth($db, $variables){
 	$mysql['api_key'] = $db->real_escape_string($variables['apikey']);
 	$key_sql = "SELECT 	*

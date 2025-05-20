@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 ini_set('memory_limit', '64M');
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php');
 

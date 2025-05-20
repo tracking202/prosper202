@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 header("content-type: image/gif"); 
 header('Content-Length: 43');
 header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');

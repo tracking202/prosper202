@@ -1,4 +1,5 @@
-<?php 
+<?php
+declare(strict_types=1);
 $url = $_GET['q'];
 $referrer = '';
 if (isset($_GET['r'])) {

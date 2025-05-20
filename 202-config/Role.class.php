@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 class Role
 {   
     private static $db;

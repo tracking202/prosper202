@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 use UAParser\Parser;
 
 #only allow numeric id

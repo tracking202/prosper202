@@ -1,5 +1,5 @@
-<?php 
-
+<?php
+declare(strict_types=1);
 header("Content-type: application/octet-stream");
 
 # replace excelfile.xls with whatever you want the filename to default to

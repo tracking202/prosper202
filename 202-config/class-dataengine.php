@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 ini_set('memory_limit', '-1');
 if (! $_SESSION['user_timezone']) {
     date_default_timezone_set('GMT');

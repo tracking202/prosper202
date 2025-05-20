@@ -1,20 +1,21 @@
-<?php 
+<?php
+declare(strict_types=1);
 //error_reporting(E_ALL);
 class AUTH {
 
 	const LOGOUT_DAYS = 14;
 
 	function logged_in() {
-		
+
 		$session_time_passed = time() - $_SESSION['session_time'];
 		if  ($_SESSION['user_name'] AND $_SESSION['user_id'] AND ($_SESSION['session_fingerprint'] == md5('session_fingerprint' . $_SERVER['HTTP_USER_AGENT'] . session_id())) AND ($session_time_passed < 50000)) {
-			
+
 			$_SESSION['session_time'] = time();
 			return true;
-			
+
 		} else {
 			return false;
-			
+
 		}
 	}
 

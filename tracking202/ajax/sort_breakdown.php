@@ -1,4 +1,6 @@
-<?php include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
+<?php
+declare(strict_types=1);
+include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/class-dataengine.php');
 AUTH::require_user();
 
@@ -9,7 +11,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 	$time = grab_timeframe();
 	$mysql['to'] = $db->real_escape_string($time['to']);
 	$mysql['from'] = $db->real_escape_string($time['from']);
-	 
+
 	 $de = new DataEngine();
 	 $data=($de->getReportData('breakdown',$mysql['from'], $mysql['to'],$cpv));
 	 $dr= new DisplayData();

@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 set_time_limit(0);
 
 include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
@@ -8,15 +9,15 @@ class INSTALL {
 	function install_databases() {
 
 		$database = DB::getInstance();
-    	$db = $database->getConnection();
+	$db = $database->getConnection();
 
 		$php_version = PROSPER202::php_version();
 
 		//Try to disable mysql strict mode
 		$sql = "SET session sql_mode= ''";
 		$result = _mysqli_query($sql);
-	
-		
+
+
 		//create the new mysql version table
 		$sql = "CREATE TABLE IF NOT EXISTS `202_version` (
 					  `version` varchar(50) NOT NULL

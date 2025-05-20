@@ -1,4 +1,5 @@
-<?php 
+<?php
+declare(strict_types=1);
 include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/class-dataengine.php'); 
 

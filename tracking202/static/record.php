@@ -1,4 +1,6 @@
-<?php header('Content-type: application/javascript');
+<?php
+declare(strict_types=1);
+header('Content-type: application/javascript');
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php'); 
  

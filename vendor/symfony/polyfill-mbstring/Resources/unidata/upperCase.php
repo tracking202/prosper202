@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 static $data = array (
   'a' => 'A',
   'b' => 'B',

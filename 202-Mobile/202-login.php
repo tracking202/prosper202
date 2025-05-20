@@ -1,4 +1,5 @@
-<?php 
+<?php
+declare(strict_types=1);
 include_once(substr(dirname( __FILE__ ), 0,-11) . '/202-config/connect.php'); 
 if( AUTH::logged_in() ) {
 	header('location: '.get_absolute_url().'202-Mobile/mini-stats');
