@@ -10,7 +10,7 @@ $mchost = 'localhost'; // this is the memcache server host, if you don't know wh
 
 /*---DONT EDIT ANYTHING BELOW THIS LINE!---*/
 
-//Database conncetion class
+//Database connection class
 class DB {
         private $_connection,$_connectionro;
         private static $_instance; //The single instance

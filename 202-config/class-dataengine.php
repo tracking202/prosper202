@@ -341,7 +341,7 @@ class DataEngine
         }
                 
         if ($memcacheWorking) {
-            $time = 2592000; // 7 days in sec
+            $time = 2592000; // 30 days in sec
                             // get from memcached
             $getID = $memcache->get(md5("ip-id" . $mysql['ip_address'] . systemHash()));
             
