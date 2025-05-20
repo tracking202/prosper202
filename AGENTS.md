@@ -46,8 +46,6 @@ To ensure code quality and functionality:
    ```bash
    composer install
    ```
-4. **Environment Setup**:
-   If a `setup.sh` script is present, execute it to prepare the development environment.
 
 ## Agent Interaction Guidelines
 
