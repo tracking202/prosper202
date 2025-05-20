@@ -155,7 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                 if (ini_get('magic_quotes_gpc')) {
                                         $pixelCode = stripslashes($pixelCode);
                                 }
-                                $mysql['pixel_code'] = $db->real_escape_string(addslashes($pixelCode));
+                                $mysql['pixel_code'] = $db->real_escape_string($pixelCode);
 
 				if($mysql['pixel_code']!="" && $mysql['pixel_type_id']!=""){
 
