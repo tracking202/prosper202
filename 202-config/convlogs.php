@@ -1,14 +1,15 @@
 <?php
+
 declare(strict_types=1);
 function addConversionLog($click_id, $txid, $campaign_id, $click_payout_added, $user_id, $click_time, $ip, $user_agent, $type, $conv_time = null)
 {
     $database = DB::getInstance();
     $db = $database->getConnection();
-    
+
     if ($conv_time == null) {
         $conv_time = time();
     }
-    
+
     $mysql['txid'] = $db->real_escape_string($txid);
     $click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time));
     $conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
@@ -41,26 +42,26 @@ function ignoreDuplicates()
 {
     switch ($_SERVER['REQUEST_METHOD']) {
         case 'GET':
-            $the_request = & $_GET;
+            $the_request = &$_GET;
             break;
         case 'POST':
-            $the_request = & $_POST;
+            $the_request = &$_POST;
             break;
     }
-    
+
     $database = DB::getInstance();
     $db = $database->getConnection();
-    
+
     $click_id = $db->real_escape_string($the_request['subid']);
     $txid = $db->real_escape_string($the_request['t202txid']);
     $dedupe = $db->real_escape_string($the_request['t202dedupe']);
-    
+
     if ($txid == '')
         $txid_sql = "IS NULL";
     else
-        $txid_sql = "= '" . $db->real_escape_string($txid) ."'";
-    
-    $dedupe_sql = "select * from 202_conversion_logs where click_id=".$click_id." and transaction_id " . $txid_sql;
+        $txid_sql = "= '" . $db->real_escape_string($txid) . "'";
+
+    $dedupe_sql = "select * from 202_conversion_logs where click_id=" . $click_id . " and transaction_id " . $txid_sql;
     $dedupe_result = $db->query($dedupe_sql);
     if ($dedupe == '1' && $db->affected_rows > 0) {
         return true;
@@ -68,5 +69,3 @@ function ignoreDuplicates()
         return false;
     }
 }
-
-?>
