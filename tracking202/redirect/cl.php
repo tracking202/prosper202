@@ -6,7 +6,7 @@ use Tracking202\Redirect\RedirectHelper;
 require_once substr(dirname(__FILE__), 0, -21) . '/202-config/connect2.php';
 
 // Validate required parameter
-$clickIdPublic = RedirectHelper::getStringParam('pci');
+$clickIdPublic = RedirectHelper::getIntParam('pci');
 if ($clickIdPublic === null) {
     RedirectHelper::redirect('/202-404.php');
 }
