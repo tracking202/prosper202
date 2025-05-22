@@ -8,7 +8,12 @@ if (!is_numeric($t202id)) die();
 include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
 include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
 
-//continue processing even if the client disconnects
+// Enable processing to continue even if the client disconnects.
+// This is necessary to ensure that critical operations, such as database updates
+// or logging, are completed even if the user closes their browser or loses connection.
+// Note: The behavior of ignore_user_abort(true) can vary depending on the PHP SAPI environment.
+// For example, in CLI mode, this function has no effect, while in Apache or CGI contexts,
+// it ensures that the script continues execution regardless of client disconnection.
 ignore_user_abort(true);
 
 $usedCachedRedirect = false;
