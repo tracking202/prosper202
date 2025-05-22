@@ -180,12 +180,21 @@ if ($navigation[1] == 'tracking202') {
 if (($navigation[1]) and ($navigation[1] != '202-config')) {
 	
 	//we can initalize the session managers 
-	if (!$stopSessions) { 
-		
-		//disable mysql sessions because they are slow
-		//$sess = new SessionManager(); 
-		session_start();    
-	} 
+        if (!$stopSessions) {
+
+                //disable mysql sessions because they are slow
+                //$sess = new SessionManager();
+                $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+                session_set_cookie_params([
+                        'lifetime' => 0,
+                        'path' => '/',
+                        'domain' => $_SERVER['HTTP_HOST'] ?? '',
+                        'secure' => $secure,
+                        'httponly' => true,
+                        'samesite' => 'Lax'
+                ]);
+                session_start();
+        }
 	
 	//run the cronjob checker
 //	include_once(ROOT_PATH . '/202-cronjobs/index.php'); 
