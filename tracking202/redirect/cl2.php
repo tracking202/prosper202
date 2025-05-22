@@ -1,10 +1,14 @@
 <?php
 declare(strict_types=1);
-$url = $_GET['q'];
-$referrer = '';
-if (isset($_GET['r'])) {
-	$referrer = $_GET['r']; 
+
+use Tracking202\Redirect\RedirectHelper;
+
+$url = RedirectHelper::getStringParam('q');
+if ($url === null) {
+    RedirectHelper::redirect('/202-404.php');
 }
+
+$referrer = RedirectHelper::getStringParam('r') ?? '';
 
 ?>
 
