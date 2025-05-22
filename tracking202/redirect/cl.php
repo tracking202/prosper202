@@ -1,11 +1,21 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
 
-//run script   
-$mysql['click_id_public'] = $db->real_escape_string($_GET['pci']);
-if(isset($_GET['202vars'])){
-$mysql['202vars'] = base64_decode($db->real_escape_string($_GET['202vars']));
+use Tracking202\Redirect\RedirectHelper;
+
+require_once substr(dirname(__FILE__), 0, -21) . '/202-config/connect2.php';
+
+// Validate required parameter
+$clickIdPublic = RedirectHelper::getStringParam('pci');
+if ($clickIdPublic === null) {
+    RedirectHelper::redirect('/202-404.php');
+}
+
+$mysql['click_id_public'] = $db->real_escape_string($clickIdPublic);
+
+$varsParam = RedirectHelper::getStringParam('202vars');
+if ($varsParam !== null) {
+    $mysql['202vars'] = base64_decode($db->real_escape_string($varsParam));
 }
 $tracker_sql = "
 	SELECT
