@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 use Tracking202\Redirect\RedirectHelper;
 
-$vars = explode(' ', base64_decode((string)($_GET['202v'] ?? '')));
+$vars = explode(' ', base64_decode(RedirectHelper::getStringParam('202v')));
 
 if(isset($vars[1])){
 $_GET['pci']=$vars[1];
