@@ -108,10 +108,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 if (!$success) {
 
-	$phpversion = phpversion(); 
-	if ($phpversion < 5.4) { 
-		$version_error['phpversion'] = 'Prosper202 requires PHP 5.4, or newer.';
-	}
+        $phpVersion = PHP_VERSION;
+        if (version_compare($phpVersion, '8.3', '<')) {
+                $version_error['phpversion'] = 'Prosper202 requires PHP 8.3, or newer.';
+        }
 
     // Get Database version
 	$mysqlversion = $db->server_info;

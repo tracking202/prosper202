@@ -29,10 +29,9 @@ if (is_installed() == true) {
 	
 	$html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
 
-	//$phpversion = phpversion(); 
-	if ((version_compare(PHP_VERSION, '5.4') < 0)) { 
-		$version_error['phpversion'] = 'Prosper202 requires PHP 5.4, or newer.';
-	}
+        if (version_compare(PHP_VERSION, '8.3', '<')) {
+                $version_error['phpversion'] = 'Prosper202 requires PHP 8.3, or newer.';
+        }
 
 
 	if (!function_exists('curl_version')) { 
@@ -86,10 +85,10 @@ info_top(); ?>
 		</tr>
 	</thead>
 	<tbody>
-		<tr>
-			<td>PHP >= 5.6 <strong> (Use PHP 7+ For Up to 400x Faster Redirects)</strong></td>
-			<td><span class="label label-<?php if ($version_error['phpversion']) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php echo phpversion(); ?></span></td>
-		</tr>
+                <tr>
+                        <td>PHP >= 8.3 <strong>(Use PHP 8.3+ for best performance)</strong></td>
+                        <td><span class="label label-<?php if ($version_error['phpversion']) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php echo phpversion(); ?></span></td>
+                </tr>
 		<tr>
 			<td><?php echo $dbwording?></td>
 			<td><span class="label label-<?php if ($version_error['mysqlversion']) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php echo $html['mysqlversion'] ;?></span></td>
