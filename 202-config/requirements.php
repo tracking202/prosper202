@@ -29,8 +29,8 @@ if (is_installed() == true) {
 	
 	$html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
 
-        if (version_compare(PHP_VERSION, '8.3', '<')) {
-                $version_error['phpversion'] = 'Prosper202 requires PHP 8.3, or newer.';
+        if (!php_version_supported()) {
+                $version_error['phpversion'] = 'Prosper202 requires PHP ' . PROSPER202_MIN_PHP_VERSION . ', or newer.';
         }
 
 

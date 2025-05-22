@@ -2,6 +2,15 @@
 declare(strict_types=1);
 use GuzzleHttp\json_decode;
 include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
+
+if (!defined('PROSPER202_MIN_PHP_VERSION')) {
+    define('PROSPER202_MIN_PHP_VERSION', '8.3');
+}
+
+function php_version_supported(): bool
+{
+    return version_compare(PHP_VERSION, PROSPER202_MIN_PHP_VERSION, '>=');
+}
 //our own die, that will display the them around the error message
 
 function get_absolute_url(){
