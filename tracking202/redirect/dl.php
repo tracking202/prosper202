@@ -559,9 +559,11 @@ $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_i
 
 $urlvars = getPrePopVars($_GET);
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
-$redirectLocation = ($cloaking_on === true) ?
-    setPrePopVars($urlvars, $cloaking_site_url, true) :
-    setPrePopVars($urlvars, $redirect_site_url, false);
+if ($cloaking_on === true) {
+    $redirectLocation = setPrePopVars($urlvars, $cloaking_site_url, true);
+} else {
+    $redirectLocation = setPrePopVars($urlvars, $redirect_site_url, false);
+}
 header('Location: ' . $redirectLocation);
 if (function_exists('fastcgi_finish_request')) {
     fastcgi_finish_request();
