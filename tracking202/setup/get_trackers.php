@@ -10,9 +10,10 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 }
 
 $mysql['user_id'] = $db->real_escape_string($_SESSION ['user_id']);
-$mysql['tracker_id_public'] = $db->real_escape_string($_GET['edit_tracker_id']);
-
-if ($_GET['edit_tracker_id']) {
+$editTrackerId = filter_input(INPUT_GET, 'edit_tracker_id', FILTER_SANITIZE_NUMBER_INT);
+$mysql['tracker_id_public'] = $db->real_escape_string($editTrackerId);
+$showEdit = !empty($editTrackerId);
+if ($showEdit) {
 	$edit_tracker_sql = "SELECT * FROM 202_trackers AS 2tr
 						 LEFT JOIN 202_landing_pages AS 2lp ON (2tr.landing_page_id = 2lp.landing_page_id)
 						 LEFT JOIN 202_aff_campaigns AS 2ac ON (2tr.aff_campaign_id = 2ac.aff_campaign_id)
@@ -24,9 +25,9 @@ if ($_GET['edit_tracker_id']) {
 	$cpc_value = explode(".", $edit_tracker_row['click_cpc'], 2);
 	$cpa_value = explode(".", $edit_tracker_row['click_cpa'], 2);
 
-	if ($edit_tracker_result->num_rows == 0) {
-		$_GET['edit_tracker_id'] = false;
-	}
+        if ($edit_tracker_result->num_rows == 0) {
+                $showEdit = false;
+        }
 }
 
 template_top('Get Trackers',NULL,NULL,NULL);  ?>
@@ -47,16 +48,16 @@ template_top('Get Trackers',NULL,NULL,NULL);  ?>
 <div class="row">
 	<div class="col-xs-7">
 		<form method="post" id="tracking_form" class="form-horizontal" role="form" style="margin:0px 0px 0px 15px;">
-			<?php if ($_GET['edit_tracker_id']) { ?>
-				<input type="hidden" name="edit_tracker" value="1">
-				<input type="hidden" name="tracker_id" value="<?php echo $_GET['edit_tracker_id'];?>">
-			<?php } ?>
+                        <?php if ($showEdit) { ?>
+                                <input type="hidden" name="edit_tracker" value="1">
+                                <input type="hidden" name="tracker_id" value="<?php echo htmlentities($editTrackerId, ENT_QUOTES, 'UTF-8'); ?>">
+                        <?php } ?>
 			<div class="form-group <?php if($error['landing_page_type']) echo 'has-error';?>" style="margin-bottom: 0px;" id="tracker-type">
 				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Get Text Ad Code For:</label>
 
 				<div class="col-xs-8" style="margin-top: 15px;">
 					<label class="radio">
-	            		<input type="radio" name="tracker_type" value="0" data-toggle="radio" <?php if ($edit_tracker_row['landing_page_type'] == false || $edit_tracker_row['landing_page_id'] == false) echo "checked";?> <?php if (!$_GET['edit_tracker_id']) echo "checked";?>>
+                                <input type="radio" name="tracker_type" value="0" data-toggle="radio" <?php if ($edit_tracker_row['landing_page_type'] == false || $edit_tracker_row['landing_page_id'] == false) echo "checked";?> <?php if (!$showEdit) echo "checked";?>>
 	            			Direct Link Setup, or Simple Landing Page Setup
 	          		</label>
 	          		<label class="radio">
@@ -185,7 +186,7 @@ template_top('Get Trackers',NULL,NULL,NULL);  ?>
 		    	<label class="col-xs-4 control-label" for="cost_type" style="text-align: left;">Cost Type:</label>
 		    	<div class="col-xs-6">
 					<label class="radio radio-inline">
-	            		<input type="radio" name="cost_type" value="cpc" data-toggle="radio" <?php if ($edit_tracker_row['click_cpa'] == NULL || !$_GET['edit_tracker_id']) echo "checked";?>>CPC
+                                <input type="radio" name="cost_type" value="cpc" data-toggle="radio" <?php if ($edit_tracker_row['click_cpa'] == NULL || !$showEdit) echo "checked";?>>CPC
 	          		</label>
 	          		<label class="radio radio-inline">
 	            		<input type="radio" name="cost_type" value="cpa" data-toggle="radio" <?php if ($edit_tracker_row['click_cpa']) echo "checked";?>>CPA
@@ -198,24 +199,24 @@ template_top('Get Trackers',NULL,NULL,NULL);  ?>
 				<div class="col-xs-6" style="margin-top: 10px;">
 					<div class="input-group input-group-sm">
 		          	  <span class="input-group-addon">$</span>
-		          	  <input class="form-control" name="cpc_dollars" id="cpc_dollars" maxlength="2" type="text" value="<?php if($_GET['edit_tracker_id']) echo $cpc_value[0]; else echo '0';?>">
+                                  <input class="form-control" name="cpc_dollars" id="cpc_dollars" maxlength="2" type="text" value="<?php if($showEdit) echo $cpc_value[0]; else echo '0';?>">
 
 		          	  <span class="input-group-addon">&cent;</span>
-		          	  <input class="form-control" name="cpc_cents" maxlength="5" id="cpc_cents" type="text" value="<?php if($_GET['edit_tracker_id']) echo $cpc_value[1]; else echo '00';?>">
+                                  <input class="form-control" name="cpc_cents" maxlength="5" id="cpc_cents" type="text" value="<?php if($showEdit) echo $cpc_value[1]; else echo '00';?>">
 		          	</div>
 		          	<span class="help-block" style="font-size: 11px;">you can enter cpc amounts as small as 0.00001</span>
 				</div>
 			</div>
 
-			<div class="form-group" id="cpa_costs" style="margin-bottom: 0px; <?php if ($edit_tracker_row['click_cpa'] == NULL || !$_GET['edit_tracker_id']) echo "display:none";?>">
+                        <div class="form-group" id="cpa_costs" style="margin-bottom: 0px; <?php if ($edit_tracker_row['click_cpa'] == NULL || !$showEdit) echo "display:none";?>">
 				<label class="col-xs-4 control-label" for="cpa_dollars" style="text-align: left;">Max CPA:</label>
 				<div class="col-xs-6" style="margin-top: 10px;">
 					<div class="input-group input-group-sm">
 		          	  <span class="input-group-addon">$</span>
-		          	  <input class="form-control" name="cpa_dollars" id="cpa_dollars" maxlength="2" type="text" value="<?php if($_GET['edit_tracker_id'] && $cpa_value[0]) echo $cpa_value[0]; else echo '0';?>">
+                                  <input class="form-control" name="cpa_dollars" id="cpa_dollars" maxlength="2" type="text" value="<?php if($showEdit && $cpa_value[0]) echo $cpa_value[0]; else echo '0';?>">
 
 		          	  <span class="input-group-addon">&cent;</span>
-		          	  <input class="form-control" name="cpa_cents" maxlength="5" id="cpa_cents" type="text" value="<?php if($_GET['edit_tracker_id'] && $cpa_value[1]) echo $cpa_value[1]; else echo '00';?>">
+                                  <input class="form-control" name="cpa_cents" maxlength="5" id="cpa_cents" type="text" value="<?php if($showEdit && $cpa_value[1]) echo $cpa_value[1]; else echo '00';?>">
 		          	</div>
 		          	<span class="help-block" style="font-size: 11px;">you can enter cpa amounts as small as 0.00001</span>
 				</div>
@@ -276,7 +277,7 @@ template_top('Get Trackers',NULL,NULL,NULL);  ?>
 
 			<div class="form-group">
 				<div class="col-xs-10" style="margin-top: 10px;">
-					<input type="button" id="get-links" class="btn btn-sm btn-p202 btn-block" value="<?php if ($_GET['edit_tracker_id']) echo "Edit Tracking Link"; else echo "Generate Tracking Link";?>">					
+                                        <input type="button" id="get-links" class="btn btn-sm btn-p202 btn-block" value="<?php if ($showEdit) echo "Edit Tracking Link"; else echo "Generate Tracking Link";?>">
 				</div>
 			</div>
 
@@ -397,7 +398,7 @@ template_top('Get Trackers',NULL,NULL,NULL);  ?>
         var element8 = $('#tracker_rotator');
 
         <?php 
-        if ($_GET['edit_tracker_id']) {
+        if ($showEdit) {
 	        if ($edit_tracker_row['landing_page_type'] == false && $edit_tracker_row['rotator_id'] == false) { ?>
 	        	
 	        	element1.show();

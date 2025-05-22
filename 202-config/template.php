@@ -66,7 +66,7 @@ if(!$_SESSION['publisher']){
 	<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery.tablesorter.min.js"></script>
 	<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery.tablesorter.widgets.js"></script>
 	<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery.tablesorter.pager.min.js"></script>
-	<script type="text/javascript" src="<?php echo get_absolute_url();?>202-js/dni.search.offers.tablesorter.php?ddlci=<?php echo $_GET['ddlci'];?>"></script>
+        <script type="text/javascript" src="<?php echo get_absolute_url();?>202-js/dni.search.offers.tablesorter.php?ddlci=<?php echo urlencode($_GET['ddlci'] ?? ''); ?>"></script>
 	<?php } ?>
 	<?php if(($navigation[2] == "setup") AND ($navigation[3] == "ads.php")) { ?>
 	<script type="text/javascript" src="<?php echo get_absolute_url();?>202-js/dropzone.js"></script>
