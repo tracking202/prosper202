@@ -191,7 +191,7 @@ PHP;
             true,
             [$key => $url]
         );
-        $this->assertContains('location: http://example.com/?affsub=p202&c1=foo', $result['headers']);
+        $this->assertStringContainsString('location: http://example.com/?affsub=p202&c1=foo', $result['headers']);
     }
 
     public function testCachedRedirectError(): void
