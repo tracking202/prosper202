@@ -5,8 +5,16 @@ $t202id = $_GET['t202id'];
 if (!is_numeric($t202id)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php'); 
+include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
 include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
+
+// Enable processing to continue even if the client disconnects.
+// This is necessary to ensure that critical operations, such as database updates
+// or logging, are completed even if the user closes their browser or loses connection.
+// Note: The behavior of ignore_user_abort(true) can vary depending on the PHP SAPI environment.
+// For example, in CLI mode, this function has no effect, while in Apache or CGI contexts,
+// it ensures that the script continues execution regardless of client disconnection.
+ignore_user_abort(true);
 
 $usedCachedRedirect = false;
 if (!$db) $usedCachedRedirect = true;
@@ -549,58 +557,55 @@ $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_id);
 
 
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url); 
+$urlvars = getPrePopVars($_GET);
+setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
+if ($cloaking_on === true) {
+    $redirectLocation = setPrePopVars($urlvars, $cloaking_site_url, true);
+} else {
+    $redirectLocation = setPrePopVars($urlvars, $redirect_site_url, false);
+}
+header('Location: ' . $redirectLocation);
+if (function_exists('fastcgi_finish_request')) {
+    fastcgi_finish_request();
+}
+
+$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
 
 //insert this
 $click_sql = "INSERT INTO   202_clicks_site
-			  SET           click_id='".$mysql['click_id']."',
-							click_referer_site_url_id='".$mysql['click_referer_site_url_id']."',
-							click_outbound_site_url_id='".$mysql['click_outbound_site_url_id']."',
-							click_redirect_site_url_id='".$mysql['click_redirect_site_url_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);   
+                          SET           click_id='".$mysql['click_id']."',
+                                                        click_referer_site_url_id='".$mysql['click_referer_site_url_id']."',
+                                                        click_outbound_site_url_id='".$mysql['click_outbound_site_url_id']."',
+                                                        click_redirect_site_url_id='".$mysql['click_redirect_site_url_id']."'";
+$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 
 
+//update the click summary table
 
-//update the click summary table 
+        $now = time();
 
-	$now = time();
+        $today_day = date('j', time());
+        $today_month = date('n', time());
+        $today_year = date('Y', time());
 
-	$today_day = date('j', time());
-	$today_month = date('n', time());
-	$today_year = date('Y', time());
+        //the click_time is recorded in the middle of the day
+        $click_time = mktime(12,0,0,$today_month,$today_day,$today_year);
+        $mysql['click_time'] = $db->real_escape_string($click_time);
 
-	//the click_time is recorded in the middle of the day
-	$click_time = mktime(12,0,0,$today_month,$today_day,$today_year);
-	$mysql['click_time'] = $db->real_escape_string($click_time);
 
- 
 if ($mysql['click_cpa'] != NULL) {
-	$insert_sql = "INSERT INTO 202_cpa_trackers
-				   SET         click_id='".$mysql['click_id']."',
-							   tracker_id_public='".$mysql['tracker_id_public']."'";
-	$insert_result = $db->query($insert_sql);
+        $insert_sql = "INSERT INTO 202_cpa_trackers
+                                   SET         click_id='".$mysql['click_id']."',
+                                                           tracker_id_public='".$mysql['tracker_id_public']."'";
+        $insert_result = $db->query($insert_sql);
 }
-
-//set the cookie
-setClickIdCookie($mysql['click_id'],$mysql['aff_campaign_id']);
 
 //set dirty hour
 $de = new DataEngine();
 $data=($de->setDirtyHour($mysql['click_id']));
 
 if (isset($_COOKIE['p202_ipx'])) {
-	$mysql['p202_ipx'] = $db->real_escape_string($_COOKIE['p202_ipx']);
-	$db->query("UPDATE 202_clicks_impressions SET click_id = '".$mysql['click_id']."' WHERE impression_id = '".$mysql['p202_ipx']."'");
+        $mysql['p202_ipx'] = $db->real_escape_string($_COOKIE['p202_ipx']);
+        $db->query("UPDATE 202_clicks_impressions SET click_id = '".$mysql['click_id']."' WHERE impression_id = '".$mysql['p202_ipx']."'");
 }
-
-//get and prep extra stuff for pre-pop or data passing
-$urlvars = getPrePopVars($_GET);
-
-//now we've recorded, now lets redirect them
-if ($cloaking_on == true) {
-	//if cloaked, redirect them to the cloaked site. 
-	header('location: '.setPrePopVars($urlvars,$cloaking_site_url,true));
-} else {
-	header('location: '.setPrePopVars($urlvars,$redirect_site_url,false));
-} 
