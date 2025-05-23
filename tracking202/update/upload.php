@@ -28,7 +28,9 @@ function about_revenue_upload() {
 
 $upload_dir = dirname(__FILE__) . '/reports/';
 
-switch ($_GET['case']) { 
+$case = isset($_GET['case']) ? (int)$_GET['case'] : 0;
+
+switch ($case) {
 
 	case 1:
 		
