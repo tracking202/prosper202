@@ -133,4 +133,4 @@ template_top('Get Advanced Landing Page Code',NULL,NULL,NULL);  ?>
 	</div>
 </div>
 	
-<?php template_bottom($server_row);
+<?php template_bottom();

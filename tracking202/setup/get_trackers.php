@@ -480,4 +480,4 @@ template_top('Get Trackers',NULL,NULL,NULL);  ?>
 
 	});
 </script>
-<?php template_bottom($server_row);
+<?php template_bottom();
