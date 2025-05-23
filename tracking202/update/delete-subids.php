@@ -5,6 +5,8 @@ include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-
 
 AUTH::require_user();
 
+$success = false;
+
 if (!$userObj->hasPermission("access_to_update_section") || !$userObj->hasPermission("delete_individual_subids")) {
 	header('location: '.get_absolute_url().'tracking202/');
 	die();
@@ -14,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	
-    $subids = $_POST['subids']; 
+    $subids = $_POST['subids'] ?? '';
 	$subids = trim($subids); 
 	$subids = explode("\r",$subids);
 	$subids = str_replace("\n",'',$subids);
@@ -104,7 +106,7 @@ template_top('Delete Subids',NULL,NULL,NULL); ?>
 		<form method="post" action="" class="form-horizontal" role="form">
 			<div class="form-group" style="margin:0px 0px 15px 0px;">
 			    <label for="subids">Subids</label>
-				<textarea rows="5" name="subids" id="subids" placeholder="Add your subids..." class="form-control"><?php echo $_POST['subids']; ?></textarea>			  
+                                <textarea rows="5" name="subids" id="subids" placeholder="Add your subids..." class="form-control"><?php echo $_POST['subids'] ?? ''; ?></textarea>
 			</div>
 			<button class="btn btn-sm btn-p202 btn-block" type="submit">Update Subids</button>
 		</form>
@@ -112,3 +114,4 @@ template_top('Delete Subids',NULL,NULL,NULL); ?>
 </div>
 <script src="/202-js/flatui-fileinput.js"></script>
 <?php template_bottom();
+
