@@ -6,7 +6,7 @@ include_once(str_repeat("../", 1).'202-config/clickserver_api_management.php');
 AUTH::require_user();
 
 //get all of the user data
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $user_sql = "	SELECT 	`clickserver_api_key`
 				 FROM   	`202_users` 
 				 WHERE  	`202_users`.`user_id`='".$mysql['user_id']."'";
