@@ -5,7 +5,7 @@ include_once(dirname( __FILE__ ) . '/202-config/connect.php');
 
 
 	//take password retireveal and see if it is legitimate
-	$mysql['user_pass_key'] = $db->real_escape_string($_GET['key']);
+	$mysql['user_pass_key'] = $db->real_escape_string((string)$_GET['key']);
 	
 	$user_sql = "SELECT * FROM 202_users WHERE user_pass_key='".$mysql['user_pass_key']."'";
 	$user_result = _mysqli_query($user_sql);
@@ -52,7 +52,7 @@ include_once(dirname( __FILE__ ) . '/202-config/connect.php');
 		}
 	}   
 	
-	$html['user_name'] = htmlentities($user_row['user_name'], ENT_QUOTES, 'UTF-8'); 
+	$html['user_name'] = htmlentities((string)($user_row['user_name'] ?? ''), ENT_QUOTES, 'UTF-8'); 
 
 
 
