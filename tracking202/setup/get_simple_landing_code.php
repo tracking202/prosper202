@@ -98,4 +98,4 @@ template_top('Get Simple Landing Page Code',NULL,NULL,NULL);  ?>
 	});
 </script>
 		
-<?php template_bottom($server_row);
+<?php template_bottom();
