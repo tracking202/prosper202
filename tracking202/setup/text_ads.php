@@ -262,7 +262,7 @@ if (!empty($_GET['edit_text_ad_id'])) {
 	
 }
 
-if ((($editing == true) or ($add_success != true)) and ($mysql['aff_campaign_id'])) {
+if ((($editing === true) || ($add_success !== true)) && !empty($mysql['aff_campaign_id'])) {
     //now grab the affiliate network id, per that aff campaign id
     $aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."'";
     $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
@@ -334,8 +334,8 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 	          	</div>
 	        </div>
 
-	        <div id="aff-campaign-div" <?php if (isset($html['text_ad_type']) && $html['text_ad_type'] == '1') { echo 'style="display:none;"'; } ?>>
-		        <div class="form-group <?php if($error['aff_campaign_id']) echo "has-error";?>" style="margin-bottom: 0px;">
+                <div id="aff-campaign-div" <?php if (isset($html['text_ad_type']) && $html['text_ad_type'] == '1') { echo 'style="display:none;"'; } ?>>
+                        <div class="form-group <?php if (!empty($error['aff_campaign_id'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
 		        	<label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Category:</label>
 		        	<div class="col-xs-6" style="margin-top: 10px;">
 		        		<img id="aff_network_id_div_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif"/>
@@ -343,7 +343,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 		        	</div>
 		        </div>
 
-		        <div id="aff-campaign-group" class="form-group <?php if($error['aff_campaign_id']) echo "has-error";?>" style="margin-bottom: 0px;">
+                        <div id="aff-campaign-group" class="form-group <?php if (!empty($error['aff_campaign_id'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
 		        	<label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Campaign:</label>
 		        	<div class="col-xs-6" style="margin-top: 10px;">
 		        		<img id="aff_campaign_id_div_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif" style="display: none;"/>
@@ -356,8 +356,8 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 		        </div>
 	        </div>
 
-	        <div id="lp_landing_page" <?php if (isset($html['text_ad_type']) && (($html['text_ad_type'] == '0') || (!$html['text_ad_type']))) { echo ' style="display:none;"'; } ?>>
-		        <div class="form-group <?php if($error['landing_page_id']) echo "has-error";?>" style="margin-bottom: 0px;">
+                <div id="lp_landing_page" <?php if (isset($html['text_ad_type']) && (($html['text_ad_type'] == '0') || (!$html['text_ad_type']))) { echo ' style="display:none;"'; } ?>>
+                        <div class="form-group <?php if (!empty($error['landing_page_id'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
 		        	<label for="landing_page_id" class="col-xs-4 control-label" style="text-align: left;">Landing Page:</label>
 		        	<div class="col-xs-6" style="margin-top: 10px;">
 		        		<img id="landing_page_div_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif"/>
@@ -366,7 +366,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 		        </div>
 	        </div>
 
-	        <div class="form-group <?php if($error['text_ad_name']) echo "has-error";?>" style="margin-bottom: 0px;">
+                <div class="form-group <?php if (!empty($error['text_ad_name'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
 		        <label for="text_ad_name" class="col-xs-4 control-label" style="text-align: left;">Ad Nickname <span class="fui-info-circle" data-toggle="tooltip" title="The ad nickname is the nickname we store for you, this is used for when you have several ads, you can quickly find the ones you are looking for by assigning each ad a unique nickname."></span></label>
 		        <div class="col-xs-6" style="margin-top: 10px;">
 	                <input type="text" class="form-control input-sm" id="text_ad_name" name="text_ad_name" value="<?php echo isset($html['text_ad_name']) ? $html['text_ad_name'] : ''; ?>">
