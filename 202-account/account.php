@@ -12,6 +12,12 @@ $mysql = array();
 $selected = array();
 $add_success = false;
 $delete_success = false;
+$update_profile = false;
+$change_user_pass = false;
+$update_clickserver_api_key_done = false;
+$change_api_key = false;
+$removed_user_api_key = false;
+$change_p202_customer_api_key = false;
 
 $utc = new DateTimeZone('UTC');
 $dt = new DateTime('now', $utc);
@@ -63,7 +69,7 @@ if (!empty($_GET['customers_api_key'])) {
 }
 
 //if they want to remove their stats202 app key on file, do so
-if ($_GET['remove_user_stats202_app_key']) {
+if (!empty($_GET['remove_user_stats202_app_key'])) {
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_stats202_app_key='' WHERE user_id='" . $mysql['user_id'] . "'";
 	$result = $db->query($sql);
@@ -73,7 +79,7 @@ if ($_GET['remove_user_stats202_app_key']) {
 }
 
 //if they want to remove their user api key on file, do so
-if ($_GET['remove_user_api_key']) {
+if (!empty($_GET['remove_user_api_key'])) {
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_api_key='' WHERE user_id='" . $mysql['user_id'] . "'";
 	$result = $db->query($sql);
@@ -105,6 +111,7 @@ $html = array_map('htmlentities', $user_row);
 
 //make it hide most of the api keys
 $hideChars = 22;
+$hiddenPart = '';
 
 if ($userObj->hasPermission("access_to_personal_settings")) {
 	for ($x = 0; $x < $hideChars; $x++) $hiddenPart .= '*';
@@ -312,7 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 }
 
-if ($_POST['update_account_currency'] == '1') {
+if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency'] == '1') {
 
 	if ($_POST['token'] != $_SESSION['token']) {
 		$error['token'] = 'You must use our forms to submit data.';
@@ -355,7 +362,7 @@ if ($_POST['update_account_currency'] == '1') {
 	$update_profile = true;
 }
 
-if ($_POST['update_clickserver_api_key'] == '1') {
+if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_api_key'] == '1') {
 
 	if ($_POST['token'] != $_SESSION['token']) {
 		$error['token'] = 'You must use our forms to submit data.';
@@ -388,7 +395,7 @@ if ($_POST['update_clickserver_api_key'] == '1') {
 	}
 }
 
-if ($_POST['change_user_api_key'] == '1') {
+if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1') {
 
 	if ($_POST['token'] != $_SESSION['token']) {
 		$error['token'] = 'You must use our forms to submit data.';
@@ -417,7 +424,7 @@ if ($_POST['change_user_api_key'] == '1') {
 	}
 }
 
-if ($_POST['change_user_stats202_app_key'] == '1') {
+if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats202_app_key'] == '1') {
 	if (!preg_match('/\*/', $_POST['user_stats202_app_key'])) {
 		if (!AUTH::is_valid_app_key('stats202', $_SESSION['user_api_key'], $_POST['user_stats202_app_key'])) {
 			$error['user_stats202_app_key'] = '<div class="error">This Tracking202 API Key &amp; Stats202 App Key combination appears invalid.</div>';
@@ -440,7 +447,7 @@ if ($_POST['change_user_stats202_app_key'] == '1') {
 	}
 }
 
-if ($_POST['update_p202_customer_api_key'] == '1') {
+if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_customer_api_key'] == '1') {
 	if ($_POST['token'] != $_SESSION['token']) {
 		$error['token'] = 'You must use our forms to submit data.';
 	}
@@ -456,7 +463,7 @@ if ($_POST['update_p202_customer_api_key'] == '1') {
 	}
 }
 
-if ($_POST['change_user_pass'] == '1') {
+if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 
 	//check token, and new user_pass
 	if ($_POST['token'] != $_SESSION['token']) {
@@ -476,17 +483,21 @@ if ($_POST['change_user_pass'] == '1') {
 	}
 
 	//check to to see if old user_pass is correct
-	$user_pass = salt_user_pass($_POST['user_pass']);
-	$mysql['user_pass'] = $db->real_escape_string($user_pass);
-	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
+	if (!isset($_POST['user_pass']) || empty($_POST['user_pass'])) {
+		$error['user_pass'] .= 'You must enter your current password.';
+	} else {
+		$user_pass = salt_user_pass($_POST['user_pass']);
+		$mysql['user_pass'] = $db->real_escape_string($user_pass);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 
-	$user_sql = "	SELECT 	*
-					FROM   		`202_users`
-					WHERE   	`user_id`='" . $mysql['user_id'] . "'
-					AND     		`user_pass`='" . $mysql['user_pass'] . "'";
-	$user_result = $db->query($user_sql);
+		$user_sql = "	SELECT 	*
+						FROM   		`202_users`
+						WHERE   	`user_id`='" . $mysql['user_id'] . "'
+						AND     		`user_pass`='" . $mysql['user_pass'] . "'";
+		$user_result = $db->query($user_sql);
 
-	if ($user_result->num_rows == 0) $error['user_pass'] .= 'Your old password was typed incorrectly.';
+		if ($user_result->num_rows == 0) $error['user_pass'] .= 'Your old password was typed incorrectly.';
+	}
 
 	//if no user_pass errors
 	if (!$error) {
@@ -509,8 +520,8 @@ $html = array_merge($html, array_map('htmlentities', $_POST));
 
 
 
-$html['user_id'] = htmlentities($_SESSION['user_id'], ENT_QUOTES, 'UTF-8');
-$html['user_username'] = htmlentities($_SESSION['user_username'], ENT_QUOTES, 'UTF-8');
+$html['user_id'] = htmlentities((string)$_SESSION['user_id'], ENT_QUOTES, 'UTF-8');
+$html['user_username'] = htmlentities((string)($_SESSION['user_username'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 
 template_top('Personal Settings', NULL, NULL, NULL);
