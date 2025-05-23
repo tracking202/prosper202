@@ -103,9 +103,9 @@ template_top('Update CPC',NULL,NULL,NULL);  ?>
 					<div id="ad_preview_div">
 						<div class="panel panel-default" style="opacity:0.5; border-color: #3498db; margin-bottom:0px">
 							<div class="panel-body">
-								<span id="ad-preview-headline"><?php if ($html['text_ad_headline']) { echo $html['text_ad_headline']; } else { echo 'Luxury Cruise to Mars'; } ?></span><br/>
-								<span id="ad-preview-body"><?php if ($html['text_ad_description']) { echo $html['text_ad_description']; } else { echo 'Visit the Red Planet in style. Low-gravity fun for everyone!'; } ?></span><br/>
-								<span id="ad-preview-url"><?php if ($html['text_ad_display_url']) { echo $html['text_ad_display_url']; } else { echo 'www.example.com'; } ?></span>
+                                                                <span id="ad-preview-headline"><?php echo isset($html['text_ad_headline']) && $html['text_ad_headline'] ? $html['text_ad_headline'] : 'Luxury Cruise to Mars'; ?></span><br/>
+                                                                <span id="ad-preview-body"><?php echo isset($html['text_ad_description']) && $html['text_ad_description'] ? $html['text_ad_description'] : 'Visit the Red Planet in style. Low-gravity fun for everyone!'; ?></span><br/>
+                                                                <span id="ad-preview-url"><?php echo isset($html['text_ad_display_url']) && $html['text_ad_display_url'] ? $html['text_ad_display_url'] : 'www.example.com'; ?></span>
 							</div>
 						</div>
 					</div>
@@ -153,7 +153,7 @@ template_top('Update CPC',NULL,NULL,NULL);  ?>
 				<div class="col-xs-7" style="margin-top: 10px;">
 					<div class="input-group input-group-sm">
 		          	  <span class="input-group-addon">$</span>
-		          	  <input class="form-control" name="cpc_dollars" id="cpc_dollars" maxlength="2" type="text" value="0">
+                                  <input class="form-control" name="cpc_dollars" id="cpc_dollars" maxlength="5" type="text" value="0">
 
 		          	  <span class="input-group-addon">&cent;</span>
 		          	  <input class="form-control" name="cpc_cents" maxlength="5" id="cpc_cents" type="text" value="00">
