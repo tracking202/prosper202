@@ -4,6 +4,13 @@ include_once(substr(dirname( __FILE__ ), 0,-18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
+// Initialize default variables to avoid undefined notices
+$error = [];
+$html  = [];
+$edit_tracker_row = [];
+$cpc_value = ['0', '00'];
+$cpa_value = ['0', '00'];
+
 if (!$userObj->hasPermission("access_to_setup_section")) {
 	header('location: '.get_absolute_url().'tracking202/');
 	die();
@@ -480,4 +487,4 @@ template_top('Get Trackers',NULL,NULL,NULL);  ?>
 
 	});
 </script>
-<?php template_bottom($server_row);
+<?php template_bottom();
