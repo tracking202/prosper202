@@ -4,7 +4,7 @@ header('Access-Control-Allow-Origin: *');
 header('Content-Type: application/json');
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php');
 $data = array();
-$tracker_id_public = $db->real_escape_string($_GET['t202id']); 
+$tracker_id_public = $db->real_escape_string((string)$_GET['t202id']); 
 $sql = "SELECT 
 		2cv.parameters 
 		FROM 202_trackers 

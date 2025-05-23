@@ -41,11 +41,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		//no error, so now setup all of the mysql database structures
 		INSTALL::install_databases(); 
 		
-		$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
-		$mysql['user_name'] = $db->real_escape_string($_POST['user_name']);
-		$mysql['user_timezone'] = $db->real_escape_string($_POST['user_timezone']);
-		$mysql['p202_customer_api_key'] = $db->real_escape_string($_POST['user_api']);
-		$mysql['user_time_register'] = $db->real_escape_string(time());
+		$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
+		$mysql['user_name'] = $db->real_escape_string((string)$_POST['user_name']);
+		$mysql['user_timezone'] = $db->real_escape_string((string)$_POST['user_timezone']);
+		$mysql['p202_customer_api_key'] = $db->real_escape_string((string)$_POST['user_api']);
+		$mysql['user_time_register'] = $db->real_escape_string((string)time());
 		
 		//md5 the user pass with salt
 	 	$user_pass = salt_user_pass($_POST['user_pass']);
@@ -95,9 +95,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
 	
 	
-	$html['user_email'] = htmlentities($_POST['user_email'], ENT_QUOTES, 'UTF-8');
-	$html['user_name'] = htmlentities($_POST['user_name'], ENT_QUOTES, 'UTF-8');
-	$html['user_pass'] = htmlentities($_POST['user_pass'], ENT_QUOTES, 'UTF-8');
+	$html['user_email'] = htmlentities((string)($_POST['user_email'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['user_name'] = htmlentities((string)($_POST['user_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['user_pass'] = htmlentities((string)($_POST['user_pass'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
 }
 

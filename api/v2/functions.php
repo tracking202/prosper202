@@ -43,8 +43,8 @@ function listCategories($db,$user){
   //  echo $aff_network_sql;
     while ($aff_network_row = $aff_network_result->fetch_array(MYSQL_ASSOC)) {
     
-        $html['aff_network_name'] = htmlentities($aff_network_row['aff_network_name'], ENT_QUOTES, 'UTF-8');
-        $html['aff_network_id'] = htmlentities($aff_network_row['aff_network_id'], ENT_QUOTES, 'UTF-8');
+        $html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $cat['categories'][]=array('category_id' => $html['aff_network_id'], 'category_name' => $html['aff_network_name']);    
 }
 
@@ -90,8 +90,8 @@ function runReports($db, $vars, $user, $timezone){
 			$date_to = $timestamps['to'];
 
 		} else {
-			$date_from = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
-			$date_to = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));
+			$date_from = mktime(0,0,0,(int)date('m',time()),(int)date('d',time()),(int)date('Y',time()));
+			$date_to = mktime(23,59,59,(int)date('m',time()),(int)date('d',time()),(int)date('Y',time()));
 		}
 
 	    switch($vars['type']) //each report type
@@ -443,14 +443,14 @@ function getTimestamp($datefrom, $dateto)
 	$from_day = trim($from[1]);
 	$from_year = trim($from[2]);
 
-	$date_from = mktime(0,0,0,$from_month,$from_day,$from_year);
+	$date_from = mktime(0,0,0,(int)$from_month,(int)$from_day,(int)$from_year);
 
     $to = explode('/', $dateto); 
     $to_month = trim($to[0]);
     $to_day = trim($to[1]);
     $to_year = trim($to[2]);
 
-    $date_to = mktime(23,59,59,$to_month,$to_day,$to_year);
+    $date_to = mktime(23,59,59,(int)$to_month,(int)$to_day,(int)$to_year);
 
     $date['from'] = $date_from;
     $date['to'] = $date_to;

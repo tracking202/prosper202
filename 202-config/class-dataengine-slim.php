@@ -25,7 +25,7 @@ class DataEngine
         } catch (Exception $e) {
             self::$db = false;
         }
-       // $this->mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_id']);
+       // $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
         //make sure mysql uses the timezone chosen by the user
 
         $timezone = new DateTimeZone(date_default_timezone_get()); // Get default system timezone to create a new DateTimeZone object

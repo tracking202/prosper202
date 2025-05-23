@@ -6,8 +6,8 @@ AUTH::require_user();
 
 $slack = false;
 
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 202_users.user_name AS username, 202_users_pref.maxmind_isp, 202_users_pref.user_slack_incoming_webhook AS url FROM 202_users_pref LEFT JOIN 202_users ON (202_users.user_id = '".$mysql['user_own_id']."') WHERE 202_users_pref.user_id='1'";
 $user_result = $db->query($user_sql);
 $user_row = $user_result->fetch_assoc();
@@ -108,8 +108,8 @@ if (isset($_POST['get_rotators']) && isset($_POST['rotator_id']) && $_POST['get_
 
 	        while ($rotator_row = $rotator_result->fetch_array(MYSQLI_ASSOC)) {
 	            
-	            $html['rotator_name'] = htmlentities($rotator_row['name'], ENT_QUOTES, 'UTF-8');
-	            $html['rotator_id'] = htmlentities($rotator_row['id'], ENT_QUOTES, 'UTF-8');
+	            $html['rotator_name'] = htmlentities((string)($rotator_row['name'] ?? ''), ENT_QUOTES, 'UTF-8');
+	            $html['rotator_id'] = htmlentities((string)($rotator_row['id'] ?? ''), ENT_QUOTES, 'UTF-8');
 	            
 	            if ($_POST['rotator_id'] == $rotator_row['id']) {
 	                $selected = 'selected=""';   
@@ -164,8 +164,8 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	}
 
 
-	$rotator_id = $db->real_escape_string($_POST['rotator_id']);
-	$defaults = $db->real_escape_string($_POST['defaults']);
+	$rotator_id = $db->real_escape_string((string)$_POST['rotator_id']);
+	$defaults = $db->real_escape_string((string)$_POST['defaults']);
 
 	$rotator_sql = "SELECT 
 					2ro.name,
@@ -596,7 +596,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 }
 
 if (isset($_POST['rule_details']) && $_POST['rule_details'] == true) {
-	$id = $db->real_escape_string($_POST['rule_id']);
+	$id = $db->real_escape_string((string)$_POST['rule_id']);
 	$sql = "SELECT * FROM 
 				 202_rotator_rules AS ru 
 				 LEFT JOIN 202_rotator_rules_criteria AS cr ON ru.id = cr.rule_id
@@ -886,7 +886,7 @@ if (isset($_POST['add_more_rules']) && $_POST['add_more_rules'] == true) { ?>
 
 if (isset($_POST['rule_defaults']) && $_POST['rule_defaults'] == true && isset($_POST['rotator_id'])) { 
 
-	$id = $db->real_escape_string($_POST['rotator_id']);
+	$id = $db->real_escape_string((string)$_POST['rotator_id']);
 	$rotator_sql = "SELECT * FROM 202_rotators WHERE id = '".$id."'";
 	$rotator_result = $db->query($rotator_sql);
 
@@ -955,7 +955,7 @@ if (isset($_POST['rule_defaults']) && $_POST['rule_defaults'] == true && isset($
 
 if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset($_POST['rotator_id'])) { 
 
-	$id = $db->real_escape_string($_POST['rotator_id']);
+	$id = $db->real_escape_string((string)$_POST['rotator_id']);
 	$rotator_sql = "SELECT * FROM 202_rotators WHERE id = '".$id."'";
 	$rotator_result = $db->query($rotator_sql);
 

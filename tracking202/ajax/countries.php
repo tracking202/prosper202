@@ -15,8 +15,8 @@ AUTH::require_user();
 
         while ($country_row = $country_result->fetch_array(MYSQLI_ASSOC)) {
             
-            $html['country_name'] = htmlentities($country_row['country_name'], ENT_QUOTES, 'UTF-8');
-            $html['country_id'] = htmlentities($country_row['country_id'], ENT_QUOTES, 'UTF-8');
+            $html['country_name'] = htmlentities((string)($country_row['country_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+            $html['country_id'] = htmlentities((string)($country_row['country_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
             if ($_POST['country_id'] == $country_row['country_id']) {
                 $selected = 'selected=""';   

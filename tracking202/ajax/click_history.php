@@ -158,14 +158,14 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 	
 
 	
-		$html['referer'] = htmlentities($click_row['referer'], ENT_QUOTES, 'UTF-8');   
-		$html['referer_host'] = htmlentities($click_row['referer_host'], ENT_QUOTES, 'UTF-8');
+		$html['referer'] = htmlentities((string)($click_row['referer'] ?? ''), ENT_QUOTES, 'UTF-8');   
+		$html['referer_host'] = htmlentities((string)($click_row['referer_host'] ?? ''), ENT_QUOTES, 'UTF-8');
 
-		$html['landing'] = htmlentities($click_row['landing'], ENT_QUOTES, 'UTF-8');   
-		$html['landing_host'] = htmlentities($click_row['landing_host'], ENT_QUOTES, 'UTF-8');   
+		$html['landing'] = htmlentities((string)($click_row['landing'] ?? ''), ENT_QUOTES, 'UTF-8');   
+		$html['landing_host'] = htmlentities((string)($click_row['landing_host'] ?? ''), ENT_QUOTES, 'UTF-8');   
 		
-		$html['outbound'] = htmlentities($click_row['outbound'], ENT_QUOTES, 'UTF-8');   
-		$html['outbound_host'] = htmlentities($click_row['outbound_host'], ENT_QUOTES, 'UTF-8');   
+		$html['outbound'] = htmlentities((string)($click_row['outbound'] ?? ''), ENT_QUOTES, 'UTF-8');   
+		$html['outbound_host'] = htmlentities((string)($click_row['outbound_host'] ?? ''), ENT_QUOTES, 'UTF-8');   
 		
 		//this is alittle different
 		if ($click_row['click_cloaking']) {
@@ -184,40 +184,40 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 			$html['cloaking_host'] = '';	
 		}
 
-		$html['redirect'] = htmlentities($click_row['redirect'], ENT_QUOTES, 'UTF-8');   
-		$html['redirect_host'] = htmlentities($click_row['redirect_host'], ENT_QUOTES, 'UTF-8');  
+		$html['redirect'] = htmlentities((string)($click_row['redirect'] ?? ''), ENT_QUOTES, 'UTF-8');   
+		$html['redirect_host'] = htmlentities((string)($click_row['redirect_host'] ?? ''), ENT_QUOTES, 'UTF-8');  
 		  
 		
-		$html['click_id'] = htmlentities($click_row['click_id'], ENT_QUOTES, 'UTF-8');
+		$html['click_id'] = htmlentities((string)($click_row['click_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['click_time'] = date('m/d/y g:ia',$click_row['click_time']); 
-		$html['aff_campaign_id'] = htmlentities($click_row['aff_campaign_id'], ENT_QUOTES, 'UTF-8');   
-		$html['landing_page_nickname'] = htmlentities($click_row['landing_page_nickname'], ENT_QUOTES, 'UTF-8');   
-		$html['ppc_account_id'] = htmlentities($click_row['ppc_account_id'], ENT_QUOTES, 'UTF-8');   
-		$html['text_ad_id'] = htmlentities($click_row['text_ad_id'], ENT_QUOTES, 'UTF-8');   
-		$html['text_ad_name'] = htmlentities($click_row['text_ad_name'], ENT_QUOTES, 'UTF-8');
+		$html['aff_campaign_id'] = htmlentities((string)($click_row['aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');   
+		$html['landing_page_nickname'] = htmlentities((string)($click_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');   
+		$html['ppc_account_id'] = htmlentities((string)($click_row['ppc_account_id'] ?? ''), ENT_QUOTES, 'UTF-8');   
+		$html['text_ad_id'] = htmlentities((string)($click_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');   
+		$html['text_ad_name'] = htmlentities((string)($click_row['text_ad_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 		
 		if ($click_row['aff_campaign_name'] != null) {
-		 	$html['aff_campaign_name'] = htmlentities($click_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
+		 	$html['aff_campaign_name'] = htmlentities((string)($click_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 		} else {
 			$html['aff_campaign_name'] = "Redirector url";
 		}
 
-		$html['aff_network_name'] = htmlentities($click_row['aff_network_name'], ENT_QUOTES, 'UTF-8');
-		$html['ppc_network_name'] = htmlentities($click_row['ppc_network_name'], ENT_QUOTES, 'UTF-8');
-		$html['ppc_account_name'] = htmlentities($click_row['ppc_account_name'], ENT_QUOTES, 'UTF-8');
-		$html['ip_address'] = htmlentities($click_row['ip_address'], ENT_QUOTES, 'UTF-8');
+		$html['aff_network_name'] = htmlentities((string)($click_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['ppc_network_name'] = htmlentities((string)($click_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['ppc_account_name'] = htmlentities((string)($click_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['ip_address'] = htmlentities((string)($click_row['ip_address'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['click_cpc'] = htmlentities(dollar_format($click_row['click_cpc']), ENT_QUOTES, 'UTF-8');
-		$html['keyword'] = htmlentities($click_row['keyword'], ENT_QUOTES, 'UTF-8');
-		$html['click_lead'] = htmlentities($click_row['click_lead'], ENT_QUOTES, 'UTF-8');
-		$html['click_filtered'] = htmlentities($click_row['click_filtered'], ENT_QUOTES, 'UTF-8');
-		$html['device_name'] = htmlentities($click_row['device_name'], ENT_QUOTES, 'UTF-8');
-		$html['browser_name'] = htmlentities($click_row['browser_name'], ENT_QUOTES, 'UTF-8'); 
-		$html['platform_name'] = htmlentities($click_row['platform_name'], ENT_QUOTES, 'UTF-8');
-		$html['country_code'] = htmlentities($click_row['country_code'], ENT_QUOTES, 'UTF-8');
-		$html['country_name'] = htmlentities($click_row['country_name'], ENT_QUOTES, 'UTF-8');
-		$html['region_name'] = htmlentities($click_row['region_name'], ENT_QUOTES, 'UTF-8');
-		$html['city_name'] = htmlentities($click_row['city_name'], ENT_QUOTES, 'UTF-8');
-		$html['isp_name'] = htmlentities($click_row['isp_name'], ENT_QUOTES, 'UTF-8');       
+		$html['keyword'] = htmlentities((string)($click_row['keyword'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['click_lead'] = htmlentities((string)($click_row['click_lead'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['click_filtered'] = htmlentities((string)($click_row['click_filtered'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['device_name'] = htmlentities((string)($click_row['device_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['browser_name'] = htmlentities((string)($click_row['browser_name'] ?? ''), ENT_QUOTES, 'UTF-8'); 
+		$html['platform_name'] = htmlentities((string)($click_row['platform_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['country_code'] = htmlentities((string)($click_row['country_code'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['country_name'] = htmlentities((string)($click_row['country_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['region_name'] = htmlentities((string)($click_row['region_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['city_name'] = htmlentities((string)($click_row['city_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+		$html['isp_name'] = htmlentities((string)($click_row['isp_name'] ?? ''), ENT_QUOTES, 'UTF-8');       
 	
 		if($html['referer']) {
 		    $parsed = parse_url($html['referer']);

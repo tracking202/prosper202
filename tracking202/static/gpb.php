@@ -13,9 +13,9 @@ $mysql['click_id'] = 0;
 
 //first grab the subid
 if(array_key_exists('subid',$_GET) && is_numeric($_GET['subid'])) {
-	$mysql['click_id']= $db->real_escape_string($_GET['subid']);
+	$mysql['click_id']= $db->real_escape_string((string)$_GET['subid']);
 } elseif(array_key_exists('sid',$_GET) && is_numeric($_GET['sid'])) {
-	$mysql['click_id']= $db->real_escape_string($_GET['sid']);
+	$mysql['click_id']= $db->real_escape_string((string)$_GET['sid']);
 } else {
 	header('HTTP/1.1 404 Not Found', true, 404);
 	header('Content-Type: application/json');
@@ -133,8 +133,8 @@ $mysql['referer'] = urlencode($db->real_escape_string($cvar_sql_row['site_url_ad
 
 if ($_GET['amount'] && is_numeric($_GET['amount'])) {
 	$mysql['use_pixel_payout'] = 1;
-	$mysql['payout'] = $db->real_escape_string($_GET['amount']);
-	$mysql['click_payout'] = $db->real_escape_string($_GET['amount']);
+	$mysql['payout'] = $db->real_escape_string((string)$_GET['amount']);
+	$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
 }
 
 $tokens = array(
@@ -255,7 +255,7 @@ if (is_numeric($mysql['click_id'])) {
 
 	if ($_GET['amount'] && is_numeric($_GET['amount'])) {
 		$mysql['use_pixel_payout'] = 1;
-		$mysql['click_payout'] = $db->real_escape_string($_GET['amount']);
+		$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
 	}
 
 	$click_sql = "

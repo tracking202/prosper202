@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -8,20 +7,17 @@ declare(strict_types=1);
  *
  * Released under the MIT license
  */
+
 namespace UAParser;
 
 use UAParser\Result\UserAgent;
 
 class UserAgentParser extends AbstractParser
 {
-    /**
-     * Attempts to see if the user agent matches a user agents regex from regexes.php
-     *
-     * @param string $userAgent a user agent string to test
-     * @param array $jsParseBits
-     * @return UserAgent
-     */
-    public function parseUserAgent($userAgent, array $jsParseBits = array())
+    use ParserFactoryMethods;
+
+    /** Attempts to see if the user agent matches a user agents regex from regexes.php */
+    public function parseUserAgent(string $userAgent, array $jsParseBits = []): UserAgent
     {
         $ua = new UserAgent();
 
@@ -34,13 +30,13 @@ class UserAgentParser extends AbstractParser
 
         } else {
 
-            list($regex, $matches) = $this->tryMatch($this->regexes['user_agent_parsers'], $userAgent);
+            [$regex, $matches] = self::tryMatch($this->regexes['user_agent_parsers'], $userAgent);
 
             if ($matches) {
-                $ua->family = $this->replaceString($regex, 'family_replacement', $matches[1]);
-                $ua->major = $this->replaceString($regex, 'v1_replacement', $matches[2]);
-                $ua->minor = $this->replaceString($regex, 'v2_replacement', $matches[3]);
-                $ua->patch = $this->replaceString($regex, 'v3_replacement', $matches[4]);
+                $ua->family = self::multiReplace($regex, 'family_replacement', $matches[1], $matches) ?? $ua->family;
+                $ua->major = self::multiReplace($regex, 'v1_replacement', $matches[2], $matches);
+                $ua->minor = self::multiReplace($regex, 'v2_replacement', $matches[3], $matches);
+                $ua->patch = self::multiReplace($regex, 'v3_replacement', $matches[4], $matches);
             }
         }
 
@@ -48,7 +44,11 @@ class UserAgentParser extends AbstractParser
             $jsUserAgentString = $jsParseBits['js_user_agent_string'];
             if (strpos($jsUserAgentString, 'Chrome/') !== false && strpos($userAgent, 'chromeframe') !== false) {
                 $override = $this->parseUserAgent($jsUserAgentString);
-                $ua->family = sprintf('Chrome Frame (%s %s)', $ua->family, $ua->major);
+                $family = $ua->family;
+                $ua->family = 'Chrome Frame';
+                if ($family !== null && $ua->major !== null) {
+                    $ua->family .= sprintf(' (%s %s)', $family, $ua->major);
+                }
                 $ua->major = $override->major;
                 $ua->minor = $override->minor;
                 $ua->patch = $override->patch;

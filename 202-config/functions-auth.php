@@ -6,12 +6,18 @@ class AUTH
 {
 
 	const LOGOUT_DAYS = 14;
-
-	function logged_in()
+	static function logged_in()
 	{
+		if (!isset($_SESSION['session_time'])) {
+			return false;
+		}
 
 		$session_time_passed = time() - $_SESSION['session_time'];
-		if ($_SESSION['user_name'] and $_SESSION['user_id'] and ($_SESSION['session_fingerprint'] == md5('session_fingerprint' . $_SERVER['HTTP_USER_AGENT'] . session_id())) and ($session_time_passed < 50000)) {
+		if (
+			isset($_SESSION['user_name']) && isset($_SESSION['user_id']) &&
+			(isset($_SESSION['session_fingerprint']) && $_SESSION['session_fingerprint'] == md5('session_fingerprint' . $_SERVER['HTTP_USER_AGENT'] . session_id())) &&
+			($session_time_passed < 50000)
+		) {
 
 			$_SESSION['session_time'] = time();
 			return true;
@@ -19,8 +25,7 @@ class AUTH
 			return false;
 		}
 	}
-
-	function require_user($auth_type = '')
+	static function require_user($auth_type = '')
 	{
 		if (AUTH::logged_in() == false) {
 			AUTH::remember_me_on_logged_out();
@@ -35,8 +40,7 @@ class AUTH
 		AUTH::set_timezone($_SESSION['user_timezone']);
 		AUTH::require_valid_api_key();
 	}
-
-	function require_valid_api_key()
+	static function require_valid_api_key()
 	{
 		$user_sql = "SELECT user_pref_ad_settings, p202_customer_api_key from 202_users_pref left join 202_users ON (202_users_pref.user_id = 202_users.user_id) WHERE 202_users_pref.user_id='1'";
 		$user_result = _mysqli_query($user_sql);
@@ -53,9 +57,8 @@ class AUTH
 		}
 	}
 
-
 	//this checks if this api key is valid
-	function is_valid_api_key($user_api_key)
+	static function is_valid_api_key($user_api_key)
 	{
 
 		//only check once per session speed up ui 	    
@@ -91,10 +94,17 @@ class AUTH
 		$api_validate = json_decode($result, true);
 
 		if ($api_validate['msg'] == "Key valid") {
+			$database = DB::getInstance();
+			$db = $database->getConnection();
+			$mysql = array(
+				'user_api' => $db->real_escape_string($user_api_key),
+				'user_name' => $db->real_escape_string((string)$_SESSION['user_name']),
+				'user_pass' => $db->real_escape_string((string)$_SESSION['user_pass'])
+			);
 			//update the api key
 			$user_sql = "	UPDATE 	202_users
 						SET		p202_customer_api_key='" . $mysql['user_api'] . "'
-					 	WHERE 	user_name='" . $mysql['user_name'] . "'
+						WHERE 	user_name='" . $mysql['user_name'] . "'
 						AND     		user_pass='" . $mysql['user_pass'] . "'";
 			$user_result = _mysqli_query($user_sql);
 			$_SESSION['valid_key'] = true;
@@ -104,8 +114,7 @@ class AUTH
 		}
 	}
 
-
-	function set_timezone($user_timezone)
+	static function set_timezone($user_timezone)
 	{
 
 		if (isset($_SESSION['user_timezone'])) {
@@ -231,7 +240,7 @@ class AUTH
 		$db = $database->getConnection();
 
 		$mysql = array(
-			'user_id' => $db->real_escape_string($_SESSION['user_own_id']),
+			'user_id' => $db->real_escape_string((string)$_SESSION['user_own_id']),
 			'auth_key' => $db->real_escape_string($auth_key)
 		);
 

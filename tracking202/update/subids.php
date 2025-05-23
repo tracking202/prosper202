@@ -9,9 +9,12 @@ if (!$userObj->hasPermission("access_to_update_section")) {
 	die();
 }
 
+// Initialize variables to prevent undefined variable warnings
+$success = false;
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$mysql['click_update_type'] = 'upload';
 	$mysql['click_update_time'] = time();
 		

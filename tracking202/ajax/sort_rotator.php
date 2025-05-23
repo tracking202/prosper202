@@ -15,7 +15,7 @@ AUTH::require_user();
 
 
 //show real or filtered clicks
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT user_pref_breakdown, user_pref_show, user_cpc_or_cpv FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
 	$user_result = _mysqli_query($user_sql, $dbGlobalLink); //($user_sql);
 	$user_row = $user_result->fetch_assoc();
@@ -126,7 +126,7 @@ AUTH::require_user();
 
 				$total_roi = @round($total_net/$total_cost*100); 
 
-				$html['rotator_name'] = htmlentities($rotator_row['name'], ENT_QUOTES, 'UTF-8');
+				$html['rotator_name'] = htmlentities((string)($rotator_row['name'] ?? ''), ENT_QUOTES, 'UTF-8');
 				$html['rotator_clicks'] = htmlentities(number_format($clicks), ENT_QUOTES, 'UTF-8');
 				$html['rotator_leads'] = htmlentities(number_format($leads), ENT_QUOTES, 'UTF-8');
 				$html['rotator_su_ratio'] = htmlentities($su_ratio.'%', ENT_QUOTES, 'UTF-8');
@@ -189,7 +189,7 @@ AUTH::require_user();
 										$rule_net = $rule_stats_row['income'] - $rule_stats_row['cost'];
 										$rule_roi = @round(($rule_net/$rule_stats_row['cost']*100),2); 
 
-										$html['rule_name'] = htmlentities($rule_row['rule_name'], ENT_QUOTES, 'UTF-8');
+										$html['rule_name'] = htmlentities((string)($rule_row['rule_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 										$html['rule_clicks'] = htmlentities(number_format($rule_stats_row['clicks']), ENT_QUOTES, 'UTF-8');
 										$html['rule_leads'] = htmlentities(number_format($rule_stats_row['leads']), ENT_QUOTES, 'UTF-8');
 										$html['rule_su_ratio'] = htmlentities($rule_su_ratio.'%', ENT_QUOTES, 'UTF-8');

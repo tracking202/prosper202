@@ -3,7 +3,7 @@ declare(strict_types=1);
 include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
 AUTH::require_user();
 
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $dni_id = $_GET['dni'];
 $mysql['dni_id'] = $db->real_escape_string($dni_id);
 

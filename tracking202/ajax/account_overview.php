@@ -17,7 +17,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 	$aff_campaigns = array();
 	$count = 0;
 
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT 2p.user_pref_show, 2p.user_cpc_or_cpv, 2ac.aff_campaign_name, 2ac.aff_campaign_id, 2ch.data AS chart_data, 2ch.chart_time_range 
 				 FROM 202_users_pref AS 2p 
 				 LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2p.user_id = 2ac.user_id AND 2ac.aff_campaign_deleted = 0)

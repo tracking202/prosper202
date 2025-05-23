@@ -8,7 +8,7 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 	if ($error) { echo $error['aff_campaign_id']; die(); }
 		
 	//run the code
-	$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
 	$aff_campaign_sql = "SELECT * FROM 202_aff_campaigns WHERE aff_campaign_id='".$mysql['aff_campaign_id']."'";
 	$aff_campaign_result = $db->query($aff_campaign_sql);
 	$aff_campaign_row = $aff_campaign_result->fetch_assoc();

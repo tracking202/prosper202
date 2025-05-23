@@ -9,7 +9,7 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 	die();
 }
 
-template_top($server_row,'Get Landing Page Code',NULL,NULL,NULL);  ?>
+template_top('Get Landing Page Code',NULL,NULL,NULL);  ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-5">

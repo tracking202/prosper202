@@ -9,9 +9,9 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 	die();
 }
 
-$mysql['user_id'] = $db->real_escape_string($_SESSION ['user_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $editTrackerId = filter_input(INPUT_GET, 'edit_tracker_id', FILTER_SANITIZE_NUMBER_INT);
-$mysql['tracker_id_public'] = $db->real_escape_string($editTrackerId);
+$mysql['tracker_id_public'] = $db->real_escape_string((string)($editTrackerId ?? ''));
 $showEdit = !empty($editTrackerId);
 if ($showEdit) {
 	$edit_tracker_sql = "SELECT * FROM 202_trackers AS 2tr

@@ -35,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if ($_POST['post_vars'] == true && isset($_POST['vars']) && isset($_POST['ppc_network_id'])) {
         $vars = array();
 
-        $mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
+        $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
         foreach ($_POST['vars'] as $var) {
             $var_empty = count($var) != count(array_filter($var));
 
@@ -80,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     if ($_POST['get_vars'] == true && isset($_POST['ppc_network_id'])) {
 
-        $mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
+        $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
         $sql = "SELECT * FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = '0'";
         $result = $db->query($sql); 
 
@@ -137,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 
     if ($_POST['delete_vars'] == true && isset($_POST['ppc_network_id'])) {
-        $mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
+        $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
         $sql = "DELETE FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = '0'";
         $result = $db->query($sql); 
     }

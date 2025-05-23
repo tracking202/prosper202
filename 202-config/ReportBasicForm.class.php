@@ -1539,13 +1539,13 @@ class ReportBasicForm {
 		} else if ($arg0 == self::DATE_OPTION_YES) {
 			return strtotime("yesterday");
 		} else if ($arg0 == self::DATE_OPTION_LWK) {
-			return mktime(0, 0, 0, date("m"), (date("d")- date("w"))-7, date("Y"));
+			return mktime(0, 0, 0, (int)date("m"), ((int)date("d")- (int)date("w"))-7, (int)date("Y"));
 		} else if ($arg0 == self::DATE_OPTION_L2WK) {
-			return mktime(0, 0, 0, date("m"), (date("d")- date("w"))-14, date("Y"));
+			return mktime(0, 0, 0, (int)date("m"), ((int)date("d")- (int)date("w"))-14, (int)date("Y"));
 		} else if ($arg0 == self::DATE_OPTION_L3WK) {
-			return mktime(0, 0, 0, date("m"), (date("d")- date("w"))-21, date("Y"));
+			return mktime(0, 0, 0, (int)date("m"), ((int)date("d")- (int)date("w"))-21, (int)date("Y"));
 		} else if ($arg0 == self::DATE_OPTION_L4WK) {
-			return mktime(0, 0, 0, date("m"), (date("d")- date("w"))-28, date("Y"));
+			return mktime(0, 0, 0, (int)date("m"), ((int)date("d")- (int)date("w"))-28, (int)date("Y"));
 		} else if ($arg0 == self::DATE_OPTION_MTD) {
 			/* If we're the first day of the month, MTD is still last month's numbers */
 			if(date('j') == '1') {
@@ -1593,13 +1593,13 @@ class ReportBasicForm {
 		} else if ($arg0 == self::DATE_OPTION_YES) {
 			return strtotime("yesterday");
 		} else if ($arg0 == self::DATE_OPTION_LWK) {
-			return mktime(0, 0, 0, date("m"), (date("d")- date("w"))-1, date("Y"));
+			return mktime(0, 0, 0, (int)date("m"), ((int)date("d")- (int)date("w"))-1, (int)date("Y"));
 		} else if ($arg0 == self::DATE_OPTION_L2WK) {
-			return mktime(0, 0, 0, date("m"), (date("d")- date("w"))-8, date("Y"));
+			return mktime(0, 0, 0, (int)date("m"), ((int)date("d")- (int)date("w"))-8, (int)date("Y"));
 		} else if ($arg0 == self::DATE_OPTION_L3WK) {
-			return mktime(0, 0, 0, date("m"), (date("d")- date("w"))-15, date("Y"));
+			return mktime(0, 0, 0, (int)date("m"), ((int)date("d")- (int)date("w"))-15, (int)date("Y"));
 		} else if ($arg0 == self::DATE_OPTION_L4WK) {
-			return mktime(0, 0, 0, date("m"), (date("d")- date("w"))-22, date("Y"));
+			return mktime(0, 0, 0, (int)date("m"), ((int)date("d")- (int)date("w"))-22, (int)date("Y"));
 		} else if ($arg0 == self::DATE_OPTION_MTD) {
 			/* If we're the first day of the month, MTD ends on the last day of last month */
 			if(date('j') == '1') {
@@ -2268,7 +2268,7 @@ class ReportBasicForm {
 			6=>array("start"=>-5,"end"=>1),
 			7=>array("start"=>-6,"end"=>0)
 		);
-		return mktime(0,0,0,date("n",$datetime),date("j",$datetime)+$weekStartEndPosition[$dayInWeek]["start"],date("Y",$datetime));
+		return mktime(0,0,0,(int)date("n",$datetime),(int)date("j",$datetime)+$weekStartEndPosition[$dayInWeek]["start"],(int)date("Y",$datetime));
 	}
 
 	static function getWeekEnd($datetime) {
@@ -2284,15 +2284,15 @@ class ReportBasicForm {
 			6=>array("start"=>-5,"end"=>1),
 			7=>array("start"=>-6,"end"=>0)
 		);
-		return mktime(23,59,59,date("n",$datetime),date("j",$datetime)+$weekStartEndPosition[$dayInWeek]["end"],date("Y",$datetime));
+		return mktime(23,59,59,(int)date("n",$datetime),(int)date("j",$datetime)+$weekStartEndPosition[$dayInWeek]["end"],(int)date("Y",$datetime));
 	}
 
 	static function getMonthStart($datetime) {
-		return mktime(0,0,0,date("n",$datetime),1,date("Y",$datetime));
+		return mktime(0,0,0,(int)date("n",$datetime),1,(int)date("Y",$datetime));
 	}
 
 	static function getMonthEnd($datetime) {
-		return mktime(23,59,59,date("n",$datetime),date("t", $datetime),date("Y",$datetime));
+		return mktime(23,59,59,(int)date("n",$datetime),(int)date("t", $datetime),(int)date("Y",$datetime));
 	}
 
 	public function getTimePeriodCounter() {
@@ -2303,8 +2303,8 @@ class ReportBasicForm {
 			if($this->getDetailInterval()==self::DETAIL_INTERVAL_DAY) {
 				for($current_time = $start_time;$current_time<=$end_time;$current_time = strtotime('+1 day',$current_time)) {
 					$date_interval = array();
-					$date_interval["start"] = mktime(0,0,0,date("n",$current_time),date("j",$current_time),date("Y",$current_time));
-					$date_interval["end"] = mktime(23,59,59,date("n",$current_time),date("j",$current_time),date("Y",$current_time));
+					$date_interval["start"] = mktime(0,0,0,(int)date("n",$current_time),(int)date("j",$current_time),(int)date("Y",$current_time));
+					$date_interval["end"] = mktime(23,59,59,(int)date("n",$current_time),(int)date("j",$current_time),(int)date("Y",$current_time));
 					$dates[] = $date_interval;
 				}
 			} else if($this->getDetailInterval()==self::DETAIL_INTERVAL_WEEK) {
@@ -2320,8 +2320,8 @@ class ReportBasicForm {
 					if($end_of_week > strtotime($this->getEndDate())) {
 						$end_of_week = strtotime($this->getEndDate());
 					}
-					$date_interval["start"] = mktime(0,0,0,date("n",$start_of_week),date("j",$start_of_week),date("Y",$start_of_week));
-					$date_interval["end"] = mktime(23,59,59,date("n",$end_of_week),date("j",$end_of_week),date("Y",$end_of_week));
+					$date_interval["start"] = mktime(0,0,0,(int)date("n",$start_of_week),(int)date("j",$start_of_week),(int)date("Y",$start_of_week));
+					$date_interval["end"] = mktime(23,59,59,(int)date("n",$end_of_week),(int)date("j",$end_of_week),(int)date("Y",$end_of_week));
 					$dates[] = $date_interval;
 				}
 			} else if($this->getDetailInterval()==self::DETAIL_INTERVAL_MONTH) {
@@ -2337,8 +2337,8 @@ class ReportBasicForm {
 					if($end_of_month > strtotime($this->getEndDate())) {
 						$end_of_month = strtotime($this->getEndDate());
 					}
-					$date_interval["start"] = mktime(0,0,0,date("n",$start_of_month),date("j",$start_of_month),date("Y",$start_of_month));
-					$date_interval["end"] = mktime(23,59,59,date("n",$end_of_month),date("j",$end_of_month),date("Y",$end_of_month));
+					$date_interval["start"] = mktime(0,0,0,(int)date("n",$start_of_month),(int)date("j",$start_of_month),(int)date("Y",$start_of_month));
+					$date_interval["end"] = mktime(23,59,59,(int)date("n",$end_of_month),(int)date("j",$end_of_month),(int)date("Y",$end_of_month));
 					$dates[] = $date_interval;
 				}
 			}

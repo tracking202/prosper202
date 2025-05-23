@@ -3,8 +3,7 @@
 declare(strict_types=1);
 include_once(substr(dirname(__FILE__), 0, -18) . '/202-config/connect.php');
 
-$auth = new AUTH();
-$auth->require_user();
+AUTH::require_user();
 
 if (!$userObj->hasPermission("access_to_setup_section")) {
 	header('location: ' . get_absolute_url() . 'tracking202/');
@@ -13,8 +12,14 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 
 $slack = false;
 $slack_pixel_added_message = false;
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$error = array();
+$html = array();
+$add_success = '';
+$delete_success = '';
+$network_editing = false;
+$editing = false;
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2u.install_hash, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
@@ -22,11 +27,11 @@ $user_row = $user_results->fetch_assoc();
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
-if ($_GET['edit_ppc_account_id']) {
+if (!empty($_GET['edit_ppc_account_id'])) {
 	$editing = true;
-} elseif ($_GET['edit_ppc_network_id']) {
+} elseif (!empty($_GET['edit_ppc_network_id'])) {
 	$network_editing = true;
-	$mysql['ppc_network_id'] = $db->real_escape_string($_GET['edit_ppc_network_id']);
+	$mysql['ppc_network_id'] = $db->real_escape_string((string)$_GET['edit_ppc_network_id']);
 }
 $pixel_array = array();
 $pixel_array[] = array('pixel_type_id' => '', 'pixel_code' => '', 'pixel_id' => '');
@@ -36,7 +41,7 @@ $ppc_pixel_type_sql = "SELECT * FROM `202_pixel_types`";
 $ppc_pixel_type_result = _mysqli_query($ppc_pixel_type_sql);
 
 while ($ppc_pixel_type_row = $ppc_pixel_type_result->fetch_assoc()) {
-	$pixel_types[] = array('pixel_type' => htmlentities($ppc_pixel_type_row['pixel_type'], ENT_QUOTES, 'UTF-8'), 'pixel_type_id' => htmlentities($ppc_pixel_type_row['pixel_type_id'], ENT_QUOTES, 'UTF-8'));
+	$pixel_types[] = array('pixel_type' => htmlentities((string)($ppc_pixel_type_row['pixel_type'] ?? ''), ENT_QUOTES, 'UTF-8'), 'pixel_type_id' => htmlentities((string)($ppc_pixel_type_row['pixel_type_id'] ?? ''), ENT_QUOTES, 'UTF-8'));
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -48,9 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 
 		if (!$error) {
-			$mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
-			$mysql['ppc_network_name'] = $db->real_escape_string($_POST['ppc_network_name']);
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+			$mysql['ppc_network_name'] = $db->real_escape_string((string)$_POST['ppc_network_name']);
+			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			$mysql['ppc_network_time'] = time();
 
 			if ($network_editing == true) {
@@ -97,8 +102,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		if (!$error) {
 			//check to see if this user is the owner of the ppc network hes trying to add an account to
-			$mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
 			$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
@@ -108,8 +113,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 		if (!$error) {
 			//check to see if this user is the owner of the ppc network hes trying to edit
-			$mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
 			$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
@@ -120,8 +125,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (!$error) {
 			//if editing, check to make sure the own the ppc account they are editing
 			if ($editing == true) {
-				$mysql['ppc_account_id'] = $db->real_escape_string($_GET['edit_ppc_account_id']);
-				$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+				$mysql['ppc_account_id'] = $db->real_escape_string((string)$_GET['edit_ppc_account_id']);
+				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$ppc_account_sql = "SELECT * FROM `202_ppc_accounts` LEFT JOIN 202_ppc_account_pixels USING (ppc_account_id) LEFT JOIN 202_pixel_types USING (pixel_type_id) WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_account_id`='" . $mysql['ppc_account_id'] . "'";
 				$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
 				if ($ppc_account_result->num_rows == 0) {
@@ -135,9 +140,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (!$error) {
 
 			$ppc_network_row = $ppc_network_result->fetch_assoc();
-			$mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
-			$mysql['ppc_account_name'] = $db->real_escape_string($_POST['ppc_account_name']);
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+			$mysql['ppc_account_name'] = $db->real_escape_string((string)$_POST['ppc_account_name']);
+			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			$mysql['ppc_account_time'] = time();
 
 			if ($editing == true) {
@@ -231,8 +236,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 if (isset($_GET['delete_ppc_network_id'])) {
 
 	if ($userObj->hasPermission("remove_traffic_source")) {
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-		$mysql['ppc_network_id'] = $db->real_escape_string($_GET['delete_ppc_network_id']);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+		$mysql['ppc_network_id'] = $db->real_escape_string((string)$_GET['delete_ppc_network_id']);
 		$mysql['ppc_network_time'] = time();
 
 		$delete_sql = " UPDATE  `202_ppc_networks`
@@ -253,8 +258,8 @@ if (isset($_GET['delete_ppc_network_id'])) {
 if (isset($_GET['delete_ppc_account_id'])) {
 
 	if ($userObj->hasPermission("remove_traffic_source_account")) {
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-		$mysql['ppc_account_id'] = $db->real_escape_string($_GET['delete_ppc_account_id']);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+		$mysql['ppc_account_id'] = $db->real_escape_string((string)$_GET['delete_ppc_account_id']);
 		$mysql['ppc_account_time'] = time();
 
 		$delete_sql = " UPDATE  `202_ppc_accounts`
@@ -272,10 +277,10 @@ if (isset($_GET['delete_ppc_account_id'])) {
 	}
 }
 
-if ($_GET['edit_ppc_network_id']) {
+if (!empty($_GET['edit_ppc_network_id'])) {
 
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-	$mysql['ppc_network_id'] = $db->real_escape_string($_GET['edit_ppc_network_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+	$mysql['ppc_network_id'] = $db->real_escape_string((string)$_GET['edit_ppc_network_id']);
 
 	$ppc_network_sql = "SELECT  *
 						 FROM   `202_ppc_networks`
@@ -284,14 +289,14 @@ if ($_GET['edit_ppc_network_id']) {
 	$ppc_network_result = _mysqli_query($ppc_network_sql);
 	$ppc_network_row = $ppc_network_result->fetch_assoc();
 
-	$html['ppc_network_name'] = htmlentities($ppc_network_row['ppc_network_name'], ENT_QUOTES, 'UTF-8');
+	$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$autocomplete_ppc_network_name =  $html['ppc_network_name'];
 }
 
-if ($_GET['edit_ppc_account_id']) {
+if (!empty($_GET['edit_ppc_account_id'])) {
 
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-	$mysql['ppc_account_id'] = $db->real_escape_string($_GET['edit_ppc_account_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+	$mysql['ppc_account_id'] = $db->real_escape_string((string)$_GET['edit_ppc_account_id']);
 
 	$ppc_account_sql = "SELECT  *
 						 FROM   `202_ppc_accounts`
@@ -301,7 +306,7 @@ if ($_GET['edit_ppc_account_id']) {
 	$ppc_account_row = $ppc_account_result->fetch_assoc();
 
 	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'];
-	$html['ppc_account_name'] = htmlentities($ppc_account_row['ppc_account_name'], ENT_QUOTES, 'UTF-8');
+	$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 
 	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'];
@@ -330,7 +335,7 @@ if ($_GET['edit_ppc_account_id']) {
 if ($error) {
 	//if someone happend take the post stuff and add it
 	$selected['ppc_network_id'] = $_POST['ppc_network_id'];
-	$html['ppc_account_name'] = htmlentities($_POST['ppc_account_name'], ENT_QUOTES, 'UTF-8');
+	$html['ppc_account_name'] = htmlentities((string)($_POST['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
 
@@ -347,7 +352,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 							else echo "success"; ?> pull-right" style="margin-top: 20px;">
 					<small>
 						<?php if ($error) { ?>
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token']; ?>
+							<span class="fui-alert"></span> There were errors with your submission. <?php echo isset($error['token']) ? $error['token'] : ''; ?>
 						<?php } ?>
 						<?php if ($add_success == true) { ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
@@ -376,10 +381,10 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 				<small><strong>Add Traffic Source</strong></small><br />
 				<span class="infotext">What Traffic Sources do you use? Some examples include, Facebook Ads, Twitter Ads, BingAds, & Google Adwords.</span>
 
-				<form method="post" action="<?php echo $_SERVER['REDIRECT_URL']; ?>" class="form-inline" role="form" style="margin:15px 0px;">
-					<div class="form-group <?php if ($error['ppc_network_name']) echo "has-error"; ?>">
+				<form method="post" action="<?php echo $_SERVER['REDIRECT_URL'] ?? ''; ?>" class="form-inline" role="form" style="margin:15px 0px;">
+					<div class="form-group <?php if (isset($error['ppc_network_name'])) echo "has-error"; ?>"
 						<label class="sr-only" for="ppc_network_name">Traffic source</label>
-						<input type="text" class="form-control input-sm" id="ppc_network_name" name="ppc_network_name" placeholder="Traffic source" value="<?php echo $html['ppc_network_name']; ?>">
+						<input type="text" class="form-control input-sm" id="ppc_network_name" name="ppc_network_name" placeholder="Traffic source" value="<?php echo isset($html['ppc_network_name']) ? $html['ppc_network_name'] : ''; ?>">
 					</div>
 					<button type="submit" class="btn btn-xs btn-p202"><?php if ($network_editing == true) {
 																			echo 'Edit';
@@ -398,21 +403,21 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 				<small><strong>Add Traffic Source Accounts and Pixels</strong></small><br />
 				<span class="infotext">What accounts to do you have with each Traffic Source? For instance, if you have two Facebook accounts, you can add them both here. This way you can track how individual accounts on each source are doing.</span>
 
-				<form style="margin:15px 0px;" method="post" action="<?php if ($delete_success == true) {
-																			echo $_SERVER['REDIRECT_URL'];
+				<form style="margin:15px 0px;" method="post" action="<?php if (isset($delete_success) && $delete_success == true) {
+																			echo $_SERVER['REDIRECT_URL'] ?? '';
 																		} ?>" class="form-horizontal" role="form">
-					<div class="form-group <?php if ($error['ppc_network_id']) echo "has-error"; ?>" style="margin-bottom: 0px;">
+					<div class="form-group <?php if (isset($error['ppc_network_id'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label for="ppc_network_id" class="col-xs-4 control-label" style="text-align: left;">Traffic Source:</label>
 						<div class="col-xs-5">
 							<select class="form-control input-sm" name="ppc_network_id" id="ppc_network_id">
 								<option value="">---</option>
-								<?php $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+								<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 								$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
 								$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
 								while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQLI_ASSOC)) {
 
-									$html['ppc_network_name'] = htmlentities($ppc_network_row['ppc_network_name'], ENT_QUOTES, 'UTF-8');
-									$html['ppc_network_id'] = htmlentities($ppc_network_row['ppc_network_id'], ENT_QUOTES, 'UTF-8');
+									$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+									$html['ppc_network_id'] = htmlentities((string)($ppc_network_row['ppc_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 
 									if ($selected['ppc_network_id'] == $ppc_network_row['ppc_network_id']) {
@@ -426,10 +431,10 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 						</div>
 					</div>
 
-					<div class="form-group <?php if ($error['ppc_account_name']) echo "has-error"; ?>" style="margin-bottom: 0px;">
+					<div class="form-group <?php if (isset($error['ppc_account_name'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">Account Username:</label>
 						<div class="col-xs-5">
-							<input type="ppc_account_name" class="form-control input-sm" id="ppc_account_name" name="ppc_account_name" value="<?php echo $html['ppc_account_name']; ?>">
+							<input type="ppc_account_name" class="form-control input-sm" id="ppc_account_name" name="ppc_account_name" value="<?php echo isset($html['ppc_account_name']) ? $html['ppc_account_name'] : ''; ?>">
 						</div>
 					</div>
 
@@ -500,7 +505,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 				<div id="trafficSourceList">
 					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
 					<ul class="list">
-						<?php $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+						<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 						$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
 						$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
 						if ($ppc_network_result->num_rows == 0) {
@@ -512,7 +517,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 						while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQLI_ASSOC)) {
 
 							//print out the PPC networks
-							$html['ppc_network_name'] = htmlentities($ppc_network_row['ppc_network_name'], ENT_QUOTES, 'UTF-8');
+							$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 							$url['ppc_network_id'] = urlencode($ppc_network_row['ppc_network_id']);
 
 							if ($userObj->hasPermission("remove_traffic_source")) {
@@ -532,7 +537,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 
 								while ($ppc_account_row = $ppc_account_result->fetch_array(MYSQLI_ASSOC)) {
 
-									$html['ppc_account_name'] = htmlentities($ppc_account_row['ppc_account_name'], ENT_QUOTES, 'UTF-8');
+									$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 									$url['ppc_account_id'] = urlencode($ppc_account_row['ppc_account_id']);
 
 									if ($userObj->hasPermission("remove_traffic_source_account")) {
@@ -614,7 +619,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 <script type="text/javascript">
 	$(document).ready(function() {
 		autocomplete_names('ppc_network_name', 'traffic-sources');
-		<?php if ($_GET['edit_ppc_network_id']) { ?>
+		<?php if (!empty($_GET['edit_ppc_network_id'])) { ?>
 			$("#ppc_network_name").tokenfield("setTokens", <?php print_r(json_encode(array('value' => $autocomplete_ppc_network_name, 'label' => $autocomplete_ppc_network_name))) ?>);
 		<?php } ?>
 		$(".variables-info-pop").popover({

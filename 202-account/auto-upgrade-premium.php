@@ -8,7 +8,7 @@ include_once(str_repeat("../", 1).'202-config/class-dataengine.php');
 AUTH::require_user();
 
 ini_set('memory_limit', '-1');
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT install_hash, p202_customer_api_key FROM 202_users WHERE user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();

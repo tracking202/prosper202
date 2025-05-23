@@ -3,7 +3,7 @@ declare(strict_types=1);
 include_once(str_repeat("../", 1).'202-config/connect.php');
 
 if (isset($_GET['hash']) && isset($_GET['dni'])) {
-	$mysql['networkId'] = $db->real_escape_string($_GET['dni']);
+	$mysql['networkId'] = $db->real_escape_string((string)$_GET['dni']);
 	$sql = "SELECT apiKey, install_hash, type FROM 202_dni_networks JOIN 202_users USING (user_id) WHERE networkId = '".$mysql['networkId']."'"; 
 	$results = $db->query($sql);
 	if ($results->num_rows > 0) {

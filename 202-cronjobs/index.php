@@ -32,7 +32,7 @@ function RunDailyCronjob() {
 	$today_year = date('Y', $now);
 
 	//the click_time is recorded in the middle of the day
-	$cronjob_time = mktime(12,0,0,$today_month,$today_day,$today_year);
+	$cronjob_time = mktime(12,0,0,(int)$today_month,(int)$today_day,(int)$today_year);
 	$mysql['cronjob_time'] = $db->real_escape_string($cronjob_time);
 	$mysql['cronjob_type'] = $db->real_escape_string('daily');
 	
@@ -98,7 +98,7 @@ function RunHourlyCronJob() {
 	$today_hour = date('G', $now);
 	
 	//the click_time is recorded in the middle of the day
-	$cronjob_time = mktime($today_hour,0,0,$today_month,$today_day,$today_year);
+	$cronjob_time = mktime((int)$today_hour,0,0,(int)$today_month,(int)$today_day,(int)$today_year);
 	$mysql['cronjob_time'] = $db->real_escape_string($cronjob_time);
 	$mysql['cronjob_type'] = $db->real_escape_string('hour');
 	
@@ -148,7 +148,7 @@ function RunSecondsCronjob() {
 	if ($today_second == 0) $today_second++;
 	
 	//the click_time is recorded in the middle of the day
-	$cronjob_time = mktime($today_hour,$today_minute,$today_second,$today_month,$today_day,$today_year);
+	$cronjob_time = mktime((int)$today_hour,(int)$today_minute,(int)$today_second,(int)$today_month,(int)$today_day,(int)$today_year);
 	
 	$mysql['cronjob_time'] = $db->real_escape_string($cronjob_time);
 	$mysql['cronjob_type'] = $db->real_escape_string('secon');
@@ -241,7 +241,7 @@ function AutoOptimizeDatabase() {
 function ClearOldClicks(){
     $database = DB::getInstance();
     $db = $database->getConnection();
-    $mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+    $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
     
     $sql ="SELECT user_delete_data_clickid from 202_users_pref WHERE user_id = '".$mysql['user_own_id']."'";
     $db->query($sql);

@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -7,8 +6,10 @@ declare(strict_types=1);
  *
  * Released under the MIT license
  */
+
 namespace UAParser\Util;
 
+use Composer\CaBundle\CaBundle;
 use UAParser\Exception\FetcherException;
 
 class Fetcher
@@ -24,15 +25,15 @@ class Fetcher
             $this->streamContext = $streamContext;
         } else {
             $this->streamContext = stream_context_create(
-                array(
-                    'ssl' => array(
-                        'verify_peer'            => true,
-                        'verify_depth'           => 10,
-                        'cafile'                 => __DIR__ . '/../../resources/ca-bundle.crt',
+                [
+                    'ssl' => [
+                        'verify_peer' => true,
+                        'verify_depth' => 10,
+                        'cafile' => CaBundle::getSystemCaRootBundlePath(),
                         static::getPeerNameKey() => 'www.github.com',
-                        'disable_compression'    => true,
-                    )
-                )
+                        'disable_compression' => true,
+                    ]
+                ]
             );
         }
     }
@@ -40,18 +41,18 @@ class Fetcher
     public function fetch()
     {
         $level = error_reporting(0);
-        $result = file_get_contents($this->resourceUri, null, $this->streamContext);
+        $result = file_get_contents($this->resourceUri, false, $this->streamContext);
         error_reporting($level);
 
         if ($result === false) {
             $error = error_get_last();
-            throw FetcherException::httpError($this->resourceUri, $error['message']);
+            throw FetcherException::httpError($this->resourceUri, $error['message'] ?? 'Undefined error');
         }
 
         return $result;
     }
 
-    public static function getPeerNameKey()
+    public static function getPeerNameKey(): string
     {
         return version_compare(PHP_VERSION, '5.6') === 1 ? 'peer_name' : 'CN_match';
     }

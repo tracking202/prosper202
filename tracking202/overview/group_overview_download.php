@@ -15,15 +15,15 @@ AUTH::require_user();
 
 
 //show real or filtered clicks
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
 	$user_result = _mysqli_query($user_sql, $dbGlobalLink); //($user_sql);
 	$user_row = $user_result->fetch_assoc();
 
-	$html['user_pref_group_1'] = htmlentities($user_row['user_pref_group_1'], ENT_QUOTES, 'UTF-8');
-	$html['user_pref_group_2'] = htmlentities($user_row['user_pref_group_2'], ENT_QUOTES, 'UTF-8');
-	$html['user_pref_group_3'] = htmlentities($user_row['user_pref_group_3'], ENT_QUOTES, 'UTF-8');
-	$html['user_pref_group_4'] = htmlentities($user_row['user_pref_group_4'], ENT_QUOTES, 'UTF-8');
+	$html['user_pref_group_1'] = htmlentities((string)($user_row['user_pref_group_1'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['user_pref_group_2'] = htmlentities((string)($user_row['user_pref_group_2'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['user_pref_group_3'] = htmlentities((string)($user_row['user_pref_group_3'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['user_pref_group_4'] = htmlentities((string)($user_row['user_pref_group_4'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 	if ($user_row['user_cpc_or_cpv'] == 'cpv') {
 		$cpv = true;
@@ -38,7 +38,7 @@ AUTH::require_user();
 	$summary_form->setStartTime($mysql['from']);
 	$summary_form->setEndTime($mysql['to']);
 
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 	$info_result = _mysqli_query($summary_form->getQuery($mysql['user_id'],$user_row));
 	while ($row = $info_result->fetch_assoc()) {

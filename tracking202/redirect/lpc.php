@@ -32,7 +32,7 @@ $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
 if (!$tracker_row) { die(); }
 //DONT ESCAPE THE DESITNATIONL URL IT TOTALLY SCREWS UP
-$html['aff_campaign_name'] = htmlentities($tracker_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); 
+$html['aff_campaign_name'] = htmlentities((string)($tracker_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8'); 
 
 //modify the redirect site url to go through another cloaked link
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);

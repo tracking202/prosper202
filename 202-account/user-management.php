@@ -8,8 +8,18 @@ if (!$userObj->hasPermission("add_users")) {
 	header('location: '.get_absolute_url().'202-account/');
 }
 
+// Initialize variables to prevent undefined variable warnings
+$error = array();
+$html = array();
+$mysql = array();
+$selected = array();
+$add_success = false;
+$delete_success = false;
+$editing = false;
+$deleting = false;
+
 $slack = false;
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
@@ -21,15 +31,15 @@ if (!empty($user_row['url']))
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
 
-if ($_GET ['edit_user_id']) {
+if (!empty($_GET['edit_user_id'])) {
     $editing = true;
 }
 
-if ($_GET ['delete_user_id']) {
+if (!empty($_GET['delete_user_id'])) {
     $deleting = true;
 }
 
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 $user_sql = "SELECT user_fname,user_lname,user_name,user_id,user_email,user_time_register,user_timezone,install_hash,user_hash,role_name FROM 202_users LEFT JOIN 202_user_role USING (user_id) LEFT JOIN 202_roles USING (role_id) WHERE user_id!=1 and user_deleted!=1";
 $user_result = _mysqli_query($user_sql);
@@ -114,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $hash = md5(uniqid(rand(), TRUE));
         $user_hash = intercomHash($hash);
         
-        $mysql['user_time_register'] = $db->real_escape_string(time());
+        $mysql['user_time_register'] = $db->real_escape_string((string)time());
         
             if ($editing === true) {
                 $user_sql  = " UPDATE 202_users SET"; 
@@ -385,7 +395,7 @@ template_top('User Management',NULL,NULL,NULL); ?>
 			<div class="panel-body">
 			  
 			<ul>
-			<?php  $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			<?php  $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			
 			if ($user_result ->num_rows == 0 ) {
 				?>
@@ -396,16 +406,16 @@ template_top('User Management',NULL,NULL,NULL); ?>
 			while ($user_row = $user_result ->fetch_array(MYSQLI_ASSOC)) {
 				//print out the Traffic Sources
 				if($user_row['user_fname']){
-				    $html['user_display_name'] = htmlentities($user_row['user_fname'], ENT_QUOTES, 'UTF-8');
+				    $html['user_display_name'] = htmlentities((string)($user_row['user_fname'] ?? ''), ENT_QUOTES, 'UTF-8');
 				    if($user_row['user_lname']){
-				        $html['user_display_name'] .= " ".htmlentities($user_row['user_lname'], ENT_QUOTES, 'UTF-8'). " (".$user_row['role_name'].")";
+				        $html['user_display_name'] .= " ".htmlentities((string)($user_row['user_lname'] ?? ''), ENT_QUOTES, 'UTF-8'). " (".$user_row['role_name'].")";
 				    }
 				 }
 				 else{
 				     $html['user_display_name'] .= " ".$user_row['user_name']. " (".$user_row['role_name'].")";
 				 }
 				   
-				//$html['ppc_network_name'] = htmlentities($ppc_network_row['ppc_network_name'], ENT_QUOTES, 'UTF-8');
+				//$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 				$url['user_id'] = urlencode($user_row['user_id']);
 
 				if ($user_row['role_name'] == 'Admin') {
@@ -434,5 +444,5 @@ template_top('User Management',NULL,NULL,NULL); ?>
 	$('[data-toggle="switch"]').bootstrapSwitch();
 }(jQuery));
 </script>
-<?php template_bottom($server_row);
+<?php template_bottom();
     

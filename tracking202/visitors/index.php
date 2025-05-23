@@ -23,5 +23,5 @@ template_top('Visitor History',NULL,NULL,NULL); ?>
 </script>
 
 
-<?php  template_bottom($server_row);
+<?php  template_bottom();
     

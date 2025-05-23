@@ -12,7 +12,7 @@ if (!$userObj->hasPermission("access_to_update_section") || !$userObj->hasPermis
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	
     $subids = $_POST['subids']; 
 	$subids = trim($subids); 

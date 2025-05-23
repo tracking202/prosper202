@@ -5,8 +5,8 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 AUTH::require_user();
 
 
- $mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);      
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+ $mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);      
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$text_ad_sql = "SELECT * FROM `202_text_ads`
 						WHERE `user_id`='".$mysql['user_id']."' 
 						AND `aff_campaign_id`='".$mysql['aff_campaign_id']."' 
@@ -27,8 +27,8 @@ AUTH::require_user();
 		
 				while ($text_ad_row = $text_ad_result->fetch_array(MYSQLI_ASSOC)) {
 		
-					$html['text_ad_id'] = htmlentities($text_ad_row['text_ad_id'], ENT_QUOTES, 'UTF-8');
-					$html['text_ad_name'] = htmlentities($text_ad_row['text_ad_name'], ENT_QUOTES, 'UTF-8');
+					$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+					$html['text_ad_name'] = htmlentities((string)($text_ad_row['text_ad_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 		
 					if ($_POST['text_ad_id'] == $text_ad_row['text_ad_id']) {
                         $selected = 'selected=""';   

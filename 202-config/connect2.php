@@ -2810,7 +2810,7 @@ function insertClicksVariable($mysql, $tracker_row)
 
     foreach ($parameters as $key => $value) {
         if (isset($_GET[$value])) {
-            $variable = $db->real_escape_string($_GET[$value]);
+            $variable = $db->real_escape_string((string)$_GET[$value]);
             if (isset($variable) && $variable != '') {
                 $variable = str_replace('%20', ' ', $variable);
                 $variable_id = INDEXES::get_variable_id($db, $variable, $ppc_variable_ids[$key]);
@@ -3087,7 +3087,7 @@ function getUTMParams(&$mysql)
 {
     global $db;
     //utm_source
-    $utm_source = $db->real_escape_string($_GET['utm_source']);
+    $utm_source = $db->real_escape_string((string)$_GET['utm_source']);
     if (isset($utm_source) && $utm_source != '') {
         $utm_source = str_replace('%20', ' ', $utm_source);
         $utm_source_id = INDEXES::get_utm_id($db, $utm_source, 'utm_source');
@@ -3098,7 +3098,7 @@ function getUTMParams(&$mysql)
     $mysql['utm_source'] = $db->real_escape_string($utm_source);
 
     //utm_medium
-    $utm_medium = $db->real_escape_string($_GET['utm_medium']);
+    $utm_medium = $db->real_escape_string((string)$_GET['utm_medium']);
     if (isset($utm_medium) && $utm_medium != '') {
         $utm_medium = str_replace('%20', ' ', $utm_medium);
         $utm_medium_id = INDEXES::get_utm_id($db, $utm_medium, 'utm_medium');
@@ -3109,7 +3109,7 @@ function getUTMParams(&$mysql)
     $mysql['utm_medium'] = $db->real_escape_string($utm_medium);
 
     //utm_campaign
-    $utm_campaign = $db->real_escape_string($_GET['utm_campaign']);
+    $utm_campaign = $db->real_escape_string((string)$_GET['utm_campaign']);
     if (isset($utm_campaign) && $utm_campaign != '') {
         $utm_campaign = str_replace('%20', ' ', $utm_campaign);
         $utm_campaign_id = INDEXES::get_utm_id($db, $utm_campaign, 'utm_campaign');
@@ -3120,7 +3120,7 @@ function getUTMParams(&$mysql)
     $mysql['utm_campaign'] = $db->real_escape_string($utm_campaign);
 
     //utm_term
-    $utm_term = $db->real_escape_string($_GET['utm_term']);
+    $utm_term = $db->real_escape_string((string)$_GET['utm_term']);
     if (isset($utm_term) && $utm_term != '') {
         $utm_term = str_replace('%20', ' ', $utm_term);
         $utm_term_id = INDEXES::get_utm_id($db, $utm_term, 'utm_term');
@@ -3131,7 +3131,7 @@ function getUTMParams(&$mysql)
     $mysql['utm_term'] = $db->real_escape_string($utm_term);
 
     //utm_content
-    $utm_content = $db->real_escape_string($_GET['utm_content']);
+    $utm_content = $db->real_escape_string((string)$_GET['utm_content']);
     if (isset($utm_content) && $utm_content != '') {
         $utm_content = str_replace('%20', ' ', $utm_content);
         $utm_content_id = INDEXES::get_utm_id($db, $utm_content, 'utm_content');
@@ -3189,13 +3189,13 @@ function getKeyword(&$mysql)
         case "bidded":
             #try to get the bidded keyword first
             if ($_GET['OVKEY']) { //if this is a Y! keyword
-                $keyword = $db->real_escape_string($_GET['OVKEY']);
+                $keyword = $db->real_escape_string((string)$_GET['OVKEY']);
             } elseif ($_GET['t202kw']) {
-                $keyword = $db->real_escape_string($_GET['t202kw']);
+                $keyword = $db->real_escape_string((string)$_GET['t202kw']);
             } elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-                $keyword = $db->real_escape_string($_GET['target_passthrough']);
+                $keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
             } else { //if this is a zango, or more keyword
-                $keyword = $db->real_escape_string($_GET['keyword']);
+                $keyword = $db->real_escape_string((string)$_GET['keyword']);
             }
             break;
         case "searched":
@@ -3203,37 +3203,37 @@ function getKeyword(&$mysql)
             if ($referer_query['q']) {
                 $keyword = $db->real_escape_string($referer_query['q']);
             } elseif ($_GET['OVRAW']) { //if this is a Y! keyword
-                $keyword = $db->real_escape_string($_GET['OVRAW']);
+                $keyword = $db->real_escape_string((string)$_GET['OVRAW']);
             } elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-                $keyword = $db->real_escape_string($_GET['target_passthrough']);
+                $keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
             } elseif ($_GET['keyword']) { //if this is a zango, or more keyword
-                $keyword = $db->real_escape_string($_GET['keyword']);
+                $keyword = $db->real_escape_string((string)$_GET['keyword']);
             } elseif ($_GET['search_word']) { //if this is a eniro, or more keyword
-                $keyword = $db->real_escape_string($_GET['search_word']);
+                $keyword = $db->real_escape_string((string)$_GET['search_word']);
             } elseif ($_GET['query']) { //if this is a naver, or more keyword
-                $keyword = $db->real_escape_string($_GET['query']);
+                $keyword = $db->real_escape_string((string)$_GET['query']);
             } elseif ($_GET['encquery']) { //if this is a aol, or more keyword
-                $keyword = $db->real_escape_string($_GET['encquery']);
+                $keyword = $db->real_escape_string((string)$_GET['encquery']);
             } elseif ($_GET['terms']) { //if this is a about.com, or more keyword
-                $keyword = $db->real_escape_string($_GET['terms']);
+                $keyword = $db->real_escape_string((string)$_GET['terms']);
             } elseif ($_GET['rdata']) { //if this is a viola, or more keyword
-                $keyword = $db->real_escape_string($_GET['rdata']);
+                $keyword = $db->real_escape_string((string)$_GET['rdata']);
             } elseif ($_GET['qs']) { //if this is a virgilio, or more keyword
-                $keyword = $db->real_escape_string($_GET['qs']);
+                $keyword = $db->real_escape_string((string)$_GET['qs']);
             } elseif ($_GET['wd']) { //if this is a baidu, or more keyword
-                $keyword = $db->real_escape_string($_GET['wd']);
+                $keyword = $db->real_escape_string((string)$_GET['wd']);
             } elseif ($_GET['text']) { //if this is a yandex, or more keyword
-                $keyword = $db->real_escape_string($_GET['text']);
+                $keyword = $db->real_escape_string((string)$_GET['text']);
             } elseif ($_GET['szukaj']) { //if this is a wp.pl, or more keyword
-                $keyword = $db->real_escape_string($_GET['szukaj']);
+                $keyword = $db->real_escape_string((string)$_GET['szukaj']);
             } elseif ($_GET['qt']) { //if this is a O*net, or more keyword
-                $keyword = $db->real_escape_string($_GET['qt']);
+                $keyword = $db->real_escape_string((string)$_GET['qt']);
             } elseif ($_GET['k']) { //if this is a yam, or more keyword
-                $keyword = $db->real_escape_string($_GET['k']);
+                $keyword = $db->real_escape_string((string)$_GET['k']);
             } elseif ($_GET['words']) { //if this is a Rambler, or more keyword
-                $keyword = $db->real_escape_string($_GET['words']);
+                $keyword = $db->real_escape_string((string)$_GET['words']);
             } else {
-                $keyword = $db->real_escape_string($_GET['t202kw']);
+                $keyword = $db->real_escape_string((string)$_GET['t202kw']);
             }
             break;
     }
@@ -3258,7 +3258,7 @@ function getReferer(&$mysql)
     // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
     if ($mysql['user_pref_referer_data'] == 't202ref') {
         if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
-            $mysql['t202ref'] = $db->real_escape_string($_GET['t202ref']);
+            $mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
             $click_referer_site_url_id = INDEXES::get_site_url_id($db, $mysql['t202ref']);
         } else { //if not found revert to what we usually do
             if ($referer_query['url']) {

@@ -1,7 +1,8 @@
 <?php
+
 declare(strict_types=1);
 ini_set('memory_limit', '-1');
-if (! $_SESSION['user_timezone']) {
+if (!isset($_SESSION['user_timezone']) || empty($_SESSION['user_timezone'])) {
     date_default_timezone_set('GMT');
 } else {
     date_default_timezone_set($_SESSION['user_timezone']);
@@ -12,7 +13,7 @@ class DataEngine
 
     private $total_clicks = '';
 
-    private $mysql = Array();
+    private $mysql = array();
 
     private static $db;
 
@@ -28,19 +29,18 @@ class DataEngine
         } catch (Exception $e) {
             self::$db = false;
         }
-        
-        $this->mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_own_id']);
-        
-        if($_SESSION['publisher']==false){ //user is able to see all camapigns
+
+        $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_own_id']);
+
+        if ($_SESSION['publisher'] == false) { //user is able to see all camapigns
             $this->mysql['user_id_query'] = " WHERE 2st.user_id != '0' ";
-        }
-        else{
+        } else {
             $this->mysql['user_id_query'] = " WHERE 2st.user_id ='" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
         }
-        
-        
+
+
         // make sure mysql uses the timezone choses by the user
-        
+
         $timezone = new DateTimeZone(date_default_timezone_get()); // Get default system timezone to create a new DateTimeZone object
         $offset = $timezone->getOffset(new DateTime()); // Offset in seconds to UTC
         $offsetHours = round(($offset) / 3600);
@@ -133,18 +133,18 @@ class DataEngine
 
     function getFilters()
     {
-        $mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_id']);
+        $mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
         if (isset($_POST['offset']) && $_POST['offset'] != '') {
-            $mysql['offset'] = self::$db->real_escape_string($_POST['offset']);
+            $mysql['offset'] = self::$db->real_escape_string((string)$_POST['offset']);
         } else {
             $mysql['offset'] = 0;
         }
-        
+
         $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
         $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
         $breakdown = $user_row['user_pref_breakdown'];
-        
+
         if ($user_row['user_pref_show'] == 'all') {
             $click_filtered = '';
         }
@@ -181,14 +181,14 @@ class DataEngine
         if ($user_row['user_pref_isp_id'] != '0' && ! empty($user_row['user_pref_isp_id'])) {
             $click_filtered .= " AND 2st.isp_id=" . $user_row['user_pref_isp_id'];
         }
-        
+
         // No Traffic Source is set to 16777215 also the biggest number in the database. Because 0 is being used to indicate all Traffic Sources
         if ($user_row['user_pref_ppc_network_id'] == '16777215') {
             $click_filtered .= " AND 2st.ppc_network_id IS NULL";
         } else 
             if ($user_row['user_pref_ppc_network_id'] != '0' && ! empty($user_row['user_pref_ppc_network_id'])) {
-                $click_filtered .= " AND 2st.ppc_network_id=" . $user_row['user_pref_ppc_network_id'];
-            }
+            $click_filtered .= " AND 2st.ppc_network_id=" . $user_row['user_pref_ppc_network_id'];
+        }
         if ($user_row['user_pref_ppc_account_id'] != '0' && ! empty($user_row['user_pref_ppc_account_id'])) {
             $click_filtered .= " AND 2st.ppc_account_id=" . $user_row['user_pref_ppc_account_id'];
         }
@@ -204,36 +204,36 @@ class DataEngine
         if ($user_row['user_pref_landing_page_id'] != '0' && ! empty($user_row['user_pref_landing_page_id'])) {
             $click_filtered .= " AND 2st.landing_page_id=" . $user_row['user_pref_landing_page_id'];
         }
-        
+
         if ($user_row['user_pref_method_of_promotion'] == 'directlink') {
             $click_filtered .= " AND 2st.landing_page_id = 0";
         } else 
             if ($user_row['user_pref_method_of_promotion'] == 'landingpage') {
-                $click_filtered .= " AND 2st.landing_page_id != 0";
-            }
+            $click_filtered .= " AND 2st.landing_page_id != 0";
+        }
         if ($user_row['user_cpc_or_cpv'] == 'cpv')
             $cpv = true;
         else
             $cpv = false;
-        
+
         if ($user_row['user_pref_keyword']) {
             $click_filtered .= " AND 2k.keyword like '%" . $user_row['user_pref_keyword'] . "%'";
             $click_filtered_arr['join'] = ' LEFT OUTER JOIN 202_keywords AS 2k ON (2k.keyword_id=2st.keyword_id) ';
         }
-        
+
         if ($user_row['user_pref_ip']) {
-            
+
             $ip_address = self::ipAddress($user_row['user_pref_ip']);
-            
+
             $ip_id = self::get_ip_id($ip_address);
-          
+
             if ($ip_id != '') {
                 $click_filtered .= " AND 2st.ip_id=" . $ip_id;
             } else {
                 $click_filtered .= " AND 2st.ip_id=''";
             } // make sure results are blank if the filter is not found
         }
-        
+
         if ($user_row['user_pref_referer']) {
             $referer_id = self::get_site_url_id($user_row['user_pref_referer']);
             if ($referer_id != '') {
@@ -242,7 +242,7 @@ class DataEngine
                 $click_filtered .= " AND 2st.click_referer_site_url_id=''";
             } // make sure results are blank if the filter is not found
         }
-        
+
         $click_filtered_arr['filter'] = $click_filtered;
         if ($user_row['user_pref_limit'] && $this->forDownload == 0) {
             $mysql['offset'] = ($mysql['offset'] * $user_row['user_pref_limit']);
@@ -250,10 +250,10 @@ class DataEngine
         } else {
             $click_filtered_arr['limit'] = '';
         }
-        
+
         return $click_filtered_arr;
     }
-    
+
     /*
      * function getIpxQueryObj(array $filters, $from, $to) {
      * $query = array();
@@ -288,11 +288,11 @@ class DataEngine
      */
     function getAccountOverviewFilters()
     {
-        $mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_id']);
+        $mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
         $user_sql = "SELECT user_pref_show FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
         $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
-        
+
         if ($user_row['user_pref_show'] == 'all') {
             $click_filtered = '';
         }
@@ -308,15 +308,15 @@ class DataEngine
         if ($user_row['user_pref_show'] == 'leads') {
             $click_filtered = " AND click_lead!='0' ";
         }
-        
+
         return $click_filtered;
     }
-    
+
     // this returns the keyword_id
     function get_keyword_id($keyword)
     {
         $mysql['keyword'] = self::$db->real_escape_string($keyword);
-        
+
         $keyword_sql = "SELECT group_concat(keyword_id) as keyword_id FROM 202_keywords WHERE keyword like '%" . $mysql['keyword'] . "%'";
         $keyword_row = memcache_mysql_fetch_assoc($keyword_sql);
         $keyword_id[] = $keyword_row['keyword_id'];
@@ -327,30 +327,29 @@ class DataEngine
     {
         global $memcacheWorking, $memcache;
 
-        
+
         $mysql['ip_address'] = self::$db->real_escape_string($ip->address);
-        
-        if($inet6_ntoa == '' && $ip->type == 'ipv6'){
+
+        if ($inet6_ntoa == '' && $ip->type == 'ipv6') {
             $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode for db check
         }
-        
-        if ($ip->type==='ipv6') {
-            $ip_sql = 'SELECT 202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address= '.$inet6_aton.'("' . $mysql['ip_address'] . '")';
-        }
-        else{
+
+        if ($ip->type === 'ipv6') {
+            $ip_sql = 'SELECT 202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address= ' . $inet6_aton . '("' . $mysql['ip_address'] . '")';
+        } else {
             $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
         }
-                
+
         if ($memcacheWorking) {
             $time = 2592000; // 30 days in sec
-                            // get from memcached
+            // get from memcached
             $getID = $memcache->get(md5("ip-id" . $mysql['ip_address'] . systemHash()));
-            
+
             if ($getID) {
                 $ip_id = $getID;
                 return $ip_id;
             } else {
-                
+
                 $ip_result = _mysqli_query($ip_sql);
                 $ip_row = $ip_result->fetch_assoc();
                 if ($ip_row) {
@@ -361,58 +360,59 @@ class DataEngine
                     return $ip_id;
                 } else {
                     //insert ip
-                    INDEXES::insert_ip(self::$db,$ip);
+                    INDEXES::insert_ip(self::$db, $ip);
                 }
             }
         } else {
             $ip_result = _mysqli_query($ip_sql);
             $ip_row = $ip_result->fetch_assoc();
-           
+
             if ($ip_row) {
                 // if this ip already exists, return the ip_id for it.
                 $ip_id = $ip_row['ip_id'];
                 return $ip_id;
             } else {
                 //insert ip
-                INDEXES::insert_ip(self::$db,$ip);
+                INDEXES::insert_ip(self::$db, $ip);
             }
         }
     }
-    
-    
-    function ipAddress($ip_address){
+
+
+    function ipAddress($ip_address)
+    {
         $ip = new stdClass;
-    
+
         if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-            $ip->address=$ip_address;
+            $ip->address = $ip_address;
             if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                $ip->type='ipv4';
+                $ip->type = 'ipv4';
             } else {
-                $ip->type='ipv6';
+                $ip->type = 'ipv6';
             }
         } else {
-            $ip->type='invalid';
+            $ip->type = 'invalid';
         }
-    
+
         return $ip;
     }
-    
+
     // this returns the site_url_id, when a site_url_address is given
     function get_site_url_id($site_url_address)
     {
         global $memcacheWorking, $memcache;
-        
+
         $mysql['site_url_address'] = self::$db->real_escape_string($site_url_address);
-        
+
         if ($memcacheWorking) {
             $time = 604800; // 7 days in sec
-                            // get from memcached
+            // get from memcached
             $getURL = $memcache->get(md5("url-id" . $site_url_address . systemHash()));
             if ($getURL) {
                 return $getURL;
             } else {
                 $site_url_sql = "SELECT  GROUP_CONCAT(distinct 2de.click_referer_site_url_id) AS site_url_id FROM 202_dataengine as 2de LEFT JOIN 202_site_urls ON (2de.click_referer_site_url_id = site_url_id)  WHERE site_url_address LIKE '%" . $mysql['site_url_address'] . "%'";
-                
+
                 $site_url_result = _mysqli_query($site_url_sql);
                 $site_url_row = $site_url_result->fetch_assoc();
                 if ($site_url_row) {
@@ -423,15 +423,15 @@ class DataEngine
                 }
             }
         } else {
-            
+
             $site_url_sql = "SELECT GROUP_CONCAT(distinct 2de.click_referer_site_url_id) AS site_url_id FROM 202_dataengine as 2de LEFT JOIN 202_site_urls ON (2de.click_referer_site_url_id = site_url_id)  WHERE site_url_address LIKE '%" . $mysql['site_url_address'] . "%'";
             $site_url_result = _mysqli_query($site_url_sql);
             $site_url_row = $site_url_result->fetch_assoc();
-            
+
             if ($site_url_row) {
                 // if this site_url_id already exists, return the site_url_id for it.
                 $site_url_id = $site_url_row['site_url_id'];
-                
+
                 return $site_url_id;
             }
         }
@@ -443,7 +443,7 @@ class DataEngine
         $mysql['to'] = $clickTo;
         $click_filtered = $this->getAccountOverviewFilters();
         // SQL_CALC_FOUND_ROWS
-        
+
         $click_sql = "select landing_page_nickname,
 2st.landing_page_id, sum(clicks) as clicks, sum(click_out) as click_out,";
         $click_sql .= "(clicks/click_out)*100 as ctr,SUM(leads) AS leads,(SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -456,14 +456,14 @@ AND 2st.click_time >= " . $mysql['from'] . "
 AND 2st.click_time <= " . $mysql['to'] . $click_filtered . "
 group BY landing_page_id
 ORDER BY landing_page_id ASC";
-        
-      
+
+
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
-        
+
         while ($click_row = $click_result->fetch_assoc()) {
             if ($click_row) {
-                $i ++;
+                $i++;
                 $data[] = $this->htmlFormat($click_row, $cpv);
                 $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
                 $totals['click_out'] = $totals['click_out'] + $click_row['click_out'];
@@ -476,10 +476,10 @@ ORDER BY landing_page_id ASC";
                 $totals['income'] = $totals['income'] + $click_row['income'];
                 $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
                 $totals['net'] = $totals['income'] - $totals['cost'];
-               $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+                $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             }
         }
-        
+
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
         // $click_sql = //query to get the number of results
         return $data;
@@ -491,7 +491,7 @@ ORDER BY landing_page_id ASC";
         $mysql['to'] = $clickTo;
         $click_filtered = $this->getAccountOverviewFilters();
 
-         $click_sql = "SELECT  2c.aff_campaign_id, 
+        $click_sql = "SELECT  2c.aff_campaign_id, 
              2ac.aff_campaign_name, 
              SUM(2c.clicks) AS clicks,
             SUM(2c.click_out) AS click_out, 
@@ -511,8 +511,8 @@ ORDER BY landing_page_id ASC";
 AND 2c.click_time >= " . $mysql['from'] . "
 AND 2c.click_time <= " . $mysql['to'] . $click_filtered . "
              GROUP BY IF(2c.aff_campaign_id is null or 2c.aff_campaign_id = '', '0', 2c.aff_campaign_id)";
-         
-       /* $click_sql = "SELECT 2pn.ppc_network_id as ppc_network_id, 2pn.ppc_network_name, 2ac.aff_network_id, 2an.aff_network_name,
+
+        /* $click_sql = "SELECT 2pn.ppc_network_id as ppc_network_id, 2pn.ppc_network_name, 2ac.aff_network_id, 2an.aff_network_name,
             2c.aff_campaign_id, 2ac.aff_campaign_name, SUM(2c.clicks) AS clicks,
             SUM(2c.click_out) AS click_out, 
             SUM(2c.leads) AS leads, 
@@ -533,10 +533,10 @@ AND 2c.click_time <= " . $mysql['to'] . $click_filtered . "
 AND 2c.click_time >= " . $mysql['from'] . "
 AND 2c.click_time <= " . $mysql['to'] . $click_filtered . "
             GROUP BY IFNULL(2c.aff_campaign_id, '')";*/
-      //  echo $click_sql;
-    //    die();
-        
-   /*      $click_sql = "select aff_network_name,
+        //  echo $click_sql;
+        //    die();
+
+        /*      $click_sql = "select aff_network_name,
 aff_campaign_name,
 2st.aff_campaign_id, sum(clicks) as clicks,  sum(click_out) as click_out,";
         $click_sql .= "(clicks/click_out)*100 as ctr,SUM(leads) AS leads, (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -550,13 +550,13 @@ AND 2st.click_time <= " . $mysql['to'] . $click_filtered . "
 AND 2st.aff_campaign_id IS NOT NULL group BY aff_campaign_id
 ORDER BY aff_campaign_id ASC"; */
 
-       
-        $click_result = _mysqli_query($click_sql); 
-        
+
+        $click_result = _mysqli_query($click_sql);
+
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
-            $data[] = $this->htmlFormat($click_row, $cpv,'','overview');
+            $i++;
+            $data[] = $this->htmlFormat($click_row, $cpv, '', 'overview');
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
             $totals['click_out'] = $totals['click_out'] + $click_row['click_out'];
             $totals['ctr'] = @round($totals['click_out'] / $totals['clicks'] * 100, 2);
@@ -568,13 +568,11 @@ ORDER BY aff_campaign_id ASC"; */
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-            $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
-            
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
         return $data;
-        
     }
 
     function doPerPpcReport($type, $clickFrom, $clickTo, $cpv)
@@ -582,7 +580,7 @@ ORDER BY aff_campaign_id ASC"; */
         $mysql['from'] = $clickFrom;
         $mysql['to'] = $clickTo;
         $click_sql = "select";
-        
+
         if ($type == 'slp_direct_link') {
             $select_by_id = "aff_campaign_id";
             $click_sql .= "
@@ -591,12 +589,12 @@ ORDER BY aff_campaign_id ASC"; */
             2st.aff_campaign_id,";
         } else 
             if ($type == 'alp') {
-                $select_by_id = "landing_page_id";
-                $click_sql .= "
+            $select_by_id = "landing_page_id";
+            $click_sql .= "
             landing_page_nickname, 
             2st.landing_page_id,";
-            }
-        
+        }
+
         $click_sql .= "
         sum(clicks) as clicks,
         sum(click_out) as click_out,
@@ -611,55 +609,55 @@ ORDER BY aff_campaign_id ASC"; */
         (SUM(income)-SUM(cost)) AS net,
         ((SUM(income)-SUM(cost))/SUM(cost)*100 ) as roi
         from 202_dataengine as 2st";
-        
+
         if ($type == 'slp_direct_link') {
             $click_sql .= "
             LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
             LEFT JOIN 202_aff_networks on (2st.aff_network_id= 202_aff_networks.`aff_network_id`)";
         } else 
             if ($type == 'alp') {
-                $click_sql .= "
+            $click_sql .= "
             LEFT JOIN 202_landing_pages USING (landing_page_id)";
-            }
-        
+        }
+
         $click_sql .= $this->mysql['user_id_query'];
-        
+
         if ($type == 'slp_direct_link') {
             $click_sql .= "
             AND 2st.aff_campaign_id IS TRUE";
         } else 
             if ($type == 'alp') {
-                $click_sql .= "
+            $click_sql .= "
             AND 2st.aff_campaign_id IS FALSE
             AND 2st.landing_page_id IS TRUE";
-            }
-        
+        }
+
         $click_sql .= "
         AND 2st.click_time >= '" . $mysql['from'] . "' 
         AND 2st.click_time <= '" . $mysql['to'] . "'";
-        
+
         if ($type == 'slp_direct_link') {
             $click_sql .= "
             group BY aff_campaign_id 
             ORDER BY aff_campaign_id ASC";
         } else 
             if ($type == 'alp') {
-                $click_sql .= "
+            $click_sql .= "
             group BY landing_page_id 
             ORDER BY landing_page_id ASC";
-            }
+        }
 
         $click_result = _mysqli_query($click_sql);
-        
+
         $ids = array();
-        
+
         while ($click_row = $click_result->fetch_assoc()) {
             if ($click_row) {
                 $data[$click_row[$select_by_id]] = $this->htmlFormat($click_row, $cpv, 'total');
                 $ids[] = $click_row[$select_by_id];
             }
         }
-        
+
         $ppc_sql = "select
             ppc_account_name,
             ppc_network_name,
@@ -679,20 +677,20 @@ ORDER BY aff_campaign_id ASC"; */
             ((SUM(income)-SUM(cost))/SUM(cost)*100 ) as roi
             from 202_dataengine as 2st
             LEFT JOIN 202_ppc_accounts ON (2st.ppc_account_id = 202_ppc_accounts.ppc_account_id) 
-            LEFT JOIN 202_ppc_networks ON (202_ppc_accounts.ppc_network_id = 202_ppc_networks.ppc_network_id)".
-            $this->mysql['user_id_query'].
+            LEFT JOIN 202_ppc_networks ON (202_ppc_accounts.ppc_network_id = 202_ppc_networks.ppc_network_id)" .
+            $this->mysql['user_id_query'] .
             " AND 2st.{$select_by_id} IN (" . implode(",", $ids) . ")";
-        
+
         if ($type == 'alp') {
             $ppc_sql .= " AND 2st.aff_campaign_id IS FALSE";
         }
-        
+
         $ppc_sql .= "
             AND 2st.click_time >= '" . $mysql['from'] . "' 
             AND 2st.click_time <= '" . $mysql['to'] . "' 
             group BY 2st.{$select_by_id},2st.ppc_account_id 
             ORDER BY 2st.ppc_account_id ASC;";
-   
+
         $ppc_result = _mysqli_query($ppc_sql);
 
         if ($ppc_result->num_rows > 0) {
@@ -700,7 +698,7 @@ ORDER BY aff_campaign_id ASC"; */
                 $data[$ppc_row[$select_by_id]]['ppc_accounts'][$ppc_row['ppc_account_id']] = $this->htmlFormat($ppc_row, $cpv);
             }
         }
-        
+
         return $data;
     }
 
@@ -747,7 +745,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0; // counter for averages
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++; // increment the counter so we can get the right avarage
+            $i++; // increment the counter so we can get the right avarage
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
             $totals['click_out'] = $totals['click_out'] + $click_row['click_out'];
@@ -760,10 +758,10 @@ SUM(2st.cost)/sum(clicks) AS cpc,
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-            $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         return $data;
     }
 
@@ -772,7 +770,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
         $mysql['from'] = $clickFrom;
         $mysql['to'] = $clickTo;
         $up = new UserPrefs();
-        
+
         $click_filtered = $this->getFilters();
         $click_sql = "
 SELECT  DATE_FORMAT(FROM_UNIXTIME(click_time),'%l %p')  as click_time_from_disp, DATE_FORMAT(FROM_UNIXTIME(click_time),'%p') as ampm, sum(clicks) as clicks, sum(click_out) as click_out,
@@ -786,12 +784,12 @@ SUM(2st.cost) AS cost,
 SUM(2st.cost)/sum(clicks) AS cpc,
 (SUM(2st.income)-SUM(2st.cost)) AS net,
 ((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100 ) as roi FROM 202_dataengine as 2st " . $click_filtered['join'] . $this->mysql['user_id_query'] . " AND click_time >= " . $mysql['from'] . " AND click_time <= " . $mysql['to'] . $click_filtered['filter'] . " group by HOUR(FROM_UNIXTIME(click_time)) " . $this->sortOrder('breakdown asc');
-  
+
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
-            
+            $i++;
+
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
             $totals['click_out'] = $totals['click_out'] + $click_row['click_out'];
@@ -804,11 +802,11 @@ SUM(2st.cost)/sum(clicks) AS cpc,
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         return $data;
     }
 
@@ -830,11 +828,11 @@ SUM(2st.cost) AS cost,
 SUM(2st.cost)/sum(clicks) AS cpc,
 (SUM(2st.income)-SUM(2st.cost)) AS net,
 ((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100 ) as roi FROM 202_dataengine as 2st " . $click_filtered['join'] .  $this->mysql['user_id_query'] . " AND click_time >= " . $mysql['from'] . " AND click_time <= " . $mysql['to'] . $click_filtered['filter'] . " group by click_time_from_disp  ORDER BY click_time_from_sort ASC"; // . $this->sortOrder();
-                                                                                                                                                                                                                                                                                                                                                         
+
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -848,11 +846,11 @@ SUM(2st.cost)/sum(clicks) AS cpc,
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         return $data;
     }
 
@@ -877,10 +875,10 @@ SUM(2st.cost)/sum(clicks) AS cpc,
             " . $this->mysql['user_id_query'] . " AND click_time >= " . $mysql['from'] . " AND click_time <= " . $mysql['to'] . $click_filtered['filter'] . " group by keyword" . $this->sortOrder() . $click_filtered['limit'];
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
-        
+
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -894,16 +892,16 @@ SUM(2st.cost)/sum(clicks) AS cpc,
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the number of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -912,7 +910,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
         $mysql['from'] = $clickFrom;
         $mysql['to'] = $clickTo;
         $up = new UserPrefs();
-        
+
         $click_filtered = $this->getFilters();
         $click_sql = "
 SELECT SQL_CALC_FOUND_ROWS `text_ad_name`,sum(clicks) as clicks, sum(click_out) as click_out,
@@ -932,7 +930,7 @@ LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id)
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -946,16 +944,16 @@ LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id)
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the number of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -964,7 +962,7 @@ LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id)
         $mysql['from'] = $clickFrom;
         $mysql['to'] = $clickTo;
         $up = new UserPrefs();
-        
+
         $click_filtered = $this->getFilters();
         $click_sql = "
 SELECT  SQL_CALC_FOUND_ROWS site_domain_host as referer_name,sum(clicks) as clicks, sum(click_out) as click_out,
@@ -985,7 +983,7 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -999,16 +997,16 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the number of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1019,7 +1017,7 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS IFNULL(".$inet6_ntoa."(2i6.ip_address),2i.ip_address) as ip_address,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  SQL_CALC_FOUND_ROWS IFNULL(" . $inet6_ntoa . "(2i6.ip_address),2i.ip_address) as ip_address,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1037,7 +1035,7 @@ LEFT JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_genera
         $click_result = _mysqli_query($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
             $totals['click_out'] = $totals['click_out'] + $click_row['click_out'];
@@ -1050,15 +1048,15 @@ LEFT JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_genera
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-            $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1086,7 +1084,7 @@ LEFT JOIN 202_locations_country on (2st.country_id = 202_locations_country.count
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -1100,16 +1098,16 @@ LEFT JOIN 202_locations_country on (2st.country_id = 202_locations_country.count
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1138,7 +1136,7 @@ LEFT JOIN 202_locations_country on (202_locations_region.main_country_id = 202_l
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -1152,16 +1150,16 @@ LEFT JOIN 202_locations_country on (202_locations_region.main_country_id = 202_l
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1190,7 +1188,7 @@ LEFT JOIN 202_locations_country on (202_locations_city.main_country_id = 202_loc
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -1204,16 +1202,16 @@ LEFT JOIN 202_locations_country on (202_locations_city.main_country_id = 202_loc
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1241,7 +1239,7 @@ LEFT JOIN 202_locations_isp on (2st.isp_id = 202_locations_isp.isp_id)
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -1255,16 +1253,16 @@ LEFT JOIN 202_locations_isp on (2st.isp_id = 202_locations_isp.isp_id)
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1292,7 +1290,7 @@ LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -1306,16 +1304,16 @@ LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1343,7 +1341,7 @@ LEFT JOIN 202_device_models on (2st.device_id = 202_device_models.device_id)
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -1357,16 +1355,16 @@ LEFT JOIN 202_device_models on (2st.device_id = 202_device_models.device_id)
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1394,7 +1392,7 @@ LEFT JOIN 202_browsers on (2st.browser_id = 202_browsers.browser_id)
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -1408,11 +1406,11 @@ LEFT JOIN 202_browsers on (2st.browser_id = 202_browsers.browser_id)
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
@@ -1444,7 +1442,7 @@ LEFT JOIN 202_platforms on (2st.platform_id = 202_platforms.platform_id)
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
         while ($click_row = $click_result->fetch_assoc()) {
-            $i ++;
+            $i++;
             // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
@@ -1458,16 +1456,16 @@ LEFT JOIN 202_platforms on (2st.platform_id = 202_platforms.platform_id)
             $totals['income'] = $totals['income'] + $click_row['income'];
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
-           $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+            $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
             // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
-        
+
         $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
         $count_result = _mysqli_query($count_sql);
         $count_row = $count_result->fetch_assoc();
         self::$found_rows = ($count_row['found_rows']);
-        
+
         return $data;
     }
 
@@ -1477,7 +1475,7 @@ LEFT JOIN 202_platforms on (2st.platform_id = 202_platforms.platform_id)
         $mysql['to'] = $clickTo;
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
-        
+
         $click_sql = " SELECT 2st.user_id,
         2st.ppc_network_id,
         ppc_network_name,
@@ -1495,19 +1493,34 @@ LEFT JOIN 202_platforms on (2st.platform_id = 202_platforms.platform_id)
         ((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100 ) as roi,
         GROUP_CONCAT(DISTINCT(2st.variable_set_id)) as variable_set_ids
         FROM 202_dataengine as 2st
-        JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id)".
-        $this->mysql['user_id_query']." AND 2st.variable_set_id != 0 AND click_time >= " . $mysql['from'] . " AND click_time <= " . $mysql['to'] . $click_filtered['filter'] . "
-        group by 2st.user_id, 2st.ppc_network_id" .$click_filtered['limit'];
+        JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id)" .
+            $this->mysql['user_id_query'] . " AND 2st.variable_set_id != 0 AND click_time >= " . $mysql['from'] . " AND click_time <= " . $mysql['to'] . $click_filtered['filter'] . "
+        group by 2st.user_id, 2st.ppc_network_id" . $click_filtered['limit'];
         $click_result = _mysqli_query($click_sql);
-        
+
         //group by 2st.user_id, 2st.ppc_network_id" . $this->sortOrder() . $click_filtered['limit'];
         if ($click_result) {
             $i = 0;
             while ($click_row = $click_result->fetch_assoc()) {
-                
-                if($_SESSION['publisher']==true){
-                if ($click_row['user_id'] == $this->mysql['user_id']) {
-                    $i ++;
+
+                if ($_SESSION['publisher'] == true) {
+                    if ($click_row['user_id'] == $this->mysql['user_id']) {
+                        $i++;
+                        $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
+                        $totals['click_out'] = $totals['click_out'] + $click_row['click_out'];
+                        $totals['ctr'] = @round($totals['click_out'] / $totals['clicks'] * 100, 2);
+                        $totals['cost'] = $totals['cost'] + $click_row['cost'];
+                        $totals['cpc'] = @round($totals['cost'] / $totals['clicks'], 5);
+                        $totals['leads'] = $totals['leads'] + $click_row['leads'];
+                        $totals['su_ratio'] = @round($totals['leads'] / $totals['clicks'] * 100, 2);
+                        $totals['payout'] = @round(($totals['payout'] + $click_row['payout']) / $i, 2);
+                        $totals['income'] = $totals['income'] + $click_row['income'];
+                        $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
+                        $totals['net'] = $totals['income'] - $totals['cost'];
+                        $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+                    }
+                } else {
+                    $i++;
                     $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
                     $totals['click_out'] = $totals['click_out'] + $click_row['click_out'];
                     $totals['ctr'] = @round($totals['click_out'] / $totals['clicks'] * 100, 2);
@@ -1519,22 +1532,7 @@ LEFT JOIN 202_platforms on (2st.platform_id = 202_platforms.platform_id)
                     $totals['income'] = $totals['income'] + $click_row['income'];
                     $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
                     $totals['net'] = $totals['income'] - $totals['cost'];
-                   $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
-                }}
-                else{
-                    $i ++;
-                    $totals['clicks'] = $totals['clicks'] + $click_row['clicks'];
-                    $totals['click_out'] = $totals['click_out'] + $click_row['click_out'];
-                    $totals['ctr'] = @round($totals['click_out'] / $totals['clicks'] * 100, 2);
-                    $totals['cost'] = $totals['cost'] + $click_row['cost'];
-                    $totals['cpc'] = @round($totals['cost'] / $totals['clicks'], 5);
-                    $totals['leads'] = $totals['leads'] + $click_row['leads'];
-                    $totals['su_ratio'] = @round($totals['leads'] / $totals['clicks'] * 100, 2);
-                    $totals['payout'] = @round(($totals['payout'] + $click_row['payout']) / $i, 2);
-                    $totals['income'] = $totals['income'] + $click_row['income'];
-                    $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
-                    $totals['net'] = $totals['income'] - $totals['cost'];
-                    $totals['roi'] = ($totals['cost']=='0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
+                    $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
                 }
             }
             $data[] = $this->htmlFormat($totals, $cpv, 'total');
@@ -1570,14 +1568,14 @@ FROM
     202_ppc_network_variables ON (202_custom_variables.ppc_variable_id = 202_ppc_network_variables.ppc_variable_id)
         JOIN
     202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id)
-".$this->mysql['user_id_query']."
+" . $this->mysql['user_id_query'] . "
         AND 2st.variable_set_id != 0
         AND click_time >= " . $mysql['from'] . " AND click_time <= " . $mysql['to'] . $click_filtered['filter'] . "
 group by ppc_network_id , name , variable
 ORDER BY ppc_network_id , name , variable";
 
 
-        
+
         $click_result = _mysqli_query($click_sql);
         // Loop Traffic Sources
         if ($click_result) {
@@ -1587,7 +1585,7 @@ ORDER BY ppc_network_id , name , variable";
                 $data[$click_row['ppc_network_id']]['variables'][$click_row['ppc_variable_id']]['values'][] = $this->htmlFormat($click_row, $cpv);
             }
         }
-        
+
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
         return $data;
     }
@@ -1598,7 +1596,7 @@ ORDER BY ppc_network_id , name , variable";
         $currency_result = self::$db->query("SELECT user_account_currency FROM 202_users_pref WHERE user_id = '" . $this->mysql['user_id'] . "'");
         $currency_row = $currency_result->fetch_assoc();
         $currency_row['user_account_currency'];
-        
+
         $prepend = '';
         $theCTR = @round($click_row['click_out'] / $click_row['clicks'] * 100, 2);
         if ($type == 'total')
@@ -1612,10 +1610,10 @@ ORDER BY ppc_network_id , name , variable";
                         $html[$prepend . $key] = htmlentities(number_format($data_row), ENT_QUOTES, 'UTF-8');
                         break;
                     case 'su_ratio':
-                        
+
                         $html[$prepend . $key] = htmlentities(round($data_row, 2) . '%', ENT_QUOTES, 'UTF-8');
                         break;
-                    
+
                     case 'ctr':
                         $html[$prepend . $key] = htmlentities(round($theCTR, 2) . '%', ENT_QUOTES, 'UTF-8');
                         break;
@@ -1708,7 +1706,7 @@ ORDER BY ppc_network_id , name , variable";
                         else
                             $html[$prepend . $key] = htmlentities($data_row, ENT_QUOTES, 'UTF-8');
                         break;
-                    
+
                     case 'device':
                         if (! $data_row)
                             $html[$prepend . $key] = htmlentities('[no device]', ENT_QUOTES, 'UTF-8');
@@ -1733,12 +1731,12 @@ ORDER BY ppc_network_id , name , variable";
             }
         }
 
-        if (strlen($html['aff_campaign_name']) == 0){
+        if (strlen($html['aff_campaign_name']) == 0) {
             $html['aff_campaign_name'] = "[Landing Page/Smart Redirector Campaign]";
-            if($mainKey='overview')
+            if ($mainKey = 'overview')
                 $html['aff_campaign_name'] = "[Landing Page/Smart Redirector Campaign]";
         }
-        
+
         $stop = array(
             'total_clicks',
             'total_click_out',
@@ -1754,7 +1752,7 @@ ORDER BY ppc_network_id , name , variable";
             'total_roi'
         );
         foreach ($stop as $key) {
-            
+
             if ($html[$key] == '') {
                 $html[$key] = '0';
             }
@@ -1763,18 +1761,18 @@ ORDER BY ppc_network_id , name , variable";
         return ($html);
     }
 
-    function sortOrder($order='')
+    function sortOrder($order = '')
     {
 
         // run the order by settings
-        if(isset($order)){
+        if (isset($order)) {
             $_POST['order'] = htmlentities($order, ENT_QUOTES, 'UTF-8');
         }
-        
-        $html['order'] = htmlentities($_POST['order'], ENT_QUOTES, 'UTF-8');
-        
-        
-        
+
+        $html['order'] = htmlentities((string)($_POST['order'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+
+
         $html['sort_breakdown_time_order'] = 'sort_breakdown_time_order asc';
         if ($_POST['order'] == 'sort_breakdown_time_order desc') {
             $html['sort_breakdown_time_order'] = 'sort_breakdown_time_order desc';
@@ -1783,7 +1781,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_time_order'] = 'sort_breakdown_time_order asc';
             $mysql['order'] = 'ORDER BY click_time ASC';
         }
-        
+
         $html['sort_breakdown_order'] = 'breakdown asc';
         if ($_POST['order'] == 'breakdown desc') {
             $html['sort_breakdown_order'] = 'breakdown desc';
@@ -1792,7 +1790,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_order'] = 'breakdown asc';
             $mysql['order'] = 'ORDER BY cast(DATE_FORMAT(FROM_UNIXTIME(click_time),"%k") as UNSIGNED) ASC';
         }
-        
+
         $html['sort_breakdown_clicks_order'] = 'sort_breakdown_clicks asc';
         if ($_POST['order'] == 'sort_breakdown_clicks asc') {
             $html['sort_breakdown_clicks_order'] = 'sort_breakdown_clicks desc';
@@ -1801,7 +1799,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_clicks_order'] = 'sort_breakdown_clicks asc';
             $mysql['order'] = 'ORDER BY `clicks` ASC';
         }
-        
+
         $html['sort_breakdown_click_throughs_order'] = 'sort_breakdown_click_throughs asc';
         if ($_POST['order'] == 'sort_breakdown_click_throughs asc') {
             $html['sort_breakdown_click_throughs_order'] = 'sort_breakdown_click_throughs desc';
@@ -1810,7 +1808,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_click_throughs_order'] = 'sort_breakdown_click_throughs asc';
             $mysql['order'] = 'ORDER BY `click_out` ASC';
         }
-        
+
         $html['sort_breakdown_ctr_order'] = 'sort_breakdown_ctr asc';
         if ($_POST['order'] == 'sort_breakdown_ctr asc') {
             $html['sort_breakdown_ctr_order'] = 'sort_breakdown_ctr desc';
@@ -1819,7 +1817,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_ctr_order'] = 'sort_breakdown_ctr asc';
             $mysql['order'] = 'ORDER BY `ctr` ASC';
         }
-        
+
         $html['sort_breakdown_leads_order'] = 'sort_breakdown_leads asc';
         if ($_POST['order'] == 'sort_breakdown_leads asc') {
             $html['sort_breakdown_leads_order'] = 'sort_breakdown_leads desc';
@@ -1828,7 +1826,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_leads_order'] = 'sort_breakdown_leads asc';
             $mysql['order'] = 'ORDER BY `leads` ASC';
         }
-        
+
         $html['sort_breakdown_su_ratio_order'] = 'sort_breakdown_su_ratio asc';
         if ($_POST['order'] == 'sort_breakdown_su_ratio asc') {
             $html['sort_breakdown_su_ratio_order'] = 'sort_breakdown_su_ratio desc';
@@ -1837,7 +1835,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_su_ratio_order'] = 'sort_breakdown_su_ratio asc';
             $mysql['order'] = 'ORDER BY `su` ASC';
         }
-        
+
         $html['sort_breakdown_payout_order'] = 'sort_breakdown_payout asc';
         if ($_POST['order'] == 'sort_breakdown_payout asc') {
             $html['sort_breakdown_payout_order'] = 'sort_breakdown_payout desc';
@@ -1846,7 +1844,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_payout_order'] = 'sort_breakdown_payout asc';
             $mysql['order'] = 'ORDER BY `payout` ASC';
         }
-        
+
         $html['sort_breakdown_epc_order'] = 'sort_breakdown_epc asc';
         if ($_POST['order'] == 'sort_breakdown_epc asc') {
             $html['sort_breakdown_epc_order'] = 'sort_breakdown_epc desc';
@@ -1855,7 +1853,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_epc_order'] = 'sort_breakdown_epc asc';
             $mysql['order'] = 'ORDER BY `epc` ASC';
         }
-        
+
         $html['sort_breakdown_cpc_order'] = 'sort_breakdown_cpc asc';
         if ($_POST['order'] == 'sort_breakdown_cpc asc') {
             $html['sort_breakdown_cpc_order'] = 'sort_breakdown_cpc desc';
@@ -1864,7 +1862,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_cpc_order'] = 'sort_breakdown_cpc asc';
             $mysql['order'] = 'ORDER BY `cpc` ASC';
         }
-        
+
         $html['sort_breakdown_income_order'] = 'sort_breakdown_income asc';
         if ($_POST['order'] == 'sort_breakdown_income asc') {
             $html['sort_breakdown_income_order'] = 'sort_breakdown_income desc';
@@ -1873,7 +1871,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_income_order'] = 'sort_breakdown_income asc';
             $mysql['order'] = 'ORDER BY `income` ASC';
         }
-        
+
         $html['sort_breakdown_cost_order'] = 'sort_breakdown_cost asc';
         if ($_POST['order'] == 'sort_breakdown_cost asc') {
             $html['sort_breakdown_cost_order'] = 'sort_breakdown_cost desc';
@@ -1882,7 +1880,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_cost_order'] = 'sort_breakdown_cost asc';
             $mysql['order'] = 'ORDER BY `cost` ASC';
         }
-        
+
         $html['sort_breakdown_net_order'] = 'sort_breakdown_net asc';
         if ($_POST['order'] == 'sort_breakdown_net asc') {
             $html['sort_breakdown_net_order'] = 'sort_breakdown_net desc';
@@ -1891,7 +1889,7 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_net_order'] = 'sort_breakdown_net asc';
             $mysql['order'] = 'ORDER BY `net` ASC';
         }
-        
+
         $html['sort_breakdown_roi_order'] = 'sort_breakdown_roi asc';
         if ($_POST['order'] == 'sort_breakdown_roi asc') {
             $html['sort_breakdown_roi_order'] = 'sort_breakdown_roi desc';
@@ -1900,37 +1898,37 @@ ORDER BY ppc_network_id , name , variable";
             $html['sort_breakdown_roi_order'] = 'sort_breakdown_roi asc';
             $mysql['order'] = 'ORDER BY `roi` ASC';
         }
-        
+
         if (empty($mysql['order'])) {
             $mysql['order'] = ' ORDER BY leads DESC';
         }
         return ($mysql['order']);
     }
-    
+
     // dirty hours by clicks id: This function marks the hour range that the click happened in for updating reports
     function setDirtyHour($click_id)
     {
-        global $ip_address,$db, $dbGlobalLink;
+        global $ip_address, $db, $dbGlobalLink;
         if (! isset($click_id) || $click_id == '') { // if not find the list clicks id of the ip within a 30 day range
             $mysql['user_id'] = 1;
             $mysql['ip_address'] = $db->real_escape_string($ip_address->address);
-            
-            if($inet6_ntoa == '' && $ip_address->type == 'ipv6'){
+
+            if ($inet6_ntoa == '' && $ip_address->type == 'ipv6') {
                 $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode for db check
             }
-            
+
             $daysago = time() - 86400; // 24 hours
             $click_sql1 = 'SELECT  202_clicks.click_id
                            FROM            202_clicks
                            LEFT JOIN       202_clicks_advance USING (click_id)
                            LEFT JOIN       202_ips USING (ip_id)
                            LEFT JOIN       202_ips_v6 ON (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci)
-                           WHERE           IFNULL('.$inet6_ntoa.'(202_ips_v6.ip_address),202_ips.ip_address)="'.$mysql['ip_address'].'"
+                           WHERE           IFNULL(' . $inet6_ntoa . '(202_ips_v6.ip_address),202_ips.ip_address)="' . $mysql['ip_address'] . '"
                            AND             202_clicks.user_id="' . $mysql['user_id'] . '"
                            AND             202_clicks.click_time >= "' . $daysago . '"
                            ORDER BY        202_clicks.click_id DESC
                            LIMIT           1';
-            
+
             $click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
             $click_row1 = $click_result1->fetch_assoc();
             // empy $mysql array
@@ -1939,11 +1937,11 @@ ORDER BY ppc_network_id , name , variable";
             $click_id = $mysql['click_id'];
             // $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id']);
         }
-        
+
         if (! isset($click_id) || $click_id == '') {
             return false;
         }
-        
+
         $dsql = " insert into 202_dataengine(user_id,
 click_id,
 click_time,
@@ -2072,7 +2070,7 @@ rule_id=values(rule_id),
 rule_redirect_id=values(rule_redirect_id),
 aff_campaign_id=values(aff_campaign_id),
 aff_network_id=values(aff_network_id)";
-        
+
         $result = $db->query($dsql);
     }
 
@@ -2081,13 +2079,13 @@ aff_network_id=values(aff_network_id)";
         global $db, $dbGlobalLink;
         $time_start = microtime(true);
         set_time_limit(0);
-        
+
         $delayed_sql = "
 			SELECT *
 			FROM 202_dirty_hours
 			where processed != 1
             ";
-        
+
         $delayed_result = self::$db->query($delayed_sql);
         if (! $delayed_result)
             exit();
@@ -2124,132 +2122,132 @@ aff_network_id=values(aff_network_id)";
             $mysql['click_filtered'] = self::$db->real_escape_string($delayed_row['click_filtered']);
             $mysql['click_bot'] = self::$db->real_escape_string($delayed_row['click_bot']);
             $mysql['click_alp'] = self::$db->real_escape_string($delayed_row['click_alp']);
-            
+
             $snippet = "AND 2c.user_id = " . $mysql['user_id'];
             $d_snippet = "";
-            
+
             if ($mysql['ppc_account_id']) {
                 $snippet .= " AND 2c.ppc_account_id =" . $mysql['ppc_account_id'];
             }
-            
+
             if ($mysql['aff_campaign_id']) {
                 $snippet .= " AND 2ac.aff_campaign_id =" . $mysql['aff_campaign_id'];
             }
-            
+
             if ($mysql['ppc_network_id']) {
                 $d_snippet .= " AND 2pn.ppc_network_id =" . $mysql['ppc_network_id'];
             }
-            
+
             if ($mysql['aff_network_id']) {
                 $d_snippet .= " AND 2an.aff_network_id =" . $mysql['aff_network_id'];
             }
-            
+
             if ($mysql['landing_page_id']) {
                 $d_snippet .= " AND 2c.landing_page_id =" . $mysql['landing_page_id'];
             }
-            
+
             if ($mysql['keyword_id']) {
                 $d_snippet .= " AND 2k.keyword_id =" . $mysql['keyword_id'];
             }
-            
+
             if ($mysql['utm_source_id']) {
                 $d_snippet .= " AND 2gg.utm_source_id =" . $mysql['utm_source_id'];
             }
-            
+
             if ($mysql['utm_medium_id']) {
                 $d_snippet .= " AND 2gg.utm_medium_id =" . $mysql['utm_medium_id'];
             }
-            
+
             if ($mysql['utm_campaign_id']) {
                 $d_snippet .= " AND 2gg.utm_campaign_id =" . $mysql['utm_campaign_id'];
             }
-            
+
             if ($mysql['utm_term_id']) {
                 $d_snippet .= " AND 2gg.utm_term_id =" . $mysql['utm_term_id'];
             }
-            
+
             if ($mysql['utm_content_id']) {
                 $d_snippet .= " AND 2gg.utm_content_id =" . $mysql['utm_content_id'];
             }
-            
+
             if ($mysql['text_ad_id']) {
                 $d_snippet .= " AND 2ta.text_ad_id =" . $mysql['text_ad_id'];
             }
-            
+
             if ($mysql['click_referer_site_url_id']) {
                 $d_snippet .= " AND 2cs.click_referer_site_url_id =" . $mysql['click_referer_site_url_id'];
             }
-            
+
             if ($mysql['country_id']) {
                 $d_snippet .= " AND 2cy.country_id =" . $mysql['country_id'];
             }
-            
+
             if ($mysql['region_id']) {
                 $d_snippet .= " AND 2rg.region_id =" . $mysql['region_id'];
             }
-            
+
             if ($mysql['city_id']) {
                 $d_snippet .= " AND 2ci.city_id =" . $mysql['city_id'];
             }
-            
+
             if ($mysql['isp_id']) {
                 $d_snippet .= " AND 2is.isp_id =" . $mysql['isp_id'];
             }
-            
+
             if ($mysql['browser_id']) {
                 $d_snippet .= " AND 2b.browser_id =" . $mysql['browser_id'];
             }
-            
+
             if ($mysql['device_id']) {
                 $d_snippet .= " AND 2dm.device_id =" . $mysql['device_id'];
             }
-            
+
             if ($mysql['platform_id']) {
                 $d_snippet .= " AND 2p.platform_id =" . $mysql['platform_id'];
             }
-            
+
             if ($mysql['ip_id']) {
                 $d_snippet .= " AND 2ca.ip_id =" . $mysql['ip_id'];
             }
-            
+
             if ($mysql['c1_id']) {
                 $d_snippet .= " AND 2tc1.c1_id =" . $mysql['c1_id'];
             }
-            
+
             if ($mysql['c2_id']) {
                 $d_snippet .= " AND 2tc2.c2_id =" . $mysql['c2_id'];
             }
-            
+
             if ($mysql['c3_id']) {
                 $d_snippet .= " AND 2tc3.c3_id =" . $mysql['c3_id'];
             }
-            
+
             if ($mysql['c4_id']) {
                 $d_snippet .= " AND 2tc4.c4_id =" . $mysql['c4_id'];
             }
-            
+
             if ($mysql['variable_set_id']) {
                 $d_snippet .= " AND 2cv.variable_set_id =" . $mysql['variable_set_id'];
             }
-            
+
             if ($mysql['click_filtered']) {
                 $d_snippet .= " AND 2c.click_filtered =" . $mysql['click_filtered'];
             }
-            
+
             if ($mysql['click_bot']) {
                 $d_snippet .= " AND 2c.click_bot =" . $mysql['click_bot'];
             }
-            
+
             if ($mysql['click_alp']) {
                 $d_snippet .= " AND 2c.click_alp =" . $mysql['click_alp'];
             }
-            
+
             // $query="DELETE FROM 202_dataengine WHERE click_time >= " . $mysql['click_time_from'] . " AND click_time <= " . $mysql['click_time_to'] . " " . $d_snippet;
-            
+
             // $remove = array("2ac.", "2c.", "2cv.", "2tc4.", "2tc3.", "2tc2.", "2tc1.", "2ca.", "2p.", "2dm.", "2b.", "2is.", "2ci.", "2rg.", "2cy.", "2cs.", "2ta.", "2gg.", "2k.", "2an.", "2pn.");
             // $query = str_replace($remove, "", $query);
             // self::$db->query($query) or die(self::$db->error . '<br/><br/>' . $query);
-            
+
             $this->getSummary($mysql['click_time_from'], $mysql['click_time_to'], $snippet);
             $sql = "
 			UPDATE
@@ -2259,14 +2257,14 @@ aff_network_id=values(aff_network_id)";
 		" . $delayed_row['id'];
 
             $result = self::$db->query($sql);
-            
+
             // $update_sql = $delayed_row['delayed_sql'];
             // echo $update_sql."<br>";
             // $update_result = _mysql_query($update_sql);
             // echo $update_result;
-            
 
-            
+
+
             $sql = "
 			UPDATE
 			202_dirty_hours
@@ -2277,7 +2275,7 @@ aff_network_id=values(aff_network_id)";
             $result = self::$db->query($sql);
             flush();
         }
-        
+
         $sql = "
 			UPDATE
             202_dirty_hours
@@ -2285,18 +2283,18 @@ aff_network_id=values(aff_network_id)";
             where processed=1";
 
         // $result = _mysql_query($sql);
-        
+
         $sql = "	DELETE
             FROM 202_dirty_hours
             where deleted=1";
 
         $result = self::$db->query($sql);
-        
+
         $time_end = microtime(true);
-        
+
         // dividing with 60 will give the execution time in minutes other wise seconds
         $execution_time = ($time_end - $time_start);
-        
+
         // execution time of the script
         // echo '<b>Total Execution Time:</b> ' . $execution_time . ' Secs';
     }
@@ -2307,21 +2305,21 @@ aff_network_id=values(aff_network_id)";
         $mysql['from'] = $db->real_escape_string($start); // mysqli_real_escape_string($dbGlobalLink,$start);
         $mysql['to'] = $db->real_escape_string($end);
         $mysql['user_id'] = $db->real_escape_string($user_id);
-        
+
         if ($upgrade) {
             $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['from'] . "' AND time_to = '" . $mysql['to'] . "'";
             $db->query($sql);
         }
-        
+
 
         if ($new == true) {
             $table = '202_dataengine_new';
         } else {
             $table = '202_dataengine';
         }
-        
+
         if (1) {
-            
+
             // insert into dataengine
             $query = "
  insert into " . $table . "(user_id,
@@ -2479,16 +2477,16 @@ aff_network_id=values(aff_network_id)";
         // die($db);
         $upgrade_from = mysqli_real_escape_string($dbGlobalLink, $from);
         $upgrade_to = mysqli_real_escape_string($dbGlobalLink, $to);
-        
+
         $mysql['from'] = $db->real_escape_string($from); // mysqli_real_escape_string($dbGlobalLink,$start);
         $mysql['to'] = $db->real_escape_string($to);
         $mysql['user_id'] = $db->real_escape_string($user_id);
-        
+
         if ($new)
             $table = "202_dataengine_new";
         else
             $table = "202_dataengine";
-        
+
         $tq = "INSERT INTO " . $table . " (";
         $flist = '';
         $is = '';
@@ -2497,10 +2495,10 @@ aff_network_id=values(aff_network_id)";
         $i = 0;
         $stop = array();
         mysqli_data_seek($info_result, 0);
-        
+
         while ($r = mysqli_fetch_array($info_result, MYSQLI_ASSOC)) {
             $list .= "(";
-            
+
             foreach ($r as $key => $value) {
                 $bigvalue .= "-" . $value;
                 if ($i == 0) {
@@ -2514,20 +2512,20 @@ aff_network_id=values(aff_network_id)";
                         $list .= mysqli_real_escape_string($dbGlobalLink, $value) . ",";
                 }
             }
-            
-            $list = substr($list, 0, - 1);
+
+            $list = substr($list, 0, -1);
             $list .= ",'" . sha1($bigvalue) . "'),";
-            $i ++;
-            
+            $i++;
+
             $bigvalue = '';
             // $is .= "(" . implode(',', $mysql) . "),";
-            $outsql = $tq . substr($flist, 0, - 1) . ",encode) VALUES " . substr($list, 0, - 1) . " ON DUPLICATE KEY UPDATE ";
-            
-            $outsql .= substr($fr, 0, - 1);
+            $outsql = $tq . substr($flist, 0, -1) . ",encode) VALUES " . substr($list, 0, -1) . " ON DUPLICATE KEY UPDATE ";
+
+            $outsql .= substr($fr, 0, -1);
         }
-        
+
         $is_result = _mysqli_query($outsql);
-        
+
         if ($upgrade) {
             $sql = "UPDATE 202_dataengine_job SET processing = '0', processed = '1' WHERE time_from = '" . $upgrade_from . "' AND time_to = '" . $upgrade_to . "'";
             $res = _mysqli_query($sql);
@@ -2538,37 +2536,37 @@ aff_network_id=values(aff_network_id)";
     {
         global $db, $dbGlobalLink;
         $dbGlobalLink = $db;
-        
+
         $end = time();
         $query = "SELECT (click_time - click_time % 3600) AS hourstart FROM 202_clicks WHERE click_time <= " . $end . " and click_time >= " . $start . " GROUP BY hourstart";
         $result = $db->query($query);
-        
+
         $full_day = array();
         $hours = 1;
         $counter = 0;
-        
+
         while ($row = mysqli_fetch_array($result, MYSQLI_ASSOC)) {
-            
-            $counter ++;
-            
+
+            $counter++;
+
             if ($hours == 1) {
                 $full_day[] = $row['hourstart'];
             }
-            
+
             if ($hours == 24 || $counter == $result->num_rows) {
                 $full_day[] = $row['hourstart'] + 3599;
                 $hours = 0;
-                
+
                 $mysql['time_from'] = $db->real_escape_string($full_day[0]);
                 $mysql['time_to'] = $db->real_escape_string($full_day[1]);
-                
+
                 $sql = "INSERT INTO 202_dataengine_job SET time_from = '" . $mysql['time_from'] . "', time_to = '" . $mysql['time_to'] . "'";
                 $res = $db->query($sql);
-                
+
                 $full_day = array();
             }
-            
-            $hours ++;
+
+            $hours++;
         }
     }
 
@@ -2578,19 +2576,19 @@ aff_network_id=values(aff_network_id)";
         $dbGlobalLink = $db;
 
         if (function_exists('curl_version')) { // if curel is installed use the multiget method
-            include_once (substr(dirname(__FILE__), 0, - 10) . '/202-cronjobs/process_dataengine_job.php');
+            include_once(substr(dirname(__FILE__), 0, -10) . '/202-cronjobs/process_dataengine_job.php');
         } else { // loop daily
             $query = "SELECT * FROM 202_dataengine_job WHERE processed = '0'";
             $result = $db->query($query);
             $row = $result->fetch_assoc();
-            
+
             if ($result->num_rows) {
                 if (! $row['processing']) {
                     $snippet = "AND 2c.user_id = " . 1;
-                    
+
                     $mysql['click_time_from'] = $db->real_escape_string($row['time_from']);
                     $mysql['click_time_to'] = $db->real_escape_string($row['time_to']);
-                    
+
                     $this->getSummary($mysql['click_time_from'], $mysql['click_time_to'], $snippet, 1, true);
                 }
             }
@@ -2601,34 +2599,34 @@ aff_network_id=values(aff_network_id)";
     {
         $chart = array();
         $series = array();
-        
+
         $mysql['from'] = self::$db->real_escape_string($from);
         $mysql['to'] = self::$db->real_escape_string($to);
         $click_filtered = $this->getAccountOverviewFilters();
-        
+
         if ($user_chart_data) {
             foreach ($user_chart_data as $chart_data) {
                 $chart[$chart_data['campaign_id']][] = $chart_data['value_type'];
             }
         }
-        
+
         $campaigns = array_keys($chart);
-        
+
         foreach ($campaigns as $campaign) {
-            
+
             $i = 0;
             $types = array();
             $data = array();
             $sqlSelectObj = '';
-            
+
             foreach ($chart[$campaign] as $type) {
-                $i ++;
+                $i++;
                 if (count($chart[$campaign]) == $i) {
                     $end = "";
                 } else {
                     $end = ",";
                 }
-                
+
                 switch ($type) {
                     case 'clicks':
                         $sqlSelectObj .= " SUM(clicks) AS clicks" . $end;
@@ -2679,95 +2677,95 @@ aff_network_id=values(aff_network_id)";
                         $typeName = "ROI";
                         break;
                 }
-                
+
                 $types[] = array(
                     'type_name' => $typeName,
                     'sql_name' => $type
                 );
             }
-            
+
             if ($time_range == 'hours') {
                 $rangeGroupby = "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y %l:00%p')";
                 $rangeFormat = ", DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y %l:00%p') AS date_range";
             } else 
                 if ($time_range == 'days') {
-                    $rangeGroupby = "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y')";
-                    $rangeFormat = ", DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y') AS date_range";
-                }
-            
+                $rangeGroupby = "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y')";
+                $rangeFormat = ", DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y') AS date_range";
+            }
+
             if ($campaign != '0') {
                 $rangeFormat .= ", aff_campaign_name";
             }
-            
+
             $sqlObj = "SELECT" . $sqlSelectObj . $rangeFormat . " FROM 202_dataengine ";
-            
+
             if ($campaign != '0') {
                 $sqlObj .= "LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) ";
             }
-            
+
             $sqlObj .= "WHERE click_time >= '" . $from . "' AND click_time <= '" . $to . "' ";
-            
+
             if ($campaign != '0') {
                 $sqlObj .= "AND aff_campaign_id = '" . $campaign . "' ";
             }
             $sqlObj .= $click_filtered . " ";
             $sqlObj .= "GROUP BY " . $rangeGroupby . ";";
-            
+
             $result = self::$db->query($sqlObj);
-            
-            if($result){
-            while ($row = $result->fetch_assoc()) {
-                
-                $campaign_name = $row['aff_campaign_name'];
-                $data['categories'][$row['date_range']] = $row['date_range'];
-                foreach ($row as $key => $value) {
-                    $sqlName = '';
-                    switch ($key) {
-                        case 'clicks':
-                            $sqlName = "clicks";
-                            break;
-                        case 'click_out':
-                            $sqlName = "click_out";
-                            break;
-                        case 'ctr':
-                            $sqlName = "ctr";
-                            break;
-                        case 'leads':
-                            $sqlName = "leads";
-                            break;
-                        case 'su_ratio':
-                            $sqlName = "su_ratio";
-                            break;
-                        case 'payout':
-                            $sqlName = "payout";
-                            break;
-                        case 'epc':
-                            $sqlName = "epc";
-                            break;
-                        case 'cpc':
-                            $sqlName = "cpc";
-                            break;
-                        case 'income':
-                            $sqlName = "income";
-                            break;
-                        case 'cost':
-                            $sqlName = "cost";
-                            break;
-                        case 'net':
-                            $sqlName = "net";
-                            break;
-                        case 'roi':
-                            $sqlName = "roi";
-                            break;
+
+            if ($result) {
+                while ($row = $result->fetch_assoc()) {
+
+                    $campaign_name = $row['aff_campaign_name'];
+                    $data['categories'][$row['date_range']] = $row['date_range'];
+                    foreach ($row as $key => $value) {
+                        $sqlName = '';
+                        switch ($key) {
+                            case 'clicks':
+                                $sqlName = "clicks";
+                                break;
+                            case 'click_out':
+                                $sqlName = "click_out";
+                                break;
+                            case 'ctr':
+                                $sqlName = "ctr";
+                                break;
+                            case 'leads':
+                                $sqlName = "leads";
+                                break;
+                            case 'su_ratio':
+                                $sqlName = "su_ratio";
+                                break;
+                            case 'payout':
+                                $sqlName = "payout";
+                                break;
+                            case 'epc':
+                                $sqlName = "epc";
+                                break;
+                            case 'cpc':
+                                $sqlName = "cpc";
+                                break;
+                            case 'income':
+                                $sqlName = "income";
+                                break;
+                            case 'cost':
+                                $sqlName = "cost";
+                                break;
+                            case 'net':
+                                $sqlName = "net";
+                                break;
+                            case 'roi':
+                                $sqlName = "roi";
+                                break;
+                        }
+
+                        if ($sqlName != '') {
+                            $data['data'][$row['date_range']][$sqlName] = $row[$sqlName];
+                        }
                     }
-                    
-                    if ($sqlName != '') {
-                        $data['data'][$row['date_range']][$sqlName] = $row[$sqlName];
-                    }
-                }
                 }
             }
-            
+
             foreach ($types as $type) {
                 $seriesData = array();
                 $series_name = $type['type_name'];
@@ -2776,14 +2774,14 @@ aff_network_id=values(aff_network_id)";
                 } else {
                     $series_name .= " (all)";
                 }
-                
+
                 foreach ($rangePeriod as $range) {
                     if ($time_range == 'days') {
                         $key = $range->format('M d Y');
                     } else 
                         if ($time_range == 'hours') {
-                            $key = $range->format('M d Y g:iA');
-                        }
+                        $key = $range->format('M d Y g:iA');
+                    }
                     if (isset($data['categories'][$key])) {
                         // $seriesData[] = $data['data'][$data['categories'][$key]][$type['sql_name']];
                         // print_r( $data['data'][$key][$type['sql_name']]);
@@ -2792,16 +2790,16 @@ aff_network_id=values(aff_network_id)";
                         $seriesData[] = '0';
                     }
                 }
-                
+
                 $series[] = array(
                     'name' => $series_name,
                     'data' => $seriesData
                 );
             }
         }
-        
+
         $chart = array();
-        
+
         $chart['series'] = $series;
         return $chart;
     }
@@ -2825,7 +2823,7 @@ class DisplayData
     function displayReport($reportType, $theData, $foundRows = '')
     {
         global $userObj;
-        
+
         $paginateReport = true;
         switch ($reportType) {
             case 'LpOverview':
@@ -2837,7 +2835,7 @@ class DisplayData
                 $downloadUrl = '';
                 break;
             case 'breakdown':
-                
+
                 $featureLabel = "Time";
                 $paginateReport = false;
                 $downloadUrl = '';
@@ -2896,7 +2894,7 @@ class DisplayData
                 $downloadUrl = 'platform_download.php';
                 break;
         }
-        
+
         if ($downloadUrl != '') {
             echo '<div class="row">
                     <div class="col-xs-12 text-right" style="padding-bottom: 10px;">
@@ -2907,7 +2905,7 @@ class DisplayData
                     </div>
                 </div>';
         }
-        
+
         echo '<table class="table table-bordered table-hover" id="stats-table">
         <thead>
         <tr style="background-color: #f2fbfa;">
@@ -2927,19 +2925,19 @@ class DisplayData
         </tr>
         </thead>
         <tbody>';
-        
+
         $obj = new ArrayObject($theData);
         $it = $obj->getIterator();
         $totals_row = $obj->count();
-        
+
         if (strlen($html['referer_name']) > 20)
             $html['referer_name_trim'] = substr($html['referer_name'], 0, 60) . '...';
-        
-        for ($i = 0; $i < $obj->count(); $i ++) {
+
+        for ($i = 0; $i < $obj->count(); $i++) {
             // echo $it->key() . "=" . $it->current() . "\n";
             $obj2 = new ArrayObject($it->current());
             $html = $obj2->getIterator();
-            
+
             switch ($reportType) {
                 case 'LpOverview':
                     $featureKey = $html['landing_page_nickname'];
@@ -2993,7 +2991,7 @@ class DisplayData
                     $featureKey = $html['platform_name'];
                     break;
             }
-            
+
             if (self::convertToNumber($html['net']) > 0) {
                 $netStyle = 'primary';
             } elseif ($html['net'] < 0) {
@@ -3022,9 +3020,9 @@ class DisplayData
             } else {
                 $totalRoiStyle = 'default';
             }
-            
+
             if ($i != $obj->count() - 1) {
-                
+
                 if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['clicks'] = '?';
                     $html['click_out'] = '?';
@@ -3035,7 +3033,7 @@ class DisplayData
                 } else {
                     $html['cost_wrapper'] = '(' . $html['cost'] . ')';
                 }
-                
+
                 echo ' <tr>
                <td colspan="4" style="text-align:left; padding-left:10px">' . $featureKey . '</td>
                    <td>' . $html['clicks'] . '</td>
@@ -3054,7 +3052,7 @@ class DisplayData
             			
             		</tr> ';
             } else {
-                
+
                 if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['total_clicks'] = '?';
                     $html['total_click_out'] = '?';
@@ -3065,7 +3063,7 @@ class DisplayData
                 } else {
                     $html['total_cost_wrapper'] = '(' . $html['total_cost'] . ')';
                 }
-                
+
                 echo '<tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
         <td colspan="4" style="text-align:left; padding-left:10px;"><strong>Totals for report</strong></td>
         <td><strong>' . $html['total_clicks'] . '</strong></td>
@@ -3093,31 +3091,31 @@ class DisplayData
     function displayPerPPCReport($type, $theData)
     {
         global $userObj;
-        
+
         switch ($type) {
             case 'slp_direct_link':
                 $featureLabel = "[direct link & simple lp]";
                 break;
-            
+
             case 'alp':
                 $featureLabel = "[adv lp]";
                 break;
         }
-        
+
         if (!empty($theData)) {
-            
+
             foreach ($theData as $campaign) {
-                
+
                 switch ($type) {
                     case 'slp_direct_link':
                         $name = $campaign['total_aff_network_name'] . ' - ' . $campaign['total_aff_campaign_name'];
                         break;
-                    
+
                     case 'alp':
                         $name = $campaign['total_landing_page_nickname'];
                         break;
                 }
-                
+
                 if (self::convertToNumber($campaign['total_net']) > 0) {
                     $totalNetStyle = 'primary';
                 } elseif ($campaign['total_net'] < 0) {
@@ -3132,7 +3130,7 @@ class DisplayData
                 } else {
                     $totalRoiStyle = 'default';
                 }
-                
+
                 echo '
             <strong><small>' . $name . ' <span style="font-size: 65%; color: grey; font-weight: normal;">' . $featureLabel . '</span></small></strong>
             <table class="table table-bordered table-hover" id="stats-table">
@@ -3169,7 +3167,7 @@ class DisplayData
                     } else {
                         $roiStyle = 'default';
                     }
-                    
+
                     if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                         $ppc_account['clicks'] = '?';
                         $ppc_account['click_out'] = '?';
@@ -3180,11 +3178,11 @@ class DisplayData
                     } else {
                         $ppc_account['cost_wrapper'] = '(' . $ppc_account['cost'] . ')';
                     }
-                    
-                    if(($ppc_account['ppc_network_name'] != '')  && ($ppc_account['ppc_account_name'] != '')){
-                     
+
+                    if (($ppc_account['ppc_network_name'] != '')  && ($ppc_account['ppc_account_name'] != '')) {
+
                         $source_name =  $ppc_account['ppc_network_name'] . ' - ' . $ppc_account['ppc_account_name'];
-                    }else{
+                    } else {
                         $source_name = '[No Traffic Source Account]';
                     }
 
@@ -3206,7 +3204,7 @@ class DisplayData
                         
                 </tr> ';
                 }
-                
+
                 if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $campaign['total_clicks'] = '?';
                     $campaign['total_click_out'] = '?';
@@ -3217,7 +3215,7 @@ class DisplayData
                 } else {
                     $campaign['cost_wrapper'] = '(' . $campaign['total_cost'] . ')';
                 }
-                
+
                 echo '<tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
                     <td colspan="4" style="text-align:left; padding-left:10px;"><strong>Totals for report</strong></td>
                     <td><strong>' . $campaign['total_clicks'] . '</strong></td>
@@ -3242,11 +3240,11 @@ class DisplayData
     function displayVariableReport($theData)
     {
         global $userObj;
-        
+
         $obj = new ArrayObject($theData);
         $it = $obj->getIterator();
         $totals_row = $obj->count();
-        
+
         echo '<div class="row">
                     <div class="col-xs-12 text-right" style="padding-bottom: 10px;">
                         <img style="margin-bottom:2px;" src="' . get_absolute_url() . '202-img/icons/16x16/page_white_excel.png"/>
@@ -3255,7 +3253,7 @@ class DisplayData
                         </a>
                     </div>
                 </div>';
-        
+
         echo '<table class="table table-bordered" id="stats-table">
             <thead>
             <tr style="background-color: #f2fbfa;">
@@ -3276,10 +3274,10 @@ class DisplayData
             </thead>
             <tbody>';
         // echo $obj->count();
-        for ($i = 0; $i < $obj->count(); $i ++) {
+        for ($i = 0; $i < $obj->count(); $i++) {
             $obj2 = new ArrayObject($it->current());
             $html = $obj2->getIterator();
-            
+
             if (self::convertToNumber($html['net']) > 0) {
                 $netStyle = 'primary';
             } elseif ($html['net'] < 0) {
@@ -3294,7 +3292,7 @@ class DisplayData
             } else {
                 $roiStyle = 'default';
             }
-            
+
             if (self::convertToNumber($html['total_net']) > 0) {
                 $totalNetStyle = 'primary';
             } elseif ($html['total_net'] < 0) {
@@ -3309,13 +3307,13 @@ class DisplayData
             } else {
                 $totalRoiStyle = 'default';
             }
-            
+
             if ($i != $obj->count() - 1) {
-                
+
                 if ($html['variables']) {
                     $jj = 0;
                     foreach ($html['variables'] as $variables) {
-                        
+
                         if (self::convertToNumber($variables['net']) > 0) {
                             $variables_netStyle = 'primary';
                         } elseif ($variables['net'] < 0) {
@@ -3334,7 +3332,7 @@ class DisplayData
                     <tr class="sub">
                        <td class="result_main_column_level_1" colspan="13"><strong>' . $html[$i]['ppc_network_name'] . ' - ' . $variables[0]['variable_name'] . '</strong></td>
                     </tr> ';
-                        $jj ++;
+                        $jj++;
                         if ($variables['values']) {
                             foreach ($variables['values'] as $value) {
                                 if (self::convertToNumber($value['net']) > 0) {
@@ -3351,7 +3349,7 @@ class DisplayData
                                 } else {
                                     $value_roiStyle = 'default';
                                 }
-                                
+
                                 echo '
                         <tr class="lite">
                            <td class="result_main_column_level_3">' . $value['variable_value'] . '</td>
@@ -3373,7 +3371,7 @@ class DisplayData
                     }
                 }
             } else {
-                
+
                 echo '
                 <tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
                     <td class="result_main_column_level_1"><strong>Totals for report</strong></td>
@@ -3393,7 +3391,7 @@ class DisplayData
             </tbody>
             </table>';
             }
-            
+
             $it->next();
         }
     }
@@ -3401,7 +3399,7 @@ class DisplayData
     function downloadReport($reportType, $theData, $foundRows = '')
     {
         global $userObj;
-        
+
         switch ($reportType) {
             case 'keyword':
                 $featureLabel = "Keyword";
@@ -3440,20 +3438,20 @@ class DisplayData
                 $featureLabel = "Platform";
                 break;
         }
-        
+
         echo $featureLabel . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
-        
+
         $obj = new ArrayObject($theData);
         $it = $obj->getIterator();
         $totals_row = $obj->count();
-        
-        for ($i = 0; $i < $obj->count(); $i ++) {
+
+        for ($i = 0; $i < $obj->count(); $i++) {
             // echo $it->key() . "=" . $it->current() . "\n";
             $obj2 = new ArrayObject($it->current());
             $html = $obj2->getIterator();
-            
+
             switch ($reportType) {
-                
+
                 case 'keyword':
                     $featureKey = $html['keyword'];
                     break;
@@ -3503,9 +3501,9 @@ class DisplayData
                     $featureKey = $html['platform_name'];
                     break;
             }
-            
+
             if ($featureKey) {
-                
+
                 if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['clicks'] = '?';
                     $html['click_out'] = '?';
@@ -3514,10 +3512,10 @@ class DisplayData
                     $html['cost'] = '?';
                     $html['net'] = '?';
                 }
-                
+
                 echo $featureKey . "\t" . $html['clicks'] . "\t" . $html['click_out'] . "\t" . $html['ctr'] . "\t" . $html['leads'] . "\t" . $html['su_ratio'] . "\t" . $html['payout'] . "\t" . $html['epc'] . "\t" . $html['cpc'] . "\t" . $html['income'] . "\t" . $html['cost'] . "\t" . $html['net'] . "\t" . $html['roi'] . "\n";
             }
-            
+
             $it->next();
         }
     }
@@ -3525,30 +3523,30 @@ class DisplayData
     function downloadVariables($theData)
     {
         global $userObj;
-        
+
         $obj = new ArrayObject($theData);
         $it = $obj->getIterator();
         $totals_row = $obj->count();
-        
+
         echo "Custom Variables" . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
-        
-        for ($i = 0; $i < $obj->count(); $i ++) {
+
+        for ($i = 0; $i < $obj->count(); $i++) {
             $obj2 = new ArrayObject($it->current());
             $html = $obj2->getIterator();
-            
+
             if ($i != $obj->count() - 1) {
                 echo "- " . $html['ppc_network_name'] . "\t" . $html['clicks'] . "\t" . $html['click_out'] . "\t" . $html['ctr'] . "\t" . $html['leads'] . "\t" . $html['su_ratio'] . "\t" . $html['payout'] . "\t" . $html['epc'] . "\t" . $html['cpc'] . "\t" . $html['income'] . "\t" . $html['cost'] . "\t" . $html['net'] . "\t" . $html['roi'] . "\n";
-                
+
                 foreach ($html['variables'] as $variables) {
                     echo " - " . $variables['variable_name'] . "\t" . $variables['clicks'] . "\t" . $variables['click_out'] . "\t" . $variables['ctr'] . "\t" . $variables['leads'] . "\t" . $variables['su_ratio'] . "\t" . $variables['payout'] . "\t" . $variables['epc'] . "\t" . $variables['cpc'] . "\t" . $variables['income'] . "\t" . $variables['cost'] . "\t" . $variables['net'] . "\t" . $variables['roi'] . "\n";
-                    
+
                     foreach ($variables['values'] as $value) {
-                        
+
                         echo " -- " . $value['variable_value'] . "\t" . $value['clicks'] . "\t" . $value['click_out'] . "\t" . $value['ctr'] . "\t" . $value['leads'] . "\t" . $value['su_ratio'] . "\t" . $value['payout'] . "\t" . $value['epc'] . "\t" . $value['cpc'] . "\t" . $value['income'] . "\t" . $value['cost'] . "\t" . $value['net'] . "\t" . $value['roi'] . "\n";
                     }
                 }
             }
-            
+
             $it->next();
         }
     }
@@ -3559,7 +3557,7 @@ class DisplayData
             "$",
             ","
         );
-        
+
         return str_replace($moneyStuff, "", $val);
     }
 
@@ -3572,7 +3570,7 @@ class DisplayData
             case 'landingpage':
                 $reportType = "landing_pages";
                 break;
-            
+
             case 'keyword':
             case 'referer':
             case 'ip':
@@ -3585,63 +3583,63 @@ class DisplayData
                 break;
             case 'country':
             case 'city':
-                $reportType = substr($reportType, 0, - 1) . 'ies';
+                $reportType = substr($reportType, 0, -1) . 'ies';
                 break;
         }
         $up = new UserPrefs();
         $fileName = "sort_" . $reportType . ".php";
-        
+
         $query['pages'] = ceil((int)$foundRows / (int)$up->getPref('user_pref_limit'));
-        
+
         if (isset($_POST['offset']) && $_POST['offset'] != '') {
-            $query['offset'] = self::$db->real_escape_string($_POST['offset']);
+            $query['offset'] = self::$db->real_escape_string((string)$_POST['offset']);
         } else {
             $query['offset'] = 0;
         }
-        
+
         if ($query['pages'] > 1) {
-            ?>
-<div class="row">
-	<div class="col-xs-12 text-center">
-		<div class="pagination" id="table-pages">
-			<ul>
-        			<?php
-            
-if ($query['pages'] > 1) {
-                if ($query['offset'] == 0)
-                    $page = 0;
-                else
-                    $page = $query['offset'] - 1;
-                printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $fileName, $page, $html['order']);
-            }
-            
-            if ($query['pages'] > 1) {
-                for ($i = 0; $i < $query['pages']; $i ++) {
-                    if (($i >= $query['offset'] - 10) and ($i < $query['offset'] + 11)) {
-                        if ($query['offset'] == $i) {
-                            $class = 'class="active"';
-                        }
-                        printf(' <li %s><a onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');">%s</a></li>', $class, get_absolute_url(), $fileName, $i, $html['order'], $i + 1);
-                        unset($class);
-                    }
-                }
-            }
-            
-            if ($query['pages'] > 1) {
-                if ($query['offset'] + 1 == $query['pages'])
-                    $page = $query['offset'];
-                else
-                    $page = $query['offset'] + 1;
-                printf(' <li class="next"><a class="fui-arrow-right" onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $fileName, $page, $html['order']);
-            }
-            ?>
-        		</ul>
-		</div>
-	</div>
-</div>
+?>
+            <div class="row">
+                <div class="col-xs-12 text-center">
+                    <div class="pagination" id="table-pages">
+                        <ul>
+                            <?php
+
+                            if ($query['pages'] > 1) {
+                                if ($query['offset'] == 0)
+                                    $page = 0;
+                                else
+                                    $page = $query['offset'] - 1;
+                                printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $fileName, $page, $html['order']);
+                            }
+
+                            if ($query['pages'] > 1) {
+                                for ($i = 0; $i < $query['pages']; $i++) {
+                                    if (($i >= $query['offset'] - 10) and ($i < $query['offset'] + 11)) {
+                                        if ($query['offset'] == $i) {
+                                            $class = 'class="active"';
+                                        }
+                                        printf(' <li %s><a onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');">%s</a></li>', $class, get_absolute_url(), $fileName, $i, $html['order'], $i + 1);
+                                        unset($class);
+                                    }
+                                }
+                            }
+
+                            if ($query['pages'] > 1) {
+                                if ($query['offset'] + 1 == $query['pages'])
+                                    $page = $query['offset'];
+                                else
+                                    $page = $query['offset'] + 1;
+                                printf(' <li class="next"><a class="fui-arrow-right" onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $fileName, $page, $html['order']);
+                            }
+                            ?>
+                        </ul>
+                    </div>
+                </div>
+            </div>
 <?php
-        
-}
+
+        }
     }
 }
 
@@ -3650,7 +3648,7 @@ class UserPrefs
 
     private static $userPref = array();
 
-    static $mysql = Array();
+    static $mysql = array();
 
     private static $db;
 
@@ -3662,13 +3660,13 @@ class UserPrefs
         } catch (Exception $e) {
             self::$db = false;
         }
-        $this->mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_id']);
-        
+        $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
+
         $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $this->mysql['user_id'];
         $user_result = _mysqli_query($user_sql, $dbGlobalLink); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
         $breakdown = $user_row['user_pref_breakdown'];
-        
+
         foreach ($user_row as $key => $value) {
             self::$userPref[$key] = $value;
         }
@@ -3708,8 +3706,8 @@ class UserPrefs
             $click_filtered .= " AND 2st.landing_page_id = 0";
         } else 
             if ($user_row['user_pref_method_of_promotion'] == 'landingpage') {
-                $click_filtered .= " AND 2st.landing_page_id != 0";
-            }
+            $click_filtered .= " AND 2st.landing_page_id != 0";
+        }
         /*
          * if ($user_row['user_pref_aff_campaign_id'] != '0') { $click_filtered.= " AND aff_campaign_id=".$user_row['user_pref_aff_campaign_id']; }
          * if ($user_row['user_pref_aff_campaign_id'] != '0') { $click_filtered.= " AND aff_campaign_id=".$user_row['user_pref_aff_campaign_id']; }

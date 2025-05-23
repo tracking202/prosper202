@@ -194,7 +194,7 @@ if ($vars[1] == '' && $pci == '') {
 /* ------------------------------------------------------- */
 /* ------------------------------------------------------- */
 
-$mysql['aff_campaign_id_public'] = $db->real_escape_string($_GET['acip']);
+$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['acip']);
 $mysql['click_id_public'] = $db->real_escape_string($pci);
 
 $info_sql = "

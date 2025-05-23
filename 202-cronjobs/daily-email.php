@@ -24,11 +24,11 @@ include_once(str_repeat("../", 1).'202-config/connect.php');
 	$data = array('to' => $user_row['user_email'], 'domain' => $domain, 'campaigns' => array());
 	$ids = array();
 
-	$time['from_today'] = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
-	$time['to_today'] = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));
+	$time['from_today'] = mktime(0,0,0,(int)date('m',time()),(int)date('d',time()),(int)date('Y',time()));
+	$time['to_today'] = mktime(23,59,59,(int)date('m',time()),(int)date('d',time()),(int)date('Y',time()));
 	
-	$time['from_yesterday'] = mktime(0,0,0,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
-	$time['to_yesterday'] = mktime(23,59,59,date('m',time()-86400),date('d',time()-86400),date('Y',time()-86400));
+	$time['from_yesterday'] = mktime(0,0,0,(int)date('m',time()-86400),(int)date('d',time()-86400),(int)date('Y',time()-86400));
+	$time['to_yesterday'] = mktime(23,59,59,(int)date('m',time()-86400),(int)date('d',time()-86400),(int)date('Y',time()-86400));
 		
 	$sql_today = "SELECT 
 			2ca.aff_campaign_id,

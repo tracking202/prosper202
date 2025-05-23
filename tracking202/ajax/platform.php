@@ -14,8 +14,8 @@ AUTH::require_user();
 
         while ($platform_row = $platform_result->fetch_array(MYSQLI_ASSOC)) {
 
-            $html['platform_name'] = htmlentities($platform_row['platform_name'], ENT_QUOTES, 'UTF-8');
-            $html['platform_id'] = htmlentities($platform_row['platform_id'], ENT_QUOTES, 'UTF-8');
+            $html['platform_name'] = htmlentities((string)($platform_row['platform_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+            $html['platform_id'] = htmlentities((string)($platform_row['platform_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
             if ($_POST['platform_id'] == $platform_row['platform_id']) {
                 $selected = 'selected=""';   

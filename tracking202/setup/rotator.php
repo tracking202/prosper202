@@ -9,9 +9,19 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 	die();
 }
 
+// Initialize variables to prevent undefined variable warnings
+$error = array();
+$html = array();
+$mysql = array();
+$selected = array();
+$add_success = false;
+$delete_success = false;
+$editing = false;
+$copying = false;
+
 $slack = false;
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
@@ -19,11 +29,11 @@ $user_row = $user_results->fetch_assoc();
 if (!empty($user_row['url'])) 
 	$slack = new Slack($user_row['url']);
 
-if ($_POST['edit_rotator']) {
+if (!empty($_POST['edit_rotator'])) {
 		$editing = true;
 }
 
-if ($_GET['rules_added']) {
+if (!empty($_GET['rules_added'])) {
 		$add_success = true;
 }
 
@@ -36,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 
 	if (!$error) {
 		$mysql['rotator_name'] = $db->real_escape_string ($_POST['rotator_name']);
-		$mysql['user_id'] = $db->real_escape_string ($_SESSION ['user_id']);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 		if ($editing == true) {
 			$sql = "UPDATE `202_aff_networks` SET";
@@ -59,8 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 if (isset($_GET['delete_rotator_id'])) {
 
 	if ($userObj->hasPermission("remove_rotator")) {
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-		$mysql['rotator_id'] = $db->real_escape_string($_GET['delete_rotator_id']);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+		$mysql['rotator_id'] = $db->real_escape_string((string)$_GET['delete_rotator_id']);
 
 		$delete_sql = "DELETE FROM 202_rotators WHERE id='".$mysql['rotator_id']."' AND user_id='".$mysql['user_id']."'";
 
@@ -151,7 +161,7 @@ template_top('Smart Redirector',NULL,NULL,NULL); ?>
 			<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
 			<ul class="list">
 			<?php
-				$mysql ['user_id'] = $db->real_escape_string ( $_SESSION ['user_id'] );
+				$mysql ['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$sql = "SELECT * FROM `202_rotators` WHERE `user_id`='" . $mysql ['user_id'] . "' ORDER BY `name` ASC";
 				$result = $db->query ( $sql ) or record_mysql_error ( $sql );
 				if ($result->num_rows == 0) {
@@ -218,13 +228,13 @@ template_top('Smart Redirector',NULL,NULL,NULL); ?>
 					<label for="rotator_id" style="margin-right:5px;">Select redirector: </label>
 					<select class="form-control input-sm" name="rotator_id" style="min-width: 130px;">
 						<option value="0">--</option>
-						<?php  $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+						<?php  $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 						$rotator_sql = "SELECT * FROM `202_rotators` WHERE `user_id`='".$mysql['user_id']."' ORDER BY `name` ASC";
 						$rotator_result = _mysqli_query($rotator_sql) ; 
 						while ($rotator_row = $rotator_result->fetch_array(MYSQLI_ASSOC)) {
 
-							$html['rotator_name'] = htmlentities($rotator_row['name'], ENT_QUOTES, 'UTF-8');
-							$html['rotator_id'] = htmlentities($rotator_row['id'], ENT_QUOTES, 'UTF-8');
+							$html['rotator_name'] = htmlentities((string)($rotator_row['name'] ?? ''), ENT_QUOTES, 'UTF-8');
+							$html['rotator_id'] = htmlentities((string)($rotator_row['id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 							printf('<option value="%s">%s</option>', $html['rotator_id'],$html['rotator_name']);
 

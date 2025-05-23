@@ -5,10 +5,18 @@ include_once(str_repeat("../", 1).'202-config/clickserver_api_management.php');
 
 AUTH::require_user();
 
+// Initialize variables to prevent undefined variable warnings
+$error = array();
+$html = array();
+$mysql = array();
+$selected = array();
+$add_success = false;
+$delete_success = false;
+
 $strProtocol = stripos($_SERVER['SERVER_PROTOCOL'],'https') === true ? 'https://' : 'http://';
-$mysql['add_dni'] = $db->real_escape_string($_GET['add_dni_network']);
+$mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ?? ''));
 $slack = false;
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash, 2u.p202_customer_api_key, 2up.facebook_ads_linked FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
@@ -21,7 +29,7 @@ if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
 if ($_GET['cb_status'] == 1) {
-        $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+        $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
         $user_sql = "SELECT cb_verified
              FROM 202_users_pref
              WHERE user_id='".$mysql['user_id']."'";
@@ -36,7 +44,7 @@ if ($_GET['cb_status'] == 1) {
 }
 
 //get all of the user data
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $user_sql = "	SELECT 	*
 				 FROM   	`202_users` 
 				 LEFT JOIN	`202_users_pref` USING (user_id)
@@ -58,8 +66,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         if (!$error) {
                                 
-            $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-            $mysql['cb_key'] = $db->real_escape_string($_POST['cb_key']);
+            $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+            $mysql['cb_key'] = $db->real_escape_string((string)$_POST['cb_key']);
             $mysql['cb_verified'] = $db->real_escape_string(0);
 
                 if ($mysql['cb_key'] != $user_row['cb_key']) {
@@ -96,8 +104,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
         if (!$error) {
     
-            $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-            $mysql['user_slack_incoming_webhook'] = $db->real_escape_string($_POST['user_slack_incoming_webhook']);
+            $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+            $mysql['user_slack_incoming_webhook'] = $db->real_escape_string((string)$_POST['user_slack_incoming_webhook']);
             
             if ($mysql['user_slack_incoming_webhook']) {
     
@@ -134,8 +142,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
 
         if (!$error) {
-        	$mysql['revcontent_user_id'] = $db->real_escape_string($_POST['revcontent_user_id']);
-            $mysql['revcontent_user_secret'] = $db->real_escape_string($_POST['revcontent_user_secret']);
+        	$mysql['revcontent_user_id'] = $db->real_escape_string((string)$_POST['revcontent_user_id']);
+            $mysql['revcontent_user_secret'] = $db->real_escape_string((string)$_POST['revcontent_user_secret']);
 
             $validate = validateRevContentCredentials($mysql['revcontent_user_id'], $mysql['revcontent_user_secret']);
 
@@ -166,8 +174,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         if (!$error) {
     
-            $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-            $mysql['zaxaa_api_signature'] = $db->real_escape_string($_POST['zaxaa_api_signature']);
+            $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+            $mysql['zaxaa_api_signature'] = $db->real_escape_string((string)$_POST['zaxaa_api_signature']);
             
             if ($mysql['zaxaa_api_signature']) {
     
@@ -203,8 +211,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         if (!$error) {
     
-            $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-            $mysql['jvzoo_ipn_secret_key'] = $db->real_escape_string($_POST['jvzoo_ipn_secret_key']);
+            $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+            $mysql['jvzoo_ipn_secret_key'] = $db->real_escape_string((string)$_POST['jvzoo_ipn_secret_key']);
             
             if ($mysql['jvzoo_ipn_secret_key']) {
     
@@ -240,8 +248,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         if (!$error) {
     
-            $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-            $mysql['ipqs_api_key'] = $db->real_escape_string($_POST['ipqs_api_key']);
+            $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+            $mysql['ipqs_api_key'] = $db->real_escape_string((string)$_POST['ipqs_api_key']);
             
             if ($mysql['ipqs_api_key']) {
     
@@ -271,12 +279,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     	if (array_search('', $_POST) !== false) {
     		$error['dni_network'] = 'Make sure all fields are selected and filled out!';
     	} else {
-    		$mysql['dniNetworkId'] = $db->real_escape_string($_POST['dni_network']);
-	    	$mysql['dniNetworkType'] = $db->real_escape_string($_POST['dni_network_type']);
+    		$mysql['dniNetworkId'] = $db->real_escape_string((string)$_POST['dni_network']);
+	    	$mysql['dniNetworkType'] = $db->real_escape_string((string)$_POST['dni_network_type']);
 	    	$dniNetworkName = explode(" (", $_POST['dni_network_name'], 2);
 	    	$mysql['dniNetworkName'] = $db->real_escape_string($dniNetworkName[0]);
-	    	$mysql['dniAffiliateId'] = $db->real_escape_string($_POST['dni_network_affiliate_id']);
-	    	$mysql['dniApikey'] = $db->real_escape_string($_POST['dni_network_api_key']);
+	    	$mysql['dniAffiliateId'] = $db->real_escape_string((string)$_POST['dni_network_affiliate_id']);
+	    	$mysql['dniApikey'] = $db->real_escape_string((string)$_POST['dni_network_api_key']);
 	    	$dniAuth = authDniNetworks($user_row['install_hash'], $_POST['dni_network'], $_POST['dni_network_api_key'], $_POST['dni_network_affiliate_id']);
 
 	    	if ($dniAuth['auth'] == false) {
@@ -311,7 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		    		}
 
 		    	} else if (isset($_POST['editing_dni_network_id']) && !empty($_POST['editing_dni_network_id'])){
-		    		$mysql['editing_dni_network_id'] = $db->real_escape_string($_POST['editing_dni_network_id']);
+		    		$mysql['editing_dni_network_id'] = $db->real_escape_string((string)$_POST['editing_dni_network_id']);
 		    		$sql = "UPDATE 202_dni_networks SET networkId = '".$mysql['dniNetworkId']."', name = '".$mysql['dniNetworkName']."', type = '".$mysql['dniNetworkType']."', apiKey = '".$mysql['dniApikey']."', time = '".time()."'";
 
 		    		if ($_POST['dni_network_type'] == 'Cake') {
@@ -339,7 +347,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 
 if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
-	$mysql['deleteDniNetworkId'] = $db->real_escape_string($_GET['delete_dni_network']);
+	$mysql['deleteDniNetworkId'] = $db->real_escape_string((string)$_GET['delete_dni_network']);
 	$db->query("DELETE FROM 202_dni_networks WHERE id = '".$mysql['deleteDniNetworkId']."' AND user_id = '".$mysql['user_id']."'");
 	$sql = "UPDATE 202_aff_networks SET aff_network_deleted = '1', aff_network_time = '".time()."' WHERE dni_network_id = '".$mysql['deleteDniNetworkId']."'";
 	$db->query($sql);
@@ -348,7 +356,7 @@ if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
 }
 
 if (isset($_GET['edit_dni_network']) && !empty($_GET['edit_dni_network'])) {
-	$mysql['editDniNetworkId'] = $db->real_escape_string($_GET['edit_dni_network']);
+	$mysql['editDniNetworkId'] = $db->real_escape_string((string)$_GET['edit_dni_network']);
 	$sql_edit_dni = "SELECT * FROM 202_dni_networks WHERE id = '".$mysql['editDniNetworkId']."' AND user_id = '".$mysql['user_id']."'";
 	$edit_dni_result = $db->query($sql_edit_dni);
 	if ($edit_dni_result->num_rows > 0) {
@@ -358,7 +366,7 @@ if (isset($_GET['edit_dni_network']) && !empty($_GET['edit_dni_network'])) {
 }
 
 if (isset($_GET['facebook_account_linked'])) {
-    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+    $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
     $sql = "UPDATE 202_users_pref SET facebook_ads_linked = '1' WHERE user_id = '".$mysql['user_id']."'";
     $db->query($sql);
     $facebook_success = true;

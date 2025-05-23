@@ -9,7 +9,7 @@ AUTH::require_user();
 	AUTH::set_timezone($_SESSION['user_timezone']);
 
 //show real or filtered clicks
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT user_pref_breakdown, user_pref_show, user_cpc_or_cpv FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
 	$user_result = _mysqli_query($user_sql, $dbGlobalLink); //($user_sql);
 	$user_row = $user_result->fetch_assoc();

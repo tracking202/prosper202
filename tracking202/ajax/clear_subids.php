@@ -4,10 +4,10 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	
 	if ($_POST['aff_network_id'] == 0) { $error['clear_subids'] = '<div class="error"><small><span class="fui-alert"></span>You have to at least select an affiliate network to clear out</small></div>'; }
-	$mysql['aff_network_id'] = $db->real_escape_string($_POST['aff_network_id']);
+	$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);
 	
 	if ($error){ 
 		echo $error['clear_subids'];  
@@ -21,7 +21,7 @@ AUTH::require_user();
 		$de['ppc_account_id'] = 0;
 
 		if ($_POST['aff_campaign_id'] != 0) {
-			$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
+			$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
 			$click_sql = "
 				UPDATE 202_clicks
 				SET click_lead=0

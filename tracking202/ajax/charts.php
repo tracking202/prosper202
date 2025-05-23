@@ -10,7 +10,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 $time = grab_timeframe(); 
 $mysql['to'] = $db->real_escape_string($time['to']);
 $mysql['from'] = $db->real_escape_string($time['from']);
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']); 
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']); 
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$range = array();
 		$de = new DataEngine();
 
-		$mysql['chart_time_range'] = $db->real_escape_string($_POST['chart_time_range']);
+		$mysql['chart_time_range'] = $db->real_escape_string((string)$_POST['chart_time_range']);
 
 		$sql = "UPDATE 202_charts SET chart_time_range = '".$mysql['chart_time_range']."'";
 		$result = $db->query($sql);
