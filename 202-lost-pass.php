@@ -6,8 +6,8 @@ include_once(dirname( __FILE__ ) . '/202-config/connect.php');
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
 	
-	$mysql['user_name'] = $db->real_escape_string($_POST['user_name']);
-	$mysql['user_email'] = $db->real_escape_string($_POST['user_email']);
+	$mysql['user_name'] = $db->real_escape_string((string)$_POST['user_name']);
+	$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
 	
 	$user_sql = "SELECT user_id FROM 202_users WHERE user_name='".$mysql['user_name']."' AND user_email='".$mysql['user_email']."'";
 	$user_result = _mysqli_query($user_sql);
@@ -68,8 +68,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	 
 	
 	
-	$html['user_name'] = htmlentities($_POST['user_name'], ENT_QUOTES, 'UTF-8');
-	$html['user_email'] = htmlentities($_POST['user_email'], ENT_QUOTES, 'UTF-8');
+	$html['user_name'] = htmlentities((string)($_POST['user_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['user_email'] = htmlentities((string)($_POST['user_email'] ?? ''), ENT_QUOTES, 'UTF-8');
 	
 } ?>
 
