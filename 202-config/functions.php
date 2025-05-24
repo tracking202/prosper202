@@ -439,7 +439,7 @@ function info_top()
 		if ($hour == 0 and $minutes == 0) {
 			$sign = ' ';
 		}
-		return $sign . str_pad($hour, 2, '0', STR_PAD_LEFT) . ':' . str_pad($minutes, 2, '0');
+		return $sign . str_pad((string)$hour, 2, '0', STR_PAD_LEFT) . ':' . str_pad((string)$minutes, 2, '0', STR_PAD_LEFT);
 	}
 
 	function getCurlValue($filename, $contentType, $postname)

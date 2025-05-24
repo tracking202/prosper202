@@ -3869,7 +3869,8 @@ function tagUserByNetwork($install_hash, $type, $network)
 
 function getDNIHost()
 {
-    $protocol = stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+    $protocol = (isset($_SERVER['SERVER_PROTOCOL']) && stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true) ||
+        (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https://' : 'http://';
     $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
     return base64_encode($domain);
 }
@@ -4298,7 +4299,7 @@ function showHelp($page)
             break;
     }
 
-    if ($url) {
+    if (isset($url) && $url) {
         echo '<a href="' . $url . 'helpdocs" class="btn btn-info btn-xs" target="_blank"><span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Get Help"></span></a>';
     }
 }
