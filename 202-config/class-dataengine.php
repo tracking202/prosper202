@@ -15,7 +15,7 @@ class DataEngine
 
     private $mysql = array();
 
-    private static mysqli $db;
+    private static ?mysqli $db = null;
 
     private static $found_rows;
 
