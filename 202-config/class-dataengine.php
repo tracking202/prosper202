@@ -1740,7 +1740,7 @@ ORDER BY ppc_network_id , name , variable";
             }
         }
 
-        if (strlen($html['aff_campaign_name']) == 0) {
+        if (!isset($html['aff_campaign_name']) || strlen($html['aff_campaign_name']) == 0) {
             $html['aff_campaign_name'] = "[Landing Page/Smart Redirector Campaign]";
             if ($mainKey = 'overview')
                 $html['aff_campaign_name'] = "[Landing Page/Smart Redirector Campaign]";
