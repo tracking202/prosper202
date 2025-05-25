@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (!$error) {
 
 		$mysql['user_pass'] = $db->real_escape_string(salt_user_pass($mysql['user_password']));
-		$hash = md5(uniqid(rand(), TRUE));
+		$hash = md5(uniqid((string)rand(), TRUE));
 		$user_hash = intercomHash($hash);
 
 		$mysql['user_time_register'] = $db->real_escape_string((string)time());
