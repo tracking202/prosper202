@@ -23,7 +23,7 @@ $copying = false;
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2up.maxmind_isp FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
 
@@ -167,43 +167,43 @@ template_top('Smart Redirector', NULL, NULL, NULL); ?>
 						$result = $db->query($sql) or record_mysql_error($sql);
 						if ($result->num_rows == 0) {
 						?><li>You have not added any redirectors.</li><?php
-																}
-
-																while ($row = $result->fetch_array(MYSQLI_ASSOC)) {
-																	$html['name'] = htmlentities($row['name'], ENT_QUOTES, 'UTF-8');
-																	$html['id'] = htmlentities($row['id'], ENT_QUOTES, 'UTF-8');
-
-																	if ($userObj->hasPermission("remove_rotator")) {
-																		printf('<li><span class="filter_rotator_name">%s</span> - <a href="?delete_rotator_id=%s&delete_rotator_name=%s">remove</a></li>', $html['name'], $html['id'], $html['name']);
-																	} else {
-																		printf('<li><span class="filter_rotator_name">%s</span></li>', $html['name']);
 																	}
 
-																	$rule_sql = "SELECT * FROM `202_rotator_rules` WHERE `rotator_id`='" . $row['id'] . "' ORDER BY `id` ASC";
-																	$rule_result = $db->query($rule_sql) or record_mysql_error($rule_sql);
-																	if ($rule_result->num_rows == 0) {
-																	?><ul>
+																	while ($row = $result->fetch_array(MYSQLI_ASSOC)) {
+																		$html['name'] = htmlentities($row['name'], ENT_QUOTES, 'UTF-8');
+																		$html['id'] = htmlentities($row['id'], ENT_QUOTES, 'UTF-8');
+
+																		if ($userObj->hasPermission("remove_rotator")) {
+																			printf('<li><span class="filter_rotator_name">%s</span> - <a href="?delete_rotator_id=%s&delete_rotator_name=%s">remove</a></li>', $html['name'], $html['id'], $html['name']);
+																		} else {
+																			printf('<li><span class="filter_rotator_name">%s</span></li>', $html['name']);
+																		}
+
+																		$rule_sql = "SELECT * FROM `202_rotator_rules` WHERE `rotator_id`='" . $row['id'] . "' ORDER BY `id` ASC";
+																		$rule_result = $db->query($rule_sql) or record_mysql_error($rule_sql);
+																		if ($rule_result->num_rows == 0) {
+																		?><ul>
 									<li>You have not added any rules.</li>
 								</ul><?php
-																	} else {
-																		echo "<ul>";
-																		while ($rule_row = $rule_result->fetch_array()) {
-																			$criteria_sql = "SELECT * FROM `202_rotator_rules_criteria` WHERE `rule_id`='" . $rule_row['id'] . "' ORDER BY `id` ASC";
-																			$criteria_result = $db->query($criteria_sql) or record_mysql_error($criteria_sql);
-																			if ($criteria_result->num_rows > 0) {
-																				$criteria = "You have " . $criteria_result->num_rows . " criteria added";
-																			} else {
-																				$criteria = "No criteria added";
-																			}
+																		} else {
+																			echo "<ul>";
+																			while ($rule_row = $rule_result->fetch_array()) {
+																				$criteria_sql = "SELECT * FROM `202_rotator_rules_criteria` WHERE `rule_id`='" . $rule_row['id'] . "' ORDER BY `id` ASC";
+																				$criteria_result = $db->query($criteria_sql) or record_mysql_error($criteria_sql);
+																				if ($criteria_result->num_rows > 0) {
+																					$criteria = "You have " . $criteria_result->num_rows . " criteria added";
+																				} else {
+																					$criteria = "No criteria added";
+																				}
 
 										?>
 									<li><?php echo $rule_row['rule_name'] . " - " . $criteria; ?> (<a href="" id="rule_details" data-id="<?php echo $rule_row['id']; ?>" data-toggle="modal" data-target="#rule_values_modal">Details</a>)</li>
 								<?php }
-																		echo "</ul>";
+																			echo "</ul>";
 								?>
 
 						<?php }
-																}
+																	}
 						?>
 					</ul>
 				</div>
@@ -306,7 +306,7 @@ template_top('Smart Redirector', NULL, NULL, NULL); ?>
 									<option value="country">Country</option>
 									<option value="region">State/Region</option>
 									<option value="city">Cities</option>
-									<option value="isp" <?php if (!isset($user_row['maxmind_isp']) || !$user_row['maxmind_isp']) echo "disabled"; ?>>ISP/Carrier</option>
+									<option value="isp" <?php if (!isset($user_row['maxmind_isp']) || $user_row['maxmind_isp'] != '1') echo "disabled"; ?>>ISP/Carrier</option>
 									<option value="ip">IP Address</option>
 									<option value="browser">Browser Name</option>
 									<option value="platform">OS</option>
