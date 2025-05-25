@@ -293,6 +293,8 @@ class DataEngine
         $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
 
+        $click_filtered = '';
+        
         if ($user_row['user_pref_show'] == 'all') {
             $click_filtered = '';
         }
@@ -2713,6 +2715,8 @@ aff_network_id=values(aff_network_id)";
 
             $result = self::$db->query($sqlObj);
 
+            $campaign_name = '';
+            
             if ($result) {
                 while ($row = $result->fetch_assoc()) {
 
