@@ -145,6 +145,10 @@ class DataEngine
         $user_row = $user_result->fetch_assoc();
         $breakdown = $user_row['user_pref_breakdown'];
 
+        $click_filtered = '';
+        $click_filtered_arr = array();
+        $click_filtered_arr['join'] = '';
+        
         if ($user_row['user_pref_show'] == 'all') {
             $click_filtered = '';
         }
@@ -746,6 +750,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0; // counter for averages
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++; // increment the counter so we can get the right avarage
             $data[] = $this->htmlFormat($click_row, $cpv);
@@ -1596,11 +1601,13 @@ ORDER BY ppc_network_id , name , variable";
     {
 
         $currency_result = self::$db->query("SELECT user_account_currency FROM 202_users_pref WHERE user_id = '" . $this->mysql['user_id'] . "'");
-        $currency_row = $currency_result->fetch_assoc();
-        $currency_row['user_account_currency'];
+        if ($currency_result) {
+            $currency_row = $currency_result->fetch_assoc();
+            $currency_row['user_account_currency'];
+        }
 
         $prepend = '';
-        $theCTR = @round($click_row['click_out'] / $click_row['clicks'] * 100, 2);
+        $theCTR = ($click_row['clicks'] && $click_row['clicks'] > 0) ? @round($click_row['click_out'] / $click_row['clicks'] * 100, 2) : 0;
         if ($type == 'total')
             $prepend = "total_";
         if ($click_row) {
@@ -3667,7 +3674,7 @@ class UserPrefs
         $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
 
         $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $this->mysql['user_id'];
-        $user_result = _mysqli_query($user_sql, $dbGlobalLink); // ($user_sql);
+        $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
         $breakdown = $user_row['user_pref_breakdown'];
 
@@ -3676,6 +3683,9 @@ class UserPrefs
         }
         // self::$userPref['user_pref_show'] = $user_row['user_pref_show'];
         // print_r($user_row);
+        
+        $click_filtered = '';
+        
         if ($user_row['user_pref_show'] == 'all') {
             $click_filtered = '';
         }
