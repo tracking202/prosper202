@@ -839,6 +839,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
