@@ -2172,7 +2172,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         else
             $count_sql = $count_sql . $count_where;
 
-        if ($mysql['user_landing_subid']) {
+        if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
             $join = " AND 2c.";
             if ($isspy) {
                 $join = " WHERE ";
@@ -2203,7 +2203,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
             }
 
             if (is_numeric($offset) and ($pref_limit == true)) {
-                $mysql['offset'] = $db->real_escape_string($offset * $user_row['user_pref_limit']);
+                $mysql['offset'] = $db->real_escape_string((string)($offset * $user_row['user_pref_limit']));
                 $click_sql .= $mysql['offset'] . ",";
 
                 // declare starting row number
@@ -2215,9 +2215,9 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
             if ($pref_limit == true) {
 
                 if (is_numeric($pref_limit)) {
-                    $mysql['user_pref_limit'] = $db->real_escape_string($pref_limit);
+                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$pref_limit);
                 } else {
-                    $mysql['user_pref_limit'] = $db->real_escape_string($user_row['user_pref_limit']);
+                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$user_row['user_pref_limit']);
                 }
                 $click_sql .= $mysql['user_pref_limit'];
 
@@ -2241,6 +2241,10 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     } else {
         // only if there is a limit set, run this code
         if ($pref_limit != false) {
+            // before it limits, we want to know the TOTAL number of rows
+            $count_result = _mysqli_query($count_sql);
+            $count_row = $count_result->fetch_assoc();
+            $rows = $count_row['count'];
 
             // rows is the total count of rows in this query.
             $query['rows'] = $rows;
@@ -2251,7 +2255,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
             }
 
             if (is_numeric($offset) and ($pref_limit == true)) {
-                $mysql['offset'] = $db->real_escape_string($offset * $user_row['user_pref_limit']);
+                $mysql['offset'] = $db->real_escape_string((string)($offset * $user_row['user_pref_limit']));
                 $click_sql .= $mysql['offset'] . ",";
 
                 // declare starting row number
@@ -2263,9 +2267,9 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
             if ($pref_limit == true) {
 
                 if (is_numeric($pref_limit)) {
-                    $mysql['user_pref_limit'] = $db->real_escape_string($pref_limit);
+                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$pref_limit);
                 } else {
-                    $mysql['user_pref_limit'] = $db->real_escape_string($user_row['user_pref_limit']);
+                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$user_row['user_pref_limit']);
                 }
                 $click_sql .= $mysql['user_pref_limit'];
 
@@ -3861,7 +3865,7 @@ function tagUserByNetwork($install_hash, $type, $network)
     $result = curl_exec($ch);
 
     if (curl_errno($ch)) {
-        echo 'error:' . curl_error($c);
+        echo 'error:' . curl_error($ch);
     }
     // close connection
     curl_close($ch);
@@ -4428,7 +4432,7 @@ function  upgrade_config()
                     break;
             }
         }
-        fclose($file);
+        fclose($handle);
     }
 
 
