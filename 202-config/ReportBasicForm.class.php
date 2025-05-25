@@ -190,6 +190,7 @@ class ReportBasicForm {
 	protected $calculate_dates;
 	protected $show_title_id;
 	protected $rollup_sub_tables;
+	protected $date_option;
 	protected $base_date_option;
 	protected $hide_report_parameters;
 	protected $drill_down;
@@ -2038,7 +2039,7 @@ class ReportBasicForm {
 	 */
 	public function getStartDate() {
 		if ($this->getCalculateDates()) {
-			return date("m/d/Y g:i a", self::getStartTime($this->getDateOption()));
+			return date("m/d/Y g:i a", (int)self::getStartTime($this->getDateOption()));
 		}
 		return date("m/d/Y g:i a");
 	}
@@ -2048,7 +2049,7 @@ class ReportBasicForm {
 	 * @return string
 	 */
 	public function getStartDateTime() {
-		return date('m/d/Y g:i a', self::getStartTime($this->getDateOption()));
+		return date('m/d/Y g:i a', (int)self::getStartTime($this->getDateOption()));
 	}
 
 	/**
@@ -2058,7 +2059,7 @@ class ReportBasicForm {
 	 */
 	public function getEndDate() {
 		if ($this->getCalculateDates()) {
-			return date("m/d/Y g:i a", self::getEndTime($this->getDateOption()));
+			return date("m/d/Y g:i a", (int)self::getEndTime($this->getDateOption()));
 		}
 		return date("m/d/Y g:i a");
 	}
@@ -2068,7 +2069,7 @@ class ReportBasicForm {
 	 * @return string
 	 */
 	public function getEndDateTime() {
-		return date('m/d/Y g:i a', self::getEndTime($this->getDateOption()));
+		return date('m/d/Y g:i a', (int)self::getEndTime($this->getDateOption()));
 	}
 
 	/**

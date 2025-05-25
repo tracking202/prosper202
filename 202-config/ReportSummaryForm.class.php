@@ -373,7 +373,7 @@ class ReportSummaryForm extends ReportBasicForm {
 		$database = DB::getInstance();
 		$db = $database->getConnection(); 
 		
-		if($_SESSION['publisher']==false){ //user is able to see all camapigns
+		if(isset($_SESSION['publisher']) && $_SESSION['publisher']==false){ //user is able to see all camapigns
 		    $user_id_query = " != '0' ";
 		}
 		else{
