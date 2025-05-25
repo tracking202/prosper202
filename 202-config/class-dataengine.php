@@ -794,6 +794,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
 
@@ -1607,7 +1608,7 @@ ORDER BY ppc_network_id , name , variable";
         }
 
         $prepend = '';
-        $theCTR = ($click_row['clicks'] && $click_row['clicks'] > 0) ? @round($click_row['click_out'] / $click_row['clicks'] * 100, 2) : 0;
+        $theCTR = (isset($click_row['clicks']) && $click_row['clicks'] > 0) ? @round($click_row['click_out'] / $click_row['clicks'] * 100, 2) : 0;
         if ($type == 'total')
             $prepend = "total_";
         if ($click_row) {
@@ -1762,7 +1763,7 @@ ORDER BY ppc_network_id , name , variable";
         );
         foreach ($stop as $key) {
 
-            if ($html[$key] == '') {
+            if (!isset($html[$key]) || $html[$key] == '') {
                 $html[$key] = '0';
             }
         }
@@ -2836,6 +2837,7 @@ class DisplayData
         global $userObj;
 
         $paginateReport = true;
+        $downloadUrl = '';
         switch ($reportType) {
             case 'LpOverview':
                 $featureLabel = "Direct Link / Landing Pages";
