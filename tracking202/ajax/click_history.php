@@ -5,7 +5,7 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 AUTH::require_user();
 
 //if spy is enabled, run the query in a certain way.
-	if ($_GET['spy'] == 1) {
+	if (isset($_GET['spy']) && $_GET['spy'] == 1) {
 		
 		$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,

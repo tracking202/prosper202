@@ -2003,10 +2003,10 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 
     if (!isset($_SESSION['publisher']) || $_SESSION['publisher'] == false) { //user is able to see all camapigns
         $click_sql = $command . " WHERE $db_table.user_id!='0' ";
-        $count_where .= " WHERE $db_table.user_id!='0' ";
+        $count_where = " WHERE $db_table.user_id!='0' ";
     } else {
         $click_sql = $command . " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-        $count_where .= " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
+        $count_where = " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
     }
     if ($user_row['user_pref_subid']) {
         $mysql['user_landing_subid'] = $db->real_escape_string($user_row['user_pref_subid']);
@@ -2144,8 +2144,8 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     if ($pref_time == true) {
         $time = grab_timeframe();
 
-        $mysql['from'] = $db->real_escape_string($time['from']);
-        $mysql['to'] = $db->real_escape_string($time['to']);
+        $mysql['from'] = $db->real_escape_string((string)$time['from']);
+        $mysql['to'] = $db->real_escape_string((string)$time['to']);
         if ($mysql['from'] != '') {
             $click_sql .= " AND click_time > " . $mysql['from'] . " ";
             $count_where .= " AND click_time > " . $mysql['from'] . " ";
@@ -4419,7 +4419,6 @@ function  upgrade_config()
                     break;
                 case '$dbhost':
                     $odbhost = $matches[2];
-                    echo $odbhost;
                     break;
                 case '$dbhostro':
                     $odbhostro = $matches[2];
