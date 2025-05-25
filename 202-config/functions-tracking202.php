@@ -860,7 +860,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                 $user_row = $user_result->fetch_assoc();
                 $time['from'] = $user_row['user_time_register'];
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', $time['from']), (int)date('d', $time['from']), (int)date('Y', $time['from']));
+                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
                 $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
                 ?>
 
@@ -1724,7 +1724,7 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                 $user_row = $user_result->fetch_assoc();
                 $time['from'] = $user_row['user_time_register'];
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', $time['from']), (int)date('d', $time['from']), (int)date('Y', $time['from']));
+                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
                 $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
                 ?>
 
@@ -1835,7 +1835,7 @@ function grab_timeframe()
         $user2_row = $user2_result->fetch_assoc();
         $time['from'] = $user2_row['user_time_register'];
 
-        $time['from'] = mktime(0, 0, 0, (int)date('m', $time['from']), (int)date('d', $time['from']), (int)date('Y', $time['from']));
+        $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
         $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
     }
 
