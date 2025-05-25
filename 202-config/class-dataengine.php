@@ -1027,6 +1027,7 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
         $mysql['to'] = $clickTo;
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
+        $inet6_ntoa = 'INET6_NTOA';
         $click_sql = "
 SELECT  SQL_CALC_FOUND_ROWS IFNULL(" . $inet6_ntoa . "(2i6.ip_address),2i.ip_address) as ip_address,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
@@ -1045,6 +1046,7 @@ LEFT JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_genera
 
         $click_result = _mysqli_query($click_sql);
         $i = 0;
+        $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             $data[] = $this->htmlFormat($click_row, $cpv);
@@ -3586,6 +3588,11 @@ class DisplayData
     {
         if ($val === null || $val === '') {
             return 0;
+        }
+        
+        // If it's already a number, return it as is
+        if (is_numeric($val)) {
+            return $val;
         }
         
         $moneyStuff = array(
