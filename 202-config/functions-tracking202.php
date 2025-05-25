@@ -4040,7 +4040,7 @@ function getDNICacheProgress($hash, $data)
         "Content-type: application/json"
     ));
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data, true));
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
     $results = curl_exec($ch);
     curl_close($ch);
     return $results;

@@ -30,12 +30,12 @@ class DataEngine
             self::$db = false;
         }
 
-        $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_own_id']);
+        $this->mysql['user_id'] = self::$db->real_escape_string((string)($_SESSION['user_own_id'] ?? ''));
 
-        if ($_SESSION['publisher'] == false) { //user is able to see all camapigns
+        if (isset($_SESSION['publisher']) && $_SESSION['publisher'] == false) { //user is able to see all campaigns
             $this->mysql['user_id_query'] = " WHERE 2st.user_id != '0' ";
         } else {
-            $this->mysql['user_id_query'] = " WHERE 2st.user_id ='" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
+            $this->mysql['user_id_query'] = " WHERE 2st.user_id ='" . ($_SESSION['user_own_id'] ?? '') . "' "; //user can only see their campaigns
         }
 
 
