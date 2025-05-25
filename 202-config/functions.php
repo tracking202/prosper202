@@ -37,11 +37,25 @@ function _die($message)
 
 
 //our own function for controling mysqls and monitoring then.
-function _mysqli_query($sql)
+function _mysqli_query($sql_or_db, $db_connection_or_sql = null)
 {
 	global $db;
 
-	$result = @$db->query($sql);
+	// Handle both parameter orders for backward compatibility:
+	// 1. _mysqli_query($sql, $db_connection) - new format
+	// 2. _mysqli_query($db, $sql) - legacy format from connect2.php
+
+	if (is_object($sql_or_db) && ($sql_or_db instanceof mysqli)) {
+		// Legacy format: _mysqli_query($db, $sql)
+		$connection = $sql_or_db;
+		$sql = $db_connection_or_sql;
+	} else {
+		// New format: _mysqli_query($sql, $db_connection)
+		$sql = $sql_or_db;
+		$connection = $db_connection_or_sql ?: $db;
+	}
+
+	$result = @$connection->query($sql);
 	return $result;
 }
 

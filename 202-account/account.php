@@ -768,12 +768,12 @@ $html = array_map('htmlentities', $user_row);
 				</div>
 			<?php } //closing brace for permissions check 
 			?>
-			<div class="form-group <?php if ($error['user_email']) echo "has-error"; ?>">
+			<div class="form-group <?php if (isset($error['user_email']) && $error['user_email']) echo "has-error"; ?>">
 				<label for="user_email" class="col-xs-4 control-label">* Email:
-					<?php if ($error['user_email']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_email']; ?>"></span> <?php } ?>
+					<?php if (isset($error['user_email']) && $error['user_email']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_email']; ?>"></span> <?php } ?>
 				</label>
 				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email']; ?>">
+					<input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo isset($html['user_email']) ? $html['user_email'] : ''; ?>">
 				</div>
 			</div>
 
@@ -955,27 +955,27 @@ $html = array_map('htmlentities', $user_row);
 		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
 			<input type="hidden" name="change_user_pass" value="1" />
 			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<div class="form-group <?php if ($error['user_pass']) echo "has-error"; ?>">
+			<div class="form-group <?php if (isset($error['user_pass']) && $error['user_pass']) echo "has-error"; ?>">
 				<label for="user_pass" class="col-xs-4 control-label">Old Password:
-					<?php if ($error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
+					<?php if (isset($error['user_pass']) && $error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
 				</label>
 				<div class="col-xs-8">
 					<input type="password" class="form-control input-sm" id="user_pass" name="user_pass">
 				</div>
 			</div>
 
-			<div class="form-group <?php if ($error['user_pass']) echo "has-error"; ?>">
+			<div class="form-group <?php if (isset($error['user_pass']) && $error['user_pass']) echo "has-error"; ?>">
 				<label for="new_user_pass" class="col-xs-4 control-label">New Password:
-					<?php if ($error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
+					<?php if (isset($error['user_pass']) && $error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
 				</label>
 				<div class="col-xs-8">
 					<input type="password" class="form-control input-sm" id="new_user_pass" name="new_user_pass">
 				</div>
 			</div>
 
-			<div class="form-group <?php if ($error['user_pass']) echo "has-error"; ?>">
+			<div class="form-group <?php if (isset($error['user_pass']) && $error['user_pass']) echo "has-error"; ?>">
 				<label for="retype_new_user_pass" class="col-xs-4 control-label">Retype New Password:
-					<?php if ($error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
+					<?php if (isset($error['user_pass']) && $error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
 				</label>
 				<div class="col-xs-8">
 					<input type="password" class="form-control input-sm" id="retype_new_user_pass" name="retype_new_user_pass">
