@@ -886,6 +886,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
         $click_result = _mysqli_query($click_sql); // ($click_sql);
 
         $i = 0;
+        $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -938,6 +939,7 @@ LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id)
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -2962,47 +2964,57 @@ class DisplayData
                     $featureKey = isset($html['click_time_from_disp']) ? $html['click_time_from_disp'] : '';
                     break;
                 case 'keyword':
+                    $keyword = isset($html['keyword']) ? $html['keyword'] : 'Unknown';
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
- width: 250px;" title="' . $html['keyword'] . '">' . $html['keyword'] . '</div>';
+ width: 250px;" title="' . $keyword . '">' . $keyword . '</div>';
                     break;
                 case 'textad':
-                    $featureKey = $html['text_ad_name'];
+                    $featureKey = isset($html['text_ad_name']) ? $html['text_ad_name'] : 'Unknown';
                     break;
                 case 'referer':
+                    $referer_name = isset($html['referer_name']) ? $html['referer_name'] : 'Unknown';
                     if (isset($html['referer_name']) && strlen($html['referer_name']) > 20) {
                         $html['referer_name_trim'] = substr($html['referer_name'], 0, 60) . '...';
                     }
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
- width: 250px;" title="' . $html['referer_name'] . '">' . $html['referer_name'] . '</div>';
+ width: 250px;" title="' . $referer_name . '">' . $referer_name . '</div>';
                     break;
                 case 'ip':
+                    $ip_address = isset($html['ip_address']) ? $html['ip_address'] : 'Unknown';
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
- width: 100%;" title="' . $html['ip_address'] . '">' . $html['ip_address'] . '</div>';
+ width: 100%;" title="' . $ip_address . '">' . $ip_address . '</div>';
                     break;
                 case 'country':
-                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($html['country_code']) . '.png"> ' . $html['country_name'] . ' (' . $html['country_code'] . ')';
+                    $country_code = isset($html['country_code']) && $html['country_code'] ? $html['country_code'] : 'unknown';
+                    $country_name = isset($html['country_name']) ? $html['country_name'] : 'Unknown';
+                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($country_code) . '.png"> ' . $country_name . ' (' . $country_code . ')';
                     break;
                 case 'region':
-                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($html['country_code']) . '.png"> ' . $html['region_name'] . ' (' . $html['country_code'] . ')';
+                    $country_code = isset($html['country_code']) && $html['country_code'] ? $html['country_code'] : 'unknown';
+                    $region_name = isset($html['region_name']) ? $html['region_name'] : 'Unknown';
+                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($country_code) . '.png"> ' . $region_name . ' (' . $country_code . ')';
                     break;
                 case 'city':
-                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($html['country_code']) . '.png"> ' . $html['city_name'] . ' (' . $html['country_code'] . ')';
+                    $country_code = isset($html['country_code']) && $html['country_code'] ? $html['country_code'] : 'unknown';
+                    $city_name = isset($html['city_name']) ? $html['city_name'] : 'Unknown';
+                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($country_code) . '.png"> ' . $city_name . ' (' . $country_code . ')';
                     break;
                 case 'isp':
-                    $featureKey = $html['isp_name'];
+                    $featureKey = isset($html['isp_name']) ? $html['isp_name'] : 'Unknown';
                     break;
                 case 'landingpage':
+                    $landing_page_nickname = isset($html['landing_page_nickname']) ? $html['landing_page_nickname'] : 'Unknown';
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
- width: 240px;" title="' . $html['landing_page_nickname'] . '">' . $html['landing_page_nickname'] . '</div>';
+ width: 240px;" title="' . $landing_page_nickname . '">' . $landing_page_nickname . '</div>';
                     break;
                 case 'device':
-                    $featureKey = $html['device_name'];
+                    $featureKey = isset($html['device_name']) ? $html['device_name'] : 'Unknown';
                     break;
                 case 'browser':
-                    $featureKey = $html['browser_name'];
+                    $featureKey = isset($html['browser_name']) ? $html['browser_name'] : 'Unknown';
                     break;
                 case 'platform':
-                    $featureKey = $html['platform_name'];
+                    $featureKey = isset($html['platform_name']) ? $html['platform_name'] : 'Unknown';
                     break;
             }
 
@@ -3294,16 +3306,19 @@ class DisplayData
             $obj2 = new ArrayObject($it->current());
             $html = $obj2->getIterator();
 
-            if (self::convertToNumber($html['net']) > 0) {
+            $net_value = isset($html['net']) ? $html['net'] : 0;
+            $roi_value = isset($html['roi']) ? $html['roi'] : 0;
+            
+            if (self::convertToNumber($net_value) > 0) {
                 $netStyle = 'primary';
-            } elseif ($html['net'] < 0) {
+            } elseif ($net_value < 0) {
                 $netStyle = 'important';
             } else {
                 $netStyle = 'default';
             }
-            if ($html['roi'] > 0) {
+            if ($roi_value > 0) {
                 $roiStyle = 'primary';
-            } elseif ($html['roi'] < 0) {
+            } elseif ($roi_value < 0) {
                 $roiStyle = 'important';
             } else {
                 $roiStyle = 'default';
@@ -3326,7 +3341,7 @@ class DisplayData
 
             if ($i != $obj->count() - 1) {
 
-                if ($html['variables']) {
+                if (isset($html['variables']) && $html['variables']) {
                     $jj = 0;
                     foreach ($html['variables'] as $variables) {
 
