@@ -2941,9 +2941,6 @@ class DisplayData
         $it = $obj->getIterator();
         $totals_row = $obj->count();
 
-        if (strlen($html['referer_name']) > 20)
-            $html['referer_name_trim'] = substr($html['referer_name'], 0, 60) . '...';
-
         for ($i = 0; $i < $obj->count(); $i++) {
             // echo $it->key() . "=" . $it->current() . "\n";
             $obj2 = new ArrayObject($it->current());
@@ -2969,6 +2966,9 @@ class DisplayData
                     $featureKey = $html['text_ad_name'];
                     break;
                 case 'referer':
+                    if (isset($html['referer_name']) && strlen($html['referer_name']) > 20) {
+                        $html['referer_name_trim'] = substr($html['referer_name'], 0, 60) . '...';
+                    }
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
  width: 250px;" title="' . $html['referer_name'] . '">' . $html['referer_name'] . '</div>';
                     break;
