@@ -8,3 +8,8 @@ CLAUDE.local.md
 CLAUDE.md
 phpstan-errors.txt
 phpstan.neon
+composer.json
+composer.json
+composer.lock
+composer.json
+docker-compose.yaml
