@@ -141,14 +141,13 @@ class AUTH
 					'user_id' => $db->real_escape_string($user_id),
 					'auth_key' => $db->real_escape_string($auth_key)
 				);
-
 				$sql = '
 					SELECT
 						*
                   	FROM
                   		202_auth_keys 2a, 202_users 2u
                  	WHERE
-                 	    expires < UNIX_TIMESTAMP()
+                 	    2a.expires > UNIX_TIMESTAMP()
                  	AND
                  		2a.user_id = "' . $mysql['user_id'] . '"
                   	AND
@@ -231,7 +230,6 @@ class AUTH
 			return $user_row['secret_key'];
 		}
 	}
-
 	static function remember_me_on_auth()
 	{
 		$auth_key = self::generate_random_string(48);
@@ -239,17 +237,22 @@ class AUTH
 		$database = DB::getInstance();
 		$db = $database->getConnection();
 
+		// Clean up expired auth keys
+		$cleanup_sql = 'DELETE FROM 202_auth_keys WHERE expires < UNIX_TIMESTAMP()';
+		_mysqli_query($cleanup_sql);
+
 		$mysql = array(
 			'user_id' => $db->real_escape_string((string)$_SESSION['user_own_id']),
 			'auth_key' => $db->real_escape_string($auth_key)
 		);
+		$expires_time = time() + (self::LOGOUT_DAYS * 24 * 60 * 60);
 
 		$sql = 'INSERT INTO
 					202_auth_keys
 				SET
 					auth_key = "' . $mysql['auth_key'] . '",
 					user_id = "' . $mysql['user_id'] . '",
-					expires = "' . time() . '"
+					expires = "' . $expires_time . '"
 				';
 		_mysqli_query($sql);
 
