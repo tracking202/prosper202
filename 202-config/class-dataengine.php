@@ -1924,6 +1924,7 @@ ORDER BY ppc_network_id , name , variable";
     function setDirtyHour($click_id)
     {
         global $ip_address, $db, $dbGlobalLink;
+        $inet6_ntoa = 'INET6_NTOA';
         if (! isset($click_id) || $click_id == '') { // if not find the list clicks id of the ip within a 30 day range
             $mysql['user_id'] = 1;
             $mysql['ip_address'] = $db->real_escape_string($ip_address->address);
