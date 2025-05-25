@@ -24,7 +24,7 @@ $user_row = $user_result->fetch_assoc();
 $breakdown = $user_row['user_pref_breakdown'];
 
 if ($user_row['user_pref_show'] == 'all') {
-	$click_flitered = '';
+	$click_filtered = '';
 }
 if ($user_row['user_pref_show'] == 'real') {
 	$click_filtered = " AND click_filtered='0' ";
