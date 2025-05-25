@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 include_once(substr(dirname(__FILE__), 0, -11) . '/202-config/connect.php');
+
+$error = [];
+$html = [];
+
 if (AUTH::logged_in()) {
 	header('location: ' . get_absolute_url() . '202-Mobile/mini-stats');
 }
@@ -17,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					FROM 		202_users  
 				 	WHERE 	user_name='" . $mysql['user_name'] . "'
 					AND     		user_pass='" . $mysql['user_pass'] . "'";
-	$user_result = _mysqli_query($user_sql);
+	$user_result = _mysqli_query($user_sql, $db);
 	$user_row = $user_result->fetch_assoc();
 
 	if (!$user_row) {
@@ -55,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 												login_error='" . $mysql['login_error'] . "',
 												login_server='" . $mysql['login_server'] . "',
 												login_session='" . $mysql['login_session'] . "'";
-	$user_log_result = _mysqli_query($user_log_sql);
+	$user_log_result = _mysqli_query($user_log_sql, $db);
 
 	if (!$error) {
 
@@ -68,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						SET			user_last_login_ip_id='" . $mysql['ip_id'] . "'
 					 	WHERE 	user_name='" . $mysql['user_name'] . "'
 						AND     		user_pass='" . $mysql['user_pass'] . "'";
-		$user_result = _mysqli_query($user_sql);
+		$user_result = _mysqli_query($user_sql, $db);
 
 		//regenerate session_id to prevent fixation
 		//session_regenerate_id();     have to remove this because it wouldn't like IE8 users login
@@ -121,9 +125,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			<tr>
 				<td>
 					<form method="post" action="">
-						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+						<input type="hidden" name="token" value="<?php echo $_SESSION['token'] ?? ''; ?>" />
 						<table cellspacing="0" cellpadding="5" style="margin: 0px auto;">
-							<?php if ($error['token']) {
+							<?php if (isset($error['token'])) {
 								printf('<tr><td colspan="2">%s</td></tr>', $error['token']);
 							} ?>
 							<tr>
@@ -131,9 +135,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 							</tr>
 							<tr>
 
-								<td><input id="user_name" type="text" name="user_name" value="<?php echo $html['user_name']; ?>" /></td>
+								<td><input id="user_name" type="text" name="user_name" value="<?php echo $html['user_name'] ?? ''; ?>" /></td>
 							</tr>
-							<?php if ($error['user']) {
+							<?php if (isset($error['user'])) {
 								printf('<tr><td colspan="2">%s</td></tr>', $error['user']);
 							} ?>
 

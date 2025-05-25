@@ -92,21 +92,21 @@ class AUTH
 		curl_close($ch);
 
 		$api_validate = json_decode($result, true);
-
 		if ($api_validate['msg'] == "Key valid") {
 			$database = DB::getInstance();
 			$db = $database->getConnection();
 			$mysql = array(
 				'user_api' => $db->real_escape_string($user_api_key),
-				'user_name' => $db->real_escape_string((string)$_SESSION['user_name']),
-				'user_pass' => $db->real_escape_string((string)$_SESSION['user_pass'])
-			);
-			//update the api key
-			$user_sql = "	UPDATE 	202_users
-						SET		p202_customer_api_key='" . $mysql['user_api'] . "'
-						WHERE 	user_name='" . $mysql['user_name'] . "'
-						AND     		user_pass='" . $mysql['user_pass'] . "'";
-			$user_result = _mysqli_query($user_sql);
+				'user_name' => $db->real_escape_string((string)($_SESSION['user_name'] ?? '')),
+				'user_pass' => $db->real_escape_string((string)(isset($_SESSION['user_pass']) ? $_SESSION['user_pass'] : ''))
+			);			//update the api key if user_name and user_pass are available
+			if (!empty($mysql['user_name']) && !empty($mysql['user_pass'])) {
+				$user_sql = "	UPDATE 	202_users
+							SET		p202_customer_api_key='" . $mysql['user_api'] . "'
+							WHERE 	user_name='" . $mysql['user_name'] . "'
+							AND     		user_pass='" . $mysql['user_pass'] . "'";
+				$user_result = _mysqli_query($user_sql);
+			}
 			$_SESSION['valid_key'] = true;
 			return true;
 		} else {

@@ -5,6 +5,10 @@ include_once(str_repeat("../", 2).'202-config/functions-rss.php');
 
 AUTH::require_user();
 
+$showAlerts = false;
+$dontShow = [];
+$html = [];
+
 #grab alert items
 $rss = fetch_rss( TRACKING202_RSS_URL .'/prosper202/alerts');
 if ( isset($rss->items) && 0 != count($rss->items) ) {
@@ -15,7 +19,7 @@ foreach ($rss->items as $item ) {
 	//check if this alert is already marked as seen
 	$mysql['prosper_alert_id'] = $db->real_escape_string($item['prosper_alert_id']);
 	$sql = "SELECT COUNT(*) AS count FROM 202_alerts WHERE prosper_alert_id='{$mysql['prosper_alert_id']}' AND prosper_alert_seen='1'";
-	$result = _mysqli_query($sql);
+	$result = _mysqli_query($sql, $db);
 	$row = $result->fetch_assoc();
 	if ($row['count']) {
 		#echo 'dont show';
@@ -31,7 +35,7 @@ if (!$showAlerts) die();
 #if items display the table
 if ($rss->items) { 
 		foreach ($rss->items as $item ) { 
-			if ($dontShow[$item['prosper_alert_id']] == false) {
+			if (($dontShow[$item['prosper_alert_id']] ?? false) == false) {
 				$item_time = human_time_diff(strtotime($item['pubdate'], time())) . " ago";
 				$html['time'] = htmlentities($item_time);
 				$html['prosper_alert_id'] = htmlentities($item['prosper_alert_id']);

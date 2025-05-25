@@ -9,13 +9,13 @@ AUTH::require_user();
 	if ($_POST['aff_network_id'] == 0) { $error['clear_subids'] = '<div class="error"><small><span class="fui-alert"></span>You have to at least select an affiliate network to clear out</small></div>'; }
 	$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);
 	
-	if ($error){ 
+	if (isset($error)){ 
 		echo $error['clear_subids'];  
 		die();
 	}
 	
 	
-	if (!$error) { 
+	if (!isset($error)) { 
 
 		$de = array();
 		$de['ppc_account_id'] = 0;

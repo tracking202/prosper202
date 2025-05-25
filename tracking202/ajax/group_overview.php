@@ -2,6 +2,7 @@
 declare(strict_types=1);
 include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/ReportSummaryForm.class.php');
+
 AUTH::require_user();
 
 //set the timezone for this user.
@@ -16,7 +17,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 //show real or filtered clicks
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
-	$user_result = _mysqli_query($user_sql, $dbGlobalLink); //($user_sql);
+	$user_result = $db->query($user_sql);
 	$user_row = $user_result->fetch_assoc();
 
 	$html['user_pref_group_1'] = htmlentities((string)($user_row['user_pref_group_1'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -55,7 +56,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 <?php 
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-$info_result = _mysqli_query($summary_form->getQuery($mysql['user_id'],$user_row));
+$info_result = $db->query($summary_form->getQuery($mysql['user_id'],$user_row));
 
 while ($row = $info_result->fetch_assoc()) {
 	$summary_form->addReportData($row);
