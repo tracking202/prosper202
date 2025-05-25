@@ -2956,7 +2956,7 @@ class DisplayData
                 case 'breakdown':
                 case 'hourly':
                 case 'weekly':
-                    $featureKey = $html['click_time_from_disp'];
+                    $featureKey = isset($html['click_time_from_disp']) ? $html['click_time_from_disp'] : '';
                     break;
                 case 'keyword':
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
@@ -3003,16 +3003,18 @@ class DisplayData
                     break;
             }
 
-            if (self::convertToNumber($html['net']) > 0) {
+            $netValue = isset($html['net']) ? self::convertToNumber($html['net']) : 0;
+            if ($netValue > 0) {
                 $netStyle = 'primary';
-            } elseif ($html['net'] < 0) {
+            } elseif ($netValue < 0) {
                 $netStyle = 'important';
             } else {
                 $netStyle = 'default';
             }
-            if ($html['roi'] > 0) {
+            $roiValue = isset($html['roi']) ? $html['roi'] : 0;
+            if ($roiValue > 0) {
                 $roiStyle = 'primary';
-            } elseif ($html['roi'] < 0) {
+            } elseif ($roiValue < 0) {
                 $roiStyle = 'important';
             } else {
                 $roiStyle = 'default';
@@ -3564,6 +3566,10 @@ class DisplayData
 
     function convertToNumber($val)
     {
+        if ($val === null || $val === '') {
+            return 0;
+        }
+        
         $moneyStuff = array(
             "$",
             ","
