@@ -3,12 +3,27 @@
 declare(strict_types=1);
 $version = '1.9.55';
 
+// Detect if running from command line and set defaults for missing $_SERVER variables
+$is_cli = (php_sapi_name() === 'cli');
+if ($is_cli) {
+    $_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $_SERVER['SERVER_NAME'] = $_SERVER['SERVER_NAME'] ?? 'localhost';
+    $_SERVER['REQUEST_URI'] = $_SERVER['REQUEST_URI'] ?? '/';
+    $_SERVER['REMOTE_ADDR'] = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+    $_SERVER['SERVER_ADDR'] = $_SERVER['SERVER_ADDR'] ?? '127.0.0.1';
+    $_SERVER['HTTP_USER_AGENT'] = $_SERVER['HTTP_USER_AGENT'] ?? 'CLI';
+    $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '127.0.0.1';
+    $_SERVER['DOCUMENT_ROOT'] = $_SERVER['DOCUMENT_ROOT'] ?? '';
+}
+
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
 //fix for nginx with no server name set
-if ($_SERVER['SERVER_NAME'] == '_') {
-    $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'];
+if (isset($_SERVER['SERVER_NAME']) && $_SERVER['SERVER_NAME'] == '_') {
+    $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
+} elseif (!isset($_SERVER['SERVER_NAME'])) {
+    $_SERVER['SERVER_NAME'] = 'localhost';
 }
 
 DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
@@ -83,7 +98,12 @@ switch (true) {
         $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_FORWARDED_FOR'];
         break;
     default:
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['REMOTE_ADDR'];
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+}
+
+// Ensure HTTP_X_FORWARDED_FOR is set before exploding
+if (!isset($_SERVER['HTTP_X_FORWARDED_FOR']) || empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+    $_SERVER['HTTP_X_FORWARDED_FOR'] = '127.0.0.1';
 }
 
 $tempip = explode(",", $_SERVER['HTTP_X_FORWARDED_FOR']);

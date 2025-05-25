@@ -1,5 +1,8 @@
 <?php
 declare(strict_types=1);
+if (!defined('ROOT_PATH')) {
+    define('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
+}
 include_once (ROOT_PATH . '/202-interfaces/FraudDetectionInterface.php');
 
 class FraudDetectionIPQS implements FraudDetectionInterface
