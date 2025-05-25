@@ -156,7 +156,7 @@ function getClicksEraseDate()
 	$result = $db->query($sql);
 	$row = $result->fetch_array(MYSQLI_ASSOC);
 	if ($row) {
-		return date('d-m-Y', $row['click_time']);
+		return date('d-m-Y', (int)$row['click_time']);
 	} else {
 		return date('d-m-Y', time());
 	}
@@ -513,7 +513,7 @@ function CronJobLastExecution($datetime, $full = false)
 
 					$html['user_name'] = htmlentities((string)($user_log_row['user_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 					$html['ip_address'] = htmlentities((string)($user_log_row['ip_address'] ?? ''), ENT_QUOTES, 'UTF-8');
-					$html['login_time'] = htmlentities(date('M d, y \a\t g:ia', $user_log_row['login_time']), ENT_QUOTES, 'UTF-8');
+					$html['login_time'] = htmlentities(date('M d, y \a\t g:ia', (int)$user_log_row['login_time']), ENT_QUOTES, 'UTF-8');
 
 					if ($user_log_row['login_success'] == 0) {
 						$html['login_success'] = '<span style="color: #900;">Failed</span>';
