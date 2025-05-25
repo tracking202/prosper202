@@ -40,7 +40,7 @@ function logged_in_redirect()
 				$dni_result = _mysqli_query($dni_sql);
 				if ($dni_result->num_rows > 0) {
 					$dni_row = $dni_result->fetch_assoc();
-					$offerData = setupDniOffer($dni_row['install_hash'], $dni_row['networkId'], $dni_row['apiKey'], $dni_row['affiliateId'], $vars['dl_offer_id'], $vars['ddlci'], $mysql['user_id']);
+					$offerData = setupDniOffer($dni_row['install_hash'], $dni_row['networkId'], $dni_row['apiKey'], $dni_row['affiliateId'], 'USD', $vars['dl_offer_id'], $vars['ddlci']);
 					$data = json_decode($offerData, true);
 
 					if (!empty($data)) {
