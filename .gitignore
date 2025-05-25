@@ -1,4 +1,10 @@
 /mysql_data
 p202.patch
 202-config.php
-/vendor
+/vendor/*
+.claude/settings.local.json
+.github/copilot-instructions.md
+CLAUDE.local.md
+CLAUDE.md
+phpstan-errors.txt
+phpstan.neon
