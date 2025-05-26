@@ -281,68 +281,68 @@ $mysql['gclid'] = $db->real_escape_string((string)($_GET['gclid'] ?? ''));
 
 $custom_var_ids = array();
 
-$ppc_variable_ids = explode(',', $tracker_row['ppc_variable_ids']);
-$parameters = explode(',', $tracker_row['parameters']);
+$ppc_variable_ids = !empty($tracker_row['ppc_variable_ids']) ? explode(',', $tracker_row['ppc_variable_ids']) : array();
+$parameters = !empty($tracker_row['parameters']) ? explode(',', $tracker_row['parameters']) : array();
 
 foreach ($parameters as $key => $value) {
-	$variable = $db->real_escape_string((string)$_GET[$value]);
+	$variable = $db->real_escape_string((string)($_GET[$value] ?? ''));
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = INDEXES::get_variable_id($db, $variable, $ppc_variable_ids[$key]);
+		$variable_id = INDEXES::get_variable_id($db, $variable, $ppc_variable_ids[$key] ?? '');
 		$custom_var_ids[] = $variable_id;
 	}
 }
 
 //utm_source
-$utm_source = $db->real_escape_string((string)$_GET['utm_source']);
+$utm_source = $db->real_escape_string((string)($_GET['utm_source'] ?? ''));
 if (isset($utm_source) && $utm_source != '') {
 	$utm_source = str_replace('%20', ' ', $utm_source);
 	$utm_source_id = INDEXES::get_utm_id($db, $utm_source, 'utm_source');
 } else {
 	$utm_source_id = 0;
 }
-$mysql['utm_source_id'] = $db->real_escape_string($utm_source_id);
+$mysql['utm_source_id'] = $db->real_escape_string((string)$utm_source_id);
 
 //utm_medium
-$utm_medium = $db->real_escape_string((string)$_GET['utm_medium']);
+$utm_medium = $db->real_escape_string((string)($_GET['utm_medium'] ?? ''));
 if (isset($utm_medium) && $utm_medium != '') {
 	$utm_medium = str_replace('%20', ' ', $utm_medium);
 	$utm_medium_id = INDEXES::get_utm_id($db, $utm_medium, 'utm_medium');
 } else {
 	$utm_medium_id = 0;
 }
-$mysql['utm_medium_id'] = $db->real_escape_string($utm_medium_id);
+$mysql['utm_medium_id'] = $db->real_escape_string((string)$utm_medium_id);
 
 //utm_campaign
-$utm_campaign = $db->real_escape_string((string)$_GET['utm_campaign']);
+$utm_campaign = $db->real_escape_string((string)($_GET['utm_campaign'] ?? ''));
 if (isset($utm_campaign) && $utm_campaign != '') {
 	$utm_campaign = str_replace('%20', ' ', $utm_campaign);
 	$utm_campaign_id = INDEXES::get_utm_id($db, $utm_campaign, 'utm_campaign');
 } else {
 	$utm_campaign_id = 0;
 }
-$mysql['utm_campaign_id'] = $db->real_escape_string($utm_campaign_id);
+$mysql['utm_campaign_id'] = $db->real_escape_string((string)$utm_campaign_id);
 
 //utm_term
-$utm_term = $db->real_escape_string((string)$_GET['utm_term']);
+$utm_term = $db->real_escape_string((string)($_GET['utm_term'] ?? ''));
 if (isset($utm_term) && $utm_term != '') {
 	$utm_term = str_replace('%20', ' ', $utm_term);
 	$utm_term_id = INDEXES::get_utm_id($db, $utm_term, 'utm_term');
 } else {
 	$utm_term_id = 0;
 }
-$mysql['utm_term_id'] = $db->real_escape_string($utm_term_id);
+$mysql['utm_term_id'] = $db->real_escape_string((string)$utm_term_id);
 
 //utm_content
-$utm_content = $db->real_escape_string((string)$_GET['utm_content']);
+$utm_content = $db->real_escape_string((string)($_GET['utm_content'] ?? ''));
 if (isset($utm_content) && $utm_content != '') {
 	$utm_content = str_replace('%20', ' ', $utm_content);
 	$utm_content_id = INDEXES::get_utm_id($db, $utm_content, 'utm_content');
 } else {
 	$utm_content_id = 0;
 }
-$mysql['utm_content_id'] = $db->real_escape_string($utm_content_id);
+$mysql['utm_content_id'] = $db->real_escape_string((string)$utm_content_id);
 
 
 $device_id = PLATFORMS::get_device_info($db, $detect, $_GET['ua']);
