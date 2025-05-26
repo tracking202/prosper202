@@ -860,7 +860,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                 $user_row = $user_result->fetch_assoc();
                 $time['from'] = $user_row['user_time_register'];
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', $time['from']), (int)date('d', $time['from']), (int)date('Y', $time['from']));
+                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
                 $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
                 ?>
 
@@ -1724,7 +1724,7 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                 $user_row = $user_result->fetch_assoc();
                 $time['from'] = $user_row['user_time_register'];
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', $time['from']), (int)date('d', $time['from']), (int)date('Y', $time['from']));
+                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
                 $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
                 ?>
 
@@ -1835,7 +1835,7 @@ function grab_timeframe()
         $user2_row = $user2_result->fetch_assoc();
         $time['from'] = $user2_row['user_time_register'];
 
-        $time['from'] = mktime(0, 0, 0, (int)date('m', $time['from']), (int)date('d', $time['from']), (int)date('Y', $time['from']));
+        $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
         $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
     }
 
@@ -2003,10 +2003,10 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 
     if (!isset($_SESSION['publisher']) || $_SESSION['publisher'] == false) { //user is able to see all camapigns
         $click_sql = $command . " WHERE $db_table.user_id!='0' ";
-        $count_where .= " WHERE $db_table.user_id!='0' ";
+        $count_where = " WHERE $db_table.user_id!='0' ";
     } else {
         $click_sql = $command . " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-        $count_where .= " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
+        $count_where = " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
     }
     if ($user_row['user_pref_subid']) {
         $mysql['user_landing_subid'] = $db->real_escape_string($user_row['user_pref_subid']);
@@ -2144,8 +2144,8 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     if ($pref_time == true) {
         $time = grab_timeframe();
 
-        $mysql['from'] = $db->real_escape_string($time['from']);
-        $mysql['to'] = $db->real_escape_string($time['to']);
+        $mysql['from'] = $db->real_escape_string((string)$time['from']);
+        $mysql['to'] = $db->real_escape_string((string)$time['to']);
         if ($mysql['from'] != '') {
             $click_sql .= " AND click_time > " . $mysql['from'] . " ";
             $count_where .= " AND click_time > " . $mysql['from'] . " ";
@@ -2172,7 +2172,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         else
             $count_sql = $count_sql . $count_where;
 
-        if ($mysql['user_landing_subid']) {
+        if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
             $join = " AND 2c.";
             if ($isspy) {
                 $join = " WHERE ";
@@ -2203,7 +2203,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
             }
 
             if (is_numeric($offset) and ($pref_limit == true)) {
-                $mysql['offset'] = $db->real_escape_string($offset * $user_row['user_pref_limit']);
+                $mysql['offset'] = $db->real_escape_string((string)($offset * $user_row['user_pref_limit']));
                 $click_sql .= $mysql['offset'] . ",";
 
                 // declare starting row number
@@ -2215,9 +2215,9 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
             if ($pref_limit == true) {
 
                 if (is_numeric($pref_limit)) {
-                    $mysql['user_pref_limit'] = $db->real_escape_string($pref_limit);
+                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$pref_limit);
                 } else {
-                    $mysql['user_pref_limit'] = $db->real_escape_string($user_row['user_pref_limit']);
+                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$user_row['user_pref_limit']);
                 }
                 $click_sql .= $mysql['user_pref_limit'];
 
@@ -2241,6 +2241,10 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     } else {
         // only if there is a limit set, run this code
         if ($pref_limit != false) {
+            // before it limits, we want to know the TOTAL number of rows
+            $count_result = _mysqli_query($count_sql);
+            $count_row = $count_result->fetch_assoc();
+            $rows = $count_row['count'];
 
             // rows is the total count of rows in this query.
             $query['rows'] = $rows;
@@ -2251,7 +2255,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
             }
 
             if (is_numeric($offset) and ($pref_limit == true)) {
-                $mysql['offset'] = $db->real_escape_string($offset * $user_row['user_pref_limit']);
+                $mysql['offset'] = $db->real_escape_string((string)($offset * $user_row['user_pref_limit']));
                 $click_sql .= $mysql['offset'] . ",";
 
                 // declare starting row number
@@ -2263,9 +2267,9 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
             if ($pref_limit == true) {
 
                 if (is_numeric($pref_limit)) {
-                    $mysql['user_pref_limit'] = $db->real_escape_string($pref_limit);
+                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$pref_limit);
                 } else {
-                    $mysql['user_pref_limit'] = $db->real_escape_string($user_row['user_pref_limit']);
+                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$user_row['user_pref_limit']);
                 }
                 $click_sql .= $mysql['user_pref_limit'];
 
@@ -3861,7 +3865,7 @@ function tagUserByNetwork($install_hash, $type, $network)
     $result = curl_exec($ch);
 
     if (curl_errno($ch)) {
-        echo 'error:' . curl_error($c);
+        echo 'error:' . curl_error($ch);
     }
     // close connection
     curl_close($ch);
@@ -4419,7 +4423,6 @@ function  upgrade_config()
                     break;
                 case '$dbhost':
                     $odbhost = $matches[2];
-                    echo $odbhost;
                     break;
                 case '$dbhostro':
                     $odbhostro = $matches[2];
@@ -4429,7 +4432,7 @@ function  upgrade_config()
                     break;
             }
         }
-        fclose($file);
+        fclose($handle);
     }
 
 

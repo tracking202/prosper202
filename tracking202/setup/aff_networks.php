@@ -106,7 +106,7 @@ if (!empty($_GET['edit_aff_network_id'])) {
 //this will override the edit, if posting and edit fail
 if (($_SERVER['REQUEST_METHOD'] == 'POST') and ($add_success != true)) {
 
-	$selected['aff_network_id'] = $_POST['aff_network_id'];
+	$selected['aff_network_id'] = isset($_POST['aff_network_id']) ? $_POST['aff_network_id'] : '';
 	$html = array_map('htmlentities', $_POST);
 }
 

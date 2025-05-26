@@ -497,28 +497,55 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
         $click_result = _mysqli_query($db, $click_sql);
         $click_row = $click_result->fetch_assoc();
 
-        $mysql['t202kw'] = $db->real_escape_string($click_row['keyword']);
-        $mysql['t202pubid'] = $db->real_escape_string($click_row['user_public_publisher_id']);
-        $mysql['c1'] = $db->real_escape_string($click_row['c1']);
-        $mysql['c2'] = $db->real_escape_string($click_row['c2']);
-        $mysql['c3'] = $db->real_escape_string($click_row['c3']);
-        $mysql['c4'] = $db->real_escape_string($click_row['c4']);
-        $mysql['gclid'] = $db->real_escape_string($click_row['gclid']);
-        $mysql['msclkid'] = $db->real_escape_string($click_row['msclkid']);
-        $mysql['fbclid'] = $db->real_escape_string($click_row['fbclid']);
-        $mysql['utm_source'] = $db->real_escape_string($click_row['utm_source']);
-        $mysql['utm_medium'] = $db->real_escape_string($click_row['utm_medium']);
-        $mysql['utm_campaign'] = $db->real_escape_string($click_row['utm_campaign']);
-        $mysql['utm_term'] = $db->real_escape_string($click_row['utm_term']);
-        $mysql['utm_content'] = $db->real_escape_string($click_row['utm_content']);
-        $mysql['payout'] = $db->real_escape_string($click_row['click_payout']);
-        $mysql['cpc'] = $db->real_escape_string($click_row['click_cpc']);
-        $mysql['cpa'] = $db->real_escape_string($click_row['click_cpa']);
-        $mysql['click_cpc'] = $db->real_escape_string($click_row['click_cpc']);
-        $mysql['country'] = $db->real_escape_string($click_row['country_name']);
-        $mysql['country_code'] = $db->real_escape_string($click_row['country_code']);
-        $mysql['region'] = $db->real_escape_string($click_row['region_name']);
-        $mysql['city'] = $db->real_escape_string($click_row['city_name']);
+        // Check if click_row exists before processing
+        if ($click_row) {
+            $mysql['t202kw'] = $db->real_escape_string((string)($click_row['keyword'] ?? ''));
+            $mysql['t202pubid'] = $db->real_escape_string((string)($click_row['user_public_publisher_id'] ?? ''));
+            $mysql['c1'] = $db->real_escape_string((string)($click_row['c1'] ?? ''));
+            $mysql['c2'] = $db->real_escape_string((string)($click_row['c2'] ?? ''));
+            $mysql['c3'] = $db->real_escape_string((string)($click_row['c3'] ?? ''));
+            $mysql['c4'] = $db->real_escape_string((string)($click_row['c4'] ?? ''));
+            $mysql['gclid'] = $db->real_escape_string((string)($click_row['gclid'] ?? ''));
+            $mysql['msclkid'] = $db->real_escape_string((string)($click_row['msclkid'] ?? ''));
+            $mysql['fbclid'] = $db->real_escape_string((string)($click_row['fbclid'] ?? ''));
+            $mysql['utm_source'] = $db->real_escape_string((string)($click_row['utm_source'] ?? ''));
+            $mysql['utm_medium'] = $db->real_escape_string((string)($click_row['utm_medium'] ?? ''));
+            $mysql['utm_campaign'] = $db->real_escape_string((string)($click_row['utm_campaign'] ?? ''));
+            $mysql['utm_term'] = $db->real_escape_string((string)($click_row['utm_term'] ?? ''));
+            $mysql['utm_content'] = $db->real_escape_string((string)($click_row['utm_content'] ?? ''));
+            $mysql['payout'] = $db->real_escape_string((string)($click_row['click_payout'] ?? ''));
+            $mysql['cpc'] = $db->real_escape_string((string)($click_row['click_cpc'] ?? ''));
+            $mysql['cpa'] = $db->real_escape_string((string)($click_row['click_cpa'] ?? ''));
+            $mysql['click_cpc'] = $db->real_escape_string((string)($click_row['click_cpc'] ?? ''));
+            $mysql['country'] = $db->real_escape_string((string)($click_row['country_name'] ?? ''));
+            $mysql['country_code'] = $db->real_escape_string((string)($click_row['country_code'] ?? ''));
+            $mysql['region'] = $db->real_escape_string((string)($click_row['region_name'] ?? ''));
+            $mysql['city'] = $db->real_escape_string((string)($click_row['city_name'] ?? ''));
+        } else {
+            // Initialize all fields with empty strings if no click data found
+            $mysql['t202kw'] = '';
+            $mysql['t202pubid'] = '';
+            $mysql['c1'] = '';
+            $mysql['c2'] = '';
+            $mysql['c3'] = '';
+            $mysql['c4'] = '';
+            $mysql['gclid'] = '';
+            $mysql['msclkid'] = '';
+            $mysql['fbclid'] = '';
+            $mysql['utm_source'] = '';
+            $mysql['utm_medium'] = '';
+            $mysql['utm_campaign'] = '';
+            $mysql['utm_term'] = '';
+            $mysql['utm_content'] = '';
+            $mysql['payout'] = '';
+            $mysql['cpc'] = '';
+            $mysql['cpa'] = '';
+            $mysql['click_cpc'] = '';
+            $mysql['country'] = '';
+            $mysql['country_code'] = '';
+            $mysql['region'] = '';
+            $mysql['city'] = '';
+        }
         $mysql['referer'] = urlencode($db->real_escape_string($_SERVER['HTTP_REFERER']));
         if ($db->real_escape_string($click_row['ppc_account_id']) == '0') {
             $mysql['ppc_account'] = '';
@@ -1295,6 +1322,7 @@ class INDEXES
         $mysql['utm_type'] = $db->real_escape_string($utm_type);
 
         if ($memcacheWorking) {
+            $time = 2592000; // 30 days in sec
             // get from memcached
             $getUtm = $memcache->get(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()));
             if ($getUtm) {

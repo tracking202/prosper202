@@ -15,7 +15,7 @@ class DataEngine
 
     private $mysql = array();
 
-    private static $db;
+    private static ?mysqli $db = null;
 
     private static $found_rows;
 
@@ -25,9 +25,13 @@ class DataEngine
     {
         try {
             $database = DB::getInstance();
-            self::$db = $database->getConnection();
+            $connection = $database->getConnection();
+            if ($connection === false || !($connection instanceof mysqli)) {
+                throw new Exception('Database connection failed - invalid connection object');
+            }
+            self::$db = $connection;
         } catch (Exception $e) {
-            self::$db = false;
+            throw new Exception('Database connection failed: ' . $e->getMessage());
         }
 
         $this->mysql['user_id'] = self::$db->real_escape_string((string)($_SESSION['user_own_id'] ?? ''));
@@ -133,6 +137,10 @@ class DataEngine
 
     function getFilters()
     {
+        if (self::$db === false) {
+            throw new Exception('Database connection not available');
+        }
+
         $mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
         if (isset($_POST['offset']) && $_POST['offset'] != '') {
             $mysql['offset'] = self::$db->real_escape_string((string)$_POST['offset']);
@@ -144,6 +152,10 @@ class DataEngine
         $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
         $breakdown = $user_row['user_pref_breakdown'];
+
+        $click_filtered = '';
+        $click_filtered_arr = array();
+        $click_filtered_arr['join'] = '';
 
         if ($user_row['user_pref_show'] == 'all') {
             $click_filtered = '';
@@ -288,10 +300,16 @@ class DataEngine
      */
     function getAccountOverviewFilters()
     {
+        if (self::$db === false) {
+            throw new Exception('Database connection not available');
+        }
+
         $mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
         $user_sql = "SELECT user_pref_show FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
         $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
+
+        $click_filtered = '';
 
         if ($user_row['user_pref_show'] == 'all') {
             $click_filtered = '';
@@ -315,6 +333,10 @@ class DataEngine
     // this returns the keyword_id
     function get_keyword_id($keyword)
     {
+        if (self::$db === false) {
+            return null;
+        }
+
         $mysql['keyword'] = self::$db->real_escape_string($keyword);
 
         $keyword_sql = "SELECT group_concat(keyword_id) as keyword_id FROM 202_keywords WHERE keyword like '%" . $mysql['keyword'] . "%'";
@@ -325,7 +347,17 @@ class DataEngine
 
     function get_ip_id($ip)
     {
-        global $memcacheWorking, $memcache;
+        if (self::$db === false) {
+            return null;
+        }
+
+        global $memcacheWorking, $memcache, $inet6_ntoa, $inet6_aton;
+
+        // Initialize IPv6 function variables if not set
+        if (!isset($inet6_ntoa)) {
+            $inet6_ntoa = '';
+            $inet6_aton = 'INET6_ATON';
+        }
 
 
         $mysql['ip_address'] = self::$db->real_escape_string($ip->address);
@@ -381,6 +413,14 @@ class DataEngine
 
     function ipAddress($ip_address)
     {
+        global $inet6_ntoa, $inet6_aton;
+
+        // Initialize IPv6 function variables if not set
+        if (!isset($inet6_ntoa)) {
+            $inet6_ntoa = '';
+            $inet6_aton = 'INET6_ATON';
+        }
+
         $ip = new stdClass;
 
         if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
@@ -400,6 +440,10 @@ class DataEngine
     // this returns the site_url_id, when a site_url_address is given
     function get_site_url_id($site_url_address)
     {
+        if (self::$db === false) {
+            return null;
+        }
+
         global $memcacheWorking, $memcache;
 
         $mysql['site_url_address'] = self::$db->real_escape_string($site_url_address);
@@ -460,6 +504,7 @@ ORDER BY landing_page_id ASC";
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
 
         while ($click_row = $click_result->fetch_assoc()) {
             if ($click_row) {
@@ -554,6 +599,7 @@ ORDER BY aff_campaign_id ASC"; */
         $click_result = _mysqli_query($click_sql);
 
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             $data[] = $this->htmlFormat($click_row, $cpv, '', 'overview');
@@ -744,6 +790,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0; // counter for averages
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++; // increment the counter so we can get the right avarage
             $data[] = $this->htmlFormat($click_row, $cpv);
@@ -787,6 +834,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
 
@@ -831,6 +879,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -877,6 +926,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
         $click_result = _mysqli_query($click_sql); // ($click_sql);
 
         $i = 0;
+        $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -929,6 +979,7 @@ LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id)
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -982,6 +1033,7 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1012,6 +1064,23 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
 
     function doIPReport($clickFrom, $clickTo, $cpv)
     {
+        global $inet6_ntoa, $inet6_aton;
+
+        // Initialize IPv6 function variables if not set
+        if (!isset($inet6_ntoa)) {
+            $inet6_ntoa = '';
+            $inet6_aton = 'INET6_ATON';
+        }
+
+        // Check for IPv6 support based on session
+        if (isset($_SESSION['ipv6']) && $_SESSION['ipv6'] != '') {
+            $inet6_ntoa = 'inet6_ntoa'; //decodes for display etc
+            $inet6_aton = 'inet6_aton'; //encodes for db
+        } else {
+            $inet6_ntoa = '';
+            $inet6_aton = '';
+        }
+
         $mysql['from'] = $clickFrom;
         $mysql['to'] = $clickTo;
         $up = new UserPrefs();
@@ -1034,6 +1103,7 @@ LEFT JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_genera
 
         $click_result = _mysqli_query($click_sql);
         $i = 0;
+        $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             $data[] = $this->htmlFormat($click_row, $cpv);
@@ -1083,6 +1153,7 @@ LEFT JOIN 202_locations_country on (2st.country_id = 202_locations_country.count
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1135,6 +1206,7 @@ LEFT JOIN 202_locations_country on (202_locations_region.main_country_id = 202_l
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1187,6 +1259,7 @@ LEFT JOIN 202_locations_country on (202_locations_city.main_country_id = 202_loc
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1238,6 +1311,7 @@ LEFT JOIN 202_locations_isp on (2st.isp_id = 202_locations_isp.isp_id)
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1289,6 +1363,7 @@ LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1340,6 +1415,7 @@ LEFT JOIN 202_device_models on (2st.device_id = 202_device_models.device_id)
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1391,6 +1467,7 @@ LEFT JOIN 202_browsers on (2st.browser_id = 202_browsers.browser_id)
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1441,6 +1518,7 @@ LEFT JOIN 202_platforms on (2st.platform_id = 202_platforms.platform_id)
 
         $click_result = _mysqli_query($click_sql); // ($click_sql);
         $i = 0;
+        $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
             // print_r($click_row);
@@ -1501,6 +1579,7 @@ LEFT JOIN 202_platforms on (2st.platform_id = 202_platforms.platform_id)
         //group by 2st.user_id, 2st.ppc_network_id" . $this->sortOrder() . $click_filtered['limit'];
         if ($click_result) {
             $i = 0;
+            $totals = array('clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0);
             while ($click_row = $click_result->fetch_assoc()) {
 
                 if ($_SESSION['publisher'] == true) {
@@ -1592,13 +1671,18 @@ ORDER BY ppc_network_id , name , variable";
 
     function htmlFormat($click_row, $cpv, $type = '', $mainKey = '')
     {
+        if (self::$db === false) {
+            return array();
+        }
 
         $currency_result = self::$db->query("SELECT user_account_currency FROM 202_users_pref WHERE user_id = '" . $this->mysql['user_id'] . "'");
-        $currency_row = $currency_result->fetch_assoc();
-        $currency_row['user_account_currency'];
+        if ($currency_result) {
+            $currency_row = $currency_result->fetch_assoc();
+            $currency_row['user_account_currency'];
+        }
 
         $prepend = '';
-        $theCTR = @round($click_row['click_out'] / $click_row['clicks'] * 100, 2);
+        $theCTR = (isset($click_row['clicks']) && $click_row['clicks'] > 0) ? @round($click_row['click_out'] / $click_row['clicks'] * 100, 2) : 0;
         if ($type == 'total')
             $prepend = "total_";
         if ($click_row) {
@@ -1731,7 +1815,7 @@ ORDER BY ppc_network_id , name , variable";
             }
         }
 
-        if (strlen($html['aff_campaign_name']) == 0) {
+        if (!isset($html['aff_campaign_name']) || strlen($html['aff_campaign_name']) == 0) {
             $html['aff_campaign_name'] = "[Landing Page/Smart Redirector Campaign]";
             if ($mainKey = 'overview')
                 $html['aff_campaign_name'] = "[Landing Page/Smart Redirector Campaign]";
@@ -1753,7 +1837,7 @@ ORDER BY ppc_network_id , name , variable";
         );
         foreach ($stop as $key) {
 
-            if ($html[$key] == '') {
+            if (!isset($html[$key]) || $html[$key] == '') {
                 $html[$key] = '0';
             }
         }
@@ -1908,7 +1992,22 @@ ORDER BY ppc_network_id , name , variable";
     // dirty hours by clicks id: This function marks the hour range that the click happened in for updating reports
     function setDirtyHour($click_id)
     {
-        global $ip_address, $db, $dbGlobalLink;
+        global $ip_address, $db, $dbGlobalLink, $inet6_ntoa, $inet6_aton;
+
+        // Initialize IPv6 function variables if not set
+        if (!isset($inet6_ntoa)) {
+            $inet6_ntoa = '';
+            $inet6_aton = 'INET6_ATON';
+        }
+
+        // Check for IPv6 support based on session
+        if (isset($_SESSION['ipv6']) && $_SESSION['ipv6'] != '') {
+            $inet6_ntoa = 'inet6_ntoa'; //decodes for display etc
+            $inet6_aton = 'inet6_aton'; //encodes for db
+        } else {
+            $inet6_ntoa = '';
+            $inet6_aton = '';
+        }
         if (! isset($click_id) || $click_id == '') { // if not find the list clicks id of the ip within a 30 day range
             $mysql['user_id'] = 1;
             $mysql['ip_address'] = $db->real_escape_string($ip_address->address);
@@ -2090,38 +2189,38 @@ aff_network_id=values(aff_network_id)";
         if (! $delayed_result)
             exit();
         while ($delayed_row = $delayed_result->fetch_assoc()) {
-            $mysql['ppc_account_id'] = self::$db->real_escape_string($delayed_row['ppc_account_id']);
-            $mysql['aff_campaign_id'] = self::$db->real_escape_string($delayed_row['aff_campaign_id']);
-            $mysql['user_id'] = self::$db->real_escape_string($delayed_row['user_id']);
-            $mysql['click_time_from'] = self::$db->real_escape_string($delayed_row['click_time_from']);
-            $mysql['click_time_to'] = self::$db->real_escape_string($delayed_row['click_time_to']);
-            $mysql['ppc_network_id'] = self::$db->real_escape_string($delayed_row['ppc_network_id']);
-            $mysql['aff_network_id'] = self::$db->real_escape_string($delayed_row['aff_network_id']);
-            $mysql['landing_page_id'] = self::$db->real_escape_string($delayed_row['landing_page_id']);
-            $mysql['keyword_id'] = self::$db->real_escape_string($delayed_row['keyword_id']);
-            $mysql['utm_source_id'] = self::$db->real_escape_string($delayed_row['utm_source_id']);
-            $mysql['utm_medium_id'] = self::$db->real_escape_string($delayed_row['utm_medium_id']);
-            $mysql['utm_campaign_id'] = self::$db->real_escape_string($delayed_row['utm_campaign_id']);
-            $mysql['utm_term_id'] = self::$db->real_escape_string($delayed_row['utm_term_id']);
-            $mysql['utm_content_id'] = self::$db->real_escape_string($delayed_row['utm_content_id']);
-            $mysql['text_ad_id'] = self::$db->real_escape_string($delayed_row['text_ad_id']);
-            $mysql['click_referer_site_url_id'] = self::$db->real_escape_string($delayed_row['click_referer_site_url_id']);
-            $mysql['country_id'] = self::$db->real_escape_string($delayed_row['country_id']);
-            $mysql['region_id'] = self::$db->real_escape_string($delayed_row['region_id']);
-            $mysql['city_id'] = self::$db->real_escape_string($delayed_row['city_id']);
-            $mysql['isp_id'] = self::$db->real_escape_string($delayed_row['isp_id']);
-            $mysql['browser_id'] = self::$db->real_escape_string($delayed_row['browser_id']);
-            $mysql['device_id'] = self::$db->real_escape_string($delayed_row['device_id']);
-            $mysql['platform_id'] = self::$db->real_escape_string($delayed_row['platform_id']);
-            $mysql['ip_id'] = self::$db->real_escape_string($delayed_row['ip_id']);
-            $mysql['c1_id'] = self::$db->real_escape_string($delayed_row['c1_id']);
-            $mysql['c2_id'] = self::$db->real_escape_string($delayed_row['c2_id']);
-            $mysql['c3_id'] = self::$db->real_escape_string($delayed_row['c3_id']);
-            $mysql['c4_id'] = self::$db->real_escape_string($delayed_row['c4_id']);
-            $mysql['variable_set_id'] = self::$db->real_escape_string($delayed_row['variable_set_id']);
-            $mysql['click_filtered'] = self::$db->real_escape_string($delayed_row['click_filtered']);
-            $mysql['click_bot'] = self::$db->real_escape_string($delayed_row['click_bot']);
-            $mysql['click_alp'] = self::$db->real_escape_string($delayed_row['click_alp']);
+            $mysql['ppc_account_id'] = self::$db->real_escape_string((string)($delayed_row['ppc_account_id'] ?? ''));
+            $mysql['aff_campaign_id'] = self::$db->real_escape_string((string)($delayed_row['aff_campaign_id'] ?? ''));
+            $mysql['user_id'] = self::$db->real_escape_string((string)($delayed_row['user_id'] ?? ''));
+            $mysql['click_time_from'] = self::$db->real_escape_string((string)($delayed_row['click_time_from'] ?? ''));
+            $mysql['click_time_to'] = self::$db->real_escape_string((string)($delayed_row['click_time_to'] ?? ''));
+            $mysql['ppc_network_id'] = self::$db->real_escape_string((string)($delayed_row['ppc_network_id'] ?? ''));
+            $mysql['aff_network_id'] = self::$db->real_escape_string((string)($delayed_row['aff_network_id'] ?? ''));
+            $mysql['landing_page_id'] = self::$db->real_escape_string((string)($delayed_row['landing_page_id'] ?? ''));
+            $mysql['keyword_id'] = self::$db->real_escape_string((string)($delayed_row['keyword_id'] ?? ''));
+            $mysql['utm_source_id'] = self::$db->real_escape_string((string)($delayed_row['utm_source_id'] ?? ''));
+            $mysql['utm_medium_id'] = self::$db->real_escape_string((string)($delayed_row['utm_medium_id'] ?? ''));
+            $mysql['utm_campaign_id'] = self::$db->real_escape_string((string)($delayed_row['utm_campaign_id'] ?? ''));
+            $mysql['utm_term_id'] = self::$db->real_escape_string((string)($delayed_row['utm_term_id'] ?? ''));
+            $mysql['utm_content_id'] = self::$db->real_escape_string((string)($delayed_row['utm_content_id'] ?? ''));
+            $mysql['text_ad_id'] = self::$db->real_escape_string((string)($delayed_row['text_ad_id'] ?? ''));
+            $mysql['click_referer_site_url_id'] = self::$db->real_escape_string((string)($delayed_row['click_referer_site_url_id'] ?? ''));
+            $mysql['country_id'] = self::$db->real_escape_string((string)($delayed_row['country_id'] ?? ''));
+            $mysql['region_id'] = self::$db->real_escape_string((string)($delayed_row['region_id'] ?? ''));
+            $mysql['city_id'] = self::$db->real_escape_string((string)($delayed_row['city_id'] ?? ''));
+            $mysql['isp_id'] = self::$db->real_escape_string((string)($delayed_row['isp_id'] ?? ''));
+            $mysql['browser_id'] = self::$db->real_escape_string((string)($delayed_row['browser_id'] ?? ''));
+            $mysql['device_id'] = self::$db->real_escape_string((string)($delayed_row['device_id'] ?? ''));
+            $mysql['platform_id'] = self::$db->real_escape_string((string)($delayed_row['platform_id'] ?? ''));
+            $mysql['ip_id'] = self::$db->real_escape_string((string)($delayed_row['ip_id'] ?? ''));
+            $mysql['c1_id'] = self::$db->real_escape_string((string)($delayed_row['c1_id'] ?? ''));
+            $mysql['c2_id'] = self::$db->real_escape_string((string)($delayed_row['c2_id'] ?? ''));
+            $mysql['c3_id'] = self::$db->real_escape_string((string)($delayed_row['c3_id'] ?? ''));
+            $mysql['c4_id'] = self::$db->real_escape_string((string)($delayed_row['c4_id'] ?? ''));
+            $mysql['variable_set_id'] = self::$db->real_escape_string((string)($delayed_row['variable_set_id'] ?? ''));
+            $mysql['click_filtered'] = self::$db->real_escape_string((string)($delayed_row['click_filtered'] ?? ''));
+            $mysql['click_bot'] = self::$db->real_escape_string((string)($delayed_row['click_bot'] ?? ''));
+            $mysql['click_alp'] = self::$db->real_escape_string((string)($delayed_row['click_alp'] ?? ''));
 
             $snippet = "AND 2c.user_id = " . $mysql['user_id'];
             $d_snippet = "";
@@ -2460,44 +2559,59 @@ aff_network_id=values(aff_network_id)";
     function doQuery($query, $from, $to, $upgrade = false, $new = false)
     {
         global $db, $dbGlobalLink;
+
+        // Initialize user_id at the start
+        $user_id = isset($_SESSION['user_own_id']) ? $_SESSION['user_own_id'] : 1;
+
         $info_result = $result = $db->query($query) or die($db->error . '<br/><br/>' . $query);
-        // if (mysqli_num_rows($info_result)>0)
-        // if ($info_result->num_rows>0)
-        // die(($info_result->num_rows));
-        // $this->doSummary($info_result, $from, $to, $upgrade, $new);
+        $this->doSummary($info_result, $from, $to, $user_id, $upgrade, $new);
     }
 
-    function doSummary($info_result, $from, $to, $upgrade = false, $new = false)
+    function doSummary($info_result, $from, $to, $user_id, $upgrade = false, $new = false)
     {
         global $db, $dbGlobalLink;
         $dbGlobalLink = $db;
-        // echo "*-";
-        // echo $info_result->num_rows;
-        // $info_r2= $db->query($info_result) or die($db->error . '<br/><br/>' . $query);
-        // die($db);
+
+        // Initialize all variables at the start
+        $mysql = array();
+        $bigvalue = '';
+        $fr = '';
+        $outsql = '';
+        $tq = '';
+        $flist = '';
+        $is = '';
+        $list = '';
+        $i = 0;
+
         $upgrade_from = mysqli_real_escape_string($dbGlobalLink, $from);
         $upgrade_to = mysqli_real_escape_string($dbGlobalLink, $to);
 
-        $mysql['from'] = $db->real_escape_string($from); // mysqli_real_escape_string($dbGlobalLink,$start);
+        $mysql['from'] = $db->real_escape_string($from);
         $mysql['to'] = $db->real_escape_string($to);
-        $mysql['user_id'] = $db->real_escape_string($user_id);
+        $mysql['user_id'] = $db->real_escape_string((string)$user_id);
 
-        if ($new)
+        if ($new) {
             $table = "202_dataengine_new";
-        else
+        } else {
             $table = "202_dataengine";
+        }
 
         $tq = "INSERT INTO " . $table . " (";
+        // ...existing code...
         $flist = '';
+        $fr = '';
         $is = '';
         $mysql = array();
         $list = ' ';
         $i = 0;
         $stop = array();
+        $bigvalue = '';
+        $outsql = '';
         mysqli_data_seek($info_result, 0);
 
         while ($r = mysqli_fetch_array($info_result, MYSQLI_ASSOC)) {
             $list .= "(";
+            $bigvalue = '';
 
             foreach ($r as $key => $value) {
                 $bigvalue .= "-" . $value;
@@ -2506,10 +2620,11 @@ aff_network_id=values(aff_network_id)";
                     $fr .= "$key = VALUES($key),";
                 }
                 if ($i >= 0) {
-                    if (! $value)
+                    if (! $value) {
                         $list .= "'',";
-                    else
+                    } else {
                         $list .= mysqli_real_escape_string($dbGlobalLink, $value) . ",";
+                    }
                 }
             }
 
@@ -2517,14 +2632,12 @@ aff_network_id=values(aff_network_id)";
             $list .= ",'" . sha1($bigvalue) . "'),";
             $i++;
 
-            $bigvalue = '';
-            // $is .= "(" . implode(',', $mysql) . "),";
-            $outsql = $tq . substr($flist, 0, -1) . ",encode) VALUES " . substr($list, 0, -1) . " ON DUPLICATE KEY UPDATE ";
-
-            $outsql .= substr($fr, 0, -1);
+            $outsql = $tq . substr($flist, 0, -1) . ",encode) VALUES " . substr($list, 0, -1) . " ON DUPLICATE KEY UPDATE " . substr($fr, 0, -1);
         }
 
-        $is_result = _mysqli_query($outsql);
+        if (!empty($outsql)) {
+            $is_result = _mysqli_query($outsql);
+        }
 
         if ($upgrade) {
             $sql = "UPDATE 202_dataengine_job SET processing = '0', processed = '1' WHERE time_from = '" . $upgrade_from . "' AND time_to = '" . $upgrade_to . "'";
@@ -2713,6 +2826,8 @@ aff_network_id=values(aff_network_id)";
 
             $result = self::$db->query($sqlObj);
 
+            $campaign_name = '';
+
             if ($result) {
                 while ($row = $result->fetch_assoc()) {
 
@@ -2825,6 +2940,7 @@ class DisplayData
         global $userObj;
 
         $paginateReport = true;
+        $downloadUrl = '';
         switch ($reportType) {
             case 'LpOverview':
                 $featureLabel = "Direct Link / Landing Pages";
@@ -2930,9 +3046,6 @@ class DisplayData
         $it = $obj->getIterator();
         $totals_row = $obj->count();
 
-        if (strlen($html['referer_name']) > 20)
-            $html['referer_name_trim'] = substr($html['referer_name'], 0, 60) . '...';
-
         for ($i = 0; $i < $obj->count(); $i++) {
             // echo $it->key() . "=" . $it->current() . "\n";
             $obj2 = new ArrayObject($it->current());
@@ -2948,60 +3061,75 @@ class DisplayData
                 case 'breakdown':
                 case 'hourly':
                 case 'weekly':
-                    $featureKey = $html['click_time_from_disp'];
+                    $featureKey = isset($html['click_time_from_disp']) ? $html['click_time_from_disp'] : '';
                     break;
                 case 'keyword':
+                    $keyword = isset($html['keyword']) ? $html['keyword'] : 'Unknown';
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
- width: 250px;" title="' . $html['keyword'] . '">' . $html['keyword'] . '</div>';
+ width: 250px;" title="' . $keyword . '">' . $keyword . '</div>';
                     break;
                 case 'textad':
-                    $featureKey = $html['text_ad_name'];
+                    $featureKey = isset($html['text_ad_name']) ? $html['text_ad_name'] : 'Unknown';
                     break;
                 case 'referer':
+                    $referer_name = isset($html['referer_name']) ? $html['referer_name'] : 'Unknown';
+                    if (isset($html['referer_name']) && strlen($html['referer_name']) > 20) {
+                        $html['referer_name_trim'] = substr($html['referer_name'], 0, 60) . '...';
+                    }
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
- width: 250px;" title="' . $html['referer_name'] . '">' . $html['referer_name'] . '</div>';
+ width: 250px;" title="' . $referer_name . '">' . $referer_name . '</div>';
                     break;
                 case 'ip':
+                    $ip_address = isset($html['ip_address']) ? $html['ip_address'] : 'Unknown';
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
- width: 100%;" title="' . $html['ip_address'] . '">' . $html['ip_address'] . '</div>';
+ width: 100%;" title="' . $ip_address . '">' . $ip_address . '</div>';
                     break;
                 case 'country':
-                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($html['country_code']) . '.png"> ' . $html['country_name'] . ' (' . $html['country_code'] . ')';
+                    $country_code = isset($html['country_code']) && $html['country_code'] ? $html['country_code'] : 'unknown';
+                    $country_name = isset($html['country_name']) ? $html['country_name'] : 'Unknown';
+                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($country_code) . '.png"> ' . $country_name . ' (' . $country_code . ')';
                     break;
                 case 'region':
-                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($html['country_code']) . '.png"> ' . $html['region_name'] . ' (' . $html['country_code'] . ')';
+                    $country_code = isset($html['country_code']) && $html['country_code'] ? $html['country_code'] : 'unknown';
+                    $region_name = isset($html['region_name']) ? $html['region_name'] : 'Unknown';
+                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($country_code) . '.png"> ' . $region_name . ' (' . $country_code . ')';
                     break;
                 case 'city':
-                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($html['country_code']) . '.png"> ' . $html['city_name'] . ' (' . $html['country_code'] . ')';
+                    $country_code = isset($html['country_code']) && $html['country_code'] ? $html['country_code'] : 'unknown';
+                    $city_name = isset($html['city_name']) ? $html['city_name'] : 'Unknown';
+                    $featureKey = '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower($country_code) . '.png"> ' . $city_name . ' (' . $country_code . ')';
                     break;
                 case 'isp':
-                    $featureKey = $html['isp_name'];
+                    $featureKey = isset($html['isp_name']) ? $html['isp_name'] : 'Unknown';
                     break;
                 case 'landingpage':
+                    $landing_page_nickname = isset($html['landing_page_nickname']) ? $html['landing_page_nickname'] : 'Unknown';
                     $featureKey = '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;  
- width: 240px;" title="' . $html['landing_page_nickname'] . '">' . $html['landing_page_nickname'] . '</div>';
+ width: 240px;" title="' . $landing_page_nickname . '">' . $landing_page_nickname . '</div>';
                     break;
                 case 'device':
-                    $featureKey = $html['device_name'];
+                    $featureKey = isset($html['device_name']) ? $html['device_name'] : 'Unknown';
                     break;
                 case 'browser':
-                    $featureKey = $html['browser_name'];
+                    $featureKey = isset($html['browser_name']) ? $html['browser_name'] : 'Unknown';
                     break;
                 case 'platform':
-                    $featureKey = $html['platform_name'];
+                    $featureKey = isset($html['platform_name']) ? $html['platform_name'] : 'Unknown';
                     break;
             }
 
-            if (self::convertToNumber($html['net']) > 0) {
+            $netValue = isset($html['net']) ? self::convertToNumber($html['net']) : 0;
+            if ($netValue > 0) {
                 $netStyle = 'primary';
-            } elseif ($html['net'] < 0) {
+            } elseif ($netValue < 0) {
                 $netStyle = 'important';
             } else {
                 $netStyle = 'default';
             }
-            if ($html['roi'] > 0) {
+            $roiValue = isset($html['roi']) ? $html['roi'] : 0;
+            if ($roiValue > 0) {
                 $roiStyle = 'primary';
-            } elseif ($html['roi'] < 0) {
+            } elseif ($roiValue < 0) {
                 $roiStyle = 'important';
             } else {
                 $roiStyle = 'default';
@@ -3023,7 +3151,7 @@ class DisplayData
 
             if ($i != $obj->count() - 1) {
 
-                if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['clicks'] = '?';
                     $html['click_out'] = '?';
                     $html['leads'] = '?';
@@ -3053,7 +3181,7 @@ class DisplayData
             		</tr> ';
             } else {
 
-                if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['total_clicks'] = '?';
                     $html['total_click_out'] = '?';
                     $html['total_leads'] = '?';
@@ -3168,7 +3296,7 @@ class DisplayData
                         $roiStyle = 'default';
                     }
 
-                    if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                    if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                         $ppc_account['clicks'] = '?';
                         $ppc_account['click_out'] = '?';
                         $ppc_account['leads'] = '?';
@@ -3205,7 +3333,7 @@ class DisplayData
                 </tr> ';
                 }
 
-                if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $campaign['total_clicks'] = '?';
                     $campaign['total_click_out'] = '?';
                     $campaign['total_leads'] = '?';
@@ -3278,16 +3406,19 @@ class DisplayData
             $obj2 = new ArrayObject($it->current());
             $html = $obj2->getIterator();
 
-            if (self::convertToNumber($html['net']) > 0) {
+            $net_value = isset($html['net']) ? $html['net'] : 0;
+            $roi_value = isset($html['roi']) ? $html['roi'] : 0;
+
+            if (self::convertToNumber($net_value) > 0) {
                 $netStyle = 'primary';
-            } elseif ($html['net'] < 0) {
+            } elseif ($net_value < 0) {
                 $netStyle = 'important';
             } else {
                 $netStyle = 'default';
             }
-            if ($html['roi'] > 0) {
+            if ($roi_value > 0) {
                 $roiStyle = 'primary';
-            } elseif ($html['roi'] < 0) {
+            } elseif ($roi_value < 0) {
                 $roiStyle = 'important';
             } else {
                 $roiStyle = 'default';
@@ -3310,7 +3441,7 @@ class DisplayData
 
             if ($i != $obj->count() - 1) {
 
-                if ($html['variables']) {
+                if (isset($html['variables']) && $html['variables']) {
                     $jj = 0;
                     foreach ($html['variables'] as $variables) {
 
@@ -3465,21 +3596,21 @@ class DisplayData
                     $featureKey = $html['ip_address'];
                     break;
                 case 'country':
-                    if (array_key_exists("country_name", $html) && array_key_exists("country_code", $html)) {
+                    if (isset($html['country_name']) && isset($html['country_code'])) {
                         $featureKey = $html['country_name'] . ' (' . $html['country_code'] . ')';
                     } else {
                         $featureKey = false;
                     }
                     break;
                 case 'region':
-                    if (array_key_exists("region_name", $html) && array_key_exists("country_code", $html)) {
+                    if (isset($html['region_name']) && isset($html['country_code'])) {
                         $featureKey = $html['region_name'] . ' (' . $html['country_code'] . ')';
                     } else {
                         $featureKey = false;
                     }
                     break;
                 case 'city':
-                    if (array_key_exists("city_name", $html) && array_key_exists("country_code", $html)) {
+                    if (isset($html['city_name']) && isset($html['country_code'])) {
                         $featureKey = $html['city_name'] . ' (' . $html['country_code'] . ')';
                     } else {
                         $featureKey = false;
@@ -3504,7 +3635,7 @@ class DisplayData
 
             if ($featureKey) {
 
-                if (! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['clicks'] = '?';
                     $html['click_out'] = '?';
                     $html['leads'] = '?';
@@ -3553,6 +3684,15 @@ class DisplayData
 
     function convertToNumber($val)
     {
+        if ($val === null || $val === '') {
+            return 0;
+        }
+
+        // If it's already a number, return it as is
+        if (is_numeric($val)) {
+            return $val;
+        }
+
         $moneyStuff = array(
             "$",
             ","
@@ -3563,6 +3703,10 @@ class DisplayData
 
     function paginate($reportType, $foundRows)
     {
+        // Initialize html array with order parameter
+        $html = array();
+        $html['order'] = isset($_POST['order']) ? $_POST['order'] : '';
+
         switch ($reportType) {
             case 'textad':
                 $reportType = "text_ads";
@@ -3592,7 +3736,11 @@ class DisplayData
         $query['pages'] = ceil((int)$foundRows / (int)$up->getPref('user_pref_limit'));
 
         if (isset($_POST['offset']) && $_POST['offset'] != '') {
-            $query['offset'] = self::$db->real_escape_string((string)$_POST['offset']);
+            if (self::$db instanceof mysqli) {
+                $query['offset'] = self::$db->real_escape_string((string)$_POST['offset']);
+            } else {
+                $query['offset'] = (int)$_POST['offset']; // Fallback to integer casting
+            }
         } else {
             $query['offset'] = 0;
         }
@@ -3663,7 +3811,7 @@ class UserPrefs
         $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
 
         $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $this->mysql['user_id'];
-        $user_result = _mysqli_query($user_sql, $dbGlobalLink); // ($user_sql);
+        $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
         $breakdown = $user_row['user_pref_breakdown'];
 
@@ -3672,6 +3820,9 @@ class UserPrefs
         }
         // self::$userPref['user_pref_show'] = $user_row['user_pref_show'];
         // print_r($user_row);
+
+        $click_filtered = '';
+
         if ($user_row['user_pref_show'] == 'all') {
             $click_filtered = '';
         }
