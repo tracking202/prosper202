@@ -14,6 +14,7 @@ $slack = false;
 $slack_pixel_added_message = false;
 $error = array();
 $html = array();
+$selected = array();
 $add_success = '';
 $delete_success = '';
 $network_editing = false;
@@ -52,8 +53,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$error['ppc_network_name'] = 'Type in the name the traffic source.';
 		}
 
-		if (!$error) {
-			$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+		if (empty($error)) {
+			$mysql['ppc_network_id'] = isset($_POST['ppc_network_id']) ? $db->real_escape_string((string)$_POST['ppc_network_id']) : '';
 			$mysql['ppc_network_name'] = $db->real_escape_string((string)$_POST['ppc_network_name']);
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			$mysql['ppc_network_time'] = time();
@@ -100,9 +101,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$error['ppc_network_id'] = 'What traffic source is this account attached to?';
 		}
 
-		if (!$error) {
+		if (empty($error)) {
 			//check to see if this user is the owner of the ppc network hes trying to add an account to
-			$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+			$mysql['ppc_network_id'] = $db->real_escape_string((string)($_POST['ppc_network_id'] ?? ''));
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
@@ -111,9 +112,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$error['wrong_user'] = 'You are not authorized to add an account to another user\'s traffic source';
 			}
 		}
-		if (!$error) {
+		if (empty($error)) {
 			//check to see if this user is the owner of the ppc network hes trying to edit
-			$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+			$mysql['ppc_network_id'] = $db->real_escape_string((string)($_POST['ppc_network_id'] ?? ''));
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
@@ -122,7 +123,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$error['wrong_user'] = 'You are not authorized to add an account to another user\'s traffic source' . $ppc_network_sql;
 			}
 		}
-		if (!$error) {
+		if (empty($error)) {
 			//if editing, check to make sure the own the ppc account they are editing
 			if ($editing == true) {
 				$mysql['ppc_account_id'] = $db->real_escape_string((string)$_GET['edit_ppc_account_id']);
@@ -137,10 +138,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 		}
 
-		if (!$error) {
+		if (empty($error)) {
 
 			$ppc_network_row = $ppc_network_result->fetch_assoc();
-			$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+			$mysql['ppc_network_id'] = $db->real_escape_string((string)($_POST['ppc_network_id'] ?? ''));
 			$mysql['ppc_account_name'] = $db->real_escape_string((string)$_POST['ppc_account_name']);
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			$mysql['ppc_account_time'] = time();
@@ -332,9 +333,9 @@ if (!empty($_GET['edit_ppc_account_id'])) {
 	}
 }
 
-if ($error) {
+if (!empty($error)) {
 	//if someone happend take the post stuff and add it
-	$selected['ppc_network_id'] = $_POST['ppc_network_id'];
+	$selected['ppc_network_id'] = $_POST['ppc_network_id'] ?? '';
 	$html['ppc_account_name'] = htmlentities((string)($_POST['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
@@ -348,10 +349,10 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 				<h6>Traffic Source Account Setup</h6>
 			</div>
 			<div class="col-xs-7">
-				<div class="<?php if ($error) echo "error";
+				<div class="<?php if (!empty($error)) echo "error";
 							else echo "success"; ?> pull-right" style="margin-top: 20px;">
 					<small>
-						<?php if ($error) { ?>
+						<?php if (!empty($error)) { ?>
 							<span class="fui-alert"></span> There were errors with your submission. <?php echo isset($error['token']) ? $error['token'] : ''; ?>
 						<?php } ?>
 						<?php if ($add_success == true) { ?>
@@ -420,7 +421,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 									$html['ppc_network_id'] = htmlentities((string)($ppc_network_row['ppc_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 
-									if ($selected['ppc_network_id'] == $ppc_network_row['ppc_network_id']) {
+									if (isset($selected['ppc_network_id']) && $selected['ppc_network_id'] == $ppc_network_row['ppc_network_id']) {
 										printf('<option selected="selected" value="%s">%s</option>', $html['ppc_network_id'], $html['ppc_network_name']);
 									} else {
 										printf('<option value="%s">%s</option>', $html['ppc_network_id'], $html['ppc_network_name']);
