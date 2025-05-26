@@ -174,8 +174,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			//if this landing page is brand new, add on a landing_page_id_public
 			$landing_page_row['landing_page_id'] = $db->insert_id;
 			$landing_page_id_public = rand(1, 9) . $landing_page_row['landing_page_id'] . rand(1, 9);
-			$mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
-			$mysql['landing_page_id'] = $db->real_escape_string($landing_page_row['landing_page_id']);
+			$mysql['landing_page_id_public'] = $db->real_escape_string((string)$landing_page_id_public);
+			$mysql['landing_page_id'] = $db->real_escape_string((string)$landing_page_row['landing_page_id']);
 
 			$landing_page_sql = "	UPDATE       `202_landing_pages`
 								 	SET          	 `landing_page_id_public`='" . $mysql['landing_page_id_public'] . "'
