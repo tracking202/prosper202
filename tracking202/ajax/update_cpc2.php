@@ -9,15 +9,18 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 
 //check variables
 
-$from = explode('/', $_POST['from']);
-$from_month = $from[0];
-$from_day = $from[1];
-$from_year = $from[2];
+// Initialize error array
+$error = array();
 
-$to = explode('/', $_POST['to']);
-$to_month = $to[0];
-$to_day = $to[1];
-$to_year = $to[2];
+$from = explode('/', $_POST['from'] ?? '');
+$from_month = isset($from[0]) ? $from[0] : '';
+$from_day = isset($from[1]) ? $from[1] : '';
+$from_year = isset($from[2]) ? $from[2] : '';
+
+$to = explode('/', $_POST['to'] ?? '');
+$to_month = isset($to[0]) ? $to[0] : '';
+$to_day = isset($to[1]) ? $to[1] : '';
+$to_year = isset($to[2]) ? $to[2] : '';
 
 //if from or to, validate, and if validated, set it accordingly
 
@@ -52,7 +55,7 @@ if ($_POST['aff_network_id']) {
 }
 
 //check aff_campaign id, that you own
-if ($_POST['aff_campaign_id']) {
+if (isset($_POST['aff_campaign_id']) && $_POST['aff_campaign_id']) {
 	$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
 	$aff_campaign_sql = "SELECT * FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
 	$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
@@ -67,7 +70,7 @@ if ($_POST['aff_campaign_id']) {
 }
 
 //check text_ad id, that you own
-if ($_POST['text_ad_id']) {
+if (isset($_POST['text_ad_id']) && $_POST['text_ad_id']) {
 	$mysql['text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);
 	$text_ad_sql = "SELECT * FROM 202_text_ads WHERE text_ad_id='" . $mysql['text_ad_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
 	$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
@@ -130,7 +133,7 @@ if ($_POST['ppc_network_id']) {
 }
 
 //check ppc_account id, that you own
-if ($_POST['ppc_account_id']) {
+if (isset($_POST['ppc_account_id']) && $_POST['ppc_account_id']) {
 	$mysql['ppc_account_id'] = $db->real_escape_string((string)$_POST['ppc_account_id']);
 	$ppc_account_sql = "SELECT * FROM 202_ppc_accounts WHERE ppc_account_id='" . $mysql['ppc_account_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
 	$ppc_account_result = $db->query($ppc_account_sql) or record_mysql_error($ppc_account_sql);
@@ -154,7 +157,7 @@ if ((!is_numeric($_POST['cpc_dollars'])) or (!is_numeric($_POST['cpc_cents']))) 
 
 
 //echo error
-echo $error['time'] . $error['user'];
+echo (isset($error['time']) ? $error['time'] : '') . (isset($error['user']) ? $error['user'] : '') . (isset($error['cpc']) ? $error['cpc'] : '');
 
 //if there was an error terminate, or else just continue to run
 if ($error) {
