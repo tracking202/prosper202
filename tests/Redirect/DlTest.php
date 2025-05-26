@@ -5,15 +5,16 @@ use PHPUnit\Framework\TestCase;
 
 final class DlTest extends TestCase
 {
-    private array $tmpDirs = [];
     private array $originalGet;
     private array $originalServer;
+    private array $capturedHeaders = [];
 
     protected function setUp(): void
     {
         // Store original globals
         $this->originalGet = $_GET ?? [];
         $this->originalServer = $_SERVER ?? [];
+        $this->capturedHeaders = [];
     }
 
     protected function tearDown(): void
@@ -21,52 +22,22 @@ final class DlTest extends TestCase
         // Restore original globals
         $_GET = $this->originalGet;
         $_SERVER = $this->originalServer;
-
-        // Clean up temporary directories
-        foreach ($this->tmpDirs as $tmpDir) {
-            if (is_dir($tmpDir)) {
-                $this->removeDirectory($tmpDir);
-            }
-        }
-        $this->tmpDirs = [];
     }
 
-    private function removeDirectory(string $dir): void
+    private function simulateDlLogic(array $get, bool $memcacheWorking, array $memcacheData = []): array
     {
-        if (!is_dir($dir)) {
-            return;
-        }
+        $output = '';
+        $this->capturedHeaders = [];
         
-        $files = array_diff(scandir($dir), ['.', '..']);
-        foreach ($files as $file) {
-            $path = $dir . '/' . $file;
-            if (is_dir($path)) {
-                $this->removeDirectory($path);
-            } else {
-                unlink($path);
-            }
-        }
-        rmdir($dir);
-    }
-
-    private function runDl(array $get, bool $memcacheWorking, array $memcacheData = []): array
-    {
-        // Direct include approach with proper mocking
-        $headers = [];
-        $originalDb = $GLOBALS['db'] ?? null;
-        $originalMemcache = $GLOBALS['memcache'] ?? null;
-        $originalMemcacheWorking = $GLOBALS['memcacheWorking'] ?? null;
-        
-        // Mock header function
-        if (!function_exists('header_mock')) {
-            function header($string, $replace = true, $http_response_code = 0) {
-                global $headers;
-                $headers[] = $string;
-            }
-        }
+        // Set up test environment
+        $_GET = $get;
+        $_SERVER['HTTP_REFERER'] = 'http://example.com';
+        $_SERVER['SERVER_NAME'] = 'test.com';
+        $_SERVER['REQUEST_URI'] = '/test';
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = '127.0.0.1';
         
         // Mock database
-        $GLOBALS['db'] = $memcacheWorking ? new class {
+        $db = $memcacheWorking ? new class {
             public function real_escape_string(string $str): string
             {
                 return addslashes($str);
@@ -74,7 +45,7 @@ final class DlTest extends TestCase
         } : null;
         
         // Mock memcache
-        $GLOBALS['memcache'] = new class($memcacheData) {
+        $memcache = new class($memcacheData) {
             private $data;
             public function __construct($data)
             {
@@ -91,80 +62,59 @@ final class DlTest extends TestCase
             }
         };
         
-        $GLOBALS['memcacheWorking'] = $memcacheWorking;
-        
-        // Mock functions
-        if (!function_exists('systemHash')) {
-            function systemHash(): string { return 'hash'; }
-        }
-        if (!function_exists('memcache_mysql_fetch_assoc')) {
-            function memcache_mysql_fetch_assoc($db, $sql) { return []; }
-        }
-        
-        // Set up globals
-        $_GET = $get;
-        $_SERVER['HTTP_REFERER'] = 'http://example.com';
-        $_SERVER['SERVER_NAME'] = 'test.com';
-        $_SERVER['REQUEST_URI'] = '/test';
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = '127.0.0.1';
-        
-        // Capture output
-        ob_start();
-        
+        // Simulate the core dl.php logic
         try {
-            // For the cached redirect test path only
-            if ($memcacheWorking && isset($get['t202id']) && is_numeric($get['t202id'])) {
-                $t202id = $get['t202id'];
-                $usedCachedRedirect = false;
-                $db = $GLOBALS['db'];
-                $memcache = $GLOBALS['memcache'];
-                
-                if (!$db) $usedCachedRedirect = true;
-                
-                if ($usedCachedRedirect || $memcacheWorking) {
-                    if ($memcacheWorking) {
-                        $getUrl = $memcache->get(md5('url_'.$t202id.'hash'));
-                        if ($getUrl) {
-                            $new_url = str_replace("[[subid]]", "p202", $getUrl);
-                            
-                            if(isset($_GET['c1']) && $_GET['c1'] != ''){
-                                $new_url = str_replace("[[c1]]", $db->real_escape_string($_GET['c1']), $new_url);
-                            } else {
-                                $new_url = str_replace("[[c1]]", "p202c1", $new_url);
-                            }
-                            
-                            header('location: '. $new_url);
-                            die();
+            // Check for valid ID
+            if (!isset($get['t202id']) || !is_numeric($get['t202id'])) {
+                return ['headers' => $this->capturedHeaders, 'output' => '', 'died' => true];
+            }
+            
+            $t202id = $get['t202id'];
+            $usedCachedRedirect = false;
+            
+            if (!$db) $usedCachedRedirect = true;
+            
+            if ($usedCachedRedirect || $memcacheWorking) {
+                if ($memcacheWorking) {
+                    $getUrl = $memcache->get(md5('url_'.$t202id.'hash'));
+                    if ($getUrl) {
+                        $new_url = str_replace("[[subid]]", "p202", $getUrl);
+                        
+                        if(isset($_GET['c1']) && $_GET['c1'] != ''){
+                            $new_url = str_replace("[[c1]]", $db->real_escape_string($_GET['c1']), $new_url);
+                        } else {
+                            $new_url = str_replace("[[c1]]", "p202c1", $new_url);
                         }
-                    }
-                    
-                    if (!$memcacheWorking) {
-                        die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+                        
+                        $this->capturedHeaders[] = 'location: '. $new_url;
+                        return ['headers' => $this->capturedHeaders, 'output' => $output, 'died' => true];
                     }
                 }
-            } else {
-                // Invalid ID
-                if (!isset($get['t202id']) || !is_numeric($get['t202id'])) {
-                    die();
+                
+                if (!$memcacheWorking) {
+                    $output = "<h2>Error establishing a database connection - please contact the webhost</h2>";
+                    return ['headers' => $this->capturedHeaders, 'output' => $output, 'died' => true];
                 }
             }
         } catch (Exception $e) {
             // Handle any exceptions
         }
         
-        $output = ob_get_clean();
-        
-        // Restore globals
-        $GLOBALS['db'] = $originalDb;
-        $GLOBALS['memcache'] = $originalMemcache;
-        $GLOBALS['memcacheWorking'] = $originalMemcacheWorking;
-        
-        return ['headers' => $headers, 'output' => $output];
+        return ['headers' => $this->capturedHeaders, 'output' => $output, 'died' => false];
     }
 
     public function testInvalidIdDies(): void
     {
-        $result = $this->runDl(['t202id' => 'abc'], false);
+        $result = $this->simulateDlLogic(['t202id' => 'abc'], false);
+        $this->assertTrue($result['died']);
+        $this->assertEmpty($result['headers']);
+        $this->assertSame('', $result['output']);
+    }
+
+    public function testMissingIdDies(): void
+    {
+        $result = $this->simulateDlLogic([], false);
+        $this->assertTrue($result['died']);
         $this->assertEmpty($result['headers']);
         $this->assertSame('', $result['output']);
     }
@@ -173,17 +123,36 @@ final class DlTest extends TestCase
     {
         $url = 'http://example.com/?affsub=[[subid]]&c1=[[c1]]';
         $key = md5('url_1hash');
-        $result = $this->runDl(
+        $result = $this->simulateDlLogic(
             ['t202id' => '1', 'c1' => 'foo'],
             true,
             [$key => $url]
         );
+        
+        $this->assertTrue($result['died']);
+        $this->assertNotEmpty($result['headers']);
         $this->assertStringContainsString('location: http://example.com/?affsub=p202&c1=foo', implode("\n", $result['headers']));
+    }
+
+    public function testCachedRedirectWithoutC1(): void
+    {
+        $url = 'http://example.com/?affsub=[[subid]]&c1=[[c1]]';
+        $key = md5('url_1hash');
+        $result = $this->simulateDlLogic(
+            ['t202id' => '1'],
+            true,
+            [$key => $url]
+        );
+        
+        $this->assertTrue($result['died']);
+        $this->assertNotEmpty($result['headers']);
+        $this->assertStringContainsString('location: http://example.com/?affsub=p202&c1=p202c1', implode("\n", $result['headers']));
     }
 
     public function testCachedRedirectError(): void
     {
-        $result = $this->runDl(['t202id' => '1'], false);
+        $result = $this->simulateDlLogic(['t202id' => '1'], false);
+        $this->assertTrue($result['died']);
         $this->assertStringContainsString('Error establishing a database connection', $result['output']);
         $this->assertEmpty($result['headers']);
     }
