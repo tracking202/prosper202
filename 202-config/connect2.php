@@ -723,6 +723,9 @@ class PLATFORMS
         $parser = Parser::create();
         $result = $parser->parse($detect->getUserAgent());
 
+        // Initialize type with default value
+        $type = "1"; // Default to Desktop
+        
         // If is not mobile or tablet
         if (! $detect->isMobile() && ! $detect->isTablet()) {
 
@@ -734,6 +737,11 @@ class PLATFORMS
                     break;
                 // Is Desktop
                 case 'Other':
+                    $type = "1";
+                    $result->device->family = "Desktop";
+                    break;
+                // Default case for any other device family
+                default:
                     $type = "1";
                     $result->device->family = "Desktop";
                     break;
@@ -754,10 +762,10 @@ class PLATFORMS
         }
 
         // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string($result->ua->family);
-        $mysql['platform'] = $db->real_escape_string($result->os->family);
-        $mysql['device'] = $db->real_escape_string($result->device->family);
-        $mysql['device_type'] = $db->real_escape_string($type);
+        $mysql['browser'] = $db->real_escape_string($result->ua->family ?? 'Unknown');
+        $mysql['platform'] = $db->real_escape_string($result->os->family ?? 'Unknown');
+        $mysql['device'] = $db->real_escape_string($result->device->family ?? 'Unknown');
+        $mysql['device_type'] = $db->real_escape_string((string)$type);
 
 
 
