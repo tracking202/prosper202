@@ -363,12 +363,12 @@ $mysql['click_in'] = 1;
 $mysql['click_out'] = 1;
 
 
-$ip = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : '0.0.0.0';
+$ip = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0');
 $ip_id = INDEXES::get_ip_id($db, $ip);
-$mysql['ip_id'] = $db->real_escape_string($ip_id);
+$mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 
 //before we finish filter this click
-$ip_address = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : '0.0.0.0';
+$ip_address = $ip;
 $user_id = $tracker_row['user_id'];
 
 //GEO Lookup

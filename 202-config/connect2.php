@@ -1147,13 +1147,22 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        $mysql['ip_address'] = $db->real_escape_string($ip->address);
+        // Handle both string and object input
+        if (is_string($ip)) {
+            $ip_address = $ip;
+            $ip_type = (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) ? 'ipv6' : 'ipv4';
+        } else {
+            $ip_address = $ip->address ?? '';
+            $ip_type = $ip->type ?? 'ipv4';
+        }
 
-        if ($ip->type == 'ipv6') {
+        $mysql['ip_address'] = $db->real_escape_string($ip_address);
+
+        if ($ip_type == 'ipv6') {
             $mysql['ip_address'] = $db->real_escape_string(inet6_aton($mysql['ip_address'])); //encode ipv6 for db insert
         }
 
-        if ($ip->type === 'ipv6') {
+        if ($ip_type === 'ipv6') {
             $ip_sql = 'SELECT 202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address=("' . $mysql['ip_address'] . '") order by 202_ips.ip_id DESC limit 1';
         } else {
             $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
@@ -1177,7 +1186,15 @@ class INDEXES
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 } else {
                     //insert ip
-                    $ip_id = INDEXES::insert_ip($db, $ip);
+                    // Create IP object if we received a string
+                    if (is_string($ip)) {
+                        $ip_obj = new stdClass();
+                        $ip_obj->address = $ip_address;
+                        $ip_obj->type = $ip_type;
+                        $ip_id = INDEXES::insert_ip($db, $ip_obj);
+                    } else {
+                        $ip_id = INDEXES::insert_ip($db, $ip);
+                    }
                     // add to memcached
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 }
@@ -1190,7 +1207,15 @@ class INDEXES
                 $ip_id = $ip_row['ip_id'];
             } else {
                 //insert ip
-                $ip_id = INDEXES::insert_ip($db, $ip);
+                // Create IP object if we received a string
+                if (is_string($ip)) {
+                    $ip_obj = new stdClass();
+                    $ip_obj->address = $ip_address;
+                    $ip_obj->type = $ip_type;
+                    $ip_id = INDEXES::insert_ip($db, $ip_obj);
+                } else {
+                    $ip_id = INDEXES::insert_ip($db, $ip);
+                }
             }
         }
 
