@@ -148,13 +148,13 @@ $error = array();
 	$tracker_result = $db->query($tracker_sql) or record_mysql_error($tracker_sql);
 	
 	$tracker_row['tracker_id'] = $db->insert_id;
-	$mysql['tracker_id'] = $db->real_escape_string($tracker_row['tracker_id']);
+	$mysql['tracker_id'] = $db->real_escape_string((string)$tracker_row['tracker_id']);
 
-	if ($_POST['edit_tracker'] && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
-		$mysql['tracker_id_public'] = $db->real_escape_string($get_tracker_row['tracker_id_public']);
+	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
+		$mysql['tracker_id_public'] = $db->real_escape_string((string)$get_tracker_row['tracker_id_public']);
 	} else {
 		$tracker_id_public = rand(1,9) . $tracker_row['tracker_id'] . rand(1,9);
-		$mysql['tracker_id_public'] = $db->real_escape_string($tracker_id_public);
+		$mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
 	}
 	
 	$tracker_id_public = $mysql['tracker_id_public'];
