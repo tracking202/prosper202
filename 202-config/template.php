@@ -245,30 +245,12 @@ function template_top($title = 'Prosper202 ClickServer')
 		</script>
 
 
-		<!-- this is the prosper202 support widget --> <?php
-														if (!isset($_SESSION['publisher']) || $_SESSION['publisher'] !== true) {
-															$user_data = get_user_data_feedback($_SESSION['user_id']);
-														?>
-
-			<script id="IntercomSettingsScriptTag">
-				window.intercomSettings = {
-					user_id: "<?php echo $user_data['install_hash'] ?? ''; ?>",
-					email: "<?php echo $user_data['user_email'] ?? ''; ?>",
-					user_hash: "<?php echo $user_data['user_hash'] ?? ''; ?>",
-					created_at: <?php echo $user_data['time_stamp'] ?? time(); ?>,
-					"widget": {
-						"activator": "#IntercomDefaultWidget"
-					},
-					API_key: "<?php echo $user_data['api_key'] ?? ''; ?>",
-					ClickServer_Version: "<?php echo $version; ?>",
-					PHP_Version: "<?php echo phpversion(); ?>",
-					MYSQL_Version: "<?php echo $_SESSION['mysql_version'] ?? ''; ?>",
-					payment_email: "<?php echo getDashEmail(); ?>",
-					app_id: "hciib3ia"
-				};
-			</script>
-
-			<?php if (!$user_data['modal_status']) {
+		<!-- Support widget removed -->
+		<?php
+		if (!isset($_SESSION['publisher']) || $_SESSION['publisher'] !== true) {
+			$user_data = get_user_data_feedback($_SESSION['user_id']);
+			
+			if (!$user_data['modal_status']) {
 																$data = getSurveyData($user_data['install_hash']); ?>
 
 				<script type="text/javascript">

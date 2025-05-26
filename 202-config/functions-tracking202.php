@@ -3718,26 +3718,6 @@ function updateSurveyData($install_hash, $post)
     return $data;
 }
 
-function intercomHash($install_hash)
-{
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/hash/?h=' . $install_hash);
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Execute
-    $result = curl_exec($ch);
-
-    $data = json_decode($result, true);
-
-    // close connection
-    curl_close($ch);
-
-    return $data['user_hash'];
-}
 
 function rotator_data($query, $type)
 {
