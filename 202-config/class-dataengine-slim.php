@@ -34,8 +34,9 @@ if (!class_exists('DataEngine')) {
             $offsetHours = round(($offset) / 3600);
 
             $tzSql = "SET time_zone = '" . $offsetHours . ":00'";
-            if ($offsetHours != 0)
+            if ($offsetHours != 0 && self::$db !== false) {
                 $click_result = self::$db->query($tzSql);
+            }
         }
 
         // dirty hours by clicks id: This function marks the hour range that the click happened in for updating reports

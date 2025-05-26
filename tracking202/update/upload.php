@@ -179,32 +179,60 @@ switch ($case) {
 		
 		if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
 			
+			// Initialize error variable
+			$error = false;
 			
-			//get file extension, checks to see if the image file, if not, do not allow to upload the file
-			$pext = getFileExtension($_FILES['csv']['name']);
-			$pext = strtolower($pext); 
-			if (($pext != "txt") and ($pext !="csv")) $error = true;
+			// Check if file was uploaded properly
+			if (!isset($_FILES['csv']) || !isset($_FILES['csv']['tmp_name']) || empty($_FILES['csv']['tmp_name'])) {
+				$error = true;
+			}
 			
+			if (!$error) {
+				//get file extension, checks to see if the image file, if not, do not allow to upload the file
+				$pext = getFileExtension($_FILES['csv']['name']);
+				$pext = strtolower($pext); 
+				if (($pext != "txt") and ($pext !="csv")) $error = true;
+			}
 			
-			//open the tmp file, that was uploaded, the csv
-			$tmp_name = $_FILES['csv']['tmp_name'];
-			$handle = fopen($tmp_name, "rb");
+			$handle = false;
+			if (!$error) {
+				//open the tmp file, that was uploaded, the csv
+				$tmp_name = $_FILES['csv']['tmp_name'];
+				$handle = fopen($tmp_name, "rb");
+				if ($handle === false) {
+					$error = true;
+				}
+			}
 			
-			//this counter, will help us determine the first row of the array
-			$row = @fgetcsv($handle, 100000, ",");
-			
-			#if there was no row detected, an error occured on this uploaded
-			if (!$row) $error = true;
+			if (!$error && $handle !== false) {
+				//this counter, will help us determine the first row of the array
+				$row = @fgetcsv($handle, 100000, ",");
+				
+				#if there was no row detected, an error occured on this uploaded
+				if (!$row) $error = true;
+				
+				// Close the handle since we're done with the initial check
+				fclose($handle);
+			}
 			
 			if (!$error) { 
 			
 				#now write the csv to the reports folder
 				$handle = fopen($tmp_name, "rb");
-				$data = fread($handle, 100000);
-				$file = rand(0,100) . time() . rand(0,100) .'.csv';
-				$newHandle = fopen($upload_dir . $file, 'w');
-				fwrite($newHandle, $data);
-				fclose($newHandle);
+				if ($handle !== false) {
+					$data = fread($handle, 100000);
+					$file = rand(0,100) . time() . rand(0,100) .'.csv';
+					$newHandle = fopen($upload_dir . $file, 'w');
+					if ($newHandle !== false) {
+						fwrite($newHandle, $data);
+						fclose($newHandle);
+					} else {
+						$error = true;
+					}
+					fclose($handle);
+				} else {
+					$error = true;
+				}
 				
 				header('location: '.get_absolute_url().'tracking202/update/upload.php?case=1&file='.$file); die();
 			}
