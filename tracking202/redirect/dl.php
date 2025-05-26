@@ -190,10 +190,15 @@ $mysql['text_ad_id'] = $db->real_escape_string((string)($tracker_row['text_ad_id
 
 /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
 //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
-$referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
-$referer_url_query = $referer_url_parsed['query'];
+$referer_url_parsed = array();
+$referer_url_query = '';
+$referer_query = array();
 
-@parse_str($referer_url_query, $referer_query);
+if (!empty($_SERVER['HTTP_REFERER'])) {
+	$referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
+	$referer_url_query = isset($referer_url_parsed['query']) ? $referer_url_parsed['query'] : '';
+	@parse_str($referer_url_query, $referer_query);
+}
 
 switch ($tracker_row['user_keyword_searched_or_bidded']) {
 
