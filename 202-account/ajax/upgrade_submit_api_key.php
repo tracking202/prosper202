@@ -6,8 +6,8 @@ AUTH::require_user();
 
 if (isset($_POST['api_key'])) {
 	if ($_POST['token'] != $_SESSION['token']) { $error['token'] = 'You must use our forms to submit data.';  }
-	$mysql['p202_customer_api_key'] = $db->real_escape_string($_POST['api_key']);
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+	$mysql['p202_customer_api_key'] = $db->real_escape_string((string)$_POST['api_key']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	$validate = validateCustomersApiKey($mysql['p202_customer_api_key']);
 	if ($validate['code'] != 200) {
 		$error['p202_customer_api_key_invalid'] = "API key is not valid. Check your key and try again!";

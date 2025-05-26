@@ -15,8 +15,8 @@ AUTH::require_user();
 
         while ($browser_row = $browser_result->fetch_array(MYSQLI_ASSOC)) {
 
-            $html['browser_name'] = htmlentities($browser_row['browser_name'], ENT_QUOTES, 'UTF-8');
-            $html['browser_id'] = htmlentities($browser_row['browser_id'], ENT_QUOTES, 'UTF-8');
+            $html['browser_name'] = htmlentities((string)($browser_row['browser_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+            $html['browser_id'] = htmlentities((string)($browser_row['browser_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
             if ($_POST['browser_id'] == $browser_row['browser_id']) {
                 $selected = 'selected=""';   

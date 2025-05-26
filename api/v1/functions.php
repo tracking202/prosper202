@@ -60,8 +60,8 @@ function runReports($db, $vars, $user, $timezone){
 			$date_to = $timestamps['to'];
 
 		} else {
-			$date_from = mktime(0,0,0,date('m',time()),date('d',time()),date('Y',time()));
-			$date_to = mktime(23,59,59,date('m',time()),date('d',time()),date('Y',time()));
+			$date_from = mktime(0,0,0,(int)date('m',time()),(int)date('d',time()),(int)date('Y',time()));
+			$date_to = mktime(23,59,59,(int)date('m',time()),(int)date('d',time()),(int)date('Y',time()));
 		}
 
 	    switch($vars['type']) //each report type
@@ -162,7 +162,7 @@ function wpCreateLp($db, $user) {
 		}
 		$title = '[WP] '.$title;
 		$mysql['landing_page_nickname'] = $db->real_escape_string($title);
-		$mysql['landing_page_url'] = $db->real_escape_string($_GET['page_url']);
+		$mysql['landing_page_url'] = $db->real_escape_string((string)$_GET['page_url']);
 		$mysql['user_id'] = $db->real_escape_string($user);
 		$mysql['landing_page_time'] = time();
 
@@ -178,7 +178,7 @@ function wpCreateLp($db, $user) {
 			$result = $db->query($sql);
 			$insert_id = $db->insert_id;
 		} else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
-			$mysql['aff_campaign_id_public'] = $db->real_escape_string($_GET['slp_page_campaign']);
+			$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['slp_page_campaign']);
 
 			$sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public = '".$mysql['aff_campaign_id_public']."' AND user_id = '".$mysql['user_id']."'";
 			$result = $db->query($sql);
@@ -221,8 +221,8 @@ function wpUpdateLp($db, $user) {
 		}
 		$title = '[WP] '.$title;
 		$mysql['landing_page_nickname'] = $db->real_escape_string($title);
-		$mysql['landing_page_url'] = $db->real_escape_string($_GET['page_url']);
-		$mysql['landing_page_id_public'] = $db->real_escape_string($_GET['lp_pid']);
+		$mysql['landing_page_url'] = $db->real_escape_string((string)$_GET['page_url']);
+		$mysql['landing_page_id_public'] = $db->real_escape_string((string)$_GET['lp_pid']);
 		$mysql['user_id'] = $db->real_escape_string($user);
 
 		if ($_GET['page_type'] == 'alp') {
@@ -237,7 +237,7 @@ function wpUpdateLp($db, $user) {
 			$result = $db->query($sql);
 			return array('error' => '0');
 		} else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
-			$mysql['aff_campaign_id_public'] = $db->real_escape_string($_GET['slp_page_campaign']);
+			$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['slp_page_campaign']);
 
 			$sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public = '".$mysql['aff_campaign_id_public']."' AND user_id = '".$mysql['user_id']."'";
 			$result = $db->query($sql);
@@ -574,14 +574,14 @@ function getTimestamp($datefrom, $dateto)
 	$from_day = trim($from[1]);
 	$from_year = trim($from[2]);
 
-	$date_from = mktime(0,0,0,$from_month,$from_day,$from_year);
+	$date_from = mktime(0,0,0,(int)$from_month,(int)$from_day,(int)$from_year);
 
     $to = explode('/', $dateto); 
     $to_month = trim($to[0]);
     $to_day = trim($to[1]);
     $to_year = trim($to[2]);
 
-    $date_to = mktime(23,59,59,$to_month,$to_day,$to_year);
+    $date_to = mktime(23,59,59,(int)$to_month,(int)$to_day,(int)$to_year);
 
     $date['from'] = $date_from;
     $date['to'] = $date_to;

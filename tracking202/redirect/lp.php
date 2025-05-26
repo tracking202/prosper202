@@ -114,7 +114,7 @@ parse_str($landing_page_site_url_address_parsed['query'], $_GET);
 
 if ($_GET['t202id']) { 
 	//grab tracker data if avaliable
-	$mysql['tracker_id_public'] = $db->real_escape_string($_GET['t202id']);
+	$mysql['tracker_id_public'] = $db->real_escape_string((string)$_GET['t202id']);
 
 	$tracker_sql2 = "SELECT  text_ad_id,
 							ppc_account_id,

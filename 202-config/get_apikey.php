@@ -14,7 +14,7 @@ if(isset($_GET['customers_api_key']) && $_GET['customers_api_key'] != ''){
     
 }
 
-$html['user_api'] = htmlentities($_GET['customers_api_key'], ENT_QUOTES, 'UTF-8');
+$html['user_api'] = htmlentities((string)($_GET['customers_api_key'] ?? ''), ENT_QUOTES, 'UTF-8');
  
 info_top(); ?>
 	<div class="main col-xs-7 install">

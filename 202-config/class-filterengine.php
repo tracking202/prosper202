@@ -15,7 +15,7 @@ class FilterEngine
         } catch (Exception $e) {
             self::$db = false;
         }
-        $this->mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_id']);
+        $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
         // make sure mysql uses the timezone choses by the user
     }
 

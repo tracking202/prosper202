@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
-$vars=@explode(" ",base64_decode($_GET['202v']));
+
+use Tracking202\Redirect\RedirectHelper;
+
+$vars = explode(' ', base64_decode(RedirectHelper::getStringParam('202v')));
 
 if(isset($vars[1])){
 $_GET['pci']=$vars[1];
@@ -12,28 +15,26 @@ $expire = time() + 2592000;
 $redirect_site_url='';
 
 
-  //Simple LP redirect
-  if (isset($_GET['lpip']) && !empty($_GET['lpip'])) {
+// Simple LP redirect
+if (isset($_GET['lpip']) && is_numeric($_GET['lpip'])) {
     if (isset($_COOKIE['tracking202outbound'])) {
-      $tracking202outbound = $_COOKIE['tracking202outbound'];     
+        $tracking202outbound = $_COOKIE['tracking202outbound'];
     } else {
-    	require_once(substr(dirname( __FILE__ ), 0,-21) . '/tracking202/redirect/lp.php');
+        require_once substr(dirname(__FILE__), 0, -21) . '/tracking202/redirect/lp.php';
     }
 
-    header('location: '.$tracking202outbound);
-  }
+    RedirectHelper::redirect($tracking202outbound);
+}
 
-  //Advanced LP redirect
-  if (isset($_GET['acip']) && !empty($_GET['acip'])) {
+// Advanced LP redirect
+if (isset($_GET['acip']) && is_numeric($_GET['acip'])) {
+    include_once substr(dirname(__FILE__), 0, -21) . '/tracking202/redirect/off.php';
+}
 
-  	include_once(substr(dirname( __FILE__ ), 0,-21) . '/tracking202/redirect/off.php');
-  }
-
-  //Rotator redirect on ALP
-  if (isset($_GET['rpi']) && !empty($_GET['rpi'])) {
-
-    include_once(substr(dirname( __FILE__ ), 0,-21) . '/tracking202/redirect/offrtr.php');
-  }    
+// Rotator redirect on ALP
+if (isset($_GET['rpi']) && is_numeric($_GET['rpi'])) {
+    include_once substr(dirname(__FILE__), 0, -21) . '/tracking202/redirect/offrtr.php';
+}
 
   die("Missing LPIP, ACIP or RPI variable!");
   

@@ -4,7 +4,7 @@ include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php');
 include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
 	
 //get the aff_camapaign_id
-$mysql['aff_campaign_id_public'] = $db->real_escape_string($_GET['acip']);
+$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['acip']);
 $aff_campaign_sql = "SELECT user_id FROM 202_aff_campaigns WHERE aff_campaign_id_public='".$mysql['aff_campaign_id_public']."'";
 $aff_campaign_row =  memcache_mysql_fetch_assoc($aff_campaign_sql);
 $mysql['user_id'] = $db->real_escape_string($aff_campaign_row['user_id']);

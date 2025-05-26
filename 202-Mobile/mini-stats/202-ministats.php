@@ -1,18 +1,21 @@
 <?php
 declare(strict_types=1);
+include_once(substr(dirname(__FILE__), 0, -22) . '/202-config/connect.php');
+
 //grab the users date range preferences
 $time = grab_timeframe();
+$click_filtered = '';
 $mysql['to'] = $db->real_escape_string($time['to']);
 $mysql['from'] = $db->real_escape_string($time['from']);
 
 
 //show real or filtered clicks
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $user_sql = "SELECT user_pref_show, user_cpc_or_cpv FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
-$user_result = _mysqli_query($user_sql); //($user_sql);
+$user_result = _mysqli_query($user_sql, $db); //($user_sql);
 $user_row = $user_result->fetch_assoc();
 
-if ($user_row['user_pref_show'] == 'all') { $click_flitered = ''; }
+if ($user_row['user_pref_show'] == 'all') { $click_filtered = ''; }
 if ($user_row['user_pref_show'] == 'real') { $click_filtered = " AND click_filtered='0' "; }
 if ($user_row['user_pref_show'] == 'filtered') { $click_filtered = " AND click_filtered='1' "; }
 if ($user_row['user_pref_show'] == 'leads') { $click_filtered = " AND click_lead='1' "; }
@@ -45,7 +48,7 @@ WHERE click_time >= '".$mysql['from']."'
 AND click_time <= '".$mysql['to']."'
 $click_filtered"; 
 
-$clicks_result = _mysqli_query($clicks_sql);
+$clicks_result = _mysqli_query($clicks_sql, $db);
 $clicks_row = $clicks_result->fetch_array(MYSQLI_ASSOC);
 
 ?>

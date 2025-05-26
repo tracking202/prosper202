@@ -1,8 +1,14 @@
 <?php
 declare(strict_types=1);
 include_once(dirname( __FILE__ ) . '/202-config/connect.php');
- 	
-	info_top(); ?>
+
+if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+	$strProtocol = 'https://';
+} else {
+	$strProtocol = 'http://';
+}
+
+info_top(); ?>
 	<div class="row" style="position:absolute;left:1em;">
 	<div class="main col-xs-4" style="left:5em;width:344px;box-shadow: 0 0 12px 0 rgba(0, 0, 0, 0.1), 0 10px 30px 0 rgba(0, 0, 0, 0.2);">
 	  <center><img src="202-img/prosper202.png"></center>

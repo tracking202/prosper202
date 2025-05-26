@@ -14,8 +14,8 @@ AUTH::require_user();
 
         while ($region_row = $region_result->fetch_array(MYSQLI_ASSOC)) {
             
-            $html['region_name'] = htmlentities($region_row['region_name'], ENT_QUOTES, 'UTF-8');
-            $html['region_id'] = htmlentities($region_row['region_id'], ENT_QUOTES, 'UTF-8');
+            $html['region_name'] = htmlentities((string)($region_row['region_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+            $html['region_id'] = htmlentities((string)($region_row['region_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
             if ($_POST['region_id'] == $region_row['region_id']) {
                 $selected = 'selected=""';   

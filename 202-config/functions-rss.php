@@ -11,7 +11,7 @@ declare(strict_types=1);
 
 define('RSS', 'RSS');
 define('ATOM', 'Atom');
-define('MAGPIE_USER_AGENT',  $_SERVER['HTTP_HOST']);
+define('MAGPIE_USER_AGENT', $_SERVER['HTTP_HOST'] ?? 'localhost');
 
 class MagpieRSS
 {
@@ -792,10 +792,8 @@ if (!function_exists('parse_w3cdtf')) :
 
 		if (preg_match($pat, $date_str, $match)) {
 			list($year, $month, $day, $hours, $minutes, $seconds) =
-				array($match[1], $match[2], $match[3], $match[4], $match[5], $match[7]);
-
-			# calc epoch for current date assuming GMT
-			$epoch = gmmktime($hours, $minutes, $seconds, $month, $day, $year);
+				array($match[1], $match[2], $match[3], $match[4], $match[5], $match[7]);			# calc epoch for current date assuming GMT
+			$epoch = gmmktime((int)$hours, (int)$minutes, (int)$seconds, (int)$month, (int)$day, (int)$year);
 
 			$offset = 0;
 			if ($match[11] == 'Z') {

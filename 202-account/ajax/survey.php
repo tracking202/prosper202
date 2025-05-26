@@ -7,7 +7,7 @@ AUTH::require_user();
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (isset($_POST['skip']) && $_POST['skip'] == true) {
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$sql = "UPDATE 202_users SET modal_status='1' WHERE user_id='".$mysql['user_id']."'";
 		$result = $db->query($sql);
 		die();
@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$response = updateSurveyData($user_data['install_hash'], $_POST);
 
 	if ($response['updated']) {
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$sql = "UPDATE 202_users SET modal_status='1', vip_perks_status='0' WHERE user_id='".$mysql['user_id']."'";
 		$result = $db->query($sql);
 	} else {

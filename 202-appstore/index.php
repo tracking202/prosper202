@@ -15,8 +15,8 @@ template_top('Prosper202 ClickServer App Store');
 
 			if (!$error || $mysql['clickserver_api_key'] =='') {
 					
-				$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-				$mysql['clickserver_api_key'] = $db->real_escape_string($_POST['clickserver_api_key']);
+				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+				$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
 				$user_sql = "	UPDATE 	`202_users`
 								SET     		`clickserver_api_key`='".$mysql['clickserver_api_key']."'
 								WHERE  	`user_id`='".$mysql['user_id']."'";
@@ -29,7 +29,7 @@ template_top('Prosper202 ClickServer App Store');
 	}
 	
 	//get all of the user data
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "	SELECT 	*
 				 FROM   	`202_users`
 				 LEFT JOIN	`202_users_pref` USING (user_id)

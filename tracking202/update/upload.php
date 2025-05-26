@@ -28,7 +28,9 @@ function about_revenue_upload() {
 
 $upload_dir = dirname(__FILE__) . '/reports/';
 
-switch ($_GET['case']) { 
+$case = isset($_GET['case']) ? (int)$_GET['case'] : 0;
+
+switch ($case) {
 
 	case 1:
 		
@@ -120,7 +122,7 @@ switch ($_GET['case']) {
 				else 							$click_payouts[$click_id] = $click_payout + $click_payouts[$click_id];
 				
 				#now upload each row into prosper202 and update the subids accordingly
-				$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$mysql['click_id'] = $db->real_escape_string($click_id);
 				$mysql['click_payout'] = $db->real_escape_string($click_payouts[$click_id]);
 				$mysql['click_update_time'] = time();

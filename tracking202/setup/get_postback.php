@@ -250,4 +250,4 @@ function change_pixel_data(){
 }
 </script>
 
-<?php template_bottom($server_row); ?>
+<?php template_bottom(); ?>

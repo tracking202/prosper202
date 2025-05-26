@@ -1,87 +1,99 @@
 <?php
+
 declare(strict_types=1);
-if(!isset($_SESSION['user_timezone']))
-{
+if (!isset($_SESSION['user_timezone'])) {
     date_default_timezone_set('GMT');
 } else {
     date_default_timezone_set($_SESSION['user_timezone']);
-} 
-  
-class DataEngine
-{
-    private $total_clicks = '';
-    
-    private $mysql = Array();
+}
 
-    private static $db;
-    private static $found_rows;
-    private $forDownload=0;
-    
-    function __construct()
+if (!class_exists('DataEngine')) {
+    class DataEngine
     {
-        try {
-            $database = DB::getInstance();
-            self::$db = $database->getConnection();
-        } catch (Exception $e) {
-            self::$db = false;
-        }
-       // $this->mysql['user_id'] = self::$db->real_escape_string($_SESSION['user_id']);
-        //make sure mysql uses the timezone chosen by the user
+        private $total_clicks = '';
 
-        $timezone = new DateTimeZone(date_default_timezone_get()); // Get default system timezone to create a new DateTimeZone object
-        $offset = $timezone->getOffset(new DateTime()); // Offset in seconds to UTC
-        $offsetHours = round(($offset)/3600);
-        
-        $tzSql="SET time_zone = '".$offsetHours.":00'";
-        if($offsetHours!=0)
-            $click_result = self::$db->query($tzSql);
-          
-    }
-    
-    // dirty hours by clicks id: This function marks the hour range that the click happened in for updating reports
-    function setDirtyHour($click_id)
-    {
-        global $ip_address, $db, $dbGlobalLink;
+        private $mysql = array();
 
-       if(!isset($click_id) || $click_id=='') {  //if not find the list clicks id of the ip within a 30 day range
-        $mysql['user_id'] = 1;
-        //if there is no native ipv6 support use php version
-        if($inet6_ntoa == '' && $ip_address->type == 'ipv6'){
-            //encode ip address
-            $mysql['ip_address'] = inet6_aton($db->real_escape_string($ip_address->address)); //use encoded var to compare
-        }else{
-            //do nothing. The built in mysql function will be used
-            $mysql['ip_address'] = $db->real_escape_string($ip_address->address);
+        private static $db;
+        private static $found_rows;
+        private $forDownload = 0;
+
+        function __construct()
+        {
+            try {
+                $database = DB::getInstance();
+                self::$db = $database->getConnection();
+            } catch (Exception $e) {
+                self::$db = false;
+            }
+            // $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
+            //make sure mysql uses the timezone chosen by the user
+
+            $timezone = new DateTimeZone(date_default_timezone_get()); // Get default system timezone to create a new DateTimeZone object
+            $offset = $timezone->getOffset(new DateTime()); // Offset in seconds to UTC
+            $offsetHours = round(($offset) / 3600);
+
+            $tzSql = "SET time_zone = '" . $offsetHours . ":00'";
+            if ($offsetHours != 0)
+                $click_result = self::$db->query($tzSql);
         }
-            
-            $daysago = time() - 86400; // 24 hours
-            
-            $click_sql1 = 'SELECT  202_clicks.click_id
+
+        // dirty hours by clicks id: This function marks the hour range that the click happened in for updating reports
+        function setDirtyHour($click_id)
+        {
+            global $ip_address, $db, $dbGlobalLink, $inet6_ntoa, $inet6_aton;
+
+            // Initialize IPv6 function variables if not set
+            if (!isset($inet6_ntoa)) {
+                $inet6_ntoa = '';
+                $inet6_aton = 'INET6_ATON';
+            }
+
+            if (!isset($click_id) || $click_id == '') {  //if not find the list clicks id of the ip within a 30 day range
+                $mysql['user_id'] = 1;
+                //if there is no native ipv6 support use php version
+                if ($inet6_ntoa == '' && isset($ip_address) && $ip_address->type == 'ipv6') {
+                    //encode ip address
+                    $mysql['ip_address'] = inet6_aton($db->real_escape_string($ip_address->address)); //use encoded var to compare
+                } else {
+                    //do nothing. The built in mysql function will be used
+                    $mysql['ip_address'] = $db->real_escape_string($ip_address->address);
+                }
+
+                $daysago = time() - 86400; // 24 hours
+
+                $click_sql1 = 'SELECT  202_clicks.click_id
                            FROM            202_clicks
                            LEFT JOIN       202_clicks_advance USING (click_id)
                            LEFT JOIN       202_ips USING (ip_id)
                            LEFT JOIN       202_ips_v6 ON (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci)
-                           WHERE           IFNULL('.$inet6_ntoa.'(202_ips_v6.ip_address),202_ips.ip_address)="'.$mysql['ip_address'].'"
-                           AND             202_clicks.user_id="'.$mysql['user_id'].'"
-                           AND             202_clicks.click_time >= "'.$daysago.'"
+                           WHERE           IFNULL(' . $inet6_ntoa . '(202_ips_v6.ip_address),202_ips.ip_address)="' . $mysql['ip_address'] . '"
+                           AND             202_clicks.user_id="' . $mysql['user_id'] . '"
+                           AND             202_clicks.click_time >= "' . $daysago . '"
                            ORDER BY        202_clicks.click_id DESC
                            LIMIT           1';
 
-    $click_result1 = $db->query($click_sql1) or record_mysql_error($db,$click_sql1);
-            $click_row1 = $click_result1->fetch_assoc();
-            //empy  $mysql array
+                $click_result1 = $db->query($click_sql1) or record_mysql_error($db, $click_sql1);
+                $click_row1 = $click_result1->fetch_assoc();
+                //empy  $mysql array
 
-            unset($mysql);
-            $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
-            $click_id = $mysql['click_id'];
-            // $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id']);
-        }
-    
-        if(!isset($click_id) || $click_id=='') {
-            return false;
-        }
-    
-        $dsql = " insert into 202_dataengine(user_id,
+                unset($mysql);
+
+                // Check if click_row1 exists and click_id is not null before processing
+                if ($click_row1 && isset($click_row1['click_id']) && $click_row1['click_id'] !== null) {
+                    $mysql['click_id'] = $db->real_escape_string((string)$click_row1['click_id']);
+                    $click_id = $mysql['click_id'];
+                } else {
+                    $click_id = '';
+                }
+                // $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id']);
+            }
+
+            if (!isset($click_id) || $click_id == '') {
+                return false;
+            }
+
+            $dsql = " insert into 202_dataengine(user_id,
 click_id,
 click_time,
 ppc_network_id,
@@ -194,7 +206,7 @@ LEFT OUTER JOIN 202_tracking_c3 AS 2tc3 ON (2ct.c3_id = 2tc3.c3_id)
 LEFT OUTER JOIN 202_tracking_c4 AS 2tc4 ON (2ct.c4_id = 2tc4.c4_id)
 LEFT OUTER JOIN 202_clicks_variable AS 2cv ON (2c.click_id = 2cv.click_id)
 LEFT OUTER JOIN 202_clicks_rotator AS 2rc ON (2c.click_id = 2rc.click_id)
-WHERE 2c.click_id=" . $click_id."
+WHERE 2c.click_id=" . $click_id . "
 on duplicate key update 
 click_lead=values(click_lead),
 click_bot=values(click_bot),
@@ -210,10 +222,7 @@ rule_id=values(rule_id),
 rule_redirect_id=values(rule_redirect_id),
 aff_campaign_id=values(aff_campaign_id),
 aff_network_id=values(aff_network_id)";
-        $result = $db->query($dsql);
-       
+            $result = $db->query($dsql);
+        }
     }
-
-}
-
-?>
+} // End class_exists check

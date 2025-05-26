@@ -14,8 +14,8 @@ AUTH::require_user();?>
 					$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
 					while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQLI_ASSOC)) {
 
-						$html['pixel_type'] = htmlentities($ppc_network_row['pixel_type'], ENT_QUOTES, 'UTF-8');
-						$html['pixel_type_id'] = htmlentities($ppc_network_row['pixel_type_id'], ENT_QUOTES, 'UTF-8');
+						$html['pixel_type'] = htmlentities((string)($ppc_network_row['pixel_type'] ?? ''), ENT_QUOTES, 'UTF-8');
+						$html['pixel_type_id'] = htmlentities((string)($ppc_network_row['pixel_type_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 						if ($selected['pixel_type_id'] == $ppc_network_row['pixel_type_id']) {
 							printf('<option selected="selected" value="%s">%s</option>', $html['pixel_type_id'],$html['pixel_type']);

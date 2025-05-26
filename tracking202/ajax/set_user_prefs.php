@@ -10,28 +10,28 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
     
 	//start - update user user_preferences
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);   
-		$mysql['user_pref_adv'] = $db->real_escape_string($_POST['user_pref_adv']);
-		$mysql['user_pref_ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']);
-		$mysql['user_pref_ppc_account_id'] = $db->real_escape_string($_POST['ppc_account_id']);  
-		$mysql['user_pref_aff_network_id'] = $db->real_escape_string($_POST['aff_network_id']);  
-		$mysql['user_pref_aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);     
-		$mysql['user_pref_text_ad_id'] = $db->real_escape_string($_POST['text_ad_id']);  
-		$mysql['user_pref_method_of_promotion'] = $db->real_escape_string($_POST['method_of_promotion']);  
-		$mysql['user_pref_landing_page_id'] = $db->real_escape_string($_POST['landing_page_id']);  
-		$mysql['user_pref_country_id'] = $db->real_escape_string($_POST['country_id']);
-		$mysql['user_pref_region_id'] = $db->real_escape_string($_POST['region_id']);
-		$mysql['user_pref_isp_id'] = $db->real_escape_string($_POST['isp_id']);    
-		$mysql['user_pref_ip'] = $db->real_escape_string($_POST['ip']);  
-		$mysql['user_pref_ref'] = $db->real_escape_string($_POST['referer']);  
-		$mysql['user_pref_keyword'] = $db->real_escape_string($_POST['keyword']);  
-		$mysql['user_pref_limit'] = $db->real_escape_string($_POST['user_pref_limit']);
-		$mysql['user_pref_breakdown'] = $db->real_escape_string($_POST['user_pref_breakdown']);
-		$mysql['user_cpc_or_cpv'] = $db->real_escape_string($_POST['user_cpc_or_cpv']);
-		$mysql['user_pref_show'] = $db->real_escape_string($_POST['user_pref_show']);
-		$mysql['user_pref_device_id'] = $db->real_escape_string($_POST['device_id']);
-		$mysql['user_pref_browser_id'] = $db->real_escape_string($_POST['browser_id']);
-		$mysql['user_pref_platform_id'] = $db->real_escape_string($_POST['platform_id']);  
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);   
+		$mysql['user_pref_adv'] = $db->real_escape_string((string)$_POST['user_pref_adv']);
+		$mysql['user_pref_ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
+		$mysql['user_pref_ppc_account_id'] = $db->real_escape_string((string)$_POST['ppc_account_id']);  
+		$mysql['user_pref_aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);  
+		$mysql['user_pref_aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);     
+		$mysql['user_pref_text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);  
+		$mysql['user_pref_method_of_promotion'] = $db->real_escape_string((string)$_POST['method_of_promotion']);  
+		$mysql['user_pref_landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);  
+		$mysql['user_pref_country_id'] = $db->real_escape_string((string)$_POST['country_id']);
+		$mysql['user_pref_region_id'] = $db->real_escape_string((string)$_POST['region_id']);
+		$mysql['user_pref_isp_id'] = $db->real_escape_string((string)$_POST['isp_id']);    
+		$mysql['user_pref_ip'] = $db->real_escape_string((string)$_POST['ip']);  
+		$mysql['user_pref_ref'] = $db->real_escape_string((string)$_POST['referer']);  
+		$mysql['user_pref_keyword'] = $db->real_escape_string((string)$_POST['keyword']);  
+		$mysql['user_pref_limit'] = $db->real_escape_string((string)$_POST['user_pref_limit']);
+		$mysql['user_pref_breakdown'] = $db->real_escape_string((string)$_POST['user_pref_breakdown']);
+		$mysql['user_cpc_or_cpv'] = $db->real_escape_string((string)$_POST['user_cpc_or_cpv']);
+		$mysql['user_pref_show'] = $db->real_escape_string((string)$_POST['user_pref_show']);
+		$mysql['user_pref_device_id'] = $db->real_escape_string((string)$_POST['device_id']);
+		$mysql['user_pref_browser_id'] = $db->real_escape_string((string)$_POST['browser_id']);
+		$mysql['user_pref_platform_id'] = $db->real_escape_string((string)$_POST['platform_id']);  
 		if(is_array($_POST['details'])) {
 			foreach($_POST['details'] AS $key=>$value) {
 				$mysql['user_pref_group_'.($key+1)] = $db->real_escape_string($value);
@@ -75,13 +75,13 @@ if ($_POST['user_pref_time_predefined'] != '') {
 	if (($from != '') and (checkdate($from_month, $from_day, $from_year) == false)) {
 		$error['date'] = '<div class="error">Wrong date format, you must use the following military time format:   <strong>mm/dd/yyyy - hh:mms</strong></div>';     
 	} else {
-		$clean['user_pref_time_from'] = mktime(0,00,0,$from_month,$from_day,$from_year);
+		$clean['user_pref_time_from'] = mktime(0,00,0,(int)$from_month,(int)$from_day,(int)$from_year);
 	}                                                                                                                    
 	
 	if (($to != '') and (checkdate($to_month, $to_day, $to_year) == false)) {
 		$error['date'] = '<div class="error">Wrong date format, you must use the following military time format:   <strong>mm/dd/yyyy - hh:mm</strong></div>';      
 	} else {
-		$clean['user_pref_time_to'] = mktime(23,59,59,$to_month,$to_day,$to_year);  
+		$clean['user_pref_time_to'] = mktime(23,59,59,(int)$to_month,(int)$to_day,(int)$to_year);  
     }     
 }
 

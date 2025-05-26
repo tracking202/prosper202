@@ -1,12 +1,22 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
 
-//run script   
-$mysql['landing_page_id_public'] = $db->real_escape_string($_GET['lpip']);
-if(isset($_GET['202vars'])){
-	$mysql['202vars'] = base64_decode($db->real_escape_string($_GET['202vars']));
+use Tracking202\Redirect\RedirectHelper;
+
+require_once substr(dirname(__FILE__), 0, -21) . '/202-config/connect2.php';
+require_once substr(dirname(__FILE__), 0, -21) . '/202-config/class-dataengine-slim.php';
+
+// Validate landing page id
+$landingId = RedirectHelper::getIntParam('lpip');
+if ($landingId === null) {
+    RedirectHelper::redirect('/202-404.php');
+}
+
+$mysql['landing_page_id_public'] = $db->real_escape_string((string)$landingId);
+
+$varsParam = RedirectHelper::getStringParam('202vars');
+if ($varsParam !== null) {
+    $mysql['202vars'] = base64_decode($db->real_escape_string($varsParam));
 }
 
 $tracker_sql = "SELECT  aff_campaign_name,
@@ -22,7 +32,7 @@ $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
 if (!$tracker_row) { die(); }
 //DONT ESCAPE THE DESITNATIONL URL IT TOTALLY SCREWS UP
-$html['aff_campaign_name'] = htmlentities($tracker_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); 
+$html['aff_campaign_name'] = htmlentities((string)($tracker_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8'); 
 
 //modify the redirect site url to go through another cloaked link
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);

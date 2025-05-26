@@ -5,8 +5,8 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 AUTH::require_user();
 
 $slack = false;
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
@@ -14,36 +14,41 @@ $user_row = $user_results->fetch_assoc();
 if (!empty($user_row['url'])) 
 	$slack = new Slack($user_row['url']);
 
+// Initialize variables to prevent undefined variable warnings
+$error = array();
+
 //check variables
-	if ($_POST['tracker_type'] == 0) { 
+	if (!empty($_POST['tracker_type']) && $_POST['tracker_type'] == 0) { 
 
 		if(empty($_POST['aff_network_id'])) { $error['aff_network_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate network.</small></div>'; }
 		if(empty($_POST['aff_campaign_id'])) { $error['aff_campaign_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate campaign.</small></div>'; }
 		if(empty($_POST['method_of_promotion'])) { $error['method_of_promotion'] = '<div class="error"><small><span class="fui-alert"></span> You have to select your method of promoting this affiliate link.</small></div>'; }
 		
-		echo $error['aff_network_id'] . $error['aff_campaign_id'] . $error['method_of_promotion'];
+		echo (isset($error['aff_network_id']) ? $error['aff_network_id'] : '') . 
+		     (isset($error['aff_campaign_id']) ? $error['aff_campaign_id'] : '') . 
+		     (isset($error['method_of_promotion']) ? $error['method_of_promotion'] : '');
 		
-		if ($error) { die(); } 
+		if (!empty($error)) { die(); } 
 
-	} else if($_POST['tracker_type'] == 2) {
+	} else if(!empty($_POST['tracker_type']) && $_POST['tracker_type'] == 2) {
 		if(empty($_POST['tracker_rotator'])) { die('<div class="error"><small><span class="fui-alert"></span> You have not selected rotator.</small></div>'); }
 	}
 	
 	//but we'll allow them to choose the following options, can make a tracker link without but they will be notified	
-	if ($_POST['tracker_type'] != 2) {
-		if($_POST['click_cloaking'] == '') { $error['click_cloaking'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any cloaking preference, are you sure you want to do this?</small></div>'; }
+	if (!empty($_POST['tracker_type']) && $_POST['tracker_type'] != 2) {
+		if(empty($_POST['click_cloaking'])) { $error['click_cloaking'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any cloaking preference, are you sure you want to do this?</small></div>'; }
 	}
 
 	
-	if ($_POST['ppc_network_id'] and !$_POST['ppc_account_id']) { 
+	if (!empty($_POST['ppc_network_id']) and empty($_POST['ppc_account_id'])) { 
 		die('<div class="error"><small><span class="fui-alert"></span> ERROR: You have a traffic source selected, but YOU DO NOT HAVE A PPC ACCOUNT SELECTED.  In order to track your traffic-sources you must select a ppc-account. If you have not created one, go back to step #1 to add it now.</small></div>');
 	}
-	if($_POST['ppc_network_id'] == '') { $error['ppc_network_id'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any PPC network, are you sure you want to do this?</small></div>'; }
-	if($_POST['ppc_account_id'] == '') { $error['ppc_account_id'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any PPC account, are you sure you want to do this?</small></div>'; }
-	if((!is_numeric($_POST['cpc_dollars'])) or (!is_numeric($_POST['cpc_cents']))) { $error['cpc'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link does not have it\'s CPC set, are you sure you want to do this?</small></div>'; }
+	if(empty($_POST['ppc_network_id'])) { $error['ppc_network_id'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any PPC network, are you sure you want to do this?</small></div>'; }
+	if(empty($_POST['ppc_account_id'])) { $error['ppc_account_id'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any PPC account, are you sure you want to do this?</small></div>'; }
+	if((!isset($_POST['cpc_dollars']) || !is_numeric($_POST['cpc_dollars'])) or (!isset($_POST['cpc_cents']) || !is_numeric($_POST['cpc_cents']))) { $error['cpc'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link does not have it\'s CPC set, are you sure you want to do this?</small></div>'; }
 
 	//if they do a landing page, make sure they have one
-	if ($_POST['method_of_promotion'] == 'landingpage') { 
+	if (!empty($_POST['method_of_promotion']) && $_POST['method_of_promotion'] == 'landingpage') { 
 		if (empty($_POST['landing_page_id'])) {
 			$error['landing_page_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected a landing page to use.</small></div>'; 
 		}
@@ -57,7 +62,7 @@ if (!empty($user_row['url']))
 
 //show tracking code
 
-	$mysql['landing_page_id'] = $db->real_escape_string($_POST['landing_page_id']);
+	$mysql['landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);
 	$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `landing_page_id`='".$mysql['landing_page_id']."'";
 	$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 	$landing_page_row = $landing_page_result->fetch_assoc();
@@ -72,19 +77,19 @@ if (!empty($user_row['url']))
 		$cost_sql = "`click_cpa`='".$mysql['click_cpa']."',";
 	}
 
-	$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-	$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
-	$mysql['text_ad_id'] = $db->real_escape_string($_POST['text_ad_id']);
-	$mysql['ppc_network_id'] = $db->real_escape_string($_POST['ppc_network_id']); 
-	$mysql['ppc_account_id'] = $db->real_escape_string($_POST['ppc_account_id']); 
-	$mysql['click_cloaking'] = $db->real_escape_string($_POST['click_cloaking']); 
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
+	$mysql['text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);
+	$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']); 
+	$mysql['ppc_account_id'] = $db->real_escape_string((string)$_POST['ppc_account_id']); 
+	$mysql['click_cloaking'] = $db->real_escape_string((string)$_POST['click_cloaking']); 
 	$mysql['landing_page_id'] = $db->real_escape_string($landing_page_row['landing_page_id']);
-	$mysql['rotator_id'] = $db->real_escape_string($_POST['tracker_rotator']);
+	$mysql['rotator_id'] = $db->real_escape_string((string)$_POST['tracker_rotator']);
 	$mysql['tracker_time'] = time();
 	
 
 	if ($_POST['edit_tracker'] && $_POST['tracker_id']) {
-		$mysql['tracker_id_public'] = $db->real_escape_string($_POST['tracker_id']);
+		$mysql['tracker_id_public'] = $db->real_escape_string((string)$_POST['tracker_id']);
 		$get_tracker_sql = "SELECT 
 							tracker_id, 
 							tracker_id_public,
@@ -235,7 +240,7 @@ if (!empty($user_row['url']))
 			if ($_POST['tracker_type'] == '0') {
 				if ($_POST['aff_campaign_id'] != $get_tracker_row['aff_campaign_id']) {
 					
-					$mysql['aff_campaign_id'] = $db->real_escape_string($_POST['aff_campaign_id']);
+					$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
 					$sql = "SELECT aff_network_name, aff_campaign_name FROM 202_aff_campaigns LEFT JOIN 202_aff_networks USING (aff_network_id) WHERE aff_campaign_id = '".$mysql['aff_campaign_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -260,7 +265,7 @@ if (!empty($user_row['url']))
 			if ($_POST['method_of_promotion'] == 'landingpage' || $_POST['tracker_type'] == '1') {
 				if (($get_tracker_row['landing_page_id']) && $_POST['landing_page_id'] != $get_tracker_row['landing_page_id']) {
 					
-					$mysql['landing_page_id'] = $db->real_escape_string($_POST['landing_page_id']);
+					$mysql['landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);
 					$sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$mysql['landing_page_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -272,7 +277,7 @@ if (!empty($user_row['url']))
 			if ($_POST['tracker_type'] == '0' || $_POST['tracker_type'] == '1') {
 
 				if (isset($_POST['text_ad_id']) && $get_tracker_row['text_ad_id']) {
-					$mysql['text_ad_id'] = $db->real_escape_string($_POST['text_ad_id']);
+					$mysql['text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -281,7 +286,7 @@ if (!empty($user_row['url']))
 				}
 
 				if (isset($_POST['text_ad_id']) && !$get_tracker_row['text_ad_id']) {
-					$mysql['text_ad_id'] = $db->real_escape_string($_POST['text_ad_id']);
+					$mysql['text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -317,7 +322,7 @@ if (!empty($user_row['url']))
 			}
 
 			if ($_POST['ppc_account_id'] != $get_tracker_row['ppc_account_id']) {
-				$mysql['ppc_account_id'] = $db->real_escape_string($_POST['ppc_account_id']);
+				$mysql['ppc_account_id'] = $db->real_escape_string((string)$_POST['ppc_account_id']);
 				$sql = "SELECT ppc_account_name, ppc_network_name FROM 202_ppc_accounts LEFT JOIN 202_ppc_networks USING (ppc_network_id) WHERE ppc_account_id = '".$mysql['ppc_account_id']."'";
 				$result = $db->query($sql);
 				$row = $result->fetch_assoc();
@@ -345,7 +350,7 @@ if (!empty($user_row['url']))
 
 			if ($_POST['tracker_type'] == '2') {
 				if ($_POST['tracker_rotator'] != $get_tracker_row['rotator_id']) {
-					$mysql['rotator_id'] = $db->real_escape_string($_POST['tracker_rotator']);
+					$mysql['rotator_id'] = $db->real_escape_string((string)$_POST['tracker_rotator']);
 					$sql = "SELECT name FROM 202_rotators WHERE id = '".$mysql['rotator_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();

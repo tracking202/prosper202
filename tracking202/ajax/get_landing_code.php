@@ -5,8 +5,8 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 AUTH::require_user();
 
 $slack = false;
-$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
@@ -39,7 +39,7 @@ if (!empty($user_row['url']))
 
 //show tracking code
 
-	$mysql['landing_page_id'] = $db->real_escape_string($_POST['landing_page_id']);
+	$mysql['landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);
 	$landing_page_sql = "SELECT * FROM 202_landing_pages LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) LEFT JOIN 202_aff_networks USING (aff_network_id) WHERE landing_page_id='".$mysql['landing_page_id']."'";
 	$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 	$landing_page_row = $landing_page_result->fetch_assoc();
