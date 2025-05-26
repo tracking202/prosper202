@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/9.6/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         cacheResultFile=".phpunit.result.cache"
+         executionOrder="depends,defects"
+         forceCoversAnnotation="false"
+         beStrictAboutCoversAnnotation="true"
+         beStrictAboutOutputDuringTests="true"
+         beStrictAboutTodoAnnotatedTests="true"
+         convertDeprecationsToExceptions="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         verbose="true">
+
+    <testsuites>
+        <testsuite name="default">
+            <directory>tests</directory>
+        </testsuite>
+        <testsuite name="redirect">
+            <directory>tests/Redirect</directory>
+        </testsuite>
+    </testsuites>
+
+    <coverage cacheDirectory=".phpunit.cache"
+              processUncoveredFiles="true">
+        <include>
+            <directory suffix=".php">202-config</directory>
+            <directory suffix=".php">tracking202</directory>
+            <directory suffix=".php">202-interfaces</directory>
+            <directory suffix=".php">api</directory>
+        </include>
+        <exclude>
+            <directory>vendor</directory>
+            <directory>202-config/temp</directory>
+            <directory>202-config/data</directory>
+            <directory>202-config/geo</directory>
+            <file>202-config/install.php</file>
+            <file>202-config/upgrade.php</file>
+            <file>202-config/setup-config.php</file>
+        </exclude>
+    </coverage>
+
+    <logging>
+        <junit outputFile="build/logs/junit.xml"/>
+        <testdoxHtml outputFile="build/logs/testdox.html"/>
+        <testdoxText outputFile="build/logs/testdox.txt"/>
+    </logging>
+
+    <php>
+        <ini name="error_reporting" value="-1" />
+        <ini name="memory_limit" value="1G" />
+    </php>
+</phpunit>
