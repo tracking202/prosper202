@@ -74,7 +74,21 @@ require ROOT_PATH . 'vendor/autoload.php';
 
 //determine privacy mode
 if ($memcacheWorking) {
-    $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_1' . systemHash()));
+    // Try to determine tracker/user ID from various possible sources
+    $tid = '';
+    if (isset($_GET['t202id'])) {
+        $tid = $_GET['t202id'];
+    } elseif (isset($_GET['pci'])) {
+        $tid = $_GET['pci'];
+    } elseif (isset($_GET['lpip'])) {
+        $tid = $_GET['lpip'];
+    } elseif (isset($_SESSION['user_id'])) {
+        $tid = $_SESSION['user_id'];
+    } else {
+        // Default to user 1 if no ID is found
+        $tid = '1';
+    }
+    $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
 }
 
 //exit strict mode
