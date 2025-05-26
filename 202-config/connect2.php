@@ -24,6 +24,10 @@ DEFINE('CONFIG_PATH', dirname(__FILE__));
 mysqli_report(MYSQLI_REPORT_STRICT);
 include_once(ROOT_PATH . '/202-config.php');
 
+// Get database instance
+$database = DB::getInstance();
+$db = $database->getConnection();
+
 $whatCache = false;
 
 // try to connect to memcache server
@@ -70,7 +74,7 @@ require ROOT_PATH . 'vendor/autoload.php';
 
 //determine privacy mode
 if ($memcacheWorking) {
-    $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
+    $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_1' . systemHash()));
 }
 
 //exit strict mode
