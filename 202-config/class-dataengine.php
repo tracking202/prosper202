@@ -2601,10 +2601,11 @@ aff_network_id=values(aff_network_id)";
         // Check if this is an INSERT/UPDATE query (returns true) or SELECT query (returns mysqli_result)
         if ($info_result === true) {
             // For INSERT/UPDATE queries, we don't need to call doSummary
-            return;
+            return true;
         }
         
         $this->doSummary($info_result, $from, $to, $user_id, $upgrade, $new);
+        return $info_result;
     }
 
     function doSummary($info_result, $from, $to, $user_id, $upgrade = false, $new = false)
