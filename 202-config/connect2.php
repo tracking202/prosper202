@@ -2028,10 +2028,31 @@ function rawurlencode202($token)
 
 function getGeoData($ip)
 {
+    // Handle both string and object input
+    if (is_string($ip)) {
+        $ip_address = $ip;
+    } else {
+        $ip_address = $ip->address ?? '';
+    }
+
+    // Check if GeoIp2 class exists
+    if (!class_exists('GeoIp2\Database\Reader')) {
+        return array(
+            'country' => '',
+            'country_code' => '',
+            'is_european_union' => false,
+            'state' => '',
+            'city' => '',
+            'postal_code' => '',
+            'lat' => '',
+            'long' => '',
+            'area_code' => '',
+            'dma_code' => '',
+            'network' => ''
+        );
+    }
 
     $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
-
-    $ip_address = $ip->address;
     try {
         $record = $reader->city($ip_address);
         $country = $record->country->name;
