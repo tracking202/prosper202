@@ -204,52 +204,52 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 
 	case "bidded":
 		#try to get the bidded keyword first
-		if ($_GET['OVKEY']) { //if this is a Y! keyword
+		if (isset($_GET['OVKEY'])) { //if this is a Y! keyword
 			$keyword = $db->real_escape_string((string)$_GET['OVKEY']);
-		} elseif ($_GET['t202kw']) {
+		} elseif (isset($_GET['t202kw'])) {
 			$keyword = $db->real_escape_string((string)$_GET['t202kw']);
-		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
+		} elseif (isset($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
 			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
 		} else { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['keyword']);
+			$keyword = $db->real_escape_string((string)($_GET['keyword'] ?? ''));
 		}
 		break;
 	case "searched":
 		#try to get the searched keyword
-		if ($referer_query['q']) {
+		if (isset($referer_query['q'])) {
 			$keyword = $db->real_escape_string($referer_query['q']);
-		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
+		} elseif (isset($_GET['OVRAW'])) { //if this is a Y! keyword
 			$keyword = $db->real_escape_string((string)$_GET['OVRAW']);
-		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
+		} elseif (isset($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
 			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
-		} elseif ($_GET['keyword']) { //if this is a zango, or more keyword
+		} elseif (isset($_GET['keyword'])) { //if this is a zango, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['keyword']);
-		} elseif ($_GET['search_word']) { //if this is a eniro, or more keyword
+		} elseif (isset($_GET['search_word'])) { //if this is a eniro, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['search_word']);
-		} elseif ($_GET['query']) { //if this is a naver, or more keyword
+		} elseif (isset($_GET['query'])) { //if this is a naver, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['query']);
-		} elseif ($_GET['encquery']) { //if this is a aol, or more keyword
+		} elseif (isset($_GET['encquery'])) { //if this is a aol, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['encquery']);
-		} elseif ($_GET['terms']) { //if this is a about.com, or more keyword
+		} elseif (isset($_GET['terms'])) { //if this is a about.com, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['terms']);
-		} elseif ($_GET['rdata']) { //if this is a viola, or more keyword
+		} elseif (isset($_GET['rdata'])) { //if this is a viola, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['rdata']);
-		} elseif ($_GET['qs']) { //if this is a virgilio, or more keyword
+		} elseif (isset($_GET['qs'])) { //if this is a virgilio, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['qs']);
-		} elseif ($_GET['wd']) { //if this is a baidu, or more keyword
+		} elseif (isset($_GET['wd'])) { //if this is a baidu, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['wd']);
-		} elseif ($_GET['text']) { //if this is a yandex, or more keyword
+		} elseif (isset($_GET['text'])) { //if this is a yandex, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['text']);
-		} elseif ($_GET['szukaj']) { //if this is a wp.pl, or more keyword
+		} elseif (isset($_GET['szukaj'])) { //if this is a wp.pl, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['szukaj']);
-		} elseif ($_GET['qt']) { //if this is a O*net, or more keyword
+		} elseif (isset($_GET['qt'])) { //if this is a O*net, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['qt']);
-		} elseif ($_GET['k']) { //if this is a yam, or more keyword
+		} elseif (isset($_GET['k'])) { //if this is a yam, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['k']);
-		} elseif ($_GET['words']) { //if this is a Rambler, or more keyword
+		} elseif (isset($_GET['words'])) { //if this is a Rambler, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['words']);
 		} else {
-			$keyword = $db->real_escape_string((string)$_GET['t202kw']);
+			$keyword = $db->real_escape_string((string)($_GET['t202kw'] ?? ''));
 		}
 		break;
 }
@@ -264,19 +264,20 @@ if (substr($keyword, 0, 8) == 't202var_') {
 
 $keyword = str_replace('%20', ' ', $keyword);
 $keyword_id = INDEXES::get_keyword_id($db, $keyword);
-$mysql['keyword_id'] = $db->real_escape_string($keyword_id);
+$mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id);
 
 $_lGET = array_change_key_case($_GET, CASE_LOWER); //make lowercase copy of get 
 //Get C1-C4 IDs
 for ($i = 1; $i <= 4; $i++) {
 	$custom = "c" . $i; //create dynamic variable
-	$custom_val = $db->real_escape_string($_lGET[$custom]); // get the value
+	$custom_val = isset($_lGET[$custom]) ? $_lGET[$custom] : '';
+	$custom_val = $db->real_escape_string($custom_val); // get the value
 	$custom_val = str_replace('%20', ' ', $custom_val);
 	$custom_id = INDEXES::get_custom_var_id($db, $custom, $custom_val); //get the id
-	$mysql[$custom . '_id'] = $db->real_escape_string($custom_id); //save it
+	$mysql[$custom . '_id'] = $db->real_escape_string((string)$custom_id); //save it
 }
 
-$mysql['gclid'] = $db->real_escape_string((string)$_GET['gclid']);
+$mysql['gclid'] = $db->real_escape_string((string)($_GET['gclid'] ?? ''));
 
 $custom_var_ids = array();
 
