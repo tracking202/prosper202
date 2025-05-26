@@ -63,12 +63,12 @@ function RunDailyCronjob()
 		//this makes it so we only have the most recent last 24 hour stuff, anything older, kill it.
 		//we want to keep our SPY TABLE, low
 		$click_sql = "DELETE FROM 202_clicks_spy WHERE click_time < $from";
-		$click_result = _mysqli_query($click_sql);
+		$click_result = _mysqli_query($db, $click_sql);
 
 		//clear the last 24 hour ip addresses
 		$last_ip_sql = "DELETE FROM 202_last_ips WHERE time < $from";
-		$last_ip_result = _mysqli_query($last_ip_sql);
-		$last_ip_affected_rows = $last_ip_result->affected_rows;
+		$last_ip_result = _mysqli_query($db, $last_ip_sql);
+		$last_ip_affected_rows = $db->affected_rows;
 
 		/* -------- THIS CLEARS OUT THE CHART TABLE --------- */
 

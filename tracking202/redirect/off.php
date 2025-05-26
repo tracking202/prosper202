@@ -235,7 +235,7 @@ if ($memcacheWorking) {
     
     $getKey = $memcache->get(md5('ac_' . $tid . systemHash()));
     if ($getKey === false) {
-        $setUrl = $memcache->set(md5('ac_' . $tid . systemHash()), $url, false, 0);
+        $setUrl = setCache(md5('ac_' . $tid . systemHash()), $url, 0);
     }
 }
 

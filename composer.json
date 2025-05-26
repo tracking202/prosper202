@@ -5,7 +5,8 @@
   "require": {
     "php": ">=8.3",
     "ua-parser/uap-php": "^3.9",
-    "myclabs/deep-copy": "^1.11"
+    "myclabs/deep-copy": "^1.11",
+    "geoip2/geoip2": "^3.2"
   },
   "autoload": {
     "psr-4": {

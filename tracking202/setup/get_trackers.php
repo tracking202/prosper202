@@ -343,8 +343,8 @@ template_top('Get Trackers', NULL, NULL, NULL);  ?>
 
 							$vars_query = '';
 
-							$parameters = explode(',', $tracker_row['parameters']);
-							$placeholders = explode(',', $tracker_row['placeholders']);
+							$parameters = explode(',', $tracker_row['parameters'] ?? '');
+							$placeholders = explode(',', $tracker_row['placeholders'] ?? '');
 
 							foreach ($parameters as $key => $value) {
 								$vars_query .= '&' . $value . '=' . $placeholders[$key];
@@ -371,7 +371,7 @@ template_top('Get Trackers', NULL, NULL, NULL);  ?>
 						?>
 							<li>
 								<span class="small">Id:<?php echo $tracker_row['tracker_id']; ?> -
-									(<?php echo '<span class="filter_tracker_display_name">' . $display_name . '</span> - ' . date('m/d/y', $tracker_row['tracker_time']); ?>)</span> -
+									(<?php echo '<span class="filter_tracker_display_name">' . $display_name . '</span> - ' . date('m/d/y', (int)$tracker_row['tracker_time']); ?>)</span> -
 								<?php if ($tracker_row['landing_page_id'] != 0) { ?>
 									<a href="<?php echo $destination_url; ?>">link</a> -
 								<?php } else if ($tracker_row['rotator_id']) { ?>
