@@ -33,10 +33,11 @@ $html['from'] = date('m/d/y g:ia', $clean['from']);
 $clean['to'] = mktime(23, 59, 59, (int)$to_month, (int)$to_day, (int)$to_year);
 $html['to'] = date('m/d/y g:ia', $clean['to']);
 
+//set mysql variables
+// Initialize mysql array
+$mysql = array();
 $mysql['from'] = $db->real_escape_string((string)$clean['from']);
 $mysql['to'] = $db->real_escape_string((string)$clean['to']);
-
-//set mysql variables
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 //check affiliate network id, that you own
@@ -175,36 +176,36 @@ $sql = "UPDATE  202_clicks LEFT JOIN 202_clicks_advance USING (click_id)
 						   LEFT JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 202_ppc_accounts.ppc_network_id)
 			SET     click_cpc='" . $mysql['click_cpc'] . "'
 			WHERE   202_clicks.user_id='" . $mysql['user_id'] . "'";
-if ($mysql['aff_network_id']) {
+if (isset($mysql['aff_network_id']) && $mysql['aff_network_id']) {
 	$sql .= " AND 202_aff_networks.aff_network_id='" . $mysql['aff_network_id'] . "' ";
 }
-if ($mysql['aff_campaign_id']) {
+if (isset($mysql['aff_campaign_id']) && $mysql['aff_campaign_id']) {
 	$sql .= " AND 202_clicks.aff_campaign_id='" . $mysql['aff_campaign_id'] . "' ";
 }
-if ($mysql['text_ad_id']) {
+if (isset($mysql['text_ad_id']) && $mysql['text_ad_id']) {
 	$sql .= " AND 202_clicks_advance.text_ad_id='" . $mysql['text_ad_id'] . "' ";
 }
-if ($mysql['landing_page_id']) {
+if (isset($mysql['landing_page_id']) && $mysql['landing_page_id']) {
 	$sql .= " AND 202_clicks.landing_page_id='" . $mysql['landing_page_id'] . "' ";
 }
-if ($mysql['ppc_network_id']) {
+if (isset($mysql['ppc_network_id']) && $mysql['ppc_network_id']) {
 	$sql .= " AND 202_ppc_networks.ppc_network_id='" . $mysql['ppc_network_id'] . "' ";
 }
-if ($mysql['ppc_account_id']) {
+if (isset($mysql['ppc_account_id']) && $mysql['ppc_account_id']) {
 	$sql .= " AND 202_clicks.ppc_account_id='" . $mysql['ppc_account_id'] . "' ";
 }
 
-$sql .= $mysql['method_of_promotion'];
+$sql .= isset($mysql['method_of_promotion']) ? $mysql['method_of_promotion'] : '';
 $sql .= " AND click_time >=' " . $mysql['from'] . "' AND click_time <= '" . $mysql['to'] . "'";
 $result = $db->query($sql) or record_mysql_error($sql);
 $clicks_updated = $db->affected_rows;
 
-if ($mysql['aff_campaign_id']) {
+if (isset($mysql['aff_campaign_id']) && $mysql['aff_campaign_id']) {
 	$de['aff_campaign_id'] = $mysql['aff_campaign_id'];
 } else {
 	$de['aff_campaign_id'] = 0;
 }
-if ($mysql['ppc_account_id']) {
+if (isset($mysql['ppc_account_id']) && $mysql['ppc_account_id']) {
 	$de['ppc_account_id'] = $mysql['ppc_account_id'];
 } else {
 	$de['ppc_account_id'] = 0;
@@ -223,16 +224,16 @@ $dirty_hours_sql = "INSERT IGNORE INTO
 						click_time_from = '" . $de['click_time_from'] . "',
 						click_time_to = '" . $de['click_time_to'] . "'";
 
-if ($mysql['aff_network_id']) {
+if (isset($mysql['aff_network_id']) && $mysql['aff_network_id']) {
 	$dirty_hours_sql .= ", aff_network_id = '" . $mysql['aff_network_id'] . "'";
 }
-if ($mysql['text_ad_id']) {
+if (isset($mysql['text_ad_id']) && $mysql['text_ad_id']) {
 	$dirty_hours_sql .= ", text_ad_id = '" . $mysql['text_ad_id'] . "'";
 }
-if ($mysql['landing_page_id']) {
+if (isset($mysql['landing_page_id']) && $mysql['landing_page_id']) {
 	$dirty_hours_sql .= ", landing_page_id = '" . $mysql['landing_page_id'] . "'";
 }
-if ($mysql['ppc_network_id']) {
+if (isset($mysql['ppc_network_id']) && $mysql['ppc_network_id']) {
 	$dirty_hours_sql .= ", ppc_network_id = '" . $mysql['ppc_network_id'] . "'";
 }
 
