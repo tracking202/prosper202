@@ -164,7 +164,10 @@ $error = array();
 					WHERE		`tracker_id`='".$mysql['tracker_id']."'"; 
 	$tracker_result = $db->query($tracker_sql) or record_mysql_error($tracker_sql);
 
-	$parsed_url = parse_url($landing_page_row['landing_page_url']);
+	$parsed_url = array();
+	if (!empty($landing_page_row['landing_page_url'])) {
+		$parsed_url = parse_url($landing_page_row['landing_page_url']);
+	}
 
 	//setup array of all internally recognized url variables
 	$t202variables = array(
