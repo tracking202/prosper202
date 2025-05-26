@@ -54,6 +54,12 @@ if (extension_loaded('memcache')) {
 function setCache($key, $value, $exp = null)
 {
     global $whatCache, $memcache;
+    
+    // Set default expiration if not provided
+    if ($exp === null) {
+        $exp = 0; // 0 means no expiration
+    }
+    
     switch ($whatCache) {
         case 'memcache':
             return $memcache->set($key, $value, false, $exp);
