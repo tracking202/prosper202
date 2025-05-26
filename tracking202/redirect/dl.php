@@ -157,7 +157,7 @@ if ($memcacheWorking) {
 
 
 //set the timezone to the users timezone
-$mysql['user_id'] = $db->real_escape_string($tracker_row['user_id']);
+$mysql['user_id'] = $db->real_escape_string((string)($tracker_row['user_id'] ?? '0'));
 
 //now this sets timezone
 date_default_timezone_set($tracker_row['user_timezone']);
@@ -168,9 +168,9 @@ if (!$tracker_row) {
 }
 
 //get mysql variables 
-$mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
-$mysql['ppc_account_id'] = $db->real_escape_string($tracker_row['ppc_account_id']);
-$mysql['user_pref_dynamic_bid'] = $db->real_escape_string($tracker_row['user_pref_dynamic_bid']);
+$mysql['aff_campaign_id'] = $db->real_escape_string((string)($tracker_row['aff_campaign_id'] ?? '0'));
+$mysql['ppc_account_id'] = $db->real_escape_string((string)($tracker_row['ppc_account_id'] ?? '0'));
+$mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string)($tracker_row['user_pref_dynamic_bid'] ?? '0'));
 // set cpc use dynamic variable if set or the default if not
 if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
 	$_GET['t202b'] = ltrim($_GET['t202b'], '$');
@@ -178,15 +178,15 @@ if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
 		$bid = number_format($_GET['t202b'], 5, '.', '');
 		$mysql['click_cpc'] = $db->real_escape_string($bid);
 	} else {
-		$mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
+		$mysql['click_cpc'] = $db->real_escape_string((string)($tracker_row['click_cpc'] ?? ''));
 	}
 } else
-	$mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
+	$mysql['click_cpc'] = $db->real_escape_string((string)($tracker_row['click_cpc'] ?? ''));
 
-$mysql['click_cpa'] = $db->real_escape_string($tracker_row['click_cpa']);
-$mysql['click_payout'] = $db->real_escape_string($tracker_row['aff_campaign_payout']);
+$mysql['click_cpa'] = $db->real_escape_string((string)($tracker_row['click_cpa'] ?? ''));
+$mysql['click_payout'] = $db->real_escape_string((string)($tracker_row['aff_campaign_payout'] ?? ''));
 $mysql['click_time'] = time();
-$mysql['text_ad_id'] = $db->real_escape_string($tracker_row['text_ad_id']);
+$mysql['text_ad_id'] = $db->real_escape_string((string)($tracker_row['text_ad_id'] ?? '0'));
 
 /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
 //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
