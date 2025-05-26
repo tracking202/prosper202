@@ -69,8 +69,8 @@ $error = array();
 
 //show tracking code
 
-	$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? '0'));
-	$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `landing_page_id`='".$mysql['landing_page_id']."'";
+	$input_landing_page_id = $db->real_escape_string((string)($_POST['landing_page_id'] ?? '0'));
+	$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `landing_page_id`='".$input_landing_page_id."'";
 	$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 	$landing_page_row = $landing_page_result->fetch_assoc();
 	
