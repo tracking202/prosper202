@@ -434,7 +434,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
     //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
 
     if (isset($mysql) && $mysql != '') {
-        $mysql['click_id'] = $db->real_escape_string($click_id);
+        $mysql['click_id'] = $db->real_escape_string((string)$click_id);
         $tokens = @array(
             "subid" => $mysql['click_id'],
             "t202kw" => $mysql['keyword'],
@@ -1257,7 +1257,12 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        $parsed_url = @parse_url(trim($db->real_escape_string($site_url_address)));
+        // Handle null or empty site_url_address
+        if ($site_url_address === null || $site_url_address === '') {
+            $site_url_address = '';
+        }
+
+        $parsed_url = @parse_url(trim($db->real_escape_string((string)$site_url_address)));
 
         if (isset($parsed_url)) {
             if (isset($parsed_url['host'])) {
@@ -1330,10 +1335,16 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
         $time = 2592000; // 30 days in sec
+        
+        // Handle null or empty site_url_address
+        if ($site_url_address === null || $site_url_address === '') {
+            $site_url_address = '';
+        }
+        
         $site_domain_id = INDEXES::get_site_domain_id($db, $site_url_address);
 
-        $mysql['site_url_address'] = $db->real_escape_string($site_url_address);
-        $mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
+        $mysql['site_url_address'] = $db->real_escape_string((string)$site_url_address);
+        $mysql['site_domain_id'] = $db->real_escape_string((string)$site_domain_id);
 
         if ($memcacheWorking) {
             $time = 604800; // 7 days in sec
@@ -2019,7 +2030,7 @@ function replaceTokens($url, $tokens = array(), $fillblanks = 0)
 function rawurlencode202($token)
 {
     if (isset($token)) {
-        $token = str_replace('%40', '@', rawurlencode($token));
+        $token = str_replace('%40', '@', rawurlencode((string)$token));
         return $token;
     } else {
         return NULL;

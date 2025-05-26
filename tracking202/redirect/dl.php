@@ -355,6 +355,8 @@ $mysql['platform_id'] = $db->real_escape_string((string)($device_id['platform'] 
 $mysql['browser_id'] = $db->real_escape_string((string)($device_id['browser'] ?? '0'));
 $mysql['device_id'] = $db->real_escape_string((string)($device_id['device'] ?? '0'));
 
+// Initialize click_bot with default value
+$mysql['click_bot'] = '0';
 if (isset($device_id['type']) && $device_id['type'] == '4') {
 	$mysql['click_bot'] = '1';
 }
@@ -384,6 +386,8 @@ $city_id = INDEXES::get_city_id($db, $GeoData['city'], $mysql['country_id']);
 $mysql['city_id'] = $db->real_escape_string((string)$city_id);
 
 
+// Initialize isp_id with default value
+$mysql['isp_id'] = '0';
 if ($tracker_row['maxmind_isp'] == '1') {
 	$IspData = getIspData($ip_address);
 	$isp_id = INDEXES::get_isp_id($db, $IspData);
@@ -500,6 +504,8 @@ $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 
 //now gather variables for the clicks record db
 //lets determine if cloaking is on
+$cloaking_on = false;
+$mysql['click_id_public'] = '';
 if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking on                                                             
 	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
 	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1)) //if no tracker but but by default campaign has cloaking on
@@ -508,7 +514,7 @@ if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking
 	$mysql['click_cloaking'] = 1;
 	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
 	$click_id_public = rand(1, 9) . $click_id . rand(1, 9);
-	$mysql['click_id_public'] = $db->real_escape_string($click_id_public);
+	$mysql['click_id_public'] = $db->real_escape_string((string)$click_id_public);
 } else {
 	$mysql['click_cloaking'] = 0;
 }
@@ -528,29 +534,30 @@ if ($tracker_row['user_pref_referer_data'] == 't202ref') {
 		$mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
 		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $mysql['t202ref']);
 	} else { //if not found revert to what we usually do
-		if ($referer_query['url']) {
+		if (isset($referer_query['url'])) {
 			$click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
 		} else {
-			$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER']);
+			$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER'] ?? '');
 		}
 	}
 } else { //user wants the real referer first
 
 	// now lets get variables for clicks site
 	// so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-	if ($referer_query['url']) {
+	if (isset($referer_query['url'])) {
 		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
 	} else {
-		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER']);
+		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER'] ?? '');
 	}
 }
 
-$mysql['click_referer_site_url_id'] = $db->real_escape_string($click_referer_site_url_id);
+$mysql['click_referer_site_url_id'] = $db->real_escape_string((string)$click_referer_site_url_id);
 
 $outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
 $click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
-$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_site_url_id);
+$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
+$cloaking_site_url = '';
 if ($cloaking_on == true) {
 	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
@@ -575,7 +582,7 @@ if (function_exists('fastcgi_finish_request')) {
 }
 
 $click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
-$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
+$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 //insert this
 $click_sql = "INSERT INTO   202_clicks_site
