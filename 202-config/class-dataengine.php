@@ -1724,15 +1724,15 @@ ORDER BY ppc_network_id , name , variable";
                     case 'clicks':
                     case 'leads':
                     case 'click_out':
-                        $html[$prepend . $key] = htmlentities(number_format($data_row), ENT_QUOTES, 'UTF-8');
+                        $html[$prepend . $key] = htmlentities(number_format((int)$data_row), ENT_QUOTES, 'UTF-8');
                         break;
                     case 'su_ratio':
 
-                        $html[$prepend . $key] = htmlentities(round($data_row, 2) . '%', ENT_QUOTES, 'UTF-8');
+                        $html[$prepend . $key] = htmlentities(round((float)$data_row, 2) . '%', ENT_QUOTES, 'UTF-8');
                         break;
 
                     case 'ctr':
-                        $html[$prepend . $key] = htmlentities(round($theCTR, 2) . '%', ENT_QUOTES, 'UTF-8');
+                        $html[$prepend . $key] = htmlentities(round((float)$theCTR, 2) . '%', ENT_QUOTES, 'UTF-8');
                         break;
                     case 'payout':
                     case 'income':
@@ -1745,7 +1745,7 @@ ORDER BY ppc_network_id , name , variable";
                         $html[$prepend . $key] = htmlentities(dollar_format($data_row, $currency_row['user_account_currency'], $cpv), ENT_QUOTES, 'UTF-8');
                         break;
                     case 'roi':
-                        $html[$prepend . $key] = htmlentities(number_format($data_row) . '%', ENT_QUOTES, 'UTF-8');
+                        $html[$prepend . $key] = htmlentities(number_format((float)$data_row) . '%', ENT_QUOTES, 'UTF-8');
                         break;
                     case 'click_time_from_disp':
                         $upper = array(
@@ -2434,9 +2434,9 @@ aff_network_id=values(aff_network_id)";
     function getSummary($start, $end, $params, $user_id = 1, $upgrade = false, $new = false)
     {
         global $db, $click_filtered, $dbGlobalLink;
-        $mysql['from'] = $db->real_escape_string($start); // mysqli_real_escape_string($dbGlobalLink,$start);
-        $mysql['to'] = $db->real_escape_string($end);
-        $mysql['user_id'] = $db->real_escape_string($user_id);
+        $mysql['from'] = $db->real_escape_string((string)$start); // mysqli_real_escape_string($dbGlobalLink,$start);
+        $mysql['to'] = $db->real_escape_string((string)$end);
+        $mysql['user_id'] = $db->real_escape_string((string)$user_id);
 
         if ($upgrade) {
             $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['from'] . "' AND time_to = '" . $mysql['to'] . "'";
@@ -2597,6 +2597,13 @@ aff_network_id=values(aff_network_id)";
         $user_id = isset($_SESSION['user_own_id']) ? $_SESSION['user_own_id'] : 1;
 
         $info_result = $result = $db->query($query) or die($db->error . '<br/><br/>' . $query);
+        
+        // Check if this is an INSERT/UPDATE query (returns true) or SELECT query (returns mysqli_result)
+        if ($info_result === true) {
+            // For INSERT/UPDATE queries, we don't need to call doSummary
+            return;
+        }
+        
         $this->doSummary($info_result, $from, $to, $user_id, $upgrade, $new);
     }
 
@@ -2864,7 +2871,7 @@ aff_network_id=values(aff_network_id)";
             if ($result) {
                 while ($row = $result->fetch_assoc()) {
 
-                    $campaign_name = $row['aff_campaign_name'];
+                    $campaign_name = isset($row['aff_campaign_name']) ? $row['aff_campaign_name'] : '';
                     $data['categories'][$row['date_range']] = $row['date_range'];
                     foreach ($row as $key => $value) {
                         $sqlName = '';
