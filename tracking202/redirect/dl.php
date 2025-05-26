@@ -345,12 +345,17 @@ if (isset($utm_content) && $utm_content != '') {
 $mysql['utm_content_id'] = $db->real_escape_string((string)$utm_content_id);
 
 
-$device_id = PLATFORMS::get_device_info($db, $detect, $_GET['ua']);
-$mysql['platform_id'] = $db->real_escape_string($device_id['platform']);
-$mysql['browser_id'] = $db->real_escape_string($device_id['browser']);
-$mysql['device_id'] = $db->real_escape_string($device_id['device']);
+// Initialize Mobile_Detect if not already done
+if (!isset($detect)) {
+	$detect = new Mobile_Detect();
+}
 
-if ($device_id['type'] == '4') {
+$device_id = PLATFORMS::get_device_info($db, $detect, $_GET['ua'] ?? '');
+$mysql['platform_id'] = $db->real_escape_string((string)($device_id['platform'] ?? '0'));
+$mysql['browser_id'] = $db->real_escape_string((string)($device_id['browser'] ?? '0'));
+$mysql['device_id'] = $db->real_escape_string((string)($device_id['device'] ?? '0'));
+
+if (isset($device_id['type']) && $device_id['type'] == '4') {
 	$mysql['click_bot'] = '1';
 }
 
