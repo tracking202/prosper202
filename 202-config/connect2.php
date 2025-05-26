@@ -710,7 +710,15 @@ class PLATFORMS
 
     public static function parseUserAgentInfo($db, $detect)
     {
-
+        // Get IP address
+        $ip_address_string = $_SERVER['REMOTE_ADDR'] ?? '';
+        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $ip_address_string = $_SERVER['HTTP_X_FORWARDED_FOR'];
+        }
+        
+        // Create IP address object for botCheck
+        $ip_address = new stdClass();
+        $ip_address->address = $ip_address_string;
 
         $parser = Parser::create();
         $result = $parser->parse($detect->getUserAgent());
@@ -805,7 +813,7 @@ class PLATFORMS
     {
         global $memcacheWorking, $memcache;
 
-        if ($memcacheWorking) {
+        if ($memcacheWorking && $ip && isset($ip->address)) {
             $getFromCache = $memcache->get(md5("ip-bot" . $ip->address . systemHash()));
         } else {
             $getFromCache = false;
@@ -874,6 +882,11 @@ class PLATFORMS
 
     public static function check_ip_range($ip, $range)
     {
+        // Check if IP object and address property exist
+        if (!$ip || !isset($ip->address) || empty($ip->address)) {
+            return false;
+        }
+        
         if (strpos($range, '/') == false) {
             $range .= '/32';
         }
