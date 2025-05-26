@@ -21,20 +21,46 @@ class DataEngine
 
     private $forDownload = 0;
 
+    /**
+     * Check if database connection is available
+     * @return bool
+     */
+    private function isDatabaseConnected(): bool
+    {
+        return self::$db !== null && self::$db instanceof mysqli;
+    }
+
+    /**
+     * Get database connection or fallback to global $db
+     * @return mysqli|null
+     */
+    private function getDbConnection()
+    {
+        if ($this->isDatabaseConnected()) {
+            return self::$db;
+        }
+        
+        // Fallback to global database connection
+        global $db;
+        if ($db && $db instanceof mysqli) {
+            return $db;
+        }
+        
+        return null;
+    }
+
     function __construct()
     {
         try {
             $database = DB::getInstance();
-            $connection = $database->getConnection();
-            if ($connection === false || !($connection instanceof mysqli)) {
-                throw new Exception('Database connection failed - invalid connection object');
-            }
-            self::$db = $connection;
+            self::$db = $database->getConnection();
         } catch (Exception $e) {
-            throw new Exception('Database connection failed: ' . $e->getMessage());
+            self::$db = false;
         }
 
-        $this->mysql['user_id'] = self::$db->real_escape_string((string)($_SESSION['user_own_id'] ?? ''));
+        if (self::$db !== null) {
+            $this->mysql['user_id'] = self::$db->real_escape_string((string)($_SESSION['user_own_id'] ?? ''));
+        }
 
         if (isset($_SESSION['publisher']) && $_SESSION['publisher'] == false) { //user is able to see all campaigns
             $this->mysql['user_id_query'] = " WHERE 2st.user_id != '0' ";
@@ -51,7 +77,10 @@ class DataEngine
         if ($offsetHours >= 0)
             $offsetHours = '+' . $offsetHours;
         $tzSql = "SET time_zone = '" . $offsetHours . ":00'";
-        $click_result = self::$db->query($tzSql);
+        $dbConnection = $this->getDbConnection();
+        if ($dbConnection) {
+            $click_result = $dbConnection->query($tzSql);
+        }
     }
 
     function setDownload()
