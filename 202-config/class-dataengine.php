@@ -53,9 +53,13 @@ class DataEngine
     {
         try {
             $database = DB::getInstance();
-            self::$db = $database->getConnection();
+            $connection = $database->getConnection();
+            if ($connection === false || !($connection instanceof mysqli)) {
+                throw new Exception('Database connection failed - invalid connection object');
+            }
+            self::$db = $connection;
         } catch (Exception $e) {
-            self::$db = false;
+            throw new Exception('Database connection failed: ' . $e->getMessage());
         }
 
         if (self::$db !== null) {

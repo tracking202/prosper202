@@ -7,8 +7,6 @@ AUTH::require_user();
 
 AUTH::set_timezone($_SESSION['user_timezone']);
 
-//check variables
-
 // Initialize error array
 $error = array();
 
@@ -21,6 +19,7 @@ $to = explode('/', $_POST['to'] ?? '');
 $to_month = isset($to[0]) ? $to[0] : '';
 $to_day = isset($to[1]) ? $to[1] : '';
 $to_year = isset($to[2]) ? $to[2] : '';
+
 
 //if from or to, validate, and if validated, set it accordingly
 
@@ -176,6 +175,7 @@ $sql = "UPDATE  202_clicks LEFT JOIN 202_clicks_advance USING (click_id)
 						   LEFT JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 202_ppc_accounts.ppc_network_id)
 			SET     click_cpc='" . $mysql['click_cpc'] . "'
 			WHERE   202_clicks.user_id='" . $mysql['user_id'] . "'";
+
 if (isset($mysql['aff_network_id']) && $mysql['aff_network_id']) {
 	$sql .= " AND 202_aff_networks.aff_network_id='" . $mysql['aff_network_id'] . "' ";
 }
@@ -205,6 +205,7 @@ if (isset($mysql['aff_campaign_id']) && $mysql['aff_campaign_id']) {
 } else {
 	$de['aff_campaign_id'] = 0;
 }
+
 if (isset($mysql['ppc_account_id']) && $mysql['ppc_account_id']) {
 	$de['ppc_account_id'] = $mysql['ppc_account_id'];
 } else {
