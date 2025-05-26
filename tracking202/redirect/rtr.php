@@ -335,7 +335,7 @@ if ($default == true) {
 			if ($memcacheWorking) {
 				$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
 				if (!$getUrl) {
-						$memcache->set(md5('default_url' . $tracker_id . systemHash()), $default, false, 0);			
+						setCache(md5('default_url' . $tracker_id . systemHash()), $default, 0);			
 				}
 			}
 		}

@@ -151,7 +151,7 @@ if ($memcacheWorking) {
 
 	$getKey = $memcache->get(md5('url_' . $tid . systemHash()));
 	if ($getKey === false) {
-		$setUrl = $memcache->set(md5('url_' . $tid . systemHash()), $url, false, 0);
+		$setUrl = setCache(md5('url_' . $tid . systemHash()), $url, 0);
 	}
 }
 
