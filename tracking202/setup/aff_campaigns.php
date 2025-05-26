@@ -103,15 +103,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (! $error) {
 		$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
 		$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);
-		$mysql['aff_campaign_name'] = $db->real_escape_string(trim($_POST['aff_campaign_name']));
-		$mysql['aff_campaign_url'] = $db->real_escape_string(trim($_POST['aff_campaign_url']));
-		$mysql['aff_campaign_url_2'] = $db->real_escape_string(trim($_POST['aff_campaign_url_2']));
-		$mysql['aff_campaign_url_3'] = $db->real_escape_string(trim($_POST['aff_campaign_url_3']));
-		$mysql['aff_campaign_url_4'] = $db->real_escape_string(trim($_POST['aff_campaign_url_4']));
-		$mysql['aff_campaign_url_5'] = $db->real_escape_string(trim($_POST['aff_campaign_url_5']));
-		$mysql['aff_campaign_rotate'] = $db->real_escape_string((string)$_POST['aff_campaign_rotate']);
-		$mysql['aff_campaign_payout'] = $db->real_escape_string(trim($_POST['aff_campaign_payout']));
-		$mysql['aff_campaign_cloaking'] = $db->real_escape_string((string)$_POST['aff_campaign_cloaking']);
+		$mysql['aff_campaign_name'] = $db->real_escape_string(trim($_POST['aff_campaign_name'] ?? ''));
+		$mysql['aff_campaign_url'] = $db->real_escape_string(trim($_POST['aff_campaign_url'] ?? ''));
+		$mysql['aff_campaign_url_2'] = $db->real_escape_string(trim($_POST['aff_campaign_url_2'] ?? ''));
+		$mysql['aff_campaign_url_3'] = $db->real_escape_string(trim($_POST['aff_campaign_url_3'] ?? ''));
+		$mysql['aff_campaign_url_4'] = $db->real_escape_string(trim($_POST['aff_campaign_url_4'] ?? ''));
+		$mysql['aff_campaign_url_5'] = $db->real_escape_string(trim($_POST['aff_campaign_url_5'] ?? ''));
+		$mysql['aff_campaign_rotate'] = $db->real_escape_string((string)($_POST['aff_campaign_rotate'] ?? '0'));
+		$mysql['aff_campaign_payout'] = $db->real_escape_string(trim($_POST['aff_campaign_payout'] ?? ''));
+		$mysql['aff_campaign_cloaking'] = $db->real_escape_string((string)($_POST['aff_campaign_cloaking'] ?? '0'));
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$mysql['aff_campaign_time'] = time();
 
@@ -186,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$aff_campaign_row['aff_campaign_id'] = $db->insert_id;
 			$aff_campaign_id_public = rand(1, 9) . $aff_campaign_row['aff_campaign_id'] . rand(1, 9);
 			$mysql['aff_campaign_id_public'] = $db->real_escape_string($aff_campaign_id_public);
-			$mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_row['aff_campaign_id']);
+			$mysql['aff_campaign_id'] = $db->real_escape_string((string)$aff_campaign_row['aff_campaign_id']);
 
 			$aff_campaign_sql = "	UPDATE       `202_aff_campaigns`
 								 	SET          	 `aff_campaign_id_public`='" . $mysql['aff_campaign_id_public'] . "'
@@ -226,7 +226,7 @@ if (isset($_GET['delete_aff_campaign_id'])) {
 
 		$delete_sql = " UPDATE  `202_aff_campaigns`
 						SET     `aff_campaign_deleted`='1',
-								`aff_campaign_time`='" . $mysql['aff_campaign_time'] . "'
+								`aff_campaign_time`='" . ($mysql['aff_campaign_time'] ?? time()) . "'
 						WHERE   `user_id`='" . $mysql['user_id'] . "'
 						AND     `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'";
 		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_result)) {
@@ -337,7 +337,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 		<span class="infotext">Here you add each of the campaigns you are running.</span>
 
 		<form method="post" class="form-horizontal" action="<?php if ($delete_success == true) {
-																echo $_SERVER['REDIRECT_URL'];
+																echo $_SERVER['REDIRECT_URL'] ?? '';
 															} ?>" role="form" style="margin:15px 0px;">
 			<input name="aff_campaign_id" type="hidden" value="<?php echo isset($html['aff_campaign_id']) ? $html['aff_campaign_id'] : ''; ?>" />
 			<input name="dni_id" type="hidden" value="" />
@@ -363,7 +363,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 							$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 							$html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
-							if ($selected['aff_network_id'] == $aff_network_row['aff_network_id']) {
+							if (($selected['aff_network_id'] ?? '') == $aff_network_row['aff_network_id']) {
 								printf('<option selected="selected" value="%s">%s</option>', $html['aff_network_id'], $html['aff_network_name']);
 							} else {
 								printf('<option value="%s">%s</option>', $html['aff_network_id'], $html['aff_network_name']);
@@ -490,7 +490,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 								<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>
 							</div>
 							<div class="col-xs-6">
-								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id']; ?>">
+								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'] ?? ''; ?>">
 								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url(); ?>tracking202/setup/aff_campaigns.php'; return false;">Cancel</button>
 							</div>
 						</div>
