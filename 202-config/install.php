@@ -52,7 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['user_pass'] = $db->real_escape_string($user_pass);      
  		
  		$hash = md5(uniqid(rand(), TRUE));
-		$user_hash = intercomHash($hash);
+		// $user_hash = intercomHash($hash); // Removed intercomHash call
+		$user_hash = ''; // Default empty value
 
 		//insert this user
 		$user_sql = "  	INSERT INTO 	202_users
