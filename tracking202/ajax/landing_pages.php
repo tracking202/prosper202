@@ -3,7 +3,7 @@ declare(strict_types=1);
 include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
-if (($_POST['type'] != 'landingpage' and $_POST['type'] != 'landingpages' ) and  ($_POST['type'] != 'advlandingpage')) { ?>
+if (!isset($_POST['type']) || (($_POST['type'] != 'landingpage' && $_POST['type'] != 'landingpages') && $_POST['type'] != 'advlandingpage')) { ?>
 	
 	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id" disabled="">
         <option value="0"> -- </option>
@@ -11,7 +11,7 @@ if (($_POST['type'] != 'landingpage' and $_POST['type'] != 'landingpages' ) and 
 
     <?php die();    
 }
-if($_POST['aff_campaign_id']==0)
+if(!isset($_POST['aff_campaign_id']) || $_POST['aff_campaign_id']==0)
    $eq=">=";
 else 
     $eq='=';
@@ -45,13 +45,13 @@ if ($landing_page_result->num_rows == 0) { ?>
 
 <?php } else { ?>
 
-	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id" onchange="<?php if ($_POST['type' ] =='advlandingpage') echo 'load_adv_text_ad_id(this.value);'; else  echo ' load_text_ad_id( $(\'#aff_campaign_id\').val() ); ';  ?>">					
+	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id" onchange="<?php if (isset($_POST['type']) && $_POST['type'] =='advlandingpage') echo 'load_adv_text_ad_id(this.value);'; else  echo ' load_text_ad_id( $(\'#aff_campaign_id\').val() ); ';  ?>">					
 		<option value="0"> -- </option> <?php 		while ($landing_page_row = $landing_page_result->fetch_array(MYSQLI_ASSOC)) {
 
 			$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 			$html['landing_page_nickname'] = htmlentities((string)($landing_page_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');
 
-			 if ($_POST['landing_page_id'] == $landing_page_row['landing_page_id']) {
+			 if (isset($_POST['landing_page_id']) && $_POST['landing_page_id'] == $landing_page_row['landing_page_id']) {
 				$selected = 'selected=""';   
 			} else {
 				$selected = '';  
