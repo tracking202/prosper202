@@ -375,26 +375,28 @@ $user_id = $tracker_row['user_id'];
 $GeoData = getGeoData($ip_address);
 
 $country_id = INDEXES::get_country_id($db, $GeoData['country'], $GeoData['country_code']);
-$mysql['country_id'] = $db->real_escape_string($country_id);
+$mysql['country_id'] = $db->real_escape_string((string)$country_id);
 
-$region_id = INDEXES::get_region_id($db, $GeoData['region'], $mysql['country_id']);
-$mysql['region_id'] = $db->real_escape_string($region_id);
+$region_id = INDEXES::get_region_id($db, $GeoData['region'] ?? '', $mysql['country_id']);
+$mysql['region_id'] = $db->real_escape_string((string)$region_id);
 
 $city_id = INDEXES::get_city_id($db, $GeoData['city'], $mysql['country_id']);
-$mysql['city_id'] = $db->real_escape_string($city_id);
+$mysql['city_id'] = $db->real_escape_string((string)$city_id);
 
 
 if ($tracker_row['maxmind_isp'] == '1') {
 	$IspData = getIspData($ip_address);
 	$isp_id = INDEXES::get_isp_id($db, $IspData);
-	$mysql['isp_id'] = $db->real_escape_string($isp_id);
+	$mysql['isp_id'] = $db->real_escape_string((string)$isp_id);
 }
 
 if ($device_id['type'] == '4') {
 	$mysql['click_filtered'] = '1';
 } else {
-	$click_filtered = FILTER::startFilter($db, $click_id, $ip_id, $ip_address, $user_id);
-	$mysql['click_filtered'] = $db->real_escape_string($click_filtered);
+	// Initialize click_id as 0 for the filter (will be updated after insert)
+	$click_id_temp = 0;
+	$click_filtered = FILTER::startFilter($db, $click_id_temp, $ip_id, $ip_address, $user_id);
+	$mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
 }
 
 
@@ -406,7 +408,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 
 //now gather the info for the advance click insert
 $click_id = $db->insert_id;
-$mysql['click_id'] = $db->real_escape_string($click_id);
+$mysql['click_id'] = $db->real_escape_string((string)$click_id);
 
 //because this is a simple landing page, set click_alp (which stands for click advanced landing page, equal to 0)
 $mysql['click_alp'] = 0;
