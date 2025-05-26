@@ -190,6 +190,9 @@ $error = array();
 	$get_variables = "SELECT * FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = 0";
 	$get_variables_result = $db->query($get_variables);
 	
+	// Initialize html array
+	$html = array();
+	
 	//loop over all our internal vars to see if user has set up a custom var in step 1
 	if ($get_variables_result->num_rows > 0) {
 	    while ($get_variables_row = $get_variables_result->fetch_assoc()) {
@@ -214,7 +217,7 @@ $error = array();
             $html[$key] = $db->real_escape_string(trim($_POST[$key]));
         }
         if (isset($html[$key]) || $key=='t202kw')
-            $tracking_variable_string .= $key . '=' . $html[$key] . '&'; //now write out the values/ but only if they are not empty with the exception of t202kw with we will write out no matter what
+            $tracking_variable_string .= $key . '=' . ($html[$key] ?? '') . '&'; //now write out the values/ but only if they are not empty with the exception of t202kw with we will write out no matter what
     }
     
     //remove & from end of the variable
@@ -372,7 +375,7 @@ $error = array();
 	}
 	
 
-	?><?php if($_POST['edit_tracker'] && $_POST['tracker_id']) { ?><small
+	?><?php if(isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) { ?><small
 	class="success"><em><u>Tracker updated! Your tracking link stays the
 			same.</u></em></small><?php } ?>
 <br>
