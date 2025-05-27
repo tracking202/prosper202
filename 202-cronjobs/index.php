@@ -95,8 +95,7 @@ function RunDailyCronjob()
 
         if ($check_count == 0) {
             echo 'Processing Daily Jobs...';
-            ob_flush();
-            flush();
+            flushOutput();
             
             //if a cronjob hasn't run today, record it now.
             $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
@@ -174,8 +173,7 @@ function RunHourlyCronJob()
 
         if ($check_count == 0) {
             echo 'Processing Hourly Jobs...';
-            ob_flush();
-            flush();
+            flushOutput();
             
             //if a cronjob hasn't run this hour, record it now.
             $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
@@ -243,8 +241,7 @@ function RunSecondsCronjob()
 
         if ($check_count == 0) {
             echo 'Processing Seconds Jobs...';
-            ob_flush();
-            flush();
+            flushOutput();
             
             //if a cronjob hasn't run, record it now.
             $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
