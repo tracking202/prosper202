@@ -1724,7 +1724,7 @@ ORDER BY ppc_network_id , name , variable";
                     case 'clicks':
                     case 'leads':
                     case 'click_out':
-                        $html[$prepend . $key] = htmlentities(number_format($data_row), ENT_QUOTES, 'UTF-8');
+                        $html[$prepend . $key] = htmlentities(number_format((float)$data_row), ENT_QUOTES, 'UTF-8');
                         break;
                     case 'su_ratio':
 
