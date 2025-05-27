@@ -160,8 +160,8 @@ function RunHourlyCronJob()
         $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
         $mysql['cronjob_type'] = $db->real_escape_string('hourly');
 
-        //check to make sure this cronjob doesn't already exist
-        $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
+        //check to make sure this cronjob doesn't already exist (support both 'hour' and 'hourly' for backwards compatibility)
+        $check_sql = "SELECT  *  FROM 202_cronjobs WHERE (cronjob_type='hour' OR cronjob_type='" . $mysql['cronjob_type'] . "') AND cronjob_time='" . $mysql['cronjob_time'] . "'";
         $check_result = $db->query($check_sql);
         
         if ($check_result === false) {
