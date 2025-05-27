@@ -8,7 +8,22 @@
 
 declare(strict_types=1);
 
+// Require authentication for health endpoint
 include_once(str_repeat("../", 1) . '202-config/connect.php');
+include_once(str_repeat("../", 1) . '202-config/functions-auth.php');
+
+session_start();
+
+// Check if user is authenticated
+if (!isset($_SESSION['user_id']) || !is_authenticated()) {
+    http_response_code(401);
+    header('Content-Type: application/json');
+    echo json_encode([
+        'error' => 'Authentication required',
+        'status' => 'unauthorized'
+    ]);
+    exit;
+}
 
 header('Content-Type: application/json');
 
