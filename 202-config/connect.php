@@ -65,6 +65,15 @@ function getDatabaseConnection(): mysqli {
     return $db;
 }
 
+/**
+ * Flush output buffers to ensure immediate display
+ * Standardizes output buffering management across cronjobs
+ */
+function flushOutput(): void {
+    ob_flush();
+    flush();
+}
+
 mysqli_report(MYSQLI_REPORT_STRICT);
 
 // Initialize variables
