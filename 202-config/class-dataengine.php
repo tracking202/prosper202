@@ -1728,7 +1728,7 @@ ORDER BY ppc_network_id , name , variable";
                         break;
                     case 'su_ratio':
 
-                        $html[$prepend . $key] = htmlentities(round($data_row, 2) . '%', ENT_QUOTES, 'UTF-8');
+                        $html[$prepend . $key] = htmlentities(round((float)$data_row, 2) . '%', ENT_QUOTES, 'UTF-8');
                         break;
 
                     case 'ctr':
