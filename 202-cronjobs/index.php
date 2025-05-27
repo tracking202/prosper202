@@ -32,7 +32,8 @@ try {
     ignore_user_abort(true);
     
     // Get database connection
-    $db = getDatabaseConnection();
+    $database = DB::getInstance();
+    $db = $database->getConnection();
 
     if (RunSecondsCronjob() == true) {
         if (RunHourlyCronJob() == true) {
