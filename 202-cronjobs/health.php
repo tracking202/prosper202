@@ -115,10 +115,14 @@ try {
     echo json_encode($response, JSON_PRETTY_PRINT);
     
 } catch (Exception $e) {
+    // Log the full exception details internally
+    error_log('Exception caught in health check: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+    
+    // Return a generic error message to the client
     http_response_code(500);
     echo json_encode([
         'status' => 'error',
-        'error' => $e->getMessage(),
+        'error' => 'An internal server error occurred.',
         'serverTime' => date('Y-m-d H:i:s')
     ], JSON_PRETTY_PRINT);
 }
