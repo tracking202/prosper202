@@ -28,12 +28,7 @@ if (!isset($_SESSION['user_id']) || !is_authenticated()) {
 header('Content-Type: application/json');
 
 try {
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-    
-    if (!$db || !($db instanceof mysqli)) {
-        throw new Exception("Database connection failed");
-    }
+    $db = getDatabaseConnection();
     
     // Get last cron execution time
     $log_sql = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";

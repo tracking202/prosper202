@@ -48,6 +48,23 @@ if (!isset($_SESSION['user_timezone']) || empty($_SESSION['user_timezone'])) {
     date_default_timezone_set($_SESSION['user_timezone']);
 }
 
+/**
+ * Get a validated database connection with proper error handling
+ * 
+ * @return mysqli The database connection
+ * @throws Exception if database connection fails
+ */
+function getDatabaseConnection(): mysqli {
+    $database = DB::getInstance();
+    $db = $database->getConnection();
+    
+    if (!$db || !($db instanceof mysqli)) {
+        throw new Exception("Database connection failed");
+    }
+    
+    return $db;
+}
+
 mysqli_report(MYSQLI_REPORT_STRICT);
 
 // Initialize variables
