@@ -31,13 +31,8 @@ try {
     set_time_limit(0);
     ignore_user_abort(true);
     
-    // Check database connection
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-    
-    if (!$db || !($db instanceof mysqli)) {
-        throw new Exception("Database connection failed");
-    }
+    // Get database connection
+    $db = getDatabaseConnection();
 
     if (RunSecondsCronjob() == true) {
         if (RunHourlyCronJob() == true) {
