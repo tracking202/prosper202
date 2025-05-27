@@ -159,7 +159,7 @@ function RunHourlyCronJob()
         //the click_time is recorded at the start of the hour
         $cronjob_time = mktime((int)$today_hour, 0, 0, (int)$today_month, (int)$today_day, (int)$today_year);
         $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
-        $mysql['cronjob_type'] = $db->real_escape_string('hour');
+        $mysql['cronjob_type'] = $db->real_escape_string('hourly');
 
         //check to make sure this cronjob doesn't already exist
         $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
@@ -228,7 +228,7 @@ function RunSecondsCronjob()
         $cronjob_time = mktime((int)$today_hour, (int)$today_minute, (int)$today_second, (int)$today_month, (int)$today_day, (int)$today_year);
 
         $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
-        $mysql['cronjob_type'] = $db->real_escape_string('secon');
+        $mysql['cronjob_type'] = $db->real_escape_string('second');
 
         //check to make sure this cronjob doesn't already exist
         $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
