@@ -15,7 +15,7 @@ include_once(str_repeat("../", 1) . '202-config/functions-auth.php');
 session_start();
 
 // Check if user is authenticated
-if (!isset($_SESSION['user_id']) || !is_authenticated()) {
+if (!AUTH::logged_in()) {
     http_response_code(401);
     header('Content-Type: application/json');
     echo json_encode([

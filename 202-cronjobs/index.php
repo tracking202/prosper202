@@ -21,18 +21,23 @@ try {
             exit("Cron job already running\n");
         }
     }
-    
+
     // Create lock file
     touch($lockFile);
-    
-    include_once(str_repeat("../", 1) . '202-config/connect.php');
-    include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
+
+    include_once(__DIR__ . '/../202-config/connect.php');
+    include_once(__DIR__ . '/../202-config/class-dataengine.php');
 
     set_time_limit(0);
     ignore_user_abort(true);
-    
+
     // Get database connection
-    $db = getDatabaseConnection();
+    try {
+        $db = getDatabaseConnection();
+    } catch (Exception $e) {
+        error_log("Cron job: " . $e->getMessage());
+        throw new Exception("Database connection failed");
+    }
 
     if (RunSecondsCronjob() == true) {
         if (RunHourlyCronJob() == true) {
@@ -44,29 +49,36 @@ try {
         AutoOptimizeDatabase();
         ClearOldClicks();
     }
-    
+
     // Remove lock file on successful completion
     unlink($lockFile);
-    
 } catch (Exception $e) {
     $errorMsg = date('Y-m-d H:i:s') . " - Cronjob Error: " . $e->getMessage() . "\n";
     echo "Error: " . $e->getMessage();
     error_log($errorMsg, 3, $logFile);
-    
+
     // Remove lock file on error
     if (file_exists($lockFile)) {
         unlink($lockFile);
     }
 }
 
+/**
+ * Helper function for consistent output flushing
+ */
+function flushOutput()
+{
+    ob_flush();
+    flush();
+}
+
 function RunDailyCronjob()
 {
     try {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-        
-        if (!$db || !($db instanceof mysqli)) {
-            error_log("RunDailyCronjob: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("RunDailyCronjob: Database connection failed - " . $e->getMessage());
             return false;
         }
 
@@ -85,18 +97,18 @@ function RunDailyCronjob()
         //check to make sure this cronjob doesn't already exist
         $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
         $check_result = $db->query($check_sql);
-        
+
         if ($check_result === false) {
             error_log("RunDailyCronjob: Query failed - " . $db->error);
             return false;
         }
-        
+
         $check_count = $check_result->num_rows;
 
         if ($check_count == 0) {
             echo 'Processing Daily Jobs...';
             flushOutput();
-            
+
             //if a cronjob hasn't run today, record it now.
             $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
             $insert_result = $db->query($insert_sql);
@@ -119,11 +131,11 @@ function RunDailyCronjob()
             $mysql['cronjob_time'] = (int)$mysql['cronjob_time'] - 86400;
             $delete_sql = "DELETE FROM 202_cronjobs WHERE cronjob_time < " . $mysql['cronjob_time'] . "";
             $delete_result = $db->query($delete_sql);
-            
+
             // Log the execution
             $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
             $log_result = $db->query($log_sql);
-            
+
             echo 'Done';
             flush();
             return true;
@@ -139,11 +151,10 @@ function RunDailyCronjob()
 function RunHourlyCronJob()
 {
     try {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-        
-        if (!$db || !($db instanceof mysqli)) {
-            error_log("RunHourlyCronJob: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("RunHourlyCronJob: Database connection failed - " . $e->getMessage());
             return false;
         }
 
@@ -163,26 +174,26 @@ function RunHourlyCronJob()
         //check to make sure this cronjob doesn't already exist (support both 'hour' and 'hourly' for backwards compatibility)
         $check_sql = "SELECT  *  FROM 202_cronjobs WHERE (cronjob_type='hour' OR cronjob_type='" . $mysql['cronjob_type'] . "') AND cronjob_time='" . $mysql['cronjob_time'] . "'";
         $check_result = $db->query($check_sql);
-        
+
         if ($check_result === false) {
             error_log("RunHourlyCronJob: Query failed - " . $db->error);
             return false;
         }
-        
+
         $check_count = $check_result->num_rows;
 
         if ($check_count == 0) {
             echo 'Processing Hourly Jobs...';
             flushOutput();
-            
+
             //if a cronjob hasn't run this hour, record it now.
             $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
             $insert_result = $db->query($insert_sql);
-            
+
             // Log the execution
             $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
             $log_result = $db->query($log_sql);
-            
+
             echo 'Done<br>';
             ob_flush();
             flush();
@@ -199,11 +210,10 @@ function RunHourlyCronJob()
 function RunSecondsCronjob()
 {
     try {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-        
-        if (!$db || !($db instanceof mysqli)) {
-            error_log("RunSecondsCronjob: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("RunSecondsCronjob: Database connection failed - " . $e->getMessage());
             return false;
         }
 
@@ -231,18 +241,18 @@ function RunSecondsCronjob()
         //check to make sure this cronjob doesn't already exist
         $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
         $check_result = $db->query($check_sql);
-        
+
         if ($check_result === false) {
             error_log("RunSecondsCronjob: Query failed - " . $db->error);
             return false;
         }
-        
+
         $check_count = $check_result->num_rows;
 
         if ($check_count == 0) {
             echo 'Processing Seconds Jobs...';
             flushOutput();
-            
+
             //if a cronjob hasn't run, record it now.
             $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
             $insert_result = $db->query($insert_sql);
@@ -254,13 +264,13 @@ function RunSecondsCronjob()
                 WHERE delayed_time <=" . $now . "
             ";
             $delayed_result = $db->query($delayed_sql);
-            
+
             if ($delayed_result !== false) {
                 while ($delayed_row = $delayed_result->fetch_assoc()) {
                     //run each sql
                     $update_sql = $delayed_row['delayed_sql'];
                     $update_result = $db->query($update_sql);
-                    
+
                     if ($update_result === false) {
                         error_log("Delayed SQL failed: " . $update_sql . " - Error: " . $db->error);
                     }
@@ -302,11 +312,10 @@ function RunSecondsCronjob()
 function AutoOptimizeDatabase()
 {
     try {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-        
-        if (!$db || !($db instanceof mysqli)) {
-            error_log("AutoOptimizeDatabase: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("AutoOptimizeDatabase: Database connection failed - " . $e->getMessage());
             return;
         }
 
@@ -348,7 +357,7 @@ function AutoOptimizeDatabase()
                         $table = trim($table);
                         $delete_sql = "DELETE FROM `$table` WHERE click_id < " . (int)$min_click_id . " LIMIT 10000";
                         $result = $db->query($delete_sql);
-                        
+
                         if ($result === false) {
                             error_log("AutoOptimizeDatabase: Failed to delete from $table - " . $db->error);
                         }
@@ -368,11 +377,10 @@ function AutoOptimizeDatabase()
 function ClearOldClicks()
 {
     try {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-        
-        if (!$db || !($db instanceof mysqli)) {
-            error_log("ClearOldClicks: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("ClearOldClicks: Database connection failed - " . $e->getMessage());
             return;
         }
 
@@ -401,7 +409,7 @@ function ClearOldClicks()
                     $table = trim($table);
                     $click_sql = "DELETE FROM `$table` WHERE click_id < " . (int)$mysql['click_id'] . " LIMIT 5000";
                     $result = $db->query($click_sql);
-                    
+
                     if ($result === false) {
                         error_log("ClearOldClicks: Failed to delete from $table - " . $db->error);
                     }
@@ -412,7 +420,7 @@ function ClearOldClicks()
             try {
                 $slack_sql = "SELECT user_slack_incoming_webhook FROM 202_users_pref WHERE user_id = 1 AND user_slack_incoming_webhook != ''";
                 $slack_result = $db->query($slack_sql);
-                
+
                 if ($slack_result && $slack_result->num_rows > 0) {
                     $slack_row = $slack_result->fetch_assoc();
                     if (!empty($slack_row['user_slack_incoming_webhook'])) {
@@ -426,7 +434,7 @@ function ClearOldClicks()
             } catch (Exception $e) {
                 error_log("ClearOldClicks: Slack notification failed - " . $e->getMessage());
             }
-            
+
             echo 'Done Processing Batch<br>';
             ob_flush();
             flush();
