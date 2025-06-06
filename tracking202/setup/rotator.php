@@ -152,11 +152,6 @@ template_top('Smart Redirector', NULL, NULL, NULL); ?>
 			<div class="panel-heading">My Smart Redirectors</div>
 
 			<div class="panel-body">
-				<script type="text/javascript">
-					var is_ssl = ("https:" == document.location.protocol);
-					var asset_url = is_ssl ? "https://ads.tracking202.com/prosper202-redirector/" : "<?php echo TRACKING202_ADS_URL; ?>/prosper202-redirector/";
-					document.write(unescape("%3Ciframe%20src%3D%22" + asset_url + "%22%20scrolling%3D%22no%22%20frameborder%3D%220%22%20height%3D%22240%22%3E%20%3C%2Fiframe%3E"));
-				</script>
 
 				<div id="filterRotators">
 					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">

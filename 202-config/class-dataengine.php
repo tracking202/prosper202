@@ -25,7 +25,7 @@ class DataEngine
      * Check if database connection is available
      * @return bool
      */
-    private function isDatabaseConnected(): bool
+    public function isDatabaseConnected(): bool
     {
         return self::$db !== null && self::$db instanceof mysqli;
     }

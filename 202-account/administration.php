@@ -51,23 +51,12 @@ $m = $de_minutes - ($d * 1440) - ($h * 60);
 
 if (isset($_POST['autocron'])) {
 
-	$autocron = false;
+	// Debug logging
+	error_log("AutoCron POST received. Value: " . var_export($_POST['autocron'], true));
 
 	if ($_POST['autocron'] == true) {
 		$endpoint = 'register';
-		$sql = "SELECT * FROM 202_cronjob_logs";
-		$result = _mysqli_query($sql);
-		if ($result->num_rows > 0) {
-			$row = $result->fetch_assoc();
-
-			$last_five_minutes = time() - 300;
-
-			if ($row['last_execution_time'] < $last_five_minutes) {
-				$autocron = true;
-			}
-		} else {
-			$autocron = true;
-		}
+		$autocron = true;
 	} else {
 		$endpoint = 'deregister';
 		$autocron = true;
@@ -75,12 +64,24 @@ if (isset($_POST['autocron'])) {
 
 	if ($autocron) {
 		$cron = callAutoCron($endpoint);
+		
+		// Always save the user preference, regardless of API call result
+		$mysql['auto_cron'] = $db->real_escape_string((string)$_POST['autocron']);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+		$sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
+		
+		error_log("AutoCron SQL: $sql");
+		$result = _mysqli_query($sql);
+		
+		if ($result) {
+			error_log("AutoCron setting saved successfully");
+		} else {
+			error_log("AutoCron SQL failed: " . mysqli_error($db));
+		}
 
-		if ($cron['status'] == 'success') {
-			$mysql['auto_cron'] = $db->real_escape_string((string)$_POST['autocron']);
-			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-			$sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
-			$result = _mysqli_query($sql);
+		// Log API call result for debugging
+		if (!is_array($cron) || !isset($cron['status']) || $cron['status'] != 'success') {
+			error_log("AutoCron API call failed or returned error. Endpoint: $endpoint, Response: " . json_encode($cron));
 		}
 	}
 

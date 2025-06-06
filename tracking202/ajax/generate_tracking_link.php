@@ -16,6 +16,7 @@ if (!empty($user_row['url']))
 
 // Initialize variables to prevent undefined variable warnings
 $error = array();
+$html = array();
 
 //check variables
 	if (!empty($_POST['tracker_type']) && $_POST['tracker_type'] == 0) { 
@@ -58,11 +59,16 @@ $error = array();
 	}
 
 //echo error
-	echo $error['text_ad_id'] . $error['ppc_network_id'] . $error['ppc_account_id'] . $error['cpc'] . $error['click_cloaking'] . $error['cloaking_url'];
+	echo (isset($error['text_ad_id']) ? $error['text_ad_id'] : '') . 
+	     (isset($error['ppc_network_id']) ? $error['ppc_network_id'] : '') . 
+	     (isset($error['ppc_account_id']) ? $error['ppc_account_id'] : '') . 
+	     (isset($error['cpc']) ? $error['cpc'] : '') . 
+	     (isset($error['click_cloaking']) ? $error['click_cloaking'] : '') . 
+	     (isset($error['cloaking_url']) ? $error['cloaking_url'] : '');
 
 //show tracking code
 
-	$mysql['landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);
+	$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? ''));
 	$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `landing_page_id`='".$mysql['landing_page_id']."'";
 	$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 	$landing_page_row = $landing_page_result->fetch_assoc();
@@ -78,17 +84,17 @@ $error = array();
 	}
 
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-	$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
-	$mysql['text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);
-	$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']); 
-	$mysql['ppc_account_id'] = $db->real_escape_string((string)$_POST['ppc_account_id']); 
-	$mysql['click_cloaking'] = $db->real_escape_string((string)$_POST['click_cloaking']); 
-	$mysql['landing_page_id'] = $db->real_escape_string($landing_page_row['landing_page_id']);
-	$mysql['rotator_id'] = $db->real_escape_string((string)$_POST['tracker_rotator']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string((string)($_POST['aff_campaign_id'] ?? ''));
+	$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? ''));
+	$mysql['ppc_network_id'] = $db->real_escape_string((string)($_POST['ppc_network_id'] ?? '')); 
+	$mysql['ppc_account_id'] = $db->real_escape_string((string)($_POST['ppc_account_id'] ?? '')); 
+	$mysql['click_cloaking'] = $db->real_escape_string((string)($_POST['click_cloaking'] ?? '')); 
+	$mysql['landing_page_id'] = $db->real_escape_string((string)($landing_page_row['landing_page_id'] ?? ''));
+	$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['tracker_rotator'] ?? ''));
 	$mysql['tracker_time'] = time();
 	
 
-	if ($_POST['edit_tracker'] && $_POST['tracker_id']) {
+	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) {
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$_POST['tracker_id']);
 		$get_tracker_sql = "SELECT 
 							tracker_id, 
@@ -141,9 +147,9 @@ $error = array();
 	$tracker_result = $db->query($tracker_sql) or record_mysql_error($tracker_sql);
 	
 	$tracker_row['tracker_id'] = $db->insert_id;
-	$mysql['tracker_id'] = $db->real_escape_string($tracker_row['tracker_id']);
+	$mysql['tracker_id'] = $db->real_escape_string((string)$tracker_row['tracker_id']);
 
-	if ($_POST['edit_tracker'] && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
+	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
 		$mysql['tracker_id_public'] = $db->real_escape_string($get_tracker_row['tracker_id_public']);
 	} else {
 		$tracker_id_public = rand(1,9) . $tracker_row['tracker_id'] . rand(1,9);
@@ -157,7 +163,8 @@ $error = array();
 					WHERE		`tracker_id`='".$mysql['tracker_id']."'"; 
 	$tracker_result = $db->query($tracker_sql) or record_mysql_error($tracker_sql);
 
-	$parsed_url = parse_url($landing_page_row['landing_page_url']);
+	$landing_page_url = ($landing_page_row && isset($landing_page_row['landing_page_url'])) ? $landing_page_row['landing_page_url'] : '';
+	$parsed_url = !empty($landing_page_url) ? parse_url($landing_page_url) : array();
 
 	//setup array of all internally recognized url variables
 	$t202variables = array(
@@ -204,7 +211,7 @@ $error = array();
             $html[$key] = $db->real_escape_string(trim($_POST[$key]));
         }
         if (isset($html[$key]) || $key=='t202kw')
-            $tracking_variable_string .= $key . '=' . $html[$key] . '&'; //now write out the values/ but only if they are not empty with the exception of t202kw with we will write out no matter what
+            $tracking_variable_string .= $key . '=' . (isset($html[$key]) ? $html[$key] : '') . '&'; //now write out the values/ but only if they are not empty with the exception of t202kw with we will write out no matter what
     }
     
     //remove & from end of the variable
@@ -362,7 +369,7 @@ $error = array();
 	}
 	
 
-	?><?php if($_POST['edit_tracker'] && $_POST['tracker_id']) { ?><small
+	?><?php if(isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) { ?><small
 	class="success"><em><u>Tracker updated! Your tracking link stays the
 			same.</u></em></small><?php } ?>
 <br>
@@ -407,7 +414,9 @@ $error = array();
 	
 	if (($_POST['method_of_promotion'] == 'landingpage') or ($_POST['tracker_type'] == 1)) {
 
-		$destination_url = $parsed_url['scheme'] . '://' . $parsed_url['host'] . $parsed_url['path'] . '?';
+		$destination_url = (isset($parsed_url['scheme']) ? $parsed_url['scheme'] : 'http') . '://' . 
+		                   (isset($parsed_url['host']) ? $parsed_url['host'] : '') . 
+		                   (isset($parsed_url['path']) ? $parsed_url['path'] : '') . '?';
 		if (!empty($parsed_url['query'])) {
 			$destination_url .= $parsed_url['query'] . '&';  ;
 		}

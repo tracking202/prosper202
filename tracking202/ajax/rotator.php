@@ -600,8 +600,10 @@ if (isset($_POST['rule_details']) && $_POST['rule_details'] == true) {
 	$sql = "SELECT * FROM 
 				 202_rotator_rules AS ru 
 				 LEFT JOIN 202_rotator_rules_criteria AS cr ON ru.id = cr.rule_id
+				 LEFT JOIN 202_rotator_rules_redirects AS rr ON ru.id = rr.rule_id
 				 WHERE ru.id = '".$id."'";
-	$result = $db->query($sql);?>
+	$result = $db->query($sql);
+	?>
 
 	<div class="row">
 		<div class="col-xs-12">
@@ -613,32 +615,46 @@ if (isset($_POST['rule_details']) && $_POST['rule_details'] == true) {
 					</tr>
 				</thead>
 				<tbody>
-				<?php while ($row = $result->fetch_assoc()) {
-
-					$redirect_url = $row['redirect_url'];
-					$redirect_campaign = $row['redirect_campaign'];
-
-					if ($row['statement'] == 'is') {
-						$statement = 'is';
-					} else {
-						$statement = 'is not';
+				<?php 
+				$redirects = array();
+				$criteria_displayed = array();
+				
+				while ($row = $result->fetch_assoc()) {
+					// Collect redirect information
+					if (!empty($row['redirect_url']) || !empty($row['redirect_campaign']) || !empty($row['redirect_lp'])) {
+						$redirect_key = $row['redirect_url'] . '|' . $row['redirect_campaign'] . '|' . $row['redirect_lp'];
+						if (!isset($redirects[$redirect_key])) {
+							$redirects[$redirect_key] = array(
+								'redirect_url' => $row['redirect_url'],
+								'redirect_campaign' => $row['redirect_campaign'], 
+								'redirect_lp' => $row['redirect_lp'],
+								'weight' => isset($row['weight']) ? $row['weight'] : null
+							);
+						}
 					}
 
-					?>
-					<tr>
-						<td style="text-align:left; padding-left:10px;">If</td>
-						<td style="text-align:left; padding-left:10px;"><?php echo ucfirst($row['type'])?></td>
-						<td style="text-align:left; padding-left:10px;"><?php echo $statement;?></td>
-						<td style="text-align:left; padding-left:10px;"><?php echo $row['value'];?></td>
-					</tr>
+					// Show criteria (avoid duplicates)
+					if (!empty($row['type'])) {
+						$criteria_key = $row['type'] . '|' . $row['statement'] . '|' . $row['value'];
+						if (!isset($criteria_displayed[$criteria_key])) {
+							if ($row['statement'] == 'is') {
+								$statement = 'is';
+							} else {
+								$statement = 'is not';
+							}
 
-				<?php }
-
-				if ($redirect_campaign != null) {
-					$redirect_campaign_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$redirect_campaign."'";
-					$redirect_campaign_result = $db->query($redirect_campaign_sql);
-					$redirect_campaign_row = $redirect_campaign_result->fetch_assoc();
-				}
+							?>
+							<tr>
+								<td style="text-align:left; padding-left:10px;">If</td>
+								<td style="text-align:left; padding-left:10px;"><?php echo ucfirst($row['type'])?></td>
+								<td style="text-align:left; padding-left:10px;"><?php echo $statement;?></td>
+								<td style="text-align:left; padding-left:10px;"><?php echo $row['value'];?></td>
+							</tr>
+							<?php
+							$criteria_displayed[$criteria_key] = true;
+						}
+					}
+				} // Close while loop
 				?>
 				</tbody>
 			</table>
@@ -648,11 +664,47 @@ if (isset($_POST['rule_details']) && $_POST['rule_details'] == true) {
 					<div class="form-group">
 					    <label for="redirect_url" class="col-sm-3 control-label">Redirects to: </label>
 					    <div class="col-sm-9">
-					    <?php if($redirect_campaign != null) { ?>
-					    	<div class="small" style="margin-top: 10px;"><span class="label label-info"><i><?php echo $redirect_campaign_row['aff_campaign_name'];?></i></span> campaign</div>
-					    <?php } else { ?>
-					      	<input style="color: #34495e" class="form-control input-sm" type="text" value="<?php echo $redirect_url;?>" readonly>
-						<?php } ?>
+					    <?php 
+					    if (count($redirects) > 1) {
+					    	echo '<div class="small" style="margin-top: 10px;"><strong>Split test with ' . count($redirects) . ' redirects:</strong></div>';
+					    }
+					    
+					    foreach ($redirects as $redirect) {
+					    	if (!empty($redirect['redirect_campaign'])) {
+					    		// Get campaign name
+					    		$redirect_campaign_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$redirect['redirect_campaign']."'";
+					    		$redirect_campaign_result = $db->query($redirect_campaign_sql);
+					    		$redirect_campaign_row = $redirect_campaign_result->fetch_assoc();
+					    		
+					    		echo '<div class="small" style="margin-top: 5px;"><span class="label label-info"><i>' . 
+					    		     (isset($redirect_campaign_row['aff_campaign_name']) ? $redirect_campaign_row['aff_campaign_name'] : 'Campaign ID: ' . $redirect['redirect_campaign']) . 
+					    		     '</i></span> campaign';
+					    		if (!empty($redirect['weight'])) echo ' (weight: ' . $redirect['weight'] . ')';
+					    		echo '</div>';
+					    		
+					    	} elseif (!empty($redirect['redirect_lp'])) {
+					    		// Get landing page name  
+					    		$redirect_lp_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect['redirect_lp']."' AND landing_page_deleted='0'";
+					    		$redirect_lp_result = $db->query($redirect_lp_sql);
+					    		$redirect_lp_row = $redirect_lp_result->fetch_assoc();
+					    		
+					    		echo '<div class="small" style="margin-top: 5px;"><span class="label label-success"><i>' . 
+					    		     (isset($redirect_lp_row['landing_page_nickname']) ? $redirect_lp_row['landing_page_nickname'] : 'Landing Page ID: ' . $redirect['redirect_lp']) . 
+					    		     '</i></span> landing page';
+					    		if (!empty($redirect['weight'])) echo ' (weight: ' . $redirect['weight'] . ')';
+					    		echo '</div>';
+					    		
+					    	} elseif (!empty($redirect['redirect_url'])) {
+					    		echo '<div class="small" style="margin-top: 5px;"><span class="label label-default"><i>' . $redirect['redirect_url'] . '</i></span> URL';
+					    		if (!empty($redirect['weight'])) echo ' (weight: ' . $redirect['weight'] . ')';
+					    		echo '</div>';
+					    	}
+					    }
+					    
+					    if (empty($redirects)) {
+					    	echo '<div class="small" style="margin-top: 10px; color: #999;">No redirect configured</div>';
+					    }
+					    ?>
 					    </div>
 					</div>
 				</div>
@@ -892,6 +944,14 @@ if (isset($_POST['rule_defaults']) && $_POST['rule_defaults'] == true && isset($
 
 	if ($rotator_result->num_rows > 0) {
 		$rotator_row = $rotator_result->fetch_assoc();
+	} else {
+		// Initialize with default values if no rotator found
+		$rotator_row = array(
+			'default_campaign' => null,
+			'default_lp' => null,
+			'default_url' => null,
+			'auto_monetizer' => null
+		);
 	} ?>
 	
 				<div class="col-xs-4">
@@ -1286,7 +1346,7 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 																rotator_tags_autocomplete("tag_<?php echo $criteria_row['id'];?>", "<?php echo $criteria_row['type'];?>");
 															<?php } 
 
-															if($rule_row['type'] == 'country') { ?>
+															if(isset($rule_row['type']) && $rule_row['type'] == 'country') { ?>
 																$("#tag_<?php echo $criteria_row['id'];?>").tokenfield("setTokens", <?php print_r(json_encode($country));?>);
 															<?php } else { ?>
 																$("#tag_<?php echo $criteria_row['id'];?>").tokenfield("setTokens", "<?php echo $criteria_row['value'];?>");
@@ -1320,6 +1380,15 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 
 							if ($rule_row['splittest'] == 0) { 
 								$redirects_row = $redirects_result->fetch_assoc();
+							} else {
+								// For split tests, initialize empty redirects_row to prevent undefined variable errors
+								$redirects_row = array(
+									'id' => null,
+									'redirect_campaign' => null,
+									'redirect_lp' => null, 
+									'redirect_url' => null,
+									'auto_monetizer' => null
+								);
 							}
 
 							?>
