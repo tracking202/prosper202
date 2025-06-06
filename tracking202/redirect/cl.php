@@ -11,7 +11,7 @@ if ($clickIdPublic === null) {
     RedirectHelper::redirect('/202-404.php');
 }
 
-$mysql['click_id_public'] = $db->real_escape_string($clickIdPublic);
+$mysql['click_id_public'] = $db->real_escape_string((string)$clickIdPublic);
 
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
@@ -34,18 +34,19 @@ $tracker_sql = "
 ";
 
 $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
-$referrer = $tracker_row['user_pref_cloak_referer'];
 
 if (!$tracker_row) {
 	$action_site_url = "/202-404.php";
 	$redirect_site_url = "/202-404.php";
+	$referrer = '';
+	$html['aff_campaign_name'] = '';
 } else {
 	$action_site_url = "/tracking202/redirect/cl2.php";
 	//modify the redirect site url to go through another cloaked link
-	$redirect_site_url = $tracker_row['site_url_address'];  
-}
-
-$html['aff_campaign_name'] = $tracker_row['aff_campaign_name']; 
+	$redirect_site_url = $tracker_row['site_url_address'];
+	$referrer = $tracker_row['user_pref_cloak_referer'] ?? '';
+	$html['aff_campaign_name'] = $tracker_row['aff_campaign_name'] ?? '';
+} 
 
 if(isset($mysql['202vars'])&&$mysql['202vars']!=''){
 	//remove & at the end of the string

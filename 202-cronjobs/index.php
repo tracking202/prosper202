@@ -63,14 +63,6 @@ try {
     }
 }
 
-/**
- * Helper function for consistent output flushing
- */
-function flushOutput()
-{
-    ob_flush();
-    flush();
-}
 
 function RunDailyCronjob()
 {

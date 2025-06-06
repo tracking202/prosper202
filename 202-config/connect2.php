@@ -24,6 +24,10 @@ DEFINE('CONFIG_PATH', dirname(__FILE__));
 mysqli_report(MYSQLI_REPORT_STRICT);
 include_once(ROOT_PATH . '/202-config.php');
 
+// Get database instance
+$database = DB::getInstance();
+$db = $database->getConnection();
+
 $whatCache = false;
 
 // try to connect to memcache server
@@ -50,6 +54,12 @@ if (extension_loaded('memcache')) {
 function setCache($key, $value, $exp = null)
 {
     global $whatCache, $memcache;
+    
+    // Set default expiration if not provided
+    if ($exp === null) {
+        $exp = 0; // 0 means no expiration
+    }
+    
     switch ($whatCache) {
         case 'memcache':
             return $memcache->set($key, $value, false, $exp);
@@ -70,6 +80,20 @@ require ROOT_PATH . 'vendor/autoload.php';
 
 //determine privacy mode
 if ($memcacheWorking) {
+    // Try to determine tracker/user ID from various possible sources
+    $tid = '';
+    if (isset($_GET['t202id'])) {
+        $tid = $_GET['t202id'];
+    } elseif (isset($_GET['pci'])) {
+        $tid = $_GET['pci'];
+    } elseif (isset($_GET['lpip'])) {
+        $tid = $_GET['lpip'];
+    } elseif (isset($_SESSION['user_id'])) {
+        $tid = $_SESSION['user_id'];
+    } else {
+        // Default to user 1 if no ID is found
+        $tid = '1';
+    }
     $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
 }
 
@@ -410,7 +434,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
     //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
 
     if (isset($mysql) && $mysql != '') {
-        $mysql['click_id'] = $db->real_escape_string($click_id);
+        $mysql['click_id'] = $db->real_escape_string((string)$click_id);
         $tokens = @array(
             "subid" => $mysql['click_id'],
             "t202kw" => $mysql['keyword'],
@@ -686,11 +710,22 @@ class PLATFORMS
 
     public static function parseUserAgentInfo($db, $detect)
     {
-
+        // Get IP address
+        $ip_address_string = $_SERVER['REMOTE_ADDR'] ?? '';
+        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $ip_address_string = $_SERVER['HTTP_X_FORWARDED_FOR'];
+        }
+        
+        // Create IP address object for botCheck
+        $ip_address = new stdClass();
+        $ip_address->address = $ip_address_string;
 
         $parser = Parser::create();
         $result = $parser->parse($detect->getUserAgent());
 
+        // Initialize type with default value
+        $type = "1"; // Default to Desktop
+        
         // If is not mobile or tablet
         if (! $detect->isMobile() && ! $detect->isTablet()) {
 
@@ -702,6 +737,11 @@ class PLATFORMS
                     break;
                 // Is Desktop
                 case 'Other':
+                    $type = "1";
+                    $result->device->family = "Desktop";
+                    break;
+                // Default case for any other device family
+                default:
                     $type = "1";
                     $result->device->family = "Desktop";
                     break;
@@ -722,10 +762,10 @@ class PLATFORMS
         }
 
         // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string($result->ua->family);
-        $mysql['platform'] = $db->real_escape_string($result->os->family);
-        $mysql['device'] = $db->real_escape_string($result->device->family);
-        $mysql['device_type'] = $db->real_escape_string($type);
+        $mysql['browser'] = $db->real_escape_string($result->ua->family ?? 'Unknown');
+        $mysql['platform'] = $db->real_escape_string($result->os->family ?? 'Unknown');
+        $mysql['device'] = $db->real_escape_string($result->device->family ?? 'Unknown');
+        $mysql['device_type'] = $db->real_escape_string((string)$type);
 
 
 
@@ -781,7 +821,7 @@ class PLATFORMS
     {
         global $memcacheWorking, $memcache;
 
-        if ($memcacheWorking) {
+        if ($memcacheWorking && $ip && isset($ip->address)) {
             $getFromCache = $memcache->get(md5("ip-bot" . $ip->address . systemHash()));
         } else {
             $getFromCache = false;
@@ -850,6 +890,11 @@ class PLATFORMS
 
     public static function check_ip_range($ip, $range)
     {
+        // Check if IP object and address property exist
+        if (!$ip || !isset($ip->address) || empty($ip->address)) {
+            return false;
+        }
+        
         if (strpos($range, '/') == false) {
             $range .= '/32';
         }
@@ -1102,13 +1147,22 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        $mysql['ip_address'] = $db->real_escape_string($ip->address);
+        // Handle both string and object input
+        if (is_string($ip)) {
+            $ip_address = $ip;
+            $ip_type = (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) ? 'ipv6' : 'ipv4';
+        } else {
+            $ip_address = $ip->address ?? '';
+            $ip_type = $ip->type ?? 'ipv4';
+        }
 
-        if ($ip->type == 'ipv6') {
+        $mysql['ip_address'] = $db->real_escape_string($ip_address);
+
+        if ($ip_type == 'ipv6') {
             $mysql['ip_address'] = $db->real_escape_string(inet6_aton($mysql['ip_address'])); //encode ipv6 for db insert
         }
 
-        if ($ip->type === 'ipv6') {
+        if ($ip_type === 'ipv6') {
             $ip_sql = 'SELECT 202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address=("' . $mysql['ip_address'] . '") order by 202_ips.ip_id DESC limit 1';
         } else {
             $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
@@ -1132,7 +1186,15 @@ class INDEXES
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 } else {
                     //insert ip
-                    $ip_id = INDEXES::insert_ip($db, $ip);
+                    // Create IP object if we received a string
+                    if (is_string($ip)) {
+                        $ip_obj = new stdClass();
+                        $ip_obj->address = $ip_address;
+                        $ip_obj->type = $ip_type;
+                        $ip_id = INDEXES::insert_ip($db, $ip_obj);
+                    } else {
+                        $ip_id = INDEXES::insert_ip($db, $ip);
+                    }
                     // add to memcached
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 }
@@ -1145,7 +1207,15 @@ class INDEXES
                 $ip_id = $ip_row['ip_id'];
             } else {
                 //insert ip
-                $ip_id = INDEXES::insert_ip($db, $ip);
+                // Create IP object if we received a string
+                if (is_string($ip)) {
+                    $ip_obj = new stdClass();
+                    $ip_obj->address = $ip_address;
+                    $ip_obj->type = $ip_type;
+                    $ip_id = INDEXES::insert_ip($db, $ip_obj);
+                } else {
+                    $ip_id = INDEXES::insert_ip($db, $ip);
+                }
             }
         }
 
@@ -1187,7 +1257,12 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        $parsed_url = @parse_url(trim($db->real_escape_string($site_url_address)));
+        // Handle null or empty site_url_address
+        if ($site_url_address === null || $site_url_address === '') {
+            $site_url_address = '';
+        }
+
+        $parsed_url = @parse_url(trim($db->real_escape_string((string)$site_url_address)));
 
         if (isset($parsed_url)) {
             if (isset($parsed_url['host'])) {
@@ -1260,10 +1335,16 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
         $time = 2592000; // 30 days in sec
+        
+        // Handle null or empty site_url_address
+        if ($site_url_address === null || $site_url_address === '') {
+            $site_url_address = '';
+        }
+        
         $site_domain_id = INDEXES::get_site_domain_id($db, $site_url_address);
 
-        $mysql['site_url_address'] = $db->real_escape_string($site_url_address);
-        $mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
+        $mysql['site_url_address'] = $db->real_escape_string((string)$site_url_address);
+        $mysql['site_domain_id'] = $db->real_escape_string((string)$site_domain_id);
 
         if ($memcacheWorking) {
             $time = 604800; // 7 days in sec
@@ -1949,7 +2030,7 @@ function replaceTokens($url, $tokens = array(), $fillblanks = 0)
 function rawurlencode202($token)
 {
     if (isset($token)) {
-        $token = str_replace('%40', '@', rawurlencode($token));
+        $token = str_replace('%40', '@', rawurlencode((string)$token));
         return $token;
     } else {
         return NULL;
@@ -1958,10 +2039,31 @@ function rawurlencode202($token)
 
 function getGeoData($ip)
 {
+    // Handle both string and object input
+    if (is_string($ip)) {
+        $ip_address = $ip;
+    } else {
+        $ip_address = $ip->address ?? '';
+    }
+
+    // Check if GeoIp2 class exists
+    if (!class_exists('GeoIp2\Database\Reader')) {
+        return array(
+            'country' => '',
+            'country_code' => '',
+            'is_european_union' => false,
+            'state' => '',
+            'city' => '',
+            'postal_code' => '',
+            'lat' => '',
+            'long' => '',
+            'area_code' => '',
+            'dma_code' => '',
+            'network' => ''
+        );
+    }
 
     $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
-
-    $ip_address = $ip->address;
     try {
         $record = $reader->city($ip_address);
         $country = $record->country->name;
