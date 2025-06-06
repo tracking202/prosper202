@@ -14,9 +14,13 @@ $user_row = $user_results->fetch_assoc();
 if (!empty($user_row['url'])) 
 	$slack = new Slack($user_row['url']);
 
+// Initialize variables
+$error = array();
+$success = false;
+
 //make sure a landing page is selected
 	if (empty($_POST['landing_page_id'])) { $error['landing_page_id'] = '<div class="error"><small><span class="fui-alert"></span>You have not selected a landing page to use.</small></div>';  }	
-	echo $error['landing_page_id']; 
+	echo isset($error['landing_page_id']) ? $error['landing_page_id'] : ''; 
 	
 //ok now run through all the offers to make sure they exist, THIS WILL ERROR IF THERE ISN"T A CAMPAIGN SELECTED WHEN RUN
 	$count = 0;

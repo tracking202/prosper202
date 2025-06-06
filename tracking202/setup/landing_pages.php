@@ -235,6 +235,7 @@ if ((isset($_GET['edit_landing_page_id']) || isset($_GET['copy_landing_page_id']
 	$mysql['aff_campaign_id'] = $db->real_escape_string($landing_page_row['aff_campaign_id']);
 	$html['aff_campaign_id'] = htmlentities((string)($landing_page_row['aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['landing_page_id'] = htmlentities((string)($_GET['edit_landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$selected['pixel_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['landing_page_type'] = htmlentities((string)($landing_page_row['landing_page_type'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['landing_page_nickname'] = htmlentities((string)($landing_page_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8') . $append;
 	$html['landing_page_url'] = htmlentities((string)($landing_page_row['landing_page_url'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -308,7 +309,7 @@ template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
 		<span class="infotext">Here you can add different landing pages you might use with your marketing.</span>
 
 		<form method="post" action="<?php if ($delete_success == true) {
-										echo $_SERVER['REDIRECT_URL'];
+										echo isset($_SERVER['REDIRECT_URL']) ? $_SERVER['REDIRECT_URL'] : '';
 									} ?>" class="form-horizontal" role="form" style="margin:15px 0px;">
 			<input name="landing_page_id" type="hidden" value="<?php echo isset($html['landing_page_id']) ? $html['landing_page_id'] : ''; ?>" />
 			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
@@ -405,7 +406,7 @@ template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
 								<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>
 							</div>
 							<div class="col-xs-6">
-								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id']; ?>">
+								<input type="hidden" name="pixel_id" value="<?php echo isset($selected['pixel_id']) ? $selected['pixel_id'] : ''; ?>">
 								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url(); ?>tracking202/setup/landing_pages.php'; return false;">Cancel</button>
 							</div>
 						</div>

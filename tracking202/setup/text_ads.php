@@ -38,12 +38,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if ($_POST['text_ad_type'] == 0) { 
 		
 		//text ad type
-		$aff_campaign_id = trim($_POST['aff_campaign_id']);
+		$aff_campaign_id = trim((string)($_POST['aff_campaign_id'] ?? ''));
 		if (empty($aff_campaign_id)) { $error['aff_campaign_id'] = '<div class="error">What campaign is this advertisement for?</div>'; }
 	
 	
 		//check to see if they are the owners of this affiliate network
-		$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
+		$mysql['aff_campaign_id'] = $db->real_escape_string((string)($_POST['aff_campaign_id'] ?? ''));
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `user_id`='".$mysql['user_id']."' AND `aff_campaign_id`='".$mysql['aff_campaign_id']."'";
 		$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
@@ -288,7 +288,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 				<div class="<?php if($error) echo "error"; else echo "success";?> pull-right" style="margin-top: 20px;">
 					<small>
 						<?php if ($error) { ?> 
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token']; ?>
+							<span class="fui-alert"></span> There were errors with your submission. <?php echo isset($error['token']) ? $error['token'] : ''; ?>
 						<?php } ?>
 						<?php if ($add_success == true) { ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
@@ -316,7 +316,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 		<small><strong>Add Your Text Ads</strong></small><br/>
 		<span class="infotext">Here you can add different text ads you might use with your PPC marketing.</span>
 		
-		<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL']; }?>" class="form-horizontal" role="form" style="margin:15px 0px;">
+		<form method="post" action="<?php if ($delete_success == true) { echo isset($_SERVER['REDIRECT_URL']) ? $_SERVER['REDIRECT_URL'] : ''; }?>" class="form-horizontal" role="form" style="margin:15px 0px;">
 			<input name="text_ad_id" type="hidden" value="<?php echo isset($html['text_ad_id']) ? $html['text_ad_id'] : ''; ?>"/>
 
 			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
