@@ -4,9 +4,9 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
-$count = $_POST['counter'];
+$count = isset($_POST['counter']) ? (int)$_POST['counter'] : 0;
 $count = $count + 1;  
-$html['count'] = htmlentities($count, ENT_QUOTES, 'UTF-8');
+$html['count'] = htmlentities((string)$count, ENT_QUOTES, 'UTF-8');
 
 ?>
 

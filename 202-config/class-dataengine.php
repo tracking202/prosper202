@@ -25,7 +25,7 @@ class DataEngine
      * Check if database connection is available
      * @return bool
      */
-    private function isDatabaseConnected(): bool
+    public function isDatabaseConnected(): bool
     {
         return self::$db !== null && self::$db instanceof mysqli;
     }
@@ -1725,6 +1725,7 @@ ORDER BY ppc_network_id , name , variable";
                     case 'leads':
                     case 'click_out':
                         $html[$prepend . $key] = htmlentities(number_format((int)$data_row), ENT_QUOTES, 'UTF-8');
+
                         break;
                     case 'su_ratio':
 
@@ -1745,7 +1746,8 @@ ORDER BY ppc_network_id , name , variable";
                         $html[$prepend . $key] = htmlentities(dollar_format($data_row, $currency_row['user_account_currency'], $cpv), ENT_QUOTES, 'UTF-8');
                         break;
                     case 'roi':
-                        $html[$prepend . $key] = htmlentities(number_format((float)$data_row) . '%', ENT_QUOTES, 'UTF-8');
+                        $html[$prepend . $key] = htmlentities(number_format((float)($data_row ?? 0)) . '%', ENT_QUOTES, 'UTF-8');
+
                         break;
                     case 'click_time_from_disp':
                         $upper = array(

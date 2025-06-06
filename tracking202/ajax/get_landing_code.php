@@ -14,12 +14,17 @@ $user_row = $user_results->fetch_assoc();
 if (!empty($user_row['url'])) 
 	$slack = new Slack($user_row['url']);
 	
+// Initialize error array
+$error = array();
+
 //check variables
 	if(empty($_POST['aff_network_id'])) { $error['aff_network_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate network.</small></div>'; }
 	if(empty($_POST['aff_campaign_id'])) { $error['aff_campaign_id'] = '<div class="error"><small><span class="fui-alert"></span>You have not selected an affiliate campaign.</small></div>'; }
 	if(empty($_POST['method_of_promotion'])) { $error['method_of_promotion'] = '<div class="error"><small><span class="fui-alert"></span>You have to select your method of promoting this affiliate link.</small></div>'; }
 	
-	echo $error['aff_network_id'] . $error['aff_campaign_id'] . $error['method_of_promotion'];
+	echo (isset($error['aff_network_id']) ? $error['aff_network_id'] : '') . 
+	     (isset($error['aff_campaign_id']) ? $error['aff_campaign_id'] : '') . 
+	     (isset($error['method_of_promotion']) ? $error['method_of_promotion'] : '');
 	
 	if ($error) { die(); }  
 	
@@ -30,12 +35,17 @@ if (!empty($user_row['url']))
 			$error['landing_page_id'] = '<div class="error"><small><span class="fui-alert"></span>You have not selected a landing page to use.</small></div>'; 
 		}
 		
-		echo $error['landing_page_id']; 
-		if ($error['landing_page_id']) { die(); }    
+		echo isset($error['landing_page_id']) ? $error['landing_page_id'] : ''; 
+		if (isset($error['landing_page_id'])) { die(); }    
 	}
 
 //echo error
-	echo $error['text_ad_id'] . $error['ppc_network_id'] . $error['ppc_account_id'] . $error['cpc'] . $error['click_cloaking'] . $error['cloaking_url'];
+	echo (isset($error['text_ad_id']) ? $error['text_ad_id'] : '') . 
+	     (isset($error['ppc_network_id']) ? $error['ppc_network_id'] : '') . 
+	     (isset($error['ppc_account_id']) ? $error['ppc_account_id'] : '') . 
+	     (isset($error['cpc']) ? $error['cpc'] : '') . 
+	     (isset($error['click_cloaking']) ? $error['click_cloaking'] : '') . 
+	     (isset($error['cloaking_url']) ? $error['cloaking_url'] : '');
 
 //show tracking code
 
