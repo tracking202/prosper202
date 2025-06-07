@@ -685,7 +685,12 @@ $(document).on('click', '#build_chart_form_submit', function() {
 	$.post("/tracking202/ajax/charts.php", {levels: levels, types: types})
 		.done(function(data) {
 			$('#buildChartModal').modal('hide');
-			set_user_prefs('/tracking202/ajax/account_overview.php');
+			// Wait for modal to completely hide before reloading content
+			$('#buildChartModal').on('hidden.bs.modal', function () {
+				set_user_prefs('/tracking202/ajax/account_overview.php');
+				// Unbind the event to prevent it from firing multiple times
+				$(this).off('hidden.bs.modal');
+			});
 	});
 	
 });
