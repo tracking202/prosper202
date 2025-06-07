@@ -17,7 +17,7 @@ AUTH::require_user();
             $html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
             $html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
-            if ($_POST['aff_network_id'] == $aff_network_row['aff_network_id']) {
+            if (isset($_POST['aff_network_id']) && $_POST['aff_network_id'] == $aff_network_row['aff_network_id']) {
                 $selected = 'selected=""';   
             } else {
                 $selected = '';  

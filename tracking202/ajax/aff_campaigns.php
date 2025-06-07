@@ -4,7 +4,7 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
-$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);      
+$mysql['aff_network_id'] = isset($_POST['aff_network_id']) ? $db->real_escape_string((string)$_POST['aff_network_id']) : '0';      
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
         $aff_campaign_sql = "SELECT * 
                              FROM `202_aff_campaigns` 
@@ -12,7 +12,7 @@ $mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_i
                              AND `aff_network_id`='".$mysql['aff_network_id']."' 
 							 AND `aff_campaign_deleted`='0' 
                              ORDER BY `aff_campaign_name` ASC";
-        $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sqlql);
+        $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
 
         if ($aff_campaign_result->num_rows == 0) { ?>
         
@@ -30,7 +30,7 @@ $mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_i
 				$html['aff_campaign_name'] = htmlentities((string)($aff_campaign_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 				$html['aff_campaign_payout'] = htmlentities((string)($aff_campaign_row['aff_campaign_payout'] ?? ''), ENT_QUOTES, 'UTF-8');
                 
-                if ($_POST['aff_campaign_id'] == $aff_campaign_row['aff_campaign_id']) {
+                if (isset($_POST['aff_campaign_id']) && $_POST['aff_campaign_id'] == $aff_campaign_row['aff_campaign_id']) {
                     $selected = 'selected=""';   
                 } else {
                     $selected = '';  

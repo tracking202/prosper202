@@ -9,6 +9,8 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 
 // Initialize error array
 $error = array();
+// Initialize html array
+$html = array();
 
 $from = explode('/', $_POST['from'] ?? '');
 $from_month = isset($from[0]) ? $from[0] : '';
@@ -23,7 +25,7 @@ $to_year = isset($to[2]) ? $to[2] : '';
 
 //if from or to, validate, and if validated, set it accordingly
 
-if ((!$_POST['from']) and (!$_POST['to'])) {
+if ((!isset($_POST['from']) || !$_POST['from']) and (!isset($_POST['to']) || !$_POST['to'])) {
 	$error['time'] = '<div class="error">Please enter in the dates from and to like this <strong>mm/dd/yyyy</strong></div>';
 }
 $clean['from'] = mktime(0, 0, 0, (int)$from_month, (int)$from_day, (int)$from_year);
@@ -40,7 +42,7 @@ $mysql['to'] = $db->real_escape_string((string)$clean['to']);
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 //check affiliate network id, that you own
-if ($_POST['aff_network_id']) {
+if (isset($_POST['aff_network_id']) && $_POST['aff_network_id']) {
 	$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);
 	$aff_network_sql = "SELECT * FROM 202_aff_networks WHERE aff_network_id='" . $mysql['aff_network_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
 	$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
@@ -85,10 +87,9 @@ if (isset($_POST['text_ad_id']) && $_POST['text_ad_id']) {
 }
 
 //check method of promotion, that you own
-if ($_POST['method_of_promotion']) {
+if (isset($_POST['method_of_promotion']) && $_POST['method_of_promotion']) {
 	if ($_POST['method_of_promotion'] == 'landingpage') {
 		$html['method_of_promotion'] = 'Landing pages';
-		//ITS ON 5 NOT EQULA To 5, because 5 IS IN OUR DB, AS A SITE WITH NO URL!!!! AS THE SITE_URL_ID
 		$mysql['method_of_promotion'] = ' AND click_landing_site_url_id!=\'0\' ';
 	} else {
 		$html['method_of_promotion'] = 'Direct links';
@@ -99,8 +100,8 @@ if ($_POST['method_of_promotion']) {
 }
 
 //check landing_page id, that you own
-if (($_POST['method_of_promotion'] == 'landingpage') or ($_POST['tracker_type'] == 1)) {
-	if ($_POST['landing_page_id']) {
+if ((isset($_POST['method_of_promotion']) && $_POST['method_of_promotion'] == 'landingpage') or (isset($_POST['tracker_type']) && $_POST['tracker_type'] == 1)) {
+	if (isset($_POST['landing_page_id']) && $_POST['landing_page_id']) {
 		$mysql['landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);
 		$landing_page_sql = "SELECT * FROM 202_landing_pages WHERE landing_page_id='" . $mysql['landing_page_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
 		$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
@@ -118,7 +119,7 @@ if (($_POST['method_of_promotion'] == 'landingpage') or ($_POST['tracker_type'] 
 }
 
 //check affiliate network id, that you own
-if ($_POST['ppc_network_id']) {
+if (isset($_POST['ppc_network_id']) && $_POST['ppc_network_id']) {
 	$mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
 	$ppc_network_sql = "SELECT * FROM 202_ppc_networks WHERE ppc_network_id='" . $mysql['ppc_network_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
 	$ppc_network_result = $db->query($ppc_network_sql) or record_mysql_error($ppc_network_sql);
@@ -147,7 +148,7 @@ if (isset($_POST['ppc_account_id']) && $_POST['ppc_account_id']) {
 	$html['ppc_account_name'] = 'ALL your PPC accounts in these PPC networks';
 }
 
-if ((!is_numeric($_POST['cpc_dollars'])) or (!is_numeric($_POST['cpc_cents']))) {
+if ((!isset($_POST['cpc_dollars']) || !is_numeric($_POST['cpc_dollars'])) or (!isset($_POST['cpc_cents']) || !is_numeric($_POST['cpc_cents']))) {
 	$error['cpc'] = '<div class="error">You did not input a numeric max CPC.</div>';
 } else {
 	$click_cpc = $_POST['cpc_dollars'] . '.' . $_POST['cpc_cents'];
