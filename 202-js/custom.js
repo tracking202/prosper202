@@ -682,16 +682,21 @@ $(document).on('click', '#build_chart_form_submit', function() {
 		});
 	});
 
+	// First hide the modal and remove backdrop manually
+	$('#buildChartModal').modal('hide');
+	$('.modal-backdrop').remove();
+	$('body').removeClass('modal-open');
+	
+	// Then make the AJAX call
 	$.post("/tracking202/ajax/charts.php", {levels: levels, types: types})
 		.done(function(data) {
-			$('#buildChartModal').modal('hide');
-			// Wait for modal to completely hide before reloading content
-			$('#buildChartModal').on('hidden.bs.modal', function () {
-				set_user_prefs('/tracking202/ajax/account_overview.php');
-				// Unbind the event to prevent it from firing multiple times
-				$(this).off('hidden.bs.modal');
-			});
-	});
+			// Reload the content after successful AJAX call
+			set_user_prefs('/tracking202/ajax/account_overview.php');
+		})
+		.fail(function() {
+			// Handle error case
+			alert('Error updating chart. Please try again.');
+		});
 	
 });
 
