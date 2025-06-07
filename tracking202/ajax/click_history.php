@@ -86,7 +86,7 @@ LEFT JOIN 202_site_domains as 2ccd ON (2ccd.site_domain_id = 2cc.site_domain_id)
 LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.site_domain_id) 
 ";
 	$db_table = "2c";
-	$query = query($command, $db_table, true, true, true, '  ORDER BY 2c.click_id DESC ', $_POST['offset'], true, true);
+	$query = query($command, $db_table, true, true, true, '  ORDER BY 2c.click_id DESC ', (isset($_POST['offset']) ? $_POST['offset'] : 0), true, true);
 }
 
 

@@ -117,7 +117,7 @@ if ($userObj->hasPermission("access_to_campaign_data")) {
 				type: 'line'
 			},
 			title: {
-				text: 'From <?php echo date('d/m/Y', $mysql['from']); ?> to <?php echo date('d/m/Y', $mysql['to']); ?>'
+				text: 'From <?php echo date('d/m/Y', (int)$mysql['from']); ?> to <?php echo date('d/m/Y', (int)$mysql['to']); ?>'
 			},
 			xAxis: {
 				categories: [<?php foreach ($rangePeriod as $range) {
