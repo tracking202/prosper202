@@ -658,6 +658,7 @@ ORDER BY aff_campaign_id ASC"; */
     {
         $mysql['from'] = $clickFrom;
         $mysql['to'] = $clickTo;
+        $data = array();
         $click_sql = "select";
 
         if ($type == 'slp_direct_link') {
@@ -735,6 +736,11 @@ ORDER BY aff_campaign_id ASC"; */
                 $data[$click_row[$select_by_id]] = $this->htmlFormat($click_row, $cpv, 'total');
                 $ids[] = $click_row[$select_by_id];
             }
+        }
+
+        // If no IDs found, return empty data array
+        if (empty($ids)) {
+            return $data;
         }
 
         $ppc_sql = "select
@@ -3086,10 +3092,10 @@ class DisplayData
 
             switch ($reportType) {
                 case 'LpOverview':
-                    $featureKey = $html['landing_page_nickname'];
+                    $featureKey = isset($html['landing_page_nickname']) ? $html['landing_page_nickname'] : '';
                     break;
                 case 'campaignOverview':
-                    $featureKey = $html['aff_network_name'] . ' - ' . $html['aff_campaign_name'];
+                    $featureKey = (isset($html['aff_network_name']) ? $html['aff_network_name'] : '') . ' - ' . (isset($html['aff_campaign_name']) ? $html['aff_campaign_name'] : '');
                     break;
                 case 'breakdown':
                 case 'hourly':
