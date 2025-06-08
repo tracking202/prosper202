@@ -2,7 +2,7 @@
 declare(strict_types=1);
 include_once(str_repeat("../", 1).'202-config/connect.php');
 
-if ($_SESSION['toolbar'] == 'true')
+if (isset($_SESSION['toolbar']) && $_SESSION['toolbar'] == 'true')
 	$redir_url = get_absolute_url().'202-Mobile/';
 else
 	$redir_url = get_absolute_url();
