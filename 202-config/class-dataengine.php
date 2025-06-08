@@ -39,13 +39,13 @@ class DataEngine
         if ($this->isDatabaseConnected()) {
             return self::$db;
         }
-        
+
         // Fallback to global database connection
         global $db;
         if ($db && $db instanceof mysqli) {
             return $db;
         }
-        
+
         return null;
     }
 
@@ -495,7 +495,8 @@ class DataEngine
                 if ($site_url_row) {
                     // if this site_url_id already exists, return the site_url_id for it.
                     $site_url_id = $site_url_row['site_url_id'];
-                    $setID = $memcache->set(md5("url-id" . $site_url_address . systemHash()), $site_url_id, false, $time);
+                    // Use the setCache wrapper function that handles both Memcache and Memcached correctly
+                    $setID = setCache(md5("url-id" . $site_url_address . systemHash()), $site_url_id, $time);
                     return $site_url_id;
                 }
             }
