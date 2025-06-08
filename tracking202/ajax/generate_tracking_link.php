@@ -54,8 +54,10 @@ $html = array();
 			$error['landing_page_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected a landing page to use.</small></div>'; 
 		}
 		
-		echo $error['landing_page_id']; 
-		if ($error['landing_page_id']) { die(); }    
+		if (isset($error['landing_page_id'])) {
+			echo $error['landing_page_id'];
+			die();
+		}    
 	}
 
 //echo error
@@ -68,29 +70,29 @@ $html = array();
 
 //show tracking code
 
-	$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? ''));
-	$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `landing_page_id`='".$mysql['landing_page_id']."'";
+	$input_landing_page_id = $db->real_escape_string((string)($_POST['landing_page_id'] ?? '0'));
+	$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `landing_page_id`='".$input_landing_page_id."'";
 	$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 	$landing_page_row = $landing_page_result->fetch_assoc();
 	
-	if ($_POST['cost_type'] == 'cpc') {
-		$click_cpc = $_POST['cpc_dollars'] . '.' . $_POST['cpc_cents'];
+	if (isset($_POST['cost_type']) && $_POST['cost_type'] == 'cpc') {
+		$click_cpc = ($_POST['cpc_dollars'] ?? '0') . '.' . ($_POST['cpc_cents'] ?? '00');
 		$mysql['click_cpc'] = $db->real_escape_string($click_cpc);
 		$cost_sql = "`click_cpc`='".$mysql['click_cpc']."',";
-	} else if ($_POST['cost_type'] == 'cpa') {
-		$click_cpa = $_POST['cpa_dollars'] . '.' . $_POST['cpa_cents'];
+	} else if (isset($_POST['cost_type']) && $_POST['cost_type'] == 'cpa') {
+		$click_cpa = ($_POST['cpa_dollars'] ?? '0') . '.' . ($_POST['cpa_cents'] ?? '00');
 		$mysql['click_cpa'] = $db->real_escape_string($click_cpa);
 		$cost_sql = "`click_cpa`='".$mysql['click_cpa']."',";
 	}
 
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-	$mysql['aff_campaign_id'] = $db->real_escape_string((string)($_POST['aff_campaign_id'] ?? ''));
-	$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? ''));
-	$mysql['ppc_network_id'] = $db->real_escape_string((string)($_POST['ppc_network_id'] ?? '')); 
-	$mysql['ppc_account_id'] = $db->real_escape_string((string)($_POST['ppc_account_id'] ?? '')); 
-	$mysql['click_cloaking'] = $db->real_escape_string((string)($_POST['click_cloaking'] ?? '')); 
-	$mysql['landing_page_id'] = $db->real_escape_string((string)($landing_page_row['landing_page_id'] ?? ''));
-	$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['tracker_rotator'] ?? ''));
+	$mysql['aff_campaign_id'] = $db->real_escape_string((string)($_POST['aff_campaign_id'] ?? '0'));
+	$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
+	$mysql['ppc_network_id'] = $db->real_escape_string((string)($_POST['ppc_network_id'] ?? '0')); 
+	$mysql['ppc_account_id'] = $db->real_escape_string((string)($_POST['ppc_account_id'] ?? '0')); 
+	$mysql['click_cloaking'] = $db->real_escape_string((string)($_POST['click_cloaking'] ?? '0')); 
+	$mysql['landing_page_id'] = $db->real_escape_string((string)($landing_page_row['landing_page_id'] ?? '0'));
+	$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['tracker_rotator'] ?? '0'));
 	$mysql['tracker_time'] = time();
 	
 
@@ -150,10 +152,10 @@ $html = array();
 	$mysql['tracker_id'] = $db->real_escape_string((string)$tracker_row['tracker_id']);
 
 	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
-		$mysql['tracker_id_public'] = $db->real_escape_string($get_tracker_row['tracker_id_public']);
+		$mysql['tracker_id_public'] = $db->real_escape_string((string)$get_tracker_row['tracker_id_public']);
 	} else {
 		$tracker_id_public = rand(1,9) . $tracker_row['tracker_id'] . rand(1,9);
-		$mysql['tracker_id_public'] = $db->real_escape_string($tracker_id_public);
+		$mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
 	}
 	
 	$tracker_id_public = $mysql['tracker_id_public'];
@@ -163,8 +165,10 @@ $html = array();
 					WHERE		`tracker_id`='".$mysql['tracker_id']."'"; 
 	$tracker_result = $db->query($tracker_sql) or record_mysql_error($tracker_sql);
 
-	$landing_page_url = ($landing_page_row && isset($landing_page_row['landing_page_url'])) ? $landing_page_row['landing_page_url'] : '';
-	$parsed_url = !empty($landing_page_url) ? parse_url($landing_page_url) : array();
+	$parsed_url = array();
+	if (!empty($landing_page_row['landing_page_url'])) {
+		$parsed_url = parse_url($landing_page_row['landing_page_url']);
+	}
 
 	//setup array of all internally recognized url variables
 	$t202variables = array(
@@ -186,6 +190,9 @@ $html = array();
 	
 	$get_variables = "SELECT * FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = 0";
 	$get_variables_result = $db->query($get_variables);
+	
+	// Initialize html array
+	$html = array();
 	
 	//loop over all our internal vars to see if user has set up a custom var in step 1
 	if ($get_variables_result->num_rows > 0) {
@@ -211,7 +218,7 @@ $html = array();
             $html[$key] = $db->real_escape_string(trim($_POST[$key]));
         }
         if (isset($html[$key]) || $key=='t202kw')
-            $tracking_variable_string .= $key . '=' . (isset($html[$key]) ? $html[$key] : '') . '&'; //now write out the values/ but only if they are not empty with the exception of t202kw with we will write out no matter what
+            $tracking_variable_string .= $key . '=' . ($html[$key] ?? '') . '&'; //now write out the values/ but only if they are not empty with the exception of t202kw with we will write out no matter what
     }
     
     //remove & from end of the variable
@@ -272,7 +279,7 @@ $html = array();
 			if ($_POST['method_of_promotion'] == 'landingpage' || $_POST['tracker_type'] == '1') {
 				if (($get_tracker_row['landing_page_id']) && $_POST['landing_page_id'] != $get_tracker_row['landing_page_id']) {
 					
-					$mysql['landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);
+					$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? '0'));
 					$sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$mysql['landing_page_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -281,10 +288,10 @@ $html = array();
 				}
 			}
 
-			if ($_POST['tracker_type'] == '0' || $_POST['tracker_type'] == '1') {
+			if (isset($_POST['tracker_type']) && ($_POST['tracker_type'] == '0' || $_POST['tracker_type'] == '1')) {
 
 				if (isset($_POST['text_ad_id']) && $get_tracker_row['text_ad_id']) {
-					$mysql['text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);
+					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -293,7 +300,7 @@ $html = array();
 				}
 
 				if (isset($_POST['text_ad_id']) && !$get_tracker_row['text_ad_id']) {
-					$mysql['text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);
+					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -338,7 +345,7 @@ $html = array();
 				$slack->push('tracking_link_ppc_account_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_account' => $get_tracker_row['ppc_account_name'], 'new_account' => $row['ppc_account_name'], 'user' => $user_row['username']));
 			}
 
-			if ($_POST['cost_type'] == 'cpc') {
+			if (isset($_POST['cost_type']) && $_POST['cost_type'] == 'cpc') {
 				if ($get_tracker_row['click_cpc'] == null) {
 					$slack->push('tracking_link_cost_type_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_type' => 'CPA', 'new_type' => 'CPC', 'user' => $user_row['username']));
 				} else {

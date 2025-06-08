@@ -347,7 +347,9 @@ template_top('Get Trackers', NULL, NULL, NULL);  ?>
 							$placeholders = !empty($tracker_row['placeholders']) ? explode(',', $tracker_row['placeholders']) : array();
 
 							foreach ($parameters as $key => $value) {
-								$vars_query .= '&' . $value . '=' . $placeholders[$key];
+								if (isset($placeholders[$key])) {
+									$vars_query .= '&' . $value . '=' . $placeholders[$key];
+								}
 							}
 
 							if ($tracker_row['landing_page_id']) {
