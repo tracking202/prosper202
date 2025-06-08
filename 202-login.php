@@ -21,7 +21,7 @@ $user_results = $db->query($user_sql);
 $detect = new Mobile_Detect;
 $parser = Parser::create();
 $userAgent = $detect->getUserAgent();
-if ($userAgent === null || $userAgent === '') {
+if (empty($userAgent)) {
     $userAgent = 'Unknown/1.0';
 }
 $result = $parser->parse($userAgent);
