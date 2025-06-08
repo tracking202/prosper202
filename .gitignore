@@ -13,3 +13,6 @@ docker-compose.yaml
 .claude/settings.json
 ajax_crawler.php
 site_crawler.php
+PAGE_ERROR_CHECKLIST.md
+.phpunit.result.cache
+/build
