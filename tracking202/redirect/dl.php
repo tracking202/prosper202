@@ -258,7 +258,7 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 		} elseif (isset($_GET['words']) && $_GET['words']) { //if this is a Rambler, or more keyword
 			$keyword = $db->real_escape_string((string)$_GET['words']);
 		} else {
-			$keyword = $db->real_escape_string((string)$_GET['t202kw']);
+			$keyword = isset($_GET['t202kw']) ? $db->real_escape_string((string)$_GET['t202kw']) : '';
 		}
 		break;
 }
