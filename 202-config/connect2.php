@@ -722,7 +722,8 @@ class PLATFORMS
 
 
         $parser = Parser::create();
-        $result = $parser->parse($detect->getUserAgent());
+        $userAgent = $detect->getUserAgent() ?: '';
+        $result = $parser->parse($userAgent);
 
         // Initialize type to default desktop
         $type = "1";
