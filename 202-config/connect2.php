@@ -54,12 +54,10 @@ if (extension_loaded('memcache')) {
 function setCache($key, $value, $exp = null)
 {
     global $whatCache, $memcache;
-    
-    // Set default expiration if not provided
+    // Default expiration time if not provided
     if ($exp === null) {
-        $exp = 0; // 0 means no expiration
+        $exp = 2592000; // 30 days in seconds
     }
-    
     switch ($whatCache) {
         case 'memcache':
             return $memcache->set($key, $value, false, $exp);
@@ -77,6 +75,28 @@ include_once(CONFIG_PATH . '/geo/inc/geoipregionvars.php');
 include_once(CONFIG_PATH . '/Mobile_Detect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
+
+// Initialize $tid and $db variables to prevent undefined variable errors
+if (!isset($tid)) {
+    // If $t202id is set (from dl.php), use that for $tid
+    if (isset($t202id) && is_numeric($t202id)) {
+        $tid = $t202id;
+    } else {
+        $tid = 1; // Default to user_id 1 if not set
+    }
+}
+
+// Initialize database connection using the DB class from 202-config.php
+if (!isset($db)) {
+    try {
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+    } catch (Exception $e) {
+        // Log error but don't interrupt execution
+        error_log('Database connection error in connect2.php: ' . $e->getMessage());
+        $db = null; // dl.php checks if $db is falsey
+    }
+}
 
 //determine privacy mode
 if ($memcacheWorking) {
@@ -97,9 +117,15 @@ if ($memcacheWorking) {
     $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
 }
 
-//exit strict mode
-$user_sql = "SET session sql_mode= ''";
-$user_results = $db->query($user_sql);
+//exit strict mode - only if db connection is available
+if ($db) {
+    $user_sql = "SET session sql_mode= ''";
+    try {
+        $user_results = $db->query($user_sql);
+    } catch (Exception $e) {
+        error_log('Error setting SQL mode in connect2.php: ' . $e->getMessage());
+    }
+}
 
 
 if (!isset($_SESSION['privacy'])) {
@@ -710,18 +736,23 @@ class PLATFORMS
 
     public static function parseUserAgentInfo($db, $detect)
     {
-        // Get IP address
-        $ip_address_string = $_SERVER['REMOTE_ADDR'] ?? '';
-        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $ip_address_string = $_SERVER['HTTP_X_FORWARDED_FOR'];
+        global $ip_address;
+
+        // Ensure ip_address is available for botCheck
+        if (!isset($ip_address)) {
+            $ip_address_string = $_SERVER['REMOTE_ADDR'] ?? '';
+            if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+                $ip_address_string = $_SERVER['HTTP_X_FORWARDED_FOR'];
+            }
+            $ip_address = $ip_address_string;
         }
-        
-        // Create IP address object for botCheck
-        $ip_address = new stdClass();
-        $ip_address->address = $ip_address_string;
 
         $parser = Parser::create();
-        $result = $parser->parse($detect->getUserAgent());
+        $userAgent = $detect->getUserAgent() ?: '';
+        $result = $parser->parse($userAgent);
+
+        // Initialize type to default desktop
+        $type = "1";
 
         // Initialize type with default value
         $type = "1"; // Default to Desktop
@@ -740,7 +771,7 @@ class PLATFORMS
                     $type = "1";
                     $result->device->family = "Desktop";
                     break;
-                // Default case for any other device family
+                // Default case for any other desktop device
                 default:
                     $type = "1";
                     $result->device->family = "Desktop";
@@ -756,15 +787,15 @@ class PLATFORMS
             }
         }
 
-        if (PLATFORMS::botCheck($ip_address)) {
+        if (isset($ip_address) && $ip_address && PLATFORMS::botCheck($ip_address)) {
             $type = "4";
             $result->device->family = "Bot";
         }
 
         // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string($result->ua->family ?? 'Unknown');
-        $mysql['platform'] = $db->real_escape_string($result->os->family ?? 'Unknown');
-        $mysql['device'] = $db->real_escape_string($result->device->family ?? 'Unknown');
+        $mysql['browser'] = $db->real_escape_string((string)($result->ua->family ?? ''));
+        $mysql['platform'] = $db->real_escape_string((string)($result->os->family ?? ''));
+        $mysql['device'] = $db->real_escape_string((string)($result->device->family ?? ''));
         $mysql['device_type'] = $db->real_escape_string((string)$type);
 
 
@@ -2046,20 +2077,18 @@ function getGeoData($ip)
         $ip_address = $ip->address ?? '';
     }
 
-    // Check if GeoIp2 class exists
+    // Check if GeoIP2 Reader class exists
     if (!class_exists('GeoIp2\Database\Reader')) {
+        // Fallback to legacy method
         return array(
             'country' => '',
             'country_code' => '',
             'is_european_union' => false,
-            'state' => '',
+            'continent' => '',
             'city' => '',
-            'postal_code' => '',
-            'lat' => '',
-            'long' => '',
-            'area_code' => '',
-            'dma_code' => '',
-            'network' => ''
+            'region' => '',
+            'region_code' => '',
+            'postal' => ''
         );
     }
 

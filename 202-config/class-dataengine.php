@@ -39,13 +39,13 @@ class DataEngine
         if ($this->isDatabaseConnected()) {
             return self::$db;
         }
-        
+
         // Fallback to global database connection
         global $db;
         if ($db && $db instanceof mysqli) {
             return $db;
         }
-        
+
         return null;
     }
 
@@ -495,7 +495,8 @@ class DataEngine
                 if ($site_url_row) {
                     // if this site_url_id already exists, return the site_url_id for it.
                     $site_url_id = $site_url_row['site_url_id'];
-                    $setID = $memcache->set(md5("url-id" . $site_url_address . systemHash()), $site_url_id, false, $time);
+                    // Use the setCache wrapper function that handles both Memcache and Memcached correctly
+                    $setID = setCache(md5("url-id" . $site_url_address . systemHash()), $site_url_id, $time);
                     return $site_url_id;
                 }
             }
@@ -658,6 +659,7 @@ ORDER BY aff_campaign_id ASC"; */
     {
         $mysql['from'] = $clickFrom;
         $mysql['to'] = $clickTo;
+        $data = array();
         $click_sql = "select";
 
         if ($type == 'slp_direct_link') {
@@ -735,6 +737,11 @@ ORDER BY aff_campaign_id ASC"; */
                 $data[$click_row[$select_by_id]] = $this->htmlFormat($click_row, $cpv, 'total');
                 $ids[] = $click_row[$select_by_id];
             }
+        }
+
+        // If no IDs found, return empty data array
+        if (empty($ids)) {
+            return $data;
         }
 
         $ppc_sql = "select
@@ -3096,10 +3103,10 @@ class DisplayData
 
             switch ($reportType) {
                 case 'LpOverview':
-                    $featureKey = $html['landing_page_nickname'];
+                    $featureKey = isset($html['landing_page_nickname']) ? $html['landing_page_nickname'] : '';
                     break;
                 case 'campaignOverview':
-                    $featureKey = $html['aff_network_name'] . ' - ' . $html['aff_campaign_name'];
+                    $featureKey = (isset($html['aff_network_name']) ? $html['aff_network_name'] : '') . ' - ' . (isset($html['aff_campaign_name']) ? $html['aff_campaign_name'] : '');
                     break;
                 case 'breakdown':
                 case 'hourly':

@@ -165,7 +165,7 @@ $cb_verified = $user_row['cb_verified'];
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// ClickBank Key Update
-	if ($_POST['change_cb_key'] == '1') {
+	if (isset($_POST['change_cb_key']) && $_POST['change_cb_key'] == '1') {
 		$config = [
 			'post_key' => 'cb_key',
 			'field_name' => 'cb_key',
@@ -177,7 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// Slack Webhook Update
-	if ($_POST['change_user_slack_incoming_webhook'] == '1') {
+	if (isset($_POST['change_user_slack_incoming_webhook']) && $_POST['change_user_slack_incoming_webhook'] == '1') {
 		$config = [
 			'post_key' => 'user_slack_incoming_webhook',
 			'field_name' => 'user_slack_incoming_webhook',
@@ -189,7 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// Zaxaa API Signature Update
-	if ($_POST['change_zaxaa_api_signature'] == '1') {
+	if (isset($_POST['change_zaxaa_api_signature']) && $_POST['change_zaxaa_api_signature'] == '1') {
 		$config = [
 			'post_key' => 'zaxaa_api_signature',
 			'field_name' => 'zaxaa_api_signature',
@@ -201,7 +201,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// JVZoo Secret Key Update
-	if ($_POST['change_jvzoo_secret_key'] == '1') {
+	if (isset($_POST['change_jvzoo_secret_key']) && $_POST['change_jvzoo_secret_key'] == '1') {
 		$config = [
 			'post_key' => 'jvzoo_ipn_secret_key',
 			'field_name' => 'jvzoo_ipn_secret_key',
@@ -213,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// IPQualityScore API Key Update
-	if ($_POST['change_ipqs_api_key'] == '1') {
+	if (isset($_POST['change_ipqs_api_key']) && $_POST['change_ipqs_api_key'] == '1') {
 		$config = [
 			'post_key' => 'ipqs_api_key',
 			'field_name' => 'ipqs_api_key',

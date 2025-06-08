@@ -15,7 +15,7 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
-	if ($_POST['chart_time_range']) {
+	if (isset($_POST['chart_time_range']) && $_POST['chart_time_range']) {
 		header("Content-type: text/json");
 		$data = array();
 		$range = array();

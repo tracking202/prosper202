@@ -124,7 +124,7 @@ if ($userObj->hasPermission("access_to_personal_settings")) {
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
-	if ($_POST['update_profile'] == '1') {
+	if (isset($_POST['update_profile']) && $_POST['update_profile'] == '1') {
 
 		if ($_POST['token'] != $_SESSION['token']) {
 			$error['token'] = 'You must use our forms to submit data.';
@@ -135,8 +135,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		if ($userObj->hasPermission("access_to_personal_settings")) {
 			//check user_email
-			if (!$error['user_email_invalid']) {
-				$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
+			if (!isset($error['user_email_invalid']) || !$error['user_email_invalid']) {
+				$mysql['user_email'] = $db->real_escape_string((string)(isset($_POST['user_email']) ? $_POST['user_email'] : ''));
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$count_sql = "	SELECT 	*
 							  	FROM  		`202_users` 
@@ -174,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$mysql['user_timezone'] = $db->real_escape_string((string)$_POST['user_timezone']);
 				$mysql['user_daily_email'] = $db->real_escape_string((string)$_POST['user_daily_email']);
-				$mysql['cache_time'] = $db->real_escape_string((string)$_POST['user_cached_reports']);
+				$mysql['cache_time'] = $db->real_escape_string((string)(isset($_POST['user_cached_reports']) ? $_POST['user_cached_reports'] : ''));
 				$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string((string)$_POST['user_keyword_searched_or_bidded']);
 				$mysql['user_referer'] = $db->real_escape_string((string)$_POST['user_referer']);
 				$mysql['cloak_referer'] = $db->real_escape_string((string)$_POST['cloak_referer']);
@@ -218,6 +218,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 				//try to set non expiring cache for values that are used in redirects
 				if ($memcacheWorking) {
+					$tid = $mysql['user_id'];
 					setCache(md5('user_id_' . $tid . systemHash()), $mysql['user_id'], 0);
 					setCache(md5('user_timezone_' . $tid . systemHash()), $mysql['user_timezone'], 0);
 					setCache(md5('user_keyword_searched_or_bidded_' . $tid . systemHash()), $mysql['user_keyword_searched_or_bidded'], 0);
@@ -293,8 +294,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 		}
 	} else {
-		if (!$error['user_email_invalid']) {
-			$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
+		if (!isset($error['user_email_invalid']) || !$error['user_email_invalid']) {
+			$mysql['user_email'] = $db->real_escape_string((string)(isset($_POST['user_email']) ? $_POST['user_email'] : ''));
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 			$count_sql = "	SELECT 	*
 							  	FROM  		`202_users` 
@@ -307,7 +308,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			if (!$error) {
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-				$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
+				$mysql['user_email'] = $db->real_escape_string((string)(isset($_POST['user_email']) ? $_POST['user_email'] : ''));
 				$sql = "UPDATE 202_users SET user_email = '" . $mysql['user_email'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
 				$result = $db->query($sql);
 				$update_profile = true;
@@ -889,7 +890,7 @@ $html = array_map('htmlentities', $user_row);
 
 						if ($rows > 0) {
 							while ($key_row = $key_result->fetch_assoc()) {
-								echo '<li id="' . $key_row['api_key'] . '"><span class="infotext">Date created: ' . date("m/d/Y", $key_row['created_at']) . '</span> - <code>' . $key_row['api_key'] . '</code> <a id="delete-rest-key" class="close fui-cross"></a></li>';
+								echo '<li id="' . $key_row['api_key'] . '"><span class="infotext">Date created: ' . date("m/d/Y", (int)$key_row['created_at']) . '</span> - <code>' . $key_row['api_key'] . '</code> <a id="delete-rest-key" class="close fui-cross"></a></li>';
 							}
 						} else {
 							echo '<li id="no-api-keys">No API keys generated</li>';

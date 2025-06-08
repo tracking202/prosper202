@@ -91,8 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			<center><img src="202-img/prosper202.png"></center>
 			<center><span class="infotext">Please enter your username and e-mail address.<br />You will receive a new password via e-mail to <a href="<?php echo get_absolute_url(); ?>202-login.php">login</a> with.</span></center>
 			<form class="form-signin form-horizontal" role="form" method="post" action="">
-				<div class="form-group <?php if ($error['user']) echo "has-error"; ?>">
-					<?php if ($error['user']) { ?>
+				<div class="form-group <?php if (isset($error['user'])) echo "has-error"; ?>">
+					<?php if (isset($error['user'])) { ?>
 						<div class="tooltip right in login_tooltip">
 							<div class="tooltip-arrow"></div>
 							<div class="tooltip-inner"><?php echo $error['user']; ?></div>

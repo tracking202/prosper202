@@ -6,8 +6,10 @@ AUTH::require_user();
 
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	
-	if ($_POST['aff_network_id'] == 0) { $error['clear_subids'] = '<div class="error"><small><span class="fui-alert"></span>You have to at least select an affiliate network to clear out</small></div>'; }
-	$mysql['aff_network_id'] = $db->real_escape_string((string)$_POST['aff_network_id']);
+	if (!isset($_POST['aff_network_id']) || $_POST['aff_network_id'] == 0) { 
+		$error['clear_subids'] = '<div class="error"><small><span class="fui-alert"></span>You have to at least select an affiliate network to clear out</small></div>'; 
+	}
+	$mysql['aff_network_id'] = $db->real_escape_string(isset($_POST['aff_network_id']) ? (string)$_POST['aff_network_id'] : '0');
 	
 	if (isset($error)){ 
 		echo $error['clear_subids'];  

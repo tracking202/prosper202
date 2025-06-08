@@ -5,7 +5,7 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 AUTH::require_user();
 
 
- $mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);      
+ $mysql['aff_campaign_id'] = isset($_POST['aff_campaign_id']) ? $db->real_escape_string((string)$_POST['aff_campaign_id']) : '0';      
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$text_ad_sql = "SELECT * FROM `202_text_ads`
 						WHERE `user_id`='".$mysql['user_id']."' 
