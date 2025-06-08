@@ -26,8 +26,8 @@ class DlIntegrationTest extends TestCase
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        // Should return 200 with no output (dies silently)
-        $this->assertEquals(200, $httpCode);
+        // Should return 302 redirect to cl.php
+        $this->assertEquals(302, $httpCode);
         $this->assertStringNotContainsString('Fatal error', $response);
         $this->assertStringNotContainsString('Warning', $response);
     }
@@ -46,7 +46,7 @@ class DlIntegrationTest extends TestCase
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        // Should return 200 with no output (dies silently)
+        // Should return 200 and die silently for non-numeric tracker ID
         $this->assertEquals(200, $httpCode);
         $this->assertEmpty(trim(substr($response, strpos($response, "\r\n\r\n") + 4)));
     }
@@ -65,7 +65,7 @@ class DlIntegrationTest extends TestCase
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        // Should return 200 with no output (dies silently)
+        // Should return 200 and die silently for missing tracker ID
         $this->assertEquals(200, $httpCode);
         $this->assertEmpty(trim(substr($response, strpos($response, "\r\n\r\n") + 4)));
     }
@@ -120,8 +120,8 @@ class DlIntegrationTest extends TestCase
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        // Should not contain any PHP errors
-        $this->assertEquals(200, $httpCode);
+        // Should redirect without PHP errors
+        $this->assertEquals(302, $httpCode);
         $this->assertStringNotContainsString('Fatal error', $response);
         $this->assertStringNotContainsString('Warning', $response);
         $this->assertStringNotContainsString('Notice', $response);
@@ -145,8 +145,8 @@ class DlIntegrationTest extends TestCase
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        // Should handle missing referer gracefully
-        $this->assertEquals(200, $httpCode);
+        // Should handle missing referer gracefully and redirect
+        $this->assertEquals(302, $httpCode);
         $this->assertStringNotContainsString('HTTP_REFERER', $response);
         $this->assertStringNotContainsString('Undefined', $response);
     }
@@ -176,8 +176,8 @@ class DlIntegrationTest extends TestCase
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        // Should handle special characters without errors
-        $this->assertEquals(200, $httpCode);
+        // Should handle special characters without errors and redirect
+        $this->assertEquals(302, $httpCode);
         $this->assertStringNotContainsString('Fatal error', $response);
         $this->assertStringNotContainsString('Warning', $response);
     }

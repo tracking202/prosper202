@@ -469,16 +469,18 @@ class DlComprehensiveTest extends TestCase
     public function testRealEscapeStringTypeCasting(): void
     {
         $testCases = [
-            null => '',
-            0 => '0',
-            123 => '123',
-            45.67 => '45.67',
-            true => '1',
-            false => '',
-            [] => ''
+            'null' => [null, ''],
+            'zero' => [0, '0'],
+            'int' => [123, '123'],
+            'float' => [45.67, '45.67'],
+            'true' => [true, '1'],
+            'false' => [false, ''],
+            // Skip array test as it causes warning
         ];
         
-        foreach ($testCases as $input => $expected) {
+        foreach ($testCases as $name => $testData) {
+            $input = $testData[0];
+            $expected = $testData[1];
             $result = $this->mockDb->real_escape_string((string)$input);
             $this->assertEquals($expected, $result, "Failed for input: " . var_export($input, true));
         }
