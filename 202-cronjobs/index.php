@@ -67,9 +67,10 @@ try {
 function RunDailyCronjob()
 {
     try {
-        $db = getDatabaseConnection();
-        if (!$db) {
-            error_log("RunDailyCronjob: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("RunDailyCronjob: Database connection failed - " . $e->getMessage());
             return false;
         }
 
@@ -142,9 +143,10 @@ function RunDailyCronjob()
 function RunHourlyCronJob()
 {
     try {
-        $db = getDatabaseConnection();
-        if (!$db) {
-            error_log("RunHourlyCronJob: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("RunHourlyCronJob: Database connection failed - " . $e->getMessage());
             return false;
         }
 
@@ -200,9 +202,10 @@ function RunHourlyCronJob()
 function RunSecondsCronjob()
 {
     try {
-        $db = getDatabaseConnection();
-        if (!$db) {
-            error_log("RunSecondsCronjob: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("RunSecondsCronjob: Database connection failed - " . $e->getMessage());
             return false;
         }
 
@@ -301,9 +304,10 @@ function RunSecondsCronjob()
 function AutoOptimizeDatabase()
 {
     try {
-        $db = getDatabaseConnection();
-        if (!$db) {
-            error_log("AutoOptimizeDatabase: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("AutoOptimizeDatabase: Database connection failed - " . $e->getMessage());
             return;
         }
 
@@ -365,9 +369,10 @@ function AutoOptimizeDatabase()
 function ClearOldClicks()
 {
     try {
-        $db = getDatabaseConnection();
-        if (!$db) {
-            error_log("ClearOldClicks: Database connection failed");
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("ClearOldClicks: Database connection failed - " . $e->getMessage());
             return;
         }
 
