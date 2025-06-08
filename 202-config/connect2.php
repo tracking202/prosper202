@@ -50,6 +50,10 @@ if (extension_loaded('memcache')) {
 function setCache($key, $value, $exp = null)
 {
     global $whatCache, $memcache;
+    // Default expiration time if not provided
+    if ($exp === null) {
+        $exp = 2592000; // 30 days in seconds
+    }
     switch ($whatCache) {
         case 'memcache':
             return $memcache->set($key, $value, false, $exp);
@@ -438,7 +442,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
     //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
 
     if (isset($mysql) && $mysql != '') {
-        $mysql['click_id'] = $db->real_escape_string($click_id);
+        $mysql['click_id'] = $db->real_escape_string((string)$click_id);
         $tokens = @array(
             "subid" => $mysql['click_id'],
             "t202kw" => $mysql['keyword'],
@@ -714,10 +718,14 @@ class PLATFORMS
 
     public static function parseUserAgentInfo($db, $detect)
     {
+        global $ip_address;
 
 
         $parser = Parser::create();
         $result = $parser->parse($detect->getUserAgent());
+
+        // Initialize type to default desktop
+        $type = "1";
 
         // If is not mobile or tablet
         if (! $detect->isMobile() && ! $detect->isTablet()) {
@@ -733,6 +741,11 @@ class PLATFORMS
                     $type = "1";
                     $result->device->family = "Desktop";
                     break;
+                // Default case for any other desktop device
+                default:
+                    $type = "1";
+                    $result->device->family = "Desktop";
+                    break;
             }
         } else {
             // If tablet
@@ -744,16 +757,16 @@ class PLATFORMS
             }
         }
 
-        if (PLATFORMS::botCheck($ip_address)) {
+        if (isset($ip_address) && $ip_address && PLATFORMS::botCheck($ip_address)) {
             $type = "4";
             $result->device->family = "Bot";
         }
 
         // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string($result->ua->family);
-        $mysql['platform'] = $db->real_escape_string($result->os->family);
-        $mysql['device'] = $db->real_escape_string($result->device->family);
-        $mysql['device_type'] = $db->real_escape_string($type);
+        $mysql['browser'] = $db->real_escape_string((string)($result->ua->family ?? ''));
+        $mysql['platform'] = $db->real_escape_string((string)($result->os->family ?? ''));
+        $mysql['device'] = $db->real_escape_string((string)($result->device->family ?? ''));
+        $mysql['device_type'] = $db->real_escape_string((string)$type);
 
 
 
@@ -1977,7 +1990,7 @@ function replaceTokens($url, $tokens = array(), $fillblanks = 0)
 function rawurlencode202($token)
 {
     if (isset($token)) {
-        $token = str_replace('%40', '@', rawurlencode($token));
+        $token = str_replace('%40', '@', rawurlencode((string)$token));
         return $token;
     } else {
         return NULL;
@@ -1986,6 +1999,20 @@ function rawurlencode202($token)
 
 function getGeoData($ip)
 {
+    // Check if GeoIP2 Reader class exists
+    if (!class_exists('GeoIp2\Database\Reader')) {
+        // Fallback to legacy method
+        return array(
+            'country' => '',
+            'country_code' => '',
+            'is_european_union' => '',
+            'continent' => '',
+            'city' => '',
+            'region' => '',
+            'region_code' => '',
+            'postal' => ''
+        );
+    }
 
     $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
 
