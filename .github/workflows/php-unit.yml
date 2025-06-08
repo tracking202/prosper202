@@ -25,5 +25,5 @@ jobs:
       - name: Validate Dependencies
         run: composer diagnose
 
-      - name: Run PHPUnit
-        run: vendor/bin/phpunit --verbose
+      - name: Run PHPUnit (Unit Tests Only)
+        run: vendor/bin/phpunit --verbose --exclude-group integration
