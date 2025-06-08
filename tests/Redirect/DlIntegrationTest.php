@@ -7,6 +7,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * Integration tests for dl.php that test actual HTTP requests and responses
+ * @group integration
  */
 class DlIntegrationTest extends TestCase
 {
