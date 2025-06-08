@@ -145,7 +145,7 @@ final class DlTest extends TestCase
         
         // For cached redirect tests, we still use mockDb for escaping
         $db = $this->mockDb;
-        $dbWorking = $dbWorking;
+        
         $memcacheWorking = !empty($memcacheData);
         
         // Simulate the core dl.php logic
