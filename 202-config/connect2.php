@@ -68,14 +68,42 @@ include_once(CONFIG_PATH . '/Mobile_Detect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
 
+// Initialize $tid and $db variables to prevent undefined variable errors
+if (!isset($tid)) {
+    // If $t202id is set (from dl.php), use that for $tid
+    if (isset($t202id) && is_numeric($t202id)) {
+        $tid = $t202id;
+    } else {
+        $tid = 1; // Default to user_id 1 if not set
+    }
+}
+
+// Initialize database connection using the DB class from 202-config.php
+if (!isset($db)) {
+    try {
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+    } catch (Exception $e) {
+        // Log error but don't interrupt execution
+        error_log('Database connection error in connect2.php: ' . $e->getMessage());
+        $db = null; // dl.php checks if $db is falsey
+    }
+}
+
 //determine privacy mode
 if ($memcacheWorking) {
     $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
 }
 
-//exit strict mode
-$user_sql = "SET session sql_mode= ''";
-$user_results = $db->query($user_sql);
+//exit strict mode - only if db connection is available
+if ($db) {
+    $user_sql = "SET session sql_mode= ''";
+    try {
+        $user_results = $db->query($user_sql);
+    } catch (Exception $e) {
+        error_log('Error setting SQL mode in connect2.php: ' . $e->getMessage());
+    }
+}
 
 
 if (!isset($_SESSION['privacy'])) {
