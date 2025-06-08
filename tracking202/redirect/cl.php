@@ -11,7 +11,7 @@ if ($clickIdPublic === null) {
     RedirectHelper::redirect('/202-404.php');
 }
 
-$mysql['click_id_public'] = $db->real_escape_string($clickIdPublic);
+$mysql['click_id_public'] = $db->real_escape_string((string)$clickIdPublic);
 
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
