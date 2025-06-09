@@ -2,7 +2,7 @@
 
 ## What is Prosper202?
 
-Prosper202 is analytics tracking software that enables users to track profit and loss, conversion metrics, do split testing, and much more. We can track almost any traffic source and pretty much any affiliate offer/network/advertiser. We are not an affiliate network software nor are we a media server. Prosper202 was specifically designed to help people track their marketing campaigns and how well its doing. Whether you are an affiliate, a small business owner, an agency, a product owner, etc.. we can help. Unsure if Prosper202 is right for you, feel free to contact us and ask.
+Prosper202 is analytics tracking software that enables users to track profit and loss, conversion metrics, do split testing, and much more. We can track almost any traffic source and pretty much any affiliate offer/network/advertiser. We are not an affiliate network software nor are we a media server. Prosper202 was specifically designed to help people track their marketing campaigns and how well it's doing. Whether you are an affiliate, a small business owner, an agency, a product owner, etc.. we can help. Unsure if Prosper202 is right for you, feel free to contact us and ask.
 
  ## What is the difference between Tracking202 and Prosper202?
 
@@ -12,11 +12,11 @@ Tracking202 was our hosted solution for our flagship analytics tracking software
 
 As a general rule of thumb, we do not recommend using shared hosting to run your Prosper202. Most shared hosting services do not meet the requirements of installing Prosper202 and even if you could get it to work, we highly recommend against it for performance reasons.
 
-There are many affordable VPS or better hosting solutions and we always strongly recommend using those hosting solutions instead (except for the two above hosting companies above).
+There are many affordable VPS or better hosting solutions, and we always strongly recommend using those instead.
 
  ## Will Prosper202 Work With My Web Host?
 
-There is no way for us to tell specifically as there are too many web hosts out there for us to know of or even check. In general, most web hosts can be configured or install software to make work but by default, it is difficult to tell. If you want to be certain, please check our list of recommended web hosting companies who already support current Prosper202 users: **../partnering-with-us/01-web-hosting-services.md**
+There is no way for us to tell specifically as there are too many web hosts out there for us to know of or even check. In general, most web hosts can be configured or install software to make it work, but by default, it is difficult to tell. If you want to be certain, please check our list of recommended web hosting companies who already support current Prosper202 users: [Web Hosting Services](../partnering-with-us/01-web-hosting-services.md)
 
  ## I am having issues with installing or upgrading Prosper202 or some other technical issue
 
@@ -34,7 +34,7 @@ No, but strongly recommended.
 
  ## The number of clicks shown in Prosper is different than what is shown in my network/traffic source.
 
-This could be due to a number of reasons. Have you checked to see if Prosper is showing all clicks, filtered clicks, or real clicks. For an understanding of what these are, see section question. Next, any tests the network/advertiser and/or traffic source does may not reflect on your click count with them but will be recorded by Prosper. Because filtering is also different between each source, the count be differ. Finally, be aware that any incomplete redirects or traffic that pings certain sources can throw counts off as well such as users hitting your landing page triggering logs but not through your ad link. If you require additional assistance, we can take a look if you are a paid subscriber.
+This could be due to a number of reasons. Have you checked to see if Prosper is showing all clicks, filtered clicks, or real clicks? For an understanding of what these are, see the next question. Next, any tests the network/advertiser and/or traffic source does may not reflect on your click count with them but will be recorded by Prosper. Because filtering is also different between each source, the count can differ. Finally, be aware that any incomplete redirects or traffic that pings certain sources can throw counts off as well, such as users hitting your landing page triggering logs but not through your ad link. If you require additional assistance, we can take a look if you are a paid subscriber.
 
  ## What's the difference between a filtered click and a real click?
 
@@ -46,7 +46,7 @@ Please go to Overview > Group Overview and see if that's what you're looking for
 
  ## Are there any limitations with the free Prosper202?
 
-No. There are no click limits or any other limits we set. This is the full blown Pro version of the software with all the bells and whistles. It can handle insane amounts of traffic. We're giving it away because it stopped making sense to build two different versions of the software (a Lite version and a Pro version) and we felt that rather than charge for Pro, giving it away was a huge value ad for the community. In return we decided to no longer offer free support. We felt it was fair that if you needed assistance, you can pay for it considering the software is free and that we made great efforts to provide free documentation and video tutorials such as the one found on this site.
+No. There are no click limits or any other limits we set. This is the full blown Pro version of the software with all the bells and whistles. It can handle insane amounts of traffic. We're giving it away because it stopped making sense to build two different versions of the software (a Lite version and a Pro version) and we felt that rather than charge for Pro, giving it away was a huge value add for the community. In return, we decided to no longer offer free support. We felt it was fair that if you needed assistance, you can pay for it considering the software is free and that we made great efforts to provide free documentation and video tutorials such as the one found on this site.
 
  ## I can't find my login or its not working
 
@@ -58,12 +58,11 @@ Some traffic sources such as Google and Bing have specific tokens required for k
 
  ## My tracking link works but I'm not seeing any conversions
 
-Please make sure your conversion tracking is setup properly. There are multiple ways Prosper can track conversions but without knowing the specifics, we can't answer this question easily. You can pay for support and reach us if you are unable to figure this out.
+Please make sure your conversion tracking is set up properly. There are multiple ways Prosper can track conversions, but without knowing the specifics, we can't answer this question easily. You can pay for support and reach us if you are unable to figure this out.
 
  ## How do I rotate offers or split test LPs?
 
-Please refer to our video tutorial section found here: 
-**01-video-tutorials.md**
+Please refer to our video tutorial section found here: [Video Tutorials](01-video-tutorials.md)
 
  ## I have multiple offers, can Prosper track this?
 
@@ -83,7 +82,7 @@ At the time of this writing, we do not.
 
  ## Does your analytics software work with email marketing or actual mobile apps?
 
-We've had users use our software for email marketing and we while our software works with promoting mobile install offers, it does not yet support event tracking inside of mobile apps. Please note that Prosper202 was not designed for mobile app install tracking.
+We've had users use our software for email marketing, and while our software works with promoting mobile install offers, it does not yet support event tracking inside of mobile apps. Please note that Prosper202 was not designed for mobile app install tracking.
 
  ## Can Prosper202 filter out IP ranges?
 
