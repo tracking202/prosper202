@@ -4,7 +4,7 @@ This step is required. You must generate a tracking link. This tracking link is 
 ![Screen Shot 2015-12-07 at 3.05.20 PM.png](../images/step-8-1.png)
 ## Setup
 
-By now you're a pro at this! Simply select the option you're promoting whether that's direct linking or simple LP, advanced LP, or smart redirector (from Step 6). Then proceed to select all the appropriate options. Please the final generated link into your traffic source. Please do not enter your direct landing page URL as this would cause issues.
+By now you're a pro at this! Simply select the option you're promoting whether that's direct linking or simple LP, advanced LP, or smart redirector (from Step 6). Then proceed to select all the appropriate options. Paste the final generated link into your traffic source. Please do not enter your direct landing page URL as this would cause issues.
 
 ## Options
 
