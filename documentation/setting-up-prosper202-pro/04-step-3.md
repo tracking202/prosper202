@@ -6,7 +6,7 @@ Here we will cover two methods of completing this step. You can choose from Dire
 
 QUICK LINKS: **[Direct Network Integration](04-step-3.md#section-direct-network-integration-method)** OR **[Manual Campaign Setup](04-step-3.md#section-manual-campaign-setup)**
 
-PLEASTE NOTE: There is also a new transaction ID system that allow users to track sales through funnels or upsells that tie to the same transaction. **[You can read about this here separately](999-transactions-id.md)**.
+PLEASE NOTE: There is also a new transaction ID system that allows users to track sales through funnels or upsells that tie to the same transaction. **[You can read about this here separately](999-transactions-id.md)**.
 
 ---------------------------------------------------------------------------------------------------------------------------
 
@@ -50,7 +50,7 @@ The second method is the manual campaign setup and how Prosper202 historically w
 
 **Category and Campaign Name**
 
-In this step, you want to enter all the campaigns you plan to promote. You can begin by selecting a category from the dropdown (these are from the list of categories you added in the previous step, Step 2). Assuming you do what we normally do, it'd be a list of networks you're working with. Enter what kind of offer you are promoting in the second box. Again, you can name this whatever you want as it is for your reference. 
+In this step, you want to enter all the campaigns you plan to promote. Begin by selecting a category from the dropdown (these are from the list of categories you added in the previous step, Step 2). Assuming you do what we normally do, it'd be a list of networks you're working with. Enter what kind of offer you are promoting in the second box. Again, you can name this whatever you want as it is for your reference. 
 
 In the example below, I chose AdCommunal (the network I added in the last step) for the Category. For Campaign Name, I will enter a name for the affiliate offer I intend to promote from AdCommunal. As an example, I can see AdCommunal offer Amazon App downloads available for promotion in the US. I actually see one for the iOS App Store (iPhones, iPads, and iPod Touches) and one for Android through the Google Play Store. 
 
@@ -96,7 +96,7 @@ To append the required SubID parameter, I simply just have to add an "&" and the
 
 *SubID Token*
 
-The last thing I need to do on this step that is required is enter the SubID token available among the list of shown tokens on the screen, in this case: [[subid]]
+The last required step is to enter the SubID token available among the list of shown tokens on the screen, in this case: [[subid]]
 
 This subid token, unlike the SubID parameter above, is the same for everyone.
 
@@ -105,14 +105,14 @@ My final link that goes into Step 3 should look like this:
 
 In other words, the formula is something like:
 
-affiliate URL + & (amperstand symbol) + SubID paramater (unique to each network) + [[subid]]
+affiliate URL + & (ampersand symbol) + SubID parameter (unique to each network) + [[subid]]
 
 *Other Optional Tokens*
 
-The other optional tokens parameters and placeholders are available for use if you wish to track other parameters. They are not required. In general we recommend using c1-c4 for tracking any additional parameters. 
+The other optional token parameters and placeholders are available for use if you wish to track other parameters. They are not required. In general we recommend using c1-c4 for tracking any additional parameters. 
 [**Click here to read more about all the optional tokens**](../tutorials-and-guides/999-prosper202-tokens.md).
 
-Now included in Step 8 are input boxes for these tracking variables so you don't have to enter them here. In fact, we recommend inputing the extra variables in Step 8.
+Now included in Step 8 are input boxes for these tracking variables so you don't have to enter them here. In fact, we recommend inputting the extra variables in Step 8.
 
 Again, if you need assistance with this step, please subscribe to our paid support plan for further assistance.
 
