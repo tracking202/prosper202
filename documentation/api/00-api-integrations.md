@@ -12,11 +12,11 @@ You can create multiple API keys. It’s best to create a new App API key for ev
 
 ## API Authentication
 
-The Prosper202 ClickServer uses a simple token based authentication system. The API keys that you generate are used to authenticate and app and allow the pulling of reports from your system. With that in mind it’s important to keep the tokens secure and limit token use to one per app or integration.
+The Prosper202 ClickServer uses a simple token based authentication system. The API keys that you generate are used to authenticate an app and allow the pulling of reports from your system. With that in mind it’s important to keep the tokens secure and limit token use to one per app or integration.
 
 ## API Endpoint
 
-The API endpoint for Prosper202 will depend up your tracking domain, however the general form is as follows: **http://[[your­Prosper202­domain]]/api/v1/**
+The API endpoint for Prosper202 will depend upon your tracking domain, however the general form is as follows: **http://[[your-Prosper202-domain]]/api/v1/**
 
 ## Methods
 
@@ -38,7 +38,7 @@ The current valid values are as follows
   * carriers -­ Carrier and ISP report
   * landing_pages -­ Landing page report
 
-**Argument name: **apikey (Required) - API key generated in Prosper202 and used
+**Argument name:** apikey (Required) - API key generated in Prosper202 and used
 for authentication.
 
 **Argument name:** date_from (Optional) - Start date for the report you’d like to
@@ -49,7 +49,7 @@ should be in the following format: mm/dd/yyyy
 If left blank the system will default to the end of the current day. A valid date should
 be in the following format: mm/dd/yyyy
 
-**Argument name: **cid (Optional) - Campaign id to filter your report by. If this is
+**Argument name:** cid (Optional) - Campaign id to filter your report by. If this is
 blank, data from all campaigns will be returned.
 
 **Argument name:** c1,c2,c3,c4 (Optional) - Filters by value stored in the
