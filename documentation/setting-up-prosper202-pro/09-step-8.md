@@ -2,6 +2,7 @@
 
 This step is required. You must generate a tracking link. This tracking link is the link you'll use to place as your destination URL in your traffic sources.
 ![Screen Shot 2015-12-07 at 3.05.20 PM.png](../images/step-8-1.png)
+
 ## Setup
 
 By now you're a pro at this! Simply select the option you're promoting whether that's direct linking, simple LP, advanced LP, or smart redirector (from Step 6). Then proceed to select all the appropriate options. Please paste the final generated link into your traffic source. Please do not enter your direct landing page URL as this would cause issues.
@@ -16,7 +17,7 @@ As mentioned before we are looking to phase out this option but it shows up here
 
 ## CPC vs CPA
 
-You can choose which type of traffic you are paying for. It will calculate an average estimate based on what you type here. We don't have 100% accurate tracking so this is based on an estimated average if you're going with CPC. Finally, enter the dollar and cents amount. 
+You can choose which type of traffic you are paying for. It will calculate an average estimate based on what you type here. We don't have 100% accurate tracking so this is based on an estimated average if you're going with CPC. Finally, enter the dollar and cents amount.
 
 ## Custom Token and Variable Tracking
 
