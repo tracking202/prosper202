@@ -5,7 +5,8 @@
 If you are using WordPress as your landing page, we have developed a WordPress plugin you can install with your WordPress that will integrate with Prosper202. Simply download the WordPress plugin below and follow the instructions inside the plugin once activated to enable it to work with your Prosper202 install.
 
 ## Purchase of WP Plugin
-You can sign up and purchase the WP Plugin here: **http://join.tracking202.com**, if you haven't already done so. 
+
+You can sign up and purchase the WP Plugin here: **http://join.tracking202.com**, if you haven't already done so.
 
 ## Additional Support
 
