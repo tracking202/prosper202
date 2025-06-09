@@ -4,8 +4,9 @@ This step is OPTIONAL if you are not promoting through a landing page but instea
 
 ## Simple VS Advanced
 
-First, select whether you're promoting a **[Simple LP](08-step-7.md#section-simple-lp)** or an **[Advanced LP](08-step-7.md#section-advanced-lp)** 
+First, select whether you're promoting a **[Simple LP](08-step-7.md#section-simple-lp)** or an **[Advanced LP](08-step-7.md#section-advanced-lp)**
 ![Screen Shot 2015-12-02 at 4.03.07 PM.png](../images/step-7-1.png)
+
 ## Simple LP
 
 If you chose the Simple LP option, you'll see a screenshot similar to the one below. Enter all your information in the dropdowns and click Get Landing Page Codes.
