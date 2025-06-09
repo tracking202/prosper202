@@ -2,7 +2,7 @@
 
 ## Pre-requisites
 
-If you haven't already, download the latest version of [Prosper202](http://prosper.tracking202.com/apps/) and follow our install instructions here:
+If you haven't done so already, download the latest version of [Prosper202](https://my.tracking202.com/) and follow our install instructions here:
 **00-installation.md**. 
 
 Once you've completed these steps, the following guide will help walk you through setting up a campaign.
