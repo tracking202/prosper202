@@ -24,7 +24,6 @@
 - [Reporting](setting-up-prosper202-pro/12-reporting.md)
 - [Group Overview](setting-up-prosper202-pro/13-group-overview.md)
 - [Transactions ID](setting-up-prosper202-pro/999-transactions-id.md)
-- [Step 7 - Landing Page Codes](setting-up-prosper202-pro/999-step-7-landing-page-codes.md)
 - [Prosper202 Release Cycle](setting-up-prosper202-pro/999-prosper202-release-cycle.md)
 
 ### Tutorials and Guides
