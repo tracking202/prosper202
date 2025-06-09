@@ -1,6 +1,6 @@
 # Prosper202 ClickServer API
 
-Currently, if you are developer, you can use the Prosper202 ClickServer API to run reports without a UI and integrate it into your own applications. Below is the documentation available for the API.
+Currently, if you are a developer, you can use the Prosper202 ClickServer API to run reports without a UI and integrate it into your own applications. Below is the documentation available for the API.
 
 ## Locating your API Keys
 
