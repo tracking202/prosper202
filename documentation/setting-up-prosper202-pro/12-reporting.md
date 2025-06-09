@@ -28,7 +28,7 @@ The analyze tab and its numerous sub-navigation options gives you a quick glance
 ![Screen Shot 2015-12-03 at 10.37.59 AM.png](../images/reporting-3.png)
 ## Visitor and Spy Views
 
-The spy view is a live time feed of all your clicks coming in. It shows a limited number of feeds and refreshes constantly. If you want to go through your click history, thats what the visitor tab is for. They are essentially the same except visitor is your history log with no real time update and spy view is your real time feed of the past 24 hours worth of clicks without the history log.
+The spy view is a live time feed of all your clicks coming in. It shows a limited number of feeds and refreshes constantly. If you want to go through your click history, that’s what the visitor tab is for. They are essentially the same except visitor is your history log with no real time update and spy view is your real time feed of the past 24 hours worth of clicks without the history log.
 ![Screen Shot 2015-12-03 at 10.40.01 AM.png](../images/reporting-4.png)
 ## Update
 
