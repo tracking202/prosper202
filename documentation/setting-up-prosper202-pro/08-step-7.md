@@ -4,7 +4,7 @@ This step is OPTIONAL if you are not promoting through a landing page but instea
 
 ## Simple VS Advanced
 
-First, select whether you're promoting a **[Simple LP](08-step-7.md#section-simple-lp)** or an **[Advanced LP](08-step-7.md#section-advanced-lp) ** 
+First, select whether you're promoting a **[Simple LP](08-step-7.md#section-simple-lp)** or an **[Advanced LP](08-step-7.md#section-advanced-lp)** 
 ![Screen Shot 2015-12-02 at 4.03.07 PM.png](../images/step-7-1.png)
 ## Simple LP
 
@@ -14,7 +14,7 @@ If you chose the Simple LP option, you'll see a screenshot similar to the one be
 
 After you click Get Landing Page Codes, some code should have been generated. The first shown directly below is your inbound landing page JavaScript code. This JavaScript code must be placed inside the head tag of your single landing page so that when the visitor lands on the site, the JavaScript code will load. Copy the code exactly and paste it inside your <head> and </head> tags. If you're using something like WordPress, please refer to our WordPress section instead.
 ![Screen Shot 2015-12-02 at 4.10.02 PM.png](../images/step-7-3.png)
-Next, you're given a few options for outbound code. These are code you must use to redirect the visitor from your landing page to the offer. You must use one of the provided methods. The easiest is usually option one where you can replace the outgoing URL with the specific PHP link provided as shown below. You can copy the code and replace your link URL with it.
+Next, you're given a few options for outbound code. These are codes you must use to redirect the visitor from your landing page to the offer. You must use one of the provided methods. The easiest is usually option one where you can replace the outgoing URL with the specific PHP link provided as shown below. You can copy the code and replace your link URL with it.
 ![Screen Shot 2015-12-02 at 4.13.15 PM.png](../images/step-7-4.png)
 The alternative solution if you don't want such an ugly URL as an outbound link to the offer, you can copy the next section of code, save it in a .php file such as offer.php, and use that as the outbound link. Copy and paste the code exactly into a new .php file. Upload the file to your website and use it as the outbound link. This option is likely the more popular option.
 ![Screen Shot 2015-12-02 at 4.14.13 PM.png](../images/step-7-5.png)
