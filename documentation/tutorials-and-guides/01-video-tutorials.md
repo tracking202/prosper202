@@ -6,7 +6,7 @@ You can find these video tutorials on our YouTube channel here: **https://www.yo
 
 Below are some of the included videos we think you'll find useful:
 
-## Setting Up Rule Base Redirection
+## Setting Up Rule Based Redirection
 
 **Video:** [Prosper202 Pro Tutorial: Setting Rules Based Redirection](https://www.youtube.com/watch?v=f_lSpq_Sme0&feature=youtu.be)
 

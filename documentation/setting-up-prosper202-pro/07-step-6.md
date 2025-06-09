@@ -4,7 +4,7 @@ This step is also OPTIONAL. If you like to redirect your URL or to do Split Test
 
 The very first thing you should decide on is whether you want to **[redirect URLs](07-step-6.md#section-setting-up-rule-base-redirection)** or do **[split tests](07-step-6.md#section-setting-up-a-b-or-split-testing)**. We'll cover how to do both here but they serve very different purposes. Let's dive right in.
 
-## Setting Up Rule Base Redirection
+## Setting Up Rule Based Redirection
 
 Redirecting URL is useful because generally speaking, whether you are an affiliate or promoting your own product, you likely have specific customers you want to target. For example, as an affiliate, you might be promoting an offer designed specifically for US traffic. In instances like this, you might want to redirect non-US traffic to other offers. Whatever the case may be or whatever the reason you might have for wanting to redirect traffic, here is how you do it.
 ![Screen Shot 2015-12-07 at 2.45.21 PM.png](../images/step-6-1.png)
