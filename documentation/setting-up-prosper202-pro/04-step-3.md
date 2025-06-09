@@ -71,7 +71,7 @@ As shown in the screenshot above, I selected AdCommunal as my network from the l
 
 **Rotate URLs**
 
-If you just downloaded the latest version of Prosper202, this step no longer exists. However if you upgraded from an older version and you previously had this step setup, it still here mostly for legacy reasons. Because we can rotate URLs or do split testing on a separate step later in our setup (Step 6), this step is no longer necessary and outdated. The new version is much more robust and has advance features so we highly recommend you upgrade if you haven't already. Regardless, if you are on an older version (keep in mind we don't support older versions), I generally would keep this option as No if you still have it and if you don't, don't worry about it. Its irrelevant to new Prosper202 installs.
+If you just downloaded the latest version of Prosper202, this step no longer exists. However if you upgraded from an older version and you previously had this step setup, it still here mostly for legacy reasons. Because we can rotate URLs or do split testing on a separate step later in our setup (Step 6), this step is no longer necessary and outdated. The new version is much more robust and has advance features so we highly recommend you upgrade if you haven't already. Regardless, if you are on an older version (keep in mind we don't support older versions), I generally would keep this option as No if you still have it and if you don't, don't worry about it. It's irrelevant to new Prosper202 installs.
 
 **Campaign URL**
 
