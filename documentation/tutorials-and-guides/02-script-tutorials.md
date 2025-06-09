@@ -1,6 +1,6 @@
 # Script Tutorials
 
-**Please note that some of these are really old scripts but we're including them for legacy sake:**
+**Please note that some of these are really old scripts but we're including them for legacy's sake:**
 
 Below you'll find three available scripts. **[iFrame](02-script-tutorials.md#section-iframe-script)**, **[Dynamic Keyword Insertion](02-script-tutorials.md#section-putting-dynamic-keywords-in-your-landing-pages)**, and **[Page Load Time Analysis](02-script-tutorials.md#section-landing-page-load-time-analysis)**.
 
@@ -20,7 +20,7 @@ Here is the correct code to use for iframing an offer with Tracking202. The Pros
 Using an Iframe on the 2nd page, instead of redirecting through the affiliate link
 Sometimes you may just want a regular landing page as the first page the visitor sees, but then instead of having a link that redirects out to the offer destination url, you instead want the 2nd page to just be an iframe of the offer. So in this aspect the visitor never actually leaves your domain. They land on the first page, which is a regular page that tries to make them click through and then instead when they click through to redirect them to the offer, you instead have a page that iframes the offer. This makes it look like the user is still on your page. Below I will show you how to do this.
 
-The basic concept is acutally quite simple; instead of redirecting to the affiliate url, we are now just going to have an iframe and paste the affiliate url as the IFRAME SRC. You can do this by modifing the simple or advance landing page PHP REDIRECT code by using the example below. All that is happening is instead of using the previous header() command which redirects the user, we now echo (which prints to HTML) the url in the IFRAME SRC. See below:
+The basic concept is actually quite simple; instead of redirecting to the affiliate URL, we are now just going to have an iframe and paste the affiliate URL as the IFRAME SRC. You can do this by modifying the simple or advanced landing page PHP REDIRECT code by using the example below. All that is happening is instead of using the previous header() command which redirects the user, we now echo (which prints to HTML) the URL in the IFRAME SRC. See below:
 [block:code]
 {
   "codes": [
