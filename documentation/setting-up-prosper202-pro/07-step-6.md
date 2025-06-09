@@ -26,7 +26,7 @@ Below is a video tutorial of what was just covered:
 
 ## Setting Up A/B or Split Testing
 
-Lets say you're not looking to redirect traffic but instead you want to split test your campaign. The setup is very similar. The only difference is you must check the box that says Split Test.
+Let's say you're not looking to redirect traffic but instead you want to split test your campaign. The setup is very similar. The only difference is you must check the box that says Split Test.
 By selecting this option, you'll notice the options changed a bit. You can select any number of URLs you want to split test and add more as needed and any you want to make go inactive at any time, check the inactive box.
 ![Screen Shot 2015-12-07 at 2.54.22 PM.png](../images/step-6-3.png)
 Once you've set up all the different URLs you want to split test, you can give them a weight. This determines how often each link gets rotated. For example, if you have four links you want to split test and you want the traffic distributed evenly, you can enter a value of 25 for each of the weight. There are many ways to do weight calculation but in my experience its probably easiest to divide by 100 (as if it were percentages) and enter that into the weight box). So in this example, a weight of 25 per link out of 4 links is like saying 25% each or rotate them evenly. This is not entirely accurate but it works well for weight distribution.
