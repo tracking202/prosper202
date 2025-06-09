@@ -1,6 +1,6 @@
 # Step 9 - Conversion Tracking
 
-If you've been using Prosper, this step may look slightly different. This is the step necessary for you to set up to be able to track conversions inside of Prosper202. Different networks offer different conversion tracking options and we offer a variety of options to suite each different network needs. If you're promoting your own offer, unless your site or system supports all these various tracking methods, likely pixel is your best option. Otherwise, some networks prefer pixel tracking while others prefer postback URL. Check which method works best with your network.
+If you've been using Prosper, this step may look slightly different. This is the step necessary for you to set up to be able to track conversions inside of Prosper202. Different networks offer different conversion tracking options and we offer a variety of options to suit each different network needs. If you're promoting your own offer, unless your site or system supports all these various tracking methods, likely pixel is your best option. Otherwise, some networks prefer pixel tracking while others prefer postback URL. Check which method works best with your network.
 
 ## Selecting An Option
 
