@@ -2,7 +2,7 @@
 
 This step is also OPTIONAL. If you like to redirect your URL or to do Split Testing, this is the step you would do it in.
 
-The very first thing you should decide on is whether you want to **[redirect URLs](07-step-6.md#section-setting-up-rule-base-redirection)** or do **[split tests](07-step-6.md#section-setting-up-a-b-or-split-testing)**. We'll cover how to do both here but they serve very different purposes. Let's dive right in.
+The very first thing you should decide on is whether you want to **[redirect URLs](07-step-6.md#section-setting-up-rule-based-redirection)** or do **[split tests](07-step-6.md#section-setting-up-a-b-or-split-testing)**. We'll cover how to do both here but they serve very different purposes. Let's dive right in.
 
 ## Setting Up Rule Base Redirection
 
