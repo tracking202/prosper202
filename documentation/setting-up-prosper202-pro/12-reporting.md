@@ -12,7 +12,7 @@ By default, when you click on your Prosper202 CS link, the first screen you see 
 ![Screen Shot 2015-12-03 at 10.31.03 AM.png](../images/reporting-1.png)
 ## Breakdown Overview
 
-Next we have the breakdown overview section which gives you a overall daily breakdown of your campaigns performances. You have some filtering capabilities here but this is a good way to see a quick day to day breakdown.
+Next we have the breakdown overview section which gives you a overall daily breakdown of your campaigns' performance. You have some filtering capabilities here but this is a good way to see a quick day to day breakdown.
 ![Screen Shot 2015-12-03 at 10.33.12 AM.png](../images/reporting-2.png)
 ## Day Parting and Week Parting
 
