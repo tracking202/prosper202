@@ -2,11 +2,11 @@
 
 ## Downloading Prosper202
 
-You can download our latest version here: **https://my.tracking202.com**. 
+You can download our latest version here: **https://my.tracking202.com**.
 
-Please note that our software is free to download. 
+Please note that our software is free to download.
 
-Documentation, tutorials, and what you find here are available for free but beyond that, if you require support of any kind, you'll need to be on a premium paid support plan. You can sign up and view our support plans here:  
+Documentation, tutorials, and what you find here are available for free but beyond that, if you require support of any kind, you'll need to be on a premium paid support plan. You can sign up and view our support plans here:
 
 **https://my.tracking202.com**
 
@@ -42,7 +42,7 @@ Begin your installation by:
 3. Unzip the downloaded file to a folder on your hard drive.
 4. Print this page out if necessary so you have it handy during the installation.
 
-**Note:** *Please install Prosper on its own domain. Although some people have installed it on a subdomain or a subdirectory, this is not recommended and if you are having issues, please install it on its own domain. If you require assistance, please see our note above about subscribing to a support plan.*
+**Note:** _Please install Prosper on its own domain. Although some people have installed it on a subdomain or a subdirectory, this is not recommended and if you are having issues, please install it on its own domain. If you require assistance, please see our note above about subscribing to a support plan._
 
 You will need to rename 202-config-sample.php to 202-config.php and create a new database and new database user with your web host. Once you do, enter this information in the 202-config.php file in the correct spot and go to your URL to proceed with finishing installing Prosper202.
 
