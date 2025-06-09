@@ -8,6 +8,7 @@ Select secure link for whether you're running http or https. Please note that if
 
 Select the appropriate options for Category and Campaign.
 ![Screen Shot 2016-04-12 at 4.14.53 PM.png](../images/step-9-1.png)
+
 ## Amount
 
 This is OPTIONAL and overwrites the payout amount previously set in Step 3. If you do not wish to overwrite it, leave it blank.
@@ -19,6 +20,7 @@ Finally enter the SubID parameter **type** as shown in the example. For our exam
 **PLEASE NOTE:** If your network commonly uses s1 as its SubID token parameter, please switch to using s2. Do this also for Step 3.
 
 ## Pixel vs Postback
+
 ![Screen Shot 2015-12-02 at 4.42.03 PM.png](../images/step-9-2.png)
 Once you have done that, you're given the option to choose tracking pixel or postback URL based on what your network supports. And that's it. You're done with this step.
 
