@@ -120,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		<table cellspacing="0" cellpadding="5">
 			<tr>
-				<td colspan="2" style="text-align: center;"><a href="http://prosper202.com" target="_blank"><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png" /></a><br /></td>
+				<td colspan="2" style="text-align: center;"><a href="https://my.tracking202.com" target="_blank"><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png" /></a><br /></td>
 			</tr>
 			<tr>
 				<td>
