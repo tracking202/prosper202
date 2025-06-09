@@ -20,7 +20,7 @@ The API endpoint for Prosper202 will depend upon your tracking domain, however t
 
 ## Methods
 
-As of now the only support method is the reports method
+As of now the only supported method is the reports method
 
 Method Name: reports
 Required: Yes
@@ -29,14 +29,15 @@ Required: Yes
 
 **Argument name:** type (Required) - Specifies the type of report you'd like to run.
 The current valid values are as follows
-  * keywords ­- Keyword report
-  * ips ­- IP report
-  * text_ads -­ text ad report
-  * referers ­- Referrer report
-  * countries -­ Country report
-  * cities ­- Cities report
-  * carriers -­ Carrier and ISP report
-  * landing_pages -­ Landing page report
+
+- keywords ­- Keyword report
+- ips ­- IP report
+- text_ads -­ text ad report
+- referers ­- Referrer report
+- countries -­ Country report
+- cities ­- Cities report
+- carriers -­ Carrier and ISP report
+- landing_pages -­ Landing page report
 
 **Argument name:** apikey (Required) - API key generated in Prosper202 and used
 for authentication.
