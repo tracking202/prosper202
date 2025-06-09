@@ -12,7 +12,7 @@ Documentation, tutorials, and what you find here are available for free but beyo
 
 ## Installing Prosper202
 
-You will need a [web host](../partnering-with-us/01-web-hosting-services.md) in order to install Prosper202. We highly recommend getting at least VPS hosting as some shared hosting services do not work with well with Prosper202. If you need recommendations for a web host to install Prosper202, we recommend these hosting companies [here](../partnering-with-us/01-web-hosting-services.md)
+You will need a [web host](../partnering-with-us/01-web-hosting-services.md) in order to install Prosper202. We highly recommend getting at least VPS hosting as some shared hosting services do not work well with Prosper202. If you need recommendations for a web host to install Prosper202, we recommend these hosting companies [here](../partnering-with-us/01-web-hosting-services.md).
 
 Our installer was inspired by the WordPress installer, and we have made it almost exactly the same as theirs. It can generally be installed in about 5 minutes or less by simply uploading the files to a dedicated domain and then running the installer. The following installation guide will help you install Prosper202.
 
@@ -20,9 +20,9 @@ Before you begin the install, there are few things you need to check, have, and 
 
 ## System Requirements
 
-Below is a sample screenshot of what you'll need with your hosting company to install Prosper202
+Below is a sample screenshot of what you'll need with your hosting company to install Prosper202:
 ![Screen Shot 2015-12-16 at 2.40.37 PM.png](../images/installation-1.png)
-If you are not using one of our recommend hosts and are unsure if your host supports the above, please ask your hosting company. Every host should be able to host the requirements above, just maybe not by default.
+If you are not using one of our recommended hosts and are unsure if your host supports the above, please ask your hosting company. Every host should be able to host the requirements above, just maybe not by default.
 
 ## Things You Need For The Installation
 
