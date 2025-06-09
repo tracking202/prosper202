@@ -393,6 +393,10 @@ function info_top()
 
 	function returnRanges($fromdate, $todate, $type)
 	{
+		// Set default values
+		$set = 'P1D';
+		$add = 'day';
+		
 		switch ($type) {
 			case 'days':
 				$set = 'P1D';

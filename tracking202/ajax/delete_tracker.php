@@ -16,6 +16,9 @@ if (!empty($user_row['url']))
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_tracker")) {
 	
+	if (!isset($_POST['tracker_id'])) {
+		die("Error: No tracker ID provided");
+	}
 	$mysql['tracker_id'] = $db->real_escape_string((string)$_POST['tracker_id']);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
@@ -23,17 +26,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_trac
 
 		$sql = "SELECT * FROM 202_trackers WHERE tracker_id = '".$mysql['tracker_id']."' AND user_id = '".$mysql['user_id']."'";
 		$result = $db->query($sql);
+		$row = false;
 		if ($result->num_rows > 0) {
 			$row = $result->fetch_assoc();
 		}
 
-		if (!$row['landing_page_id'] && !$row['rotator_id'] && $row['aff_campaign_id']) {
+		$type = 'Unknown';
+		if ($row && !$row['landing_page_id'] && !$row['rotator_id'] && $row['aff_campaign_id']) {
 			$type = 'Direct Link';
-		} else if ($row['landing_page_id'] && !$row['rotator_id'] && $row['aff_campaign_id']) {
+		} else if ($row && $row['landing_page_id'] && !$row['rotator_id'] && $row['aff_campaign_id']) {
 			$type = 'Simple Landing Page';
-		} else if ($row['landing_page_id'] && !$row['rotator_id'] && !$row['aff_campaign_id']) {
+		} else if ($row && $row['landing_page_id'] && !$row['rotator_id'] && !$row['aff_campaign_id']) {
 			$type = 'Advance Landing Page';
-		} else if (!$row['landing_page_id'] && $row['rotator_id'] && !$row['aff_campaign_id']) {
+		} else if ($row && !$row['landing_page_id'] && $row['rotator_id'] && !$row['aff_campaign_id']) {
 			$type = 'Smart Redirector';
 		}
 

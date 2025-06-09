@@ -51,18 +51,18 @@ $user_result2 = _mysqli_query($db, $user_sql);
 $user_row2 = $user_result2->fetch_assoc();
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-	$mysql['form_user_id'] = $db->real_escape_string(trim($_POST['user_id']));
-	$mysql['user_fname'] = $db->real_escape_string(trim($_POST['user_fname']));
+	$mysql['form_user_id'] = $db->real_escape_string(trim($_POST['user_id'] ?? ''));
+	$mysql['user_fname'] = $db->real_escape_string(trim($_POST['user_fname'] ?? ''));
 	if (empty($mysql['user_fname'])) {
 		$error['user_fname'] = '<div class="error help-block">Enter a first name.</div>';
 	}
 
-	$mysql['user_lname'] = $db->real_escape_string(trim($_POST['user_lname']));
+	$mysql['user_lname'] = $db->real_escape_string(trim($_POST['user_lname'] ?? ''));
 	if (empty($mysql['user_lname'])) {
 		$error['user_lname'] = '<div class="error help-block">Enter a last name.</div>';
 	}
 
-	$mysql['user_email'] = $db->real_escape_string(trim($_POST['user_email']));
+	$mysql['user_email'] = $db->real_escape_string(trim($_POST['user_email'] ?? ''));
 	if (empty($mysql['user_email'])) {
 		$error['user_email'] = '<div class="error help-block">Enter an email address.</div>';
 	} else {
@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 
-	$mysql['user_name'] = $db->real_escape_string(trim($_POST['user_name']));
+	$mysql['user_name'] = $db->real_escape_string(trim($_POST['user_name'] ?? ''));
 	if (empty($mysql['user_name'])) {
 		$error['user_name'] = '<div class="error help-block">Enter a username.</div>';
 	}
@@ -91,24 +91,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	if ($editing !== true) {
-		$mysql['user_password'] = $db->real_escape_string(trim($_POST['user_password']));
+		$mysql['user_password'] = $db->real_escape_string(trim($_POST['user_password'] ?? ''));
 		if (empty($mysql['user_password'])) {
 			$error['user_password'] = '<div class="error help-block">Enter a password.</div>';
 		}
+	} elseif ($editing === true && isset($_POST['user_password']) && $_POST['user_password'] != '') {
+		// When editing, only set password if a new one is provided
+		$mysql['user_password'] = $db->real_escape_string(trim($_POST['user_password']));
 	}
 
-	if ($editing !== true || ($mysql['user_password'] != '' && $editing === true)) {
-		$mysql['user_password2'] = $db->real_escape_string(trim($_POST['user_password2']));
+	if ($editing !== true || (isset($_POST['user_password']) && $_POST['user_password'] != '' && $editing === true)) {
+		$mysql['user_password2'] = $db->real_escape_string(trim($_POST['user_password2'] ?? ''));
 		if (empty($mysql['user_password2'])) {
 			$error['user_password2'] = '<div class="error help-block">Retype the users password.</div>';
 		}
 	}
 
-	if (strcmp($mysql['user_password'],  $mysql['user_password2']) !== 0) {
-		$error['user_password2'] = '<div class="error help-block">Make sure the passwords you entered match.</div>';
+	// Only compare passwords if both are set
+	if (isset($mysql['user_password']) && isset($mysql['user_password2'])) {
+		if (strcmp($mysql['user_password'],  $mysql['user_password2']) !== 0) {
+			$error['user_password2'] = '<div class="error help-block">Make sure the passwords you entered match.</div>';
+		}
 	}
 
-	$mysql['user_role'] = $db->real_escape_string(trim($_POST['user_role']));
+	$mysql['user_role'] = $db->real_escape_string(trim($_POST['user_role'] ?? ''));
 	if (empty($mysql['user_role'])) {
 		$error['user_role'] = '<div class="error help-block">Please select user role</div>';
 	}
@@ -120,7 +126,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (!$error) {
 
-		$mysql['user_pass'] = $db->real_escape_string(salt_user_pass($mysql['user_password']));
+		// Only hash password if it's set (for new users or when changing password)
+		if (isset($mysql['user_password'])) {
+			$mysql['user_pass'] = $db->real_escape_string(salt_user_pass($mysql['user_password']));
+		}
 		$hash = md5(uniqid((string)rand(), TRUE));
 		$user_hash = ''; // Default empty value
 
@@ -150,6 +159,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$user_public_publisher_id = createId(5);
 				$user_sql .= "`user_public_publisher_id`= '" . $user_public_publisher_id . "', ";
 			}
+		} elseif ($editing === true && isset($mysql['user_pass'])) {
+			// When editing, only update password if a new one was provided
+			$user_sql .= "`user_pass`='" . $mysql['user_pass'] . "',";
 		}
 		$user_sql .= "`user_active`='" . $mysql['user_active'] . "'";
 
@@ -167,7 +179,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 
 		$role_result = _mysqli_query($db, $role_sql);
-		$pref_result = _mysqli_query($db, $pref_sql);
+		
+		// Only run pref_sql when creating a new user (not editing)
+		if (!$editing) {
+			$pref_result = _mysqli_query($db, $pref_sql);
+		}
 
 		$add_success = true;
 

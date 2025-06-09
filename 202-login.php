@@ -20,7 +20,11 @@ $user_results = $db->query($user_sql);
 
 $detect = new Mobile_Detect;
 $parser = Parser::create();
-$result = $parser->parse($detect->getUserAgent());
+$userAgent = $detect->getUserAgent();
+if (empty($userAgent)) {
+    $userAgent = 'Unknown/1.0';
+}
+$result = $parser->parse($userAgent);
 
 function logged_in_redirect()
 {

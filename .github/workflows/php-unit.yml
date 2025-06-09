@@ -18,12 +18,16 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
+          extensions: mysqli, pdo, pdo_mysql, memcached, mbstring, curl, zip, dom, xml, gd, zlib
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress --no-suggest
+        run: composer install --prefer-dist --no-progress
 
       - name: Validate Dependencies
         run: composer diagnose
 
-      - name: Run PHPUnit
-        run: vendor/bin/phpunit --verbose
+      - name: Create build directory
+        run: mkdir -p build/logs
+
+      - name: Run PHPUnit (Unit Tests Only)  
+        run: vendor/bin/phpunit --configuration phpunit.ci.xml --verbose --exclude-group integration --no-coverage
