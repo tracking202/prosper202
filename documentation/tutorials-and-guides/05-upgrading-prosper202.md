@@ -8,7 +8,7 @@ Upgrading your Prosper202 software is extremely easy. Make sure you back up your
 
 Simply follow the instructions, please follow them exactly.
 
-## How-to Upgrade Video 
+## How-to Upgrade Video
 
 **Video:** [Upgrading Your Prosper202 Installation To Version 1.8.3](https://www.youtube.com/watch?v=lc16taRyV3I&feature=youtu.be)
 
@@ -29,5 +29,5 @@ Please note newer versions now come with an auto-upgrade feature.
 
 ## Additional Support
 
-If you require additional assistance, you will need to be on a paid support plan. Please check out our support plans here: 
+If you require additional assistance, you will need to be on a paid support plan. Please check out our support plans here:
 **http://join.tracking202.com**
