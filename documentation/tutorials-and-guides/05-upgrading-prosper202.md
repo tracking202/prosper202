@@ -23,7 +23,7 @@ Simply follow the instructions, please follow them exactly.
 7. Navigate to your Prosper202 url and follow the prompts.
 8. You should now be done.
 
-And That's it! Prosper202 should now be upgraded.
+And that's it! Prosper202 should now be upgraded.
 
 Please note newer versions now come with an auto-upgrade feature.
 
