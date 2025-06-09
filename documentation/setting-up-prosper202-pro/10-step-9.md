@@ -20,7 +20,7 @@ Finally enter the SubID parameter **type** as shown in the example. For our exam
 
 ## Pixel vs Postback
 ![Screen Shot 2015-12-02 at 4.42.03 PM.png](../images/step-9-2.png)
-Once you have done that, you're given the option to choose tracking pixel or postback URL base on what your network supports. And that's it. You're done with this step.
+Once you have done that, you're given the option to choose tracking pixel or postback URL based on what your network supports. And that's it. You're done with this step.
 
 Please note that if you need to, you can also download a subids report from your network to upload into Prosper for any missing leads via the Update tab.
 
