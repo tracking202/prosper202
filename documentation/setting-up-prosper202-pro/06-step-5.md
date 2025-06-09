@@ -20,6 +20,6 @@ If you chose Advanced LP, you only have to select the LP you are promoting.
 
 Next, give your ad a nickname that is easy for you to identify, fill in all the ad details the way you like it or the way your actual text ad is, then click add.
 
-Repeat this any many times as needed to get all your ads in Prosper202.
+Repeat this as many times as needed to get all your ads in Prosper202.
 
 Finally, when ready, **[click here to proceed to Step 6](07-step-6.md)**.
