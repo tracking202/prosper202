@@ -1,8 +1,8 @@
 # Step 1 - Traffic Sources
 
-This is the step where you enter your traffic source. Basically where you intend to drive traffic from. 
+This is the step where you enter your traffic source. Basically where you intend to drive traffic from.
 
-In the example below, I am using Google Adwords as an example. Simply type in Google Adwords (you can name this whatever you want as this is for your reference) and click Add. There may be an autocomplete option that pop ups.
+In the example below, I am using Google Adwords as an example. Simply type in Google Adwords (you can name this whatever you want as this is for your reference) and click Add. There may be an autocomplete option that pops up.
 ![step1a.png](../images/step-1-1.png)
 Once you click add, you will see it get added to the box on the right hand side. Proceed to select the Traffic Source you just added and add your username or login in the second box. Please note you can name these whatever you want as well as they are also for your own reference so you know which account it came from.
 
