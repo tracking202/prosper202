@@ -12,7 +12,7 @@ If you chose the Simple LP option, you'll see a screenshot similar to the one be
 ![Screen Shot 2015-12-07 at 2.55.56 PM.png](../images/step-7-2.png)
 **Simple LP Codes**
 
-After you click Get Landing Page Codes, some code should have been generated. The first shown directly below is your inbound landing page javascript code. This Javascript code must be placed inside the head tag of your single landing page so that when the visitor lands on the site, the javascript code will load. Copy the code exactly and paste it inside your <head> and </head> tags. If you're using something like Wordpress, please refer to our Wordpress section instead.
+After you click Get Landing Page Codes, some code should have been generated. The first shown directly below is your inbound landing page JavaScript code. This JavaScript code must be placed inside the head tag of your single landing page so that when the visitor lands on the site, the JavaScript code will load. Copy the code exactly and paste it inside your <head> and </head> tags. If you're using something like WordPress, please refer to our WordPress section instead.
 ![Screen Shot 2015-12-02 at 4.10.02 PM.png](../images/step-7-3.png)
 Next, you're given a few options for outbound code. These are code you must use to redirect the visitor from your landing page to the offer. You must use one of the provided methods. The easiest is usually option one where you can replace the outgoing URL with the specific PHP link provided as shown below. You can copy the code and replace your link URL with it.
 ![Screen Shot 2015-12-02 at 4.13.15 PM.png](../images/step-7-4.png)
