@@ -1,6 +1,6 @@
 # Reporting
 
-We're going to do a quick run down of all the reporting available in this section. Please feel free to explore Prosper202 to get a better understanding of what you are looking at beyond what is written here.
+We're going to do a quick rundown of all the reporting available in this section. Please feel free to explore Prosper202 to get a better understanding of what you are looking at beyond what is written here.
 
 ## Overview
 
