@@ -4,7 +4,7 @@ We're going to do a quick rundown of all the reporting available in this section
 
 ## Overview
 
-Overview in general gives you a birds eye view of your overall campaign performance. Here we'll go over the various sub-sections under Overview.
+Overview in general gives you a bird’s-eye view of your overall campaign performance. Here we'll go over the various sub-sections under Overview.
 
 **Campaign Overview**
 
