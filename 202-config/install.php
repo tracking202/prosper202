@@ -3,8 +3,15 @@ declare(strict_types=1);
 //include mysql settings
 include_once(dirname( __FILE__ ) . '/connect.php');
 include_once(dirname( __FILE__ ) . '/functions-install.php');
+
+// Initialize variables
+$success = false;
+$version_error = array();
+$error = array();
+$html = array();
+
 if(isset($_COOKIE['user_api'])){
-$html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
+    $html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
 }
 else{
     header("Location: ".get_absolute_url()."202-config/get_apikey.php");    
@@ -51,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	 	$user_pass = salt_user_pass($_POST['user_pass']);
 		$mysql['user_pass'] = $db->real_escape_string($user_pass);      
  		
- 		$hash = md5(uniqid(rand(), TRUE));
+ 		$hash = md5(uniqid((string)rand(), TRUE));
 		// $user_hash = intercomHash($hash); // Removed intercomHash call
 		$user_hash = ''; // Default empty value
 
@@ -156,10 +163,10 @@ if (!$success) {
 
 			      <input type="hidden" class="form-control input-sm" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" >
 
-		    <div class="form-group <?php if ($error['user_email']) echo "has-error";?>">
+		    <div class="form-group <?php if (isset($error['user_email'])) echo "has-error";?>">
 			    <label for="user_email" class="col-xs-4 control-label"><strong>Your Email:</strong></label>
 			    <div class="col-xs-8">
-			      <input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email']; ?>">
+			      <input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo isset($html['user_email']) ? $html['user_email'] : ''; ?>">
 			    </div>
 			</div>
 
@@ -170,11 +177,36 @@ if (!$success) {
 			
 					
 
+					// Try to detect user's timezone
+					$user_timezone = '';
+					if (isset($_POST['user_timezone'])) {
+					    $user_timezone = $_POST['user_timezone'];
+					} elseif (isset($_SERVER['TZ'])) {
+					    $user_timezone = $_SERVER['TZ'];
+					} else {
+					    // Default to a common timezone if detection fails
+					    $user_timezone = 'America/Los_Angeles';
+					}
+
 					$utc = new DateTimeZone('UTC');
 					$dt = new DateTime('now', $utc);
 
 					echo '<select class="form-control input-sm" name="user_timezone" id="user_timezone">';
+					
+					// First, add the user's timezone if we have one
+					if ($user_timezone && in_array($user_timezone, DateTimeZone::listIdentifiers())) {
+					    $current_tz = new DateTimeZone($user_timezone);
+					    $offset = $current_tz->getOffset($dt);
+					    $transition = $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());
+					    $abbr = $transition[0]['abbr'];
+					    echo '<option value="' .$user_timezone. '" selected>' .$user_timezone. ' [' .$abbr. ' '. formatOffset($offset). '] (Current)</option>';
+					}
+					
+					// Then add all other timezones
 					foreach(DateTimeZone::listIdentifiers() as $tz) {
+					    // Skip if this is the user's timezone (already added above)
+					    if ($tz === $user_timezone) continue;
+					    
 					    $current_tz = new DateTimeZone($tz);
 					    $offset =  $current_tz->getOffset($dt);
 					    $transition =  $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());
@@ -187,21 +219,21 @@ if (!$success) {
 			    </div>
 			</div>
 
-			<div class="form-group <?php if ($error['user_name']) echo "has-error";?>">
+			<div class="form-group <?php if (isset($error['user_name'])) echo "has-error";?>">
 			    <label for="user_name" class="col-xs-4 control-label"><strong>Username:</strong></label>
 			    <div class="col-xs-8">
 			      <input type="text" class="form-control input-sm" id="user_name" name="user_name">
 			    </div>
 			</div>
 
-			<div class="form-group <?php if ($error['user_pass']) echo "has-error";?>">
+			<div class="form-group <?php if (isset($error['user_pass'])) echo "has-error";?>">
 			    <label for="user_pass" class="col-xs-4 control-label"><strong>Password:</strong></label>
 			    <div class="col-xs-8">
 			      <input type="password" class="form-control input-sm" id="user_pass" name="user_pass">
 			    </div>
 			</div>
 
-			<div class="form-group <?php if ($error['user_pass']) echo "has-error";?>">
+			<div class="form-group <?php if (isset($error['user_pass'])) echo "has-error";?>">
 			    <label for="verify_user_pass" class="col-xs-4 control-label"><strong>Verify Password:</strong></label>
 			    <div class="col-xs-8">
 			      <input type="password" class="form-control input-sm" id="verify_user_pass" name="verify_user_pass">
@@ -213,6 +245,30 @@ if (!$success) {
 $('form#install-prosper202').submit(function(){
     $(this).find(':input[type=submit]').prop('disabled', true);
     $('body').css( 'cursor', 'wait' );
+});
+
+// Try to detect user's timezone using JavaScript
+$(document).ready(function() {
+    try {
+        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz) {
+            // Check if this timezone exists in the select options
+            var found = false;
+            $('#user_timezone option').each(function() {
+                if ($(this).val() === tz) {
+                    // Move this option to the top and select it
+                    var $option = $(this);
+                    $option.prependTo('#user_timezone');
+                    $option.prop('selected', true);
+                    $option.text($option.text() + ' (Detected)');
+                    found = true;
+                    return false; // break the loop
+                }
+            });
+        }
+    } catch(e) {
+        // Timezone detection not supported
+    }
 });
 
 					</script>

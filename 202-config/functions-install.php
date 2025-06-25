@@ -6,7 +6,7 @@ include_once(dirname( __FILE__ ) . '/functions-upgrade.php');
 
 class INSTALL {
 
-	function install_databases() {
+	static function install_databases() {
 
 		$database = DB::getInstance();
 	$db = $database->getConnection();
@@ -1417,7 +1417,7 @@ $result = _mysqli_query($sql);
   
 
 
-	function install_database_partitions(){
+	static function install_database_partitions(){
 	    $database = DB::getInstance();
 	    $db = $database->getConnection();
 	    
