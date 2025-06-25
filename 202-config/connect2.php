@@ -13,8 +13,8 @@ if ($_SERVER['SERVER_NAME'] == '_') {
     $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'];
 }
 
-DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
-DEFINE('CONFIG_PATH', dirname(__FILE__));
+define('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
+define('CONFIG_PATH', dirname(__FILE__));
 @ini_set('auto_detect_line_endings', TRUE);
 // @ini_set('register_globals', 0); // Removed: deprecated and removed in PHP 5.4+
 @ini_set('display_errors', 'On');
@@ -22,7 +22,7 @@ DEFINE('CONFIG_PATH', dirname(__FILE__));
 // @ini_set('safe_mode', 'Off'); // Removed: deprecated and removed in PHP 5.4+
 
 mysqli_report(MYSQLI_REPORT_STRICT);
-include_once(ROOT_PATH . '/202-config.php');
+include_once ROOT_PATH . '/202-config.php';
 
 // Get database instance
 $database = DB::getInstance();
@@ -35,19 +35,21 @@ if (extension_loaded('memcache')) {
     $whatCache = 'memcache';
     $memcacheInstalled = true;
     $memcache = new Memcache();
-    if (@$memcache->connect($mchost, 11211))
+    if (@$memcache->connect($mchost, 11211)) {
         $memcacheWorking = true;
-    else
+    } else {
         $memcacheWorking = false;
+    }
 } else {
     if (extension_loaded('memcached')) {
         $whatCache = 'memcached';
         $memcacheInstalled = true;
         $memcache = new Memcached();
-        if (@$memcache->addserver($mchost, 11211))
+        if (@$memcache->addserver($mchost, 11211)) {
             $memcacheWorking = true;
-        else
+        } else {
             $memcacheWorking = false;
+        }
     }
 }
 
@@ -61,19 +63,17 @@ function setCache($key, $value, $exp = null)
     switch ($whatCache) {
         case 'memcache':
             return $memcache->set($key, $value, false, $exp);
-            break;
 
         case 'memcached':
             return $memcache->set($key, $value, $exp);
-            break;
     }
 }
 
 
-include_once(CONFIG_PATH . '/geo/inc/geoipcity.inc');
-include_once(CONFIG_PATH . '/geo/inc/geoipregionvars.php');
-include_once(CONFIG_PATH . '/Mobile_Detect.php');
-include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
+include_once CONFIG_PATH . '/geo/inc/geoipcity.inc';
+include_once CONFIG_PATH . '/geo/inc/geoipregionvars.php';
+include_once CONFIG_PATH . '/Mobile_Detect.php';
+include_once CONFIG_PATH . '/FraudDetectionIPQS.class.php';
 require ROOT_PATH . 'vendor/autoload.php';
 
 // Initialize $tid and $db variables to prevent undefined variable errors

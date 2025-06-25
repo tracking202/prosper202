@@ -36,7 +36,7 @@ info_top(); ?>
             <div class="form-group <?php if ($error['user_email']) echo "has-error";?>">
 			    <label for="user_api" class="col-xs-4 control-label"><strong>Prosper202 API Key:</strong><br> <small></label>
 			    <div class="col-xs-8">
-			      <input type="text" class="form-control input-sm" style="color:black;" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" placeholder="Click Button To Get Your API Key" readonly>
+			      <input type="text" class="form-control input-sm" style="color:black;" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" placeholder="Click Button To Get Your API Key">
 			    </div>
 			</div>
 		  
