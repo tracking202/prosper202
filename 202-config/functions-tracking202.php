@@ -1860,6 +1860,13 @@ function getLastDayOfMonth($month, $year)
 
 function getTrackingDomain()
 {
+    $tracking_domain = $_SERVER['SERVER_NAME'];
+    
+    // Only query database if user is logged in
+    if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
+        return $tracking_domain;
+    }
+    
     $database = DB::getInstance();
     $db = $database->getConnection();
     $tracking_domain_sql = "
@@ -1870,12 +1877,16 @@ function getTrackingDomain()
 		WHERE
 			`user_id`='" . $db->real_escape_string((string)$_SESSION['user_id']) . "'
 	";
-    $tracking_domain_result = _mysqli_query($tracking_domain_sql); // ($user_sql);
-    $tracking_domain_row = $tracking_domain_result->fetch_assoc();
-    $tracking_domain = $_SERVER['SERVER_NAME'];
-    if (strlen($tracking_domain_row['user_tracking_domain']) > 0) {
-        $tracking_domain = $tracking_domain_row['user_tracking_domain'];
+    $tracking_domain_result = _mysqli_query($tracking_domain_sql);
+    
+    if ($tracking_domain_result && $tracking_domain_row = $tracking_domain_result->fetch_assoc()) {
+        if (isset($tracking_domain_row['user_tracking_domain']) && 
+            is_string($tracking_domain_row['user_tracking_domain']) && 
+            strlen($tracking_domain_row['user_tracking_domain']) > 0) {
+            $tracking_domain = $tracking_domain_row['user_tracking_domain'];
+        }
     }
+    
     return $tracking_domain;
 }
 

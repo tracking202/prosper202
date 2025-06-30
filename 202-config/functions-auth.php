@@ -42,13 +42,27 @@ class AUTH
 	}
 	static function require_valid_api_key()
 	{
+		// First try the join query
 		$user_sql = "SELECT user_pref_ad_settings, p202_customer_api_key from 202_users_pref left join 202_users ON (202_users_pref.user_id = 202_users.user_id) WHERE 202_users_pref.user_id='1'";
 		$user_result = _mysqli_query($user_sql);
-		if ($user_result) {
+		
+		if ($user_result && $user_result->num_rows > 0) {
 			$user_row = $user_result->fetch_assoc();
 			$user_api_key = $user_row['p202_customer_api_key'];
 		} else {
-			$user_api_key = '';
+			// Fallback: If no user_pref record exists, check 202_users directly
+			$user_sql = "SELECT p202_customer_api_key FROM 202_users WHERE user_id='1'";
+			$user_result = _mysqli_query($user_sql);
+			if ($user_result && $user_result->num_rows > 0) {
+				$user_row = $user_result->fetch_assoc();
+				$user_api_key = $user_row['p202_customer_api_key'];
+				
+				// Create missing user_pref record
+				$insert_sql = "INSERT IGNORE INTO 202_users_pref (user_id) VALUES ('1')";
+				_mysqli_query($insert_sql);
+			} else {
+				$user_api_key = '';
+			}
 		}
 
 		if (AUTH::is_valid_api_key($user_api_key) == false || $user_api_key == '') {
@@ -82,17 +96,28 @@ class AUTH
 		curl_setopt($ch, CURLOPT_POST, 1);
 		// Set post fields
 		curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+		// Set timeout to prevent hanging
+		curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
 		// Execute
 		$result = curl_exec($ch);
-
-		if (curl_errno($ch)) {
-			// echo 'error:' . curl_error($c);
-		}
+		$http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		$curl_error = curl_error($ch);
+		$curl_errno = curl_errno($ch);
+		
 		// close connection
 		curl_close($ch);
 
+		// If there's a network error or timeout, assume the key is valid
+		// This prevents blocking access when the validation server is down
+		if ($curl_errno > 0 || $http_code == 0) {
+			// Network error - allow access but don't cache the validation
+			return true;
+		}
+		
+		// If we got a response, validate it
 		$api_validate = json_decode($result, true);
-		if ($api_validate['msg'] == "Key valid") {
+		if (isset($api_validate['msg']) && $api_validate['msg'] == "Key valid") {
 			$database = DB::getInstance();
 			$db = $database->getConnection();
 			$mysql = array(

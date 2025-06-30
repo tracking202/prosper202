@@ -30,7 +30,8 @@ if (file_exists('../202-config.php')) {
     while(!feof($handle)) {
         $line = fgets($handle);
         preg_match($re, $line, $matches);
-    switch ($matches[1]) {
+        if (isset($matches[1])) {
+            switch ($matches[1]) {
             case '$dbname':
                 $odbname=$matches[2];
                 break;
@@ -49,9 +50,10 @@ if (file_exists('../202-config.php')) {
             case '$mchost':
                 $omchost=$matches[2];
                 break;            
+            }
         }
     }
-    fclose($file);
+    fclose($handle);
      
 }
 
@@ -212,7 +214,8 @@ switch($step) {
 
 	foreach ($configFile as $line_num => $line) {
 	    preg_match($re, $line, $matches);
-		switch ($matches[1]) {
+		if (isset($matches[1])) {
+			switch ($matches[1]) {
 			case '$dbname':
 				fwrite($handle, str_replace("putyourdbnamehere", $dbname, $line));
 				break;
@@ -233,6 +236,9 @@ switch($step) {
 				break;
 			default:
 				fwrite($handle, $line);
+			}
+		} else {
+			fwrite($handle, $line);
 		}
 	}
 	fclose($handle);

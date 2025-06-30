@@ -228,7 +228,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					}
 				}
 			}
-			_mysqli_query($sql);
+			if (isset($sql) && !empty($sql)) {
+				_mysqli_query($sql);
+			}
 			header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 		}
 	}
