@@ -311,7 +311,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
 //set token to prevent CSRF attacks
 if (!isset($_SESSION['token'])) {
-    $_SESSION['token'] = md5(uniqid((string)rand(), TRUE));
+    $_SESSION['token'] = md5(uniqid((string)rand(), true));
 }
 
 // Initialize $skip_upgrade variable
