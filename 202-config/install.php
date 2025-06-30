@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	 	$user_pass = salt_user_pass($_POST['user_pass']);
 		$mysql['user_pass'] = $db->real_escape_string($user_pass);      
  		
- 		$hash = md5(uniqid((string)rand(), TRUE));
+ 		$hash = md5(uniqid((string)rand(), true));
 		// $user_hash = intercomHash($hash); // Removed intercomHash call
 		$user_hash = ''; // Default empty value
 

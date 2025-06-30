@@ -43,8 +43,8 @@ class UPGRADE
     {
         global $dbname;
 
-        ini_set('max_execution_time', 60 * 20);
-        ini_set('max_input_time', 60 * 20);
+        ini_set('max_execution_time', (string)(60 * 20));
+        ini_set('max_input_time', (string)(60 * 20));
 
         //Try to disable mysql strict mode
         $sql = "SET session sql_mode= ''";
@@ -882,7 +882,7 @@ class UPGRADE
 										  ADD COLUMN `vip_perks_status` int(1) NOT NULL;";
             $result = _mysqli_query($sql);
 
-            $hash = md5(uniqid((string)rand(), TRUE));
+            $hash = md5(uniqid((string)rand(), true));
             $user_hash = ''; // Default empty value
 
             $sql = "UPDATE 202_users SET install_hash='" . $hash . "', user_hash='" . $user_hash . "' WHERE user_id='1'";

@@ -15,10 +15,10 @@ if ($_SERVER['SERVER_NAME'] == '_') {
 
 define('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
 define('CONFIG_PATH', dirname(__FILE__));
-@ini_set('auto_detect_line_endings', TRUE);
-// @ini_set('register_globals', 0); // Removed: deprecated and removed in PHP 5.4+
+@ini_set('auto_detect_line_endings', '1');
+// @ini_set('register_globals', '0'); // Removed: deprecated and removed in PHP 5.4+
 @ini_set('display_errors', 'On');
-@ini_set('error_reporting', 6135);
+@ini_set('error_reporting', '6135');
 // @ini_set('safe_mode', 'Off'); // Removed: deprecated and removed in PHP 5.4+
 
 mysqli_report(MYSQLI_REPORT_STRICT);

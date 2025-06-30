@@ -28,24 +28,49 @@ if (isset($_SERVER['SERVER_NAME']) && $_SERVER['SERVER_NAME'] == '_') {
 
 DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
 DEFINE('CONFIG_PATH', dirname(__FILE__));
-@ini_set('auto_detect_line_endings', TRUE);
+@ini_set('auto_detect_line_endings', '1');
 // Deprecated in PHP 5.4
-// @ini_set('register_globals', 0);
+// @ini_set('register_globals', '0');
 @ini_set('display_errors', 'On');
-@ini_set('error_reporting', 6135);
+@ini_set('error_reporting', '6135');
 // @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
-@ini_set('set_time_limit', 0);
+@ini_set('set_time_limit', '0');
 
 // Start session if not already started
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+initializeSession();
 
 // Check if the session variable exists
 if (!isset($_SESSION['user_timezone']) || empty($_SESSION['user_timezone'])) {
     date_default_timezone_set('GMT');
 } else {
     date_default_timezone_set($_SESSION['user_timezone']);
+}
+
+/**
+ * Initialize session with proper directory handling
+ * 
+ * @return bool True if session was started successfully
+ */
+function initializeSession(): bool {
+    if (session_status() !== PHP_SESSION_NONE) {
+        return true;
+    }
+    
+    // Set session save path if not configured
+    if (empty(session_save_path())) {
+        $session_dir = sys_get_temp_dir() . '/prosper202_sessions';
+        if (!is_dir($session_dir)) {
+            @mkdir($session_dir, 0700, true);
+        }
+        if (is_dir($session_dir) && is_writable($session_dir)) {
+            session_save_path($session_dir);
+        } else {
+            error_log("Prosper202: Unable to create writable session directory: " . $session_dir);
+            return false;
+        }
+    }
+    
+    return session_start();
 }
 
 /**
@@ -266,6 +291,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
         if (session_status() === PHP_SESSION_NONE) {
             //disable mysql sessions because they are slow
             //$sess = new SessionManager();
+            
             $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
             session_set_cookie_params([
                 'lifetime' => 0,
@@ -275,7 +301,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
                 'httponly' => true,
                 'samesite' => 'Lax'
             ]);
-            session_start();
+            initializeSession();
         }
     }
 
@@ -285,7 +311,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
 //set token to prevent CSRF attacks
 if (!isset($_SESSION['token'])) {
-    $_SESSION['token'] = md5(uniqid((string)rand(), TRUE));
+    $_SESSION['token'] = md5(uniqid((string)rand(), true));
 }
 
 // Initialize $skip_upgrade variable

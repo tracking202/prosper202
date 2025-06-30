@@ -130,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (isset($mysql['user_password'])) {
 			$mysql['user_pass'] = $db->real_escape_string(salt_user_pass($mysql['user_password']));
 		}
-		$hash = md5(uniqid((string)rand(), TRUE));
+		$hash = md5(uniqid((string)rand(), true));
 		$user_hash = ''; // Default empty value
 
 		$mysql['user_time_register'] = $db->real_escape_string((string)time());

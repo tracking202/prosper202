@@ -26,12 +26,29 @@ $user_sql = "SET @@global.sql_mode= ''";
 $user_results = $db->query($user_sql);
 
 $detect = new Mobile_Detect;
-$parser = Parser::create();
 $userAgent = $detect->getUserAgent();
 if (empty($userAgent)) {
     $userAgent = 'Unknown/1.0';
 }
-$result = $parser->parse($userAgent);
+
+// Create UA parser with error handling
+try {
+    // Check if the Parser class and its methods are available
+    if (class_exists('UAParser\Parser') && method_exists('UAParser\Parser', 'create')) {
+        $parser = Parser::create();
+        $result = $parser->parse($userAgent);
+    } else {
+        throw new Exception('UAParser not available');
+    }
+} catch (Exception $e) {
+    // Fallback if UA parser fails - create a basic result object
+    $result = (object)[
+        'ua' => (object)['family' => 'Unknown', 'major' => '1', 'minor' => '0', 'patch' => null],
+        'os' => (object)['family' => 'Unknown', 'major' => null, 'minor' => null, 'patch' => null],
+        'device' => (object)['family' => 'Unknown', 'brand' => null, 'model' => null]
+    ];
+    error_log("UA Parser error: " . $e->getMessage());
+}
 
 function logged_in_redirect()
 {
