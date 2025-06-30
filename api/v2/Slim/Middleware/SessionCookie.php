@@ -90,7 +90,7 @@ class SessionCookie extends \Slim\Middleware
          * disable the session cookie and cache limiter. We also set the session
          * handler to this class instance to avoid PHP's native session file locking.
          */
-        ini_set('session.use_cookies', 0);
+        ini_set('session.use_cookies', '0');
         session_cache_limiter(false);
         session_set_save_handler(
             array($this, 'open'),

@@ -43,8 +43,8 @@ class UPGRADE
     {
         global $dbname;
 
-        ini_set('max_execution_time', 60 * 20);
-        ini_set('max_input_time', 60 * 20);
+        ini_set('max_execution_time', (string)(60 * 20));
+        ini_set('max_input_time', (string)(60 * 20));
 
         //Try to disable mysql strict mode
         $sql = "SET session sql_mode= ''";

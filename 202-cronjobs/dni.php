@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', '1');
 try {
 	include_once(str_repeat("../", 1) . '202-config/connect.php');
 

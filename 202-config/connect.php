@@ -28,13 +28,13 @@ if (isset($_SERVER['SERVER_NAME']) && $_SERVER['SERVER_NAME'] == '_') {
 
 DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
 DEFINE('CONFIG_PATH', dirname(__FILE__));
-@ini_set('auto_detect_line_endings', TRUE);
+@ini_set('auto_detect_line_endings', '1');
 // Deprecated in PHP 5.4
-// @ini_set('register_globals', 0);
+// @ini_set('register_globals', '0');
 @ini_set('display_errors', 'On');
-@ini_set('error_reporting', 6135);
+@ini_set('error_reporting', '6135');
 // @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
-@ini_set('set_time_limit', 0);
+@ini_set('set_time_limit', '0');
 
 // Start session if not already started
 if (session_status() === PHP_SESSION_NONE) {
