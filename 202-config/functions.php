@@ -7,7 +7,7 @@ use GuzzleHttp\json_decode;
 include_once(dirname(__FILE__) . '/functions-upgrade.php');
 
 if (!defined('PROSPER202_MIN_PHP_VERSION')) {
-	define('PROSPER202_MIN_PHP_VERSION', '8.3');
+	define('PROSPER202_MIN_PHP_VERSION', '8.1');
 }
 
 function php_version_supported(): bool

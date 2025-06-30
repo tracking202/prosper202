@@ -3201,7 +3201,7 @@ class DisplayData
 
             if ($i != $obj->count() - 1) {
 
-                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
                     $html['clicks'] = '?';
                     $html['click_out'] = '?';
                     $html['leads'] = '?';
@@ -3231,7 +3231,7 @@ class DisplayData
             		</tr> ';
             } else {
 
-                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
                     $html['total_clicks'] = '?';
                     $html['total_click_out'] = '?';
                     $html['total_leads'] = '?';
@@ -3346,7 +3346,7 @@ class DisplayData
                         $roiStyle = 'default';
                     }
 
-                    if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                    if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
                         $ppc_account['clicks'] = '?';
                         $ppc_account['click_out'] = '?';
                         $ppc_account['leads'] = '?';
@@ -3383,7 +3383,7 @@ class DisplayData
                 </tr> ';
                 }
 
-                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
                     $campaign['total_clicks'] = '?';
                     $campaign['total_click_out'] = '?';
                     $campaign['total_leads'] = '?';
@@ -3685,7 +3685,7 @@ class DisplayData
 
             if ($featureKey) {
 
-                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
                     $html['clicks'] = '?';
                     $html['click_out'] = '?';
                     $html['leads'] = '?';

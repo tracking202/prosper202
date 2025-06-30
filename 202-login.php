@@ -15,6 +15,13 @@ $selected = array();
 $add_success = false;
 $delete_success = false;
 
+// Check if the application is installed
+if (!is_installed()) {
+    // Redirect to setup if not installed
+    header('Location: ' . get_absolute_url() . '202-config/setup-config.php');
+    exit;
+}
+
 $user_sql = "SET @@global.sql_mode= ''";
 $user_results = $db->query($user_sql);
 
@@ -48,10 +55,10 @@ function logged_in_redirect()
 					$data = json_decode($offerData, true);
 
 					if (!empty($data)) {
-						$mysql['aff_network_id'] = $db->real_escape_string($dni_row['aff_network_id']);
+						$mysql['aff_network_id'] = $db->real_escape_string((string)$dni_row['aff_network_id']);
 						$mysql['aff_campaign_name'] = $db->real_escape_string($data['name']);
 						$mysql['aff_campaign_url'] = $db->real_escape_string($data['trk_url']);
-						$mysql['aff_campaign_payout'] = $db->real_escape_string($data['payout']);
+						$mysql['aff_campaign_payout'] = $db->real_escape_string((string)$data['payout']);
 						$mysql['aff_campaign_time'] = time();
 						$affSql = "INSERT INTO 202_aff_campaigns 
 								   SET 
@@ -101,6 +108,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	//check to see if this user exists
 	$user_sql = "SELECT * FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_name='" . $mysql['user_name'] . "' AND user_pass='" . $mysql['user_pass'] . "' AND user_deleted!='1' AND user_active='1'";
 	$user_result = _mysqli_query($user_sql);
+	
+	// Check if query was successful
+	if ($user_result === false) {
+		// Database error - likely tables don't exist
+		header('Location: ' . get_absolute_url() . '202-config/setup-config.php');
+		exit;
+	}
+	
 	$user_row = $user_result->fetch_assoc();
 
 	if (!$user_row) {
@@ -157,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$mysql['vip_perks_status'] = 0;
 		}
 
-		$mysql['ip_id'] = $db->real_escape_string($ip_id);
+		$mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 
 		$api_sql = "user_last_login_ip_id='" . $mysql['ip_id'] . "', modal_status='" . $mysql['modal_status'] . "', vip_perks_status='" . $mysql['vip_perks_status'] . "'";
 

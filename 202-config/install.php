@@ -75,19 +75,34 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$user_result = _mysqli_query($user_sql);
 		
 		$user_id = $db->insert_id;
-		$mysql['user_id'] = $db->real_escape_string($user_id);
+		$mysql['user_id'] = $db->real_escape_string((string)$user_id);
 		
 		//update user preference table   
 		$user_sql = "INSERT INTO 202_users_pref SET user_id='".$mysql['user_id']."'";
 		$user_result = _mysqli_query($user_sql);
 		
-		$role_sql = "INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (1, 1);";
-		$role_result = _mysqli_query($role_sql);
+		// Assign Super User role (role_id=1) to the new user
+		// First, ensure the role exists
+		$role_check_sql = "SELECT role_id FROM 202_roles WHERE role_id = 1";
+		$role_check_result = _mysqli_query($role_check_sql);
+		
+		if ($role_check_result && $role_check_result->num_rows > 0) {
+			// Role exists, now assign it to the user
+			$role_sql = "INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES ('".$mysql['user_id']."', 1);";
+			$role_result = _mysqli_query($role_sql);
+			
+			// Check if role assignment failed and log the error
+			if (!$role_result) {
+				error_log("Failed to assign role to user_id " . $mysql['user_id'] . ": " . $db->error);
+			}
+		} else {
+			error_log("Role ID 1 (Super user) does not exist in 202_roles table. Cannot assign role to user_id " . $mysql['user_id']);
+		}
 
 		$cron = callAutoCron('register');
 
 		if ($cron['status'] == 'success') {
-		    $sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '1'";
+		    $sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '".$mysql['user_id']."'";
 		    $result = _mysqli_query($sql);
 		}
 
