@@ -142,7 +142,6 @@ if (file_exists(ROOT_PATH  . '202-config.php')) {
     header('location: setup-config.php');
     die();
 }
-include_once(ROOT_PATH  . '202-config.php');
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
@@ -168,19 +167,21 @@ if (extension_loaded('memcache')) {
     $whatCache = 'memcache';
     $memcacheInstalled = true;
     $memcache = new Memcache();
-    if (@$memcache->connect($mchost, 11211))
+    if (@$memcache->connect($mchost, 11211)) {
         $memcacheWorking = true;
-    else
+    } else {
         $memcacheWorking = false;
+    }
 } else {
     if (extension_loaded('memcached')) {
         $whatCache = 'memcached';
         $memcacheInstalled = true;
         $memcache = new Memcached();
-        if (@$memcache->addserver($mchost, 11211))
+        if (@$memcache->addserver($mchost, 11211)) {
             $memcacheWorking = true;
-        else
+        } else {
             $memcacheWorking = false;
+        }
     }
 }
 

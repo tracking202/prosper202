@@ -40,16 +40,29 @@ info_top(); ?>
 			    </div>
 			</div>
 		  
-            <?php if($html['user_api'] == ''){?>
+            <div id="get-key-button" <?php if($html['user_api'] != '') echo 'style="display:none;"';?>>
 			<a class="btn btn-lg btn-p202 btn-block" href="https://my.tracking202.com/api/customers/login?redirect=get-api">Click Here For Your API Key<span class="fui-check-inverted pull-right"></a>
-			<?php }else {?>
+			</div>
+			<div id="install-button" <?php if($html['user_api'] == '') echo 'style="display:none;"';?>>
 			<button class="btn btn-lg btn-p202 btn-block" type="submit">Save API Key & Install Prosper202 ClickServer<span class="fui-check-inverted pull-right"></span></button>
-			<?php }?>
+			</div>
 
 		</form>
 		</div>
 <script type="text/javascript">
 $(document).ready(function() {
+
+	// Toggle buttons based on API key input
+	$("#user_api").on('input', function() {
+		var apiKeyValue = $(this).val().trim();
+		if (apiKeyValue.length > 0) {
+			$("#get-key-button").hide();
+			$("#install-button").show();
+		} else {
+			$("#get-key-button").show();
+			$("#install-button").hide();
+		}
+	});
 
 	$( "#getapikey").submit(function( event ) {
 	
