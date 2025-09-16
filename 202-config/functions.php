@@ -72,9 +72,10 @@ function is_installed()
 
 function upgrade_needed()
 {
-	$prosper202 = new PROSPER202();
-	$mysql_version = $prosper202->prosper202_version();
-	$php_version = $prosper202->php_version();
+
+	// Call static methods
+	$mysql_version = PROSPER202::prosper202_version();
+	$php_version = PROSPER202::php_version();
 	if ($mysql_version != $php_version) {
 		return true;
 	} else {
@@ -215,15 +216,14 @@ function info_top()
 	function update_needed()
 	{
 		global $version;
+		$log = ''; // Initialize log variable to store update errors
 
-		$jsonData = getData('https://my.tracking202.com/api/v2/premium-p202/version');
+		$rssData = getData('https://my.tracking202.com/api/v2/premium-p202/version');
 		$rss = null;
-		if (is_string($jsonData)) {
-			$rss = json_decode($jsonData);
+		if ($rssData !== false && !empty($rssData)) {
+			$rss = json_decode($rssData);
 		}
-
-		// Check if decoding was successful and $rss is an object with the 'items' property
-		if (is_object($rss) && isset($rss->items) && is_array($rss->items) && count($rss->items) > 0) {
+		if (isset($rss->items) && 0 != count($rss->items)) {
 
 			$rss->items = array_slice($rss->items, 0, 1);
 			foreach ($rss->items as $item) {
@@ -253,7 +253,8 @@ function info_top()
 
 				//if current version, is older than the latest version, return true for an update is now needed.
 				if (version_compare($version, $latest_version) == '-1') {
-					if (!is_writable(dirname(__FILE__) . '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
+
+					if (!is_writable(dirname(__FILE__) . '/') || !class_exists('ZipArchive')) {
 						$_SESSION['auto_upgraded_not_possible'] = true;
 						return true;
 					}
@@ -279,11 +280,13 @@ function info_top()
 								if (temp_exists()) {
 									$downloadUpdate = @file_put_contents(dirname(__FILE__) . '/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
 									if ($downloadUpdate) {
-										$zip = @zip_open(dirname(__FILE__) . '/temp/prosper202_' . $latest_version . '.zip');
+										$zip = new ZipArchive();
+										$zipResult = $zip->open(dirname(__FILE__) . '/temp/prosper202_' . $latest_version . '.zip');
 
-										if ($zip) {
-											while ($zip_entry = @zip_read($zip)) {
-												$thisFileName = zip_entry_name($zip_entry);
+										if ($zipResult === TRUE) {
+
+											for ($i = 0; $i < $zip->numFiles; $i++) {
+												$thisFileName = $zip->getNameIndex($i);
 
 												if (substr($thisFileName, -1, 1) == '/') {
 													if (is_dir(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName)) {
@@ -292,7 +295,7 @@ function info_top()
 														@mkdir(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName, 0755, true);
 													}
 												} else {
-													$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
+													$contents = $zip->getFromIndex($i);
 													$file_ext = array_pop(explode(".", $thisFileName));
 
 													if ($updateThis = @fopen(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName, 'wb')) {
@@ -304,23 +307,44 @@ function info_top()
 													}
 												}
 											}
-											$FilesUpdated = true;
-											zip_close($zip);
+
+											$zip->close();
 										}
 									}
+								} else {
+									$FilesUpdated = false;
+									$log .= "Failed to download update file. ";
 								}
+							} else {
+								$FilesUpdated = false;
+								$log .= "Temporary directory doesn't exist or isn't writable. ";
+							}
 
-								if ($FilesUpdated) {
-									// Clear opcode cache if possible after update
-									if (function_exists('opcache_reset')) {
-										opcache_reset(); // Recommended for modern PHP versions
-									} elseif (function_exists('apc_clear_cache')) {
-										// Fallback for older APC extension
-										apc_clear_cache('user');
-									}
-									return false; // Successfully auto-upgraded
+							if ($FilesUpdated == true) {
+								// Clear all PHP caches
+								clear_php_caches();
+								include_once(dirname(__FILE__) . '/functions-upgrade.php');
+
+								if (UPGRADE::upgrade_databases(null) == true) {
+									$version = $latest_version;
+									$upgrade_done = true;
+								} else {
+									$upgrade_done = false;
 								}
 							}
+
+							// Store any error logs if they exist
+							if (!empty($log)) {
+								$_SESSION['upgrade_error_log'] = $log;
+							}
+
+							if ($upgrade_done) {
+								return false;
+							} else {
+								return true;
+							}
+						} else {
+							return true;
 						}
 					}
 
@@ -546,4 +570,32 @@ function info_top()
 		}
 		$result = json_decode($result, true);
 		return $result;
+	}
+
+	/**
+	 * Clear all available PHP caches (APC, OPcache, etc)
+	 * 
+	 * This function attempts to clear caches using various mechanisms
+	 * without causing errors if the cache systems are not available.
+	 */
+	function clear_php_caches()
+	{
+		// Try APC cache
+		if (function_exists('apc_clear_cache')) {
+			@apc_clear_cache();
+			@apc_clear_cache('user');
+			@apc_clear_cache('opcode');
+		}
+
+		// Try OPcache
+		if (function_exists('opcache_reset')) {
+			@opcache_reset();
+		}
+
+		// Try APCu (APC User Cache)
+		if (function_exists('apcu_clear_cache')) {
+			@apcu_clear_cache();
+		}
+
+		// Could add more cache clearing methods here as needed
 	}

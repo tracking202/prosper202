@@ -2606,15 +2606,7 @@ aff_network_id=values(aff_network_id)";
         $user_id = isset($_SESSION['user_own_id']) ? $_SESSION['user_own_id'] : 1;
 
         $info_result = $result = $db->query($query) or die($db->error . '<br/><br/>' . $query);
-        
-        // Check if this is an INSERT/UPDATE query (returns true) or SELECT query (returns mysqli_result)
-        if ($info_result === true) {
-            // For INSERT/UPDATE queries, we don't need to call doSummary
-            return true;
-        }
-        
         $this->doSummary($info_result, $from, $to, $user_id, $upgrade, $new);
-        return $info_result;
     }
 
     function doSummary($info_result, $from, $to, $user_id, $upgrade = false, $new = false)
@@ -3201,7 +3193,7 @@ class DisplayData
 
             if ($i != $obj->count() - 1) {
 
-                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['clicks'] = '?';
                     $html['click_out'] = '?';
                     $html['leads'] = '?';
@@ -3231,7 +3223,7 @@ class DisplayData
             		</tr> ';
             } else {
 
-                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['total_clicks'] = '?';
                     $html['total_click_out'] = '?';
                     $html['total_leads'] = '?';
@@ -3346,7 +3338,7 @@ class DisplayData
                         $roiStyle = 'default';
                     }
 
-                    if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
+                    if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                         $ppc_account['clicks'] = '?';
                         $ppc_account['click_out'] = '?';
                         $ppc_account['leads'] = '?';
@@ -3383,7 +3375,7 @@ class DisplayData
                 </tr> ';
                 }
 
-                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $campaign['total_clicks'] = '?';
                     $campaign['total_click_out'] = '?';
                     $campaign['total_leads'] = '?';
@@ -3685,7 +3677,7 @@ class DisplayData
 
             if ($featureKey) {
 
-                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
+                if ($userObj && ! $userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
                     $html['clicks'] = '?';
                     $html['click_out'] = '?';
                     $html['leads'] = '?';

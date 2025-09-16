@@ -46,7 +46,7 @@ class PROSPER202
 class UPGRADE
 {
 
-    function upgrade_databases($time_from)
+    public static function upgrade_databases($time_from)
     {
         global $dbname;
 
@@ -889,7 +889,7 @@ class UPGRADE
 										  ADD COLUMN `vip_perks_status` int(1) NOT NULL;";
             $result = _mysqli_query($sql);
 
-            $hash = md5(uniqid(rand(), TRUE));
+            $hash = md5(uniqid((string)rand(), TRUE));
             $user_hash = intercomHash($hash);
 
             $sql = "UPDATE 202_users SET install_hash='" . $hash . "', user_hash='" . $user_hash . "' WHERE user_id='1'";
@@ -1706,7 +1706,9 @@ class UPGRADE
             $result = _mysqli_query($sql);
 
             $de = new DataEngine();
-            $de->getSummary($time_from, $time_to, $snippet, 1, true, false);
+            if (method_exists($de, 'getSummary')) {
+                $de->getSummary($time_from, $time_to, $snippet, 1, true, false);
+            }
 
             $sql = "CREATE TABLE `202_rotator_rules_redirects` (
                   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2031,13 +2033,13 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.27') {
 
-            $sql = "ALTER TABLE `202_users` DROP `leave_behind_page_url`";
+            $sql = "ALTER TABLE 202_users DROP `leave_behind_page_url`";
             $result = _mysqli_query($sql);
 
-            $sql = "ALTER TABLE `202_users` DROP `user_mods`";
+            $sql = "ALTER TABLE 202_users DROP `user_mods`";
             $result = _mysqli_query($sql);
 
-            $sql = "ALTER TABLE `202_users` ADD COLUMN  `user_mods_lb` tinyint(1) unsigned NOT NULL DEFAULT '0'";
+            $sql = "ALTER TABLE 202_users ADD COLUMN  `user_mods_lb` tinyint(1) unsigned NOT NULL DEFAULT '0'";
             $result = _mysqli_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.28'";

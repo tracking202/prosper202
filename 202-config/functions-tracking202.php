@@ -863,8 +863,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                     $time['from'] = $user_row['user_time_register'];
                 }
 
-                $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
-                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
+                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1730,8 +1730,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
                     $time['from'] = $user_row['user_time_register'];
                 }
 
-                $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
-                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
+                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1844,8 +1844,8 @@ function grab_timeframe()
             $time['from'] = $user2_row['user_time_register'];
         }
 
-        $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
-        $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+        $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
+        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
     }
 
     if ($user_row['user_pref_time_predefined'] == '') {
@@ -2024,10 +2024,10 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     $count_where = ''; //initialize count_where variable
     if ($_SESSION['publisher'] == false) { //user is able to see all camapigns
         $click_sql = $command . " WHERE $db_table.user_id!='0' ";
-        $count_where .= " WHERE $db_table.user_id!='0' ";
+        $count_where = " WHERE $db_table.user_id!='0' ";
     } else {
         $click_sql = $command . " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-        $count_where .= " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
+        $count_where = " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
     }
     if ($user_row['user_pref_subid']) {
         $mysql['user_landing_subid'] = $db->real_escape_string($user_row['user_pref_subid']);
@@ -2165,8 +2165,8 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     if ($pref_time == true) {
         $time = grab_timeframe();
 
-        $mysql['from'] = $db->real_escape_string($time['from']);
-        $mysql['to'] = $db->real_escape_string($time['to']);
+        $mysql['from'] = $db->real_escape_string((string)$time['from']);
+        $mysql['to'] = $db->real_escape_string((string)$time['to']);
         if ($mysql['from'] != '') {
             $click_sql .= " AND click_time > " . $mysql['from'] . " ";
             $count_where .= " AND click_time > " . $mysql['from'] . " ";
@@ -2193,7 +2193,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         else
             $count_sql = $count_sql . $count_where;
 
-        if ($mysql['user_landing_subid']) {
+        if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
             $join = " AND 2c.";
             if ($isspy) {
                 $join = " WHERE ";
@@ -2262,6 +2262,10 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     } else {
         // only if there is a limit set, run this code
         if ($pref_limit != false) {
+            // before it limits, we want to know the TOTAL number of rows
+            $count_result = _mysqli_query($count_sql);
+            $count_row = $count_result->fetch_assoc();
+            $rows = $count_row['count'];
 
             // rows is the total count of rows in this query.
             $query['rows'] = $rows;
@@ -4401,7 +4405,6 @@ function  upgrade_config()
                     break;
                 case '$dbhost':
                     $odbhost = $matches[2];
-                    echo $odbhost;
                     break;
                 case '$dbhostro':
                     $odbhostro = $matches[2];

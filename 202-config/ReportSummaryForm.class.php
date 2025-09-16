@@ -1298,7 +1298,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 		$hideDate = false;
 
-		if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
+		if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
 			$hideDate = true;
 		}
 
@@ -1493,7 +1493,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 		$hideDate = false;
 
-		if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && (!isset($_SESSION['publisher']) || !$_SESSION['publisher'])) {
+		if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
 			$hideDate = true;
 		}
 

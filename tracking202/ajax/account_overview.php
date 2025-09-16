@@ -27,19 +27,12 @@ $user_sql = "SELECT 2p.user_pref_show, 2p.user_cpc_or_cpv, 2ac.aff_campaign_name
 				 WHERE 2p.user_id=" . $mysql['user_id'] . "";
 $user_result = _mysqli_query($user_sql); //($user_sql);
 
-$aff_campaigns = array();
-$campaign_ids = array();
 while ($user_row2 = $user_result->fetch_assoc()) {
 	$user_row['user_pref_show'] = $user_row2['user_pref_show'];
 	$user_row['user_cpc_or_cpv'] = $user_row2['user_cpc_or_cpv'];
 	$user_row['user_chart_data'] = $user_row2['chart_data'];
 	$user_row['chart_time_range'] = $user_row2['chart_time_range'];
-	
-	// Only add campaign if it hasn't been added already
-	if ($user_row2['aff_campaign_id'] && !in_array($user_row2['aff_campaign_id'], $campaign_ids)) {
-		$aff_campaigns[] = array('aff_campaign_id' => $user_row2['aff_campaign_id'], 'aff_campaign_name' => $user_row2['aff_campaign_name']);
-		$campaign_ids[] = $user_row2['aff_campaign_id'];
-	}
+	$aff_campaigns[] = array('aff_campaign_id' => $user_row2['aff_campaign_id'], 'aff_campaign_name' => $user_row2['aff_campaign_name']);
 }
 
 $user_row['user_chart_data'] = unserialize($user_row['user_chart_data']);
@@ -124,7 +117,7 @@ if ($userObj->hasPermission("access_to_campaign_data")) {
 				type: 'line'
 			},
 			title: {
-				text: 'From <?php echo date('d/m/Y', (int)$mysql['from']); ?> to <?php echo date('d/m/Y', (int)$mysql['to']); ?>'
+				text: 'From <?php echo date('d/m/Y', $mysql['from']); ?> to <?php echo date('d/m/Y', $mysql['to']); ?>'
 			},
 			xAxis: {
 				categories: [<?php foreach ($rangePeriod as $range) {

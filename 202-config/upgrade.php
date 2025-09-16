@@ -131,12 +131,12 @@ if ($version_error) {
 				</tr>
 
 				<tr>
-					<td>PHP ZipArchive <br>(required for 1-Click Upgrade)</td>
-					<td><span class="label label-<?php if (!class_exists('ZipArchive')) {
+					<td>PHP zip_open() <br>(required for 1-Click Upgrade)</td>
+					<td><span class="label label-<?php if (!function_exists('zip_open')) {
 														echo "warning";
 													} else {
 														echo "primary";
-													} ?>" style="font-size: 100%;"><?php if (!class_exists('ZipArchive')) echo "Missing";
+													} ?>" style="font-size: 100%;"><?php if (!function_exists('zip_open')) echo "Missing";
 																					else echo "Installed"; ?></span></td>
 				</tr>
 

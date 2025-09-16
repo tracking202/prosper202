@@ -103,13 +103,8 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 
 					//su ration
 					$su_ratio = 0;
-					if ($clicks > 0) {
-						$su_ratio = @round($leads / $clicks * 100, 2);
-					}
-					$total_su_ratio = 0;
-					if ($total_clicks > 0) {
-						$total_su_ratio = @round($total_leads / $total_clicks * 100, 2);
-					}
+					$su_ratio = @round($leads / $clicks * 100, 2);
+					$total_su_ratio = @round($total_leads / $total_clicks * 100, 2);
 
 					//cost
 					$cost = 0;
@@ -119,10 +114,7 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 					//avg cpc
 					$avg_cpc = 0;
 					$avg_cpc = $rotator_totals_row['avg_cpc'];
-					$total_avg_cpc = 0;
-					if ($total_clicks > 0) {
-						$total_avg_cpc = @round($total_cost / $total_clicks, 5);
-					}
+					$total_avg_cpc = @round($total_cost / $total_clicks, 5);
 
 					//income
 					$income = 0;
@@ -131,13 +123,8 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 
 					//grab the EPC
 					$epc = 0;
-					if ($clicks > 0) {
-						$epc = @round($income / $clicks, 2);
-					}
-					$total_epc = 0;
-					if ($total_clicks > 0) {
-						$total_epc = @round($total_income / $total_clicks, 2);
-					}
+					$epc = @round($income / $clicks, 2);
+					$total_epc = @round($total_income / $total_clicks, 2);
 
 					//net income
 					$net = 0;
@@ -146,14 +133,9 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 
 					//roi
 					$roi = 0;
-					if ($cost > 0) {
-						$roi = @round($net / $cost * 100);
-					}
+					$roi = @round($net / $cost * 100);
 
-					$total_roi = 0;
-					if ($total_cost > 0) {
-						$total_roi = @round($total_net / $total_cost * 100);
-					}
+					$total_roi = @round($total_net / $total_cost * 100);
 
 					$html['rotator_name'] = htmlentities((string)($rotator_row['name'] ?? ''), ENT_QUOTES, 'UTF-8');
 					$html['rotator_clicks'] = htmlentities(number_format($clicks), ENT_QUOTES, 'UTF-8');
@@ -225,19 +207,10 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 							$rule_stats_result = $db->query($rule_stats_sql) or record_mysql_error($rule_stats_sql);
 							$rule_stats_row = $rule_stats_result->fetch_assoc();
 
-							$rule_su_ratio = 0;
-							if ($rule_stats_row['clicks'] > 0) {
-								$rule_su_ratio = @round($rule_stats_row['leads'] / $rule_stats_row['clicks'] * 100, 2);
-							}
-							$rule_epc = 0;
-							if ($rule_stats_row['clicks'] > 0) {
-								$rule_epc = @round($rule_stats_row['income'] / $rule_stats_row['clicks'], 2);
-							}
+							$rule_su_ratio = @round($rule_stats_row['leads'] / $rule_stats_row['clicks'] * 100, 2);
+							$rule_epc = @round($rule_stats_row['income'] / $rule_stats_row['clicks'], 2);
 							$rule_net = $rule_stats_row['income'] - $rule_stats_row['cost'];
-							$rule_roi = 0;
-							if ($rule_stats_row['cost'] > 0) {
-								$rule_roi = @round(($rule_net / $rule_stats_row['cost'] * 100), 2);
-							}
+							$rule_roi = @round(($rule_net / $rule_stats_row['cost'] * 100), 2);
 
 							$html['rule_name'] = htmlentities((string)($rule_row['rule_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 							$html['rule_clicks'] = htmlentities(number_format($rule_stats_row['clicks']), ENT_QUOTES, 'UTF-8');

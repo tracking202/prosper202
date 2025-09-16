@@ -128,29 +128,32 @@ $clicks = $click_row['clicks'];
 
 
 if (isset($_POST['database_management'])) {
-	$tables = is_array($tables) ? $tables : explode(',', '202_clicks_advance,202_clicks_record,202_clicks_site,202_clicks_spy,202_clicks_tracking,202_clicks');
+	$tables = explode(',', '202_clicks_advance,202_clicks_record,202_clicks_site,202_clicks_spy,202_clicks_tracking,202_clicks');
 	$click_timestamp = strtotime($_POST['database_management'] . "00:00:00 " . date('T'));
 	$clickid_sql = "SELECT click_id AS click_id FROM 202_clicks WHERE click_time <=" . $click_timestamp . " ORDER BY click_id DESC LIMIT 1";
 
 	$clickid_result = _mysqli_query($clickid_sql);
 	$clickid_row = $clickid_result->fetch_assoc();
 
-	$mysql['user_delete_data_clickid'] = $db->real_escape_string($clickid_row['click_id']);
-
-	$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
-	$db->query($sql);
-
 	// Make sure we have a valid click_id before continuing
 	if (isset($clickid_row['click_id'])) {
 		global $db;
 		$mysql['user_delete_data_clickid'] = $db->real_escape_string($clickid_row['click_id']);
 
+		$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
+		$db->query($sql);
+
+		if ($slack)
+			$slack->push('click_data_deleted', array('user' => $username, 'date' => $_POST['database_management']));
+	}
+
 	header('location: ' . get_absolute_url() . '202-account/administration.php');
 }
 
 if (isset($_POST['auto_database_management'])) {
-	$mysq['auto_database_management'] = $db->real_escape_string($_POST['auto_database_management']);
-	$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysq['auto_database_management'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
+	global $db;
+	$mysql['auto_database_management'] = $db->real_escape_string((string)$_POST['auto_database_management']);
+	$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
 	$db->query($sql);
 }
 
