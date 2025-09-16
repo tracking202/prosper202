@@ -1,6 +1,4 @@
 <?php
-
-declare(strict_types=1);
 //error_reporting(E_ALL);
 class AUTH
 {
@@ -12,12 +10,11 @@ class AUTH
 			return false;
 		}
 
-		$session_time_passed = time() - $_SESSION['session_time'];
-		if (
-			isset($_SESSION['user_name']) && isset($_SESSION['user_id']) &&
-			(isset($_SESSION['session_fingerprint']) && $_SESSION['session_fingerprint'] == md5('session_fingerprint' . $_SERVER['HTTP_USER_AGENT'] . session_id())) &&
-			($session_time_passed < 50000)
-		) {
+	static function logged_in()
+	{
+
+		$session_time_passed = isset($_SESSION['session_time']) ? time() - $_SESSION['session_time'] : PHP_INT_MAX;
+		if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and ($_SESSION['session_fingerprint'] == md5('session_fingerprint' . $_SERVER['HTTP_USER_AGENT'] . session_id())) and ($session_time_passed < 50000)) {
 
 			$_SESSION['session_time'] = time();
 			return true;
@@ -25,6 +22,7 @@ class AUTH
 			return false;
 		}
 	}
+
 	static function require_user($auth_type = '')
 	{
 		if (AUTH::logged_in() == false) {
@@ -40,36 +38,24 @@ class AUTH
 		AUTH::set_timezone($_SESSION['user_timezone']);
 		AUTH::require_valid_api_key();
 	}
+
 	static function require_valid_api_key()
 	{
-		// First try the join query
 		$user_sql = "SELECT user_pref_ad_settings, p202_customer_api_key from 202_users_pref left join 202_users ON (202_users_pref.user_id = 202_users.user_id) WHERE 202_users_pref.user_id='1'";
 		$user_result = _mysqli_query($user_sql);
-		
-		if ($user_result && $user_result->num_rows > 0) {
+		if ($user_result) {
 			$user_row = $user_result->fetch_assoc();
 			$user_api_key = $user_row['p202_customer_api_key'];
 		} else {
-			// Fallback: If no user_pref record exists, check 202_users directly
-			$user_sql = "SELECT p202_customer_api_key FROM 202_users WHERE user_id='1'";
-			$user_result = _mysqli_query($user_sql);
-			if ($user_result && $user_result->num_rows > 0) {
-				$user_row = $user_result->fetch_assoc();
-				$user_api_key = $user_row['p202_customer_api_key'];
-				
-				// Create missing user_pref record
-				$insert_sql = "INSERT IGNORE INTO 202_users_pref (user_id) VALUES ('1')";
-				_mysqli_query($insert_sql);
-			} else {
-				$user_api_key = '';
-			}
+			$user_api_key = '';
 		}
 
-		if (AUTH::is_valid_api_key($user_api_key) == false || $user_api_key == '') {
+		if (self::is_valid_api_key($user_api_key) == false || $user_api_key == '') {
 			header('location: ' . get_absolute_url() . 'api-key-required.php');
 			die();
 		}
 	}
+
 
 	//this checks if this api key is valid
 	static function is_valid_api_key($user_api_key)
@@ -96,42 +82,23 @@ class AUTH
 		curl_setopt($ch, CURLOPT_POST, 1);
 		// Set post fields
 		curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-		// Set timeout to prevent hanging
-		curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
 		// Execute
 		$result = curl_exec($ch);
-		$http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-		$curl_error = curl_error($ch);
-		$curl_errno = curl_errno($ch);
-		
+
+		if (curl_errno($ch)) {
+			// echo 'error:' . curl_error($c);
+		}
 		// close connection
 		curl_close($ch);
 
-		// If there's a network error or timeout, assume the key is valid
-		// This prevents blocking access when the validation server is down
-		if ($curl_errno > 0 || $http_code == 0) {
-			// Network error - allow access but don't cache the validation
-			return true;
-		}
-		
-		// If we got a response, validate it
 		$api_validate = json_decode($result, true);
-		if (isset($api_validate['msg']) && $api_validate['msg'] == "Key valid") {
-			$database = DB::getInstance();
-			$db = $database->getConnection();
-			$mysql = array(
-				'user_api' => $db->real_escape_string($user_api_key),
-				'user_name' => $db->real_escape_string((string)($_SESSION['user_name'] ?? '')),
-				'user_pass' => $db->real_escape_string((string)(isset($_SESSION['user_pass']) ? $_SESSION['user_pass'] : ''))
-			);			//update the api key if user_name and user_pass are available
-			if (!empty($mysql['user_name']) && !empty($mysql['user_pass'])) {
-				$user_sql = "	UPDATE 	202_users
-							SET		p202_customer_api_key='" . $mysql['user_api'] . "'
-							WHERE 	user_name='" . $mysql['user_name'] . "'
-							AND     		user_pass='" . $mysql['user_pass'] . "'";
-				$user_result = _mysqli_query($user_sql);
-			}
+
+		if ($api_validate['msg'] == "Key valid") {
+			//update the api key
+			$user_sql = "	UPDATE 	202_users
+						SET		p202_customer_api_key='" . $user_api_key . "'
+						WHERE 	user_id='" . $_SESSION['user_id'] . "'";
+			$user_result = _mysqli_query($user_sql);
 			$_SESSION['valid_key'] = true;
 			return true;
 		} else {
@@ -139,9 +106,9 @@ class AUTH
 		}
 	}
 
+
 	static function set_timezone($user_timezone)
 	{
-
 		if (isset($_SESSION['user_timezone'])) {
 			$user_timezone = $_SESSION['user_timezone'];
 		}
@@ -255,6 +222,7 @@ class AUTH
 			return $user_row['secret_key'];
 		}
 	}
+
 	static function remember_me_on_auth()
 	{
 		$auth_key = self::generate_random_string(48);
@@ -277,7 +245,7 @@ class AUTH
 				SET
 					auth_key = "' . $mysql['auth_key'] . '",
 					user_id = "' . $mysql['user_id'] . '",
-					expires = "' . $expires_time . '"
+					expires = "' . time() . '"
 				';
 		_mysqli_query($sql);
 
@@ -313,7 +281,22 @@ class AUTH
 
 	static function dev_urand($min = 0, $max = 0x7FFFFFFF)
 	{
-		// Use random_int for cryptographically secure random numbers in PHP 7+
-		return random_int($min, $max);
+		if (function_exists('random_bytes')) {
+			$diff = $max - $min;
+			if ($diff < 0 || $diff > 0x7FFFFFFF) {
+				throw new RuntimeException("Bad range");
+			}
+			$bytes = random_bytes(4);
+			if ($bytes === false || strlen($bytes) != 4) {
+				throw new RuntimeException("Unable to get 4 bytes");
+			}
+			$ary = unpack("Nint", $bytes);
+			$val = $ary['int'] & 0x7FFFFFFF;   // 32-bit safe
+			$fp = (float) $val / 2147483647.0; // convert to [0,1]
+			return round($fp * $diff) + $min;
+		}
+
+		// fallback to less secure nt_rand in case user doesn't have mcrypt extension
+		return mt_rand($min = 0, $max = 0x7FFFFFFF);
 	}
 }

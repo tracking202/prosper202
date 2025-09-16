@@ -1,6 +1,49 @@
 <?php
 
-declare(strict_types=1);
+// Polyfills for WordPress functions that may not be available
+if (!function_exists('apply_filters')) {
+	function apply_filters($tag, $value, ...$args)
+	{
+		return $value;
+	}
+}
+
+if (!function_exists('get_option')) {
+	function get_option($option, $default = false)
+	{
+		return $default;
+	}
+}
+
+if (!function_exists('force_balance_tags')) {
+	function force_balance_tags($text)
+	{
+		return $text;
+	}
+}
+
+if (!function_exists('get_magic_quotes_gpc')) {
+	function get_magic_quotes_gpc()
+	{
+		return false; // Always return false in PHP 8
+	}
+}
+
+if (!function_exists('wp_kses_bad_protocol')) {
+	function wp_kses_bad_protocol($string, $allowed_protocols)
+	{
+		return $string; // Simple pass-through as a placeholder
+	}
+}
+
+// Define __ngettext if not exists
+if (!function_exists('__ngettext')) {
+	function __ngettext($singular, $plural, $number)
+	{
+		return ($number == 1) ? $singular : $plural;
+	}
+}
+
 function wptexturize($text)
 {
 	global $wp_cockneyreplace;
@@ -28,7 +71,7 @@ function wptexturize($text)
 	for ($i = 0; $i < $stop; $i++) {
 		$curl = $textarr[$i];
 
-		if (isset($curl[0]) && '<' != $curl[0] && $next) { // If it's not a tag
+		if (isset($curl[0]) && '<' != $curl[0] && $next) { // If it's not a tag - replaced curly braces with square brackets
 			// static strings
 			$curl = str_replace($static_characters, $static_replacements, $curl);
 			// regular expressions

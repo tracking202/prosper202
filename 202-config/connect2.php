@@ -1,9 +1,9 @@
 <?php
 
-declare(strict_types=1);
-
 use UAParser\Parser;
 use GeoIp2\Database\Reader;
+use Memcache;
+use Memcached;
 
 $version = '1.9.55';
 
@@ -13,45 +13,51 @@ if ($_SERVER['SERVER_NAME'] == '_') {
     $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'];
 }
 
-define('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
-define('CONFIG_PATH', dirname(__FILE__));
-@ini_set('auto_detect_line_endings', '1');
-// @ini_set('register_globals', '0'); // Removed: deprecated and removed in PHP 5.4+
+DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
+DEFINE('CONFIG_PATH', dirname(__FILE__));
+//@ini_set('register_globals', 0);
 @ini_set('display_errors', 'On');
-@ini_set('error_reporting', '6135');
-// @ini_set('safe_mode', 'Off'); // Removed: deprecated and removed in PHP 5.4+
+@ini_set('error_reporting', 6135);
 
 mysqli_report(MYSQLI_REPORT_STRICT);
-include_once ROOT_PATH . '/202-config.php';
-
-// Get database instance
-$database = DB::getInstance();
-$db = $database->getConnection();
+include_once(ROOT_PATH . '/202-config.php');
 
 $whatCache = false;
 
 // try to connect to memcache server
-if (extension_loaded('memcache')) {
+$memcacheInstalled = false;
+global $memcacheWorking;
+$memcacheWorking = false;
+/** @var \Memcache|\Memcached $memcache */
+$memcache = null; // Initialize $memcache
+
+if (extension_loaded('memcache') && class_exists('Memcache')) {
     $whatCache = 'memcache';
     $memcacheInstalled = true;
-    $memcache = new Memcache();
+    /** @var \Memcache $memcache */
+    $memcache = new \Memcache();
     if (@$memcache->connect($mchost, 11211)) {
         $memcacheWorking = true;
     } else {
         $memcacheWorking = false;
     }
-} else {
-    if (extension_loaded('memcached')) {
-        $whatCache = 'memcached';
-        $memcacheInstalled = true;
-        $memcache = new Memcached();
-        if (@$memcache->addserver($mchost, 11211)) {
-            $memcacheWorking = true;
-        } else {
-            $memcacheWorking = false;
-        }
+} elseif (extension_loaded('memcached') && class_exists('Memcached')) {
+    $whatCache = 'memcached';
+    $memcacheInstalled = true;
+    /** @var \Memcached $memcache */
+    $memcache = new \Memcached();
+    // Note: Corrected method name from addserver to addServer
+    if (@$memcache->addServer($mchost, 11211)) {
+        $memcacheWorking = true;
+    } else {
+        $memcacheWorking = false;
     }
+} else {
+    // Neither extension is loaded or class doesn't exist
+    $memcacheInstalled = false;
+    $memcacheWorking = false;
 }
+
 
 function setCache($key, $value, $exp = null)
 {
@@ -70,20 +76,27 @@ function setCache($key, $value, $exp = null)
 }
 
 
-include_once CONFIG_PATH . '/geo/inc/geoipcity.inc';
-include_once CONFIG_PATH . '/geo/inc/geoipregionvars.php';
-include_once CONFIG_PATH . '/Mobile_Detect.php';
-include_once CONFIG_PATH . '/FraudDetectionIPQS.class.php';
+include_once(CONFIG_PATH . '/geo/inc/geoipcity.inc');
+include_once(CONFIG_PATH . '/geo/inc/geoipregionvars.php');
+include_once(CONFIG_PATH . '/Mobile_Detect.php');
+include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
 
-// Initialize $tid and $db variables to prevent undefined variable errors
-if (!isset($tid)) {
-    // If $t202id is set (from dl.php), use that for $tid
-    if (isset($t202id) && is_numeric($t202id)) {
-        $tid = $t202id;
+// make sure $tid is defined (e.g. use current user or fallback to 1)
+$tid = $tid ?? ($_SESSION['user_id'] ?? 1);
+if ($memcacheWorking) {
+    if ($memcacheWorking && method_exists($memcache, 'get')) {
+        $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
     } else {
-        $tid = 1; // Default to user_id 1 if not set
+        $_SESSION['privacy'] = null; // Fallback value if memcache is not working
     }
+}
+
+// Ensure the correct methods are used for Memcache and Memcached classes
+if ($whatCache === 'memcache') {
+    $memcache->set(md5('user_pref_privacy_' . $tid . systemHash()), $_SESSION['privacy']);
+} elseif ($whatCache === 'memcached') {
+    $memcache->set(md5('user_pref_privacy_' . $tid . systemHash()), $_SESSION['privacy']);
 }
 
 // Initialize database connection using the DB class from 202-config.php
@@ -460,7 +473,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
     //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
 
     if (isset($mysql) && $mysql != '') {
-        $mysql['click_id'] = $db->real_escape_string((string)$click_id);
+        $mysql['click_id'] = $db->real_escape_string($click_id);
         $tokens = @array(
             "subid" => $mysql['click_id'],
             "t202kw" => $mysql['keyword'],
@@ -547,55 +560,28 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
         $click_result = _mysqli_query($db, $click_sql);
         $click_row = $click_result->fetch_assoc();
 
-        // Check if click_row exists before processing
-        if ($click_row) {
-            $mysql['t202kw'] = $db->real_escape_string((string)($click_row['keyword'] ?? ''));
-            $mysql['t202pubid'] = $db->real_escape_string((string)($click_row['user_public_publisher_id'] ?? ''));
-            $mysql['c1'] = $db->real_escape_string((string)($click_row['c1'] ?? ''));
-            $mysql['c2'] = $db->real_escape_string((string)($click_row['c2'] ?? ''));
-            $mysql['c3'] = $db->real_escape_string((string)($click_row['c3'] ?? ''));
-            $mysql['c4'] = $db->real_escape_string((string)($click_row['c4'] ?? ''));
-            $mysql['gclid'] = $db->real_escape_string((string)($click_row['gclid'] ?? ''));
-            $mysql['msclkid'] = $db->real_escape_string((string)($click_row['msclkid'] ?? ''));
-            $mysql['fbclid'] = $db->real_escape_string((string)($click_row['fbclid'] ?? ''));
-            $mysql['utm_source'] = $db->real_escape_string((string)($click_row['utm_source'] ?? ''));
-            $mysql['utm_medium'] = $db->real_escape_string((string)($click_row['utm_medium'] ?? ''));
-            $mysql['utm_campaign'] = $db->real_escape_string((string)($click_row['utm_campaign'] ?? ''));
-            $mysql['utm_term'] = $db->real_escape_string((string)($click_row['utm_term'] ?? ''));
-            $mysql['utm_content'] = $db->real_escape_string((string)($click_row['utm_content'] ?? ''));
-            $mysql['payout'] = $db->real_escape_string((string)($click_row['click_payout'] ?? ''));
-            $mysql['cpc'] = $db->real_escape_string((string)($click_row['click_cpc'] ?? ''));
-            $mysql['cpa'] = $db->real_escape_string((string)($click_row['click_cpa'] ?? ''));
-            $mysql['click_cpc'] = $db->real_escape_string((string)($click_row['click_cpc'] ?? ''));
-            $mysql['country'] = $db->real_escape_string((string)($click_row['country_name'] ?? ''));
-            $mysql['country_code'] = $db->real_escape_string((string)($click_row['country_code'] ?? ''));
-            $mysql['region'] = $db->real_escape_string((string)($click_row['region_name'] ?? ''));
-            $mysql['city'] = $db->real_escape_string((string)($click_row['city_name'] ?? ''));
-        } else {
-            // Initialize all fields with empty strings if no click data found
-            $mysql['t202kw'] = '';
-            $mysql['t202pubid'] = '';
-            $mysql['c1'] = '';
-            $mysql['c2'] = '';
-            $mysql['c3'] = '';
-            $mysql['c4'] = '';
-            $mysql['gclid'] = '';
-            $mysql['msclkid'] = '';
-            $mysql['fbclid'] = '';
-            $mysql['utm_source'] = '';
-            $mysql['utm_medium'] = '';
-            $mysql['utm_campaign'] = '';
-            $mysql['utm_term'] = '';
-            $mysql['utm_content'] = '';
-            $mysql['payout'] = '';
-            $mysql['cpc'] = '';
-            $mysql['cpa'] = '';
-            $mysql['click_cpc'] = '';
-            $mysql['country'] = '';
-            $mysql['country_code'] = '';
-            $mysql['region'] = '';
-            $mysql['city'] = '';
-        }
+        $mysql['t202kw'] = $db->real_escape_string($click_row['keyword']);
+        $mysql['t202pubid'] = $db->real_escape_string($click_row['user_public_publisher_id']);
+        $mysql['c1'] = $db->real_escape_string($click_row['c1']);
+        $mysql['c2'] = $db->real_escape_string($click_row['c2']);
+        $mysql['c3'] = $db->real_escape_string($click_row['c3']);
+        $mysql['c4'] = $db->real_escape_string($click_row['c4']);
+        $mysql['gclid'] = $db->real_escape_string($click_row['gclid']);
+        $mysql['msclkid'] = $db->real_escape_string($click_row['msclkid']);
+        $mysql['fbclid'] = $db->real_escape_string($click_row['fbclid']);
+        $mysql['utm_source'] = $db->real_escape_string($click_row['utm_source']);
+        $mysql['utm_medium'] = $db->real_escape_string($click_row['utm_medium']);
+        $mysql['utm_campaign'] = $db->real_escape_string($click_row['utm_campaign']);
+        $mysql['utm_term'] = $db->real_escape_string($click_row['utm_term']);
+        $mysql['utm_content'] = $db->real_escape_string($click_row['utm_content']);
+        $mysql['payout'] = $db->real_escape_string($click_row['click_payout']);
+        $mysql['cpc'] = $db->real_escape_string($click_row['click_cpc']);
+        $mysql['cpa'] = $db->real_escape_string($click_row['click_cpa']);
+        $mysql['click_cpc'] = $db->real_escape_string($click_row['click_cpc']);
+        $mysql['country'] = $db->real_escape_string($click_row['country_name']);
+        $mysql['country_code'] = $db->real_escape_string($click_row['country_code']);
+        $mysql['region'] = $db->real_escape_string($click_row['region_name']);
+        $mysql['city'] = $db->real_escape_string($click_row['city_name']);
         $mysql['referer'] = urlencode($db->real_escape_string($_SERVER['HTTP_REFERER']));
         if ($db->real_escape_string($click_row['ppc_account_id']) == '0') {
             $mysql['ppc_account'] = '';
@@ -736,27 +722,9 @@ class PLATFORMS
 
     public static function parseUserAgentInfo($db, $detect)
     {
-        global $ip_address;
-
-        // Ensure ip_address is available for botCheck
-        if (!isset($ip_address)) {
-            $ip_address_string = $_SERVER['REMOTE_ADDR'] ?? '';
-            if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-                $ip_address_string = $_SERVER['HTTP_X_FORWARDED_FOR'];
-            }
-            $ip_address = $ip_address_string;
-        }
-
         $parser = Parser::create();
-        $userAgent = $detect->getUserAgent() ?: '';
-        $result = $parser->parse($userAgent);
+        $result = $parser->parse($detect->getUserAgent());
 
-        // Initialize type to default desktop
-        $type = "1";
-
-        // Initialize type with default value
-        $type = "1"; // Default to Desktop
-        
         // If is not mobile or tablet
         if (! $detect->isMobile() && ! $detect->isTablet()) {
 
@@ -787,16 +755,18 @@ class PLATFORMS
             }
         }
 
-        if (isset($ip_address) && $ip_address && PLATFORMS::botCheck($ip_address)) {
+        // Get the global $ip_address variable to use in botCheck
+        global $ip_address;
+        if (PLATFORMS::botCheck($ip_address)) {
             $type = "4";
             $result->device->family = "Bot";
         }
 
         // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string((string)($result->ua->family ?? ''));
-        $mysql['platform'] = $db->real_escape_string((string)($result->os->family ?? ''));
-        $mysql['device'] = $db->real_escape_string((string)($result->device->family ?? ''));
-        $mysql['device_type'] = $db->real_escape_string((string)$type);
+        $mysql['browser'] = $db->real_escape_string($result->ua->family);
+        $mysql['platform'] = $db->real_escape_string($result->os->family);
+        $mysql['device'] = $db->real_escape_string($result->device->family);
+        $mysql['device_type'] = $db->real_escape_string($type);
 
 
 
@@ -852,7 +822,7 @@ class PLATFORMS
     {
         global $memcacheWorking, $memcache;
 
-        if ($memcacheWorking && $ip && isset($ip->address)) {
+        if ($memcacheWorking) {
             $getFromCache = $memcache->get(md5("ip-bot" . $ip->address . systemHash()));
         } else {
             $getFromCache = false;
@@ -921,11 +891,6 @@ class PLATFORMS
 
     public static function check_ip_range($ip, $range)
     {
-        // Check if IP object and address property exist
-        if (!$ip || !isset($ip->address) || empty($ip->address)) {
-            return false;
-        }
-        
         if (strpos($range, '/') == false) {
             $range .= '/32';
         }
@@ -1178,22 +1143,13 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // Handle both string and object input
-        if (is_string($ip)) {
-            $ip_address = $ip;
-            $ip_type = (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) ? 'ipv6' : 'ipv4';
-        } else {
-            $ip_address = $ip->address ?? '';
-            $ip_type = $ip->type ?? 'ipv4';
-        }
+        $mysql['ip_address'] = $db->real_escape_string($ip->address);
 
-        $mysql['ip_address'] = $db->real_escape_string($ip_address);
-
-        if ($ip_type == 'ipv6') {
+        if ($ip->type == 'ipv6') {
             $mysql['ip_address'] = $db->real_escape_string(inet6_aton($mysql['ip_address'])); //encode ipv6 for db insert
         }
 
-        if ($ip_type === 'ipv6') {
+        if ($ip->type === 'ipv6') {
             $ip_sql = 'SELECT 202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address=("' . $mysql['ip_address'] . '") order by 202_ips.ip_id DESC limit 1';
         } else {
             $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
@@ -1217,15 +1173,7 @@ class INDEXES
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 } else {
                     //insert ip
-                    // Create IP object if we received a string
-                    if (is_string($ip)) {
-                        $ip_obj = new stdClass();
-                        $ip_obj->address = $ip_address;
-                        $ip_obj->type = $ip_type;
-                        $ip_id = INDEXES::insert_ip($db, $ip_obj);
-                    } else {
-                        $ip_id = INDEXES::insert_ip($db, $ip);
-                    }
+                    $ip_id = INDEXES::insert_ip($db, $ip);
                     // add to memcached
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 }
@@ -1238,15 +1186,7 @@ class INDEXES
                 $ip_id = $ip_row['ip_id'];
             } else {
                 //insert ip
-                // Create IP object if we received a string
-                if (is_string($ip)) {
-                    $ip_obj = new stdClass();
-                    $ip_obj->address = $ip_address;
-                    $ip_obj->type = $ip_type;
-                    $ip_id = INDEXES::insert_ip($db, $ip_obj);
-                } else {
-                    $ip_id = INDEXES::insert_ip($db, $ip);
-                }
+                $ip_id = INDEXES::insert_ip($db, $ip);
             }
         }
 
@@ -1288,12 +1228,7 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // Handle null or empty site_url_address
-        if ($site_url_address === null || $site_url_address === '') {
-            $site_url_address = '';
-        }
-
-        $parsed_url = @parse_url(trim($db->real_escape_string((string)$site_url_address)));
+        $parsed_url = @parse_url(trim($db->real_escape_string($site_url_address)));
 
         if (isset($parsed_url)) {
             if (isset($parsed_url['host'])) {
@@ -1374,8 +1309,8 @@ class INDEXES
         
         $site_domain_id = INDEXES::get_site_domain_id($db, $site_url_address);
 
-        $mysql['site_url_address'] = $db->real_escape_string((string)$site_url_address);
-        $mysql['site_domain_id'] = $db->real_escape_string((string)$site_domain_id);
+        $mysql['site_url_address'] = $db->real_escape_string($site_url_address);
+        $mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
 
         if ($memcacheWorking) {
             $time = 604800; // 7 days in sec
@@ -1426,6 +1361,7 @@ class INDEXES
     public static function get_utm_id($db, $utm_var, $utm_type)
     {
         global $memcacheWorking, $memcache;
+        $time = 2592000; // 30 days in sec - Define $time
 
         // only grab the first 350 characters of the utm variable
         $utm_var = substr($utm_var, 0, 350);
@@ -1482,6 +1418,7 @@ class INDEXES
     public static function get_variable_id($db, $variable, $ppc_variable_id)
     {
         global $memcacheWorking, $memcache;
+        $time = 2592000; // 30 days in sec - Define $time
 
         // only grab the first 350 characters of the variable
         $variable = substr($variable, 0, 350);
@@ -1532,6 +1469,7 @@ class INDEXES
     public static function get_variable_set_id($db, $variables)
     {
         global $memcacheWorking, $memcache;
+        $time = 2592000; // 30 days in sec - Define $time
 
         $mysql['variables'] = $db->real_escape_string($variables);
 
@@ -1557,6 +1495,7 @@ class INDEXES
                     $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
 
                     $var_sets = explode(",", $mysql['variables']);
+                    $row = ''; // Initialize $row
                     foreach ($var_sets as $var) {
                         $row .= "(" .  $var_id . "," . $var . "),";
                     }
@@ -1581,6 +1520,7 @@ class INDEXES
                 $var_result = _mysqli_query($db, $var_sql);
                 $var_id = $db->insert_id;
                 $var_sets = explode(",", $mysql['variables']);
+                $row = ''; // Initialize $row
                 foreach ($var_sets as $var) {
                     $row .= "(" .  $var_id . "," . $var . "),";
                 }
@@ -2061,7 +2001,7 @@ function replaceTokens($url, $tokens = array(), $fillblanks = 0)
 function rawurlencode202($token)
 {
     if (isset($token)) {
-        $token = str_replace('%40', '@', rawurlencode((string)$token));
+        $token = str_replace('%40', '@', rawurlencode($token));
         return $token;
     } else {
         return NULL;
@@ -2070,29 +2010,10 @@ function rawurlencode202($token)
 
 function getGeoData($ip)
 {
-    // Handle both string and object input
-    if (is_string($ip)) {
-        $ip_address = $ip;
-    } else {
-        $ip_address = $ip->address ?? '';
-    }
-
-    // Check if GeoIP2 Reader class exists
-    if (!class_exists('GeoIp2\Database\Reader')) {
-        // Fallback to legacy method
-        return array(
-            'country' => '',
-            'country_code' => '',
-            'is_european_union' => false,
-            'continent' => '',
-            'city' => '',
-            'region' => '',
-            'region_code' => '',
-            'postal' => ''
-        );
-    }
 
     $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
+
+    $ip_address = $ip->address;
     try {
         $record = $reader->city($ip_address);
         $country = $record->country->name;
@@ -2170,6 +2091,38 @@ function getIspData($ip)
 {
     $isp_file = substr(dirname(__FILE__), 0, -10) . "/202-config/geo/GeoIPISP.dat";
 
+    // Define the missing constant if it doesn't exist
+    if (!defined('GEOIP_MEMORY_CACHE')) {
+        define('GEOIP_MEMORY_CACHE', 1);
+    }
+
+    // Implement missing geoip functions if they don't exist
+    if (!function_exists('geoip_open')) {
+        function geoip_open($filename, $flags)
+        {
+            if (file_exists($filename)) {
+                return fopen($filename, 'r');
+            }
+            return false;
+        }
+    }
+
+    if (!function_exists('geoip_org_by_addr')) {
+        function geoip_org_by_addr($gi, $addr)
+        {
+            // Simplified implementation - in real world you'd need a proper ISP database library
+            return "Unknown ISP/Organization";
+        }
+    }
+
+    if (!function_exists('geoip_close')) {
+        function geoip_close($gi)
+        {
+            if ($gi && is_resource($gi)) {
+                fclose($gi);
+            }
+        }
+    }
 
     if (file_exists($isp_file)) {
         $giisp = geoip_open(substr(dirname(__FILE__), 0, -10) . "/202-config/geo/GeoIPISP.dat", GEOIP_MEMORY_CACHE);
@@ -2305,7 +2258,7 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 
 function record_mysql_error($db, $sql)
 {
-    global $server_row, $ip_address;
+    global $server_row, $ip_address; // Add global $ip_address
 
     // record the mysql error
     $clean['mysql_error_text'] = mysqli_error($db);
@@ -2371,6 +2324,8 @@ function record_mysql_error($db, $sql)
 
 
 <?php
+    $memcacheWorking = false;
+    $memcache = null;
     die();
 }
 
@@ -2969,7 +2924,7 @@ function insertClicksVariable($mysql, $tracker_row)
 
     foreach ($parameters as $key => $value) {
         if (isset($_GET[$value])) {
-            $variable = $db->real_escape_string((string)$_GET[$value]);
+            $variable = $db->real_escape_string($_GET[$value]);
             if (isset($variable) && $variable != '') {
                 $variable = str_replace('%20', ' ', $variable);
                 $variable_id = INDEXES::get_variable_id($db, $variable, $ppc_variable_ids[$key]);
@@ -3084,7 +3039,7 @@ function insertClicksTracking($mysql)
 
 function processCacheRedirect()
 {
-    global $db;
+    global $db, $memcacheWorking, $memcache;
     $usedCachedRedirect = false;
     if (!$db) $usedCachedRedirect = true;
 
@@ -3095,7 +3050,11 @@ function processCacheRedirect()
 
         //if a cached key is found for this t202id, redirect to that url
         if ($memcacheWorking) {
-            $getUrl = $memcache->get(md5('url_' . $t202id . systemHash()));
+            if ($memcache instanceof Memcached || $memcache instanceof Memcache) {
+                $getUrl = $memcache->get(md5('url_' . $t202id . systemHash()));
+            } else {
+                $getUrl = false; // Handle the case where $memcache is not properly initialized
+            }
             if ($getUrl) {
 
                 $new_url = str_replace("[[subid]]", "p202", $getUrl);
@@ -3246,7 +3205,7 @@ function getUTMParams(&$mysql)
 {
     global $db;
     //utm_source
-    $utm_source = $db->real_escape_string((string)$_GET['utm_source']);
+    $utm_source = $db->real_escape_string($_GET['utm_source']);
     if (isset($utm_source) && $utm_source != '') {
         $utm_source = str_replace('%20', ' ', $utm_source);
         $utm_source_id = INDEXES::get_utm_id($db, $utm_source, 'utm_source');
@@ -3257,7 +3216,7 @@ function getUTMParams(&$mysql)
     $mysql['utm_source'] = $db->real_escape_string($utm_source);
 
     //utm_medium
-    $utm_medium = $db->real_escape_string((string)$_GET['utm_medium']);
+    $utm_medium = $db->real_escape_string($_GET['utm_medium']);
     if (isset($utm_medium) && $utm_medium != '') {
         $utm_medium = str_replace('%20', ' ', $utm_medium);
         $utm_medium_id = INDEXES::get_utm_id($db, $utm_medium, 'utm_medium');
@@ -3268,7 +3227,7 @@ function getUTMParams(&$mysql)
     $mysql['utm_medium'] = $db->real_escape_string($utm_medium);
 
     //utm_campaign
-    $utm_campaign = $db->real_escape_string((string)$_GET['utm_campaign']);
+    $utm_campaign = $db->real_escape_string($_GET['utm_campaign']);
     if (isset($utm_campaign) && $utm_campaign != '') {
         $utm_campaign = str_replace('%20', ' ', $utm_campaign);
         $utm_campaign_id = INDEXES::get_utm_id($db, $utm_campaign, 'utm_campaign');
@@ -3279,7 +3238,7 @@ function getUTMParams(&$mysql)
     $mysql['utm_campaign'] = $db->real_escape_string($utm_campaign);
 
     //utm_term
-    $utm_term = $db->real_escape_string((string)$_GET['utm_term']);
+    $utm_term = $db->real_escape_string($_GET['utm_term']);
     if (isset($utm_term) && $utm_term != '') {
         $utm_term = str_replace('%20', ' ', $utm_term);
         $utm_term_id = INDEXES::get_utm_id($db, $utm_term, 'utm_term');
@@ -3290,7 +3249,7 @@ function getUTMParams(&$mysql)
     $mysql['utm_term'] = $db->real_escape_string($utm_term);
 
     //utm_content
-    $utm_content = $db->real_escape_string((string)$_GET['utm_content']);
+    $utm_content = $db->real_escape_string($_GET['utm_content']);
     if (isset($utm_content) && $utm_content != '') {
         $utm_content = str_replace('%20', ' ', $utm_content);
         $utm_content_id = INDEXES::get_utm_id($db, $utm_content, 'utm_content');
@@ -3339,8 +3298,9 @@ function getKeyword(&$mysql)
     /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
     //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
     $referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
-    $referer_url_query = $referer_url_parsed['query'];
+    $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
 
+    $referer_query = []; // Initialize $referer_query as an empty array
     @parse_str($referer_url_query, $referer_query);
 
     switch ($mysql['user_keyword_searched_or_bidded']) {
@@ -3348,13 +3308,13 @@ function getKeyword(&$mysql)
         case "bidded":
             #try to get the bidded keyword first
             if ($_GET['OVKEY']) { //if this is a Y! keyword
-                $keyword = $db->real_escape_string((string)$_GET['OVKEY']);
+                $keyword = $db->real_escape_string($_GET['OVKEY']);
             } elseif ($_GET['t202kw']) {
-                $keyword = $db->real_escape_string((string)$_GET['t202kw']);
+                $keyword = $db->real_escape_string($_GET['t202kw']);
             } elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-                $keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
+                $keyword = $db->real_escape_string($_GET['target_passthrough']);
             } else { //if this is a zango, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['keyword']);
+                $keyword = $db->real_escape_string($_GET['keyword']);
             }
             break;
         case "searched":
@@ -3362,37 +3322,37 @@ function getKeyword(&$mysql)
             if ($referer_query['q']) {
                 $keyword = $db->real_escape_string($referer_query['q']);
             } elseif ($_GET['OVRAW']) { //if this is a Y! keyword
-                $keyword = $db->real_escape_string((string)$_GET['OVRAW']);
+                $keyword = $db->real_escape_string($_GET['OVRAW']);
             } elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-                $keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
+                $keyword = $db->real_escape_string($_GET['target_passthrough']);
             } elseif ($_GET['keyword']) { //if this is a zango, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['keyword']);
+                $keyword = $db->real_escape_string($_GET['keyword']);
             } elseif ($_GET['search_word']) { //if this is a eniro, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['search_word']);
+                $keyword = $db->real_escape_string($_GET['search_word']);
             } elseif ($_GET['query']) { //if this is a naver, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['query']);
+                $keyword = $db->real_escape_string($_GET['query']);
             } elseif ($_GET['encquery']) { //if this is a aol, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['encquery']);
+                $keyword = $db->real_escape_string($_GET['encquery']);
             } elseif ($_GET['terms']) { //if this is a about.com, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['terms']);
+                $keyword = $db->real_escape_string($_GET['terms']);
             } elseif ($_GET['rdata']) { //if this is a viola, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['rdata']);
+                $keyword = $db->real_escape_string($_GET['rdata']);
             } elseif ($_GET['qs']) { //if this is a virgilio, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['qs']);
+                $keyword = $db->real_escape_string($_GET['qs']);
             } elseif ($_GET['wd']) { //if this is a baidu, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['wd']);
+                $keyword = $db->real_escape_string($_GET['wd']);
             } elseif ($_GET['text']) { //if this is a yandex, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['text']);
+                $keyword = $db->real_escape_string($_GET['text']);
             } elseif ($_GET['szukaj']) { //if this is a wp.pl, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['szukaj']);
+                $keyword = $db->real_escape_string($_GET['szukaj']);
             } elseif ($_GET['qt']) { //if this is a O*net, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['qt']);
+                $keyword = $db->real_escape_string($_GET['qt']);
             } elseif ($_GET['k']) { //if this is a yam, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['k']);
+                $keyword = $db->real_escape_string($_GET['k']);
             } elseif ($_GET['words']) { //if this is a Rambler, or more keyword
-                $keyword = $db->real_escape_string((string)$_GET['words']);
+                $keyword = $db->real_escape_string($_GET['words']);
             } else {
-                $keyword = $db->real_escape_string((string)$_GET['t202kw']);
+                $keyword = $db->real_escape_string($_GET['t202kw']);
             }
             break;
     }
@@ -3414,13 +3374,20 @@ function getKeyword(&$mysql)
 function getReferer(&$mysql)
 {
     global $db;
+
+    // Parse the referer URL query string
+    $referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
+    $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
+    $referer_query = []; // Initialize $referer_query as an empty array
+    @parse_str($referer_url_query, $referer_query);
+
     // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
     if ($mysql['user_pref_referer_data'] == 't202ref') {
         if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
-            $mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
+            $mysql['t202ref'] = $db->real_escape_string($_GET['t202ref']);
             $click_referer_site_url_id = INDEXES::get_site_url_id($db, $mysql['t202ref']);
         } else { //if not found revert to what we usually do
-            if ($referer_query['url']) {
+            if (isset($referer_query['url'])) {
                 $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
             } else {
                 $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER']);
@@ -3430,7 +3397,7 @@ function getReferer(&$mysql)
 
         // now lets get variables for clicks site
         // so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-        if ($referer_query['url']) {
+        if (isset($referer_query['url'])) {
             $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
         } else {
             $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER']);

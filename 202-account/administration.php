@@ -1,13 +1,17 @@
 <?php
-
-declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
-include_once(str_repeat("../", 1) . '202-config/functions-tracking202.php');
+include_once(str_repeat("../", 1) . '202-config/functions-timeframe.php');
+include_once(str_repeat("../", 1) . '202-config/functions-db.php');
+include_once(str_repeat("../", 1) . '202-config/functions-indexes.php');
+include_once(str_repeat("../", 1) . '202-config/functions-icons.php');
+include_once(str_repeat("../", 1) . '202-config/functions-api.php');
+include_once(str_repeat("../", 1) . '202-config/functions-utils.php');
+include_once(str_repeat("../", 1) . '202-config/functions-empty.php');
 
 AUTH::require_user();
 
 $slack = false;
-$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
+$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
@@ -56,7 +60,19 @@ if (isset($_POST['autocron'])) {
 
 	if ($_POST['autocron'] == true) {
 		$endpoint = 'register';
-		$autocron = true;
+		$sql = "SELECT * FROM 202_cronjob_logs";
+		$result = _mysqli_query($sql);
+		if ($result->num_rows > 0) {
+			$row = $result->fetch_assoc();
+
+			$last_five_minutes = time() - 300;
+
+			if ($row['last_execution_time'] < $last_five_minutes) {
+				$autocron = true;
+			}
+		} else {
+			$autocron = true;
+		}
 	} else {
 		$endpoint = 'deregister';
 		$autocron = true;
@@ -64,24 +80,12 @@ if (isset($_POST['autocron'])) {
 
 	if ($autocron) {
 		$cron = callAutoCron($endpoint);
-		
-		// Always save the user preference, regardless of API call result
-		$mysql['auto_cron'] = $db->real_escape_string((string)$_POST['autocron']);
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
-		
-		error_log("AutoCron SQL: $sql");
-		$result = _mysqli_query($sql);
-		
-		if ($result) {
-			error_log("AutoCron setting saved successfully");
-		} else {
-			error_log("AutoCron SQL failed: " . mysqli_error($db));
-		}
 
-		// Log API call result for debugging
-		if (!is_array($cron) || !isset($cron['status']) || $cron['status'] != 'success') {
-			error_log("AutoCron API call failed or returned error. Endpoint: $endpoint, Response: " . json_encode($cron));
+		if ($cron['status'] == 'success') {
+			$mysql['auto_cron'] = $db->real_escape_string($_POST['autocron']);
+			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			$sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
+			$result = _mysqli_query($sql);
 		}
 	}
 
@@ -92,7 +96,7 @@ if (isset($_POST['maxmind'])) {
 
 	if ($_POST['maxmind'] == "true") {
 		if (file_exists(substr(dirname(__FILE__), 0, -12) . '/202-config/geo/GeoIPISP.dat')) {
-			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 			$sql = "UPDATE 202_users_pref SET maxmind_isp='1' WHERE user_id='" . $mysql['user_id'] . "'";
 			$result = _mysqli_query($sql);
 			if ($slack)
@@ -103,7 +107,7 @@ if (isset($_POST['maxmind'])) {
 	}
 
 	if ($_POST['maxmind'] == "false") {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 		$sql = "UPDATE 202_users_pref SET maxmind_isp='0' WHERE user_id='" . $mysql['user_id'] . "'";
 		$result = _mysqli_query($sql);
 
@@ -124,32 +128,29 @@ $clicks = $click_row['clicks'];
 
 
 if (isset($_POST['database_management'])) {
-	$tables = explode(',', '202_clicks_advance,202_clicks_record,202_clicks_site,202_clicks_spy,202_clicks_tracking,202_clicks');
+	$tables = is_array($tables) ? $tables : explode(',', '202_clicks_advance,202_clicks_record,202_clicks_site,202_clicks_spy,202_clicks_tracking,202_clicks');
 	$click_timestamp = strtotime($_POST['database_management'] . "00:00:00 " . date('T'));
 	$clickid_sql = "SELECT click_id AS click_id FROM 202_clicks WHERE click_time <=" . $click_timestamp . " ORDER BY click_id DESC LIMIT 1";
 
 	$clickid_result = _mysqli_query($clickid_sql);
 	$clickid_row = $clickid_result->fetch_assoc();
 
+	$mysql['user_delete_data_clickid'] = $db->real_escape_string($clickid_row['click_id']);
+
+	$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
+	$db->query($sql);
+
 	// Make sure we have a valid click_id before continuing
 	if (isset($clickid_row['click_id'])) {
 		global $db;
 		$mysql['user_delete_data_clickid'] = $db->real_escape_string($clickid_row['click_id']);
 
-		$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
-		$db->query($sql);
-
-		if ($slack)
-			$slack->push('click_data_deleted', array('user' => $username, 'date' => $_POST['database_management']));
-	}
-
 	header('location: ' . get_absolute_url() . '202-account/administration.php');
 }
 
 if (isset($_POST['auto_database_management'])) {
-	global $db;
-	$mysql['auto_database_management'] = $db->real_escape_string((string)$_POST['auto_database_management']);
-	$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
+	$mysq['auto_database_management'] = $db->real_escape_string($_POST['auto_database_management']);
+	$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysq['auto_database_management'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
 	$db->query($sql);
 }
 
@@ -162,7 +163,7 @@ function getClicksEraseDate()
 	$result = $db->query($sql);
 	$row = $result->fetch_array(MYSQLI_ASSOC);
 	if ($row) {
-		return date('d-m-Y', (int)$row['click_time']);
+		return date('d-m-Y', $row['click_time']);
 	} else {
 		return date('d-m-Y', time());
 	}
@@ -195,13 +196,14 @@ function database_size()
 	return $mbytes;
 }
 
-function CronJobLastExecution($datetime, $full = false)
+function CronJobLastExecution($datetime)
 {
 	$now = new DateTime;
 	$ago = new DateTime($datetime);
 	$diff = $now->diff($ago);
-	$weeks = floor($diff->d / 7);
-	$days_remainder = $diff->d % 7;
+	$week = array('w' => floor($diff->d / 7));
+	$diff->d -= $week->w * 7;
+	$diff = (object) array_merge((array)$diff, $week);
 	$string = array(
 		'y' => 'year',
 		'm' => 'month',
@@ -212,11 +214,7 @@ function CronJobLastExecution($datetime, $full = false)
 		's' => 'second',
 	);
 	foreach ($string as $k => &$v) {
-		if ($k === 'w' && $weeks) {
-			$v = $weeks . ' ' . $v . ($weeks > 1 ? 's' : '');
-		} else if ($k === 'd' && $days_remainder) {
-			$v = $days_remainder . ' ' . $v . ($days_remainder > 1 ? 's' : '');
-		} else if ($k !== 'w' && $k !== 'd' && $diff->$k) {
+		if ($diff->$k) {
 			$v = $diff->$k . ' ' . $v . ($diff->$k > 1 ? 's' : '');
 		} else {
 			unset($string[$k]);
@@ -258,8 +256,9 @@ function CronJobLastExecution($datetime, $full = false)
 						<p>
 							PHP Safe Mode <span class="fui-info-circle" style="font-size: 10px;"
 								data-toggle="tooltip"
-								title="PHP Safe Mode was removed in PHP 5.4."></span><span
-								class="pull-right">N/A</span>
+								title="PHP Safe Mode needs to be turned off in order for Stats202, Offers202 or Alerts202 to work. You will have to contact your web host to have them disable it."></span><span
+								class="pull-right"><?php if (@ini_get('safe_mode')) echo '<span class="label label-important">On</span> - this should be turned off.';
+													else echo 'Off'; ?></span>
 						</p>
 						<p>
 							Memcache Installed <span class="fui-info-circle"
@@ -278,7 +277,7 @@ function CronJobLastExecution($datetime, $full = false)
 						<p>
 							Default Keyword Preference <span class="pull-right"
 								style="font-size: 10px; line-height: 2.5;">
-								<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+								<?php $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 								$user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
 								$user_result = _mysqli_query($user_sql);
 								$user_row = $user_result->fetch_assoc();
@@ -517,9 +516,9 @@ function CronJobLastExecution($datetime, $full = false)
 				<?php
 				while ($user_log_row = $user_log_result->fetch_assoc()) {
 
-					$html['user_name'] = htmlentities((string)($user_log_row['user_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-					$html['ip_address'] = htmlentities((string)($user_log_row['ip_address'] ?? ''), ENT_QUOTES, 'UTF-8');
-					$html['login_time'] = htmlentities(date('M d, y \a\t g:ia', (int)$user_log_row['login_time']), ENT_QUOTES, 'UTF-8');
+					$html['user_name'] = htmlentities($user_log_row['user_name'], ENT_QUOTES, 'UTF-8');
+					$html['ip_address'] = htmlentities($user_log_row['ip_address'], ENT_QUOTES, 'UTF-8');
+					$html['login_time'] = htmlentities(date('M d, y \a\t g:ia', $user_log_row['login_time']), ENT_QUOTES, 'UTF-8');
 
 					if ($user_log_row['login_success'] == 0) {
 						$html['login_success'] = '<span style="color: #900;">Failed</span>';

@@ -1,6 +1,5 @@
-<?php
-declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php');
+<?php include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php'); 
+include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/functions-ui-calendar.php');
 
 AUTH::require_user();
 
@@ -20,4 +19,4 @@ template_top('Hourly Overview',NULL,NULL,NULL);  ?>
    loadContent('<?php echo get_absolute_url();?>tracking202/ajax/sort_hourly.php',null);
 </script>
 
-<?php template_bottom();
+<?php template_bottom(); ?>

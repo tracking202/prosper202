@@ -3,128 +3,93 @@
 declare(strict_types=1);
 $version = '1.9.55';
 
-// Detect if running from command line and set defaults for missing $_SERVER variables
-$is_cli = (php_sapi_name() === 'cli');
-if ($is_cli) {
-    $_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $_SERVER['SERVER_NAME'] = $_SERVER['SERVER_NAME'] ?? 'localhost';
-    $_SERVER['REQUEST_URI'] = $_SERVER['REQUEST_URI'] ?? '/';
-    $_SERVER['REMOTE_ADDR'] = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
-    $_SERVER['SERVER_ADDR'] = $_SERVER['SERVER_ADDR'] ?? '127.0.0.1';
-    $_SERVER['HTTP_USER_AGENT'] = $_SERVER['HTTP_USER_AGENT'] ?? 'CLI';
-    $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '127.0.0.1';
-    $_SERVER['DOCUMENT_ROOT'] = $_SERVER['DOCUMENT_ROOT'] ?? '';
-}
+// Start the session at the beginning to avoid undefined $_SESSION variable
+session_start();
 
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
 //fix for nginx with no server name set
-if (isset($_SERVER['SERVER_NAME']) && $_SERVER['SERVER_NAME'] == '_') {
-    $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
-} elseif (!isset($_SERVER['SERVER_NAME'])) {
-    $_SERVER['SERVER_NAME'] = 'localhost';
+if ($_SERVER['SERVER_NAME'] == '_') {
+    $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'];
 }
 
 DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
 DEFINE('CONFIG_PATH', dirname(__FILE__));
-@ini_set('auto_detect_line_endings', '1');
-// Deprecated in PHP 5.4
-// @ini_set('register_globals', '0');
+// @ini_set('auto_detect_line_endings', TRUE); // Deprecated in PHP 8.1+, safe to remove
+@ini_set('register_globals', 0);
 @ini_set('display_errors', 'On');
-@ini_set('error_reporting', '6135');
-// @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
-@ini_set('set_time_limit', '0');
+@ini_set('error_reporting', 6135);
+// safe_mode is deprecated in PHP 7.x and removed in PHP 8.0
+// @ini_set('safe_mode', 'Off');
+@ini_set('set_time_limit', 0);
 
-// Start session if not already started
-initializeSession();
+if (!class_exists('Memcache')) {
+    class Memcache
+    {
+        public function connect($host, $port)
+        {
+            return false;
+        }
+        public function set($key, $value, $flag = false, $exp = 0)
+        {
+            return false;
+        }
+    }
+}
 
-// Check if the session variable exists
+// Add polyfill for Memcached if the extension isn't installed
+if (!class_exists('Memcached')) {
+    class Memcached
+    {
+        public function __construct() {}
+        public function addServer($host, $port)
+        {
+            return false;
+        }
+        public function set($key, $value, $exp = 0)
+        {
+            return false;
+        }
+    }
+}
+
+// Use null coalescing operator to handle undefined array index
 if (!isset($_SESSION['user_timezone']) || empty($_SESSION['user_timezone'])) {
     date_default_timezone_set('GMT');
 } else {
     date_default_timezone_set($_SESSION['user_timezone']);
 }
 
-/**
- * Initialize session with proper directory handling
- * 
- * @return bool True if session was started successfully
- */
-function initializeSession(): bool {
-    if (session_status() !== PHP_SESSION_NONE) {
-        return true;
-    }
-    
-    // Set session save path if not configured
-    if (empty(session_save_path())) {
-        $session_dir = sys_get_temp_dir() . '/prosper202_sessions';
-        if (!is_dir($session_dir)) {
-            @mkdir($session_dir, 0700, true);
-        }
-        if (is_dir($session_dir) && is_writable($session_dir)) {
-            session_save_path($session_dir);
-        } else {
-            error_log("Prosper202: Unable to create writable session directory: " . $session_dir);
-            return false;
-        }
-    }
-    
-    return session_start();
+// Check if mysqli extension is loaded before calling mysqli_report
+if (function_exists('mysqli_report')) {
+    mysqli_report(MYSQLI_REPORT_STRICT);
+} else {
+    // Polyfill or alternative error handling if mysqli_report isn't available
+    error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED);
+    @ini_set('display_errors', 'On');
 }
 
-/**
- * Get a validated database connection with proper error handling
- * 
- * @return mysqli The database connection
- * @throws Exception if database connection fails
- */
-function getDatabaseConnection(): mysqli {
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-    
-    if (!$db || !($db instanceof mysqli)) {
-        throw new Exception("Database connection failed");
-    }
-    
-    return $db;
-}
-
-/**
- * Flush output buffers to ensure immediate display
- * Standardizes output buffering management across cronjobs
- */
-function flushOutput(): void {
-    ob_flush();
-    flush();
-}
-
-mysqli_report(MYSQLI_REPORT_STRICT);
-
-// Initialize variables
-$stopSessions = false;
 $install_path = substr(ROOT_PATH, strlen($_SERVER['DOCUMENT_ROOT']));
 
 $re = '/\b(api|tracking202|202-\w+).*/';
 $str = (string)($_SERVER['REQUEST_URI'] ?? '');
 preg_match_all($re, $str, $matches, PREG_SET_ORDER, 0);
 
-// Check if matches were found to prevent undefined array key error
-if (!empty($matches) && isset($matches[0][0])) {
+// Fix for PHP 8 - Check if $matches array exists and has expected structure before accessing it
+if (!empty($matches) && isset($matches[0]) && isset($matches[0][0])) {
     $navigation = $matches[0][0];
     $navigation = '/' . $navigation;
 } else {
-    // Default navigation path if no match is found
+    // Fallback if no matches are found
     $navigation = '/';
 }
 
 $navigation = explode('/', $navigation);
 foreach ($navigation as $key => $row) {
-    if (!empty($navigation[$key])) {
-        $split_chars = preg_split('/\?{1}/', $navigation[$key], -1, PREG_SPLIT_OFFSET_CAPTURE);
-        if (!empty($split_chars) && isset($split_chars[0][0])) {
-            $navigation[$key] = $split_chars[0][0];
-        }
+    $split_chars = preg_split('/\?{1}/', $navigation[$key], -1, PREG_SPLIT_OFFSET_CAPTURE);
+    if (!empty($split_chars) && isset($split_chars[0]) && isset($split_chars[0][0])) {
+        $navigation[$key] = $split_chars[0][0];
     }
 }
 
@@ -149,17 +114,15 @@ switch (true) {
         $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_FORWARDED_FOR'];
         break;
     default:
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['REMOTE_ADDR'];
 }
 
-// Ensure HTTP_X_FORWARDED_FOR is set before exploding
-if (!isset($_SERVER['HTTP_X_FORWARDED_FOR']) || empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-    $_SERVER['HTTP_X_FORWARDED_FOR'] = '127.0.0.1';
-}
 
 $tempip = explode(",", $_SERVER['HTTP_X_FORWARDED_FOR']);
 $_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
-$ip_address = ipAddress($_SERVER['HTTP_X_FORWARDED_FOR']);
+
+// Store the IP address temporarily, we'll pass it to ipAddress() after functions.php is included
+$temp_ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
 
 if (file_exists(ROOT_PATH  . '202-config.php')) {
     include_once(ROOT_PATH  . '202-config.php');
@@ -167,9 +130,12 @@ if (file_exists(ROOT_PATH  . '202-config.php')) {
     header('location: setup-config.php');
     die();
 }
+include_once(ROOT_PATH  . '202-config.php');
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
+// Now that functions.php is included, we can use ipAddress()
+$ip_address = ipAddress($temp_ip_address);
 include_once(CONFIG_PATH . '/template.php');
 
 include_once(CONFIG_PATH . '/functions-auth.php');
@@ -184,29 +150,36 @@ include_once(CONFIG_PATH . '/class-xmltoarray.php');
 include_once(CONFIG_PATH . '/Role.class.php');
 include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');
+include_once(CONFIG_PATH . '/functions-timeframe.php');
+include_once(CONFIG_PATH . '/functions-db.php');
+include_once(CONFIG_PATH . '/functions-indexes.php');
+include_once(CONFIG_PATH . '/functions-icons.php');
+include_once(CONFIG_PATH . '/functions-api.php');
+include_once(CONFIG_PATH . '/functions-utils.php');
+include_once(CONFIG_PATH . '/functions-empty.php');
 
 $whatCache = false;
 
 // try to connect to memcache server
-if (extension_loaded('memcache')) {
+if (extension_loaded('memcache') && class_exists('Memcache')) {
     $whatCache = 'memcache';
     $memcacheInstalled = true;
+    /** @var Memcache $memcache */
     $memcache = new Memcache();
     if (@$memcache->connect($mchost, 11211)) {
         $memcacheWorking = true;
     } else {
         $memcacheWorking = false;
-    }
 } else {
-    if (extension_loaded('memcached')) {
+    if (extension_loaded('memcached') && class_exists('Memcached')) {
         $whatCache = 'memcached';
         $memcacheInstalled = true;
+        /** @var Memcached $memcache */
         $memcache = new Memcached();
         if (@$memcache->addserver($mchost, 11211)) {
             $memcacheWorking = true;
         } else {
             $memcacheWorking = false;
-        }
     }
 }
 
@@ -224,23 +197,8 @@ function setCache($key, $value, $exp = null)
     }
 }
 
-function ipAddress($ip_address)
-{
-    $ip = new stdClass;
-
-    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-        $ip->address = $ip_address;
-        if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            $ip->type = 'ipv4';
-        } else {
-            $ip->type = 'ipv6';
-        }
-    } else {
-        $ip->type = 'invalid';
-    }
-
-    return $ip;
-}
+// ipAddress() function has been moved to functions.php - using that implementation instead
+// to avoid duplicate function declaration errors
 
 function inet6_ntoa($ip)
 {
@@ -255,11 +213,41 @@ function inet6_aton($ip)
 
 try {
     $database = DB::getInstance();
+
+    // Check if getInstance() returned null (connection failed)
+    if ($database === null) {
+        // Throw an exception to be caught by the catch block below
+        // Retrieve the last error if possible, otherwise use a generic message
+        $last_error = error_get_last();
+        $error_message = $last_error ? $last_error['message'] : 'Unknown connection error during DB initialization.';
+        throw new Exception("Database connection failed during initialization: " . $error_message);
+    }
+
     $db = $database->getConnection();
-    // Error handling
+
+    // Check for connection errors on the mysqli object itself (redundant if constructor throws, but safe)
+    if ($db === null || $db->connect_error) {
+        $errno = $db ? $db->connect_errno : 'N/A';
+        $error = $db ? $db->connect_error : 'DB object is null';
+        throw new Exception("MySQL Connection Error ({$errno}): {$error}");
+    }
+
+    // Initialize $dbro as well
+    $dbro = $database->getConnectionro();
+    if ($dbro === null || $dbro->connect_error) {
+        $errno = $dbro ? $dbro->connect_errno : 'N/A';
+        $error = $dbro ? $dbro->connect_error : 'DB RO object is null';
+        // Decide if this is fatal or just a warning
+        error_log("Read-only DB Connection Error ({$errno}): {$error}");
+        // Potentially allow the script to continue if read-only connection is not critical
+    }
 } catch (Exception $e) {
+    // Capture the specific exception message
+    $db_error_msg = $e->getMessage();
+
     _die("<h6>Error establishing a database connection</h6>
 			<p><small>This either means that the username and password information in your <code>202-config.php</code> file is incorrect or we can't contact the database server. This could mean your host's database server is down.</small></p>
+            <p><strong style='color: red;'>Error Details: {$db_error_msg}</strong></p>
 			<small>
 			<ul> 
 				<li>Are you sure you have the correct username and password?</li>
@@ -271,6 +259,12 @@ try {
 			<p><small>If you're unsure what these terms mean you should probably contact your host. If you still need help you can always visit the <a href='http://support.tracking202.com'>Prosper202 Support Center</a>.</small></p>
 		");
 }
+
+// Initialize $skip_upgrade to false before it is used to avoid undefined variable warning
+$skip_upgrade = false;
+
+// Initialize $stopSessions to false by default
+$stopSessions = false;
 
 //stop the sessions if this is a redirect or a javascript placement, we were recording sessions on every hit when we don't need it on
 if ($navigation[1] == 'tracking202') {
@@ -287,22 +281,10 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
     //we can initalize the session managers 
     if (!$stopSessions) {
-        // Only set cookie params if session hasn't been started yet
-        if (session_status() === PHP_SESSION_NONE) {
-            //disable mysql sessions because they are slow
-            //$sess = new SessionManager();
-            
-            $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
-            session_set_cookie_params([
-                'lifetime' => 0,
-                'path' => '/',
-                'domain' => $_SERVER['HTTP_HOST'] ?? '',
-                'secure' => $secure,
-                'httponly' => true,
-                'samesite' => 'Lax'
-            ]);
-            initializeSession();
-        }
+
+        //disable mysql sessions because they are slow
+        //$sess = new SessionManager(); 
+        session_start();
     }
 
     //run the cronjob checker
@@ -311,8 +293,9 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
 //set token to prevent CSRF attacks
 if (!isset($_SESSION['token'])) {
-    $_SESSION['token'] = md5(uniqid((string)rand(), true));
+    $_SESSION['token'] = md5(uniqid(rand(), TRUE));
 }
+
 
 // Initialize $skip_upgrade variable
 $skip_upgrade = false;
@@ -343,18 +326,21 @@ switch ($navigation[1]) {
     case "offers202":
     case "alerts202":
     case "stats202":
-        // safe_mode directive removed as of PHP 5.4
+        if (@ini_get('safe_mode')) {
+            header('location: ' . get_absolute_url() . '202-account/disable-safe-mode.php');
+            die();
+        }
         break;
 }
 
-// Initialize User object only if user_own_id is set in session
-$userObj = null;
-if (isset($_SESSION['user_own_id'])) {
-    $userObj = new User($_SESSION['user_own_id']);
+// Skip user initialization during installation
+if (strpos($_SERVER['PHP_SELF'], '202-config/install.php') === false) {
+    $userObj = new User($_SESSION['user_own_id'] ?? null);
+} else {
+    $userObj = null;
 }
 
-// Check for IPv6 support
-if (!isset($_SESSION['ipv6']) || empty($_SESSION['ipv6'])) {
+if (!$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
     $result = $db->query($sql);
 

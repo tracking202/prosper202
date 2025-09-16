@@ -1,19 +1,8 @@
 <?php
 
-declare(strict_types=1);
-
 use GuzzleHttp\json_decode;
 
 include_once(dirname(__FILE__) . '/functions-upgrade.php');
-
-if (!defined('PROSPER202_MIN_PHP_VERSION')) {
-	define('PROSPER202_MIN_PHP_VERSION', '8.1');
-}
-
-function php_version_supported(): bool
-{
-	return version_compare(PHP_VERSION, PROSPER202_MIN_PHP_VERSION, '>=');
-}
 //our own die, that will display the them around the error message
 
 function get_absolute_url()
@@ -37,25 +26,11 @@ function _die($message)
 
 
 //our own function for controling mysqls and monitoring then.
-function _mysqli_query($sql_or_db, $db_connection_or_sql = null)
+function _mysqli_query($sql)
 {
 	global $db;
 
-	// Handle both parameter orders for backward compatibility:
-	// 1. _mysqli_query($sql, $db_connection) - new format
-	// 2. _mysqli_query($db, $sql) - legacy format from connect2.php
-
-	if (is_object($sql_or_db) && ($sql_or_db instanceof mysqli)) {
-		// Legacy format: _mysqli_query($db, $sql)
-		$connection = $sql_or_db;
-		$sql = $db_connection_or_sql;
-	} else {
-		// New format: _mysqli_query($sql, $db_connection)
-		$sql = $sql_or_db;
-		$connection = $db_connection_or_sql ?: $db;
-	}
-
-	$result = @$connection->query($sql);
+	$result = @$db->query($sql);
 	return $result;
 }
 
@@ -70,26 +45,36 @@ function salt_user_pass($user_pass)
 
 function is_installed()
 {
+	// Skip the check if we're accessing the installer or API key setup
+	if (
+		strpos($_SERVER['PHP_SELF'], '202-config/install.php') !== false ||
+		strpos($_SERVER['PHP_SELF'], '202-config/get_apikey.php') !== false
+	) {
+		return false;
+	}
+
 	$database = DB::getInstance();
 	$db = $database->getConnection();
 
-	//if a user account already exists, this application is installed
-	$user_sql = "SELECT COUNT(*) FROM 202_users";
-	$user_result = $db->query($user_sql);
-
-	if ($user_result) {
-		return true;
-	} else {
+	//if a user account already exists, this application is installed 
+	try {
+		$user_sql = "SELECT COUNT(*) FROM 202_users";
+		$user_result = $db->query($user_sql);
+		if ($user_result) {
+			return true;
+		}
+	} catch (mysqli_sql_exception $e) {
+		// Table doesn't exist yet, return false
 		return false;
 	}
+	return false;
 }
 
 function upgrade_needed()
 {
-
-	// Call static methods
-	$mysql_version = PROSPER202::prosper202_version();
-	$php_version = PROSPER202::php_version();
+	$prosper202 = new PROSPER202();
+	$mysql_version = $prosper202->prosper202_version();
+	$php_version = $prosper202->php_version();
 	if ($mysql_version != $php_version) {
 		return true;
 	} else {
@@ -229,75 +214,85 @@ function info_top()
 
 	function update_needed()
 	{
-
 		global $version;
-		$log = ''; // Initialize log variable to store update errors
 
-		$rssData = getData('https://my.tracking202.com/api/v2/premium-p202/version');
+		$jsonData = getData('https://my.tracking202.com/api/v2/premium-p202/version');
 		$rss = null;
-		if ($rssData !== false && !empty($rssData)) {
-			$rss = json_decode($rssData);
+		if (is_string($jsonData)) {
+			$rss = json_decode($jsonData);
 		}
-		if (isset($rss->items) && 0 != count($rss->items)) {
+
+		// Check if decoding was successful and $rss is an object with the 'items' property
+		if (is_object($rss) && isset($rss->items) && is_array($rss->items) && count($rss->items) > 0) {
 
 			$rss->items = array_slice($rss->items, 0, 1);
 			foreach ($rss->items as $item) {
-				$latest_version = $item['title'];
+				// Check if item is valid
+				if (!is_object($item) && !is_array($item)) {
+					continue; // Skip this item and move to next in loop
+				}
+
+				// Get latest version and link
+				$latest_version = null;
+				$link = null;
+				$autoupgrade = false;
+
+				if (is_array($item)) {
+					$latest_version = isset($item['title']) ? $item['title'] : null;
+					$link = isset($item['link']) ? $item['link'] : null;
+					$autoupgrade = isset($item['autoupgrade']) ? $item['autoupgrade'] : 'false';
+				} elseif (is_object($item)) {
+					$latest_version = isset($item->title) ? $item->title : null;
+					$link = isset($item->link) ? $item->link : null;
+					$autoupgrade = isset($item->autoupgrade) ? $item->autoupgrade : 'false';
+				}
+
+				if ($latest_version === null) {
+					continue; // Skip if title is missing
+				}
+
 				//if current version, is older than the latest version, return true for an update is now needed.
 				if (version_compare($version, $latest_version) == '-1') {
-
-					if (!is_writable(dirname(__FILE__) . '/') || !class_exists('ZipArchive')) {
+					if (!is_writable(dirname(__FILE__) . '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
 						$_SESSION['auto_upgraded_not_possible'] = true;
 						return true;
 					}
 
-					if ($item['autoupgrade'] == 'true') {
+					if ($autoupgrade == 'true' && $link !== null) {
 						$decimals = explode('.', $latest_version);
 						$versionCount = count($decimals);
-
 						$lastDecimal = substr($latest_version, strrpos($latest_version, '.') + 1);
 
-						if ($versionCount == 2) {
-							$calcVersion = ($decimals[0] - 1) . '.9.9';
-						} else if ($versionCount == 3) {
-							if ($lastDecimal == '1') {
-								if ($decimals[1] == '0') {
-									$calcVersion = $decimals[0] . '.0';
-								} else {
-									$calcVersion = $decimals[0] . '.' . $decimals[1] . '.0';
-								}
-							} else if ($lastDecimal == '0') {
-								$calcVersion = $decimals[0] . '.' . ($decimals[1] - 1) . '.9';
-							} else {
-								$calcVersion = $decimals[0] . '.' . $decimals[1] . '.' . ($lastDecimal - 1);
-							}
+						// Calculate version
+						if ($lastDecimal == '0') {
+							$calcVersion = $decimals[0] . '.' . ($decimals[1] - 1) . '.9';
+						} else {
+							$calcVersion = $decimals[0] . '.' . $decals[1] . '.' . ($lastDecimal - 1);
 						}
 
 						if ($calcVersion == $version) {
 							//Auto upgrade without user confirmation
-							$GetUpdate = @getData($item['link']);
+							$GetUpdate = @getData($link);
 							if ($GetUpdate) {
+								$FilesUpdated = false;
 
 								if (temp_exists()) {
 									$downloadUpdate = @file_put_contents(dirname(__FILE__) . '/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
 									if ($downloadUpdate) {
-										$zip = new ZipArchive();
-										$zipResult = $zip->open(dirname(__FILE__) . '/temp/prosper202_' . $latest_version . '.zip');
+										$zip = @zip_open(dirname(__FILE__) . '/temp/prosper202_' . $latest_version . '.zip');
 
-										if ($zipResult === TRUE) {
-
-											for ($i = 0; $i < $zip->numFiles; $i++) {
-												$thisFileName = $zip->getNameIndex($i);
+										if ($zip) {
+											while ($zip_entry = @zip_read($zip)) {
+												$thisFileName = zip_entry_name($zip_entry);
 
 												if (substr($thisFileName, -1, 1) == '/') {
 													if (is_dir(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName)) {
+														// Directory already exists
 													} else {
-														if (@mkdir(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName, 0755, true)) {
-														} else {
-														}
+														@mkdir(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName, 0755, true);
 													}
 												} else {
-													$contents = $zip->getFromIndex($i);
+													$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
 													$file_ext = array_pop(explode(".", $thisFileName));
 
 													if ($updateThis = @fopen(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName, 'wb')) {
@@ -308,58 +303,34 @@ function info_top()
 														$log .= "Can't update file:" . $thisFileName . "! Operation aborted";
 													}
 												}
-
-												$FilesUpdated = true;
 											}
-
-											$zip->close();
+											$FilesUpdated = true;
+											zip_close($zip);
 										}
-									} else {
-										$FilesUpdated = false;
 									}
-								} else {
-									$FilesUpdated = false;
-									$log .= "Failed to download update file. ";
 								}
-							} else {
-								$FilesUpdated = false;
-								$log .= "Temporary directory doesn't exist or isn't writable. ";
-							}
 
-							if ($FilesUpdated == true) {
-								// Clear all PHP caches
-								clear_php_caches();
-								include_once(dirname(__FILE__) . '/functions-upgrade.php');
-
-								if (UPGRADE::upgrade_databases(null) == true) {
-									$version = $latest_version;
-									$upgrade_done = true;
-								} else {
-									$upgrade_done = false;
+								if ($FilesUpdated) {
+									// Clear opcode cache if possible after update
+									if (function_exists('opcache_reset')) {
+										opcache_reset(); // Recommended for modern PHP versions
+									} elseif (function_exists('apc_clear_cache')) {
+										// Fallback for older APC extension
+										apc_clear_cache('user');
+									}
+									return false; // Successfully auto-upgraded
 								}
 							}
-
-							// Store any error logs if they exist
-							if (!empty($log)) {
-								$_SESSION['upgrade_error_log'] = $log;
-							}
-
-							if ($upgrade_done) {
-								return false;
-							} else {
-								return true;
-							}
-						} else {
-							return true;
 						}
-					} else {
-						return true;
 					}
-				} else {
-					return false;
+
+					return true; // Update needed
 				}
 			}
 		}
+
+		// Return false if no update needed or if checks failed
+		return false;
 	}
 
 	function check_premium_update()
@@ -384,7 +355,7 @@ function info_top()
 		if ($_GET['iphone']) {
 			return true;
 		}
-		if (preg_match("/iphone/i", (string)($_SERVER["HTTP_USER_AGENT"] ?? ''))) {
+		if (preg_match("/iphone/i", $_SERVER["HTTP_USER_AGENT"])) {
 			return true;
 		} else {
 			return false;
@@ -393,10 +364,6 @@ function info_top()
 
 	function returnRanges($fromdate, $todate, $type)
 	{
-		// Set default values
-		$set = 'P1D';
-		$add = 'day';
-		
 		switch ($type) {
 			case 'days':
 				$set = 'P1D';
@@ -468,7 +435,7 @@ function info_top()
 		if ($hour == 0 and $minutes == 0) {
 			$sign = ' ';
 		}
-		return $sign . str_pad((string)$hour, 2, '0', STR_PAD_LEFT) . ':' . str_pad((string)$minutes, 2, '0', STR_PAD_LEFT);
+		return $sign . str_pad($hour, 2, '0', STR_PAD_LEFT) . ':' . str_pad($minutes, 2, '0');
 	}
 
 	function getCurlValue($filename, $contentType, $postname)
@@ -579,32 +546,4 @@ function info_top()
 		}
 		$result = json_decode($result, true);
 		return $result;
-	}
-
-	/**
-	 * Clear all available PHP caches (APC, OPcache, etc)
-	 * 
-	 * This function attempts to clear caches using various mechanisms
-	 * without causing errors if the cache systems are not available.
-	 */
-	function clear_php_caches()
-	{
-		// Try APC cache
-		if (function_exists('apc_clear_cache')) {
-			@apc_clear_cache();
-			@apc_clear_cache('user');
-			@apc_clear_cache('opcode');
-		}
-
-		// Try OPcache
-		if (function_exists('opcache_reset')) {
-			@opcache_reset();
-		}
-
-		// Try APCu (APC User Cache)
-		if (function_exists('apcu_clear_cache')) {
-			@apcu_clear_cache();
-		}
-
-		// Could add more cache clearing methods here as needed
 	}

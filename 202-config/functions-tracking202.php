@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 use UAParser\Parser;
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.
@@ -20,15 +18,17 @@ function record_mysql_error($sql)
     echo $sql . '<br/><br/>' . $clean['mysql_error_text'] . '<br/><br/>';
     die();
 
-    $ip = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : '0.0.0.0';
-    $ip_id = INDEXES::get_ip_id($ip);
+    $auth = new AUTH();
+    $auth->set_timezone($_SESSION['user_timezone']);
+
+    $ip_id = INDEXES::get_ip_id($_SERVER['HTTP_X_FORWARDED_FOR']);
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
     $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
     $site_id = INDEXES::get_site_url_id($site_url);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 
-    $mysql['user_id'] = $db->real_escape_string(strip_tags($_SESSION['user_id']));
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string(strip_tags($_SESSION['user_id'])) : 0;
     $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
     $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
     $mysql['script_url'] = $db->real_escape_string(strip_tags($_SERVER['SCRIPT_URL']));
@@ -52,7 +52,7 @@ function record_mysql_error($sql)
 					time: ' . date('r', time()) . '<br/>
 					server_name: ' . $_SERVER['SERVER_NAME'] . '<br/><br/>
 					
-					user_id: ' . $_SESSION['user_id'] . '<br/>
+					user_id: ' . (isset($_SESSION['user_id']) ? $_SESSION['user_id'] : 'N/A') . '<br/>
 					script_url: ' . $site_url . '<br/>
 					$_SERVER: ' . serialize($_SERVER) . '<br/><br/>
 					
@@ -96,11 +96,6 @@ function dollar_format($amount, $currency = null, $cpv = false)
         $currency = 'USD';
     }
 
-    // Convert string amount to float for number_format
-    if (is_string($amount)) {
-        $amount = (float)$amount;
-    }
-
     $currency_before = '';
     $currency_after = '';
 
@@ -128,7 +123,7 @@ function dollar_format($amount, $currency = null, $cpv = false)
 
     if ($currency_before == '' && $currency_after == '') $currency_before = $currency;
 
-    if ($amount !== '' && $amount !== null) {
+    if ($amount !== '') {
         if ($amount >= 0) {
             $new_amount = $currency_before . number_format($amount, $decimals) . $currency_after;
         } else {
@@ -146,43 +141,44 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     global $navigation;
     $database = DB::getInstance();
     $db = $database->getConnection();
-    AUTH::set_timezone($_SESSION['user_timezone']);
+    $auth = new AUTH();
+    $auth->set_timezone($_SESSION['user_timezone']);
 
-    $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string($_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
     $user_result = _mysqli_query($user_sql);
     $user_row = $user_result->fetch_assoc();
 
-    $html['user_pref_aff_network_id'] = htmlentities((string)($user_row['user_pref_aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_aff_campaign_id'] = htmlentities((string)($user_row['user_pref_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_text_ad_id'] = htmlentities((string)($user_row['user_pref_text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_method_of_promotion'] = htmlentities((string)($user_row['user_pref_method_of_promotion'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_landing_page_id'] = htmlentities((string)($user_row['user_pref_landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_ppc_network_id'] = htmlentities((string)($user_row['user_pref_ppc_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_ppc_account_id'] = htmlentities((string)($user_row['user_pref_ppc_account_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_1'] = htmlentities((string)($user_row['user_pref_group_1'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_2'] = htmlentities((string)($user_row['user_pref_group_2'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_3'] = htmlentities((string)($user_row['user_pref_group_3'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_4'] = htmlentities((string)($user_row['user_pref_group_4'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $html['user_pref_aff_network_id'] = htmlentities($user_row['user_pref_aff_network_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_aff_campaign_id'] = htmlentities($user_row['user_pref_aff_campaign_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_text_ad_id'] = htmlentities($user_row['user_pref_text_ad_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_method_of_promotion'] = htmlentities($user_row['user_pref_method_of_promotion'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_landing_page_id'] = htmlentities($user_row['user_pref_landing_page_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_ppc_network_id'] = htmlentities($user_row['user_pref_ppc_network_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_ppc_account_id'] = htmlentities($user_row['user_pref_ppc_account_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_group_1'] = htmlentities($user_row['user_pref_group_1'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_group_2'] = htmlentities($user_row['user_pref_group_2'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_group_3'] = htmlentities($user_row['user_pref_group_3'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_group_4'] = htmlentities($user_row['user_pref_group_4'], ENT_QUOTES, 'UTF-8');
 
     $time = grab_timeframe();
     $html['from'] = date('m/d/Y', $time['from']);
     $html['to'] = date('m/d/Y', $time['to']);
-    $html['ip'] = htmlentities((string)($user_row['user_pref_ip'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $html['ip'] = htmlentities($user_row['user_pref_ip'], ENT_QUOTES, 'UTF-8');
     if ($user_row['user_pref_subid'] != '0' && !empty($user_row['user_pref_subid'])) {
-        $html['subid'] = htmlentities((string)($user_row['user_pref_subid'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $html['subid'] = htmlentities($user_row['user_pref_subid'], ENT_QUOTES, 'UTF-8');
     } else {
         $html['subid'] = '';
     }
-    $html['user_pref_country_id'] = htmlentities((string)($user_row['user_pref_country_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_region_id'] = htmlentities((string)($user_row['user_pref_region_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_isp_id'] = htmlentities((string)($user_row['user_pref_isp_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['referer'] = htmlentities((string)($user_row['user_pref_referer'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['keyword'] = htmlentities((string)($user_row['user_pref_keyword'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['page'] = htmlentities((string)($page ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_device_id'] = htmlentities((string)($user_row['user_pref_device_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_browser_id'] = htmlentities((string)($user_row['user_pref_browser_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_platform_id'] = htmlentities((string)($user_row['user_pref_platform_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $html['user_pref_country_id'] = htmlentities($user_row['user_pref_country_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_region_id'] = htmlentities($user_row['user_pref_region_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_isp_id'] = htmlentities($user_row['user_pref_isp_id'], ENT_QUOTES, 'UTF-8');
+    $html['referer'] = htmlentities($user_row['user_pref_referer'], ENT_QUOTES, 'UTF-8');
+    $html['keyword'] = htmlentities($user_row['user_pref_keyword'], ENT_QUOTES, 'UTF-8');
+    $html['page'] = htmlentities($page, ENT_QUOTES, 'UTF-8');
+    $html['user_pref_device_id'] = htmlentities($user_row['user_pref_device_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_browser_id'] = htmlentities($user_row['user_pref_browser_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_platform_id'] = htmlentities($user_row['user_pref_platform_id'], ENT_QUOTES, 'UTF-8');
 ?>
 
     <div class="row" style="margin-bottom: 15px;">
@@ -277,7 +273,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                                                     } ?>">
                             <div class="col-xs-12" style="margin-top: 5px;">
                                 <div class="row">
-                                    <?php if (!isset($_SESSION['publisher']) || !$_SESSION['publisher']) { ?>
+                                    <?php if (!$_SESSION['publisher']) { ?>
                                         <div class="col-xs-6">
                                             <label>Traffic Source/Account: </label>
 
@@ -312,7 +308,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                             </div>
                                         </div>
                                     </div>
-                                    <?php if (!isset($_SESSION['publisher']) || !$_SESSION['publisher']) { ?>
+                                    <?php if (!$_SESSION['publisher']) { ?>
                                         <div class="col-xs-6">
                                             <label>Category/Campaign: </label>
                                             <div class="form-group">
@@ -363,7 +359,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                             <div class="row" style="text-align: left;">
                                 <div class="col-xs-12" style="margin-top: 5px;">
                                     <div class="row">
-                                        <?php if (!isset($_SESSION['publisher']) || !$_SESSION['publisher']) { ?>
+                                        <?php if (!$_SESSION['publisher']) { ?>
                                             <div class="col-xs-6">
                                                 <label>Text Ad: </label>
 
@@ -420,7 +416,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                         </div>
                                     </div>
                                     <div class="row">
-                                        <?php if (!isset($_SESSION['publisher']) || !$_SESSION['publisher']) { ?>
+                                        <?php if (!$_SESSION['publisher']) { ?>
                                             <div class="col-xs-6">
                                                 <label>Method of Promotion: </label>
                                                 <div class="form-group">
@@ -467,7 +463,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                         </div>
                                     </div>
                                     <div class="row">
-                                        <?php if (!isset($_SESSION['publisher']) || !$_SESSION['publisher']) { ?>
+                                        <?php if (!$_SESSION['publisher']) { ?>
                                             <div class="col-xs-6">
                                                 <label>Landing Page: </label>
                                                 <div class="form-group">
@@ -576,7 +572,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                         <option
                                             value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>"
                                             <?php echo $html['user_pref_group_1'] == ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-                                        <?php foreach (ReportSummaryForm::getDetailArray() as $detail_item) { ?>
+                                        <?php foreach (ReportBasicForm::getDetailArray() as $detail_item) { ?>
                                             <option value="<?php echo $detail_item ?>"
                                                 <?php echo $html['user_pref_group_4'] == $detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
                                         <?php } ?>
@@ -760,8 +756,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'today') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time()), date('d', time()), date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -771,8 +767,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'yesterday') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400), date('d', time() - 86400), date('Y', time() - 86400));
+                $time['to'] = mktime(23, 59, 59, date('m', time() - 86400), date('d', time() - 86400), date('Y', time() - 86400));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -782,8 +778,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'last7') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 7), (int)date('d', time() - 86400 * 7), (int)date('Y', time() - 86400 * 7));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 7), date('d', time() - 86400 * 7), date('Y', time() - 86400 * 7));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -793,8 +789,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'last14') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 14), (int)date('d', time() - 86400 * 14), (int)date('Y', time() - 86400 * 14));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 14), date('d', time() - 86400 * 14), date('Y', time() - 86400 * 14));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -804,8 +800,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'last30') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 30), (int)date('d', time() - 86400 * 30), (int)date('Y', time() - 86400 * 30));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 30), date('d', time() - 86400 * 30), date('Y', time() - 86400 * 30));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -815,8 +811,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'thismonth') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time()), 1, date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -826,8 +822,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'lastmonth') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 2629743), 1, (int)date('Y', time() - 2629743));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time() - 2629743), getLastDayOfMonth((int)date('m', time() - 2629743), (int)date('Y', time() - 2629743)), (int)date('Y', time() - 2629743));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 2629743), 1, date('Y', time() - 2629743));
+                $time['to'] = mktime(23, 59, 59, date('m', time() - 2629743), getLastDayOfMonth(date('m', time() - 2629743), date('Y', time() - 2629743)), date('Y', time() - 2629743));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -837,8 +833,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'thisyear') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, 1, 1, (int)date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, 1, 1, date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -848,8 +844,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'lastyear') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, 1, 1, (int)date('Y', time() - 31556926));
-                $time['to'] = mktime(0, 0, 0, 12, getLastDayOfMonth((int)date('m', time() - 31556926), (int)date('Y', time() - 31556926)), (int)date('Y', time() - 31556926));
+                $time['from'] = mktime(0, 0, 0, 1, 1, date('Y', time() - 31556926));
+                $time['to'] = mktime(0, 0, 0, 12, getLastDayOfMonth(date('m', time() - 31556926), date('Y', time() - 31556926)), date('Y', time() - 31556926));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -859,14 +855,16 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'alltime') {
                 <?php
                 // for the time from, do something special select the exact date this user was registered and use that :)
-                $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-                $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
-                $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
-                $user_row = $user_result->fetch_assoc();
-                $time['from'] = $user_row['user_time_register'];
+                if (isset($_SESSION['user_id'])) {
+                    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+                    $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
+                    $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
+                    $user_row = $user_result->fetch_assoc();
+                    $time['from'] = $user_row['user_time_register'];
+                }
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -916,10 +914,11 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
     global $navigation;
     $database = DB::getInstance();
     $db = $database->getConnection();
-    AUTH::set_timezone($_SESSION['user_timezone']);
+    $auth = new AUTH();
+    $auth->set_timezone($_SESSION['user_timezone']);
     $filterEngine = new FilterEngine;
 
-    $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string($_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
     $user_result = _mysqli_query($user_sql);
     $user_row = $user_result->fetch_assoc();
@@ -939,9 +938,9 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
     $time = grab_timeframe();
     $html['from'] = date('m/d/Y', $time['from']);
     $html['to'] = date('m/d/Y', $time['to']);
-    $html['ip'] = htmlentities((string)($user_row['user_pref_ip'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $html['ip'] = htmlentities($user_row['user_pref_ip'], ENT_QUOTES, 'UTF-8');
     if ($user_row['user_pref_subid'] != '0' && !empty($user_row['user_pref_subid'])) {
-        $html['subid'] = htmlentities((string)($user_row['user_pref_subid'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $html['subid'] = htmlentities($user_row['user_pref_subid'], ENT_QUOTES, 'UTF-8');
     } else {
         $html['subid'] = '';
     }
@@ -957,15 +956,15 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
     $html['filter_value2'] = htmlentities($filterEngine->getFilter('filter_value', 2), ENT_QUOTES, 'UTF-8');
     $html['filter_value3'] = htmlentities($filterEngine->getFilter('filter_value', 3), ENT_QUOTES, 'UTF-8');
 
-    $html['user_pref_country_id'] = htmlentities((string)($user_row['user_pref_country_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_region_id'] = htmlentities((string)($user_row['user_pref_region_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_isp_id'] = htmlentities((string)($user_row['user_pref_isp_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['referer'] = htmlentities((string)($user_row['user_pref_referer'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['keyword'] = htmlentities((string)($user_row['user_pref_keyword'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['page'] = htmlentities((string)($page ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_device_id'] = htmlentities((string)($user_row['user_pref_device_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_browser_id'] = htmlentities((string)($user_row['user_pref_browser_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_platform_id'] = htmlentities((string)($user_row['user_pref_platform_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $html['user_pref_country_id'] = htmlentities($user_row['user_pref_country_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_region_id'] = htmlentities($user_row['user_pref_region_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_isp_id'] = htmlentities($user_row['user_pref_isp_id'], ENT_QUOTES, 'UTF-8');
+    $html['referer'] = htmlentities($user_row['user_pref_referer'], ENT_QUOTES, 'UTF-8');
+    $html['keyword'] = htmlentities($user_row['user_pref_keyword'], ENT_QUOTES, 'UTF-8');
+    $html['page'] = htmlentities($page, ENT_QUOTES, 'UTF-8');
+    $html['user_pref_device_id'] = htmlentities($user_row['user_pref_device_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_browser_id'] = htmlentities($user_row['user_pref_browser_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_platform_id'] = htmlentities($user_row['user_pref_platform_id'], ENT_QUOTES, 'UTF-8');
 ?>
 
     <div class="row" style="margin-bottom: 15px;">
@@ -1624,8 +1623,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'today') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time()), date('d', time()), date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1635,8 +1634,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'yesterday') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400), date('d', time() - 86400), date('Y', time() - 86400));
+                $time['to'] = mktime(23, 59, 59, date('m', time() - 86400), date('d', time() - 86400), date('Y', time() - 86400));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1646,8 +1645,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'last7') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 7), (int)date('d', time() - 86400 * 7), (int)date('Y', time() - 86400 * 7));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 7), date('d', time() - 86400 * 7), date('Y', time() - 86400 * 7));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1657,8 +1656,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'last14') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 14), (int)date('d', time() - 86400 * 14), (int)date('Y', time() - 86400 * 14));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 14), date('d', time() - 86400 * 14), date('Y', time() - 86400 * 14));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1668,8 +1667,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'last30') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 30), (int)date('d', time() - 86400 * 30), (int)date('Y', time() - 86400 * 30));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 30), date('d', time() - 86400 * 30), date('Y', time() - 86400 * 30));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1679,8 +1678,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'thismonth') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', time()), 1, date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1690,8 +1689,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'lastmonth') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 2629743), 1, (int)date('Y', time() - 2629743));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time() - 2629743), getLastDayOfMonth((int)date('m', time() - 2629743), (int)date('Y', time() - 2629743)), (int)date('Y', time() - 2629743));
+                $time['from'] = mktime(0, 0, 0, date('m', time() - 2629743), 1, date('Y', time() - 2629743));
+                $time['to'] = mktime(23, 59, 59, date('m', time() - 2629743), getLastDayOfMonth(date('m', time() - 2629743), date('Y', time() - 2629743)), date('Y', time() - 2629743));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1701,8 +1700,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'thisyear') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, 1, 1, (int)date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, 1, 1, date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1712,8 +1711,8 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'lastyear') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, 1, 1, (int)date('Y', time() - 31556926));
-                $time['to'] = mktime(0, 0, 0, 12, getLastDayOfMonth((int)date('m', time() - 31556926), (int)date('Y', time() - 31556926)), (int)date('Y', time() - 31556926));
+                $time['from'] = mktime(0, 0, 0, 1, 1, date('Y', time() - 31556926));
+                $time['to'] = mktime(0, 0, 0, 12, getLastDayOfMonth(date('m', time() - 31556926), date('Y', time() - 31556926)), date('Y', time() - 31556926));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1723,14 +1722,16 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
             if (element.val() == 'alltime') {
                 <?php
                 // for the time from, do something special select the exact date this user was registered and use that :)
-                $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-                $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
-                $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
-                $user_row = $user_result->fetch_assoc();
-                $time['from'] = $user_row['user_time_register'];
+                if (isset($_SESSION['user_id'])) {
+                    $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+                    $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
+                    $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
+                    $user_row = $user_result->fetch_assoc();
+                    $time['from'] = $user_row['user_time_register'];
+                }
 
-                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
+                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1776,19 +1777,20 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
 }
 function grab_timeframe()
 {
-    AUTH::set_timezone($_SESSION['user_timezone']);
+    $auth = new AUTH();
+    $auth->set_timezone($_SESSION['user_timezone']);
 
     $database = DB::getInstance();
     $db = $database->getConnection();
 
-    $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string($_SESSION['user_id']) : 0;
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
     $user_row = $user_result->fetch_assoc();
 
-    if (($user_row['user_pref_time_predefined'] == 'today') or (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '')) {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+    if (($user_row['user_pref_time_predefined'] == 'today') or ($user_row['pref_time_from'] != '')) {
+        $time['from'] = mktime(0, 0, 0, date('m', time()), date('d', time()), date('Y', time()));
+        $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
     }
 
     if ($user_row['user_pref_time_predefined'] == 'yesterday') {
@@ -1834,14 +1836,16 @@ function grab_timeframe()
     if ($user_row['user_pref_time_predefined'] == 'alltime') {
 
         // for the time from, do something special select the exact date this user was registered and use that :)
-        $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-        $user2_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
-        $user2_result = $db->query($user2_sql) or record_mysql_error($user2_sql);
-        $user2_row = $user2_result->fetch_assoc();
-        $time['from'] = $user2_row['user_time_register'];
+        if (isset($_SESSION['user_id'])) {
+            $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+            $user2_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
+            $user2_result = $db->query($user2_sql) or record_mysql_error($user2_sql);
+            $user2_row = $user2_result->fetch_assoc();
+            $time['from'] = $user2_row['user_time_register'];
+        }
 
-        $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+        $time['from'] = mktime(0, 0, 0, date('m', $time['from']), date('d', $time['from']), date('Y', $time['from']));
+        $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
     }
 
     if ($user_row['user_pref_time_predefined'] == '') {
@@ -1902,7 +1906,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 
 
     // grab user preferences
-    $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string($_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql); // ($user_sql);
     $user_row = $user_result->fetch_assoc();
@@ -2017,12 +2021,13 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         }
     }
 
-    if (!isset($_SESSION['publisher']) || $_SESSION['publisher'] == false) { //user is able to see all camapigns
+    $count_where = ''; //initialize count_where variable
+    if ($_SESSION['publisher'] == false) { //user is able to see all camapigns
         $click_sql = $command . " WHERE $db_table.user_id!='0' ";
-        $count_where = " WHERE $db_table.user_id!='0' ";
+        $count_where .= " WHERE $db_table.user_id!='0' ";
     } else {
         $click_sql = $command . " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-        $count_where = " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
+        $count_where .= " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
     }
     if ($user_row['user_pref_subid']) {
         $mysql['user_landing_subid'] = $db->real_escape_string($user_row['user_pref_subid']);
@@ -2160,8 +2165,8 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     if ($pref_time == true) {
         $time = grab_timeframe();
 
-        $mysql['from'] = $db->real_escape_string((string)$time['from']);
-        $mysql['to'] = $db->real_escape_string((string)$time['to']);
+        $mysql['from'] = $db->real_escape_string($time['from']);
+        $mysql['to'] = $db->real_escape_string($time['to']);
         if ($mysql['from'] != '') {
             $click_sql .= " AND click_time > " . $mysql['from'] . " ";
             $count_where .= " AND click_time > " . $mysql['from'] . " ";
@@ -2188,7 +2193,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         else
             $count_sql = $count_sql . $count_where;
 
-        if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
+        if ($mysql['user_landing_subid']) {
             $join = " AND 2c.";
             if ($isspy) {
                 $join = " WHERE ";
@@ -2257,10 +2262,6 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     } else {
         // only if there is a limit set, run this code
         if ($pref_limit != false) {
-            // before it limits, we want to know the TOTAL number of rows
-            $count_result = _mysqli_query($count_sql);
-            $count_row = $count_result->fetch_assoc();
-            $rows = $count_row['count'];
 
             // rows is the total count of rows in this query.
             $query['rows'] = $rows;
@@ -2830,32 +2831,13 @@ class INDEXES
     {
         global $db, $memcacheWorking, $memcache;
 
-        // Check if $ip is a string (direct IP) or an object with address property
-        if (is_string($ip)) {
-            $mysql['ip_address'] = $db->real_escape_string($ip);
-            $ip_type = (strpos($ip, ':') !== false) ? 'ipv6' : 'ipv4';
-        } else if (is_object($ip) && isset($ip->address)) {
-            $mysql['ip_address'] = $db->real_escape_string($ip->address);
-            $ip_type = $ip->type ?? 'ipv4';
-        } else if ($ip === null) {
-            // If $ip is null, use a default IP
-            $mysql['ip_address'] = $db->real_escape_string('0.0.0.0');
-            $ip_type = 'ipv4';
-        } else {
-            // Handle any other unexpected type
-            $mysql['ip_address'] = $db->real_escape_string('0.0.0.0');
-            $ip_type = 'ipv4';
-        }
+        $mysql['ip_address'] = $db->real_escape_string($ip->address);
 
-        // Initialize $inet6_ntoa and $inet6_aton if they're needed
-        $inet6_ntoa = '';
-        $inet6_aton = 'INET6_ATON';
-
-        if ($inet6_ntoa == '' && $ip_type == 'ipv6') {
+        if ($inet6_ntoa == '' && $ip->type == 'ipv6') {
             $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode for db check
         }
 
-        if ($ip_type === 'ipv6') {
+        if ($ip->type === 'ipv6') {
             $ip_sql = 'SELECT  202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address= ' . $inet6_aton . '("' . $mysql['ip_address'] . '") order by 202_ips.ip_id DESC limit 1';
         } else {
             $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
@@ -2903,32 +2885,13 @@ class INDEXES
     public static function insert_ip($db, $ip)
     {
 
-        // Initialize $inet6_ntoa and $inet6_aton if they're needed
-        $inet6_ntoa = '';
-        $inet6_aton = 'INET6_ATON';
+        $mysql['ip_address'] = $db->real_escape_string($ip->address);
 
-        // Check if $ip is a string (direct IP) or an object with address property
-        if (is_string($ip)) {
-            $mysql['ip_address'] = $db->real_escape_string($ip);
-            $ip_type = (strpos($ip, ':') !== false) ? 'ipv6' : 'ipv4';
-        } else if (is_object($ip) && isset($ip->address)) {
-            $mysql['ip_address'] = $db->real_escape_string($ip->address);
-            $ip_type = $ip->type ?? 'ipv4';
-        } else if ($ip === null) {
-            // If $ip is null, use a default IP
-            $mysql['ip_address'] = $db->real_escape_string('0.0.0.0');
-            $ip_type = 'ipv4';
-        } else {
-            // Handle any other unexpected type
-            $mysql['ip_address'] = $db->real_escape_string('0.0.0.0');
-            $ip_type = 'ipv4';
-        }
-
-        if ($inet6_ntoa == '' && $ip_type == 'ipv6') {
+        if ($inet6_ntoa == '' && $ip->type == 'ipv6') {
             $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode for db check
         }
 
-        if ($ip_type === 'ipv6') {
+        if ($ip->type === 'ipv6') {
             //insert the ipv6 ip address and get the ipv6_id
             $ip_sql = 'INSERT INTO 202_ips_v6 SET ip_address=' . $inet6_aton . '("' . $mysql['ip_address'] . '")';
             $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
@@ -3729,6 +3692,26 @@ function updateSurveyData($install_hash, $post)
     return $data;
 }
 
+function intercomHash($install_hash)
+{
+    // Initiate curl
+    $ch = curl_init();
+    // Set the url
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/hash/?h=' . $install_hash);
+    // Disable SSL verification
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    // Will return the response, if false it print the response
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Execute
+    $result = curl_exec($ch);
+
+    $data = json_decode($result, true);
+
+    // close connection
+    curl_close($ch);
+
+    return $data['user_hash'];
+}
 
 function rotator_data($query, $type)
 {
@@ -3869,8 +3852,7 @@ function tagUserByNetwork($install_hash, $type, $network)
 
 function getDNIHost()
 {
-    $protocol = (isset($_SERVER['SERVER_PROTOCOL']) && stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true) ||
-        (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https://' : 'http://';
+    $protocol = stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
     $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
     return base64_encode($domain);
 }
@@ -4299,7 +4281,7 @@ function showHelp($page)
             break;
     }
 
-    if (isset($url) && $url) {
+    if ($url) {
         echo '<a href="' . $url . 'helpdocs" class="btn btn-info btn-xs" target="_blank"><span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Get Help"></span></a>';
     }
 }
@@ -4419,6 +4401,7 @@ function  upgrade_config()
                     break;
                 case '$dbhost':
                     $odbhost = $matches[2];
+                    echo $odbhost;
                     break;
                 case '$dbhostro':
                     $odbhostro = $matches[2];

@@ -1,6 +1,4 @@
 <?php
-
-declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 
 AUTH::require_user();
@@ -12,10 +10,10 @@ template_top();  ?>
 <div class="row home">
 	<div class="col-xs-7">
 		<div class="row">
-			<?php if (!isset($_SESSION['user_pref_ad_settings']) || (isset($_SESSION['user_pref_ad_settings']) && $_SESSION['user_pref_ad_settings'] != 'hide_all')) { ?>
+			<?php if (isset($_SESSION['user_pref_ad_settings']) && $_SESSION['user_pref_ad_settings'] != 'hide_all') { ?>
 				<div class="col-xs-12">
 					<h6 class="h6-home">Special Offers <span class="glyphicon glyphicon-tags home-icons"></span></h6>
-					<iframe class="advertise" src="<?php echo TRACKING202_ADS_URL; ?>/prosper202-home/?t202aid=<?php echo $_SESSION['user_cirrus_link'] ?? ''; ?>" scrolling="no" frameborder="0"></iframe>
+					<iframe class="advertise" src="<?php echo TRACKING202_ADS_URL; ?>/prosper202-home/?t202aid=<?php echo $_SESSION['user_cirrus_link']; ?>" scrolling="no" frameborder="0"></iframe>
 
 				</div>
 			<?php } ?>

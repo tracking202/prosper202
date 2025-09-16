@@ -34,17 +34,24 @@ class PROSPER202
         $php_version = $version;
         return $php_version;
     }
+
+    // Add a static method for static calls
+    public static function php_version_static()
+    {
+        global $version;
+        return $version;
+    }
 }
 
 class UPGRADE
 {
 
-    public static function upgrade_databases($time_from)
+    function upgrade_databases($time_from)
     {
         global $dbname;
 
-        ini_set('max_execution_time', (string)(60 * 20));
-        ini_set('max_input_time', (string)(60 * 20));
+        ini_set('max_execution_time', 60 * 20);
+        ini_set('max_input_time', 60 * 20);
 
         //Try to disable mysql strict mode
         $sql = "SET session sql_mode= ''";
@@ -882,8 +889,8 @@ class UPGRADE
 										  ADD COLUMN `vip_perks_status` int(1) NOT NULL;";
             $result = _mysqli_query($sql);
 
-            $hash = md5(uniqid((string)rand(), true));
-            $user_hash = ''; // Default empty value
+            $hash = md5(uniqid(rand(), TRUE));
+            $user_hash = intercomHash($hash);
 
             $sql = "UPDATE 202_users SET install_hash='" . $hash . "', user_hash='" . $user_hash . "' WHERE user_id='1'";
             $result = _mysqli_query($sql);
@@ -1699,9 +1706,7 @@ class UPGRADE
             $result = _mysqli_query($sql);
 
             $de = new DataEngine();
-            if (method_exists($de, 'getSummary')) {
-                $de->getSummary($time_from, $time_to, $snippet, 1, true, false);
-            }
+            $de->getSummary($time_from, $time_to, $snippet, 1, true, false);
 
             $sql = "CREATE TABLE `202_rotator_rules_redirects` (
                   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2026,13 +2031,13 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.27') {
 
-            $sql = "ALTER TABLE 202_users DROP `leave_behind_page_url`";
+            $sql = "ALTER TABLE `202_users` DROP `leave_behind_page_url`";
             $result = _mysqli_query($sql);
 
-            $sql = "ALTER TABLE 202_users DROP `user_mods`";
+            $sql = "ALTER TABLE `202_users` DROP `user_mods`";
             $result = _mysqli_query($sql);
 
-            $sql = "ALTER TABLE 202_users ADD COLUMN  `user_mods_lb` tinyint(1) unsigned NOT NULL DEFAULT '0'";
+            $sql = "ALTER TABLE `202_users` ADD COLUMN  `user_mods_lb` tinyint(1) unsigned NOT NULL DEFAULT '0'";
             $result = _mysqli_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.28'";

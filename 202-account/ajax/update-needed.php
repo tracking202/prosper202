@@ -1,6 +1,4 @@
 <?php
-
-declare(strict_types=1);
 include_once(str_repeat("../", 2) . '202-config/connect.php');
 
 AUTH::require_user();
@@ -31,7 +29,7 @@ if (isset($_SESSION['auto_upgraded_not_possible']) && $_SESSION['auto_upgraded_n
 			</div>
 		</div>
 	</div>
-<?php } else if (isset($_SESSION['update_needed']) && $_SESSION['update_needed'] == true) { ?>
+<?php } else if ($_SESSION['update_needed'] == true) { ?>
 	<div class="panel-group alertaccordion" id="accordion" role="tablist" aria-multiselectable="true">
 		<div class="panel panel-default">
 			<div class="panel-heading" role="tab" id="headingOne">
@@ -96,7 +94,7 @@ if (isset($_SESSION['auto_upgraded_not_possible']) && $_SESSION['auto_upgraded_n
 		</div>
 	</div>
 	<?php } else if (isset($_SESSION['premium_update_available']) && $_SESSION['premium_update_available'] == true) {
-	$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
+	$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
 	$user_sql = "SELECT p202_customer_api_key FROM 202_users WHERE user_id = '" . $mysql['user_own_id'] . "'";
 	$user_results = $db->query($user_sql);
 	$user_row = $user_results->fetch_assoc();

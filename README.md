@@ -14,6 +14,12 @@ Prosper202 provides pay per click affiliate marketers with leading edge self hos
 <b>Version 1.9.55</b>
 
 <ul>
+<li>Add support for PHP 8</li>
+</ul>
+
+<b>Version 1.9.55</b>
+
+<ul>
 <li>New: Support for Chrome Samesite=none and secure requirement </li>
 <li>New: PayKickstart Integration for Bot202 Link Assistant and Affiliate IPN for conversion tracking</li>
 <li>New: Deferred Pixel Now Supports PurLinks</li>
