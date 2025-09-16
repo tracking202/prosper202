@@ -25,7 +25,7 @@ class DataEngine
      * Check if database connection is available
      * @return bool
      */
-    public function isDatabaseConnected(): bool
+    private function isDatabaseConnected(): bool
     {
         return self::$db !== null && self::$db instanceof mysqli;
     }
@@ -39,13 +39,13 @@ class DataEngine
         if ($this->isDatabaseConnected()) {
             return self::$db;
         }
-
+        
         // Fallback to global database connection
         global $db;
         if ($db && $db instanceof mysqli) {
             return $db;
         }
-
+        
         return null;
     }
 
@@ -55,11 +55,17 @@ class DataEngine
             $database = DB::getInstance();
             $connection = $database->getConnection();
             if ($connection === false || !($connection instanceof mysqli)) {
-                throw new Exception('Database connection failed - invalid connection object');
+                // Log the error but don't throw exception to maintain backward compatibility
+                error_log('DataEngine: Database connection failed - invalid connection object');
+                self::$db = null;
+                return;
             }
             self::$db = $connection;
         } catch (Exception $e) {
-            throw new Exception('Database connection failed: ' . $e->getMessage());
+            // Log the error but don't throw exception to maintain backward compatibility
+            error_log('DataEngine: Database connection failed: ' . $e->getMessage());
+            self::$db = null;
+            return;
         }
 
         if (self::$db !== null) {

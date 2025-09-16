@@ -96,6 +96,11 @@ function dollar_format($amount, $currency = null, $cpv = false)
         $currency = 'USD';
     }
 
+    // Convert string amount to float for number_format
+    if (is_string($amount)) {
+        $amount = (float)$amount;
+    }
+
     $currency_before = '';
     $currency_after = '';
 
@@ -123,7 +128,7 @@ function dollar_format($amount, $currency = null, $cpv = false)
 
     if ($currency_before == '' && $currency_after == '') $currency_before = $currency;
 
-    if ($amount !== '') {
+    if ($amount !== '' && $amount !== null) {
         if ($amount >= 0) {
             $new_amount = $currency_before . number_format($amount, $decimals) . $currency_after;
         } else {
