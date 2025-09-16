@@ -16,13 +16,13 @@ if ($_SERVER['SERVER_NAME'] == '_') {
 
 DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
 DEFINE('CONFIG_PATH', dirname(__FILE__));
-// @ini_set('auto_detect_line_endings', TRUE); // Deprecated in PHP 8.1+, safe to remove
-@ini_set('register_globals', 0);
+@ini_set('auto_detect_line_endings', '1');
+// Deprecated in PHP 5.4
+// @ini_set('register_globals', 0);
 @ini_set('display_errors', 'On');
-@ini_set('error_reporting', 6135);
-// safe_mode is deprecated in PHP 7.x and removed in PHP 8.0
-// @ini_set('safe_mode', 'Off');
-@ini_set('set_time_limit', 0);
+@ini_set('error_reporting', '6135');
+// @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
+@ini_set('set_time_limit', '0');
 
 if (!class_exists('Memcache')) {
     class Memcache
