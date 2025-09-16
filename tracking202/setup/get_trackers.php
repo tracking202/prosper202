@@ -343,8 +343,8 @@ template_top('Get Trackers', NULL, NULL, NULL);  ?>
 
 							$vars_query = '';
 
-							$parameters = !empty($tracker_row['parameters']) ? explode(',', $tracker_row['parameters']) : array();
-							$placeholders = !empty($tracker_row['placeholders']) ? explode(',', $tracker_row['placeholders']) : array();
+							$parameters = explode(',', $tracker_row['parameters'] ?? '');
+							$placeholders = explode(',', $tracker_row['placeholders'] ?? '');
 
 							foreach ($parameters as $key => $value) {
 								if (isset($placeholders[$key])) {

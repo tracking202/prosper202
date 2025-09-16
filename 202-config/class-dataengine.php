@@ -1728,7 +1728,6 @@ ORDER BY ppc_network_id , name , variable";
                     case 'leads':
                     case 'click_out':
                         $html[$prepend . $key] = htmlentities(number_format((int)$data_row), ENT_QUOTES, 'UTF-8');
-
                         break;
                     case 'su_ratio':
 
@@ -1749,8 +1748,7 @@ ORDER BY ppc_network_id , name , variable";
                         $html[$prepend . $key] = htmlentities(dollar_format($data_row, $currency_row['user_account_currency'], $cpv), ENT_QUOTES, 'UTF-8');
                         break;
                     case 'roi':
-                        $html[$prepend . $key] = htmlentities(number_format((float)($data_row ?? 0)) . '%', ENT_QUOTES, 'UTF-8');
-
+                        $html[$prepend . $key] = htmlentities(number_format((float)$data_row) . '%', ENT_QUOTES, 'UTF-8');
                         break;
                     case 'click_time_from_disp':
                         $upper = array(
@@ -2602,7 +2600,15 @@ aff_network_id=values(aff_network_id)";
         $user_id = isset($_SESSION['user_own_id']) ? $_SESSION['user_own_id'] : 1;
 
         $info_result = $result = $db->query($query) or die($db->error . '<br/><br/>' . $query);
+        
+        // Check if this is an INSERT/UPDATE query (returns true) or SELECT query (returns mysqli_result)
+        if ($info_result === true) {
+            // For INSERT/UPDATE queries, we don't need to call doSummary
+            return true;
+        }
+        
         $this->doSummary($info_result, $from, $to, $user_id, $upgrade, $new);
+        return $info_result;
     }
 
     function doSummary($info_result, $from, $to, $user_id, $upgrade = false, $new = false)

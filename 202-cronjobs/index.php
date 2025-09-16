@@ -101,13 +101,15 @@ function RunDailyCronjob()
             echo 'Processing Daily Jobs...';
             flushOutput();
 
-            //if a cronjob hasn't run today, record it now.
-            $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
-            $insert_result = $db->query($insert_sql);
+		//this makes it so we only have the most recent last 24 hour stuff, anything older, kill it.
+		//we want to keep our SPY TABLE, low
+		$click_sql = "DELETE FROM 202_clicks_spy WHERE click_time < $from";
+		$click_result = _mysqli_query($db, $click_sql);
 
-            /* -------- THIS CLEARS OUT THE CLICK SPY MEMORY TABLE --------- */
-            //this function runs everyday at midnight to clear out the temp clicks_memory table
-            $from = $now - 86400;
+		//clear the last 24 hour ip addresses
+		$last_ip_sql = "DELETE FROM 202_last_ips WHERE time < $from";
+		$last_ip_result = _mysqli_query($db, $last_ip_sql);
+		$last_ip_affected_rows = $db->affected_rows;
 
             //this makes it so we only have the most recent last 24 hour stuff, anything older, kill it.
             //we want to keep our SPY TABLE, low
