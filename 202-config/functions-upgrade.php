@@ -890,7 +890,8 @@ class UPGRADE
             $result = _mysqli_query($sql);
 
             $hash = md5(uniqid((string)rand(), TRUE));
-            $user_hash = intercomHash($hash);
+            // $user_hash = intercomHash($hash); // Removed intercomHash call
+            $user_hash = ''; // Default empty value
 
             $sql = "UPDATE 202_users SET install_hash='" . $hash . "', user_hash='" . $user_hash . "' WHERE user_id='1'";
             $result = _mysqli_query($sql);
