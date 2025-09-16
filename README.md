@@ -15,6 +15,7 @@ Prosper202 provides pay per click affiliate marketers with leading edge self hos
 
 <ul>
 <li>Add support for PHP 8</li>
+<li>Updated codebase to PHP 8 conventions and enabled strict type checking.</li>
 </ul>
 
 <b>Version 1.9.55</b>
