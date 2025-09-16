@@ -1793,9 +1793,9 @@ function grab_timeframe()
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
     $user_row = $user_result->fetch_assoc();
 
-    if (($user_row['user_pref_time_predefined'] == 'today') or ($user_row['pref_time_from'] != '')) {
-        $time['from'] = mktime(0, 0, 0, date('m', time()), date('d', time()), date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+    if (($user_row['user_pref_time_predefined'] == 'today') or (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '')) {
+        $time['from'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
     }
 
     if ($user_row['user_pref_time_predefined'] == 'yesterday') {

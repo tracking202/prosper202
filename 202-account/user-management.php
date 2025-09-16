@@ -126,7 +126,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (!$error) {
 
-		$mysql['user_pass'] = $db->real_escape_string(salt_user_pass($mysql['user_password']));
+		// Only hash password if it's set (for new users or when changing password)
+		if (isset($mysql['user_password'])) {
+			$mysql['user_pass'] = $db->real_escape_string(salt_user_pass($mysql['user_password']));
+		}
 		$hash = md5(uniqid((string)rand(), TRUE));
 		// $user_hash = intercomHash($hash); // Removed intercomHash call
 		$user_hash = ''; // Default empty value

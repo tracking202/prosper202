@@ -39,13 +39,13 @@ class DataEngine
         if ($this->isDatabaseConnected()) {
             return self::$db;
         }
-        
+
         // Fallback to global database connection
         global $db;
         if ($db && $db instanceof mysqli) {
             return $db;
         }
-        
+
         return null;
     }
 
