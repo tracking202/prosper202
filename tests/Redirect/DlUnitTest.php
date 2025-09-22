@@ -83,7 +83,7 @@ class DlUnitTest extends TestCase
         ];
         
         foreach ($tokens as $key => $value) {
-            $url = preg_replace('/\[\[' . $key . '\]\]/i', (string)$value, $url);
+            $url = preg_replace('/\[\[' . $key . '\]\]/i', (string)$value, (string) $url);
         }
         
         $expected = 'https://example.com/track?subid=12345&kw=test keyword&c1=campaign1';

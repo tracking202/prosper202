@@ -78,16 +78,13 @@ final class DlTest extends TestCase
             public function query($sql)
             {
                 // Mock query results based on SQL
-                if (strpos($sql, 'tracker_id_public') !== false) {
-                    preg_match("/tracker_id_public='([^']+)'/", $sql, $matches);
+                if (str_contains((string) $sql, 'tracker_id_public')) {
+                    preg_match("/tracker_id_public='([^']+)'/", (string) $sql, $matches);
                     $trackerId = $matches[1] ?? '0';
                     
                     return new class($this->trackerData[$trackerId] ?? false) {
-                        private $data;
-                        
-                        public function __construct($data)
+                        public function __construct(private $data)
                         {
-                            $this->data = $data;
                         }
                         
                         public function fetch_assoc()
@@ -151,7 +148,7 @@ final class DlTest extends TestCase
         // Simulate the core dl.php logic
         try {
             // Check for valid ID
-            $t202id = isset($_GET['t202id']) ? $_GET['t202id'] : '';
+            $t202id = $_GET['t202id'] ?? '';
             if (!is_numeric($t202id)) {
                 return ['headers' => $this->capturedHeaders, 'output' => '', 'died' => true];
             }

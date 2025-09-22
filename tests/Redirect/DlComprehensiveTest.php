@@ -19,8 +19,6 @@ class DlComprehensiveTest extends TestCase
     
     protected function setUp(): void
     {
-        parent::setUp();
-        
         // Store original superglobals
         $this->originalGet = $_GET ?? [];
         $this->originalServer = $_SERVER ?? [];
@@ -45,8 +43,6 @@ class DlComprehensiveTest extends TestCase
         $_GET = $this->originalGet;
         $_SERVER = $this->originalServer;
         $_COOKIE = $this->originalCookie;
-        
-        parent::tearDown();
     }
     
     private function createMockDb()
@@ -139,7 +135,7 @@ class DlComprehensiveTest extends TestCase
         $died = false;
         
         // Simulate the check
-        $t202id = isset($_GET['t202id']) ? $_GET['t202id'] : '';
+        $t202id = $_GET['t202id'] ?? '';
         if (!is_numeric($t202id)) {
             $died = true;
         }
@@ -257,12 +253,12 @@ class DlComprehensiveTest extends TestCase
     {
         // Test with X-Forwarded-For
         $_SERVER['HTTP_X_FORWARDED_FOR'] = '192.168.1.100';
-        $ip_string = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : '0.0.0.0';
+        $ip_string = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
         $this->assertEquals('192.168.1.100', $ip_string);
         
         // Test without X-Forwarded-For
         unset($_SERVER['HTTP_X_FORWARDED_FOR']);
-        $ip_string = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : '0.0.0.0';
+        $ip_string = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
         $this->assertEquals('0.0.0.0', $ip_string);
     }
     
@@ -273,13 +269,13 @@ class DlComprehensiveTest extends TestCase
     {
         unset($_SERVER['HTTP_REFERER']);
         
-        $referer_url_parsed = array();
+        $referer_url_parsed = [];
         $referer_url_query = '';
-        $referer_query = array();
+        $referer_query = [];
         
         if (isset($_SERVER['HTTP_REFERER']) && $_SERVER['HTTP_REFERER']) {
             $referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
-            $referer_url_query = isset($referer_url_parsed['query']) ? $referer_url_parsed['query'] : '';
+            $referer_url_query = $referer_url_parsed['query'] ?? '';
             if ($referer_url_query) {
                 @parse_str($referer_url_query, $referer_query);
             }
@@ -362,7 +358,7 @@ class DlComprehensiveTest extends TestCase
         
         for ($i = 1; $i <= 4; $i++) {
             $custom = "c" . $i;
-            $custom_val = isset($_lGET[$custom]) ? $_lGET[$custom] : '';
+            $custom_val = $_lGET[$custom] ?? '';
             $custom_val = $this->mockDb->real_escape_string((string)$custom_val);
             $custom_val = str_replace('%20', ' ', $custom_val);
             
@@ -388,16 +384,16 @@ class DlComprehensiveTest extends TestCase
         
         $ppc_variable_ids = isset($tracker_row['ppc_variable_ids']) && $tracker_row['ppc_variable_ids'] 
             ? explode(',', $tracker_row['ppc_variable_ids']) 
-            : array();
+            : [];
         
         $parameters = isset($tracker_row['parameters']) && $tracker_row['parameters'] 
             ? explode(',', $tracker_row['parameters']) 
-            : array();
+            : [];
         
         $this->assertCount(3, $ppc_variable_ids);
         $this->assertCount(3, $parameters);
         
-        foreach ($parameters as $key => $value) {
+        foreach ($parameters as $value) {
             $variable = isset($_GET[$value]) ? $this->mockDb->real_escape_string((string)$_GET[$value]) : '';
             $this->assertNotEmpty($variable);
         }
@@ -478,7 +474,7 @@ class DlComprehensiveTest extends TestCase
             // Skip array test as it causes warning
         ];
         
-        foreach ($testCases as $name => $testData) {
+        foreach ($testCases as $testData) {
             $input = $testData[0];
             $expected = $testData[1];
             $result = $this->mockDb->real_escape_string((string)$input);
