@@ -1,30 +1,52 @@
 <?php
 declare(strict_types=1);
 include_once(str_repeat("../", 2).'202-config/connect.php');
+include_once(str_repeat("../", 2).'202-config/DashboardDataManager.class.php');
 
 AUTH::require_user();
 
- #Meetup202 Global Calendar
- $json = @getData( TRACKING202_RSS_URL . '/meetup202/events.php?type=json');
- $items = json_decode((string) $json, true);
- $items = $items['value']['items'];
- $counter = 0;
- if ($items) {
- foreach ($items as $item) {
- 	$counter++;
- 	$html['title'] = htmlentities((string) $item['meetup_group']);
- 	$html['description'] = htmlentities($item['summary'] . '. ' . $item['description']);
- 	$html['link'] = htmlentities((string) $item['link']);
- 	$html['time'] = htmlentities(date('l, M j \a\t g:i A T', $item['meetup_start_time']));
- 	#Saturday, July 10 at 10:30 AM
- 	if (strlen((string) $html['description']) > 350) { 
- 		$html['description'] = substr((string) $html['description'],0,350) . ' [...]';
- 	}
- 	
- 	if ($counter < 20) {?>
- 		
-	 	<h4><a href="http://meetup.tracking202.com" target="_blank"></a> <a href='<?php echo ($html['link']); ?>'  target="_blank"><?php echo $html['title']; ?></a> - <?php echo $html['time']; ?></h4>
-		<p><?php echo $html['description']; ?></p><?php  
- 	}
+// Get cached meetups from local database
+$dataManager = new DashboardDataManager();
+$meetups = $dataManager->getContent('meetups', 20);
+
+// If no cached meetups, exit silently
+if (empty($meetups)) {
+    exit;
 }
- } ?>
+
+$counter = 0;
+foreach ($meetups as $meetup) {
+    $counter++;
+    
+    // Extract data from JSON if available, fallback to direct fields
+    $data = json_decode($meetup['data'] ?? '{}', true) ?: [];
+    
+    $title = $meetup['title'] ?? $data['meetup_group'] ?? '';
+    $summary = $data['summary'] ?? '';
+    $description_raw = $meetup['description'] ?? $data['description'] ?? '';
+    $description = $summary . ($summary && $description_raw ? '. ' : '') . $description_raw;
+    $link = $meetup['link'] ?? $data['link'] ?? '';
+    
+    // Handle meetup time - try multiple sources
+    $meetup_time = 0;
+    if ($meetup['published_at']) {
+        $meetup_time = strtotime((string) $meetup['published_at']);
+    } elseif (isset($data['meetup_start_time'])) {
+        $meetup_time = (int)$data['meetup_start_time'];
+    }
+    
+    $formatted_time = $meetup_time > 0 ? date('l, M j \a\t g:i A T', $meetup_time) : 'Time TBD';
+    
+    // Sanitize and truncate description
+    $clean_description = htmlentities($description);
+    if (strlen($clean_description) > 350) { 
+        $clean_description = substr($clean_description, 0, 350) . ' [...]';
+    }
+    
+    if ($counter <= 20) { ?>
+        
+        <h4><a href="http://meetup.tracking202.com" target="_blank"></a> <a href='<?php echo htmlentities($link); ?>' target="_blank"><?php echo htmlentities($title); ?></a> - <?php echo htmlentities($formatted_time); ?></h4>
+        <p><?php echo $clean_description; ?></p>
+        
+    <?php }
+} ?>

@@ -2,21 +2,30 @@
 declare(strict_types=1);
 include_once(str_repeat("../", 2).'202-config/connect.php');
 include_once(str_repeat("../", 2).'202-config/functions-rss.php');
+include_once(str_repeat("../", 2).'202-config/DashboardDataManager.class.php');
 
 AUTH::require_user();
 
-$rss = fetch_rss( TRACKING202_RSS_URL . '/twitter/timeline.php');
- if ( isset($rss->items) && 0 != count($rss->items) ) {
- 	
- 	$rss->items = array_slice($rss->items, 0, 1);
- 	foreach ($rss->items as $item ) { 
- 		
- 		$item_time = strtotime((string) $item['pubdate'], time());
- 		//only display items that are recent within 30 days from twitter
- 		if ($item_time > (time() - 60*60*24*30)) {
-	 		$item['title'] = str_replace('tracking202: ', '', $item['title']);
-	 		$item['description'] = html2txt($item['description']); ?>
- 		
-	<span class="fui-twitter"></span><a href='<?php echo ($item['link']); ?>'><?php echo $item['title']; ?></a> - <span style="font-size: 10px;">(<?php printf(('%s ago'), human_time_diff($item_time)) ; ?>)</span><br></br>
-	<?php } }
+// Get cached tweets from local database
+$dataManager = new DashboardDataManager();
+$tweets = $dataManager->getContent('tweets', 1);
+
+// If no cached tweets, exit silently
+if (empty($tweets)) {
+    exit;
+}
+
+foreach ($tweets as $tweet) {
+    $published_time = $tweet['published_at'] ? strtotime((string) $tweet['published_at']) : time();
+    
+    // Only display items that are recent within 30 days
+    if ($published_time > (time() - 60*60*24*30)) {
+        $title = str_replace('tracking202: ', '', $tweet['title'] ?? '');
+        $description = html2txt($tweet['description'] ?? '');
+        $link = $tweet['link'] ?? '';
+        $time_ago = human_time_diff($published_time); ?>
+        
+        <span class="fui-twitter"></span><a href='<?php echo htmlentities($link); ?>'><?php echo htmlentities($title); ?></a> - <span style="font-size: 10px;">(<?php printf(('%s ago'), $time_ago); ?>)</span><br></br>
+        
+    <?php }
 } ?>

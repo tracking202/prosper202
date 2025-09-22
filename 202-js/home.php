@@ -8,27 +8,46 @@ include_once(substr(__DIR__, 0,-7) . '/202-config/functions.php');
 ?>
 
 $(document).ready(function() {
-	$.get("<?php echo get_absolute_url();?>202-account/ajax/alerts.php", function(data) {
-		  $( "#tracking202_alerts" ).html(data);
-		});
-
-		$.get("<?php echo get_absolute_url();?>202-account/ajax/tweets.php", function(data) {
-		  $( "#tracking202_tweets" ).html(data);
-		});
-
-		$.get("<?php echo get_absolute_url();?>202-account/ajax/posts.php", function(data) {
-		  $( "#tracking202_posts" ).html(data);
-		});
-
-		$.get("<?php echo get_absolute_url();?>202-account/ajax/meetups.php", function(data) {
-		  $( "#tracking202_meetups" ).html(data);
-		});
-
-		$.get("<?php echo get_absolute_url();?>202-account/ajax/sponsors.php", function(data) {
-		  $( "#tracking202_sponsors" ).html(data);
-		});
-		
-		$.ajax({
-		  url: "<?php echo get_absolute_url();?>202-account/ajax/system-checks.php",
-		});
+    // Helper function for fetch with timeout and error handling
+    async function fetchContent(url, elementId) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        
+        try {
+            const response = await fetch(url, {
+                signal: controller.signal,
+                cache: 'no-cache'
+            });
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
+            const data = await response.text();
+            const element = document.getElementById(elementId);
+            if (element) {
+                element.innerHTML = data;
+            }
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                console.log(`Timeout loading ${elementId}`);
+            } else {
+                console.log(`Error loading ${elementId}:`, error);
+            }
+            // Gracefully fail - keep existing content or show nothing
+        }
+    }
+    
+    // Load all dashboard content with modern fetch API
+    fetchContent("<?php echo get_absolute_url();?>202-account/ajax/alerts.php", "tracking202_alerts");
+    fetchContent("<?php echo get_absolute_url();?>202-account/ajax/tweets.php", "tracking202_tweets");
+    fetchContent("<?php echo get_absolute_url();?>202-account/ajax/posts.php", "tracking202_posts");
+    fetchContent("<?php echo get_absolute_url();?>202-account/ajax/meetups.php", "tracking202_meetups");
+    fetchContent("<?php echo get_absolute_url();?>202-account/ajax/sponsors.php", "tracking202_sponsors");
+    
+    // System checks (no UI update needed)
+    fetch("<?php echo get_absolute_url();?>202-account/ajax/system-checks.php")
+        .catch(error => console.log('System check failed:', error));
 });
