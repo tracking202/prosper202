@@ -2687,11 +2687,49 @@ class UPGRADE
             $prosper202_version = '1.9.55';
         }
 
+        if ($prosper202_version == '1.9.55') {
+
+            // Create dashboard content cache table
+            $sql = "CREATE TABLE IF NOT EXISTS `202_dashboard_content` (
+              `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+              `content_type` enum('alerts','tweets','posts','meetups','sponsors') NOT NULL,
+              `external_id` varchar(100) DEFAULT NULL,
+              `title` varchar(500) DEFAULT NULL,
+              `description` text,
+              `link` varchar(500) DEFAULT NULL,
+              `image_url` varchar(500) DEFAULT NULL,
+              `published_at` timestamp NULL DEFAULT NULL,
+              `data` json DEFAULT NULL,
+              `last_updated` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              `is_active` tinyint(1) NOT NULL DEFAULT '1',
+              PRIMARY KEY (`id`),
+              KEY `content_type_active_published` (`content_type`,`is_active`,`published_at`),
+              UNIQUE KEY `unique_content` (`content_type`,`external_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Create dashboard sync tracking table
+            $sql = "CREATE TABLE IF NOT EXISTS `202_dashboard_sync` (
+              `content_type` varchar(50) NOT NULL,
+              `last_sync` timestamp NULL DEFAULT NULL,
+              `last_success` timestamp NULL DEFAULT NULL,
+              `error_count` int(11) NOT NULL DEFAULT '0',
+              `last_error` text,
+              PRIMARY KEY (`content_type`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "UPDATE 202_version SET version='1.9.56'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.56';
+        }
+
         //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.55') {
+        if ($prosper202_version > '1.9.56') {
 
 
-            $prosper202_version = '1.9.55';
+            $prosper202_version = '1.9.56';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }

@@ -3,7 +3,11 @@
 use UAParser\Parser;
 use GeoIp2\Database\Reader;
 
-$version = '1.9.55';
+// Load centralized version configuration
+if (!file_exists(__DIR__ . '/version.php')) {
+    die('Critical: Version file missing');
+}
+require_once(__DIR__ . '/version.php');
 
 $_GET = array_change_key_case($_GET, CASE_LOWER);
 //fix for nginx with no server name set
@@ -84,13 +88,7 @@ include_once(CONFIG_PATH . '/functions-auth.php');
 if (!function_exists('array_any')) {
     function array_any(array $items, callable $callback): bool
     {
-        foreach ($items as $key => $value) {
-            if ($callback($value, $key)) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($items, fn($value, $key) => $callback($value, $key));
     }
 }
 include_once(CONFIG_PATH . '/Mobile_Detect.php');
@@ -155,7 +153,7 @@ if (!isset($_SESSION['privacy'])) {
 				 FROM   	`202_users_pref`
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
-    $privacy = memcache_mysql_fetch_assoc($db, $user_sql);
+    $privacy = memcache_mysql_fetch_assoc($db);
     if (isset($privacy['user_pref_privacy'])) {
         $_SESSION['privacy'] = $privacy['user_pref_privacy'];
     } else {
@@ -1241,7 +1239,7 @@ class INDEXES
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 } else {
                     //insert ip
-                    $ip_id = INDEXES::insert_ip($db, $ip_object);
+                    $ip_id = INDEXES::insert_ip($db);
                     // add to memcached
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 }
@@ -1253,7 +1251,7 @@ class INDEXES
                 // if this ip already exists, return the ip_id for it.
                 $ip_id = $ip_row['ip_id'];
             } else {
-                $ip_id = INDEXES::insert_ip($db, $ip_object);
+                $ip_id = INDEXES::insert_ip($db);
             }
         }
 
@@ -1379,7 +1377,7 @@ class INDEXES
             $site_url_address = '';
         }
         
-        $site_domain_id = INDEXES::get_site_domain_id($db, $site_url_address);
+        $site_domain_id = INDEXES::get_site_domain_id($db);
 
         $mysql['site_url_address'] = $db->real_escape_string((string)$site_url_address);
         $mysql['site_domain_id'] = $db->real_escape_string((string)$site_domain_id);
@@ -2425,7 +2423,7 @@ function record_mysql_error($db, $sql): never
 
 
     $ipForError = $ip_address ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? ''));
-    $ip_id = INDEXES::get_ip_id($db, $ipForError);
+    $ip_id = INDEXES::get_ip_id($db);
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
     $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
@@ -2645,7 +2643,7 @@ function getPublisher($pubid)
 		WHERE
 			`user_public_publisher_id`='" . $pubid . "'";
 
-    $pubid_row = memcache_mysql_fetch_assoc($db, $publisher_id_sql);
+    $pubid_row = memcache_mysql_fetch_assoc($db);
     if ($pubid_row) {
         return $db->real_escape_string($pubid_row['user_id']);
     } else {
@@ -2770,7 +2768,7 @@ function getTrackerDetail(&$mysql)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
-    $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+    $tracker_row = memcache_mysql_fetch_assoc($db);
 
     //set all mysql vars
     $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
@@ -2840,7 +2838,7 @@ function getTrackerDetailPT(&$mysql)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
-    $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+    $tracker_row = memcache_mysql_fetch_assoc($db);
 
     //set all mysql vars
     $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
@@ -3523,7 +3521,7 @@ function getKeyword(&$mysql)
     }
 
     $keyword = str_replace('%20', ' ', $keyword);
-    $keyword_id = INDEXES::get_keyword_id($db, $keyword);
+    $keyword_id = INDEXES::get_keyword_id($db);
     $mysql['keyword_id'] = $db->real_escape_string($keyword_id);
     $mysql['keyword'] = $db->real_escape_string($keyword);
 }

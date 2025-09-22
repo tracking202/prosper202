@@ -1,13 +1,22 @@
 <?php
 
 declare(strict_types=1);
-$version = '1.9.55';
+
+// Load centralized version configuration
+if (!file_exists(__DIR__ . '/version.php')) {
+    die('Critical: Version file missing');
+}
+require_once(__DIR__ . '/version.php');
 
 // Start the session at the beginning to avoid undefined $_SESSION variable
 session_start();
 
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
+
+// Dashboard API configuration
+DEFINE('DASHBOARD_API_URL', 'https://my.tracking202.com/api/v1');
+DEFINE('DASHBOARD_CACHE_TTL', 3600); // 1 hour
 
 //fix for nginx with no server name set
 if ($_SERVER['SERVER_NAME'] == '_') {
