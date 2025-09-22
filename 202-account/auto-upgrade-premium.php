@@ -22,7 +22,7 @@ if (!empty($user_row['p202_customer_api_key'])) {
 }
 
 $json = @getData('https://my.tracking202.com/api/v2/premium-p202/version');
-$array = json_decode($json, true);
+$array = json_decode((string) $json, true);
 $latest_version = $array['version'];
 if (version_compare($version, $latest_version) == '-1') {
 	$update_needed = true;
@@ -34,7 +34,7 @@ if ($_POST['start_upgrade'] == '1') {
 
 	$GetUpdate = @getData('https://my.tracking202.com/api/v2/premium-p202/download/' . $user_row['install_hash'] . '/' . $user_row['p202_customer_api_key']);
 	$installlog = "Downloading new update...\n";
-	$checkError = json_decode($GetUpdate, true);
+	$checkError = json_decode((string) $GetUpdate, true);
 	if (json_last_error() == JSON_ERROR_NONE) {
 		$installlog .= $checkError['msg'] . "...\n";
 		$FilesUpdated = false;
@@ -45,11 +45,11 @@ if ($_POST['start_upgrade'] == '1') {
 
 		if (temp_exists()) {
 			$installlog .= "Created /202-config/temp/ directory.\n";
-			$downloadUpdate = @file_put_contents(substr(dirname(__FILE__), 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
+			$downloadUpdate = @file_put_contents(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
 			if ($downloadUpdate) {
 				$installlog .= "Update downloaded and saved!\n";
 
-				$zip = @zip_open(substr(dirname(__FILE__), 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
+				$zip = @zip_open(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
 
 				if ($zip) {
 					$installlog .= "\nUpdate process started...\n";
@@ -58,11 +58,11 @@ if ($_POST['start_upgrade'] == '1') {
 					while ($zip_entry = @zip_read($zip)) {
 						$thisFileName = zip_entry_name($zip_entry);
 
-						if (substr($thisFileName, -1, 1) == '/') {
-							if (is_dir(substr(dirname(__FILE__), 0, -12) . '/' . $thisFileName)) {
+						if (str_ends_with($thisFileName, '/')) {
+							if (is_dir(substr(__DIR__, 0, -12) . '/' . $thisFileName)) {
 								$installlog .= "Directory: /" . $thisFileName . "......updated\n";
 							} else {
-								if (@mkdir(substr(dirname(__FILE__), 0, -12) . '/' . $thisFileName, 0755, true)) {
+								if (@mkdir(substr(__DIR__, 0, -12) . '/' . $thisFileName, 0755, true)) {
 									$installlog .= "Directory: /" . $thisFileName . "......created\n";
 								} else {
 									$installlog .= "Can't create /" . $thisFileName . " directory! Operation aborted";
@@ -72,13 +72,13 @@ if ($_POST['start_upgrade'] == '1') {
 							$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
 							$file_ext = array_pop(explode(".", $thisFileName));
 
-							if (file_exists(substr(dirname(__FILE__), 0, -12) . '/' . $thisFileName)) {
+							if (file_exists(substr(__DIR__, 0, -12) . '/' . $thisFileName)) {
 								$status = "updated";
 							} else {
 								$status = "created";
 							}
 
-							if ($updateThis = @fopen(substr(dirname(__FILE__), 0, -12) . '/' . $thisFileName, 'wb')) {
+							if ($updateThis = @fopen(substr(__DIR__, 0, -12) . '/' . $thisFileName, 'wb')) {
 								fwrite($updateThis, $contents);
 								fclose($updateThis);
 								unset($contents);

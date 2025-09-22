@@ -62,14 +62,14 @@ class Flash extends \Slim\Middleware implements \ArrayAccess, \IteratorAggregate
      * Constructor
      * @param  array  $settings
      */
-    public function __construct($settings = array())
+    public function __construct($settings = [])
     {
-        $this->settings = array_merge(array('key' => 'slim.flash'), $settings);
-        $this->messages = array(
-            'prev' => array(), //flash messages from prev request (loaded when middleware called)
-            'next' => array(), //flash messages for next request
-            'now' => array() //flash messages for current request
-        );
+        $this->settings = array_merge(['key' => 'slim.flash'], $settings);
+        $this->messages = [
+            'prev' => [], //flash messages from prev request (loaded when middleware called)
+            'next' => [], //flash messages for next request
+            'now' => [] //flash messages for current request
+        ];
     }
 
     /**
@@ -170,7 +170,7 @@ class Flash extends \Slim\Middleware implements \ArrayAccess, \IteratorAggregate
     {
         $messages = $this->getMessages();
 
-        return isset($messages[$offset]) ? $messages[$offset] : null;
+        return $messages[$offset] ?? null;
     }
 
     /**

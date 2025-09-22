@@ -4,7 +4,7 @@ include_once(str_repeat("../", 2) . '202-config/connect.php');
 AUTH::require_user();
 
 $json = getUrl(TRACKING202_RSS_URL . '/prosper202/sponsors?type=json');
-$json = json_decode($json, true);
+$json = json_decode((string) $json, true);
 
 // Check if $json is not null and contains the 'sponsors' key
 if (is_array($json) && isset($json['sponsors'])) {

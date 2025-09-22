@@ -7,7 +7,7 @@ if (isset($_SESSION['toolbar']) && $_SESSION['toolbar'] == 'true')
 else
 	$redir_url = get_absolute_url();
 session_destroy();
-setcookie('remember_me','',1,'/',$_SERVER['HTTP_HOST'],false,true);
+setcookie('remember_me','', ['expires' => 1, 'path' => '/', 'domain' => (string) $_SERVER['HTTP_HOST'], 'secure' => false, 'httponly' => true]);
 setcookie('remember_me',false);
 unset($_COOKIE['remember_me']);
 header('location: '.$redir_url);

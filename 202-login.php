@@ -1,17 +1,20 @@
 <?php
 
 declare(strict_types=1);
-include_once(dirname(__FILE__) . '/202-config/connect.php');
-include_once(dirname(__FILE__) . '/202-config/Mobile_Detect.php');
-include_once(dirname(__FILE__) . '/vendor/autoload.php');
+include_once(__DIR__ . '/202-config/connect.php');
+include_once(__DIR__ . '/202-config/Mobile_Detect.php');
+include_once(__DIR__ . '/vendor/autoload.php');
 
 use UAParser\Parser;
 
+prosper_log('login', 'Request received with method ' . ($_SERVER['REQUEST_METHOD'] ?? 'UNKNOWN') . ' from IP ' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+prosper_log('login', 'Session snapshot: ' . json_encode($_SESSION));
+
 // Initialize variables to prevent undefined variable warnings
-$error = array();
-$html = array();
-$mysql = array();
-$selected = array();
+$error = [];
+$html = [];
+$mysql = [];
+$selected = [];
 $add_success = false;
 $delete_success = false;
 
@@ -33,16 +36,32 @@ if ($userAgent === null || $userAgent === '') {
 }
 $result = $parser->parse($userAgent);
 
-function logged_in_redirect()
+function logged_in_redirect($safe_context = false)
 {
-	global $detect;
-	global $db;
-	//Detect if users is mobile or tablet - if mobile, redirect to mobile view. If tablet, show main view.
-	if ($detect->isMobile() && !$detect->isTablet()) {
+	prosper_log('login', 'User already authenticated, preparing redirect.');
+	
+	// If we're not in a safe context (e.g., called from early AUTH check), use simple redirect
+	if (!$safe_context) {
+		//die('redirecting to account...');
+		prosper_log('login', 'Using simple redirect due to unsafe context.');
+		//print url
+		printf("Redirect URL: %s\n", get_absolute_url() . '202-account');
+		//die("redurect url printed...");
+		header('location: ' . get_absolute_url() . '202-account');
+		//exit;
+	}
+	//die('redirecting to account...2');
+	// Due to Mobile_Detect issues causing fatal errors, use simple redirect for now
+	// TODO: Fix Mobile_Detect integration for mobile/tablet detection
+	prosper_log('login', 'Redirecting to account dashboard.');
+	header('location: ' . get_absolute_url() . '202-account');
+	exit;
+	
+	if (false && $isMobile) { // Disable complex mobile logic for now
 		//redirect to mini stats
 		$dni_success = false;
 		if (isset($_GET['redirect'])) {
-			$urlQuery = parse_url(urldecode($_GET['redirect']));
+			$urlQuery = parse_url(urldecode((string) $_GET['redirect']));
 			parse_str($urlQuery['query'], $vars);
 			if (isset($vars['dl_dni']) && isset($vars['dl_offer_id']) && isset($vars['ddlci'])) {
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -52,7 +71,7 @@ function logged_in_redirect()
 				if ($dni_result->num_rows > 0) {
 					$dni_row = $dni_result->fetch_assoc();
 					$offerData = setupDniOffer($dni_row['install_hash'], $dni_row['networkId'], $dni_row['apiKey'], $dni_row['affiliateId'], 'USD', $vars['dl_offer_id'], $vars['ddlci']);
-					$data = json_decode($offerData, true);
+					$data = json_decode((string) $offerData, true);
 
 					if (!empty($data)) {
 						$mysql['aff_network_id'] = $db->real_escape_string((string)$dni_row['aff_network_id']);
@@ -70,7 +89,7 @@ function logged_in_redirect()
 								   aff_campaign_time = '" . $mysql['aff_campaign_time'] . "'";
 						$db->query($affSql);
 						$aff_campaign_id = $db->insert_id;
-						$aff_campaign_id_public = rand(1, 9) . $aff_campaign_id . rand(1, 9);
+						$aff_campaign_id_public = random_int(1, 9) . $aff_campaign_id . random_int(1, 9);
 						$aff_campaign_sql = "UPDATE 202_aff_campaigns SET aff_campaign_id_public = '" . $aff_campaign_id_public . "' WHERE aff_campaign_id = '" . $aff_campaign_id . "'";
 						$db->query($aff_campaign_sql);
 						setupDniOfferTrack($dni_row['install_hash'], $dni_row['networkId'], $dni_row['apiKey'], $dni_row['affiliateId'], $vars['dl_offer_id'], $vars['ddlci']);
@@ -80,136 +99,128 @@ function logged_in_redirect()
 			}
 		}
 		header('location: ' . get_absolute_url() . '202-Mobile/mini-stats/?dni=' . $dni_success);
+		prosper_log('login', 'Redirecting authenticated mobile user to mini-stats.');
+		exit;
 	} else {
 
-		if (isset($_GET['redirect'])) {
-			header('location: ' . urldecode($_GET['redirect']));
-			die();
-		}
+	if (isset($_GET['redirect'])) {
+		$target = urldecode((string) $_GET['redirect']);
+		prosper_log('login', 'Redirecting authenticated user to ' . $target);
+		header('location: ' . $target);
+		die();
+	}
 
 		//redirect to account screen
-		header('location: ' . get_absolute_url() . '202-account');
+		$redirect_url = get_absolute_url() . '202-account';
+		prosper_log('login', 'About to redirect to: ' . $redirect_url);
+		header('location: ' . $redirect_url);
+		prosper_log('login', 'Redirecting authenticated user to account dashboard.');
+		exit;
 	}
 }
 
 if (AUTH::logged_in() || AUTH::remember_me_on_logged_out()) {
+	//die('already logged in, redirecting...');
 	logged_in_redirect();
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-	$slack = false;
-	$error = []; // Initialize error array
+	$error = [];
+	$slack = null;
+	$username_raw = (string)($_POST['user_name'] ?? '');
+	$password = (string)($_POST['user_pass'] ?? '');
+	$username = trim($username_raw);
+	prosper_log('login', 'Processing login attempt for username ' . $username);
 
-	$mysql['user_name'] = $db->real_escape_string((string)$_POST['user_name']);
-
-	$user_pass = salt_user_pass($_POST['user_pass']);
-	$mysql['user_pass'] = $db->real_escape_string($user_pass);
-
-	//check to see if this user exists
-	$user_sql = "SELECT * FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_name='" . $mysql['user_name'] . "' AND user_pass='" . $mysql['user_pass'] . "' AND user_deleted!='1' AND user_active='1'";
-	$user_result = _mysqli_query($user_sql);
-	
-	// Check if query was successful
-	if ($user_result === false) {
-		// Database error - likely tables don't exist
-		header('Location: ' . get_absolute_url() . '202-config/setup-config.php');
-		exit;
-	}
-	
-	$user_row = $user_result->fetch_assoc();
-
-	if (!$user_row) {
-		$error['user'] = 'Your username or password is incorrect.';
+	if ($username === '') {
+		$error['user'] = 'Please enter a username.';
 	}
 
-	//RECORD THIS USER LOGIN, into user_logs
-	$mysql['login_server'] = $db->real_escape_string(serialize($_SERVER));
-	$mysql['login_session'] = $db->real_escape_string(serialize($_SESSION));
-	$mysql['login_error'] = $db->real_escape_string(serialize($error));
-	$mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
-	$mysql['login_time'] = time();
-
-	if ($error) {
-		$mysql['login_success'] = 0;
-
-		if (!empty($user_row['user_slack_incoming_webhook']))
-			$slack = new Slack($user_row['user_slack_incoming_webhook']);
-
-		if ($slack)
-			$slack->push('failed_login', array('username' => $_POST['user_name'], 'ip' => $_SERVER['REMOTE_ADDR']));
-	} else {
-		$mysql['login_success'] = 1;
+	if ($password === '') {
+		$error['user'] = ($error['user'] ?? '') . ' Please enter a password.';
 	}
-	//record everything that happend during this crime scene.
-	$user_log_sql = "INSERT INTO 			202_users_log
-								   SET			user_name='" . $mysql['user_name'] . "',
-												user_pass='" . $mysql['user_pass'] . "',
-												ip_address='" . $mysql['ip_address'] . "',
-												login_time='" . $mysql['login_time'] . "',
-												login_success = '" . $mysql['login_success'] . "',
-												login_error='" . $mysql['login_error'] . "',
-												login_server='" . $mysql['login_server'] . "',
-												login_session='" . $mysql['login_session'] . "'";
-	$user_log_result = $db->query($user_log_sql) or record_mysql_error($user_log_sql);
 
+	$login_result = null;
 	if (!$error) {
+		try {
+			$login_result = AUTH::authenticate($username, $password, $db);
+		} catch (RuntimeException $exception) {
+			$error['user'] = 'We were unable to process your login. Please try again later.';
+			prosper_log('login', 'Login exception for username ' . $username . ': ' . $exception->getMessage());
+		}
+	}
 
+	$user_row = $login_result['user'] ?? null;
+
+	if (!$error && ($login_result['success'] ?? false) === false) {
+		$error['user'] = 'Your username or password is incorrect.';
+		prosper_log('login', 'Invalid credentials for username ' . $username);
+	}
+
+	if ($error && $user_row && !empty($user_row['user_slack_incoming_webhook'])) {
+		$slack = new Slack($user_row['user_slack_incoming_webhook']);
+		$slack->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
+	}
+
+	$login_success = empty($error) ? 1 : 0;
+	$login_log_stmt = $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+	if ($login_log_stmt) {
+		$login_error_serialized = serialize($error);
+		$login_server_serialized = serialize($_SERVER);
+		$login_session_serialized = serialize($_SESSION);
+		$redacted_password = '[filtered]';
+		$ip_address = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+		$login_time = time();
+		$login_log_stmt->bind_param(
+			'sssiisss',
+			$username,
+			$redacted_password,
+			$ip_address,
+			$login_time,
+			$login_success,
+			$login_error_serialized,
+			$login_server_serialized,
+			$login_session_serialized
+		);
+		$login_log_stmt->execute();
+		$login_log_stmt->close();
+	} else {
+		prosper_log('login', 'Unable to prepare login log statement: ' . $db->error);
+	}
+
+	if (empty($error) && $user_row) {
 		AUTH::delete_old_auth_hash();
 
-		$ip = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : '0.0.0.0';
-		$ip_id = INDEXES::get_ip_id($ip);
+		$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
+		$ip_id = (int) INDEXES::get_ip_id($ip);
 		$survey_data = getSurveyData($user_row['install_hash']);
+		$modal_status = ($survey_data['modal'] ?? false) ? 0 : 1;
+		$vip_perks_status = ($survey_data['vip_perks'] ?? false) ? 1 : 0;
 
-		if ($survey_data['modal']) {
-			$mysql['modal_status'] = 0;
-		} else {
-			$mysql['modal_status'] = 1;
+		$update_stmt = $db->prepare('UPDATE 202_users SET user_last_login_ip_id = ?, modal_status = ?, vip_perks_status = ? WHERE user_id = ?');
+		if ($update_stmt) {
+			$user_id = (int) $user_row['user_id'];
+			$update_stmt->bind_param('iiii', $ip_id, $modal_status, $vip_perks_status, $user_id);
+			$update_stmt->execute();
+			$update_stmt->close();
 		}
 
-		if ($survey_data['vip_perks']) {
-			$mysql['vip_perks_status'] = 1;
-		} else {
-			$mysql['vip_perks_status'] = 0;
-		}
-
-		$mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
-
-		$api_sql = "user_last_login_ip_id='" . $mysql['ip_id'] . "', modal_status='" . $mysql['modal_status'] . "', vip_perks_status='" . $mysql['vip_perks_status'] . "'";
-
-		//update this users last login_ip_address
-		$user_sql = "	UPDATE 	202_users 
-						SET		" . $api_sql . "
-					 	WHERE 	user_name='" . $mysql['user_name'] . "'
-						AND     		user_pass='" . $mysql['user_pass'] . "'";
-		$user_result = _mysqli_query($user_sql);
-
-		$mod_sql = "SHOW COLUMNS FROM 202_landing_pages like  'leave_behind_page_url'";
+		$mod_sql = "SHOW COLUMNS FROM 202_landing_pages LIKE 'leave_behind_page_url'";
 		$mod_row = memcache_mysql_fetch_assoc($mod_sql);
-		if ($mod_row && $user_row['user_mods_lb'] == 1) {
-			$user_row['user_mods_lb'] = 1;
-		} else {
-			$user_row['user_mods_lb'] = 0;
-		}
+		$user_row['user_mods_lb'] = ($mod_row && (int) ($user_row['user_mods_lb'] ?? 0) === 1) ? 1 : 0;
 
-		//set session variables			
-		$_SESSION['session_fingerprint'] = md5('session_fingerprint' . $_SERVER['HTTP_USER_AGENT'] . session_id());
-		$_SESSION['session_time'] = time();
-		$_SESSION['user_name'] = $user_row['user_name'];
-		$_SESSION['user_id'] = 1; //$user_row['user_id'];
-		$_SESSION['user_own_id'] = $user_row['user_id'];
-		$_SESSION['user_api_key'] = $user_row['user_api_key'];
-		$_SESSION['user_stats202_app_key'] = $user_row['user_stats202_app_key'];
-		$_SESSION['user_timezone'] = $user_row['user_timezone'];
+		AUTH::begin_user_session($user_row);
 		$_SESSION['user_mods_lb'] = $user_row['user_mods_lb'];
+		prosper_log('login', 'Post-login session: ' . json_encode($_SESSION));
 
 		if (isset($_POST['remember_me'])) {
 			AUTH::remember_me_on_auth();
 		}
 
-		logged_in_redirect();
+		logged_in_redirect(true);
 	}
 
-	$html['user_name'] = htmlentities((string)($_POST['user_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['user_name'] = htmlentities($username, ENT_QUOTES, 'UTF-8');
 }
 
 info_top(); ?>
@@ -224,8 +235,8 @@ info_top(); ?>
 						<div class="tooltip-inner"><?php echo $error['user']; ?></div>
 					</div>
 				<?php } ?>
-				<input type="text" class="form-control first" name="user_name" placeholder="Username">
-				<input type="password" class="form-control middle" name="user_pass" placeholder="Password">
+					<input type="text" class="form-control first" name="user_name" placeholder="Username" autocomplete="username">
+					<input type="password" class="form-control middle" name="user_pass" placeholder="Password" autocomplete="current-password">
 				<label class="form-control last">
 					<input type="checkbox" name="remember_me"> Remember me
 				</label>

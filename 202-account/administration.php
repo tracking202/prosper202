@@ -95,12 +95,12 @@ if (isset($_POST['autocron'])) {
 if (isset($_POST['maxmind'])) {
 
 	if ($_POST['maxmind'] == "true") {
-		if (file_exists(substr(dirname(__FILE__), 0, -12) . '/202-config/geo/GeoIPISP.dat')) {
+		if (file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIPISP.dat')) {
 			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
 			$sql = "UPDATE 202_users_pref SET maxmind_isp='1' WHERE user_id='" . $mysql['user_id'] . "'";
 			$result = _mysqli_query($sql);
 			if ($slack)
-				$slack->push('maxmind_isp_changed', array('user' => $username, 'type' => 'Activated'));
+				$slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Activated']);
 		} else {
 			echo "ISP Database file doesn't exist. Make sure (GeoIPISP.dat file) is in /202-config/geo/ folder.";
 		}
@@ -112,15 +112,15 @@ if (isset($_POST['maxmind'])) {
 		$result = _mysqli_query($sql);
 
 		if ($slack)
-			$slack->push('maxmind_isp_changed', array('user' => $username, 'type' => 'Deactivated'));
+			$slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Deactivated']);
 	}
 
 	die();
 }
 
-template_top('Administration', NULL, NULL, NULL);
+template_top('Administration');
 $click_sql = "SELECT `AUTO_INCREMENT`-1 as clicks FROM  INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '202_clicks_counter';";
-$click_row = memcache_mysql_fetch_assoc($click_sql);
+$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
 $clicks = $click_row['clicks'];
 //$click_sql = "SELECT count(*) clicks FROM 202_clicks_total";
 //$click_row = memcache_mysql_fetch_assoc($click_sql);
@@ -144,7 +144,7 @@ if (isset($_POST['database_management'])) {
 		$db->query($sql);
 
 		if ($slack)
-			$slack->push('click_data_deleted', array('user' => $username, 'date' => $_POST['database_management']));
+			$slack->push('click_data_deleted', ['user' => $username, 'date' => $_POST['database_management']]);
 	}
 
 	header('location: ' . get_absolute_url() . '202-account/administration.php');
@@ -199,15 +199,15 @@ function database_size()
 	return $mbytes;
 }
 
-function CronJobLastExecution($datetime)
+function CronJobLastExecution($datetime, $full = false)
 {
 	$now = new DateTime;
 	$ago = new DateTime($datetime);
 	$diff = $now->diff($ago);
-	$week = array('w' => floor($diff->d / 7));
-	$diff->d -= $week->w * 7;
+	$week = ['w' => (int) floor($diff->d / 7)];
+	$diff->d -= $week['w'] * 7;
 	$diff = (object) array_merge((array)$diff, $week);
-	$string = array(
+	$string = [
 		'y' => 'year',
 		'm' => 'month',
 		'w' => 'week',
@@ -215,7 +215,7 @@ function CronJobLastExecution($datetime)
 		'h' => 'hour',
 		'i' => 'minute',
 		's' => 'second',
-	);
+	];
 	foreach ($string as $k => &$v) {
 		if ($diff->$k) {
 			$v = $diff->$k . ' ' . $v . ($diff->$k > 1 ? 's' : '');
@@ -227,6 +227,7 @@ function CronJobLastExecution($datetime)
 	if (!$full) $string = array_slice($string, 0, 1);
 	return $string ? implode(', ', $string) . ' ago' : 'just now';
 }
+
 
 ?>
 
@@ -284,7 +285,7 @@ function CronJobLastExecution($datetime)
 								$user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
 								$user_result = _mysqli_query($user_sql);
 								$user_row = $user_result->fetch_assoc();
-								$html['keyword_pref'] = htmlentities(strtoupper($user_row['user_keyword_searched_or_bidded']));
+								$html['keyword_pref'] = htmlentities(strtoupper((string) $user_row['user_keyword_searched_or_bidded']));
 								echo 'Pick up the ' . $html['keyword_pref'] . ' keyword - <a href="' . get_absolute_url() . '202-account/account.php">[change]</a>'; ?></span>
 						</p>
 						<p>
@@ -519,8 +520,8 @@ function CronJobLastExecution($datetime)
 				<?php
 				while ($user_log_row = $user_log_result->fetch_assoc()) {
 
-					$html['user_name'] = htmlentities($user_log_row['user_name'], ENT_QUOTES, 'UTF-8');
-					$html['ip_address'] = htmlentities($user_log_row['ip_address'], ENT_QUOTES, 'UTF-8');
+					$html['user_name'] = htmlentities((string) $user_log_row['user_name'], ENT_QUOTES, 'UTF-8');
+					$html['ip_address'] = htmlentities((string) $user_log_row['ip_address'], ENT_QUOTES, 'UTF-8');
 					$html['login_time'] = htmlentities(date('M d, y \a\t g:ia', $user_log_row['login_time']), ENT_QUOTES, 'UTF-8');
 
 					if ($user_log_row['login_success'] == 0) {

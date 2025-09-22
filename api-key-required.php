@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
-include_once(dirname( __FILE__ ) . '/202-config/connect.php');
-include_once(dirname( __FILE__ ) . '/202-config/functions-tracking202.php');
+include_once(__DIR__ . '/202-config/connect.php');
+include_once(__DIR__ . '/202-config/functions-tracking202.php');
 
 if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
 	$strProtocol = 'https://';
@@ -26,11 +26,11 @@ if ($existing_key_check && $existing_key_check->num_rows > 0) {
 $error = '';
 $success = false;
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['api_key'])) {
-	$api_key = trim($_POST['api_key']);
+	$api_key = trim((string) $_POST['api_key']);
 	if (!empty($api_key)) {
 		// Validate the API key
 		$validation_result = api_key_validate($api_key);
-		$validation_data = json_decode($validation_result, true);
+		$validation_data = json_decode((string) $validation_result, true);
 		
 		if (isset($validation_data['msg']) && $validation_data['msg'] === 'Key valid') {
 			// Save the API key
@@ -78,7 +78,7 @@ info_top(); ?>
 		<?php if ($has_existing_key): ?>
 		  <div class="alert alert-warning">
 			<strong>Note:</strong> An API key is already saved in the database, but validation is failing. This could be due to network issues or an expired key. 
-			<br><br>Current key: <code><?php echo substr($existing_api_key, 0, 8) . '...' . substr($existing_api_key, -4); ?></code>
+			<br><br>Current key: <code><?php echo substr((string) $existing_api_key, 0, 8) . '...' . substr((string) $existing_api_key, -4); ?></code>
 			<br><br>You can enter a new API key below to replace the existing one.
 		  </div>
 		<?php endif; ?>

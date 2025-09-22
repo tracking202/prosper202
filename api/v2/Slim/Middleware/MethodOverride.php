@@ -58,9 +58,9 @@ class MethodOverride extends \Slim\Middleware
      * Constructor
      * @param  array  $settings
      */
-    public function __construct($settings = array())
+    public function __construct($settings = [])
     {
-        $this->settings = array_merge(array('key' => '_METHOD'), $settings);
+        $this->settings = array_merge(['key' => '_METHOD'], $settings);
     }
 
     /**
@@ -80,14 +80,14 @@ class MethodOverride extends \Slim\Middleware
         if (isset($env['HTTP_X_HTTP_METHOD_OVERRIDE'])) {
             // Header commonly used by Backbone.js and others
             $env['slim.method_override.original_method'] = $env['REQUEST_METHOD'];
-            $env['REQUEST_METHOD'] = strtoupper($env['HTTP_X_HTTP_METHOD_OVERRIDE']);
+            $env['REQUEST_METHOD'] = strtoupper((string) $env['HTTP_X_HTTP_METHOD_OVERRIDE']);
         } elseif (isset($env['REQUEST_METHOD']) && $env['REQUEST_METHOD'] === 'POST') {
             // HTML Form Override
             $req = new \Slim\Http\Request($env);
             $method = $req->post($this->settings['key']);
             if ($method) {
                 $env['slim.method_override.original_method'] = $env['REQUEST_METHOD'];
-                $env['REQUEST_METHOD'] = strtoupper($method);
+                $env['REQUEST_METHOD'] = strtoupper((string) $method);
             }
         }
         $this->next->call();

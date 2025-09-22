@@ -19,7 +19,7 @@ function getStats($db, $variables){
 
 		return runReports($db, $variables, $key_row['user_id'], $user_row['user_timezone']);
 	} else {
-		return array('msg' => 'Unauthorized', 'error' => true, 'status' => 401);
+		return ['msg' => 'Unauthorized', 'error' => true, 'status' => 401];
 	}
 }
 
@@ -27,7 +27,7 @@ function runReports($db, $vars, $user, $timezone){
 
 	date_default_timezone_set($timezone);
 
-	$report_types = array('keywords','wtkeywords', 'text_ads', 'referers', 'ips', 'countries', 'cities', 'carriers', 'landing_pages', 'get_data_for_wp', 'wp_create_lp', 'wp_update_lp'); //report types
+	$report_types = ['keywords','wtkeywords', 'text_ads', 'referers', 'ips', 'countries', 'cities', 'carriers', 'landing_pages', 'get_data_for_wp', 'wp_create_lp', 'wp_update_lp']; //report types
 
 	if (in_array($vars['type'], $report_types))
 	{	
@@ -49,7 +49,7 @@ function runReports($db, $vars, $user, $timezone){
 		if ($vars['date_from'] != null || $vars['date_to'] != null) {
 			
 			if(!validateDate($vars['date_from']) || !validateDate($vars['date_to'])){
-				$data = array('msg' => 'Wrong date format', 'error' => true, 'status' => 404);
+				$data = ['msg' => 'Wrong date format', 'error' => true, 'status' => 404];
 				$json = json_encode($data, true);
 				print_r(pretty_json($json));
 				die();
@@ -119,16 +119,16 @@ function runReports($db, $vars, $user, $timezone){
 		}
 
 	} else {
-		return array('msg' => 'Not allowed report type', 'error' => true, 'status' => 404);
+		return ['msg' => 'Not allowed report type', 'error' => true, 'status' => 404];
 	}
 	
 }
 
 function getDataForWP($db, $user) {
-	$data = array();
-	$slp = array();
-	$alp = array();
-	$campaigns = array();
+	$data = [];
+	$slp = [];
+	$alp = [];
+	$campaigns = [];
 	$mysql['user_id'] = $db->real_escape_string($user);
 	
 	$sql = "SELECT landing_page_id_public, landing_page_nickname, landing_page_type, aff_campaign_id_public, aff_campaign_name FROM 202_landing_pages LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) WHERE 202_landing_pages.user_id='".$mysql['user_id']."' AND landing_page_deleted='0'";
@@ -136,9 +136,9 @@ function getDataForWP($db, $user) {
 
 	while ($row = $result->fetch_assoc()) {
 		if ($row['landing_page_type'] == 0) {
-			$slp[] = array('landing_page_id_public' => $row['landing_page_id_public'], 'landing_page_nickname' => $row['landing_page_nickname'], 'aff_campaign_name' => $row['aff_campaign_name']);
+			$slp[] = ['landing_page_id_public' => $row['landing_page_id_public'], 'landing_page_nickname' => $row['landing_page_nickname'], 'aff_campaign_name' => $row['aff_campaign_name']];
 		} else if ($row['landing_page_type'] == 1) {
-			$alp[] = array('landing_page_id_public' => $row['landing_page_id_public'], 'landing_page_nickname' => $row['landing_page_nickname']);
+			$alp[] = ['landing_page_id_public' => $row['landing_page_id_public'], 'landing_page_nickname' => $row['landing_page_nickname']];
 		}
 	}
 
@@ -148,7 +148,7 @@ function getDataForWP($db, $user) {
 		$campaigns[] = $row;
 	}
 
-	$data[] = array('slp' => $slp, 'alp' => $alp, 'campaigns' => $campaigns);
+	$data[] = ['slp' => $slp, 'alp' => $alp, 'campaigns' => $campaigns];
 
 	return $data;
 }
@@ -156,7 +156,7 @@ function getDataForWP($db, $user) {
 function wpCreateLp($db, $user) {
 	if (isset($_GET['page_type']) && isset($_GET['page_title']) && isset($_GET['page_url'])) {
 		$title = $_GET['page_title'];
-		if (strlen($title) > 45) {
+		if (strlen((string) $title) > 45) {
 			$title = substr($_GET['page_title'], 0, 41);
 			$title = substr($title, 0, strrpos($title, ' ')) . " ...";
 		}
@@ -198,24 +198,24 @@ function wpCreateLp($db, $user) {
 			}
 		}
 
-		$landing_page_id_public = rand(1,9) . $insert_id . rand(1,9);
+		$landing_page_id_public = random_int(1,9) . $insert_id . random_int(1,9);
 		$landing_page_sql = "UPDATE `202_landing_pages` SET `landing_page_id_public`='".$landing_page_id_public."' WHERE `landing_page_id`='".$insert_id."'";
 		$landing_page_result = $db->query($landing_page_sql);
 
 		if ($landing_page_result) {
-			return array('error' => '0', 'lp_pid' => $landing_page_id_public);
+			return ['error' => '0', 'lp_pid' => $landing_page_id_public];
 		} else {
-			return array('error' => '1');
+			return ['error' => '1'];
 		}
 	} else {
-		return array('error' => true);
+		return ['error' => true];
 	}
 }
 
 function wpUpdateLp($db, $user) {
 	if (isset($_GET['page_type']) && isset($_GET['page_title']) && isset($_GET['page_url']) && isset($_GET['lp_pid'])) {
 		$title = $_GET['page_title'];
-		if (strlen($title) > 45) {
+		if (strlen((string) $title) > 45) {
 			$title = substr($_GET['page_title'], 0, 41);
 			$title = substr($title, 0, strrpos($title, ' ')) . " ...";
 		}
@@ -235,7 +235,7 @@ function wpUpdateLp($db, $user) {
 					user_id = '".$mysql['user_id']."'
 					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."'";
 			$result = $db->query($sql);
-			return array('error' => '0');
+			return ['error' => '0'];
 		} else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
 			$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['slp_page_campaign']);
 
@@ -252,7 +252,7 @@ function wpUpdateLp($db, $user) {
 					user_id = '".$mysql['user_id']."'
 					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."'";
 				$result = $db->query($sql);
-				return array('error' => '0');
+				return ['error' => '0'];
 			}
 		}
 	}
@@ -261,13 +261,13 @@ function wpUpdateLp($db, $user) {
 
 function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid = null, $c1 = null, $c2 = null, $c3 = null, $c4 = null){
 
-	$date = array(
+	$date = [
 			'date_from' => date('m/d/Y', $date_from),
 			'date_to' => date('m/d/Y', $date_to),
 			'time_zone' => date_default_timezone_get() 
-	);
+	];
 
-	$data = array();
+	$data = [];
 
 	$mysql['user_id'] = $db->real_escape_string($user);
 	$select_id = $db->real_escape_string($id);
@@ -407,12 +407,12 @@ $report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca
 					$clicks = 0;
 					$clicks = $click_row['clicks'];
 
-					$total_clicks = $total_clicks + $clicks;
+					$total_clicks += $clicks;
 
 					$click_throughs = 0;
 					$click_throughs = $click_row['click_throughs'];
 
-					$total_click_throughs = $total_click_throughs + $click_throughs;
+					$total_click_throughs += $click_throughs;
 
 				//ctr rate
 					$ctr_ratio = 0;
@@ -427,14 +427,14 @@ $report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca
 					$cost = 0;
 					$cost = $clicks * $avg_cpc;
 
-					$total_cost = $total_cost + $cost;
+					$total_cost += $cost;
 					$total_avg_cpc = @round($total_cost/$total_clicks, 5);
 
 				//leads
 					$leads = 0;
 					$leads = $click_row['leads'];
 
-					$total_leads = $total_leads + $leads;
+					$total_leads += $leads;
 
 				//signup ratio
 					$su_ratio - 0;
@@ -445,13 +445,13 @@ $report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca
 				//current payout
 					$payout = 0;
 					$payout = $report_row['click_payout'];
-					$total_payout = $total_payout + $payout;
+					$total_payout += $payout;
 
 				//income
 					$income = 0;
 					$income = $click_row['income'];
 
-					$total_income = $total_income + $income;
+					$total_income += $income;
 				//grab the EPC
 					$epc = 0;
 					$epc = @round($income/$clicks,2);
@@ -500,7 +500,7 @@ $report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca
 				}
 			}
 
-			$data[] = array(
+			$data[] = [
 				$name => $report_row[$name],
 	        	"clicks" => $clicks,
 	        	"click_throughs" => $click_throughs,
@@ -514,10 +514,10 @@ $report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca
 	        	"cost" => dollar_format($cost),
 	        	"net" => dollar_format($net),
 	        	"roi" => $roi."%"
-	    	);
+	    	];
 		}
 
-		$totals = array(
+		$totals = [
 			"clicks" => $total_clicks, 
 			"click_throughs" => $total_click_throughs,
 			"lp_ctr" => $total_ctr_ratio."%",
@@ -530,14 +530,14 @@ $report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca
 			"cost" => dollar_format($total_cost),
 			"net" => dollar_format($total_net),
 			"roi" => $total_roi."%"
-		);
+		];
 
 	} else {
-		$totals = array();
+		$totals = [];
 	}
 if($type=='wtkeywords')
 $type='keywords';
-	return array("date_range" => $date, $type => $data, "totals" => $totals);
+	return ["date_range" => $date, $type => $data, "totals" => $totals];
 	
 }
 
@@ -553,7 +553,7 @@ function getCampaignID($db, $campaign, $user){
 	if($key_result->num_rows > 0) {
 		return true;
 	} else {
-		$json = json_encode(array('msg' => 'Campaign not found', 'error' => true, 'status' => 404), true);
+		$json = json_encode(['msg' => 'Campaign not found', 'error' => true, 'status' => 404], true);
 		print_r(pretty_json($json));
 		die();
 	}
@@ -567,16 +567,16 @@ function validateDate($date, $format = 'm/d/Y')
 
 function getTimestamp($datefrom, $dateto)
 {	
-	$date = array();
+	$date = [];
 
-	$from = explode('/', $datefrom);
+	$from = explode('/', (string) $datefrom);
 	$from_month = trim($from[0]);
 	$from_day = trim($from[1]);
 	$from_year = trim($from[2]);
 
 	$date_from = mktime(0,0,0,(int)$from_month,(int)$from_day,(int)$from_year);
 
-    $to = explode('/', $dateto); 
+    $to = explode('/', (string) $dateto); 
     $to_month = trim($to[0]);
     $to_day = trim($to[1]);
     $to_year = trim($to[2]);
@@ -593,7 +593,7 @@ function pretty_json($json) {
  
     $result      = '';
     $pos         = 0;
-    $strLen      = strlen($json);
+    $strLen      = strlen((string) $json);
     $indentStr   = '  ';
     $newLine     = "\n";
     $prevChar    = '';
@@ -602,12 +602,12 @@ function pretty_json($json) {
     for ($i=0; $i<=$strLen; $i++) {
  
         // Grab the next character in the string.
-        $char = substr($json, $i, 1);
+        $char = substr((string) $json, $i, 1);
  
         // Are we inside a quoted string?
         if ($char == '"' && $prevChar != '\\') {
             $outOfQuotes = !$outOfQuotes;
- 
+
         // If this character is the end of an element, 
         // output a new line and indent the next line.
         } else if(($char == '}' || $char == ']') && $outOfQuotes) {
@@ -650,7 +650,7 @@ function dollar_format($amount, $cpv = false) {
 	if ($amount >= 0) {
 		$new_amount = "\$".sprintf("%.".$decimals."f",$amount);
 	} else { 
-		$new_amount = "\$".sprintf("%.".$decimals."f",substr($amount,1,strlen($amount)));
+		$new_amount = "\$".sprintf("%.".$decimals."f",substr((string) $amount,1,strlen((string) $amount)));
 		$new_amount = '('.$new_amount.')';    
 	}
 	

@@ -57,7 +57,7 @@ class Request
     /**
      * @var array
      */
-    protected static $formDataMediaTypes = array('application/x-www-form-urlencoded');
+    protected static $formDataMediaTypes = ['application/x-www-form-urlencoded'];
 
     /**
      * Application Environment
@@ -199,7 +199,7 @@ class Request
     {
         $union = array_merge($this->get(), $this->post());
         if ($key) {
-            return isset($union[$key]) ? $union[$key] : $default;
+            return $union[$key] ?? $default;
         }
 
         return $union;
@@ -218,11 +218,11 @@ class Request
     public function get($key = null, $default = null)
     {
         if (!isset($this->env['slim.request.query_hash'])) {
-            $output = array();
+            $output = [];
             if (function_exists('mb_parse_str') && !isset($this->env['slim.tests.ignore_multibyte'])) {
-                mb_parse_str($this->env['QUERY_STRING'], $output);
+                mb_parse_str((string) $this->env['QUERY_STRING'], $output);
             } else {
-                parse_str($this->env['QUERY_STRING'], $output);
+                parse_str((string) $this->env['QUERY_STRING'], $output);
             }
             $this->env['slim.request.query_hash'] = Util::stripSlashesIfMagicQuotes($output);
         }
@@ -254,9 +254,9 @@ class Request
             throw new \RuntimeException('Missing slim.input in environment variables');
         }
         if (!isset($this->env['slim.request.form_hash'])) {
-            $this->env['slim.request.form_hash'] = array();
+            $this->env['slim.request.form_hash'] = [];
             if ($this->isFormData() && is_string($this->env['slim.input'])) {
-                $output = array();
+                $output = [];
                 if (function_exists('mb_parse_str') && !isset($this->env['slim.tests.ignore_multibyte'])) {
                     mb_parse_str($this->env['slim.input'], $output);
                 } else {
@@ -348,7 +348,7 @@ class Request
      */
     public function isFormData()
     {
-        $method = isset($this->env['slim.method_override.original_method']) ? $this->env['slim.method_override.original_method'] : $this->getMethod();
+        $method = $this->env['slim.method_override.original_method'] ?? $this->getMethod();
 
         return ($method === self::METHOD_POST && is_null($this->getContentType())) || in_array($this->getMediaType(), self::$formDataMediaTypes);
     }
@@ -432,7 +432,7 @@ class Request
     public function getMediaTypeParams()
     {
         $contentType = $this->getContentType();
-        $contentTypeParams = array();
+        $contentTypeParams = [];
         if ($contentType) {
             $contentTypeParts = preg_split('/\s*[;,]\s*/', $contentType);
             $contentTypePartsLength = count($contentTypeParts);
@@ -452,11 +452,8 @@ class Request
     public function getContentCharset()
     {
         $mediaTypeParams = $this->getMediaTypeParams();
-        if (isset($mediaTypeParams['charset'])) {
-            return $mediaTypeParams['charset'];
-        }
 
-        return null;
+        return $mediaTypeParams['charset'] ?? null;
     }
 
     /**
@@ -475,8 +472,8 @@ class Request
     public function getHost()
     {
         if (isset($this->env['HTTP_HOST'])) {
-            if (strpos($this->env['HTTP_HOST'], ':') !== false) {
-                $hostParts = explode(':', $this->env['HTTP_HOST']);
+            if (str_contains((string) $this->env['HTTP_HOST'], ':')) {
+                $hostParts = explode(':', (string) $this->env['HTTP_HOST']);
 
                 return $hostParts[0];
             }
@@ -579,7 +576,7 @@ class Request
      */
     public function getIp()
     {
-        $keys = array('X_FORWARDED_FOR', 'HTTP_X_FORWARDED_FOR', 'CLIENT_IP', 'REMOTE_ADDR');
+        $keys = ['X_FORWARDED_FOR', 'HTTP_X_FORWARDED_FOR', 'CLIENT_IP', 'REMOTE_ADDR'];
         foreach ($keys as $key) {
             if (isset($this->env[$key])) {
                 return $this->env[$key];

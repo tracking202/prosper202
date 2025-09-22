@@ -54,12 +54,12 @@ class Route
     /**
      * @var array Conditions for this route's URL parameters
      */
-    protected $conditions = array();
+    protected $conditions = [];
 
     /**
      * @var array Default conditions applied to all route instances
      */
-    protected static $defaultConditions = array();
+    protected static $defaultConditions = [];
 
     /**
      * @var string The name of this route (optional)
@@ -69,32 +69,27 @@ class Route
     /**
      * @var array Key-value array of URL parameters
      */
-    protected $params = array();
+    protected $params = [];
 
     /**
      * @var array value array of URL parameter names
      */
-    protected $paramNames = array();
+    protected $paramNames = [];
 
     /**
      * @var array key array of URL parameter names with + at the end
      */
-    protected $paramNamesPath = array();
+    protected $paramNamesPath = [];
 
     /**
      * @var array HTTP methods supported by this Route
      */
-    protected $methods = array();
+    protected $methods = [];
 
     /**
      * @var array[Callable] Middleware to be run before only this route instance
      */
-    protected $middleware = array();
-
-    /**
-     * @var bool Whether or not this route should be matched in a case-sensitive manner
-     */
-    protected $caseSensitive;
+    protected $middleware = [];
 
     /**
      * Constructor
@@ -102,12 +97,11 @@ class Route
      * @param mixed $callable Anything that returns TRUE for is_callable()
      * @param bool $caseSensitive Whether or not this route should be matched in a case-sensitive manner
      */
-    public function __construct($pattern, $callable, $caseSensitive = true)
+    public function __construct($pattern, $callable, protected $caseSensitive = true)
     {
         $this->setPattern($pattern);
         $this->setCallable($callable);
         $this->setConditions(self::getDefaultConditions());
-        $this->caseSensitive = $caseSensitive;
     }
 
     /**
@@ -162,7 +156,7 @@ class Route
      */
     public function setCallable($callable)
     {
-        $matches = array();
+        $matches = [];
         if (is_string($callable) && preg_match('!^([^\:]+)\:([a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)$!', $callable, $matches)) {
             $class = $matches[1];
             $method = $matches[2];
@@ -171,7 +165,7 @@ class Route
                 if ($obj === null) {
                     $obj = new $class;
                 }
-                return call_user_func_array(array($obj, $method), func_get_args());
+                return call_user_func_array([$obj, $method], func_get_args());
             };
         }
 
@@ -377,10 +371,10 @@ class Route
         //Convert URL params into regex patterns, construct a regex for this route, init params
         $patternAsRegex = preg_replace_callback(
             '#:([\w]+)\+?#',
-            array($this, 'matchesCallback'),
+            [$this, 'matchesCallback'],
             str_replace(')', ')?', (string)$this->pattern)
         );
-        if (substr($this->pattern, -1) === '/') {
+        if (str_ends_with($this->pattern, '/')) {
             $patternAsRegex .= '?';
         }
 
@@ -418,7 +412,7 @@ class Route
         if (isset($this->conditions[$m[1]])) {
             return '(?P<' . $m[1] . '>' . $this->conditions[$m[1]] . ')';
         }
-        if (substr($m[0], -1) === '+') {
+        if (str_ends_with((string) $m[0], '+')) {
             $this->paramNamesPath[$m[1]] = 1;
 
             return '(?P<' . $m[1] . '>.+)';
@@ -463,7 +457,7 @@ class Route
     public function dispatch()
     {
         foreach ($this->middleware as $mw) {
-            call_user_func_array($mw, array($this));
+            call_user_func_array($mw, [$this]);
         }
 
         $return = call_user_func_array($this->getCallable(), array_values($this->getParams()));

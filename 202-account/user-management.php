@@ -10,10 +10,10 @@ if (!$userObj->hasPermission("add_users")) {
 }
 
 // Initialize variables to prevent undefined variable warnings
-$error = array();
-$html = array();
-$mysql = array();
-$selected = array();
+$error = [];
+$html = [];
+$mysql = [];
+$selected = [];
 $add_success = false;
 $delete_success = false;
 $editing = false;
@@ -97,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	} elseif ($editing === true && isset($_POST['user_password']) && $_POST['user_password'] != '') {
 		// When editing, only set password if a new one is provided
-		$mysql['user_password'] = $db->real_escape_string(trim($_POST['user_password']));
+		$mysql['user_password'] = $db->real_escape_string(trim((string) $_POST['user_password']));
 	}
 
 	if ($editing !== true || (isset($_POST['user_password']) && $_POST['user_password'] != '' && $editing === true)) {
@@ -130,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (isset($mysql['user_password'])) {
 			$mysql['user_pass'] = $db->real_escape_string(salt_user_pass($mysql['user_password']));
 		}
-		$hash = md5(uniqid((string)rand(), TRUE));
+		$hash = md5(uniqid((string)random_int(0, mt_getrandmax()), TRUE));
 		// $user_hash = intercomHash($hash); // Removed intercomHash call
 		$user_hash = ''; // Default empty value
 
@@ -212,9 +212,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		if ($slack) {
 			if ($editing === true) {
-				$slack->push('user_management_user', array('user' => $username, 'type' => 'Updated', 'username' => $_POST['user_name'], 'role' => $role));
+				$slack->push('user_management_user', ['user' => $username, 'type' => 'Updated', 'username' => $_POST['user_name'], 'role' => $role]);
 			} else {
-				$slack->push('user_management_user', array('user' => $username, 'type' => 'Created', 'username' => $_POST['user_name'], 'role' => $role));
+				$slack->push('user_management_user', ['user' => $username, 'type' => 'Created', 'username' => $_POST['user_name'], 'role' => $role]);
 			}
 		}
 
@@ -278,7 +278,7 @@ if ($deleting == true) {
 				break;
 		}
 
-		$slack->push('user_management_user', array('user' => $username, 'type' => 'Removed', 'username' => $row['user_name'], 'role' => $role));
+		$slack->push('user_management_user', ['user' => $username, 'type' => 'Removed', 'username' => $row['user_name'], 'role' => $role]);
 	}
 
 	header('location: ' . get_absolute_url() . '202-account/user-management.php');
@@ -289,7 +289,7 @@ if (empty($html)) {
 
 
 //show the template
-template_top('User Management', NULL, NULL, NULL); ?>
+template_top('User Management'); ?>
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
 		<h6>User Management</h6>
@@ -310,47 +310,47 @@ template_top('User Management', NULL, NULL, NULL); ?>
 					<div class="form-group <?php if (isset($error['user_fname']) && $error['user_fname']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label for="ppc_network_id" class="col-xs-4 control-label" style="text-align: left;" placeholder="">First Name:</label>
 						<div class="col-xs-5">
-							<input type="text" class="form-control input-sm" id="user_fname" name="user_fname" value="<?php echo isset($html['user_fname']) ? $html['user_fname'] : ''; ?>">
-							<?php echo isset($error['user_fname']) ? $error['user_fname'] : ''; ?>
+							<input type="text" class="form-control input-sm" id="user_fname" name="user_fname" value="<?php echo $html['user_fname'] ?? ''; ?>">
+							<?php echo $error['user_fname'] ?? ''; ?>
 						</div>
 					</div>
 					<div class="form-group <?php if (isset($error['user_lname']) && $error['user_lname']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label for="ppc_network_id" class="col-xs-4 control-label" style="text-align: left;">Last Name:</label>
 						<div class="col-xs-5">
-							<input type="text" class="form-control input-sm" id="user_lname" name="user_lname" value="<?php echo isset($html['user_lname']) ? $html['user_lname'] : ''; ?>">
-							<?php echo isset($error['user_lname']) ? $error['user_lname'] : ''; ?>
+							<input type="text" class="form-control input-sm" id="user_lname" name="user_lname" value="<?php echo $html['user_lname'] ?? ''; ?>">
+							<?php echo $error['user_lname'] ?? ''; ?>
 						</div>
 
 					</div>
 					<div class="form-group <?php if (isset($error['user_email']) && $error['user_email']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">E-mail:</label>
 						<div class="col-xs-5">
-							<input type="ppc_account_name" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo isset($html['user_email']) ? $html['user_email'] : ''; ?>">
-							<?php echo isset($error['user_email']) ? $error['user_email'] : ''; ?>
+							<input type="ppc_account_name" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email'] ?? ''; ?>">
+							<?php echo $error['user_email'] ?? ''; ?>
 						</div>
 
 					</div>
 					<div class="form-group <?php if (isset($error['user_name']) && $error['user_name']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">Username:</label>
 						<div class="col-xs-5">
-							<input type="text" class="form-control input-sm" id="user_name" name="user_name" value="<?php echo isset($html['user_name']) ? $html['user_name'] : ''; ?>">
-							<?php echo isset($error['user_name']) ? $error['user_name'] : ''; ?>
+							<input type="text" class="form-control input-sm" id="user_name" name="user_name" value="<?php echo $html['user_name'] ?? ''; ?>">
+							<?php echo $error['user_name'] ?? ''; ?>
 						</div>
 					</div>
 					<?php if (!$editing) { ?>
 						<div class="form-group <?php if (isset($error['user_password']) && $error['user_password']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 							<label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">Password:</label>
 							<div class="col-xs-5">
-								<input type="password" class="form-control input-sm" id="user_password" name="user_password" value="<?php echo isset($html['user_password']) ? $html['user_password'] : ''; ?>">
-								<?php echo isset($error['user_password']) ? $error['user_password'] : ''; ?>
+								<input type="password" class="form-control input-sm" id="user_password" name="user_password" value="<?php echo $html['user_password'] ?? ''; ?>">
+								<?php echo $error['user_password'] ?? ''; ?>
 							</div>
 
 						</div>
 						<div class="form-group <?php if (isset($error['user_password2']) && $error['user_password2']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 							<label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">Retype Password:</label>
 							<div class="col-xs-5">
-								<input type="password" class="form-control input-sm" id="user_password2" name="user_password2" value="<?php echo isset($html['user_password2']) ? $html['user_password2'] : ''; ?>">
-								<?php echo isset($error['user_password2']) ? $error['user_password2'] : ''; ?>
+								<input type="password" class="form-control input-sm" id="user_password2" name="user_password2" value="<?php echo $html['user_password2'] ?? ''; ?>">
+								<?php echo $error['user_password2'] ?? ''; ?>
 							</div>
 
 						</div>
@@ -369,7 +369,7 @@ template_top('User Management', NULL, NULL, NULL); ?>
 									<option value="6" <?php if (isset($html['role_id']) && $html['role_id'] == '6') echo "selected"; ?>>Publisher</option>
 								<?php } ?>
 							</select>
-							<?php echo isset($error['user_role']) ? $error['user_role'] : ''; ?>
+							<?php echo $error['user_role'] ?? ''; ?>
 						</div>
 					</div>
 
@@ -395,7 +395,7 @@ template_top('User Management', NULL, NULL, NULL); ?>
 										<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>
 									</div>
 									<div class="col-xs-6">
-										<input type="hidden" name="user_id" value="<?php echo isset($html['user_id']) ? $html['user_id'] : ''; ?>">
+										<input type="hidden" name="user_id" value="<?php echo $html['user_id'] ?? ''; ?>">
 										<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url(); ?>202-account/user-management.php'; return false;">Cancel</button>
 									</div>
 								</div>
@@ -436,7 +436,7 @@ template_top('User Management', NULL, NULL, NULL); ?>
 						}
 
 						//$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-						$url['user_id'] = urlencode($user_row['user_id']);
+						$url['user_id'] = urlencode((string) $user_row['user_id']);
 
 						if ($user_row['role_name'] == 'Admin') {
 							if (!$userObj->hasPermission("add_edit_delete_admin")) {

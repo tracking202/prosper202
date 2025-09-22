@@ -86,9 +86,9 @@ class Environment implements \ArrayAccess, \IteratorAggregate
      * @param  array       $userSettings
      * @return \Slim\Environment
      */
-    public static function mock($userSettings = array())
+    public static function mock($userSettings = [])
     {
-        $defaults = array(
+        $defaults = [
             'REQUEST_METHOD' => 'GET',
             'SCRIPT_NAME' => '',
             'PATH_INFO' => '',
@@ -103,7 +103,7 @@ class Environment implements \ArrayAccess, \IteratorAggregate
             'slim.url_scheme' => 'http',
             'slim.input' => '',
             'slim.errors' => @fopen('php://stderr', 'w')
-        );
+        ];
         self::$environment = new self(array_merge($defaults, $userSettings));
 
         return self::$environment;
@@ -119,7 +119,7 @@ class Environment implements \ArrayAccess, \IteratorAggregate
         if ($settings) {
             $this->properties = $settings;
         } else {
-            $env = array();
+            $env = [];
 
             //The HTTP request method
             $env['REQUEST_METHOD'] = $_SERVER['REQUEST_METHOD'];
@@ -130,18 +130,18 @@ class Environment implements \ArrayAccess, \IteratorAggregate
             // Server params
             $scriptName = $_SERVER['SCRIPT_NAME']; // <-- "/foo/index.php"
             $requestUri = $_SERVER['REQUEST_URI']; // <-- "/foo/bar?test=abc" or "/foo/index.php/bar?test=abc"
-            $queryString = isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : ''; // <-- "test=abc" or ""
+            $queryString = $_SERVER['QUERY_STRING'] ?? ''; // <-- "test=abc" or ""
 
             // Physical path
-            if (strpos($requestUri, $scriptName) !== false) {
+            if (str_contains((string) $requestUri, (string) $scriptName)) {
                 $physicalPath = $scriptName; // <-- Without rewriting
             } else {
-                $physicalPath = str_replace('\\', '', dirname($scriptName)); // <-- With rewriting
+                $physicalPath = str_replace('\\', '', dirname((string) $scriptName)); // <-- With rewriting
             }
-            $env['SCRIPT_NAME'] = rtrim($physicalPath, '/'); // <-- Remove trailing slashes
+            $env['SCRIPT_NAME'] = rtrim((string) $physicalPath, '/'); // <-- Remove trailing slashes
 
             // Virtual path
-            $env['PATH_INFO'] = substr_replace($requestUri, '', 0, strlen($physicalPath)); // <-- Remove physical path
+            $env['PATH_INFO'] = substr_replace($requestUri, '', 0, strlen((string) $physicalPath)); // <-- Remove physical path
             $env['PATH_INFO'] = str_replace('?' . $queryString, '', $env['PATH_INFO']); // <-- Remove query string
             $env['PATH_INFO'] = '/' . ltrim($env['PATH_INFO'], '/'); // <-- Ensure leading slash
 

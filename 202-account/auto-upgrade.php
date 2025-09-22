@@ -60,11 +60,11 @@ if (($_POST['start_upgrade'] == '1') == false) {
 
 			if (temp_exists()) {
 				$log .= "Created /202-config/temp/ directory.\n";
-				$downloadUpdate = @file_put_contents(substr(dirname(__FILE__), 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
+				$downloadUpdate = @file_put_contents(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
 				if ($downloadUpdate) {
 					$log .= "Update downloaded and saved!\n";
 
-					$zip = @zip_open(substr(dirname(__FILE__), 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
+					$zip = @zip_open(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
 
 					if ($zip) {
 						$log .= "\nUpdate process started...\n";
@@ -73,11 +73,11 @@ if (($_POST['start_upgrade'] == '1') == false) {
 						while ($zip_entry = @zip_read($zip)) {
 							$thisFileName = zip_entry_name($zip_entry);
 
-							if (substr($thisFileName, -1, 1) == '/') {
-								if (is_dir(substr(dirname(__FILE__), 0, -12) . '/' . $thisFileName)) {
+							if (str_ends_with($thisFileName, '/')) {
+								if (is_dir(substr(__DIR__, 0, -12) . '/' . $thisFileName)) {
 									$log .= "Directory: /" . $thisFileName . "......updated\n";
 								} else {
-									if (@mkdir(substr(dirname(__FILE__), 0, -12) . '/' . $thisFileName, 0755, true)) {
+									if (@mkdir(substr(__DIR__, 0, -12) . '/' . $thisFileName, 0755, true)) {
 										$log .= "Directory: /" . $thisFileName . "......created\n";
 									} else {
 										$log .= "Can't create /" . $thisFileName . " directory! Operation aborted";
@@ -87,13 +87,13 @@ if (($_POST['start_upgrade'] == '1') == false) {
 								$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
 								$file_ext = array_pop(explode(".", $thisFileName));
 
-								if (file_exists(substr(dirname(__FILE__), 0, -12) . '/' . $thisFileName)) {
+								if (file_exists(substr(__DIR__, 0, -12) . '/' . $thisFileName)) {
 									$status = "updated";
 								} else {
 									$status = "created";
 								}
 
-								if ($updateThis = @fopen(substr(dirname(__FILE__), 0, -12) . '/' . $thisFileName, 'wb')) {
+								if ($updateThis = @fopen(substr(__DIR__, 0, -12) . '/' . $thisFileName, 'wb')) {
 									fwrite($updateThis, $contents);
 									fclose($updateThis);
 									unset($contents);

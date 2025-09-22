@@ -57,14 +57,14 @@ class ContentTypes extends \Slim\Middleware
      * Constructor
      * @param array $settings
      */
-    public function __construct($settings = array())
+    public function __construct($settings = [])
     {
-        $defaults = array(
-            'application/json' => array($this, 'parseJson'),
-            'application/xml' => array($this, 'parseXml'),
-            'text/xml' => array($this, 'parseXml'),
-            'text/csv' => array($this, 'parseCsv')
-        );
+        $defaults = [
+            'application/json' => [$this, 'parseJson'],
+            'application/xml' => [$this, 'parseXml'],
+            'text/xml' => [$this, 'parseXml'],
+            'text/csv' => [$this, 'parseCsv']
+        ];
         $this->contentTypes = array_merge($defaults, $settings);
     }
 
@@ -142,7 +142,7 @@ class ContentTypes extends \Slim\Middleware
                 $result = new \SimpleXMLElement($input);
                 libxml_disable_entity_loader($backup);
                 return $result;
-            } catch (\Exception $e) {
+            } catch (\Exception) {
                 // Do nothing
             }
         }
@@ -164,8 +164,8 @@ class ContentTypes extends \Slim\Middleware
         $temp = fopen('php://memory', 'rw');
         fwrite($temp, $input);
         fseek($temp, 0);
-        $res = array();
-        while (($data = fgetcsv($temp)) !== false) {
+        $res = [];
+        while (($data = fgetcsv($temp, escape: '\\')) !== false) {
             $res[] = $data;
         }
         fclose($temp);

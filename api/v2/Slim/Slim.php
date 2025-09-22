@@ -65,7 +65,7 @@ class Slim
     /**
      * @var array[\Slim]
      */
-    protected static $apps = array();
+    protected static $apps = [];
 
     /**
      * @var string
@@ -90,14 +90,14 @@ class Slim
     /**
      * @var array
      */
-    protected $hooks = array(
-        'slim.before' => array(array()),
-        'slim.before.router' => array(array()),
-        'slim.before.dispatch' => array(array()),
-        'slim.after.dispatch' => array(array()),
-        'slim.after.router' => array(array()),
-        'slim.after' => array(array())
-    );
+    protected $hooks = [
+        'slim.before' => [[]],
+        'slim.before.router' => [[]],
+        'slim.before.dispatch' => [[]],
+        'slim.after.dispatch' => [[]],
+        'slim.after.router' => [[]],
+        'slim.after' => [[]]
+    ];
 
     /********************************************************************************
     * PSR-0 Autoloader
@@ -110,15 +110,15 @@ class Slim
      */
     public static function autoload($className)
     {
-        $thisClass = str_replace(__NAMESPACE__.'\\', '', __CLASS__);
+        $thisClass = str_replace(__NAMESPACE__.'\\', '', self::class);
 
         $baseDir = __DIR__;
 
-        if (substr($baseDir, -strlen($thisClass)) === $thisClass) {
+        if (str_ends_with($baseDir, $thisClass)) {
             $baseDir = substr($baseDir, 0, -strlen($thisClass));
         }
 
-        $className = ltrim($className, '\\');
+        $className = ltrim((string) $className, '\\');
         $fileName  = $baseDir;
         $namespace = '';
         if ($lastNsPos = strripos($className, '\\')) {
@@ -149,31 +149,23 @@ class Slim
      * Constructor
      * @param  array $userSettings Associative array of application settings
      */
-    public function __construct(array $userSettings = array())
+    public function __construct(array $userSettings = [])
     {
         // Setup IoC container
         $this->container = new \Slim\Helper\Set();
         $this->container['settings'] = array_merge(static::getDefaultSettings(), $userSettings);
 
         // Default environment
-        $this->container->singleton('environment', function ($c) {
-            return \Slim\Environment::getInstance();
-        });
+        $this->container->singleton('environment', fn($c) => \Slim\Environment::getInstance());
 
         // Default request
-        $this->container->singleton('request', function ($c) {
-            return new \Slim\Http\Request($c['environment']);
-        });
+        $this->container->singleton('request', fn($c) => new \Slim\Http\Request($c['environment']));
 
         // Default response
-        $this->container->singleton('response', function ($c) {
-            return new \Slim\Http\Response();
-        });
+        $this->container->singleton('response', fn($c) => new \Slim\Http\Response());
 
         // Default router
-        $this->container->singleton('router', function ($c) {
-            return new \Slim\Router();
-        });
+        $this->container->singleton('router', fn($c) => new \Slim\Router());
 
         // Default view
         $this->container->singleton('view', function ($c) {
@@ -220,7 +212,7 @@ class Slim
         };
 
         // Define default middleware stack
-        $this->middleware = array($this);
+        $this->middleware = [$this];
         $this->add(new \Slim\Middleware\Flash());
         $this->add(new \Slim\Middleware\MethodOverride());
 
@@ -257,7 +249,7 @@ class Slim
      */
     public static function getInstance($name = 'default')
     {
-        return isset(static::$apps[$name]) ? static::$apps[$name] : null;
+        return static::$apps[$name] ?? null;
     }
 
     /**
@@ -285,7 +277,7 @@ class Slim
      */
     public static function getDefaultSettings()
     {
-        return array(
+        return [
             // Application
             'mode' => 'development',
             // Debugging
@@ -296,7 +288,7 @@ class Slim
             'log.enabled' => true,
             // View
             'templates.path' => './templates',
-            'view' => '\Slim\View',
+            'view' => \Slim\View::class,
             // Cookies
             'cookies.encrypt' => false,
             'cookies.lifetime' => '20 minutes',
@@ -312,7 +304,7 @@ class Slim
             'http.version' => '1.1',
             // Routing
             'routes.case_sensitive' => true
-        );
+        ];
     }
 
     /**
@@ -345,7 +337,7 @@ class Slim
                 $c['settings'] = array_merge($c['settings'], $name);
             }
         } elseif (func_num_args() === 1) {
-            return isset($c['settings'][$name]) ? $c['settings'][$name] : null;
+            return $c['settings'][$name] ?? null;
         } else {
             $settings = $c['settings'];
             $settings[$name] = $value;
@@ -598,7 +590,7 @@ class Slim
             if (is_callable($this->notFound)) {
                 call_user_func($this->notFound);
             } else {
-                call_user_func(array($this, 'defaultNotFound'));
+                call_user_func([$this, 'defaultNotFound']);
             }
             $this->halt(404, ob_get_clean());
         }
@@ -654,9 +646,9 @@ class Slim
     {
         ob_start();
         if (is_callable($this->error)) {
-            call_user_func_array($this->error, array($argument));
+            call_user_func_array($this->error, [$argument]);
         } else {
-            call_user_func_array(array($this, 'defaultError'), array($argument));
+            call_user_func_array([$this, 'defaultError'], [$argument]);
         }
 
         return ob_get_clean();
@@ -720,7 +712,7 @@ class Slim
     public function view($viewClass = null)
     {
         if (!is_null($viewClass)) {
-            $existingData = is_null($this->view) ? array() : $this->view->getData();
+            $existingData = is_null($this->view) ? [] : $this->view->getData();
             if ($viewClass instanceOf \Slim\View) {
                 $this->view = $viewClass;
             } else {
@@ -749,7 +741,7 @@ class Slim
      * @param  array  $data     Associative array of data made available to the view
      * @param  int    $status   The HTTP response status code to use (optional)
      */
-    public function render($template, $data = array(), $status = null)
+    public function render($template, $data = [], $status = null)
     {
         if (!is_null($status)) {
             $this->response->status($status);
@@ -777,9 +769,9 @@ class Slim
      */
     public function lastModified($time)
     {
-        if (is_integer($time)) {
+        if (is_int($time)) {
             $this->response->headers->set('Last-Modified', gmdate('D, d M Y H:i:s T', $time));
-            if ($time === strtotime($this->request->headers->get('IF_MODIFIED_SINCE'))) {
+            if ($time === strtotime((string) $this->request->headers->get('IF_MODIFIED_SINCE'))) {
                 $this->halt(304);
             }
         } else {
@@ -806,7 +798,7 @@ class Slim
     public function etag($value, $type = 'strong')
     {
         //Ensure type is correct
-        if (!in_array($type, array('strong', 'weak'))) {
+        if (!in_array($type, ['strong', 'weak'])) {
             throw new \InvalidArgumentException('Invalid Slim::etag type. Expected "strong" or "weak".');
         }
 
@@ -819,7 +811,7 @@ class Slim
 
         //Check conditional GET
         if ($etagsHeader = $this->request->headers->get('IF_NONE_MATCH')) {
-            $etags = preg_split('@\s*,\s*@', $etagsHeader);
+            $etags = preg_split('@\s*,\s*@', (string) $etagsHeader);
             if (in_array($value, $etags) || in_array('*', $etags)) {
                 $this->halt(304);
             }
@@ -867,14 +859,14 @@ class Slim
      */
     public function setCookie($name, $value, $time = null, $path = null, $domain = null, $secure = null, $httponly = null)
     {
-        $settings = array(
+        $settings = [
             'value' => $value,
             'expires' => is_null($time) ? $this->config('cookies.lifetime') : $time,
             'path' => is_null($path) ? $this->config('cookies.path') : $path,
             'domain' => is_null($domain) ? $this->config('cookies.domain') : $domain,
             'secure' => is_null($secure) ? $this->config('cookies.secure') : $secure,
             'httponly' => is_null($httponly) ? $this->config('cookies.httponly') : $httponly
-        );
+        ];
         $this->response->cookies->set($name, $settings);
     }
 
@@ -967,12 +959,12 @@ class Slim
      */
     public function deleteCookie($name, $path = null, $domain = null, $secure = null, $httponly = null)
     {
-        $settings = array(
+        $settings = [
             'domain' => is_null($domain) ? $this->config('cookies.domain') : $domain,
             'path' => is_null($path) ? $this->config('cookies.path') : $path,
             'secure' => is_null($secure) ? $this->config('cookies.secure') : $secure,
             'httponly' => is_null($httponly) ? $this->config('cookies.httponly') : $httponly
-        );
+        ];
         $this->response->cookies->remove($name, $settings);
     }
 
@@ -992,7 +984,7 @@ class Slim
      */
     public function root()
     {
-        return rtrim($_SERVER['DOCUMENT_ROOT'], '/') . rtrim($this->request->getRootUri(), '/') . '/';
+        return rtrim((string) $_SERVER['DOCUMENT_ROOT'], '/') . rtrim($this->request->getRootUri(), '/') . '/';
     }
 
     /**
@@ -1013,7 +1005,7 @@ class Slim
      *
      * @throws \Slim\Exception\Stop
      */
-    public function stop()
+    public function stop(): never
     {
         throw new \Slim\Exception\Stop();
     }
@@ -1030,7 +1022,7 @@ class Slim
      * @param  int      $status     The HTTP response status
      * @param  string   $message    The HTTP response body
      */
-    public function halt($status, $message = '')
+    public function halt($status, $message = ''): never
     {
         $this->cleanBuffer();
         $this->response->status($status);
@@ -1047,7 +1039,7 @@ class Slim
      *
      * @throws \Slim\Exception\Pass
      */
-    public function pass()
+    public function pass(): never
     {
         $this->cleanBuffer();
         throw new \Slim\Exception\Pass();
@@ -1078,7 +1070,7 @@ class Slim
      * @throws \RuntimeException    If named route does not exist
      * @return string
      */
-    public function urlFor($name, $params = array())
+    public function urlFor($name, $params = [])
     {
         return $this->request->getRootUri() . $this->router->urlFor($name, $params);
     }
@@ -1095,7 +1087,7 @@ class Slim
      * @param  string   $url        The destination URL
      * @param  int      $status     The HTTP redirect status code (optional)
      */
-    public function redirect($url, $status = 302)
+    public function redirect($url, $status = 302): never
     {
         $this->response->redirect($url, $status);
         $this->halt($status);
@@ -1109,7 +1101,7 @@ class Slim
      * @param string    $route      The route name
      * @param array     $params     Associative array of URL parameters and replacement values
      */
-    public function redirectTo($route, $params = array(), $status = 302){
+    public function redirectTo($route, $params = [], $status = 302): never{
         $this->redirect($this->urlFor($route, $params), $status);
     }
 
@@ -1164,7 +1156,7 @@ class Slim
     public function hook($name, $callable, $priority = 10)
     {
         if (!isset($this->hooks[$name])) {
-            $this->hooks[$name] = array(array());
+            $this->hooks[$name] = [[]];
         }
         if (is_callable($callable)) {
             $this->hooks[$name][(int) $priority][] = $callable;
@@ -1179,7 +1171,7 @@ class Slim
     public function applyHook($name, $hookArg = null)
     {
         if (!isset($this->hooks[$name])) {
-            $this->hooks[$name] = array(array());
+            $this->hooks[$name] = [[]];
         }
         if (!empty($this->hooks[$name])) {
             // Sort by priority, low to high, if there's more than one priority
@@ -1210,7 +1202,7 @@ class Slim
     public function getHooks($name = null)
     {
         if (!is_null($name)) {
-            return isset($this->hooks[(string) $name]) ? $this->hooks[(string) $name] : null;
+            return $this->hooks[(string) $name] ?? null;
         } else {
             return $this->hooks;
         }
@@ -1228,10 +1220,10 @@ class Slim
     public function clearHooks($name = null)
     {
         if (!is_null($name) && isset($this->hooks[(string) $name])) {
-            $this->hooks[(string) $name] = array(array());
+            $this->hooks[(string) $name] = [[]];
         } else {
             foreach ($this->hooks as $key => $value) {
-                $this->hooks[$key] = array(array());
+                $this->hooks[$key] = [[]];
             }
         }
     }
@@ -1251,7 +1243,7 @@ class Slim
     public function add(\Slim\Middleware $newMiddleware)
     {
         if(in_array($newMiddleware, $this->middleware)) {
-            $middleware_class = get_class($newMiddleware);
+            $middleware_class = $newMiddleware::class;
             throw new \RuntimeException("Circular Middleware setup detected. Tried to queue the same Middleware instance ({$middleware_class}) twice.");
         }
         $newMiddleware->setApplication($this);
@@ -1272,7 +1264,7 @@ class Slim
      */
     public function run()
     {
-        set_error_handler(array('\Slim\Slim', 'handleErrors'));
+        set_error_handler(\Slim\Slim::handleErrors(...));
 
         //Apply final outer middleware layers
         if ($this->config('debug')) {
@@ -1284,7 +1276,7 @@ class Slim
         $this->middleware[0]->call();
 
         //Fetch status, header, and body
-        list($status, $headers, $body) = $this->response->finalize();
+        [$status, $headers, $body] = $this->response->finalize();
 
         // Serialize cookies (with optional encryption)
         \Slim\Http\Util::serializeCookies($headers, $this->response->cookies, $this->settings);
@@ -1292,7 +1284,7 @@ class Slim
         //Send headers
         if (headers_sent() === false) {
             //Send status
-            if (strpos(PHP_SAPI, 'cgi') === 0) {
+            if (str_starts_with(PHP_SAPI, 'cgi')) {
                 header(sprintf('Status: %s', \Slim\Http\Response::getMessageForCode($status)));
             } else {
                 header(sprintf('HTTP/%s %s', $this->config('http.version'), \Slim\Http\Response::getMessageForCode($status)));
@@ -1300,7 +1292,7 @@ class Slim
 
             //Send headers
             foreach ($headers as $name => $value) {
-                $hValues = explode("\n", $value);
+                $hValues = explode("\n", (string) $value);
                 foreach ($hValues as $hVal) {
                     header("$name: $hVal", false);
                 }
@@ -1341,7 +1333,7 @@ class Slim
                     if ($dispatched) {
                         break;
                     }
-                } catch (\Slim\Exception\Pass $e) {
+                } catch (\Slim\Exception\Pass) {
                     continue;
                 }
             }
@@ -1350,7 +1342,7 @@ class Slim
             }
             $this->applyHook('slim.after.router');
             $this->stop();
-        } catch (\Slim\Exception\Stop $e) {
+        } catch (\Slim\Exception\Stop) {
             $this->response()->write(ob_get_clean());
         } catch (\Exception $e) {
             if ($this->config('debug')) {
@@ -1358,7 +1350,7 @@ class Slim
             } else {
                 try {
                     $this->error($e);
-                } catch (\Slim\Exception\Stop $e) {
+                } catch (\Slim\Exception\Stop) {
                     // Do nothing
                 }
             }

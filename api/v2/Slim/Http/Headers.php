@@ -53,14 +53,14 @@ class Headers extends \Slim\Helper\Set
      *
      * @var array
      */
-    protected static $special = array(
+    protected static $special = [
         'CONTENT_TYPE',
         'CONTENT_LENGTH',
         'PHP_AUTH_USER',
         'PHP_AUTH_PW',
         'PHP_AUTH_DIGEST',
         'AUTH_TYPE'
-    );
+    ];
 
     /**
      * Extract HTTP headers from an array of data (e.g. $_SERVER)
@@ -69,10 +69,10 @@ class Headers extends \Slim\Helper\Set
      */
     public static function extract($data)
     {
-        $results = array();
+        $results = [];
         foreach ($data as $key => $value) {
-            $key = strtoupper($key);
-            if (strpos($key, 'X_') === 0 || strpos($key, 'HTTP_') === 0 || in_array($key, static::$special)) {
+            $key = strtoupper((string) $key);
+            if (str_starts_with($key, 'X_') || str_starts_with($key, 'HTTP_') || in_array($key, static::$special)) {
                 if ($key === 'HTTP_CONTENT_LENGTH') {
                     continue;
                 }
@@ -92,12 +92,13 @@ class Headers extends \Slim\Helper\Set
      * @param  string $key
      * @return string
      */
+    #[\Override]
     protected function normalizeKey($key)
     {
         $key = strtolower($key);
-        $key = str_replace(array('-', '_'), ' ', $key);
+        $key = str_replace(['-', '_'], ' ', $key);
         $key = preg_replace('#^http #', '', $key);
-        $key = ucwords($key);
+        $key = ucwords((string) $key);
         $key = str_replace(' ', '-', $key);
 
         return $key;

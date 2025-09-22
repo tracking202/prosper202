@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(dirname(__FILE__) . '/202-config/connect.php');
+include_once(__DIR__ . '/202-config/connect.php');
 
 $error = [];
 $html = [];
@@ -43,7 +43,7 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 	if ($_POST['user_pass'] == '') {
 		$error['user_pass'] .= '<div class="error">You must type verify your password</div>';
 	}
-	if ((strlen($_POST['user_pass']) < 6) or (strlen($_POST['user_pass']) > 15)) {
+	if ((strlen((string) $_POST['user_pass']) < 6) or (strlen((string) $_POST['user_pass']) > 15)) {
 		$error['user_pass'] .= '<div class="error">Passwords must be 6 to 15 characters long</div>';
 	}
 	if ($_POST['user_pass'] != $_POST['verify_user_pass']) {

@@ -6,10 +6,10 @@ include_once(str_repeat("../", 1) . '202-config/connect.php');
 AUTH::require_user();
 
 // Initialize variables to prevent undefined variable warnings
-$error = array();
-$html = array();
-$mysql = array();
-$selected = array();
+$error = [];
+$html = [];
+$mysql = [];
+$selected = [];
 $add_success = false;
 $delete_success = false;
 $update_profile = false;
@@ -39,7 +39,7 @@ if (isset($_POST['add_rest_api_key'])) {
 	$key_result = $db->query($key_sql);
 
 	if ($slack)
-		$slack->push('user_added_app_api_key', array('user' => $username));
+		$slack->push('user_added_app_api_key', ['user' => $username]);
 	die();
 }
 
@@ -50,13 +50,13 @@ if (isset($_POST['remove_rest_api_key'])) {
 	$key_result = $db->query($key_sql);
 
 	if ($slack)
-		$slack->push('user_removed_app_api_key', array('user' => $username));
+		$slack->push('user_removed_app_api_key', ['user' => $username]);
 
 	die();
 }
 
 if (!empty($_GET['customers_api_key'])) {
-	$mysql['p202_customer_api_key'] = $db->real_escape_string(base64_decode($_GET['customers_api_key']));
+	$mysql['p202_customer_api_key'] = $db->real_escape_string(base64_decode((string) $_GET['customers_api_key']));
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	$validate = validateCustomersApiKey($mysql['p202_customer_api_key']);
 	if ($validate['code'] != 200) {
@@ -107,6 +107,7 @@ if (!$userObj->hasPermission("access_to_personal_settings")) {
 
 $user_result = $db->query($user_sql);
 $user_row = $user_result->fetch_assoc();
+$currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 $html = array_map('htmlentities', $user_row);
 
 //make it hide most of the api keys
@@ -124,19 +125,23 @@ if ($userObj->hasPermission("access_to_personal_settings")) {
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	$submittedEmail = isset($_POST['user_email']) ? trim((string)$_POST['user_email']) : $currentUserEmail;
+
 	if (isset($_POST['update_profile']) && $_POST['update_profile'] == '1') {
+		$originalUserEmail = $currentUserEmail;
+		$emailUpdated = false;
 
 		if ($_POST['token'] != $_SESSION['token']) {
 			$error['token'] = 'You must use our forms to submit data.';
 		}
-		if (check_email_address($_POST['user_email']) == false) {
+		if (check_email_address($submittedEmail) == false) {
 			$error['user_email'] = 'Please enter a valid email address';
 		}
 
 		if ($userObj->hasPermission("access_to_personal_settings")) {
 			//check user_email
 			if (!isset($error['user_email_invalid']) || !$error['user_email_invalid']) {
-				$mysql['user_email'] = $db->real_escape_string((string)(isset($_POST['user_email']) ? $_POST['user_email'] : ''));
+				$mysql['user_email'] = $db->real_escape_string($submittedEmail);
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$count_sql = "	SELECT 	*
 							  	FROM  		`202_users` 
@@ -174,7 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$mysql['user_timezone'] = $db->real_escape_string((string)$_POST['user_timezone']);
 				$mysql['user_daily_email'] = $db->real_escape_string((string)$_POST['user_daily_email']);
-				$mysql['cache_time'] = $db->real_escape_string((string)(isset($_POST['user_cached_reports']) ? $_POST['user_cached_reports'] : ''));
+				$mysql['cache_time'] = $db->real_escape_string((string)($_POST['user_cached_reports'] ?? ''));
 				$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string((string)$_POST['user_keyword_searched_or_bidded']);
 				$mysql['user_referer'] = $db->real_escape_string((string)$_POST['user_referer']);
 				$mysql['cloak_referer'] = $db->real_escape_string((string)$_POST['cloak_referer']);
@@ -217,7 +222,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $html['install_hash']);
 
 				//try to set non expiring cache for values that are used in redirects
-				if ($memcacheWorking) {
+				if (!empty($memcacheWorking)) {
 					$tid = $mysql['user_id'];
 					setCache(md5('user_id_' . $tid . systemHash()), $mysql['user_id'], 0);
 					setCache(md5('user_timezone_' . $tid . systemHash()), $mysql['user_timezone'], 0);
@@ -227,6 +232,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					setCache(md5('user_pref_dynamic_bid_' . $tid . systemHash()), $mysql['user_pref_dynamic_bid'], 0);
 					setCache(md5('user_pref_privacy_' . $tid . systemHash()), $mysql['user_pref_privacy'], 0);
 				}
+
+				$currentUserEmail = $submittedEmail;
+				$html['user_email'] = htmlentities($submittedEmail, ENT_QUOTES, 'UTF-8');
+				$emailUpdated = ($originalUserEmail !== $submittedEmail);
 			}
 
 			//set the  session's user_timezone
@@ -234,7 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			if ($slack) {
 				if ($_POST['user_timezone'] != $user_row['user_timezone']) {
-					$slack->push('user_time_zone_changed', array('user' => $username, 'old_zone' => $user_row['user_timezone'], 'new_zone' => $_POST['user_timezone']));
+					$slack->push('user_time_zone_changed', ['user' => $username, 'old_zone' => $user_row['user_timezone'], 'new_zone' => $_POST['user_timezone']]);
 				}
 
 				if ($_POST['user_keyword_searched_or_bidded'] != $user_row['user_keyword_searched_or_bidded']) {
@@ -251,7 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						$to_type = 'Pickup Searched Keyword';
 					}
 
-					$slack->push('user_keyword_preference_changed', array('user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type));
+					$slack->push('user_keyword_preference_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
 				}
 
 				if ($_POST['user_referer'] != $user_row['user_pref_referer_data']) {
@@ -268,7 +277,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						$to_type = 'Pickup Referer from browser';
 					}
 
-					$slack->push('user_referer_changed', array('user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type));
+					$slack->push('user_referer_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
 				}
 
 				if ($_POST['cloak_referer'] != $user_row['user_pref_cloak_referer']) {
@@ -285,17 +294,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						$to_type = 'Show Blank Referer';
 					}
 
-					$slack->push('user_pref_cloak_referer_changed', array('user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type));
+					$slack->push('user_pref_cloak_referer_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
 				}
 
-				if ($_POST['user_email'] != $user_row['user_email']) {
-					$slack->push('user_email_changed', array('user' => $username, 'old_email' => $user_row['user_email'], 'new_email' => $_POST['user_email']));
+				if ($emailUpdated) {
+					$slack->push('user_email_changed', ['user' => $username, 'old_email' => $originalUserEmail, 'new_email' => $submittedEmail]);
 				}
 			}
 		}
 	} else {
 		if (!isset($error['user_email_invalid']) || !$error['user_email_invalid']) {
-			$mysql['user_email'] = $db->real_escape_string((string)(isset($_POST['user_email']) ? $_POST['user_email'] : ''));
+			$mysql['user_email'] = $db->real_escape_string($submittedEmail);
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 			$count_sql = "	SELECT 	*
 							  	FROM  		`202_users` 
@@ -308,13 +317,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			if (!$error) {
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-				$mysql['user_email'] = $db->real_escape_string((string)(isset($_POST['user_email']) ? $_POST['user_email'] : ''));
+				$mysql['user_email'] = $db->real_escape_string($submittedEmail);
 				$sql = "UPDATE 202_users SET user_email = '" . $mysql['user_email'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
 				$result = $db->query($sql);
 				$update_profile = true;
 
-				if ($slack)
-					$slack->push('user_email_changed', array('user' => $username, 'old_email' => $user_row['user_email'], 'new_email' => $_POST['user_email']));
+				if ($slack && $submittedEmail !== $currentUserEmail) {
+					$slack->push('user_email_changed', ['user' => $username, 'old_email' => $currentUserEmail, 'new_email' => $submittedEmail]);
+				}
+				$currentUserEmail = $submittedEmail;
+				$html['user_email'] = htmlentities($submittedEmail, ENT_QUOTES, 'UTF-8');
 			}
 		}
 	}
@@ -371,7 +383,7 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 
 	$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
 
-	if (!preg_match('/\*/', $_POST['clickserver_api_key'])) {
+	if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
 		if (!clickserver_api_key_validate($mysql['clickserver_api_key']) && $mysql['clickserver_api_key'] != '') {
 			$error['clickserver_api_key'] = 'This API Key appears invalid.';
 		}
@@ -389,7 +401,7 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 
 			if ($slack) {
 				if ($_POST['clickserver_api_key'] != $user_row['clickserver_api_key']) {
-					$slack->push('user_updated_clickserver_api_key', array('user' => $username));
+					$slack->push('user_updated_clickserver_api_key', ['user' => $username]);
 				}
 			}
 		}
@@ -402,7 +414,7 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 		$error['token'] = 'You must use our forms to submit data.';
 	}
 
-	if (!preg_match('/\*/', $_POST['user_api_key'])) {
+	if (!preg_match('/\*/', (string) $_POST['user_api_key'])) {
 		if (!AUTH::is_valid_api_key($_POST['user_api_key'])) {
 			$error['user_api_key'] = 'This API Key appears invalid.';
 		}
@@ -426,13 +438,13 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 }
 
 if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats202_app_key'] == '1') {
-	if (!preg_match('/\*/', $_POST['user_stats202_app_key'])) {
+	if (!preg_match('/\*/', (string) $_POST['user_stats202_app_key'])) {
 		// Replace the undefined method with a more direct validation approach
 		$app_key = $_POST['user_stats202_app_key'];
 		$api_key = $_SESSION['user_api_key'];
 
 		// Basic validation - you may need to adjust this based on actual requirements
-		if (empty($app_key) || strlen($app_key) < 10 || empty($api_key)) {
+		if (empty($app_key) || strlen((string) $app_key) < 10 || empty($api_key)) {
 			$error['user_stats202_app_key'] = '<div class="error">This Tracking202 API Key &amp; Stats202 App Key combination appears invalid.</div>';
 		}
 
@@ -481,7 +493,7 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	if ($_POST['retype_new_user_pass'] == '') {
 		$error['user_pass'] .= ' You must type verify your password.';
 	}
-	if ((strlen($_POST['new_user_pass']) < 6) or (strlen($_POST['new_user_pass']) > 35)) {
+	if ((strlen((string) $_POST['new_user_pass']) < 6) or (strlen((string) $_POST['new_user_pass']) > 35)) {
 		$error['user_pass'] .= ' Your password must be between 6 and 35 characters long.';
 	}
 	if ($_POST['new_user_pass'] != $_POST['retype_new_user_pass']) {
@@ -492,32 +504,37 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	if (!isset($_POST['user_pass']) || empty($_POST['user_pass'])) {
 		$error['user_pass'] .= 'You must enter your current password.';
 	} else {
-		$user_pass = salt_user_pass($_POST['user_pass']);
-		$mysql['user_pass'] = $db->real_escape_string($user_pass);
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-
-		$user_sql = "	SELECT 	*
-						FROM   		`202_users`
-						WHERE   	`user_id`='" . $mysql['user_id'] . "'
-						AND     		`user_pass`='" . $mysql['user_pass'] . "'";
-		$user_result = $db->query($user_sql);
-
-		if ($user_result->num_rows == 0) $error['user_pass'] .= 'Your old password was typed incorrectly.';
+		$verify_stmt = $db->prepare('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
+		if ($verify_stmt) {
+			$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
+			$verify_stmt->bind_param('i', $current_user_id);
+			$verify_stmt->execute();
+			$result = $verify_stmt->get_result();
+			$stored = $result ? $result->fetch_assoc() : null;
+			$verify_stmt->close();
+			if (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
+				$error['user_pass'] .= 'Your old password was typed incorrectly.';
+			}
+		} else {
+			$error['user_pass'] .= 'Unable to verify your current password at this time.';
+		}
 	}
 
 	//if no user_pass errors
 	if (!$error) {
 
-		$user_pass = salt_user_pass($_POST['new_user_pass']);
-		$mysql['user_pass'] = $db->real_escape_string($user_pass);
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
+	$new_hash = hash_user_pass((string) $_POST['new_user_pass']);
+	$update_stmt = $db->prepare('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
+	if ($update_stmt) {
+		$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
+		$update_stmt->bind_param('si', $new_hash, $current_user_id);
+		$update_stmt->execute();
+		$update_stmt->close();
+	} else {
+		prosper_log('account', 'Failed to prepare password update statement: ' . $db->error);
+	}
 
-		$user_sql = "	UPDATE 	`202_users`
-							SET    		`user_pass`='" . $mysql['user_pass'] . "'
-							WHERE  	`user_id`='" . $mysql['user_id'] . "'";
-		$user_result = $db->query($user_sql);
-
-		$change_user_pass = true;
+	$change_user_pass = true;
 	}
 }
 
@@ -530,9 +547,9 @@ $html['user_id'] = htmlentities((string)$_SESSION['user_id'], ENT_QUOTES, 'UTF-8
 $html['user_username'] = htmlentities((string)($_SESSION['user_username'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 
-template_top('Personal Settings', NULL, NULL, NULL);
+template_top('Personal Settings');
 
-if (isset($_SERVER["HTTPS"]) && strtolower($_SERVER["HTTPS"]) == "on") {
+if (isset($_SERVER["HTTPS"]) && strtolower((string) $_SERVER["HTTPS"]) == "on") {
 	$strProtocol = 'https://';
 } else {
 	$strProtocol = 'http://';
@@ -573,12 +590,12 @@ $html = array_map('htmlentities', $user_row);
 
 				<?php if ($error) { ?>
 					<div class="error" style="text-align:right"><small><span class="fui-alert"></span> <?php
-																										echo (isset($error['token']) ? $error['token'] : '') .
-																											(isset($error['user_email']) ? $error['user_email'] : '') .
-																											(isset($error['clickserver_api_key']) ? $error['clickserver_api_key'] : '') .
-																											(isset($error['user_api_key']) ? $error['user_api_key'] : '') .
-																											(isset($error['user_pass']) ? $error['user_pass'] : '') .
-																											(isset($error['p202_customer_api_key_invalid']) ? $error['p202_customer_api_key_invalid'] : '');
+																										echo ($error['token'] ?? '') .
+																											($error['user_email'] ?? '') .
+																											($error['clickserver_api_key'] ?? '') .
+																											($error['user_api_key'] ?? '') .
+																											($error['user_pass'] ?? '') .
+																											($error['p202_customer_api_key_invalid'] ?? '');
 																										?></small></div>
 				<?php } ?>
 				<?php if ($change_p202_customer_api_key) { ?>
@@ -774,7 +791,7 @@ $html = array_map('htmlentities', $user_row);
 					<?php if (isset($error['user_email']) && $error['user_email']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_email']; ?>"></span> <?php } ?>
 				</label>
 				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo isset($html['user_email']) ? $html['user_email'] : ''; ?>">
+					<input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email'] ?? ''; ?>">
 				</div>
 			</div>
 

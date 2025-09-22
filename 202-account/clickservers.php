@@ -16,7 +16,7 @@ if ($user_row['clickserver_api_key']) {
 	$clickservers = clickserver_api_domain_list($user_row['clickserver_api_key']);
 }
 
-template_top('ClickServer Management',NULL,NULL,NULL); 
+template_top('ClickServer Management'); 
 
 ?>
 
@@ -91,7 +91,7 @@ template_top('ClickServer Management',NULL,NULL,NULL);
 
 <script type="text/javascript">
 $(document).ready(function() {
-	var api_key = "<?php echo base64_encode($user_row['clickserver_api_key']);?>";
+	var api_key = "<?php echo base64_encode((string) $user_row['clickserver_api_key']);?>";
     var domainsUsed = <?php echo $license_date['domainsUsed'];?>;
     var domainsAvail = <?php echo $license_date['domainsAvail'];?>;
 

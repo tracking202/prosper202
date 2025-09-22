@@ -152,7 +152,7 @@ class View
     public function getData($key = null)
     {
         if (!is_null($key)) {
-            return isset($this->data[$key]) ? $this->data[$key] : null;
+            return $this->data[$key] ?? null;
         } else {
             return $this->data->all();
         }

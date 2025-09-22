@@ -36,11 +36,11 @@ if (!$showAlerts) die();
 if ($rss->items) { 
 		foreach ($rss->items as $item ) { 
 			if (($dontShow[$item['prosper_alert_id']] ?? false) == false) {
-				$item_time = human_time_diff(strtotime($item['pubdate'], time())) . " ago";
+				$item_time = human_time_diff(strtotime((string) $item['pubdate'], time())) . " ago";
 				$html['time'] = htmlentities($item_time);
-				$html['prosper_alert_id'] = htmlentities($item['prosper_alert_id']);
-				$html['title'] = htmlentities($item['title']);
-				$html['description'] = nl2br(htmlentities($item['description'])); ?>
+				$html['prosper_alert_id'] = htmlentities((string) $item['prosper_alert_id']);
+				$html['title'] = htmlentities((string) $item['title']);
+				$html['description'] = nl2br(htmlentities((string) $item['description'])); ?>
 
 				<div id="prosper-alerts" class="alert alert-error" data-alertid="<?php echo $html['prosper_alert_id'];?>">
 		            <button type="button" class="close fui-cross" data-dismiss="alert"></button>

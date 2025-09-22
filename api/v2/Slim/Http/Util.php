@@ -74,7 +74,7 @@ class Util
      */
     protected static function stripSlashes($rawData)
     {
-        return is_array($rawData) ? array_map(array('self', 'stripSlashes'), $rawData) : stripslashes($rawData);
+        return is_array($rawData) ? array_map(['self', 'stripSlashes'], $rawData) : stripslashes($rawData);
     }
 
     /**
@@ -91,15 +91,15 @@ class Util
      * @param  array  $settings Optional key-value array with custom algorithm and mode
      * @return string
      */
-    public static function encrypt($data, $key, $iv, $settings = array())
+    public static function encrypt($data, $key, $iv, $settings = [])
     {
         if ($data === '') {
             return $data;
         }
 
-        $defaults = array(
+        $defaults = [
             'cipher' => 'AES-256-CBC'
-        );
+        ];
         $settings = array_merge($defaults, $settings);
 
         $cipher = $settings['cipher'];
@@ -130,15 +130,15 @@ class Util
      * @param  array  $settings Optional key-value array with custom algorithm and mode
      * @return string
      */
-    public static function decrypt($data, $key, $iv, $settings = array())
+    public static function decrypt($data, $key, $iv, $settings = [])
     {
         if ($data === '') {
             return $data;
         }
 
-        $defaults = array(
+        $defaults = [
             'cipher' => 'AES-256-CBC'
-        );
+        ];
         $settings = array_merge($defaults, $settings);
 
         $cipher = $settings['cipher'];
@@ -212,15 +212,15 @@ class Util
                 $value,
                 $key,
                 $iv,
-                array(
+                [
                     'algorithm' => $algorithm,
                     'mode' => $mode
-                )
+                ]
             )
         );
         $verificationString = hash_hmac('sha1', $expires . $value, $key);
 
-        return implode('|', array($expires, $secureString, $verificationString));
+        return implode('|', [$expires, $secureString, $verificationString]);
     }
 
     /**
@@ -247,10 +247,10 @@ class Util
                     base64_decode($value[1]),
                     $key,
                     $iv,
-                    array(
+                    [
                         'algorithm' => $algorithm,
                         'mode' => $mode
-                    )
+                    ]
                 );
                 $verificationString = hash_hmac('sha1', $value[0] . $data, $key);
                 if ($verificationString === $value[2]) {
@@ -318,7 +318,7 @@ class Util
         if (!isset($header['Set-Cookie']) || $header['Set-Cookie'] === '') {
             $header['Set-Cookie'] = $cookie;
         } else {
-            $header['Set-Cookie'] = implode("\n", array($header['Set-Cookie'], $cookie));
+            $header['Set-Cookie'] = implode("\n", [$header['Set-Cookie'], $cookie]);
         }
     }
 
@@ -339,17 +339,17 @@ class Util
      * @param  string $name
      * @param  array  $value
      */
-    public static function deleteCookieHeader(&$header, $name, $value = array())
+    public static function deleteCookieHeader(&$header, $name, $value = [])
     {
         //Remove affected cookies from current response header
-        $cookiesOld = array();
-        $cookiesNew = array();
+        $cookiesOld = [];
+        $cookiesNew = [];
         if (isset($header['Set-Cookie'])) {
             $cookiesOld = explode("\n", $header['Set-Cookie']);
         }
         foreach ($cookiesOld as $c) {
             if (isset($value['domain']) && $value['domain']) {
-                $regex = sprintf('@%s=.*domain=%s@', urlencode($name), preg_quote($value['domain']));
+                $regex = sprintf('@%s=.*domain=%s@', urlencode($name), preg_quote((string) $value['domain']));
             } else {
                 $regex = sprintf('@%s=@', urlencode($name));
             }
@@ -364,7 +364,7 @@ class Util
         }
 
         //Set invalidating cookie to clear client-side cookie
-        self::setCookieHeader($header, $name, array_merge(array('value' => '', 'path' => null, 'domain' => null, 'expires' => time() - 100), $value));
+        self::setCookieHeader($header, $name, array_merge(['value' => '', 'path' => null, 'domain' => null, 'expires' => time() - 100], $value));
     }
 
     /**
@@ -378,8 +378,8 @@ class Util
      */
     public static function parseCookieHeader($header)
     {
-        $cookies = array();
-        $header = rtrim($header, "\r\n");
+        $cookies = [];
+        $header = rtrim((string) $header, "\r\n");
         $headerPieces = preg_split('@\s*[;,]\s*@', $header);
         foreach ($headerPieces as $c) {
             $cParts = explode('=', $c, 2);

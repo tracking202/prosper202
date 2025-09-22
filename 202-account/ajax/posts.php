@@ -13,11 +13,11 @@ AUTH::require_user();
  		
  		$item['description'] = html2txt($item['description']);
  		
- 		if (strlen($item['description']) > 350) { 
- 			$item['description'] = substr($item['description'],0,350) . ' [...]';
+ 		if (strlen((string) $item['description']) > 350) { 
+ 			$item['description'] = substr((string) $item['description'],0,350) . ' [...]';
  		} ?>
  		
-	<i class="fa fa-rss-square"></i> <a href='<?php echo ($item['link']); ?>'><?php echo $item['title']; ?></a> - <span style="font-size: 10px;">(<?php printf(('%s ago'), human_time_diff(strtotime($item['pubdate'], time() ) )) ; ?>)</span><br/>
+	<i class="fa fa-rss-square"></i> <a href='<?php echo ($item['link']); ?>'><?php echo $item['title']; ?></a> - <span style="font-size: 10px;">(<?php printf(('%s ago'), human_time_diff(strtotime((string) $item['pubdate'], time() ) )) ; ?>)</span><br/>
 	<span class="infotext"><?php echo $item['description']; ?></span><br></br>
 	<?php }
 } ?>

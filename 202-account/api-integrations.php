@@ -11,10 +11,10 @@ include_once(str_repeat("../", 1) . '202-config/clickserver_api_management.php')
 AUTH::require_user();
 
 // Initialize variables to prevent undefined variable warnings
-$error = array();
-$html = array();
-$mysql = array();
-$selected = array();
+$error = [];
+$html = [];
+$mysql = [];
+$selected = [];
 $add_success = false;
 $delete_success = false;
 
@@ -59,7 +59,7 @@ function updateUserPreference($field_name, $value, $user_id, $db)
 function sendSlackNotification($slack, $event_name, $username, $old_value, $new_value)
 {
 	if ($slack && $old_value !== $new_value) {
-		$slack->push($event_name, array('user' => $username));
+		$slack->push($event_name, ['user' => $username]);
 	}
 }
 
@@ -106,7 +106,7 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 function showSuccessMessage($condition, $message)
 {
 	if ($condition) {
-		echo '<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> ' . htmlspecialchars($message) . '</small></div>';
+		echo '<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> ' . htmlspecialchars((string) $message) . '</small></div>';
 	}
 }
 
@@ -116,11 +116,11 @@ function showSuccessMessage($condition, $message)
 function showErrorMessage($errors, $key)
 {
 	if (isset($errors[$key]) && $errors[$key]) {
-		echo '<div class="error" style="text-align:right"><small><span class="fui-alert"></span> ' . htmlspecialchars($errors[$key]) . '</small></div>';
+		echo '<div class="error" style="text-align:right"><small><span class="fui-alert"></span> ' . htmlspecialchars((string) $errors[$key]) . '</small></div>';
 	}
 }
 
-$strProtocol = stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+$strProtocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
 $mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ?? ''));
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
@@ -130,7 +130,7 @@ $user_row = $user_results->fetch_assoc();
 $username = $user_row['username'];
 $editing_dni_network = false;
 $dniNetworks = getAllDniNetworks($user_row['install_hash']);
-$dniProcesing = array('host' => getDNIHost(), 'install_hash' => $user_row['install_hash'], 'networks' => array());
+$dniProcesing = ['host' => getDNIHost(), 'install_hash' => $user_row['install_hash'], 'networks' => []];
 
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
@@ -230,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		} else {
 			$mysql['dniNetworkId'] = $db->real_escape_string((string)$_POST['dni_network']);
 			$mysql['dniNetworkType'] = $db->real_escape_string((string)$_POST['dni_network_type']);
-			$dniNetworkName = explode(" (", $_POST['dni_network_name'], 2);
+			$dniNetworkName = explode(" (", (string) $_POST['dni_network_name'], 2);
 			$mysql['dniNetworkName'] = $db->real_escape_string($dniNetworkName[0]);
 			$mysql['dniAffiliateId'] = $db->real_escape_string((string)$_POST['dni_network_affiliate_id']);
 			$mysql['dniApikey'] = $db->real_escape_string((string)$_POST['dni_network_api_key']);
@@ -315,7 +315,7 @@ if (isset($_GET['edit_dni_network']) && !empty($_GET['edit_dni_network'])) {
 $dni_sql = "SELECT * FROM 202_dni_networks WHERE user_id = '1'";
 $dni_result = $db->query($dni_sql);
 
-template_top('API Integrations', NULL, NULL, NULL);
+template_top('API Integrations');
 
 ?>
 
@@ -369,7 +369,7 @@ template_top('API Integrations', NULL, NULL, NULL);
 						<?php if ($dni_result->num_rows > 0) {
 							while ($dni_row = $dni_result->fetch_assoc()) {
 								if ($dni_row['processed'] == false) {
-									$dniProcesing['networks'][] = array('id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']);
+									$dniProcesing['networks'][] = ['id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']];
 								}
 						?>
 								<tr>
@@ -385,7 +385,7 @@ template_top('API Integrations', NULL, NULL, NULL);
 												<div>
 												<?php } ?>
 									</td>
-									<td><?php echo substr($dni_row['apiKey'], 0, 12) . "... "; ?><a href="#" class="link showFullDniApikey" data-long="<?php echo $dni_row['apiKey']; ?>" data-short="<?php echo substr($dni_row['apiKey'], 0, 12); ?>">show</a></td>
+									<td><?php echo substr((string) $dni_row['apiKey'], 0, 12) . "... "; ?><a href="#" class="link showFullDniApikey" data-long="<?php echo $dni_row['apiKey']; ?>" data-short="<?php echo substr((string) $dni_row['apiKey'], 0, 12); ?>">show</a></td>
 									<td><?php echo $dni_row['affiliateId']; ?></td>
 									<td><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?edit_dni_network=<?php echo $dni_row['id']; ?>"><i class="glyphicon glyphicon-pencil"></i></a> <a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?delete_dni_network=<?php echo $dni_row['id']; ?>" onClick="return confirm('Delete This DNI Network?')"><i class="glyphicon glyphicon-trash"></i></a></td>
 								</tr>
@@ -396,11 +396,11 @@ template_top('API Integrations', NULL, NULL, NULL);
 			</div>
 			<div class="col-xs-12">
 				<form class="form-horizontal" role="form" method="post" action="">
-					<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo isset($edit_dni_row['type']) ? $edit_dni_row['type'] : ''; ?>">
-					<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo isset($edit_dni_row['name']) ? $edit_dni_row['name'] : ''; ?>">
+					<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo $edit_dni_row['type'] ?? ''; ?>">
+					<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo $edit_dni_row['name'] ?? ''; ?>">
 					<?php if (isset($editing_dni_network) && $editing_dni_network) { ?>
 						<input type="hidden" name="editing_dni_network" value="1">
-						<input type="hidden" name="editing_dni_network_id" value="<?php echo isset($edit_dni_row['id']) ? $edit_dni_row['id'] : ''; ?>">
+						<input type="hidden" name="editing_dni_network_id" value="<?php echo $edit_dni_row['id'] ?? ''; ?>">
 					<?php } ?>
 					<div class="col-xs-3" style="padding: 0px; padding-right: 5px;">
 						<label class="sr-only" for="dni_network">Select Network</label>
@@ -419,7 +419,7 @@ template_top('API Integrations', NULL, NULL, NULL);
 									echo 'col-xs-7';
 								} ?>" id="dni_api_key_input_group" style="padding: 0px; padding-right: 5px;">
 						<label class="sr-only" for="dni_network_api_key">Add API key</label>
-						<input type="text" name="dni_network_api_key" class="form-control input-sm" placeholder="API Key" value="<?php echo isset($edit_dni_row['apiKey']) ? $edit_dni_row['apiKey'] : ''; ?>">
+						<input type="text" name="dni_network_api_key" class="form-control input-sm" placeholder="API Key" value="<?php echo $edit_dni_row['apiKey'] ?? ''; ?>">
 						<p>
 						<div id="dniInfo"></div>
 					</div>
@@ -432,7 +432,7 @@ template_top('API Integrations', NULL, NULL, NULL);
 						<input type="text" name="dni_network_affiliate_id" id="dni_network_affiliate_id" class="form-control input-sm" placeholder="Affiliate ID" value="<?php if (isset($editing_dni_network) && $editing_dni_network) {
 																																												if (isset($edit_dni_row['type']) && $edit_dni_row['type'] == 'HasOffers') echo 'null';
 																																											} else {
-																																												echo isset($edit_dni_row['affiliateId']) ? $edit_dni_row['affiliateId'] : '';
+																																												echo $edit_dni_row['affiliateId'] ?? '';
 																																											} ?>">
 					</div>
 					<div class="col-xs-2" style="padding: 0px;">

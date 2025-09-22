@@ -46,17 +46,11 @@ namespace Slim\Middleware;
 class PrettyExceptions extends \Slim\Middleware
 {
     /**
-     * @var array
-     */
-    protected $settings;
-
-    /**
      * Constructor
      * @param array $settings
      */
-    public function __construct($settings = array())
+    public function __construct(protected $settings = [])
     {
-        $this->settings = $settings;
     }
 
     /**
@@ -90,11 +84,11 @@ class PrettyExceptions extends \Slim\Middleware
         $message = $exception->getMessage();
         $file = $exception->getFile();
         $line = $exception->getLine();
-        $trace = str_replace(array('#', "\n"), array('<div>#', '</div>'), $exception->getTraceAsString());
+        $trace = str_replace(['#', "\n"], ['<div>#', '</div>'], $exception->getTraceAsString());
         $html = sprintf('<h1>%s</h1>', $title);
         $html .= '<p>The application could not run because of the following error:</p>';
         $html .= '<h2>Details</h2>';
-        $html .= sprintf('<div><strong>Type:</strong> %s</div>', get_class($exception));
+        $html .= sprintf('<div><strong>Type:</strong> %s</div>', $exception::class);
         if ($code) {
             $html .= sprintf('<div><strong>Code:</strong> %s</div>', $code);
         }

@@ -19,7 +19,7 @@ function getAuth($db, $variables){
 		showCategories($db, $variables, $mysql['user_id']);
 		//return array('msg' => 'Authorized', 'error' => false, 'status' => 202);
 	} else {
-		return array('msg' => 'Unauthorized', 'error' => true, 'status' => 401);
+		return ['msg' => 'Unauthorized', 'error' => true, 'status' => 401];
 	}
 }
 
@@ -28,7 +28,7 @@ function showCategories($db, $vars, $user){
         $vars[$key]=$db->real_escape_string($var);
     //$vars = $db->real_escape_string($vars);
   //  print_r($vars);
-    
+
     if($vars['action']=="list")
         $data= listCategories($db,$user);
    // print_r($data);
@@ -45,7 +45,7 @@ function listCategories($db,$user){
     
         $html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
         $html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $cat['categories'][]=array('category_id' => $html['aff_network_id'], 'category_name' => $html['aff_network_name']);    
+    $cat['categories'][]=['category_id' => $html['aff_network_id'], 'category_name' => $html['aff_network_name']];    
 }
 
 $json = str_replace('\\/', '/', json_encode($cat));
@@ -57,7 +57,7 @@ function runReports($db, $vars, $user, $timezone){
 
 	date_default_timezone_set($timezone);
 
-	$report_types = array('keywords', 'text_ads', 'referers', 'ips', 'countries', 'cities', 'carriers', 'landing_pages'); //report types
+	$report_types = ['keywords', 'text_ads', 'referers', 'ips', 'countries', 'cities', 'carriers', 'landing_pages']; //report types
 
 	if (in_array($vars['type'], $report_types))
 	{	
@@ -79,7 +79,7 @@ function runReports($db, $vars, $user, $timezone){
 		if ($vars['date_from'] != null || $vars['date_to'] != null) {
 			
 			if(!validateDate($vars['date_from']) || !validateDate($vars['date_to'])){
-				$data = array('msg' => 'Wrong date format', 'error' => true, 'status' => 404);
+				$data = ['msg' => 'Wrong date format', 'error' => true, 'status' => 404];
 				$json = json_encode($data, true);
 				print_r(pretty_json($json));
 				die();
@@ -134,20 +134,20 @@ function runReports($db, $vars, $user, $timezone){
 		}
 
 	} else {
-		return array('msg' => 'Not allowed report type', 'error' => true, 'status' => 404);
+		return ['msg' => 'Not allowed report type', 'error' => true, 'status' => 404];
 	}
 	
 }
 
 function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid = null, $c1 = null, $c2 = null, $c3 = null, $c4 = null){
 
-	$date = array(
+	$date = [
 			'date_from' => date('m/d/Y', $date_from),
 			'date_to' => date('m/d/Y', $date_to),
 			'time_zone' => date_default_timezone_get() 
-	);
+	];
 
-	$data = array();
+	$data = [];
 
 	$mysql['user_id'] = $db->real_escape_string($user);
 	$select_id = $db->real_escape_string($id);
@@ -277,12 +277,12 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					$clicks = 0;
 					$clicks = $click_row['clicks'];
 
-					$total_clicks = $total_clicks + $clicks;
+					$total_clicks += $clicks;
 
 					$click_throughs = 0;
 					$click_throughs = $click_row['click_throughs'];
 
-					$total_click_throughs = $total_click_throughs + $click_throughs;
+					$total_click_throughs += $click_throughs;
 
 				//ctr rate
 					$ctr_ratio = 0;
@@ -297,14 +297,14 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					$cost = 0;
 					$cost = $clicks * $avg_cpc;
 
-					$total_cost = $total_cost + $cost;
+					$total_cost += $cost;
 					$total_avg_cpc = @round($total_cost/$total_clicks, 5);
 
 				//leads
 					$leads = 0;
 					$leads = $click_row['leads'];
 
-					$total_leads = $total_leads + $leads;
+					$total_leads += $leads;
 
 				//signup ratio
 					$su_ratio - 0;
@@ -315,13 +315,13 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 				//current payout
 					$payout = 0;
 					$payout = $report_row['click_payout'];
-					$total_payout = $total_payout + $payout;
+					$total_payout += $payout;
 
 				//income
 					$income = 0;
 					$income = $click_row['income'];
 
-					$total_income = $total_income + $income;
+					$total_income += $income;
 				//grab the EPC
 					$epc = 0;
 					$epc = @round($income/$clicks,2);
@@ -370,7 +370,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 				}
 			}
 
-			$data[] = array(
+			$data[] = [
 				$name => $report_row[$name],
 	        	"clicks" => $clicks,
 	        	"click_throughs" => $click_throughs,
@@ -384,10 +384,10 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 	        	"cost" => dollar_format($cost),
 	        	"net" => dollar_format($net),
 	        	"roi" => $roi."%"
-	    	);
+	    	];
 		}
 
-		$totals = array(
+		$totals = [
 			"clicks" => $total_clicks, 
 			"click_throughs" => $total_click_throughs,
 			"lp_ctr" => $total_ctr_ratio."%",
@@ -400,13 +400,13 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 			"cost" => dollar_format($total_cost),
 			"net" => dollar_format($total_net),
 			"roi" => $total_roi."%"
-		);
+		];
 
 	} else {
-		$totals = array();
+		$totals = [];
 	}
 
-	return array("date_range" => $date, $type => $data, "totals" => $totals);
+	return ["date_range" => $date, $type => $data, "totals" => $totals];
 	
 }
 
@@ -422,7 +422,7 @@ function getCampaignID($db, $campaign, $user){
 	if($key_result->num_rows > 0) {
 		return true;
 	} else {
-		$json = json_encode(array('msg' => 'Campaign not found', 'error' => true, 'status' => 404), true);
+		$json = json_encode(['msg' => 'Campaign not found', 'error' => true, 'status' => 404], true);
 		print_r(pretty_json($json));
 		die();
 	}
@@ -436,16 +436,16 @@ function validateDate($date, $format = 'm/d/Y')
 
 function getTimestamp($datefrom, $dateto)
 {	
-	$date = array();
+	$date = [];
 
-	$from = explode('/', $datefrom);
+	$from = explode('/', (string) $datefrom);
 	$from_month = trim($from[0]);
 	$from_day = trim($from[1]);
 	$from_year = trim($from[2]);
 
 	$date_from = mktime(0,0,0,(int)$from_month,(int)$from_day,(int)$from_year);
 
-    $to = explode('/', $dateto); 
+    $to = explode('/', (string) $dateto); 
     $to_month = trim($to[0]);
     $to_day = trim($to[1]);
     $to_year = trim($to[2]);
@@ -462,7 +462,7 @@ function pretty_json($json) {
  
     $result      = '';
     $pos         = 0;
-    $strLen      = strlen($json);
+    $strLen      = strlen((string) $json);
     $indentStr   = '  ';
     $newLine     = "\n";
     $prevChar    = '';
@@ -471,12 +471,12 @@ function pretty_json($json) {
     for ($i=0; $i<=$strLen; $i++) {
  
         // Grab the next character in the string.
-        $char = substr($json, $i, 1);
+        $char = substr((string) $json, $i, 1);
  
         // Are we inside a quoted string?
         if ($char == '"' && $prevChar != '\\') {
             $outOfQuotes = !$outOfQuotes;
- 
+
         // If this character is the end of an element, 
         // output a new line and indent the next line.
         } else if(($char == '}' || $char == ']') && $outOfQuotes) {
@@ -519,7 +519,7 @@ function dollar_format($amount, $cpv = false) {
 	if ($amount >= 0) {
 		$new_amount = "\$".sprintf("%.".$decimals."f",$amount);
 	} else { 
-		$new_amount = "\$".sprintf("%.".$decimals."f",substr($amount,1,strlen($amount)));
+		$new_amount = "\$".sprintf("%.".$decimals."f",substr((string) $amount,1,strlen((string) $amount)));
 		$new_amount = '('.$new_amount.')';    
 	}
 	

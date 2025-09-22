@@ -74,8 +74,8 @@ class Router
      */
     public function __construct()
     {
-        $this->routes = array();
-        $this->routeGroups = array();
+        $this->routes = [];
+        $this->routeGroups = [];
     }
 
     /**
@@ -105,7 +105,7 @@ class Router
     public function getMatchedRoutes($httpMethod, $resourceUri, $reload = false)
     {
         if ($reload || is_null($this->matchedRoutes)) {
-            $this->matchedRoutes = array();
+            $this->matchedRoutes = [];
             foreach ($this->routes as $route) {
                 if (!$route->supportsHttpMethod($httpMethod) && !$route->supportsHttpMethod("ANY")) {
                     continue;
@@ -126,7 +126,7 @@ class Router
      */
     public function map(\Slim\Route $route)
     {
-        list($groupPattern, $groupMiddleware) = $this->processGroups();
+        [$groupPattern, $groupMiddleware] = $this->processGroups();
 
         $route->setPattern($groupPattern . $route->getPattern());
         $this->routes[] = $route;
@@ -144,7 +144,7 @@ class Router
     protected function processGroups()
     {
         $pattern = "";
-        $middleware = array();
+        $middleware = [];
         foreach ($this->routeGroups as $group) {
             $k = key($group);
             $pattern .= $k;
@@ -152,7 +152,7 @@ class Router
                 $middleware = array_merge($middleware, $group[$k]);
             }
         }
-        return array($pattern, $middleware);
+        return [$pattern, $middleware];
     }
 
     /**
@@ -161,9 +161,9 @@ class Router
      * @param  array|null $middleware Optional parameter array of middleware
      * @return int        The index of the new group
      */
-    public function pushGroup($group, $middleware = array())
+    public function pushGroup($group, $middleware = [])
     {
-        return array_push($this->routeGroups, array($group => $middleware));
+        return array_push($this->routeGroups, [$group => $middleware]);
     }
 
     /**
@@ -182,19 +182,19 @@ class Router
      * @throws \RuntimeException            If named route not found
      * @return string                       The URL for the given route populated with provided replacement values
      */
-    public function urlFor($name, $params = array())
+    public function urlFor($name, $params = [])
     {
         if (!$this->hasNamedRoute($name)) {
             throw new \RuntimeException('Named route not found for name: ' . $name);
         }
-        $search = array();
+        $search = [];
         foreach ($params as $key => $value) {
-            $search[] = '#:' . preg_quote($key, '#') . '\+?(?!\w)#';
+            $search[] = '#:' . preg_quote((string) $key, '#') . '\+?(?!\w)#';
         }
         $pattern = preg_replace($search, $params, $this->getNamedRoute($name)->getPattern());
 
         //Remove remnants of unpopulated, trailing optional pattern segments, escaped special characters
-        return preg_replace('#\(/?:.+\)|\(|\)|\\\\#', '', $pattern);
+        return preg_replace('#\(/?:.+\)|\(|\)|\\\\#', '', (string) $pattern);
     }
 
     /**
@@ -245,7 +245,7 @@ class Router
     public function getNamedRoutes()
     {
         if (is_null($this->namedRoutes)) {
-            $this->namedRoutes = array();
+            $this->namedRoutes = [];
             foreach ($this->routes as $route) {
                 if ($route->getName() !== null) {
                     $this->addNamedRoute($route->getName(), $route);

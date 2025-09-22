@@ -39,14 +39,14 @@ class Cookies extends \Slim\Helper\Set
      * Default cookie settings
      * @var array
      */
-    protected $defaults = array(
+    protected $defaults = [
         'value' => '',
         'domain' => null,
         'path' => null,
         'expires' => null,
         'secure' => false,
         'httponly' => false
-    );
+    ];
 
     /**
      * Set cookie
@@ -62,12 +62,13 @@ class Cookies extends \Slim\Helper\Set
      * @param string $key   Cookie name
      * @param mixed  $value Cookie settings
      */
+    #[\Override]
     public function set($key, $value)
     {
         if (is_array($value)) {
             $cookieSettings = array_replace($this->defaults, $value);
         } else {
-            $cookieSettings = array_replace($this->defaults, array('value' => $value));
+            $cookieSettings = array_replace($this->defaults, ['value' => $value]);
         }
         parent::set($key, $cookieSettings);
     }
@@ -83,7 +84,8 @@ class Cookies extends \Slim\Helper\Set
      * @param  string $key      Cookie name
      * @param  array  $settings Optional cookie settings
      */
-    public function remove($key, $settings = array())
+    #[\Override]
+    public function remove($key, $settings = [])
     {
         $settings['value'] = '';
         $settings['expires'] = time() - 86400;

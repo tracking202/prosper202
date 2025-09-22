@@ -5,7 +5,7 @@ include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/api/v2/functions.php');
 
 header('Content-Type: application/json');
-$data = array();
+$data = [];
 
 if ($_SERVER['REQUEST_METHOD'] == "GET") {
 			$data = getAuth($db, $_GET);
@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] == "GET") {
 			}
 
 } else {
-	$data = array('msg' => 'Not allowed request method', 'error' => true, 'status' => 405);
+	$data = ['msg' => 'Not allowed request method', 'error' => true, 'status' => 405];
 }
 
 if(isset($data)){

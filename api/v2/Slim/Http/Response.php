@@ -74,7 +74,7 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
     /**
      * @var array HTTP response codes and messages
      */
-    protected static $messages = array(
+    protected static $messages = [
         //Informational 1xx
         100 => '100 Continue',
         101 => '101 Switching Protocols',
@@ -124,7 +124,7 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
         503 => '503 Service Unavailable',
         504 => '504 Gateway Timeout',
         505 => '505 HTTP Version Not Supported'
-    );
+    ];
 
     /**
      * Constructor
@@ -132,10 +132,10 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
      * @param int                      $status The HTTP response status
      * @param \Slim\Http\Headers|array $headers The HTTP response headers
      */
-    public function __construct($body = '', $status = 200, $headers = array())
+    public function __construct($body = '', $status = 200, $headers = [])
     {
         $this->setStatus($status);
-        $this->headers = new \Slim\Http\Headers(array('Content-Type' => 'text/html'));
+        $this->headers = new \Slim\Http\Headers(['Content-Type' => 'text/html']);
         $this->headers->replace($headers);
         $this->cookies = new \Slim\Http\Cookies();
         $this->write($body);
@@ -272,13 +272,13 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
     public function finalize()
     {
         // Prepare response
-        if (in_array($this->status, array(204, 304))) {
+        if (in_array($this->status, [204, 304])) {
             $this->headers->remove('Content-Type');
             $this->headers->remove('Content-Length');
             $this->setBody('');
         }
 
-        return array($this->status, $this->headers, $this->body);
+        return [$this->status, $this->headers, $this->body];
     }
 
     /**
@@ -322,7 +322,7 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
      * @param string $name     The name of the cookie
      * @param array  $settings Properties for cookie including: value, expire, path, domain, secure, httponly
      */
-    public function deleteCookie($name, $settings = array())
+    public function deleteCookie($name, $settings = [])
     {
         $this->cookies->remove($name, $settings);
         // Util::deleteCookieHeader($this->header, $name, $value);
@@ -349,7 +349,7 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
      */
     public function isEmpty()
     {
-        return in_array($this->status, array(201, 204, 304));
+        return in_array($this->status, [201, 204, 304]);
     }
 
     /**
@@ -385,7 +385,7 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
      */
     public function isRedirect()
     {
-        return in_array($this->status, array(301, 302, 303, 307));
+        return in_array($this->status, [301, 302, 303, 307]);
     }
 
     /**

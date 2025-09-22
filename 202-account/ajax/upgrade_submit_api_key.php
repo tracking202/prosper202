@@ -14,9 +14,9 @@ if (isset($_POST['api_key'])) {
 	}
 	if (!$error) {
 		$db->query("UPDATE 202_users SET p202_customer_api_key = '".$mysql['p202_customer_api_key']."' WHERE user_id = '".$mysql['user_id']."'");
-		$msg = array('error' => false, 'msg' => 'Valid');
+		$msg = ['error' => false, 'msg' => 'Valid'];
 	} else {
-		$msg = array('error' => true, 'msg' => $error['token'] . $error['p202_customer_api_key_invalid']);
+		$msg = ['error' => true, 'msg' => $error['token'] . $error['p202_customer_api_key_invalid']];
 	}
 
 	echo json_encode($msg, true);

@@ -4,7 +4,7 @@ include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user();
 
-template_top('Help Resources',NULL,NULL,NULL);  ?>
+template_top('Help Resources');  ?>
 
 
 <div class="row account">

@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(dirname(__FILE__) . '/202-config/connect.php');
+include_once(__DIR__ . '/202-config/connect.php');
 
 $error = [];
 $html = [];
@@ -65,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$header .= "Content-Transfer-Encoding: 8bit \r\n";
 		$header .= "MIME-Version: 1.0 \r\n";
 
-		mail($to, $subject, $message, $header);
+		mail((string) $to, $subject, $message, $header);
 
 		$success = true;
 	}

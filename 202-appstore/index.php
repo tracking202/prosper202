@@ -10,7 +10,7 @@ template_top('Prosper202 ClickServer App Store');
 
 		if ($_POST['token'] != $_SESSION['token']) { $error['token'] = 'You must use our forms to submit data.';  }
 
-		if (!preg_match('/\*/', $_POST['clickserver_api_key'])) {
+		if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
 			if (!clickserver_api_key_validate($_POST['clickserver_api_key']) && $mysql['clickserver_api_key'] !='') { $error['clickserver_api_key'] = 'This API Key appears invalid.'; }
 
 			if (!$error || $mysql['clickserver_api_key'] =='') {

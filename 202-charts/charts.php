@@ -12,9 +12,9 @@ declare(strict_types=1);
 
 //====================================
 function InsertChart( $flash_file, $library_path, $php_source, $width=400, $height=250, $bg_color="666666", $transparent=false, $license=null ){
-	
-	$php_source=urlencode($php_source);
-	$library_path=urlencode($library_path);
+
+	$php_source=urlencode((string) $php_source);
+	$library_path=urlencode((string) $library_path);
 
 	/*if (!isset($_COOKIE['hideChartUpgrade'])) {
 		$display = "style='display:none'";
@@ -24,7 +24,7 @@ function InsertChart( $flash_file, $library_path, $php_source, $width=400, $heig
 
 	$html="<OBJECT classid='clsid:D27CDB6E-AE6D-11cf-96B8-444553540000' codebase='http://download.macromedia.com/pub/shockwave/cabs/flash/swflash.cab#version=6,0,0,0' ";
 	$html.="WIDTH=".$width." HEIGHT=".$height." id='charts' ALIGN=''>";
-	$u=(strpos ($flash_file,"?")===false)? "?" : ((substr($flash_file, -1)==="&")? "":"&");
+	$u=(!str_contains ((string) $flash_file,"?"))? "?" : ((str_ends_with((string) $flash_file, "&"))? "":"&");
 	$html.="<PARAM NAME=movie VALUE='".$flash_file.$u."library_path=".$library_path."&stage_width=".$width."&stage_height=".$height."&php_source=".$php_source;
 	if($license!=null){$html.="&license=".$license;}
 	$html.="'> <PARAM NAME=quality VALUE=high> <PARAM NAME=bgcolor VALUE=#".$bg_color."> ";
@@ -35,12 +35,12 @@ function InsertChart( $flash_file, $library_path, $php_source, $width=400, $heig
 	if($transparent){$html.="wmode=transparent ";}
 	$html.="TYPE='application/x-shockwave-flash' PLUGINSPAGE='http://www.macromedia.com/go/getflashplayer'></EMBED></OBJECT>";
 	return $html;
-	
+
 }
 
 //====================================
-function SendChartData( $chart=array() ){
-	
+function SendChartData( $chart=[] ){
+
 	$xml="<chart>\r\n";
 	$Keys1= array_keys((array) $chart);
 	for ($i1=0;$i1<count($Keys1);$i1++){
@@ -54,23 +54,15 @@ function SendChartData( $chart=array() ){
 						case "chart_data":
 						$xml.="\t\t<row>\r\n";
 						for($i3=0;$i3<count($Keys3);$i3++){
-							switch(true){
-								case ($chart[$Keys1[$i1]][$Keys2[$i2]][$Keys3[$i3]]===null):
-								$xml.="\t\t\t<null/>\r\n";
-								break;
-								
-								case ($Keys2[$i2]>0 and $Keys3[$i3]>0):
-								$xml.="\t\t\t<number>".$chart[$Keys1[$i1]][$Keys2[$i2]][$Keys3[$i3]]."</number>\r\n";
-								break;
-								
-								default:
-								$xml.="\t\t\t<string>".$chart[$Keys1[$i1]][$Keys2[$i2]][$Keys3[$i3]]."</string>\r\n";
-								break;
-							}
+							match (true) {
+                                $chart[$Keys1[$i1]][$Keys2[$i2]][$Keys3[$i3]]===null => $xml.="\t\t\t<null/>\r\n",
+                                $Keys2[$i2]>0 and $Keys3[$i3]>0 => $xml.="\t\t\t<number>".$chart[$Keys1[$i1]][$Keys2[$i2]][$Keys3[$i3]]."</number>\r\n",
+                                default => $xml.="\t\t\t<string>".$chart[$Keys1[$i1]][$Keys2[$i2]][$Keys3[$i3]]."</string>\r\n",
+                            };
 						}
 						$xml.="\t\t</row>\r\n";
 						break;
-						
+
 						case "chart_value_text":
 						$xml.="\t\t<row>\r\n";
 						$count=0;
@@ -80,7 +72,7 @@ function SendChartData( $chart=array() ){
 						}
 						$xml.="\t\t</row>\r\n";
 						break;
-						
+
 						/*case "link_data_text":
 						$xml.="\t\t<row>\r\n";
 						$count=0;
@@ -90,7 +82,7 @@ function SendChartData( $chart=array() ){
 						}
 						$xml.="\t\t</row>\r\n";
 						break;*/
-						
+
 						case "draw":
 						$text="";
 						$xml.="\t\t<".$chart[$Keys1[$i1]][$Keys2[$i2]]['type'];
@@ -103,8 +95,8 @@ function SendChartData( $chart=array() ){
 						if($text!=""){$xml.=">".$text."</text>\r\n";}
 						else{$xml.=" />\r\n";}
 						break;
-						
-						
+
+
 						default://link, etc.
 						$xml.="\t\t<value";
 						for($i3=0;$i3<count($Keys3);$i3++){

@@ -5,7 +5,7 @@ include_once(str_repeat("../", 1).'202-config/connect.php');
 AUTH::require_user();
 
 $user_data = get_user_data_feedback($_SESSION['user_id']);
-template_top('VIP Perks Profile',NULL,NULL,NULL);
+template_top('VIP Perks Profile');
 $survey_data = getSurveyData($user_data['install_hash']);
 ?>
 <style type="text/css">

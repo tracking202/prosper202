@@ -11,7 +11,7 @@ $rss = fetch_rss( TRACKING202_RSS_URL . '/twitter/timeline.php');
  	$rss->items = array_slice($rss->items, 0, 1);
  	foreach ($rss->items as $item ) { 
  		
- 		$item_time = strtotime($item['pubdate'], time());
+ 		$item_time = strtotime((string) $item['pubdate'], time());
  		//only display items that are recent within 30 days from twitter
  		if ($item_time > (time() - 60*60*24*30)) {
 	 		$item['title'] = str_replace('tracking202: ', '', $item['title']);
