@@ -1,16 +1,29 @@
-/mysql_data
-p202.patch
+# Configuration files
 202-config.php
+phpstan.neon
+docker-compose.yaml
+composer.json
+
+# Dependencies
 /vendor/
-.claude/settings.local.json
+/node_modules/
+
+# Build and cache files
+*.cache
+*.patch
+composer.lock
+build/
+
+# Development and documentation
+/docs/
+/tests/
+phpstan-errors.txt
+
+# IDE and editor files
+.claude/
 .github/copilot-instructions.md
 CLAUDE.local.md
 CLAUDE.md
-phpstan-errors.txt
-phpstan.neon
-composer.lock
-vendor/
-composer.json
-docker-compose.yaml
-/vendor
-/vendor/ua-parser
+
+# Database
+/mysql_data/
