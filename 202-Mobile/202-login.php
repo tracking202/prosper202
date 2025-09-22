@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -11) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -11) . '/202-config/connect.php');
 
 $error = [];
 $html = [];
@@ -10,87 +10,74 @@ if (AUTH::logged_in()) {
 	header('location: ' . get_absolute_url() . '202-Mobile/mini-stats');
 }
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+	$username_raw = (string)($_POST['user_name'] ?? '');
+	$password = (string)($_POST['user_pass'] ?? '');
+	$username = trim($username_raw);
 
-	$mysql['user_name'] = $db->real_escape_string((string)$_POST['user_name']);
+	if ($username === '' || $password === '') {
+		$error['user'] = '<div class="error">Enter both a username and password.</div>';
+	}
 
-	$user_pass = salt_user_pass($_POST['user_pass']);
-	$mysql['user_pass'] = $db->real_escape_string($user_pass);
+	$login_result = null;
+	if (empty($error)) {
+		try {
+			$login_result = AUTH::authenticate($username, $password, $db);
+		} catch (RuntimeException) {
+			$error['user'] = '<div class="error">Unable to sign you in right now. Please try again later.</div>';
+		}
+	}
 
-	//check to see if this user exists
-	$user_sql = "	SELECT 	* 
-					FROM 		202_users  
-				 	WHERE 	user_name='" . $mysql['user_name'] . "'
-					AND     		user_pass='" . $mysql['user_pass'] . "'";
-	$user_result = _mysqli_query($user_sql, $db);
-	$user_row = $user_result->fetch_assoc();
-
-	if (!$user_row) {
+	$user_row = $login_result['user'] ?? null;
+	if (empty($error) && ($login_result['success'] ?? false) === false) {
 		$error['user'] = '<div class="error">Your username or password is incorrect.</div>';
 	}
 
-	//check tokens	
-	/* ($_POST['token'] != $_SESSION['token']) {
-		$error['token'] = '<div class="error">You must use theses forms to submit data.</div'; 
-	}*/
-
-
-
-	//RECORD THIS USER LOGIN, into user_logs
-	$mysql['login_server'] = $db->real_escape_string(serialize($_SERVER));
-	$mysql['login_session'] = $db->real_escape_string(serialize($_SESSION));
-	$mysql['login_error'] = $db->real_escape_string(serialize($error));
-	$mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
-
-	$mysql['login_time'] = time();
-
-	if ($error) {
-		$mysql['login_success'] = 0;
+	$login_success = empty($error) ? 1 : 0;
+	$log_stmt = $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+	if ($log_stmt) {
+		$login_error_serialized = serialize($error);
+		$login_server_serialized = serialize($_SERVER);
+		$login_session_serialized = serialize($_SESSION);
+		$redacted_password = '[filtered]';
+		$ip_address = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+		$login_time = time();
+		$log_stmt->bind_param(
+			'sssiisss',
+			$username,
+			$redacted_password,
+			$ip_address,
+			$login_time,
+			$login_success,
+			$login_error_serialized,
+			$login_server_serialized,
+			$login_session_serialized
+		);
+		$log_stmt->execute();
+		$log_stmt->close();
 	} else {
-		$mysql['login_success'] = 1;
+		prosper_log('login', 'Unable to prepare mobile login log statement: ' . $db->error);
 	}
 
-	//record everything that happend during this crime scene.
-	$user_log_sql = "INSERT INTO 			202_users_log
-								   SET			user_name='" . $mysql['user_name'] . "',
-												user_pass='" . $mysql['user_pass'] . "',
-												ip_address='" . $mysql['ip_address'] . "',
-												login_time='" . $mysql['login_time'] . "',
-												login_success = '" . $mysql['login_success'] . "',
-												login_error='" . $mysql['login_error'] . "',
-												login_server='" . $mysql['login_server'] . "',
-												login_session='" . $mysql['login_session'] . "'";
-	$user_log_result = _mysqli_query($user_log_sql, $db);
+	if (empty($error) && $user_row) {
+		AUTH::delete_old_auth_hash();
+		$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
+		$ip_id = (int) INDEXES::get_ip_id($ip);
+		$update_stmt = $db->prepare('UPDATE 202_users SET user_last_login_ip_id = ? WHERE user_id = ?');
+		if ($update_stmt) {
+			$user_id = (int) $user_row['user_id'];
+			$update_stmt->bind_param('ii', $ip_id, $user_id);
+			$update_stmt->execute();
+			$update_stmt->close();
+		}
 
-	if (!$error) {
-
-		$ip = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : '0.0.0.0';
-		$ip_id = INDEXES::get_ip_id($ip);
-		$mysql['ip_id'] = $db->real_escape_string($ip_id);
-
-		//update this users last login_ip_address
-		$user_sql = "	UPDATE 	202_users  
-						SET			user_last_login_ip_id='" . $mysql['ip_id'] . "'
-					 	WHERE 	user_name='" . $mysql['user_name'] . "'
-						AND     		user_pass='" . $mysql['user_pass'] . "'";
-		$user_result = _mysqli_query($user_sql, $db);
-
-		//regenerate session_id to prevent fixation
-		//session_regenerate_id();     have to remove this because it wouldn't like IE8 users login
-
-		//set session variables			
-		$_SESSION['session_fingerprint'] = md5('session_fingerprint' . $_SERVER['HTTP_USER_AGENT'] . session_id());
-		$_SESSION['session_time'] = time();
-		$_SESSION['user_name'] = $user_row['user_name'];
-		$_SESSION['user_id'] = $user_row['user_id'];
-		$_SESSION['user_api_key'] = $user_row['user_api_key'];
-		$_SESSION['user_stats202_app_key'] = $user_row['user_stats202_app_key'];
-		$_SESSION['user_timezone'] = $user_row['user_timezone'];
+		AUTH::begin_user_session($user_row);
 		$_SESSION['toolbar'] = 'true';
-		//redirect to account scree
+
 		header('location: ' . get_absolute_url() . '202-Mobile/mini-stats');
+		exit;
 	}
 
-	$html['user_name'] = htmlentities((string)($_POST['user_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['user_name'] = htmlentities($username, ENT_QUOTES, 'UTF-8');
 }
 ?>
 
@@ -135,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 							</tr>
 							<tr>
 
-								<td><input id="user_name" type="text" name="user_name" value="<?php echo $html['user_name'] ?? ''; ?>" /></td>
+								<td><input id="user_name" type="text" name="user_name" value="<?php echo $html['user_name'] ?? ''; ?>" autocomplete="username" /></td>
 							</tr>
 							<?php if (isset($error['user'])) {
 								printf('<tr><td colspan="2">%s</td></tr>', $error['user']);
@@ -147,7 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 							<tr>
 
 								<td>
-									<input id="user_pass" type="password" name="user_pass" />
+									<input id="user_pass" type="password" name="user_pass" autocomplete="current-password" />
 									<!-- <span id="forgot_pass"><br>(<a href="<?php echo get_absolute_url(); ?>202-lost-pass.php">I forgot my password/username</a>)</a> -->
 								</td>
 							</tr>

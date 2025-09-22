@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 //if the 202-config.php doesn't exist, we need to build one
-if ( !file_exists(substr(dirname( __FILE__ ), 0,-11) . '/202-config.php') ) {
+if ( !file_exists(substr(__DIR__, 0,-11) . '/202-config.php') ) {
 	
-	require_once(substr(dirname( __FILE__ ), 0,-11) . '/202-config/functions.php');
+	require_once(substr(__DIR__, 0,-11) . '/202-config/functions.php');
 	
         //check to make sure this user has the required PHP version
         if (!php_version_supported()) {
@@ -16,7 +16,7 @@ if ( !file_exists(substr(dirname( __FILE__ ), 0,-11) . '/202-config.php') ) {
 
 } else {
 
-	require_once(substr(dirname( __FILE__ ), 0,-11) . '/202-config/connect.php');
+	require_once(substr(__DIR__, 0,-11) . '/202-config/connect.php');
 
 	if (  is_installed() == false) {
 		
