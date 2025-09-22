@@ -2,8 +2,8 @@
 declare(strict_types=1);
 header('Access-Control-Allow-Origin: *');
 header('Content-Type: application/json');
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php');
-$data = array();
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
+$data = [];
 $tracker_id_public = $db->real_escape_string((string)$_GET['t202id']); 
 $sql = "SELECT 
 		2cv.parameters 
@@ -14,7 +14,7 @@ $sql = "SELECT
 $result = $db->query($sql);
 if ($result->num_rows > 0) {
 	$row = $result->fetch_assoc();
-	$parameters = explode(',', $row['parameters']);
+	$parameters = explode(',', (string) $row['parameters']);
 
 	foreach ($parameters as $parameter) {
 		$data[] = $parameter;

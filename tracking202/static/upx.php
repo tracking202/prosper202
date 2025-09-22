@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 header('P3P: CP="Prosper202 does not have a P3P policy"');
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php');
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-snoopy.php');
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/class-snoopy.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;
@@ -54,7 +54,7 @@ if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
 if(!$mysql['click_id']){
     header('HTTP/1.1 404 Not Found', true, 404);
 	header('Content-Type: application/json');
-	$response = array('error' => true, 'code' => 404, 'msg' => 'SubID not found');
+	$response = ['error' => true, 'code' => 404, 'msg' => 'SubID not found'];
 	print_r(json_encode($response));
 	die();
 }
@@ -124,7 +124,7 @@ $mysql['cpc'] = $db->real_escape_string($cvar_sql_row['click_cpc']);
 $mysql['click_cpa'] = $db->real_escape_string($cvar_sql_row['click_cpa']);
 $mysql['click_lead'] = $db->real_escape_string($cvar_sql_row['click_lead']);
 $mysql['click_time'] = $db->real_escape_string($cvar_sql_row['click_time']);
-$mysql['referer'] = urlencode($db->real_escape_string($cvar_sql_row['site_url_address']));
+$mysql['referer'] = urlencode((string) $db->real_escape_string($cvar_sql_row['site_url_address']));
 
 if ($_GET['amount'] && is_numeric($_GET['amount'])) {
 	$mysql['use_pixel_payout'] = 1;
@@ -132,7 +132,7 @@ if ($_GET['amount'] && is_numeric($_GET['amount'])) {
 	$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
 }
 
-$tokens = array(
+$tokens = [
     "subid" => $mysql['click_id'],
     "t202kw" => $mysql['t202kw'],
 	"c1" => $mysql['c1'],
@@ -151,7 +151,7 @@ $tokens = array(
 	"payout" => $mysql['payout'],
 	"random" => mt_rand(1000000, 9999999),
     "referer" => $mysql['referer']
-);
+];
 
 $account_id_sql="SELECT 202_clicks.ppc_account_id
 				 FROM 202_clicks 
@@ -171,13 +171,13 @@ if($mysql['ppc_account_id']){
 			//$pixel_result_row = memcache_mysql_fetch_assoc($pixel_sql);
 			$mysql['pixel_type_id'] = $db->real_escape_string($pixel_result_row['pixel_type_id']);
 			if ($mysql['pixel_type_id'] == 5) {
-				$mysql['pixel_code'] = stripslashes($pixel_result_row['pixel_code']);
+				$mysql['pixel_code'] = stripslashes((string) $pixel_result_row['pixel_code']);
 			}else{
 				$mysql['pixel_code'] = $db->real_escape_string($pixel_result_row['pixel_code']);
 			}
 
 			//get the list of pixel urls
-		    if($mysql['pixel_type_id'] != 5) $pixel_urls = explode(' ',$mysql['pixel_code']);
+		    if($mysql['pixel_type_id'] != 5) $pixel_urls = explode(' ',(string) $mysql['pixel_code']);
 		   
 			switch ($mysql['pixel_type_id']) {
 				case 1:

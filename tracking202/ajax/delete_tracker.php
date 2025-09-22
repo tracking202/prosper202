@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_trac
 			$type = 'Smart Redirector';
 		}
 
-		$slack->push('tracking_link_deleted', array('type' => $type, 'id' => $mysql['tracker_id'], 'user' => $user_row['username']));
+		$slack->push('tracking_link_deleted', ['type' => $type, 'id' => $mysql['tracker_id'], 'user' => $user_row['username']]);
 	}
 
 	$sql = "DELETE FROM 202_trackers WHERE tracker_id = '".$mysql['tracker_id']."' AND user_id = '".$mysql['user_id']."'";

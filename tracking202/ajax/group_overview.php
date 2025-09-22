@@ -1,8 +1,8 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/connect.php');
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/ReportSummaryForm.class.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/ReportSummaryForm.class.php');
 
 AUTH::require_user();
 
@@ -33,9 +33,9 @@ if ($user_row['user_cpc_or_cpv'] == 'cpv') {
 }
 
 $summary_form = new ReportSummaryForm();
-$summary_form->setDetails(array($user_row['user_pref_group_1'], $user_row['user_pref_group_2'], $user_row['user_pref_group_3'], $user_row['user_pref_group_4']));
-$summary_form->setDetailsSort(array(ReportBasicForm::SORT_NAME));
-$summary_form->setDisplayType(array(ReportBasicForm::DISPLAY_TYPE_TABLE));
+$summary_form->setDetails([$user_row['user_pref_group_1'], $user_row['user_pref_group_2'], $user_row['user_pref_group_3'], $user_row['user_pref_group_4']]);
+$summary_form->setDetailsSort([ReportBasicForm::SORT_NAME]);
+$summary_form->setDisplayType([ReportBasicForm::DISPLAY_TYPE_TABLE]);
 $summary_form->setStartTime($mysql['from']);
 $summary_form->setEndTime($mysql['to']);
 

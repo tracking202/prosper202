@@ -1,11 +1,11 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php');
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/ReportSummaryForm.class.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/ReportSummaryForm.class.php');
 AUTH::require_user();
 
 //show the template
-template_top('Group Overview',NULL,NULL,NULL);   ?>
+template_top('Group Overview');   ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">

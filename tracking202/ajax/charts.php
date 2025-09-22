@@ -1,8 +1,8 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/connect.php');
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/class-dataengine.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/class-dataengine.php');
 
 AUTH::require_user();
 
@@ -17,8 +17,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (isset($_POST['chart_time_range']) && $_POST['chart_time_range']) {
 		header("Content-type: text/json");
-		$data = array();
-		$range = array();
+		$data = [];
+		$range = [];
 		$de = new DataEngine();
 
 		$mysql['chart_time_range'] = $db->real_escape_string((string)$_POST['chart_time_range']);
@@ -57,11 +57,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		echo json_encode($data, JSON_NUMERIC_CHECK);
 	} else {
 
-		$data = array();
+		$data = [];
 		$keys = array_keys($_POST['levels']);
 
 		foreach ($keys as $key) {
-			$data[] = array('campaign_id' => $_POST['levels'][$key]['id'], 'value_type' => $_POST['types'][$key]['type']);
+			$data[] = ['campaign_id' => $_POST['levels'][$key]['id'], 'value_type' => $_POST['types'][$key]['type']];
 		}
 
 		$serialize = serialize($data);

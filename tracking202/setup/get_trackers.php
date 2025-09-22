@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -18) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -30,15 +30,15 @@ if ($showEdit) {
 
 	$edit_tracker_result = $db->query($edit_tracker_sql);
 	$edit_tracker_row = $edit_tracker_result->fetch_assoc();
-	$cpc_value = explode(".", $edit_tracker_row['click_cpc'], 2);
-	$cpa_value = explode(".", $edit_tracker_row['click_cpa'], 2);
+	$cpc_value = explode(".", (string) $edit_tracker_row['click_cpc'], 2);
+	$cpa_value = explode(".", (string) $edit_tracker_row['click_cpa'], 2);
 
 	if ($edit_tracker_result->num_rows == 0) {
 		$showEdit = false;
 	}
 }
 
-template_top('Get Trackers', NULL, NULL, NULL);  ?>
+template_top('Get Trackers');  ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
@@ -353,7 +353,7 @@ template_top('Get Trackers', NULL, NULL, NULL);  ?>
 							}
 
 							if ($tracker_row['landing_page_id']) {
-								$parsed_url = parse_url($tracker_row['landing_page_url']);
+								$parsed_url = parse_url((string) $tracker_row['landing_page_url']);
 								$destination_url = $parsed_url['scheme'] . '://' . $parsed_url['host'] . $parsed_url['path'] . '?';
 								if (!empty($parsed_url['query'])) {
 									$destination_url .= $parsed_url['query'] . '&';;

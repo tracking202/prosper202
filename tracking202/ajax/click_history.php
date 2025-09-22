@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -48,7 +48,7 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 
 
 	$db_table = "2c";
-	$query = query($command, $db_table, false, true, true, ' ORDER BY 2c.click_id DESC ', false, 30, true, true);
+	$query = query($command);
 } else {
 	$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,
@@ -86,7 +86,7 @@ LEFT JOIN 202_site_domains as 2ccd ON (2ccd.site_domain_id = 2cc.site_domain_id)
 LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.site_domain_id) 
 ";
 	$db_table = "2c";
-	$query = query($command, $db_table, true, true, true, '  ORDER BY 2c.click_id DESC ', (int)($_POST['offset'] ?? 0), true, true);
+	$query = query($command);
 }
 
 
@@ -176,11 +176,11 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																															//if not a landing page
 																																																																																															if (!$click_row['click_alp']) {
 																																																																																																$html['cloaking'] = htmlentities('http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public']);
-																																																																																																$html['cloaking_host'] = htmlentities($_SERVER['SERVER_NAME']);
+																																																																																																$html['cloaking_host'] = htmlentities((string) $_SERVER['SERVER_NAME']);
 																																																																																															} else {
 																																																																																																//advanced lander
 																																																																																																$html['cloaking'] = htmlentities('http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/off.php?acip=' . $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public']);
-																																																																																																$html['cloaking_host'] = htmlentities($_SERVER['SERVER_NAME']);
+																																																																																																$html['cloaking_host'] = htmlentities((string) $_SERVER['SERVER_NAME']);
 																																																																																															}
 																																																																																														} else {
 																																																																																															$html['cloaking'] = '';
@@ -209,7 +209,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																														$html['ppc_network_name'] = htmlentities((string)($click_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 																																																																																														$html['ppc_account_name'] = htmlentities((string)($click_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 																																																																																														$html['ip_address'] = htmlentities((string)($click_row['ip_address'] ?? ''), ENT_QUOTES, 'UTF-8');
-																																																																																														$html['click_cpc'] = htmlentities(dollar_format(isset($click_row['click_cpc']) ? $click_row['click_cpc'] : 0), ENT_QUOTES, 'UTF-8');
+																																																																																														$html['click_cpc'] = htmlentities((string) dollar_format($click_row['click_cpc'] ?? 0), ENT_QUOTES, 'UTF-8');
 																																																																																														$html['keyword'] = htmlentities((string)($click_row['keyword'] ?? ''), ENT_QUOTES, 'UTF-8');
 																																																																																														$html['click_lead'] = htmlentities((string)($click_row['click_lead'] ?? ''), ENT_QUOTES, 'UTF-8');
 																																																																																														$html['click_filtered'] = htmlentities((string)($click_row['click_filtered'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -223,7 +223,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																														$html['isp_name'] = htmlentities((string)($click_row['isp_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 																																																																																														if ($html['referer']) {
-																																																																																															$parsed = parse_url($html['referer']);
+																																																																																															$parsed = parse_url((string) $html['referer']);
 																																																																																															if (empty($parsed['scheme'])) {
 																																																																																																$html['referer'] = 'http://' . $html['referer'];
 																																																																																															}
@@ -238,7 +238,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																															$x--;
 																																																																																														}
 
-																																																																																														$ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'], $click_row['ppc_account_name'], $html['referer_host']);
+																																																																																														$ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'], $click_row['ppc_account_name']);
 
 																																																																																														if (!$click_row['type_name']) {
 																																																																																															$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $click_row['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/other.png/></span></span>';
@@ -268,7 +268,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 						<td id="<?php echo $html['click_id']; ?>"><?php printf('%s', $html['click_id']); ?></td>
 						<td style="text-align:left; padding-left:10px;"><?php echo $html['click_time']; ?></td>
 						<td class="device_info"><?php echo $html['device_type']; ?></td>
-						<td class="geo"><span data-toggle="tooltip" <?php echo 'title="' . $html['country_name'] . ' (' . $html['country_code'] . '), ' . $html['city_name'] . ' (' . $html['region_name'] . ')"'; ?>><img src="<?php echo get_absolute_url(); ?>202-img/flags/<?php echo strtolower($html['country_code']); ?>.png"></span></td>
+						<td class="geo"><span data-toggle="tooltip" <?php echo 'title="' . $html['country_name'] . ' (' . $html['country_code'] . '), ' . $html['city_name'] . ' (' . $html['region_name'] . ')"'; ?>><img src="<?php echo get_absolute_url(); ?>202-img/flags/<?php echo strtolower((string) $html['country_code']); ?>.png"></span></td>
 						<td class="isp"><?php if ($html['isp_name']) echo $html['isp_name'];
 																																																																																														else echo "-" ?></td>
 						<td class="filter">

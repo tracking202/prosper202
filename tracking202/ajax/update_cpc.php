@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -16,17 +16,17 @@ $to_day = '';
 $to_year = '';
 
 if (isset($_POST['from'])) {
-	$from = explode('/', $_POST['from']);
-	$from_month = isset($from[0]) ? $from[0] : '';
-	$from_day = isset($from[1]) ? $from[1] : '';
-	$from_year = isset($from[2]) ? $from[2] : '';
+	$from = explode('/', (string) $_POST['from']);
+	$from_month = $from[0] ?? '';
+	$from_day = $from[1] ?? '';
+	$from_year = $from[2] ?? '';
 }
 
 if (isset($_POST['to'])) {
-	$to = explode('/', $_POST['to']);
-	$to_month = isset($to[0]) ? $to[0] : '';
-	$to_day = isset($to[1]) ? $to[1] : '';
-	$to_year = isset($to[2]) ? $to[2] : '';
+	$to = explode('/', (string) $_POST['to']);
+	$to_month = $to[0] ?? '';
+	$to_day = $to[1] ?? '';
+	$to_year = $to[2] ?? '';
 }
 
 //if from or to, validate, and if validated, set it accordingly
@@ -42,8 +42,8 @@ if ((!isset($_POST['from']) || empty($_POST['from'])) || (!isset($_POST['to']) |
 }
 
 // Initialize error and html arrays to prevent undefined variable warnings
-$error = array();
-$html = array();
+$error = [];
+$html = [];
 
 //set mysql variables
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -165,7 +165,7 @@ if ((!isset($_POST['cpc_dollars']) || !is_numeric($_POST['cpc_dollars'])) or (!i
 
 
 //echo error
-echo (isset($error['time']) ? $error['time'] : '') . (isset($error['user']) ? $error['user'] : '') . (isset($error['cpc']) ? $error['cpc'] : '');
+echo ($error['time'] ?? '') . ($error['user'] ?? '') . ($error['cpc'] ?? '');
 
 //if there was an error terminate, or else just continue to run
 if (!empty($error)) {
@@ -184,22 +184,22 @@ if (!empty($error)) {
 <small>
 
 	<?php if (isset($_POST['tracker_type']) && $_POST['tracker_type'] == 0) { ?>
-		<strong>Affiliate Network:</strong> <em><?php echo isset($html['aff_network_name']) ? $html['aff_network_name'] : ''; ?></em><br />
-		<strong>Campaign:</strong> <em><?php echo isset($html['aff_campaign_name']) ? $html['aff_campaign_name'] : ''; ?></em><br />
+		<strong>Affiliate Network:</strong> <em><?php echo $html['aff_network_name'] ?? ''; ?></em><br />
+		<strong>Campaign:</strong> <em><?php echo $html['aff_campaign_name'] ?? ''; ?></em><br />
 	<?php } ?>
 
-	<strong>Text Ad:</strong> <em><?php echo isset($html['text_ad_name']) ? $html['text_ad_name'] : ''; ?></em><br />
+	<strong>Text Ad:</strong> <em><?php echo $html['text_ad_name'] ?? ''; ?></em><br />
 
 	<?php if (isset($_POST['tracker_type']) && $_POST['tracker_type'] == 0) { ?>
-		<strong>Method of Promotion:</strong> <em><?php echo isset($html['method_of_promotion']) ? $html['method_of_promotion'] : ''; ?></em><br />
+		<strong>Method of Promotion:</strong> <em><?php echo $html['method_of_promotion'] ?? ''; ?></em><br />
 	<?php } ?>
 
-	<strong>Landing Page:</strong> <em><?php echo isset($html['landing_page_name']) ? $html['landing_page_name'] : ''; ?></em><br />
-	<strong>PPC Network:</strong> <em><?php echo isset($html['ppc_network_name']) ? $html['ppc_network_name'] : ''; ?></em><br />
-	<strong>PPC Account:</strong> <em><?php echo isset($html['ppc_account_name']) ? $html['ppc_account_name'] : ''; ?></em><br />
-	<strong>Date From:</strong> <em><?php echo isset($html['from']) ? $html['from'] : ''; ?></em><br />
-	<strong>Date To:</strong> <em><?php echo isset($html['to']) ? $html['to'] : ''; ?></em><br />
-	<strong>Updated CPC:</strong> <em><?php echo isset($html['click_cpc']) ? $html['click_cpc'] : ''; ?></em><br></br>
+	<strong>Landing Page:</strong> <em><?php echo $html['landing_page_name'] ?? ''; ?></em><br />
+	<strong>PPC Network:</strong> <em><?php echo $html['ppc_network_name'] ?? ''; ?></em><br />
+	<strong>PPC Account:</strong> <em><?php echo $html['ppc_account_name'] ?? ''; ?></em><br />
+	<strong>Date From:</strong> <em><?php echo $html['from'] ?? ''; ?></em><br />
+	<strong>Date To:</strong> <em><?php echo $html['to'] ?? ''; ?></em><br />
+	<strong>Updated CPC:</strong> <em><?php echo $html['click_cpc'] ?? ''; ?></em><br></br>
 </small>
 
 <div class="error text-center"><span class="fui-alert"></span>BE VERY SURE YOU WANT TO DO THIS!</div>

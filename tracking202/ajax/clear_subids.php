@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -19,7 +19,7 @@ AUTH::require_user();
 	
 	if (!isset($error)) { 
 
-		$de = array();
+		$de = [];
 		$de['ppc_account_id'] = 0;
 
 		if ($_POST['aff_campaign_id'] != 0) {

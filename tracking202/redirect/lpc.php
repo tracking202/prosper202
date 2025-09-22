@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 use Tracking202\Redirect\RedirectHelper;
 
-require_once substr(dirname(__FILE__), 0, -21) . '/202-config/connect2.php';
-require_once substr(dirname(__FILE__), 0, -21) . '/202-config/class-dataengine-slim.php';
+require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
+require_once substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php';
 
 // Validate landing page id
 $landingId = RedirectHelper::getIntParam('lpip');
@@ -16,7 +16,7 @@ $mysql['landing_page_id_public'] = $db->real_escape_string((string)$landingId);
 
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
-    $mysql['202vars'] = base64_decode($db->real_escape_string($varsParam));
+    $mysql['202vars'] = base64_decode((string) $db->real_escape_string($varsParam));
 }
 
 $tracker_sql = "SELECT  aff_campaign_name,

@@ -5,8 +5,8 @@ header('Content-type: application/javascript');
 header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
 header('Expires: Sun, 03 Feb 2008 05:00:00 GMT'); // Date in the past
 header("Pragma: no-cache");
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php');
-if ( isset( $_SERVER["HTTPS"] ) && strtolower( $_SERVER["HTTPS"] ) == "on" ) {
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
+if ( isset( $_SERVER["HTTPS"] ) && strtolower( (string) $_SERVER["HTTPS"] ) == "on" ) {
 $strProtocol = 'https';
 } else {
 $strProtocol = 'http';
@@ -157,7 +157,7 @@ function t202Init(vars){
 		var t202kw = t202GetVar('t202kw');
 	}
 
-	var lpip = '<?php echo htmlentities($_GET['lpip']); ?>';
+	var lpip = '<?php echo htmlentities((string) $_GET['lpip']); ?>';
 	var t202id = t202GetVar('t202id');
     var t202ref = t202GetVar('t202ref');
 	var OVRAW = t202GetVar('OVRAW');

@@ -20,8 +20,8 @@ elseif (isset($_COOKIE['tracking202pci']))
 
 if (! is_numeric($acip))
     die();
-include_once (substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
+include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
 if(isset($_COOKIE['tracking202subid'])) { //if there's a cookie use it
     $click_id = $_COOKIE['tracking202subid'];
@@ -260,7 +260,7 @@ $update_sql = "
 ";
 // this function delays the sql, because UPDATING is very very slow
 //delay_sql($db, $update_sql);
-$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $mysql['click_out'] = 1;
 
@@ -284,10 +284,10 @@ $update_sql = "
 		click_id='" . $mysql['click_id'] . "'
 ";
 //delay_sql($db, $update_sql);
-$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
+$click_outbound_site_url_id = INDEXES::get_site_url_id($db);
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_site_url_id);
 
 if ($cloaking_on == true) {
@@ -298,7 +298,7 @@ $redirect_site_url = rotateTrackerUrl($db, $info_row);
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
 
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
+$click_redirect_site_url_id = INDEXES::get_site_url_id($db);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
 
 $update_sql = "
@@ -311,7 +311,7 @@ $update_sql = "
 		click_id='" . $mysql['click_id'] . "'
 ";
 //delay_sql($db, $update_sql);
-$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 // alright now the updates,
 // WE WANT TO DELAY THESES UPDATES, in a MYSQL DATBASES? Or else the UPDATES lag the server, the UPDATES have to wait until it locks to update the server
@@ -413,4 +413,3 @@ if ($cloaking_on == true) {
     header('location: ' . $redirect_site_url);
     die();
 }
-

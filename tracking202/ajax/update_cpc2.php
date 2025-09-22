@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -10,19 +10,19 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 //check variables
 
 // Initialize error array
-$error = array();
+$error = [];
 // Initialize html array
-$html = array();
+$html = [];
 
 $from = explode('/', $_POST['from'] ?? '');
-$from_month = isset($from[0]) ? $from[0] : '';
-$from_day = isset($from[1]) ? $from[1] : '';
-$from_year = isset($from[2]) ? $from[2] : '';
+$from_month = $from[0] ?? '';
+$from_day = $from[1] ?? '';
+$from_year = $from[2] ?? '';
 
 $to = explode('/', $_POST['to'] ?? '');
-$to_month = isset($to[0]) ? $to[0] : '';
-$to_day = isset($to[1]) ? $to[1] : '';
-$to_year = isset($to[2]) ? $to[2] : '';
+$to_month = $to[0] ?? '';
+$to_day = $to[1] ?? '';
+$to_year = $to[2] ?? '';
 
 //if from or to, validate, and if validated, set it accordingly
 
@@ -37,7 +37,7 @@ $html['to'] = date('m/d/y g:ia', $clean['to']);
 
 //set mysql variables
 // Initialize mysql array
-$mysql = array();
+$mysql = [];
 $mysql['from'] = $db->real_escape_string((string)$clean['from']);
 $mysql['to'] = $db->real_escape_string((string)$clean['to']);
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -153,20 +153,20 @@ if ((!isset($_POST['cpc_dollars']) || !is_numeric($_POST['cpc_dollars'])) or (!i
 	$error['cpc'] = '<div class="error">You did not input a numeric max CPC.</div>';
 } else {
 	$click_cpc = $_POST['cpc_dollars'] . '.' . $_POST['cpc_cents'];
-	$html['click_cpc'] = htmlentities(dollar_format($click_cpc), ENT_QUOTES, 'UTF-8');
+	$html['click_cpc'] = htmlentities((string) dollar_format($click_cpc), ENT_QUOTES, 'UTF-8');
 	$mysql['click_cpc'] = $db->real_escape_string($click_cpc);
 }
 
 
 //echo error
-echo (isset($error['time']) ? $error['time'] : '') . (isset($error['user']) ? $error['user'] : '') . (isset($error['cpc']) ? $error['cpc'] : '');
+echo ($error['time'] ?? '') . ($error['user'] ?? '') . ($error['cpc'] ?? '');
 
 //if there was an error terminate, or else just continue to run
 if ($error) {
 	die();
 }
 
-$de = array();
+$de = [];
 
 // update regular clicks
 $sql = "UPDATE  202_clicks LEFT JOIN 202_clicks_advance USING (click_id) 
@@ -196,7 +196,7 @@ if (isset($mysql['ppc_account_id']) && $mysql['ppc_account_id']) {
 	$sql .= " AND 202_clicks.ppc_account_id='" . $mysql['ppc_account_id'] . "' ";
 }
 
-$sql .= isset($mysql['method_of_promotion']) ? $mysql['method_of_promotion'] : '';
+$sql .= $mysql['method_of_promotion'] ?? '';
 $sql .= " AND click_time >=' " . $mysql['from'] . "' AND click_time <= '" . $mysql['to'] . "'";
 $result = $db->query($sql) or record_mysql_error($sql);
 $clicks_updated = $db->affected_rows;

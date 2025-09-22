@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -8,8 +8,8 @@ AUTH::require_user();
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 // Initialize error array
-$error = array();
-$clean = array();
+$error = [];
+$clean = [];
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
     
@@ -64,12 +64,12 @@ if (isset($_POST['user_pref_time_predefined']) && $_POST['user_pref_time_predefi
     
 } else { 
 	
-	$from = isset($_POST['from']) ? explode('/', $_POST['from']) : array('', '', ''); 
+	$from = isset($_POST['from']) ? explode('/', (string) $_POST['from']) : ['', '', '']; 
     $from_month = isset($from[0]) ? trim($from[0]) : '';
 	$from_day = isset($from[1]) ? trim($from[1]) : '';
 	$from_year = isset($from[2]) ? trim($from[2]) : '';
 
-    $to = isset($_POST['to']) ? explode('/', $_POST['to']) : array('', '', ''); 
+    $to = isset($_POST['to']) ? explode('/', (string) $_POST['to']) : ['', '', '']; 
     $to_month = isset($to[0]) ? trim($to[0]) : '';
     $to_day = isset($to[1]) ? trim($to[1]) : '';
     $to_year = isset($to[2]) ? trim($to[2]) : '';
@@ -89,7 +89,7 @@ if (isset($_POST['user_pref_time_predefined']) && $_POST['user_pref_time_predefi
     }     
 }
 
-echo (isset($error['date']) ? $error['date'] : '') . (isset($error['user_pref_time_predefined']) ? $error['user_pref_time_predefined'] : '') .  (isset($error['user_pref_limit']) ? $error['user_pref_limit'] : '') . (isset($error['user_pref_show']) ? $error['user_pref_show'] : '');    
+echo ($error['date'] ?? '') . ($error['user_pref_time_predefined'] ?? '') .  ($error['user_pref_limit'] ?? '') . ($error['user_pref_show'] ?? '');    
 
 
 if (empty($error) && $_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -124,10 +124,10 @@ if (empty($error) && $_SERVER['REQUEST_METHOD'] == 'POST') {
 							`user_pref_time_predefined`='".$mysql['user_pref_time_predefined']."',
 							`user_pref_time_from`='".$mysql['user_pref_time_from']."',
 							`user_pref_time_to`='".$mysql['user_pref_time_to']."',
-							`user_pref_group_1`='".(isset($mysql['user_pref_group_1']) ? $mysql['user_pref_group_1'] : '')."',
-							`user_pref_group_2`='".(isset($mysql['user_pref_group_2']) ? $mysql['user_pref_group_2'] : '')."',
-							`user_pref_group_3`='".(isset($mysql['user_pref_group_3']) ? $mysql['user_pref_group_3'] : '')."',
-							`user_pref_group_4`='".(isset($mysql['user_pref_group_4']) ? $mysql['user_pref_group_4'] : '')."',
+							`user_pref_group_1`='".($mysql['user_pref_group_1'] ?? '')."',
+							`user_pref_group_2`='".($mysql['user_pref_group_2'] ?? '')."',
+							`user_pref_group_3`='".($mysql['user_pref_group_3'] ?? '')."',
+							`user_pref_group_4`='".($mysql['user_pref_group_4'] ?? '')."',
 							`user_pref_device_id`='".$mysql['user_pref_device_id']."',
 							`user_pref_browser_id`='".$mysql['user_pref_browser_id']."',
 							`user_pref_platform_id`='".$mysql['user_pref_platform_id']."'

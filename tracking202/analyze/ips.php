@@ -1,5 +1,7 @@
-<?php include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/connect.php');
-include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/functions-ui-calendar.php');
+<?php
+$rootPath = dirname(__DIR__, 2);
+include_once $rootPath . '/202-config/connect.php';
+include_once $rootPath . '/202-config/functions-ui-calendar.php';
 
 AUTH::require_user();
 
@@ -7,7 +9,7 @@ AUTH::require_user();
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 //show the template
-template_top('Analyze Incoming IP Addresses', NULL, NULL, NULL); ?>
+template_top('Analyze Incoming IP Addresses'); ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">

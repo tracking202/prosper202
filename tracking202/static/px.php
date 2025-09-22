@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php');
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 	
 //get the aff_camapaign_id
 $mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['acip']);

@@ -9,8 +9,8 @@ header("Pragma: no-cache");
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
 
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect2.php'); 
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php'); 
+include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;

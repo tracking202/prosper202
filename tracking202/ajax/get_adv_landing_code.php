@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -15,12 +15,12 @@ if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
 // Initialize variables
-$error = array();
+$error = [];
 $success = false;
 
 //make sure a landing page is selected
 	if (empty($_POST['landing_page_id'])) { $error['landing_page_id'] = '<div class="error"><small><span class="fui-alert"></span>You have not selected a landing page to use.</small></div>';  }	
-	echo isset($error['landing_page_id']) ? $error['landing_page_id'] : ''; 
+	echo $error['landing_page_id'] ?? ''; 
 	
 //ok now run through all the offers to make sure they exist, THIS WILL ERROR IF THERE ISN"T A CAMPAIGN SELECTED WHEN RUN
 	$count = 0;
@@ -41,7 +41,7 @@ $success = false;
 	$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 	$landing_page_row = $landing_page_result->fetch_assoc();
 	
-	$parsed_url = parse_url($landing_page_row['landing_page_url']);
+	$parsed_url = parse_url((string) $landing_page_row['landing_page_url']);
 	
 	?><small><em><u>Make sure you test out all the links to make sure they work yourself before running them live.</u></em></small><?php 
 	$javascript_code = '<script>
@@ -180,5 +180,5 @@ print('<br/><strong><small>Dynamic Content Segment</strong></small><br/>
 		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
 
 if ($slack)	
-	$slack->push('advanced_landing_page_code_generated', array('name' => $landing_page_row['landing_page_nickname'], 'offers' => $campaign_slack, 'user' => $user_row['username']));
+	$slack->push('advanced_landing_page_code_generated', ['name' => $landing_page_row['landing_page_nickname'], 'offers' => $campaign_slack, 'user' => $user_row['username']]);
   ?>

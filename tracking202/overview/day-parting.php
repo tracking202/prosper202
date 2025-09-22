@@ -1,10 +1,10 @@
-<?php include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php'); 
-include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/functions-ui-calendar.php');
+<?php include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php'); 
+include_once(substr(__DIR__, 0, -21) . '/202-config/functions-ui-calendar.php');
 
 AUTH::require_user();
 
 //show the template
-template_top('Hourly Overview',NULL,NULL,NULL);  ?>
+template_top('Hourly Overview');  ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">

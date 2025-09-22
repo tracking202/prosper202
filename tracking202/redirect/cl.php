@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 use Tracking202\Redirect\RedirectHelper;
 
-require_once substr(dirname(__FILE__), 0, -21) . '/202-config/connect2.php';
+require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
 // Validate required parameter
 $clickIdPublic = RedirectHelper::getIntParam('pci');
@@ -15,7 +15,7 @@ $mysql['click_id_public'] = $db->real_escape_string((string)$clickIdPublic);
 
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
-    $mysql['202vars'] = base64_decode($db->real_escape_string($varsParam));
+    $mysql['202vars'] = base64_decode((string) $db->real_escape_string($varsParam));
 }
 $tracker_sql = "
 	SELECT
@@ -51,10 +51,10 @@ if (!$tracker_row) {
 if(isset($mysql['202vars'])&&$mysql['202vars']!=''){
 	//remove & at the end of the string
 
-	if(!parse_url ($redirect_site_url,PHP_URL_QUERY)){
+	if(!parse_url ((string) $redirect_site_url,PHP_URL_QUERY)){
 		
 		//if there is no query url the add a ? to thecVars but before doing that remove case where there may be a ? at the end of the url and nothing else
-		$redirect_site_url = rtrim($redirect_site_url,'?');
+		$redirect_site_url = rtrim((string) $redirect_site_url,'?');
 
 		//remove the & from thecVars and put a ? in fron t of it
 

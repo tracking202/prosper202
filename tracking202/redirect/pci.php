@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
 $mysql['click_id_public'] = $db->real_escape_string((string)$_GET['pci']);
 
@@ -31,7 +31,7 @@ $mysql['click_out'] = '1';
 $click_sql = "UPDATE    202_clicks_record
 			  SET       click_out='".$mysql['click_out']."'
 			  WHERE     click_id='".$mysql['click_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 
 //see if cloaking was turned on
@@ -64,4 +64,3 @@ if ($cloaking_on == true) {
 } else {
 	header ('location: '.$redirect_site_url);        
 }
-

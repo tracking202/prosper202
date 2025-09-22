@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -9,7 +9,7 @@ AUTH::require_user();
 	AUTH::set_timezone($_SESSION['user_timezone']);
 
 //show the template
-template_top('Redirectors Breakdown Overview',NULL,NULL,NULL); ?>
+template_top('Redirectors Breakdown Overview'); ?>
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
 		<h6>Redirectors Breakdown Overview</h6>

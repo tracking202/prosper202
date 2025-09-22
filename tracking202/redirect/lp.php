@@ -6,8 +6,8 @@ $lpip = $_GET['lpip'];
 if (!is_numeric($lpip)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php'); 
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
+include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
 $usedCachedRedirect = false; 
 if (!$db) $usedCachedRedirect = true;
@@ -54,7 +54,7 @@ if ($usedCachedRedirect==true) {
 				
 				if (isset ( $urlvars ) && $urlvars != '') {
 					// remove & at the end of the string
-					$urlvars = rtrim ( $urlvars, '&' );
+					$urlvars = rtrim ( (string) $urlvars, '&' );
 					if (! parse_url ( $new_url, PHP_URL_QUERY )) {
 						
 						// if there is no query url the add a ? to url but before doing that remove case where there may be a ? at the end of the url and nothing else
@@ -109,7 +109,7 @@ if ($memcacheWorking) {
 }
 
 //grab the GET variables from the LANDING PAGE
-$landing_page_site_url_address_parsed = parse_url($_SERVER['HTTP_REFERER']);  
+$landing_page_site_url_address_parsed = parse_url((string) $_SERVER['HTTP_REFERER']);  
 parse_str($landing_page_site_url_address_parsed['query'], $_GET);       
 
 if ($_GET['t202id']) { 
@@ -151,7 +151,7 @@ if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
 	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
-	$click_id_public = rand(1,9) . $click_id . rand(1,9);
+	$click_id_public = random_int(1,9) . $click_id . random_int(1,9);
 	$mysql['click_id_public'] = $db->real_escape_string($click_id_public); 
 } else { 
 	$mysql['click_cloaking'] = 0; 
@@ -161,7 +161,7 @@ if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking
 if ($cloaking_on == true) {
 
 	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
-	$click_cloaking_site_url_id = INDEXES::get_site_url_id($db, $cloaking_site_url); 
+	$click_cloaking_site_url_id = INDEXES::get_site_url_id($db); 
 	$mysql['click_cloaking_site_url_id'] = $db->real_escape_string($click_cloaking_site_url_id);         
 	
 }
@@ -181,7 +181,7 @@ $update_sql = "
 		click_cloaking='".$mysql['click_cloaking']."'
 	WHERE
 		click_id='".$mysql['click_id']."'";
-$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+$click_result = $db->query($update_sql) or record_mysql_error($db);
 //delay_sql($db, $update_sql);
 
 //set dirty hour
@@ -190,7 +190,7 @@ $data=($de->setDirtyHour($mysql['click_id']));
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url); 
+$click_redirect_site_url_id = INDEXES::get_site_url_id($db); 
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
 
 

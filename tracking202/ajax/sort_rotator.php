@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -89,17 +89,17 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 					//clicks
 					$clicks = 0;
 					$clicks = $rotator_totals_row['clicks'];
-					$total_clicks = $total_clicks + $clicks;
+					$total_clicks += $clicks;
 
 					//leads
 					$leads = 0;
 					$leads = $rotator_totals_row['leads'];
-					$total_leads = $total_leads + $leads;
+					$total_leads += $leads;
 
 					//payout
 					$payout = 0;
 					$payout = $rotator_totals_row['payout'];
-					$total_payout = $total_payout + $payout;
+					$total_payout += $payout;
 
 					//su ration
 					$su_ratio = 0;
@@ -114,7 +114,7 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 					//cost
 					$cost = 0;
 					$cost = $rotator_totals_row['cost'];
-					$total_cost = $total_cost + $cost;
+					$total_cost += $cost;
 
 					//avg cpc
 					$avg_cpc = 0;
@@ -127,7 +127,7 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 					//income
 					$income = 0;
 					$income = $rotator_totals_row['income'];
-					$total_income = $total_income + $income;
+					$total_income += $income;
 
 					//grab the EPC
 					$epc = 0;
@@ -159,12 +159,12 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 					$html['rotator_clicks'] = htmlentities(number_format($clicks), ENT_QUOTES, 'UTF-8');
 					$html['rotator_leads'] = htmlentities(number_format($leads), ENT_QUOTES, 'UTF-8');
 					$html['rotator_su_ratio'] = htmlentities($su_ratio . '%', ENT_QUOTES, 'UTF-8');
-					$html['rotator_payout'] = htmlentities(dollar_format($payout), ENT_QUOTES, 'UTF-8');
-					$html['rotator_epc'] = htmlentities(dollar_format($epc), ENT_QUOTES, 'UTF-8');
-					$html['rotator_avg_cpc'] = htmlentities(dollar_format($avg_cpc, $cpv), ENT_QUOTES, 'UTF-8');
-					$html['rotator_income'] = htmlentities(dollar_format($income, $cpv), ENT_QUOTES, 'UTF-8');
-					$html['rotator_cost'] = htmlentities(dollar_format($cost, $cpv), ENT_QUOTES, 'UTF-8');
-					$html['rotator_net'] = htmlentities(dollar_format($net, $cpv), ENT_QUOTES, 'UTF-8');
+					$html['rotator_payout'] = htmlentities((string) dollar_format($payout), ENT_QUOTES, 'UTF-8');
+					$html['rotator_epc'] = htmlentities((string) dollar_format($epc), ENT_QUOTES, 'UTF-8');
+					$html['rotator_avg_cpc'] = htmlentities((string) dollar_format($avg_cpc, $cpv), ENT_QUOTES, 'UTF-8');
+					$html['rotator_income'] = htmlentities((string) dollar_format($income, $cpv), ENT_QUOTES, 'UTF-8');
+					$html['rotator_cost'] = htmlentities((string) dollar_format($cost, $cpv), ENT_QUOTES, 'UTF-8');
+					$html['rotator_net'] = htmlentities((string) dollar_format($net, $cpv), ENT_QUOTES, 'UTF-8');
 					$html['rotator_roi'] = htmlentities($roi . '%', ENT_QUOTES, 'UTF-8');
 					$html['rotator_cost_wrapper'] = '(' . $html['rotator_cost'] . ')';
 
@@ -243,12 +243,12 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 							$html['rule_clicks'] = htmlentities(number_format($rule_stats_row['clicks']), ENT_QUOTES, 'UTF-8');
 							$html['rule_leads'] = htmlentities(number_format($rule_stats_row['leads']), ENT_QUOTES, 'UTF-8');
 							$html['rule_su_ratio'] = htmlentities($rule_su_ratio . '%', ENT_QUOTES, 'UTF-8');
-							$html['rule_payout'] = htmlentities(dollar_format($rule_stats_row['payout']), ENT_QUOTES, 'UTF-8');
-							$html['rule_epc'] = htmlentities(dollar_format($rule_epc), ENT_QUOTES, 'UTF-8');
-							$html['rule_avg_cpc'] = htmlentities(dollar_format($rule_stats_row['avg_cpc'], $cpv), ENT_QUOTES, 'UTF-8');
-							$html['rule_income'] = htmlentities(dollar_format($rule_stats_row['income'], $cpv), ENT_QUOTES, 'UTF-8');
-							$html['rule_cost'] = htmlentities(dollar_format($rule_stats_row['cost'], $cpv), ENT_QUOTES, 'UTF-8');
-							$html['rule_net'] = htmlentities(dollar_format($rule_net, $cpv), ENT_QUOTES, 'UTF-8');
+							$html['rule_payout'] = htmlentities((string) dollar_format($rule_stats_row['payout']), ENT_QUOTES, 'UTF-8');
+							$html['rule_epc'] = htmlentities((string) dollar_format($rule_epc), ENT_QUOTES, 'UTF-8');
+							$html['rule_avg_cpc'] = htmlentities((string) dollar_format($rule_stats_row['avg_cpc'], $cpv), ENT_QUOTES, 'UTF-8');
+							$html['rule_income'] = htmlentities((string) dollar_format($rule_stats_row['income'], $cpv), ENT_QUOTES, 'UTF-8');
+							$html['rule_cost'] = htmlentities((string) dollar_format($rule_stats_row['cost'], $cpv), ENT_QUOTES, 'UTF-8');
+							$html['rule_net'] = htmlentities((string) dollar_format($rule_net, $cpv), ENT_QUOTES, 'UTF-8');
 							$html['rule_roi'] = htmlentities($rule_roi . '%', ENT_QUOTES, 'UTF-8');
 							$html['rule_cost_wrapper'] = '(' . $html['rule_cost'] . ')';
 
@@ -312,12 +312,12 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 						$html['default_clicks'] = htmlentities(number_format($default_stats_row['clicks']), ENT_QUOTES, 'UTF-8');
 						$html['default_leads'] = htmlentities(number_format($default_stats_row['leads']), ENT_QUOTES, 'UTF-8');
 						$html['default_su_ratio'] = htmlentities($default_su_ratio . '%', ENT_QUOTES, 'UTF-8');
-						$html['default_payout'] = htmlentities(dollar_format($default_stats_row['payout']), ENT_QUOTES, 'UTF-8');
-						$html['default_epc'] = htmlentities(dollar_format($default_epc), ENT_QUOTES, 'UTF-8');
-						$html['default_avg_cpc'] = htmlentities(dollar_format($default_stats_row['avg_cpc'], $cpv), ENT_QUOTES, 'UTF-8');
-						$html['default_income'] = htmlentities(dollar_format($default_stats_row['income'], $cpv), ENT_QUOTES, 'UTF-8');
-						$html['default_cost'] = htmlentities(dollar_format($default_stats_row['cost'], $cpv), ENT_QUOTES, 'UTF-8');
-						$html['default_net'] = htmlentities(dollar_format($default_net, $cpv), ENT_QUOTES, 'UTF-8');
+						$html['default_payout'] = htmlentities((string) dollar_format($default_stats_row['payout']), ENT_QUOTES, 'UTF-8');
+						$html['default_epc'] = htmlentities((string) dollar_format($default_epc), ENT_QUOTES, 'UTF-8');
+						$html['default_avg_cpc'] = htmlentities((string) dollar_format($default_stats_row['avg_cpc'], $cpv), ENT_QUOTES, 'UTF-8');
+						$html['default_income'] = htmlentities((string) dollar_format($default_stats_row['income'], $cpv), ENT_QUOTES, 'UTF-8');
+						$html['default_cost'] = htmlentities((string) dollar_format($default_stats_row['cost'], $cpv), ENT_QUOTES, 'UTF-8');
+						$html['default_net'] = htmlentities((string) dollar_format($default_net, $cpv), ENT_QUOTES, 'UTF-8');
 						$html['default_roi'] = htmlentities($default_roi . '%', ENT_QUOTES, 'UTF-8');
 
 						$html['default_cost_wrapper'] = '(' . $html['default_cost'] . ')';
@@ -360,18 +360,18 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 				</tr>
 			<?php } ?>
 
-			<?php $total_payout = $total_payout + $default_stats_row['payout'];
-			$rows = $rows + 1;
+			<?php $total_payout += $default_stats_row['payout'];
+			$rows += 1;
 			$total_payout = @round(($total_payout / $rows), 2);
 			$html['total_clicks'] = htmlentities(number_format($total_clicks), ENT_QUOTES, 'UTF-8');
 			$html['total_leads'] = htmlentities(number_format($total_leads), ENT_QUOTES, 'UTF-8');
 			$html['total_su_ratio'] = htmlentities($total_su_ratio . '%', ENT_QUOTES, 'UTF-8');
-			$html['total_payout'] =  htmlentities(dollar_format($total_payout), ENT_QUOTES, 'UTF-8');
-			$html['total_epc'] =  htmlentities(dollar_format($total_epc), ENT_QUOTES, 'UTF-8');
-			$html['total_cpc'] =  htmlentities(dollar_format($total_avg_cpc, $cpv), ENT_QUOTES, 'UTF-8');
-			$html['total_income'] =  htmlentities(dollar_format($total_income, $cpv), ENT_QUOTES, 'UTF-8');
-			$html['total_cost'] =  htmlentities(dollar_format($total_cost, $cpv), ENT_QUOTES, 'UTF-8');
-			$html['total_net'] = htmlentities(dollar_format($total_net, $cpv), ENT_QUOTES, 'UTF-8');
+			$html['total_payout'] =  htmlentities((string) dollar_format($total_payout), ENT_QUOTES, 'UTF-8');
+			$html['total_epc'] =  htmlentities((string) dollar_format($total_epc), ENT_QUOTES, 'UTF-8');
+			$html['total_cpc'] =  htmlentities((string) dollar_format($total_avg_cpc, $cpv), ENT_QUOTES, 'UTF-8');
+			$html['total_income'] =  htmlentities((string) dollar_format($total_income, $cpv), ENT_QUOTES, 'UTF-8');
+			$html['total_cost'] =  htmlentities((string) dollar_format($total_cost, $cpv), ENT_QUOTES, 'UTF-8');
+			$html['total_net'] = htmlentities((string) dollar_format($total_net, $cpv), ENT_QUOTES, 'UTF-8');
 			$html['total_roi'] = htmlentities($total_roi . '%', ENT_QUOTES, 'UTF-8');
 
 			$html['total_cost_wrapper'] = '(' . $html['total_cost'] . ')';

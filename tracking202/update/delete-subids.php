@@ -1,8 +1,8 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -19) . '/202-config/connect.php');
-include_once(substr(dirname(__FILE__), 0, -19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0, -19) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 
 AUTH::require_user();
 
@@ -18,11 +18,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 	$subids = $_POST['subids'] ?? '';
-	$subids = trim($subids);
+	$subids = trim((string) $subids);
 	$subids = explode("\r", $subids);
 	$subids = str_replace("\n", '', $subids);
 
-	foreach ($subids as $key => $click_id) {
+	foreach ($subids as $click_id) {
 		$mysql['click_id'] = $db->real_escape_string($click_id);
 
 		$click_sql = "
@@ -80,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 //show the template
-template_top('Delete Subids', NULL, NULL, NULL); ?>
+template_top('Delete Subids'); ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">

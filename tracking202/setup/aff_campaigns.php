@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -18) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -11,9 +11,12 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 }
 
 // Initialize variables to prevent undefined variable warnings
-if (!isset($error)) $error = array();
-if (!isset($html)) $html = array();
-if (!isset($selected)) $selected = array();
+if (!isset($error)) $error = [];
+if (!isset($html)) $html = [];
+if (!isset($selected)) $selected = [];
+
+// Initialize default HTML values
+$html['aff_campaign_rotate'] = '0';
 if (!isset($add_success)) $add_success = false;
 if (!isset($delete_success)) $delete_success = false;
 if (!isset($editing)) $editing = false;
@@ -45,30 +48,30 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
-	$aff_network_id = trim($_POST['aff_network_id']);
+	$aff_network_id = trim((string) $_POST['aff_network_id']);
 	if (empty($aff_network_id)) {
 		$error['aff_network_id'] = '<div class="error">Select a category.</div>';
 	}
 
-	$aff_campaign_name = trim($_POST['aff_campaign_name']);
+	$aff_campaign_name = trim((string) $_POST['aff_campaign_name']);
 	if (empty($aff_campaign_name)) {
 		$error['aff_campaign_name'] = '<div class="error">What is the name of this campaign.</div>';
 	}
 
-	$aff_campaign_url = trim($_POST['aff_campaign_url']);
+	$aff_campaign_url = trim((string) $_POST['aff_campaign_url']);
 	if (empty($aff_campaign_url)) {
 		$error['aff_campaign_url'] = '<div class="error">What is your affiliate link? Make sure subids can be added to it.</div>';
 	}
 
 
-	if ((substr($_POST['aff_campaign_url'], 0, 7) != 'http://') and (substr($_POST['aff_campaign_url'], 0, 8) != 'https://')) {
+	if ((!str_starts_with((string) $_POST['aff_campaign_url'], 'http://')) and (!str_starts_with((string) $_POST['aff_campaign_url'], 'https://'))) {
 		if (!isset($error['aff_campaign_url'])) {
 			$error['aff_campaign_url'] = '';
 		}
 		$error['aff_campaign_url'] .= '<div class="error">Your Landing Page URL must start with http:// or https://</div>';
 	}
 
-	$aff_campaign_payout = trim($_POST['aff_campaign_payout']);
+	$aff_campaign_payout = trim((string) $_POST['aff_campaign_payout']);
 	if (! is_numeric($aff_campaign_payout)) {
 		if (!isset($error['aff_campaign_payout'])) {
 			$error['aff_campaign_payout'] = '';
@@ -109,7 +112,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['aff_campaign_url_3'] = $db->real_escape_string(trim($_POST['aff_campaign_url_3'] ?? ''));
 		$mysql['aff_campaign_url_4'] = $db->real_escape_string(trim($_POST['aff_campaign_url_4'] ?? ''));
 		$mysql['aff_campaign_url_5'] = $db->real_escape_string(trim($_POST['aff_campaign_url_5'] ?? ''));
-		$mysql['aff_campaign_rotate'] = $db->real_escape_string((string)($_POST['aff_campaign_rotate'] ?? '0'));
+		$post_aff_campaign_rotate = isset($_POST['aff_campaign_rotate']) ? (string)$_POST['aff_campaign_rotate'] : '0';
+		$mysql['aff_campaign_rotate'] = $db->real_escape_string($post_aff_campaign_rotate);
 		$mysql['aff_campaign_payout'] = $db->real_escape_string(trim($_POST['aff_campaign_payout'] ?? ''));
 		$mysql['aff_campaign_cloaking'] = $db->real_escape_string((string)($_POST['aff_campaign_cloaking'] ?? '0'));
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -143,29 +147,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($slack) {
 			if ($editing == true) {
 				if ($aff_campaign_row['aff_campaign_name'] != $_POST['aff_campaign_name']) {
-					$slack->push('campaign_name_changed', array('old_name' => $aff_campaign_row['aff_campaign_name'], 'new_name' => $_POST['aff_campaign_name'], 'user' => $user_row['username']));
+					$slack->push('campaign_name_changed', ['old_name' => $aff_campaign_row['aff_campaign_name'], 'new_name' => $_POST['aff_campaign_name'], 'user' => $user_row['username']]);
 				}
 
 				if ($aff_campaign_row['aff_network_id'] != $_POST['aff_network_id']) {
-					$slack->push('campaign_category_changed', array('name' => $_POST['aff_campaign_name'], 'old_category' => $aff_campaign_row['aff_network_name'], 'new_category' => $aff_network_row['aff_network_name'], 'user' => $user_row['username']));
+					$slack->push('campaign_category_changed', ['name' => $_POST['aff_campaign_name'], 'old_category' => $aff_campaign_row['aff_network_name'], 'new_category' => $aff_network_row['aff_network_name'], 'user' => $user_row['username']]);
 				}
 
-				if ($aff_campaign_row['aff_campaign_rotate'] != $_POST['aff_campaign_rotate']) {
-					if ($_POST['aff_campaign_rotate'] == true) {
+				if (isset($aff_campaign_row['aff_campaign_rotate']) && $aff_campaign_row['aff_campaign_rotate'] != $post_aff_campaign_rotate) {
+					if ($post_aff_campaign_rotate === '1') {
 						$rotation_status = 'on';
 					} else {
 						$rotation_status = 'off';
 					}
 
-					$slack->push('campaign_category_rotation_changed', array('name' => $_POST['aff_campaign_name'], 'status' => $rotation_status, 'user' => $user_row['username']));
+					$slack->push('campaign_category_rotation_changed', ['name' => $_POST['aff_campaign_name'], 'status' => $rotation_status, 'user' => $user_row['username']]);
 				}
 
 				if ($aff_campaign_row['aff_campaign_url'] != $_POST['aff_campaign_url']) {
-					$slack->push('campaign_url_changed', array('name' => $_POST['aff_campaign_name'], 'old_url' => $aff_campaign_row['aff_campaign_url'], 'new_url' => $_POST['aff_campaign_url'], 'user' => $user_row['username']));
+					$slack->push('campaign_url_changed', ['name' => $_POST['aff_campaign_name'], 'old_url' => $aff_campaign_row['aff_campaign_url'], 'new_url' => $_POST['aff_campaign_url'], 'user' => $user_row['username']]);
 				}
 
 				if ($aff_campaign_row['aff_campaign_payout'] != $_POST['aff_campaign_payout']) {
-					$slack->push('campaign_payout_changed', array('name' => $_POST['aff_campaign_name'], 'old_payout' => $aff_campaign_row['aff_campaign_payout'], 'new_payout' => $_POST['aff_campaign_payout'], 'user' => $user_row['username']));
+					$slack->push('campaign_payout_changed', ['name' => $_POST['aff_campaign_name'], 'old_payout' => $aff_campaign_row['aff_campaign_payout'], 'new_payout' => $_POST['aff_campaign_payout'], 'user' => $user_row['username']]);
 				}
 
 				if ($aff_campaign_row['aff_campaign_cloaking'] != $_POST['aff_campaign_cloaking']) {
@@ -175,7 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						$claoking_status = 'off';
 					}
 
-					$slack->push('campaign_cloaking_changed', array('name' => $_POST['aff_campaign_name'], 'status' => $claoking_status, 'user' => $user_row['username']));
+					$slack->push('campaign_cloaking_changed', ['name' => $_POST['aff_campaign_name'], 'status' => $claoking_status, 'user' => $user_row['username']]);
 				}
 			}
 		}
@@ -184,7 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($editing != true) {
 			//if this landing page is brand new, add on a landing_page_id_public
 			$aff_campaign_row['aff_campaign_id'] = $db->insert_id;
-			$aff_campaign_id_public = rand(1, 9) . $aff_campaign_row['aff_campaign_id'] . rand(1, 9);
+			$aff_campaign_id_public = random_int(1, 9) . $aff_campaign_row['aff_campaign_id'] . random_int(1, 9);
 			$mysql['aff_campaign_id_public'] = $db->real_escape_string($aff_campaign_id_public);
 			$mysql['aff_campaign_id'] = $db->real_escape_string((string)$aff_campaign_row['aff_campaign_id']);
 
@@ -210,7 +214,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 
 			if ($slack)
-				$slack->push('campaign_created', array('name' => $_POST['aff_campaign_name'], 'user' => $user_row['username']));
+				$slack->push('campaign_created', ['name' => $_POST['aff_campaign_name'], 'user' => $user_row['username']]);
 		}
 
 		$_GET['copy_aff_campaign_id'] = false;
@@ -251,7 +255,7 @@ if (!empty($_GET['edit_aff_campaign_id'])) {
 	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 
 	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'];
-	$html = array_map('htmlentities', $aff_campaign_row);
+	$html = array_map(function($value) { return htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'); }, $aff_campaign_row);
 	$html['aff_campaign_id'] = htmlentities((string)($_GET['edit_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
@@ -269,7 +273,7 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 
 	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'];
-	$html = array_map('htmlentities', $aff_campaign_row);
+	$html = array_map(function($value) { return htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'); }, $aff_campaign_row);
 	$html['aff_campaign_id'] = htmlentities((string)($_GET['copy_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['aff_campaign_name'] .= " (Copy)"; //append (Copy) to the campaign name so the user knows its a copy 
 
@@ -284,7 +288,7 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and (!isset($add_success) || $add_suc
 	$html = array_map('htmlentities', $_POST);
 }
 
-template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
+template_top('Affiliate Campaigns Setup');
 ?>
 
 <div class="row" style="margin-bottom: 15px;">
@@ -297,7 +301,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 				<div class="<?php if (isset($error) && !empty($error)) echo "error";
 							else echo "success"; ?> pull-right" style="margin-top: 20px;"> <small>
 						<?php if (isset($error) && !empty($error)) { ?>
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo isset($error['token']) ? $error['token'] : ''; ?>
+							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
 						<?php } ?>
 						<?php if (isset($add_success) && $add_success == true) { ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
@@ -339,7 +343,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 		<form method="post" class="form-horizontal" action="<?php if ($delete_success == true) {
 																echo $_SERVER['REDIRECT_URL'] ?? '';
 															} ?>" role="form" style="margin:15px 0px;">
-			<input name="aff_campaign_id" type="hidden" value="<?php echo isset($html['aff_campaign_id']) ? $html['aff_campaign_id'] : ''; ?>" />
+			<input name="aff_campaign_id" type="hidden" value="<?php echo $html['aff_campaign_id'] ?? ''; ?>" />
 			<input name="dni_id" type="hidden" value="" />
 			<input name="dni_offer_id" type="hidden" value="" />
 			<div class="form-group <?php if (isset($error['aff_network_id'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
@@ -377,7 +381,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 			<div class="form-group <?php if (isset($error['aff_campaign_name'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 				<label class="col-xs-4 control-label" for="aff_campaign_name" style="text-align: left;">Campaign Name:</label>
 				<div class="col-xs-6">
-					<input type="text" class="form-control input-sm" id="aff_campaign_name" name="aff_campaign_name" value="<?php echo isset($html['aff_campaign_name']) ? $html['aff_campaign_name'] : ''; ?>">
+					<input type="text" class="form-control input-sm" id="aff_campaign_name" name="aff_campaign_name" value="<?php echo $html['aff_campaign_name'] ?? ''; ?>">
 				</div>
 			</div>
 
@@ -402,7 +406,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 			<div class="form-group <?php if (isset($error['aff_campaign_url'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 				<label class="col-xs-4 control-label" for="aff_campaign_url" style="text-align: left;">Campaign URL <span class="fui-info" data-toggle="tooltip" title="This is where people will be sent when yout tracking link is clicked. If you are running an affiliate campaign, this will be where to put your affiliate url."></span></label>
 				<div class="col-xs-6">
-					<textarea name="aff_campaign_url" id="aff_campaign_url" class="form-control input-sm" rows="3" placeholder="http://"><?php echo isset($html['aff_campaign_url']) ? $html['aff_campaign_url'] : ''; ?></textarea>
+					<textarea name="aff_campaign_url" id="aff_campaign_url" class="form-control input-sm" rows="3" placeholder="http://"><?php echo $html['aff_campaign_url'] ?? ''; ?></textarea>
 				</div>
 			</div>
 
@@ -464,7 +468,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 			<div class="form-group <?php if (isset($error['aff_campaign_payout'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 				<label class="col-xs-4 control-label" for="aff_campaign_payout" style="text-align: left;">Payout $</label>
 				<div class="col-xs-2">
-					<input type="text" size="4" class="form-control input-sm" id="aff_campaign_payout" name="aff_campaign_payout" value="<?php echo isset($html['aff_campaign_payout']) ? $html['aff_campaign_payout'] : ''; ?>">
+					<input type="text" size="4" class="form-control input-sm" id="aff_campaign_payout" name="aff_campaign_payout" value="<?php echo $html['aff_campaign_payout'] ?? ''; ?>">
 				</div>
 			</div>
 
@@ -520,7 +524,7 @@ template_top('Affiliate Campaigns Setup', NULL, NULL, NULL);
 
 																while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
 																	$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-																	$url['aff_network_id'] = urlencode($aff_network_row['aff_network_id']);
+																	$url['aff_network_id'] = urlencode((string) $aff_network_row['aff_network_id']);
 
 																	if ($aff_network_row['dni_network_id'] != null) {
 																		if ($aff_network_row['processed'] == false) {

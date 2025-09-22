@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -18) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -11,10 +11,10 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 }
 
 // Initialize variables to prevent undefined variable warnings
-$error = array();
-$html = array();
-$mysql = array();
-$selected = array();
+$error = [];
+$html = [];
+$mysql = [];
+$selected = [];
 $add_success = false;
 $delete_success = false;
 $editing = false;
@@ -40,7 +40,7 @@ if (!empty($_GET['rules_added'])) {
 
 if ($_SERVER['REQUEST_METHOD'] == "POST") {
 
-	$rotator_name = trim($_POST['rotator_name']);
+	$rotator_name = trim((string) $_POST['rotator_name']);
 	if (empty($rotator_name)) {
 		$error['rotator_name'] = '<div class="error">Type in the name of your rotator!</div>';
 	}
@@ -58,12 +58,12 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 		$result = $db->query($sql);
 		$rotator_id = $db->insert_id;
 
-		$sql = "UPDATE 202_rotators SET public_id='" . rand(1, 9) . $rotator_id . rand(1, 9) . "' WHERE id='" . $rotator_id . "'";
+		$sql = "UPDATE 202_rotators SET public_id='" . random_int(1, 9) . $rotator_id . random_int(1, 9) . "' WHERE id='" . $rotator_id . "'";
 		$result = $db->query($sql);
 		$add_success = true;
 
 		if ($slack)
-			$slack->push('rotator_created', array('name' => $_POST['rotator_name'], 'user' => $user_row['username']));
+			$slack->push('rotator_created', ['name' => $_POST['rotator_name'], 'user' => $user_row['username']]);
 	}
 }
 
@@ -83,7 +83,7 @@ if (isset($_GET['delete_rotator_id'])) {
 				if (_mysqli_query($criteria_sql)) {
 					$delete_success = true;
 					if ($slack)
-						$slack->push('rotator_deleted', array('name' => $_GET['delete_rotator_name'], 'user' => $user_row['username']));
+						$slack->push('rotator_deleted', ['name' => $_GET['delete_rotator_name'], 'user' => $user_row['username']]);
 				}
 			}
 		}
@@ -93,7 +93,7 @@ if (isset($_GET['delete_rotator_id'])) {
 }
 
 
-template_top('Smart Redirector', NULL, NULL, NULL); ?>
+template_top('Smart Redirector'); ?>
 
 
 
@@ -165,8 +165,8 @@ template_top('Smart Redirector', NULL, NULL, NULL); ?>
 																	}
 
 																	while ($row = $result->fetch_array(MYSQLI_ASSOC)) {
-																		$html['name'] = htmlentities($row['name'], ENT_QUOTES, 'UTF-8');
-																		$html['id'] = htmlentities($row['id'], ENT_QUOTES, 'UTF-8');
+																		$html['name'] = htmlentities((string) $row['name'], ENT_QUOTES, 'UTF-8');
+																		$html['id'] = htmlentities((string) $row['id'], ENT_QUOTES, 'UTF-8');
 
 																		if ($userObj->hasPermission("remove_rotator")) {
 																			printf('<li><span class="filter_rotator_name">%s</span> - <a href="?delete_rotator_id=%s&delete_rotator_name=%s">remove</a></li>', $html['name'], $html['id'], $html['name']);

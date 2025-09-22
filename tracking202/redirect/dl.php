@@ -6,8 +6,8 @@ $t202id = $_GET['t202id'];
 if (!is_numeric($t202id)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
-include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/connect2.php');
-include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0, -21) . '/202-config/connect2.php');
+include_once(substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php');
 
 // Enable processing to continue even if the client disconnects.
 // This is necessary to ensure that critical operations, such as database updates
@@ -173,7 +173,7 @@ $mysql['ppc_account_id'] = $db->real_escape_string((string)($tracker_row['ppc_ac
 $mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string)($tracker_row['user_pref_dynamic_bid'] ?? '0'));
 // set cpc use dynamic variable if set or the default if not
 if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
-	$_GET['t202b'] = ltrim($_GET['t202b'], '$');
+	$_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
 	if (is_numeric($_GET['t202b'])) {
 		$bid = number_format($_GET['t202b'], 5, '.', '');
 		$mysql['click_cpc'] = $db->real_escape_string($bid);
@@ -190,13 +190,13 @@ $mysql['text_ad_id'] = $db->real_escape_string((string)($tracker_row['text_ad_id
 
 /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
 //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
-$referer_url_parsed = array();
+$referer_url_parsed = [];
 $referer_url_query = '';
-$referer_query = array();
+$referer_query = [];
 
 if (!empty($_SERVER['HTTP_REFERER'])) {
-	$referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
-	$referer_url_query = isset($referer_url_parsed['query']) ? $referer_url_parsed['query'] : '';
+	$referer_url_parsed = @parse_url((string) $_SERVER['HTTP_REFERER']);
+	$referer_url_query = $referer_url_parsed['query'] ?? '';
 	@parse_str($referer_url_query, $referer_query);
 }
 
@@ -254,8 +254,8 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 		break;
 }
 
-if (substr($keyword, 0, 8) == 't202var_') {
-	$t202var = substr($keyword, strpos($keyword, "_") + 1);
+if (str_starts_with((string) $keyword, 't202var_')) {
+	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
 	if (isset($_GET[$t202var])) {
 		$keyword = $_GET[$t202var];
@@ -270,7 +270,7 @@ $_lGET = array_change_key_case($_GET, CASE_LOWER); //make lowercase copy of get
 //Get C1-C4 IDs
 for ($i = 1; $i <= 4; $i++) {
 	$custom = "c" . $i; //create dynamic variable
-	$custom_val = isset($_lGET[$custom]) ? $_lGET[$custom] : '';
+	$custom_val = $_lGET[$custom] ?? '';
 	$custom_val = $db->real_escape_string($custom_val); // get the value
 	$custom_val = str_replace('%20', ' ', $custom_val);
 	$custom_id = INDEXES::get_custom_var_id($db, $custom, $custom_val); //get the id
@@ -279,10 +279,10 @@ for ($i = 1; $i <= 4; $i++) {
 
 $mysql['gclid'] = $db->real_escape_string((string)($_GET['gclid'] ?? ''));
 
-$custom_var_ids = array();
+$custom_var_ids = [];
 
-$ppc_variable_ids = !empty($tracker_row['ppc_variable_ids']) ? explode(',', $tracker_row['ppc_variable_ids']) : array();
-$parameters = !empty($tracker_row['parameters']) ? explode(',', $tracker_row['parameters']) : array();
+$ppc_variable_ids = !empty($tracker_row['ppc_variable_ids']) ? explode(',', (string) $tracker_row['ppc_variable_ids']) : [];
+$parameters = !empty($tracker_row['parameters']) ? explode(',', (string) $tracker_row['parameters']) : [];
 
 foreach ($parameters as $key => $value) {
 	$variable = $db->real_escape_string((string)($_GET[$value] ?? ''));
@@ -365,7 +365,7 @@ $mysql['click_in'] = 1;
 $mysql['click_out'] = 1;
 
 
-$ip = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0');
+$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 $ip_id = INDEXES::get_ip_id($db, $ip);
 $mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 
@@ -375,14 +375,17 @@ $user_id = $tracker_row['user_id'];
 
 //GEO Lookup
 $GeoData = getGeoData($ip_address);
-
-$country_id = INDEXES::get_country_id($db, $GeoData['country'], $GeoData['country_code']);
+$countryName = $GeoData['country'] ?? '';
+$countryCode = $GeoData['country_code'] ?? '';
+$country_id = INDEXES::get_country_id($db, $countryName, $countryCode);
 $mysql['country_id'] = $db->real_escape_string((string)$country_id);
 
-$region_id = INDEXES::get_region_id($db, $GeoData['region'] ?? '', $mysql['country_id']);
+$regionName = $GeoData['region'] ?? '';
+$region_id = INDEXES::get_region_id($db, $regionName, $country_id);
 $mysql['region_id'] = $db->real_escape_string((string)$region_id);
 
-$city_id = INDEXES::get_city_id($db, $GeoData['city'], $mysql['country_id']);
+$cityName = $GeoData['city'] ?? '';
+$city_id = INDEXES::get_city_id($db, $cityName, $country_id);
 $mysql['city_id'] = $db->real_escape_string((string)$city_id);
 
 
@@ -390,6 +393,10 @@ $mysql['city_id'] = $db->real_escape_string((string)$city_id);
 $mysql['isp_id'] = '0';
 if ($tracker_row['maxmind_isp'] == '1') {
 	$IspData = getIspData($ip_address);
+	if (is_string($IspData)) {
+		$IspDataParts = explode(',', $IspData);
+		$IspData = $IspDataParts[0];
+	}
 	$isp_id = INDEXES::get_isp_id($db, $IspData);
 	$mysql['isp_id'] = $db->real_escape_string((string)$isp_id);
 }
@@ -406,7 +413,7 @@ if ($device_id['type'] == '4') {
 
 //ok we have the main data, now insert this row
 $click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 
 
@@ -430,7 +437,7 @@ $click_sql = "INSERT INTO   202_clicks
 							click_filtered = '" . $mysql['click_filtered'] . "',
 							click_bot = '" . $mysql['click_bot'] . "',
 							click_time = '" . $mysql['click_time'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 $total_vars = count($custom_var_ids);
 
@@ -442,10 +449,10 @@ if ($total_vars > 0) {
 	$mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);
 
 	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
-	$var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+	$var_result = $db->query($var_sql) or record_mysql_error($db);
 } else {
 	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "',0)";
-	$var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+	$var_result = $db->query($var_sql) or record_mysql_error($db);
 }
 
 // insert gclid and utm vars
@@ -457,7 +464,7 @@ $click_sql = "INSERT INTO   202_google
 utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
 utm_term_id = '" . $mysql['utm_term_id'] . "',
 utm_content_id = '" . $mysql['utm_content_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 //ok we have the main data, now insert this row
 $click_sql = "INSERT INTO   202_clicks_spy
@@ -471,7 +478,7 @@ $click_sql = "INSERT INTO   202_clicks_spy
 							click_bot = '" . $mysql['click_bot'] . "',
 							click_alp = '" . $mysql['click_alp'] . "',
 							click_time = '" . $mysql['click_time'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 
 
@@ -488,7 +495,7 @@ $click_sql = "INSERT INTO   202_clicks_advance
 							platform_id='" . $mysql['platform_id'] . "',
 							browser_id='" . $mysql['browser_id'] . "',
 							device_id='" . $mysql['device_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 //insert the tracking data
 $click_sql = "
@@ -500,7 +507,7 @@ $click_sql = "
 		c2_id = '" . $mysql['c2_id'] . "',
 		c3_id = '" . $mysql['c3_id'] . "',
 		c4_id = '" . $mysql['c4_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 //now gather variables for the clicks record db
 //lets determine if cloaking is on
@@ -513,7 +520,7 @@ if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
 	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
-	$click_id_public = rand(1, 9) . $click_id . rand(1, 9);
+	$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
 	$mysql['click_id_public'] = $db->real_escape_string((string)$click_id_public);
 } else {
 	$mysql['click_cloaking'] = 0;
@@ -526,13 +533,13 @@ $click_sql = "INSERT INTO   202_clicks_record
 							click_cloaking='" . $mysql['click_cloaking'] . "',
 							click_in='" . $mysql['click_in'] . "',
 							click_out='" . $mysql['click_out'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
 if ($tracker_row['user_pref_referer_data'] == 't202ref') {
 	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
 		$mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
-		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $mysql['t202ref']);
+		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_GET['t202ref']);
 	} else { //if not found revert to what we usually do
 		if (isset($referer_query['url'])) {
 			$click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
@@ -590,7 +597,7 @@ $click_sql = "INSERT INTO   202_clicks_site
                                                         click_referer_site_url_id='" . $mysql['click_referer_site_url_id'] . "',
                                                         click_outbound_site_url_id='" . $mysql['click_outbound_site_url_id'] . "',
                                                         click_redirect_site_url_id='" . $mysql['click_redirect_site_url_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 
 //update the click summary table
@@ -602,8 +609,8 @@ $today_month = date('n', time());
 $today_year = date('Y', time());
 
 //the click_time is recorded in the middle of the day
-$click_time = mktime(12, 0, 0, $today_month, $today_day, $today_year);
-$mysql['click_time'] = $db->real_escape_string($click_time);
+$click_time = mktime(12, 0, 0, (int)$today_month, (int)$today_day, (int)$today_year);
+$mysql['click_time'] = $db->real_escape_string((string)$click_time);
 
 
 if ($mysql['click_cpa'] != NULL) {

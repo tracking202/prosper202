@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php');
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 
 $mysql['user_id'] = 1;
 
@@ -20,11 +20,11 @@ if (function_exists('openssl_decrypt')) {
     $iv = $message->{'iv'};
     $decrypted = trim(
         openssl_decrypt(
-            base64_decode($encrypted),
+            base64_decode((string) $encrypted),
             'AES-128-CBC',
-            substr(sha1($user_row['cb_key']), 0, 32),
+            substr(sha1((string) $user_row['cb_key']), 0, 32),
             OPENSSL_RAW_DATA,
-            base64_decode($iv)
+            base64_decode((string) $iv)
         ),
         "\0..\32"
     );
@@ -37,7 +37,7 @@ if (function_exists('openssl_decrypt')) {
         $user_results = $db->query($user_sql);
 
         if ($slack) 
-            $slack->push('cb_key_verified', array());
+            $slack->push('cb_key_verified', []);
 
     } else if($order['transactionType'] == 'SALE') {
         $mysql['click_id'] = $db->real_escape_string($order['trackingCodes'][0]);

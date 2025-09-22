@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 if (!isset($_POST['type']) || (($_POST['type'] != 'landingpage' && $_POST['type'] != 'landingpages') && $_POST['type'] != 'advlandingpage')) { ?>
@@ -34,7 +34,7 @@ if ($_POST['type'] == 'landingpages') {
     $landing_page_sql = "(SELECT landing_page_id,landing_page_nickname FROM `202_landing_pages` AS 2lp JOIN 202_aff_campaigns using(aff_campaign_id) JOIN 202_aff_networks using(aff_network_id) WHERE 2lp.user_id='".$mysql['user_id']."' AND 2lp.aff_campaign_id".$eq."'".$mysql['aff_campaign_id']."' AND `landing_page_deleted`='0' AND aff_campaign_deleted='0' AND `aff_network_deleted`='0' ORDER BY `aff_campaign_id`, `landing_page_nickname` ASC) UNION (SELECT landing_page_id,landing_page_nickname FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND `landing_page_type`='1' AND `landing_page_deleted`='0' ORDER BY `landing_page_nickname` ASC)";
 }
 
-?><input id="landing_page_style_type" type="hidden" name="landing_page_style_type" value="<?php echo htmlentities($_POST['type']); ?>"/><?php 
+?><input id="landing_page_style_type" type="hidden" name="landing_page_style_type" value="<?php echo htmlentities((string) $_POST['type']); ?>"/><?php 
 $landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 
 if ($landing_page_result->num_rows == 0) { ?>

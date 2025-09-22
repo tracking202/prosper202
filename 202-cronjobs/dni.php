@@ -18,20 +18,20 @@ try {
 			}
 
 			if ($_GET['processed'] == 'false') {
-				$data = array(
-					'credentials' => array(
+				$data = [
+					'credentials' => [
 						'install_hash' => $row['install_hash'],
 						'networkId' => $_GET['dni'],
 						'api_key' => $row['apiKey'],
 						'type' => $row['type'],
 						'host' => getDNIHost()
-					)
-				);
+					]
+				];
 
 				$curl = curl_init('https://my.tracking202.com/api/v2/dni/iron/offers/cache/all');
 				curl_setopt($curl, CURLOPT_HEADER, false);
 				curl_setopt($curl, CURLOPT_RETURNTRANSFER, false);
-				curl_setopt($curl, CURLOPT_HTTPHEADER, array("Content-type: application/json"));
+				curl_setopt($curl, CURLOPT_HTTPHEADER, ["Content-type: application/json"]);
 				curl_setopt($curl, CURLOPT_POST, true);
 				curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($data, JSON_NUMERIC_CHECK));
 				$response = curl_exec($curl);

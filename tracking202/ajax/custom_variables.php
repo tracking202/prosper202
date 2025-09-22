@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -33,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <?php } 
 
     if ($_POST['post_vars'] == true && isset($_POST['vars']) && isset($_POST['ppc_network_id'])) {
-        $vars = array();
+        $vars = [];
 
         $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
         foreach ($_POST['vars'] as $var) {

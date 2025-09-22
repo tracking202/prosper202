@@ -25,8 +25,8 @@ try {
 		die();
 	}
 	$domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
-	$data = array('to' => $user_row['user_email'], 'domain' => $domain, 'campaigns' => array());
-	$ids = array();
+	$data = ['to' => $user_row['user_email'], 'domain' => $domain, 'campaigns' => []];
+	$ids = [];
 
 	$time['from_today'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
 	$time['to_today'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
@@ -58,7 +58,7 @@ try {
 
 	if ($result_today->num_rows > 0) {
 		while ($row_today = $result_today->fetch_assoc()) {
-			$columns_today = array();
+			$columns_today = [];
 			$ids[] = $row_today['aff_campaign_id'];
 			foreach ($row_today as $key => $value) {
 				if ($key == 'aff_campaign_id' || $key == 'aff_campaign_name') {
@@ -95,7 +95,7 @@ try {
 
 	if ($result_yesterday->num_rows > 0) {
 		while ($row_yesterday = $result_yesterday->fetch_assoc()) {
-			$difference = array();
+			$difference = [];
 
 			foreach ($row_yesterday as $key => $value) {
 				if ($key == 'aff_campaign_id' || $key == 'aff_campaign_name') {
@@ -123,7 +123,7 @@ try {
 		$curl = curl_init('https://my.tracking202.com/api/v2/send-daily-email');
 		curl_setopt($curl, CURLOPT_HEADER, false);
 		curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($curl, CURLOPT_HTTPHEADER, array("Content-type: application/json"));
+		curl_setopt($curl, CURLOPT_HTTPHEADER, ["Content-type: application/json"]);
 		curl_setopt($curl, CURLOPT_POST, true);
 		curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($data));
 		$response = curl_exec($curl);

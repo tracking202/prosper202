@@ -4,8 +4,8 @@ declare(strict_types=1);
 header("Pragma: no-cache");
 header("Expires: -1");
 
-include_once(substr(dirname(__FILE__), 0, -19) . '/202-config/connect2.php');
-include_once(substr(dirname(__FILE__), 0, -19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0, -19) . '/202-config/connect2.php');
+include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 
 $landing_page_id_public = $_GET['lpip'];
 $mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
@@ -13,7 +13,7 @@ $tracker_sql = "SELECT  202_landing_pages.user_id,
 						  202_landing_pages.landing_page_id
 				FROM     202_landing_pages
 				WHERE  202_landing_pages.landing_page_id_public='" . $mysql['landing_page_id_public'] . "'";
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+$tracker_row = memcache_mysql_fetch_assoc($db);
 
 //set the timezone to the users timezone
 $mysql['user_id'] = $db->real_escape_string($tracker_row['user_id']);
@@ -25,7 +25,7 @@ $user_sql = "SELECT 		user_timezone,
 			   FROM 		202_users 
 			   LEFT JOIN	202_users_pref USING (user_id)
 			   WHERE 		202_users.user_id='" . $mysql['user_id'] . "'";
-$user_row = memcache_mysql_fetch_assoc($db, $user_sql);
+$user_row = memcache_mysql_fetch_assoc($db);
 $mysql['user_pref_dynamic_bid'] = $db->real_escape_string($user_row['user_pref_dynamic_bid']);
 
 //now this sets it
@@ -54,7 +54,7 @@ if ($_GET['t202id']) {
 			LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)		
 		WHERE
 			tr.tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
+	$tracker_row2 = memcache_mysql_fetch_assoc($db);
 	if ($tracker_row2) {
 		$tracker_row = array_merge($tracker_row, $tracker_row2);
 	}
@@ -85,7 +85,7 @@ $mysql['text_ad_id'] = $db->real_escape_string($tracker_row['text_ad_id']);
 
 /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
 //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
-$referer_url_parsed = @parse_url($_GET['referer']);
+$referer_url_parsed = @parse_url((string) $_GET['referer']);
 $referer_url_query = $referer_url_parsed['query'];
 
 @parse_str($referer_url_query, $referer_query);
@@ -144,8 +144,8 @@ switch ($user_row['user_keyword_searched_or_bidded']) {
 		break;
 }
 
-if (substr($keyword, 0, 8) == 't202var_') {
-	$t202var = substr($keyword, strpos($keyword, "_") + 1);
+if (str_starts_with((string) $keyword, 't202var_')) {
+	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
 	if (isset($_GET[$t202var])) {
 		$keyword = $_GET[$t202var];
@@ -179,10 +179,10 @@ $mysql['c4_id'] = $db->real_escape_string($c4_id);
 $mysql['gclid'] = $db->real_escape_string((string)$_GET['gclid']);
 
 
-$custom_var_ids = array();
+$custom_var_ids = [];
 
-$ppc_variable_ids = explode(',', $tracker_row['ppc_variable_ids']);
-$parameters = explode(',', $tracker_row['parameters']);
+$ppc_variable_ids = explode(',', (string) $tracker_row['ppc_variable_ids']);
+$parameters = explode(',', (string) $tracker_row['parameters']);
 
 foreach ($parameters as $key => $value) {
 	$variable = $db->real_escape_string((string)$_GET[$value]);
@@ -244,7 +244,7 @@ if (isset($utm_content) && $utm_content != '') {
 }
 $mysql['utm_content_id'] = $db->real_escape_string($utm_content_id);
 
-$ip = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? $_SERVER['HTTP_X_FORWARDED_FOR'] : '0.0.0.0';
+$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
 $ip_id = INDEXES::get_ip_id($db, $ip);
 $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
@@ -265,12 +265,12 @@ $mysql['click_out'] = 0;
 if ($user_row['user_pref_referer_data'] == 't202ref') {
 	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
 		$mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
-		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $mysql['t202ref']);
+		$click_referer_site_url_id = INDEXES::get_site_url_id($db);
 	} else { //if not found revert to what we usually do
 		if ($referer_query['url']) {
-			$click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+			$click_referer_site_url_id = INDEXES::get_site_url_id($db);
 		} else {
-			$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_GET['referer']);
+			$click_referer_site_url_id = INDEXES::get_site_url_id($db);
 		}
 	}
 } else { //user wants the real referer first
@@ -278,9 +278,9 @@ if ($user_row['user_pref_referer_data'] == 't202ref') {
 	// now lets get variables for clicks site
 	// so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
 	if ($referer_query['url']) {
-		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+		$click_referer_site_url_id = INDEXES::get_site_url_id($db);
 	} else {
-		$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_GET['referer']);
+		$click_referer_site_url_id = INDEXES::get_site_url_id($db);
 	}
 }
 
@@ -294,18 +294,26 @@ $user_id = $tracker_row['user_id'];
 //GEO Lookup
 $GeoData = getGeoData($ip_address);
 
-$country_id = INDEXES::get_country_id($db, $GeoData['country'], $GeoData['country_code']);
+$countryName = $GeoData['country'] ?? '';
+$countryCode = $GeoData['country_code'] ?? '';
+$country_id = INDEXES::get_country_id($db, $countryName, $countryCode);
 $mysql['country_id'] = $db->real_escape_string($country_id);
 
-$region_id = INDEXES::get_region_id($db, $GeoData['region'], $mysql['country_id']);
+$regionName = $GeoData['region'] ?? '';
+$region_id = INDEXES::get_region_id($db, $regionName, $country_id);
 $mysql['region_id'] = $db->real_escape_string($region_id);
 
-$city_id = INDEXES::get_city_id($db, $GeoData['city'], $mysql['country_id']);
+$cityName = $GeoData['city'] ?? '';
+$city_id = INDEXES::get_city_id($db, $cityName, $country_id);
 $mysql['city_id'] = $db->real_escape_string($city_id);
 
 
 if ($user_row['maxmind_isp'] == '1') {
 	$IspData = getIspData($ip_address);
+	if (is_string($IspData)) {
+		$IspDataParts = explode(',', $IspData);
+		$IspData = $IspDataParts[0];
+	}
 	$isp_id = INDEXES::get_isp_id($db, $IspData);
 	$mysql['isp_id'] = $db->real_escape_string($isp_id);
 }
@@ -326,7 +334,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($click_sql);
 //now gather the info for the advance click insert
 $click_id = $db->insert_id;
 $mysql['click_id'] = $db->real_escape_string($click_id);
-$click_id_public = rand(1, 9) . $click_id . rand(1, 9);
+$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
 $mysql['click_id_public'] = $db->real_escape_string($click_id_public);
 
 //because this is a simple landing page, set click_alp (which stands for click advanced landing page, equal to 0)
@@ -357,10 +365,10 @@ if ($total_vars > 0) {
 	$mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);
 
 	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
-	$var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+	$var_result = $db->query($var_sql) or record_mysql_error($db);
 } else {
 	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "',0)";
-	$var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+	$var_result = $db->query($var_sql) or record_mysql_error($db);
 }
 
 
@@ -373,7 +381,7 @@ $click_sql = "INSERT INTO   202_google
 utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
 utm_term_id = '" . $mysql['utm_term_id'] . "',
 utm_content_id = '" . $mysql['utm_content_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 //ok we have the main data, now insert this row
 $click_sql = "INSERT INTO  202_clicks_spy
@@ -435,7 +443,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($click_sql);
 
 
 $landing_site_url = $_SERVER['HTTP_REFERER'];
-$click_landing_site_url_id = INDEXES::get_site_url_id($db, $landing_site_url);
+$click_landing_site_url_id = INDEXES::get_site_url_id($db);
 $mysql['click_landing_site_url_id'] = $db->real_escape_string($click_landing_site_url_id);
 
 $old_lp_site_url = 'http://' . $_SERVER['REDIRECT_SERVER_NAME'] . '/lp/' . $landing_page_id_public;

@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-30) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-30) . '/202-config/connect.php');
 	
 //make sure user is logged in or die
 	AUTH::require_user();
@@ -58,7 +58,7 @@ LEFT JOIN 202_utm_medium AS 2um ON (2g.utm_medium_id = 2um.utm_medium_id)
 LEFT JOIN 202_utm_source AS 2us ON (2g.utm_source_id = 2us.utm_source_id) 
 LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 	$db_table = "2c";
-	$query = query($command, $db_table, true, true, true, '  ORDER BY 2c.click_id DESC ', $_POST['offset'], false, false);
+	$query = query($command);
 	
 
 //run query
@@ -66,9 +66,9 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 	$click_result = $db->query($click_sql) or record_mysql_error($click_sql); 
 	//echo $click_sql;	
 //html escape vars
-	$html['from'] = htmlentities($query['from'], ENT_QUOTES, 'UTF-8');
-	$html['to'] = htmlentities($query['to'], ENT_QUOTES, 'UTF-8'); 
-	$html['rows'] = htmlentities($query['rows'], ENT_QUOTES, 'UTF-8'); 
+	$html['from'] = htmlentities((string) $query['from'], ENT_QUOTES, 'UTF-8');
+	$html['to'] = htmlentities((string) $query['to'], ENT_QUOTES, 'UTF-8'); 
+	$html['rows'] = htmlentities((string) $query['rows'], ENT_QUOTES, 'UTF-8'); 
 
 //set the timezone for the user, to display dates in their timezone
 	AUTH::set_timezone($_SESSION['user_timezone']);
@@ -129,11 +129,11 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 			//if not a landing page
 			if (!$click_row['click_alp']) { 
 				$html['cloaking'] = htmlentities( 'http://' .$_SERVER['SERVER_NAME'] . get_absolute_url().'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public'] );
-				$html['cloaking_host'] = htmlentities( $_SERVER['SERVER_NAME'] );   
+				$html['cloaking_host'] = htmlentities( (string) $_SERVER['SERVER_NAME'] );   
 			} else { 
 				//advanced lander
 				$html['cloaking'] = htmlentities( 'http://' .$_SERVER['SERVER_NAME'] . get_absolute_url().'tracking202/redirect/off.php?acip='. $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public'] );
-				$html['cloaking_host'] = htmlentities( $_SERVER['SERVER_NAME'] );   
+				$html['cloaking_host'] = htmlentities( (string) $_SERVER['SERVER_NAME'] );   
 			}
 		} else {
 			$html['cloaking'] = '';
@@ -156,7 +156,7 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 		$html['ppc_account_name'] = htmlentities((string)($click_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['ip_address'] = htmlentities((string)($click_row['ip_address'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['isp_name'] = htmlentities((string)($click_row['isp_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['click_cpc'] = htmlentities(dollar_format($click_row['click_cpc']), ENT_QUOTES, 'UTF-8');
+		$html['click_cpc'] = htmlentities((string) dollar_format($click_row['click_cpc']), ENT_QUOTES, 'UTF-8');
 		$html['keyword'] = htmlentities((string)($click_row['keyword'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['click_lead'] = htmlentities((string)($click_row['click_lead'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['click_filtered'] = htmlentities((string)($click_row['click_filtered'] ?? ''), ENT_QUOTES, 'UTF-8');      
@@ -173,7 +173,7 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 				$origin = $click_row['location_city_name'] . ', ' . $origin;  
 			}
 			
-			$html['origin'] = htmlentities($origin, ENT_QUOTES, 'UTF-8');  
+			$html['origin'] = htmlentities((string) $origin, ENT_QUOTES, 'UTF-8');  
 		}  
 		
 		if ($click_row['click_filtered'] == '1') { 

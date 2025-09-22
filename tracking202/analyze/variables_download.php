@@ -7,8 +7,8 @@ header("Content-Disposition: attachment; filename=T202_custom_variables_".time()
 header("Pragma: no-cache");
 header("Expires: -1");
 
-include_once(substr(dirname( __FILE__ ), 0,-20) . '/202-config/connect.php');
-include_once(substr(dirname( __FILE__ ), 0,-20) . '/202-config/class-dataengine.php'); 
+include_once(substr(__DIR__, 0,-20) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-20) . '/202-config/class-dataengine.php'); 
 
 AUTH::require_user();
 
@@ -27,7 +27,7 @@ $de = new DataEngine();
 $de->setDownload(); //enable downloads query modification. removes the LIMIT filter
 
 $data=($de->getReportData('variable', $mysql['from'], $mysql['to'],$cpv));
-	
+
 $dr= new DisplayData();
 $dr->downloadVariables($data);
 $de->setDisplay(); //disable downloads query modification

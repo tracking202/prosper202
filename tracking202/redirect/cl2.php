@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 use Tracking202\Redirect\RedirectHelper;
 
-require_once substr(dirname(__FILE__), 0, -21) . '/202-config/connect2.php';
+require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
 $url = RedirectHelper::getStringParam('q');
 if ($url === null) {

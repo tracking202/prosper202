@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 	//require authenticated user
 	AUTH::require_user(); 
@@ -13,8 +13,8 @@ include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
 	$aff_campaign_result = $db->query($aff_campaign_sql);
 	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 	
-	$html['aff_campaign_id_public'] = htmlentities($aff_campaign_row['aff_campaign_id_public']);
-	$html['aff_campaign_name'] = htmlentities($aff_campaign_row['aff_campaign_name']);
+	$html['aff_campaign_id_public'] = htmlentities((string) $aff_campaign_row['aff_campaign_id_public']);
+	$html['aff_campaign_name'] = htmlentities((string) $aff_campaign_row['aff_campaign_name']);
 	
 	//the pixel
 	$pixel = '<img height="1" width="1" border="0" style="display: none;" src="http://'.$_SERVER['SERVER_NAME'].get_absolute_url().'tracking202/static/px.php?acip='.$html['aff_campaign_id_public'].'"/>';

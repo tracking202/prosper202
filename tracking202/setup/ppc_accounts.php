@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -18) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -12,9 +12,9 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 
 $slack = false;
 $slack_pixel_added_message = false;
-$error = array();
-$html = array();
-$selected = array();
+$error = [];
+$html = [];
+$selected = [];
 $add_success = '';
 $delete_success = '';
 $network_editing = false;
@@ -34,21 +34,21 @@ if (!empty($_GET['edit_ppc_account_id'])) {
 	$network_editing = true;
 	$mysql['ppc_network_id'] = $db->real_escape_string((string)$_GET['edit_ppc_network_id']);
 }
-$pixel_array = array();
-$pixel_array[] = array('pixel_type_id' => '', 'pixel_code' => '', 'pixel_id' => '');
-$pixel_types = array();
+$pixel_array = [];
+$pixel_array[] = ['pixel_type_id' => '', 'pixel_code' => '', 'pixel_id' => ''];
+$pixel_types = [];
 
 $ppc_pixel_type_sql = "SELECT * FROM `202_pixel_types`";
 $ppc_pixel_type_result = _mysqli_query($ppc_pixel_type_sql);
 
 while ($ppc_pixel_type_row = $ppc_pixel_type_result->fetch_assoc()) {
-	$pixel_types[] = array('pixel_type' => htmlentities((string)($ppc_pixel_type_row['pixel_type'] ?? ''), ENT_QUOTES, 'UTF-8'), 'pixel_type_id' => htmlentities((string)($ppc_pixel_type_row['pixel_type_id'] ?? ''), ENT_QUOTES, 'UTF-8'));
+	$pixel_types[] = ['pixel_type' => htmlentities((string)($ppc_pixel_type_row['pixel_type'] ?? ''), ENT_QUOTES, 'UTF-8'), 'pixel_type_id' => htmlentities((string)($ppc_pixel_type_row['pixel_type_id'] ?? ''), ENT_QUOTES, 'UTF-8')];
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (isset($_POST['ppc_network_name'])) {
-		$ppc_network_name = trim($_POST['ppc_network_name']);
+		$ppc_network_name = trim((string) $_POST['ppc_network_name']);
 		if (empty($ppc_network_name)) {
 			$error['ppc_network_name'] = 'Type in the name the traffic source.';
 		}
@@ -74,12 +74,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$add_success = true;
 			if ($network_editing == true) {
 				if ($slack)
-					$slack->push('traffic_source_name_changed', array('old_name' => $_GET['edit_ppc_network_name'], 'new_name' => $_POST['ppc_network_name'], 'user' => $user_row['username']));
+					$slack->push('traffic_source_name_changed', ['old_name' => $_GET['edit_ppc_network_name'], 'new_name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
 				//if editing true, refresh back with the edit get variable GONE GONE!
 				header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 			} else {
 				if ($slack)
-					$slack->push('traffic_source_created', array('name' => $_POST['ppc_network_name'], 'user' => $user_row['username']));
+					$slack->push('traffic_source_created', ['name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
 			}
 
 			tagUserByNetwork($user_row['install_hash'], 'traffic-sources', $_POST['ppc_network_name']);
@@ -88,15 +88,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (isset($_POST['ppc_network_id']) && ($network_editing == false)) {
 
-		$pixel_ids = array();
+		$pixel_ids = [];
 
-		$ppc_account_name = trim($_POST['ppc_account_name']);
+		$ppc_account_name = trim((string) $_POST['ppc_account_name']);
 		$do_edit_ppc_account = trim(filter_input(INPUT_POST, 'do_edit_ppc_account', FILTER_SANITIZE_NUMBER_INT));
 		if ($ppc_account_name == '' && $do_edit_ppc_account == '1') {
 			$error['ppc_account_name'] = 'What is the username for this account?';
 		}
 
-		$ppc_network_id = trim($_POST['ppc_network_id']);
+		$ppc_network_id = trim((string) $_POST['ppc_network_id']);
 		if ($ppc_network_id == '') {
 			$error['ppc_network_id'] = 'What traffic source is this account attached to?';
 		}
@@ -173,7 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$pixel_type_result = _mysqli_query($pixel_type_sql);
 				$pixel_type_row = $pixel_type_result->fetch_assoc();
 
-				$pixelCode = trim($_POST['pixel_code'][$key]);
+				$pixelCode = trim((string) $_POST['pixel_code'][$key]);
 				$mysql['pixel_code'] = $db->real_escape_string($pixelCode);
 
 				if ($mysql['pixel_code'] != "" && $mysql['pixel_type_id'] != "") {
@@ -183,11 +183,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 						if ($slack) {
 							if ($ppc_old_account_row['pixel_type_id'] != $value) {
-								$slack->push('traffic_source_account_pixel_type_changed', array('network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $ppc_old_account_row['ppc_account_name'], 'old_pixel_type' => $ppc_old_account_row['pixel_type'], 'new_pixel_type' => $pixel_type_row['pixel_type'], 'user' => $user_row['username']));
+								$slack->push('traffic_source_account_pixel_type_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $ppc_old_account_row['ppc_account_name'], 'old_pixel_type' => $ppc_old_account_row['pixel_type'], 'new_pixel_type' => $pixel_type_row['pixel_type'], 'user' => $user_row['username']]);
 							}
 
 							if ($ppc_old_account_row['pixel_code'] != $_POST['pixel_code'][$key]) {
-								$slack->push('traffic_source_account_pixel_code_changed', array('network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $ppc_old_account_row['ppc_account_name'], 'user' => $user_row['username']));
+								$slack->push('traffic_source_account_pixel_code_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $ppc_old_account_row['ppc_account_name'], 'user' => $user_row['username']]);
 							}
 						}
 						$db->query($pixel_sql);
@@ -198,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 							. $mysql['pixel_code'] . "',"
 							. $mysql['pixel_type_id'] . ")";
 
-						$slack_pixel_added_message_vars = array('type' => $pixel_type_row['pixel_type'], 'network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']);
+						$slack_pixel_added_message_vars = ['type' => $pixel_type_row['pixel_type'], 'network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']];
 						$slack_pixel_added_message = true;
 
 						$db->query($pixel_sql);
@@ -212,7 +212,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				if ($editing == true) {
 					if ($slack) {
 						if ($ppc_old_account_row['ppc_account_name'] != $_POST['ppc_account_name']) {
-							$slack->push('traffic_source_account_name_changed', array('network_name' => $ppc_network_row['ppc_network_name'], 'old_account_name' => $ppc_old_account_row['ppc_account_name'], 'new_account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']));
+							$slack->push('traffic_source_account_name_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'old_account_name' => $ppc_old_account_row['ppc_account_name'], 'new_account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']]);
 						}
 					}
 					//if editing true, refresh back with the edit get variable GONE GONE!
@@ -220,7 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 				} else {
 					if ($slack) {
-						$slack->push('traffic_source_account_created', array('account_name' => $_POST['ppc_account_name'], 'network_name' => $ppc_network_row['ppc_network_name'], 'user' => $user_row['username']));
+						$slack->push('traffic_source_account_created', ['account_name' => $_POST['ppc_account_name'], 'network_name' => $ppc_network_row['ppc_network_name'], 'user' => $user_row['username']]);
 
 						if ($slack_pixel_added_message) {
 							$slack->push('traffic_source_account_pixel_added', $slack_pixel_added_message_vars);
@@ -251,7 +251,7 @@ if (isset($_GET['delete_ppc_network_id'])) {
 		if ($delete_result = _mysqli_query($delete_sql)) { //($delete_result)) {
 			$delete_success = true;
 			if ($slack)
-				$slack->push('traffic_source_deleted', array('name' => $_GET['delete_ppc_network_name'], 'user' => $user_row['username']));
+				$slack->push('traffic_source_deleted', ['name' => $_GET['delete_ppc_network_name'], 'user' => $user_row['username']]);
 		}
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
@@ -273,7 +273,7 @@ if (isset($_GET['delete_ppc_account_id'])) {
 		if ($delete_result = _mysqli_query($delete_sql)) {
 			$delete_success = true;
 			if ($slack)
-				$slack->push('traffic_source_account_deleted', array('account_name' => $_GET['delete_ppc_account_name'], 'user' => $user_row['username']));
+				$slack->push('traffic_source_account_deleted', ['account_name' => $_GET['delete_ppc_account_name'], 'user' => $user_row['username']]);
 		}
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
@@ -319,18 +319,18 @@ if (!empty($_GET['edit_ppc_account_id'])) {
 	//echo $ppc_account_pixel_sql;
 	$ppc_account_pixel_result = _mysqli_query($ppc_account_pixel_sql); //($ppc_account_sql);
 
-	$pixel_array = array();
+	$pixel_array = [];
 
 	if ($ppc_account_pixel_result->num_rows > 0) {
 		while ($ppc_account_pixel_row = $ppc_account_pixel_result->fetch_assoc()) {
 			if ($ppc_account_pixel_row['pixel_type_id'] == 5) {
-				$selected['pixel_code'] = stripslashes($ppc_account_pixel_row['pixel_code']);
+				$selected['pixel_code'] = stripslashes((string) $ppc_account_pixel_row['pixel_code']);
 				$selected['pixel_code'] = htmlentities($selected['pixel_code']);
 			} else {
 				$selected['pixel_code'] = $ppc_account_pixel_row['pixel_code'];
 			}
 
-			$pixel_array[] = array('pixel_type_id' => $ppc_account_pixel_row['pixel_type_id'], 'pixel_code' => $selected['pixel_code'], 'pixel_id' => $ppc_account_pixel_row['pixel_id']);
+			$pixel_array[] = ['pixel_type_id' => $ppc_account_pixel_row['pixel_type_id'], 'pixel_code' => $selected['pixel_code'], 'pixel_id' => $ppc_account_pixel_row['pixel_id']];
 		}
 	}
 }
@@ -342,7 +342,7 @@ if (!empty($error)) {
 }
 
 
-template_top('Traffic Sources', NULL, NULL, NULL); ?>
+template_top('Traffic Sources'); ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
@@ -355,7 +355,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 							else echo "success"; ?> pull-right" style="margin-top: 20px;">
 					<small>
 						<?php if (!empty($error)) { ?>
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo isset($error['token']) ? $error['token'] : ''; ?>
+							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
 						<?php } ?>
 						<?php if ($add_success == true) { ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
@@ -387,7 +387,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 				<form method="post" action="<?php echo $_SERVER['REDIRECT_URL'] ?? ''; ?>" class="form-inline" role="form" style="margin:15px 0px;">
 					<div class="form-group <?php if (isset($error['ppc_network_name'])) echo "has-error"; ?>"
 						<label class="sr-only" for="ppc_network_name">Traffic source</label>
-						<input type="text" class="form-control input-sm" id="ppc_network_name" name="ppc_network_name" placeholder="Traffic source" value="<?php echo isset($html['ppc_network_name']) ? $html['ppc_network_name'] : ''; ?>">
+						<input type="text" class="form-control input-sm" id="ppc_network_name" name="ppc_network_name" placeholder="Traffic source" value="<?php echo $html['ppc_network_name'] ?? ''; ?>">
 					</div>
 					<button type="submit" class="btn btn-xs btn-p202"><?php if ($network_editing == true) {
 																			echo 'Edit';
@@ -437,7 +437,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 					<div class="form-group <?php if (isset($error['ppc_account_name'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">Account Username:</label>
 						<div class="col-xs-5">
-							<input type="ppc_account_name" class="form-control input-sm" id="ppc_account_name" name="ppc_account_name" value="<?php echo isset($html['ppc_account_name']) ? $html['ppc_account_name'] : ''; ?>">
+							<input type="ppc_account_name" class="form-control input-sm" id="ppc_account_name" name="ppc_account_name" value="<?php echo $html['ppc_account_name'] ?? ''; ?>">
 						</div>
 					</div>
 
@@ -521,7 +521,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 
 							//print out the PPC networks
 							$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-							$url['ppc_network_id'] = urlencode($ppc_network_row['ppc_network_id']);
+							$url['ppc_network_id'] = urlencode((string) $ppc_network_row['ppc_network_id']);
 
 							if ($userObj->hasPermission("remove_traffic_source")) {
 								printf('<li><span class="filter_source_name">%s</span> - <a href="?edit_ppc_network_id=%s&edit_ppc_network_name=%s">edit</a> - <a href="#" class="custom variables" data-id="%s">variables</a> - <a href="?delete_ppc_network_id=%s&delete_ppc_network_name=%s" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Traffic Source?\');">remove</a></li>', $html['ppc_network_name'], $url['ppc_network_id'], $html['ppc_network_name'], $url['ppc_network_id'], $url['ppc_network_id'], $html['ppc_network_name']);
@@ -541,7 +541,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 								while ($ppc_account_row = $ppc_account_result->fetch_array(MYSQLI_ASSOC)) {
 
 									$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-									$url['ppc_account_id'] = urlencode($ppc_account_row['ppc_account_id']);
+									$url['ppc_account_id'] = urlencode((string) $ppc_account_row['ppc_account_id']);
 
 									if ($userObj->hasPermission("remove_traffic_source_account")) {
 										printf('<li>%s - <a href="?edit_ppc_account_id=%s">edit</a> - <a href="?delete_ppc_account_id=%s&delete_ppc_account_name=%s" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Account?\');">remove</a></li>', $html['ppc_account_name'], $url['ppc_account_id'], $url['ppc_account_id'], $html['ppc_account_name']);
@@ -623,7 +623,7 @@ template_top('Traffic Sources', NULL, NULL, NULL); ?>
 	$(document).ready(function() {
 		autocomplete_names('ppc_network_name', 'traffic-sources');
 		<?php if (!empty($_GET['edit_ppc_network_id'])) { ?>
-			$("#ppc_network_name").tokenfield("setTokens", <?php print_r(json_encode(array('value' => $autocomplete_ppc_network_name, 'label' => $autocomplete_ppc_network_name))) ?>);
+			$("#ppc_network_name").tokenfield("setTokens", <?php print_r(json_encode(['value' => $autocomplete_ppc_network_name, 'label' => $autocomplete_ppc_network_name])) ?>);
 		<?php } ?>
 		$(".variables-info-pop").popover({
 			trigger: "hover"

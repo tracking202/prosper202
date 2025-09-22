@@ -1,8 +1,8 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -19) . '/202-config/connect.php');
-include_once(substr(dirname(__FILE__), 0, -19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0, -19) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 AUTH::require_user();
 
 if (!$userObj->hasPermission("access_to_update_section")) {
@@ -20,11 +20,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$mysql['click_update_time'] = time();
 
 	$subids = $_POST['subids'];
-	$subids = trim($subids);
+	$subids = trim((string) $subids);
 	$subids = explode("\r", $subids);
 	$subids = str_replace("\n", '', $subids);
 
-	foreach ($subids as $key => $click_id) {
+	foreach ($subids as $click_id) {
 		$mysql['click_id'] = $db->real_escape_string($click_id);
 
 		$click_sql = "

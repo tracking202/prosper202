@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php'); 
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect.php'); 
+include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 
 AUTH::require_user();
 
@@ -26,7 +26,7 @@ function about_revenue_upload() {
 }
 
 
-$upload_dir = dirname(__FILE__) . '/reports/';
+$upload_dir = __DIR__ . '/reports/';
 
 $case = isset($_GET['case']) ? (int)$_GET['case'] : 0;
 
@@ -37,7 +37,7 @@ switch ($case) {
 		#else it worked ok, save the csv to file, and then ask them what fields are what
 		$file = $upload_dir . $_GET['file'];
 		if (!file_exists($file)) {
-			template_top('Upload Revenue Reports',NULL,NULL,NULL); 
+			template_top('Upload Revenue Reports'); 
 			about_revenue_upload();
 			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import<br/>or you have already successfully uploaded it.</small></div>';
 			template_bottom();
@@ -45,7 +45,7 @@ switch ($case) {
 		}
 		
 		
-		template_top('Upload Revenue Reports',NULL,NULL,NULL); 
+		template_top('Upload Revenue Reports'); 
 		about_revenue_upload();
 			echo '<div class="row">
 					<div class="col-xs-12">
@@ -61,7 +61,7 @@ switch ($case) {
 			 
 			
 		$handle = fopen($file, 'rb'); 	
-		$row = @fgetcsv($handle, 100000, ",");
+		$row = @fgetcsv($handle, 100000, ",", escape: '\\');
 		for ($x = 0; $x < count($row); $x++) { 
 			$html = array_map('htmlentities', $row);
 			echo '<tr>';	
@@ -86,7 +86,7 @@ switch ($case) {
 		if ( (!is_numeric($_GET['click_id'])) or (!is_numeric($_GET['click_payout'])) ) { 
 			
 			$file = $_GET['file'];
-			template_top('Upload Revenue Reports',NULL,NULL,NULL); 
+			template_top('Upload Revenue Reports'); 
 			about_revenue_upload();
 			echo '<div class="error"><small><span class="fui-alert"></span>You forgot to check the subid and the commission column, <a href="'.get_absolute_url().'tracking202/update/upload.php?case=1&file='.$file.'">please try again</a></small></div>';
 			template_bottom();
@@ -96,20 +96,20 @@ switch ($case) {
 		
 		$file = $upload_dir . $_GET['file'];
 		if (!file_exists($file)) {
-			template_top('Upload Revenue Reports',NULL,NULL,NULL); 
+			template_top('Upload Revenue Reports'); 
 			about_revenue_upload();
 			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import or you have already successfully uploaded it.</small></div>';
 			template_bottom();
 			die();
 		}
 		
-		$click_payouts = array();
+		$click_payouts = [];
 		
 		$handle = fopen($file, 'rb'); 
 		
 		$de = new DataEngine();
 		
-		while ($row = @fgetcsv($handle, 100000, ",")) {
+		while ($row = @fgetcsv($handle, 100000, ",", escape: '\\')) {
 			
 			#store all the subid values and payouts
 			$click_id = $row[ $_GET['click_id'] ];
@@ -151,7 +151,7 @@ switch ($case) {
 		unlink ($file);
 
 		
-		template_top('Upload Revenue Reports',NULL,NULL,NULL); 
+		template_top('Upload Revenue Reports'); 
 		about_revenue_upload();
 			echo '<div class="row">
 					<div class="col-xs-12">
@@ -190,7 +190,7 @@ switch ($case) {
 			if (!$error) {
 				//get file extension, checks to see if the image file, if not, do not allow to upload the file
 				$pext = getFileExtension($_FILES['csv']['name']);
-				$pext = strtolower($pext); 
+				$pext = strtolower((string) $pext); 
 				if (($pext != "txt") and ($pext !="csv")) $error = true;
 			}
 			
@@ -206,7 +206,7 @@ switch ($case) {
 			
 			if (!$error && $handle !== false) {
 				//this counter, will help us determine the first row of the array
-				$row = @fgetcsv($handle, 100000, ",");
+				$row = @fgetcsv($handle, 100000, ",", escape: '\\');
 				
 				#if there was no row detected, an error occured on this uploaded
 				if (!$row) $error = true;
@@ -221,7 +221,7 @@ switch ($case) {
 				$handle = fopen($tmp_name, "rb");
 				if ($handle !== false) {
 					$data = fread($handle, 100000);
-					$file = rand(0,100) . time() . rand(0,100) .'.csv';
+					$file = random_int(0,100) . time() . random_int(0,100) .'.csv';
 					$newHandle = fopen($upload_dir . $file, 'w');
 					if ($newHandle !== false) {
 						fwrite($newHandle, $data);
@@ -238,7 +238,7 @@ switch ($case) {
 			}
 		}
 		
-		template_top('Upload Revenue Reports',NULL,NULL,NULL); 
+		template_top('Upload Revenue Reports'); 
 		about_revenue_upload();
 			
 		//check to see if the directory is writable

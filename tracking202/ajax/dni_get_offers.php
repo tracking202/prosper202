@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php'); 
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php'); 
 AUTH::require_user();
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -17,7 +17,7 @@ if (isset($_GET['dni']) && isset($_GET['all_offers'])) {
 	if ($results->num_rows > 0) {
 		$dni = $results->fetch_assoc();
 		
-		$sort_by = array('column' => '', 'by' => '');
+		$sort_by = ['column' => '', 'by' => ''];
 		if (!empty($sort)) {
 			foreach ($sort as $key => $value) {
 				if ($sort[$key] == 0) {
@@ -48,7 +48,7 @@ if (isset($_GET['dni']) && isset($_GET['all_offers'])) {
 			}
 		}
 
-		$filter_by = array();
+		$filter_by = [];
 		if (!empty($filter)) {
 
 			foreach ($filter as $key => $value) {
@@ -110,7 +110,7 @@ if (isset($_GET['dni']) && isset($_GET['offer_id']) && isset($_GET['setup_offer'
 		$aff_network_results = $db->query($aff_network_sql);
 		$aff_network_row = $aff_network_results->fetch_assoc();
 		$offerData = setupDniOffer($dni['install_hash'], $dni['networkId'], $dni['apiKey'], $dni['affiliateId'], 'USD', $_GET['offer_id'], $_GET['ddlci']);
-		$data = json_decode($offerData, true);
+		$data = json_decode((string) $offerData, true);
 		$data['aff_network_id'] = $aff_network_row['aff_network_id'];
 		header('Content-Type: application/json');
 		echo json_encode($data);

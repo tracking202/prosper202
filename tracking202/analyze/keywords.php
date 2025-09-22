@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-20) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-20) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -8,7 +8,7 @@ AUTH::require_user();
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 //show the template
-template_top('Analyze Your Keywords',NULL,NULL,NULL); ?>
+template_top('Analyze Your Keywords'); ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">

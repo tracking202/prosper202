@@ -8,8 +8,8 @@ header("Content-Disposition: attachment; filename=T202_landing_pages_" . time() 
 header("Pragma: no-cache");
 header("Expires: -1");
 
-include_once(substr(dirname(__FILE__), 0, -20) . '/202-config/connect.php');
-include_once(substr(dirname(__FILE__), 0, -20) . '/202-config/class-dataengine.php');
+include_once(substr(__DIR__, 0, -20) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -20) . '/202-config/class-dataengine.php');
 
 AUTH::require_user();
 

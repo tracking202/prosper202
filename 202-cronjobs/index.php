@@ -25,8 +25,26 @@ try {
     // Create lock file
     touch($lockFile);
 
-    include_once(__DIR__ . '/../202-config/connect.php');
-    include_once(__DIR__ . '/../202-config/class-dataengine.php');
+include_once(__DIR__ . '/../202-config/connect.php');
+include_once(__DIR__ . '/../202-config/class-dataengine.php');
+
+/**
+ * Helper to reuse the application singleton DB connection inside cron.
+ */
+function getDatabaseConnection(): mysqli
+{
+    $database = DB::getInstance();
+    if (!$database) {
+        throw new Exception('Unable to initialise database singleton');
+    }
+
+    $connection = $database->getConnection();
+    if (!$connection instanceof mysqli) {
+        throw new Exception('Database connection unavailable');
+    }
+
+    return $connection;
+}
 
     set_time_limit(0);
     ignore_user_abort(true);
@@ -326,10 +344,10 @@ function AutoOptimizeDatabase()
 
         if (!empty($row['user_auto_database_optimization_days'])) {
             $date_to = date('Y-m-d', strtotime('-1 days', strtotime(date("Y-m-d"))));
-            $date_to = $date_to . ' 23:59:59';
+            $date_to .= ' 23:59:59';
 
             $date_from = date('Y-m-d', strtotime('-' . $row['user_auto_database_optimization_days'] . ' days', strtotime($date_to)));
-            $date_from = $date_from . ' 23:59:59';
+            $date_from .= ' 23:59:59';
             $to = strtotime($date_from);
 
             echo " Processing Auto DB Delete -";
@@ -421,7 +439,7 @@ function ClearOldClicks()
                         // Only initialize Slack if webhook is configured
                         if (class_exists('Slack')) {
                             $slack = new Slack($slack_row['user_slack_incoming_webhook']);
-                            $slack->push('click_data_deleted', array('user' => 'cron', 'date' => date('Y-m-d')));
+                            $slack->push('click_data_deleted', ['user' => 'cron', 'date' => date('Y-m-d')]);
                         }
                     }
                 }

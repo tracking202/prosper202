@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-19) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -9,7 +9,7 @@ if (!$userObj->hasPermission("access_to_update_section")) {
 	die();
 }
 
-template_top('Clear Subids',NULL,NULL,NULL);  ?>
+template_top('Clear Subids');  ?>
 
 <div class="row">
 	<div class="col-xs-12">

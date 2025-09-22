@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -18,22 +18,22 @@ if (!empty($user_row['url']))
 	$campaigns_sql = "SELECT aff_campaign_id, aff_campaign_name FROM 202_aff_campaigns LEFT JOIN  202_aff_networks using(aff_network_id) WHERE 202_aff_campaigns.user_id = '".$mysql['user_id']."' AND `aff_campaign_deleted`=0 AND `aff_network_deleted`=0 AND 202_aff_networks.user_id = 202_aff_campaigns.user_id";
 	
 	$campaigns_result = $db->query($campaigns_sql);
-	$campaigns = array();
+	$campaigns = [];
 
 	if ($campaigns_result->num_rows > 0) {
 		while ($campaigns_row = $campaigns_result->fetch_assoc()) {
-			$campaigns[] = array('id' => $campaigns_row['aff_campaign_id'], 'name' => $campaigns_row['aff_campaign_name']);
+			$campaigns[] = ['id' => $campaigns_row['aff_campaign_id'], 'name' => $campaigns_row['aff_campaign_name']];
 		}
 	}
 
 	$lp_sql = "SELECT landing_page_id, landing_page_nickname, landing_page_type FROM 202_landing_pages JOIN 202_aff_campaigns using (aff_campaign_id) WHERE 202_landing_pages.user_id = '".$mysql['user_id']."' AND COALESCE(aff_campaign_deleted,0) = 0 AND COALESCE(landing_page_deleted,0) = 0 ORDER BY landing_page_type,landing_page_nickname";
 	
 	$lp_result = $db->query($lp_sql);
-	$lps = array();
+	$lps = [];
 
 	if ($lp_result->num_rows > 0) {
 		while ($lp_row = $lp_result->fetch_assoc()) {
-			$lps[] = array('id' => $lp_row['landing_page_id'], 'name' => $lp_row['landing_page_nickname'], 'type' => $lp_row['landing_page_type']);
+			$lps[] = ['id' => $lp_row['landing_page_id'], 'name' => $lp_row['landing_page_nickname'], 'type' => $lp_row['landing_page_type']];
 		}
 	}
 
@@ -181,8 +181,10 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					WHERE 2ro.id = '".$rotator_id."' AND 2ro.user_id = '".$mysql['user_id']."' AND 2lp.landing_page_deleted='0'";
 	$rotator_result = $db->query($rotator_sql);
 	$rotator_row = $rotator_result->fetch_assoc();
+	$rotator_name = $rotator_row['name'] ?? '';
+	$canSlack = $slack && $rotator_name !== '';
 
-	if ($slack) {
+	if ($canSlack) {
 		if (!$rotator_row['default_campaign'] && !$rotator_row['default_url'] && !$rotator_row['default_lp'] && !$rotator_row['auto_monetizer']) {
 			$defaults_added = true;
 		} else {
@@ -218,19 +220,19 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 		case 'campaign':
 			$default_sql = "default_campaign='".$defaults."', default_url=null, default_lp=null, auto_monetizer=null";
 			
-			if ($slack) {
+			if ($canSlack) {
 				$default_campaign_id = $db->real_escape_string($defaults);
 				$default_campaign_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$default_campaign_id."'";
 				$default_campaign_result = $db->query($default_campaign_sql);
 				$default_campaign_row = $default_campaign_result->fetch_assoc();
 
 				if ($defaults_added) {
-					$slack->push('rotator_defaults_added', array('name' => $rotator_row['name'], 'default_type' => 'Campaign', 'default_value' => $default_campaign_row['aff_campaign_name'], 'user' => $user_row['username']));
+					$slack->push('rotator_defaults_added', ['name' => $rotator_name, 'default_type' => 'Campaign', 'default_value' => $default_campaign_row['aff_campaign_name'], 'user' => $user_row['username']]);
 				} else if ($defaults_changed) {
 					if ($default_from_type != "Auto Monetizer") {
-						$slack->push('rotator_defaults_changed', array('name' => $rotator_row['name'], 'default_from_type' => $default_from_type, 'default_from_value' => $default_from_value, 'default_to_type' => 'Campaign', 'default_to_value' => $default_campaign_row['aff_campaign_name'], 'user' => $user_row['username']));
+						$slack->push('rotator_defaults_changed', ['name' => $rotator_name, 'default_from_type' => $default_from_type, 'default_from_value' => $default_from_value, 'default_to_type' => 'Campaign', 'default_to_value' => $default_campaign_row['aff_campaign_name'], 'user' => $user_row['username']]);
 					} else if ($default_from_type == "Auto Monetizer"){
-						$slack->push('rotator_defaults_changed_from_monetizer', array('name' => $rotator_row['name'], 'default_to_type' => 'Campaign', 'default_to_value' => $default_campaign_row['aff_campaign_name'], 'user' => $user_row['username']));
+						$slack->push('rotator_defaults_changed_from_monetizer', ['name' => $rotator_name, 'default_to_type' => 'Campaign', 'default_to_value' => $default_campaign_row['aff_campaign_name'], 'user' => $user_row['username']]);
 					}
 				}
 			}
@@ -240,14 +242,14 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 		case 'url':
 			$default_sql = "default_url='".$defaults."', default_campaign=null, default_lp=null, auto_monetizer=null";
 
-			if ($slack) {
+			if ($canSlack) {
 				if ($defaults_added) {
-					$slack->push('rotator_defaults_added', array('name' => $rotator_row['name'], 'default_type' => 'URL', 'default_value' => $defaults, 'user' => $user_row['username']));
+					$slack->push('rotator_defaults_added', ['name' => $rotator_name, 'default_type' => 'URL', 'default_value' => $defaults, 'user' => $user_row['username']]);
 				} else if ($defaults_changed) {
 					if ($default_from_type != "Auto Monetizer") {
-						$slack->push('rotator_defaults_changed', array('name' => $rotator_row['name'], 'default_from_type' => $default_from_type, 'default_from_value' => $default_from_value, 'default_to_type' => 'URL', 'default_to_value' => $defaults, 'user' => $user_row['username']));
+						$slack->push('rotator_defaults_changed', ['name' => $rotator_name, 'default_from_type' => $default_from_type, 'default_from_value' => $default_from_value, 'default_to_type' => 'URL', 'default_to_value' => $defaults, 'user' => $user_row['username']]);
 					} else {
-						$slack->push('rotator_defaults_changed_from_monetizer', array('name' => $rotator_row['name'], 'default_to_type' => 'URL', 'default_to_value' => $defaults, 'user' => $user_row['username']));
+						$slack->push('rotator_defaults_changed_from_monetizer', ['name' => $rotator_name, 'default_to_type' => 'URL', 'default_to_value' => $defaults, 'user' => $user_row['username']]);
 					}
 				}
 			}
@@ -257,19 +259,19 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 		case 'lp':
 			$default_sql = "default_lp='".$defaults."', default_campaign=null, default_url=null, auto_monetizer=null";
 
-			if ($slack) {
+			if ($canSlack) {
 				$default_lp_id = $db->real_escape_string($defaults);
 				$default_lp_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$default_lp_id."' AND landing_page_deleted='0'";
 				$default_lp_result = $db->query($default_lp_sql);
 				$default_lp_row = $default_lp_result->fetch_assoc();
 
 				if ($defaults_added) {
-					$slack->push('rotator_defaults_added', array('name' => $rotator_row['name'], 'default_type' => 'Landing Page', 'default_value' => $default_lp_row['landing_page_nickname'], 'user' => $user_row['username']));
+					$slack->push('rotator_defaults_added', ['name' => $rotator_name, 'default_type' => 'Landing Page', 'default_value' => $default_lp_row['landing_page_nickname'], 'user' => $user_row['username']]);
 				} else if ($defaults_changed) {
 					if ($default_from_type != "Auto Monetizer") {
-						$slack->push('rotator_defaults_changed', array('name' => $rotator_row['name'], 'default_from_type' => $default_from_type, 'default_from_value' => $default_from_value, 'default_to_type' => 'Landing Page', 'default_to_value' => $default_lp_row['landing_page_nickname'], 'user' => $user_row['username']));
+						$slack->push('rotator_defaults_changed', ['name' => $rotator_name, 'default_from_type' => $default_from_type, 'default_from_value' => $default_from_value, 'default_to_type' => 'Landing Page', 'default_to_value' => $default_lp_row['landing_page_nickname'], 'user' => $user_row['username']]);
 					} else {
-						$slack->push('rotator_defaults_changed_from_monetizer', array('name' => $rotator_row['name'], 'default_to_type' => 'Landing Page', 'default_to_value' => $default_lp_row['landing_page_nickname'], 'user' => $user_row['username']));
+						$slack->push('rotator_defaults_changed_from_monetizer', ['name' => $rotator_name, 'default_to_type' => 'Landing Page', 'default_to_value' => $default_lp_row['landing_page_nickname'], 'user' => $user_row['username']]);
 					}
 				}
 			}
@@ -279,12 +281,12 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 		case 'monetizer':
 			$default_sql = "default_lp=null, default_campaign=null, default_url=null, auto_monetizer='true'";
 
-			if ($slack) {
+			if ($canSlack) {
 				if ($defaults_added) {
-					$slack->push('rotator_defaults_added_to_monetizer', array('name' => $rotator_row['name'], 'user' => $user_row['username']));
+					$slack->push('rotator_defaults_added_to_monetizer', ['name' => $rotator_name, 'user' => $user_row['username']]);
 				} else if ($defaults_changed) {
 					if ($default_from_type != "Auto Monetizer") {
-						$slack->push('rotator_defaults_changed_to_monetizer', array('name' => $rotator_row['name'], 'default_from_type' => $default_from_type, 'default_from_value' => $default_from_value, 'user' => $user_row['username']));
+						$slack->push('rotator_defaults_changed_to_monetizer', ['name' => $rotator_name, 'default_from_type' => $default_from_type, 'default_from_value' => $default_from_value, 'user' => $user_row['username']]);
 					}
 				}
 			}
@@ -296,13 +298,13 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	$result = $db->query($sql);
 
 	if ($result) {
-		$rules_id = array();
-		$criteria_id = array();
-		$criteria_added = array();
-		$rules_added = array();
+		$rules_id = [];
+		$criteria_id = [];
+		$criteria_added = [];
+		$rules_added = [];
 
 		foreach ($_POST['data'] as $rule) {
-			$redirects_ids = array();
+			$redirects_ids = [];
 			$redirect_changed = false;
 
 			$rule_name = $db->real_escape_string($rule['rule_name']);
@@ -410,10 +412,11 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$redirect_value = $db->real_escape_string($redirect['value']);
 					switch ($redirect['type']) {
 						case 'campaign':
-							$redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$redirect_value."'";
-							$redirect_type_result = $db->query($redirect_type_sql);
-							$redirect_type_row = $redirect_type_result->fetch_assoc();
-							$redirect_name = "Campaign: ".$redirect_type_row['aff_campaign_name'];
+						$redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$redirect_value."'";
+						$redirect_type_result = $db->query($redirect_type_sql);
+						$redirect_type_row = $redirect_type_result ? $redirect_type_result->fetch_assoc() : null;
+						$redirect_campaign_name = $redirect_type_row['aff_campaign_name'] ?? 'Unknown Campaign';
+						$redirect_name = "Campaign: ".$redirect_campaign_name;
 							$redirect_sql = "redirect_campaign='".$redirect_value."', redirect_url=null, redirect_lp=null, auto_monetizer=null, name='".$redirect_name."'";
 							break;
 						
@@ -423,10 +426,11 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 							break;
 
 						case 'lp':
-							$redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0'";
-							$redirect_type_result = $db->query($redirect_type_sql);
-							$redirect_type_row = $redirect_type_result->fetch_assoc();
-							$redirect_name = "Landing page: ".$redirect_type_row['landing_page_nickname'];
+						$redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0'";
+						$redirect_type_result = $db->query($redirect_type_sql);
+						$redirect_type_row = $redirect_type_result ? $redirect_type_result->fetch_assoc() : null;
+						$redirect_lp_name = $redirect_type_row['landing_page_nickname'] ?? 'Unknown Landing Page';
+						$redirect_name = "Landing page: ".$redirect_lp_name;
 							$redirect_sql = "redirect_lp='".$redirect_value."', redirect_url=null, redirect_campaign=null, auto_monetizer=null, name='".$redirect_name."'";
 							break;
 						
@@ -455,7 +459,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 
 				if ($slack) {
 					if ($old_rule_row['rule_name'] != $rule_name) {
-						$slack->push('rotator_rule_name_changed', array('rotator' => $rotator_row['name'], 'old_name' => $old_rule_row['rule_name'], 'new_name' => $rule_name, 'user' => $user_row['username']));
+						$slack->push('rotator_rule_name_changed', ['rotator' => $rotator_row['name'], 'old_name' => $old_rule_row['rule_name'], 'new_name' => $rule_name, 'user' => $user_row['username']]);
 					}
 
 					if ($old_rule_row['status'] != $status) {
@@ -471,7 +475,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 							$new_status = 'inactive';
 						}
 
-						$slack->push('rotator_rule_status_changed', array('rotator' => $rotator_row['name'], 'rule' => $rule_name, 'old_status' => $old_status, 'new_status' => $new_status, 'user' => $user_row['username']));
+						$slack->push('rotator_rule_status_changed', ['rotator' => $rotator_row['name'], 'rule' => $rule_name, 'old_status' => $old_status, 'new_status' => $new_status, 'user' => $user_row['username']]);
 					}
 				}
 			} else {
@@ -515,8 +519,8 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$redirects_ids[] = $db->insert_id;
 				}
 
-				if ($slack) 
-					$slack->push('rotator_rule_created', array('rotator' => $rotator_row['name'], 'rule' => $rule_name, 'user' => $user_row['username']));
+				if ($canSlack) 
+					$slack->push('rotator_rule_created', ['rotator' => $rotator_name, 'rule' => $rule_name, 'user' => $user_row['username']]);
 			}
 			
 
@@ -536,9 +540,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 						$criteria_inserted_id = $db->insert_id;
 						$criteria_id[] = $criteria_inserted_id;
 
-						if ($slack) {
-							$criteria_value = $type." ".$statement." ".$value;
-							$slack->push('rotator_rules_criteria_created', array('rotator' => $rotator_row['name'], 'rule' => $rule_name, 'criteria' => $criteria_value, 'user' => $user_row['username']));
+							if ($canSlack) {
+								$criteria_value = $type." ".$statement." ".$value;
+								$slack->push('rotator_rules_criteria_created', ['rotator' => $rotator_name, 'rule' => $rule_name, 'criteria' => $criteria_value, 'user' => $user_row['username']]);
 						}
 					}
 
@@ -556,12 +560,12 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	$criteria_id = implode(', ', $criteria_id);
 	$rules_id = implode(', ', $rules_id);
 	
-	if ($slack) {
+	if ($slack && $rotator_row) {
 		$sql = "SELECT rule_name FROM 202_rotator_rules WHERE id NOT IN (".$rules_id.") AND rotator_id='".$rotator_id."'";
 		$result = $db->query($sql);
 		if ($result->num_rows > 0) {
 			while ($row = $result->fetch_assoc()) {
-				$slack->push('rotator_rule_deleted', array('rotator' => $rotator_row['name'], 'rule' => $row['rule_name'], 'user' => $user_row['username']));
+				$slack->push('rotator_rule_deleted', ['rotator' => $rotator_row['name'], 'rule' => $row['rule_name'], 'user' => $user_row['username']]);
 			}
 		}
 	}
@@ -569,7 +573,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	$sql = "DELETE FROM `202_rotator_rules` WHERE `id` NOT IN (".$rules_id.") AND rotator_id='".$rotator_id."'";
 	$result = $db->query($sql);
 
-	if ($slack) {
+	if ($slack && isset($rotator_row['name'])) {
 		$sql = "SELECT 2rc.id, 2rc.type, 2rc.statement, 2rc.value, 2rl.rule_name
 				FROM 202_rotator_rules_criteria AS 2rc 
 				LEFT JOIN 202_rotator_rules AS 2rl ON (2rc.rule_id = 2rl.id) 
@@ -579,7 +583,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 			while ($row = $result->fetch_assoc()) {
 				if (!in_array($row['id'], $criteria_added)) {
 					$criteria_value = $row['type']." ".$row['statement']." ".$row['value'];
-					$slack->push('rotator_rules_criteria_deleted', array('rotator' => $rotator_row['name'], 'rule' => $row['rule_name'], 'criteria' => $criteria_value, 'user' => $user_row['username']));
+					$slack->push('rotator_rules_criteria_deleted', ['rotator' => $rotator_row['name'], 'rule' => $row['rule_name'], 'criteria' => $criteria_value, 'user' => $user_row['username']]);
 				}
 			}
 		}
@@ -616,20 +620,20 @@ if (isset($_POST['rule_details']) && $_POST['rule_details'] == true) {
 				</thead>
 				<tbody>
 				<?php 
-				$redirects = array();
-				$criteria_displayed = array();
+				$redirects = [];
+				$criteria_displayed = [];
 				
 				while ($row = $result->fetch_assoc()) {
 					// Collect redirect information
 					if (!empty($row['redirect_url']) || !empty($row['redirect_campaign']) || !empty($row['redirect_lp'])) {
 						$redirect_key = $row['redirect_url'] . '|' . $row['redirect_campaign'] . '|' . $row['redirect_lp'];
 						if (!isset($redirects[$redirect_key])) {
-							$redirects[$redirect_key] = array(
+							$redirects[$redirect_key] = [
 								'redirect_url' => $row['redirect_url'],
 								'redirect_campaign' => $row['redirect_campaign'], 
 								'redirect_lp' => $row['redirect_lp'],
-								'weight' => isset($row['weight']) ? $row['weight'] : null
-							);
+								'weight' => $row['weight'] ?? null
+							];
 						}
 					}
 
@@ -646,7 +650,7 @@ if (isset($_POST['rule_details']) && $_POST['rule_details'] == true) {
 							?>
 							<tr>
 								<td style="text-align:left; padding-left:10px;">If</td>
-								<td style="text-align:left; padding-left:10px;"><?php echo ucfirst($row['type'])?></td>
+								<td style="text-align:left; padding-left:10px;"><?php echo ucfirst((string) $row['type'])?></td>
 								<td style="text-align:left; padding-left:10px;"><?php echo $statement;?></td>
 								<td style="text-align:left; padding-left:10px;"><?php echo $row['value'];?></td>
 							</tr>
@@ -677,7 +681,7 @@ if (isset($_POST['rule_details']) && $_POST['rule_details'] == true) {
 					    		$redirect_campaign_row = $redirect_campaign_result->fetch_assoc();
 					    		
 					    		echo '<div class="small" style="margin-top: 5px;"><span class="label label-info"><i>' . 
-					    		     (isset($redirect_campaign_row['aff_campaign_name']) ? $redirect_campaign_row['aff_campaign_name'] : 'Campaign ID: ' . $redirect['redirect_campaign']) . 
+					    		     ($redirect_campaign_row['aff_campaign_name'] ?? 'Campaign ID: ' . $redirect['redirect_campaign']) . 
 					    		     '</i></span> campaign';
 					    		if (!empty($redirect['weight'])) echo ' (weight: ' . $redirect['weight'] . ')';
 					    		echo '</div>';
@@ -689,7 +693,7 @@ if (isset($_POST['rule_details']) && $_POST['rule_details'] == true) {
 					    		$redirect_lp_row = $redirect_lp_result->fetch_assoc();
 					    		
 					    		echo '<div class="small" style="margin-top: 5px;"><span class="label label-success"><i>' . 
-					    		     (isset($redirect_lp_row['landing_page_nickname']) ? $redirect_lp_row['landing_page_nickname'] : 'Landing Page ID: ' . $redirect['redirect_lp']) . 
+					    		     ($redirect_lp_row['landing_page_nickname'] ?? 'Landing Page ID: ' . $redirect['redirect_lp']) . 
 					    		     '</i></span> landing page';
 					    		if (!empty($redirect['weight'])) echo ' (weight: ' . $redirect['weight'] . ')';
 					    		echo '</div>';
@@ -946,12 +950,12 @@ if (isset($_POST['rule_defaults']) && $_POST['rule_defaults'] == true && isset($
 		$rotator_row = $rotator_result->fetch_assoc();
 	} else {
 		// Initialize with default values if no rotator found
-		$rotator_row = array(
+		$rotator_row = [
 			'default_campaign' => null,
 			'default_lp' => null,
 			'default_url' => null,
 			'auto_monetizer' => null
-		);
+		];
 	} ?>
 	
 				<div class="col-xs-4">
@@ -1026,7 +1030,7 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 	$rule_sql = "SELECT * FROM 202_rotator_rules WHERE rotator_id = '".$id."'";
 	$rule_result = $db->query($rule_sql);
 
-	if ($rule_result->num_rows == 0) { $rand_rule_id = rand(1000,100000); ?>
+	if ($rule_result->num_rows == 0) { $rand_rule_id = random_int(1000,100000); ?>
 					<div class="col-xs-12" style="margin-top:15px;">
 						<div class="col-xs-12 rules" data-rule-id="none" id="<?php echo $rand_rule_id;?>">
 							<div class="row">
@@ -1335,10 +1339,10 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 															<?php } elseif ($criteria_row['type'] == 'device') { ?>
 																rotator_tags_autocomplete_devices("tag_<?php echo $criteria_row['id'];?>");
 															<?php } elseif($criteria_row['type'] == 'country') { 
-																$data = explode(',', $criteria_row['value']);
-																$country = array();
+																$data = explode(',', (string) $criteria_row['value']);
+																$country = [];
 																	foreach ($data as $value) {
-																		$country[] = array('value' => $value, 'label' => substr($value, 0, strpos($value, '('))); 
+																		$country[] = ['value' => $value, 'label' => substr($value, 0, strpos($value, '('))]; 
 																	} ?>
 																rotator_tags_autocomplete("tag_<?php echo $criteria_row['id'];?>", "<?php echo $criteria_row['type'];?>");
 																
@@ -1376,19 +1380,19 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 							$redirects_sql = "SELECT * FROM 202_rotator_rules_redirects WHERE rule_id = '".$rule_row['id']."'";
 							$redirects_result = $db->query($redirects_sql);
 
-							$criteria_row = array();
+							$criteria_row = [];
 
 							if ($rule_row['splittest'] == 0) { 
 								$redirects_row = $redirects_result->fetch_assoc();
 							} else {
 								// For split tests, initialize empty redirects_row to prevent undefined variable errors
-								$redirects_row = array(
+								$redirects_row = [
 									'id' => null,
 									'redirect_campaign' => null,
 									'redirect_lp' => null, 
 									'redirect_url' => null,
 									'auto_monetizer' => null
-								);
+								];
 							}
 
 							?>

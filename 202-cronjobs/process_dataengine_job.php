@@ -28,7 +28,7 @@ try {
             $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
             $db->query($sql);
 
-            for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i = $i + 3599) {
+            for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i += 3599) {
                 $nextval = $i + 3599;
                 $urls[] = 'http://' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/dej.php?s=' . $i . '&e=' . $nextval;
             }
@@ -40,17 +40,17 @@ try {
 
             // make sure the rolling window isn't greater than the # of urls
             $rolling_window = 7;
-            $rolling_window = (sizeof($urls) < $rolling_window) ? sizeof($urls) : $rolling_window;
+            $rolling_window = (count($urls) < $rolling_window) ? count($urls) : $rolling_window;
 
             $master = curl_multi_init();
-            $curl_arr = array();
+            $curl_arr = [];
 
             // add additional curl options here
-            $std_options = array(
+            $std_options = [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_MAXREDIRS => 5
-            );
+            ];
             $options = ($custom_options) ? ($std_options + $custom_options) : $std_options;
 
             // start the first batch of requests

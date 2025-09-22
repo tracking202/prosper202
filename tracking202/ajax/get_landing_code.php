@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -15,16 +15,16 @@ if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 	
 // Initialize error array
-$error = array();
+$error = [];
 
 //check variables
 	if(empty($_POST['aff_network_id'])) { $error['aff_network_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate network.</small></div>'; }
 	if(empty($_POST['aff_campaign_id'])) { $error['aff_campaign_id'] = '<div class="error"><small><span class="fui-alert"></span>You have not selected an affiliate campaign.</small></div>'; }
 	if(empty($_POST['method_of_promotion'])) { $error['method_of_promotion'] = '<div class="error"><small><span class="fui-alert"></span>You have to select your method of promoting this affiliate link.</small></div>'; }
 	
-	echo (isset($error['aff_network_id']) ? $error['aff_network_id'] : '') . 
-	     (isset($error['aff_campaign_id']) ? $error['aff_campaign_id'] : '') . 
-	     (isset($error['method_of_promotion']) ? $error['method_of_promotion'] : '');
+	echo ($error['aff_network_id'] ?? '') . 
+	     ($error['aff_campaign_id'] ?? '') . 
+	     ($error['method_of_promotion'] ?? '');
 	
 	if ($error) { die(); }  
 	
@@ -35,17 +35,17 @@ $error = array();
 			$error['landing_page_id'] = '<div class="error"><small><span class="fui-alert"></span>You have not selected a landing page to use.</small></div>'; 
 		}
 		
-		echo isset($error['landing_page_id']) ? $error['landing_page_id'] : ''; 
+		echo $error['landing_page_id'] ?? ''; 
 		if (isset($error['landing_page_id'])) { die(); }    
 	}
 
 //echo error
-	echo (isset($error['text_ad_id']) ? $error['text_ad_id'] : '') . 
-	     (isset($error['ppc_network_id']) ? $error['ppc_network_id'] : '') . 
-	     (isset($error['ppc_account_id']) ? $error['ppc_account_id'] : '') . 
-	     (isset($error['cpc']) ? $error['cpc'] : '') . 
-	     (isset($error['click_cloaking']) ? $error['click_cloaking'] : '') . 
-	     (isset($error['cloaking_url']) ? $error['cloaking_url'] : '');
+	echo ($error['text_ad_id'] ?? '') . 
+	     ($error['ppc_network_id'] ?? '') . 
+	     ($error['ppc_account_id'] ?? '') . 
+	     ($error['cpc'] ?? '') . 
+	     ($error['click_cloaking'] ?? '') . 
+	     ($error['cloaking_url'] ?? '');
 
 //show tracking code
 
@@ -55,9 +55,9 @@ $error = array();
 	$landing_page_row = $landing_page_result->fetch_assoc();
 	
 	if ($slack)
-		$slack->push('simple_landing_page_code_generated', array('name' => $landing_page_row['landing_page_nickname'], 'campaign' => $landing_page_row['aff_campaign_name'], 'network' => $landing_page_row['aff_network_name'], 'user' => $user_row['username']));
+		$slack->push('simple_landing_page_code_generated', ['name' => $landing_page_row['landing_page_nickname'], 'campaign' => $landing_page_row['aff_campaign_name'], 'network' => $landing_page_row['aff_network_name'], 'user' => $user_row['username']]);
 
-	$parsed_url = parse_url($landing_page_row['landing_page_url']);
+	$parsed_url = parse_url((string) $landing_page_row['landing_page_url']);
 	
 	?><small><em><u>Make sure you test out all the links to make sure they work yourself before running them live.</u></em></small><?php 	
 

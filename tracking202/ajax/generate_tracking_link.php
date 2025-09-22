@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -15,8 +15,8 @@ if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
 // Initialize variables to prevent undefined variable warnings
-$error = array();
-$html = array();
+$error = [];
+$html = [];
 
 //check variables
 	if (!empty($_POST['tracker_type']) && $_POST['tracker_type'] == 0) { 
@@ -25,9 +25,9 @@ $html = array();
 		if(empty($_POST['aff_campaign_id'])) { $error['aff_campaign_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate campaign.</small></div>'; }
 		if(empty($_POST['method_of_promotion'])) { $error['method_of_promotion'] = '<div class="error"><small><span class="fui-alert"></span> You have to select your method of promoting this affiliate link.</small></div>'; }
 		
-		echo (isset($error['aff_network_id']) ? $error['aff_network_id'] : '') . 
-		     (isset($error['aff_campaign_id']) ? $error['aff_campaign_id'] : '') . 
-		     (isset($error['method_of_promotion']) ? $error['method_of_promotion'] : '');
+		echo ($error['aff_network_id'] ?? '') . 
+		     ($error['aff_campaign_id'] ?? '') . 
+		     ($error['method_of_promotion'] ?? '');
 		
 		if (!empty($error)) { die(); } 
 
@@ -61,12 +61,12 @@ $html = array();
 	}
 
 //echo error
-	echo (isset($error['text_ad_id']) ? $error['text_ad_id'] : '') . 
-	     (isset($error['ppc_network_id']) ? $error['ppc_network_id'] : '') . 
-	     (isset($error['ppc_account_id']) ? $error['ppc_account_id'] : '') . 
-	     (isset($error['cpc']) ? $error['cpc'] : '') . 
-	     (isset($error['click_cloaking']) ? $error['click_cloaking'] : '') . 
-	     (isset($error['cloaking_url']) ? $error['cloaking_url'] : '');
+	echo ($error['text_ad_id'] ?? '') . 
+	     ($error['ppc_network_id'] ?? '') . 
+	     ($error['ppc_account_id'] ?? '') . 
+	     ($error['cpc'] ?? '') . 
+	     ($error['click_cloaking'] ?? '') . 
+	     ($error['cloaking_url'] ?? '');
 
 //show tracking code
 
@@ -154,7 +154,7 @@ $html = array();
 	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$get_tracker_row['tracker_id_public']);
 	} else {
-		$tracker_id_public = rand(1,9) . $tracker_row['tracker_id'] . rand(1,9);
+		$tracker_id_public = random_int(1,9) . $tracker_row['tracker_id'] . random_int(1,9);
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
 	}
 	
@@ -165,13 +165,13 @@ $html = array();
 					WHERE		`tracker_id`='".$mysql['tracker_id']."'"; 
 	$tracker_result = $db->query($tracker_sql) or record_mysql_error($tracker_sql);
 
-	$parsed_url = array();
+	$parsed_url = [];
 	if (!empty($landing_page_row['landing_page_url'])) {
-		$parsed_url = parse_url($landing_page_row['landing_page_url']);
+		$parsed_url = parse_url((string) $landing_page_row['landing_page_url']);
 	}
 
 	//setup array of all internally recognized url variables
-	$t202variables = array(
+	$t202variables = [
 	    "c1",
 	    "c2",
 	    "c3",
@@ -184,7 +184,7 @@ $html = array();
 	    "t202ref",
 	    "t202b",
 	    "t202kw"
-	);
+	];
 	
 	$tracking_variable_string = '&';
 	
@@ -192,14 +192,14 @@ $html = array();
 	$get_variables_result = $db->query($get_variables);
 	
 	// Initialize html array
-	$html = array();
+	$html = [];
 	
 	//loop over all our internal vars to see if user has set up a custom var in step 1
 	if ($get_variables_result->num_rows > 0) {
 	    while ($get_variables_row = $get_variables_result->fetch_assoc()) {
 
 	        $key=array_search($get_variables_row['parameter'], $t202variables); // look for the current paramaeter in the list of internal url variables
-	        
+
 	        if($key===FALSE){ //if not found the output 
 	             $tracking_variable_string .= $get_variables_row['parameter'].'=' . $get_variables_row['placeholder'] . '&';
 	        }
@@ -213,9 +213,9 @@ $html = array();
 
 	//loop over all our internal variables again
     foreach ($t202variables as $key) {
-        
-        if (isset($_POST[$key]) && trim($_POST[$key]) != '') { //if there is a non empty value posted, then overwrite current value in html array with it 
-            $html[$key] = $db->real_escape_string(trim($_POST[$key]));
+
+        if (isset($_POST[$key]) && trim((string) $_POST[$key]) != '') { //if there is a non empty value posted, then overwrite current value in html array with it 
+            $html[$key] = $db->real_escape_string(trim((string) $_POST[$key]));
         }
         if (isset($html[$key]) || $key=='t202kw')
             $tracking_variable_string .= $key . '=' . ($html[$key] ?? '') . '&'; //now write out the values/ but only if they are not empty with the exception of t202kw with we will write out no matter what
@@ -226,7 +226,8 @@ $html = array();
 
 
 	if ($slack) {
-		
+		$editTracker = !empty($_POST['edit_tracker']);
+
 		switch ($_POST['tracker_type']) {
 			case '0':
 				if ($_POST['method_of_promotion'] == 'directlink') {
@@ -245,11 +246,11 @@ $html = array();
 				break;	
 		}
 
-		if (!$_POST['edit_tracker']) {
+		if (!$editTracker) {
 
-			$slack->push('tracking_link_created', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'user' => $user_row['username']));
+			$slack->push('tracking_link_created', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'user' => $user_row['username']]);
 
-		} else if($_POST['edit_tracker'] && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
+		} else if($editTracker && !empty($_POST['tracker_id']) && $get_tracker_result->num_rows > 0) {
 
 			if ($_POST['tracker_type'] == '0') {
 				if ($_POST['aff_campaign_id'] != $get_tracker_row['aff_campaign_id']) {
@@ -259,19 +260,19 @@ $html = array();
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
-					$slack->push('tracking_link_category_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_category' => $get_tracker_row['aff_network_name'], 'new_category' => $row['aff_network_name'], 'user' => $user_row['username']));
-					$slack->push('tracking_link_campaign_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_campaign' => $get_tracker_row['aff_campaign_name'], 'new_campaign' => $row['aff_campaign_name'], 'user' => $user_row['username']));
+					$slack->push('tracking_link_category_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_category' => $get_tracker_row['aff_network_name'], 'new_category' => $row['aff_network_name'], 'user' => $user_row['username']]);
+					$slack->push('tracking_link_campaign_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_campaign' => $get_tracker_row['aff_campaign_name'], 'new_campaign' => $row['aff_campaign_name'], 'user' => $user_row['username']]);
 				}
 
 				if ($_POST['method_of_promotion'] == 'directlink') {
 					if ($get_tracker_row['landing_page_id']) {
-						$slack->push('tracking_link_method_of_promotion_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_method' => 'Landing Page', 'new_method' => 'Direct Link', 'user' => $user_row['username']));
+						$slack->push('tracking_link_method_of_promotion_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_method' => 'Landing Page', 'new_method' => 'Direct Link', 'user' => $user_row['username']]);
 					}
 				}
 
 				if ($_POST['method_of_promotion'] == 'landingpage') {
 					if ($get_tracker_row['landing_page_id'] == 0) {
-						$slack->push('tracking_link_method_of_promotion_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_method' => 'Direct Link', 'new_method' => 'Landing Page', 'user' => $user_row['username']));
+						$slack->push('tracking_link_method_of_promotion_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_method' => 'Direct Link', 'new_method' => 'Landing Page', 'user' => $user_row['username']]);
 					}
 				}
 			}
@@ -284,7 +285,7 @@ $html = array();
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
-					$slack->push('tracking_link_landing_page_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_lp' => $get_tracker_row['landing_page_nickname'], 'new_lp' => $row['landing_page_nickname'], 'user' => $user_row['username']));
+					$slack->push('tracking_link_landing_page_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_lp' => $get_tracker_row['landing_page_nickname'], 'new_lp' => $row['landing_page_nickname'], 'user' => $user_row['username']]);
 				}
 			}
 
@@ -296,7 +297,7 @@ $html = array();
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
-					$slack->push('tracking_link_text_ad_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_ad' => $get_tracker_row['text_ad_name'], 'new_ad' => $row['text_ad_name'], 'user' => $user_row['username']));
+					$slack->push('tracking_link_text_ad_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_ad' => $get_tracker_row['text_ad_name'], 'new_ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
 				}
 
 				if (isset($_POST['text_ad_id']) && !$get_tracker_row['text_ad_id']) {
@@ -305,12 +306,12 @@ $html = array();
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
-					$slack->push('tracking_link_text_ad_added', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $row['text_ad_name'], 'user' => $user_row['username']));
+					$slack->push('tracking_link_text_ad_added', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
 				}
 
 				if (!$_POST['text_ad_id'] && $get_tracker_row['text_ad_id']) {
 					
-					$slack->push('tracking_link_text_ad_removed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $get_tracker_row['text_ad_name'], 'user' => $user_row['username']));
+					$slack->push('tracking_link_text_ad_removed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $get_tracker_row['text_ad_name'], 'user' => $user_row['username']]);
 
 				}
 
@@ -331,7 +332,7 @@ $html = array();
 						$to_type = 'On - Overide Campaign Default';
 					}
 
-					$slack->push('tracking_link_cloaking_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_type' => $from_type, 'new_type' => $to_type, 'user' => $user_row['username']));
+					$slack->push('tracking_link_cloaking_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_type' => $from_type, 'new_type' => $to_type, 'user' => $user_row['username']]);
 				}
 			}
 
@@ -341,24 +342,24 @@ $html = array();
 				$result = $db->query($sql);
 				$row = $result->fetch_assoc();
 
-				$slack->push('tracking_link_pcc_network_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_source' => $get_tracker_row['ppc_network_name'], 'new_source' => $row['ppc_network_name'], 'user' => $user_row['username']));
-				$slack->push('tracking_link_ppc_account_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_account' => $get_tracker_row['ppc_account_name'], 'new_account' => $row['ppc_account_name'], 'user' => $user_row['username']));
+				$slack->push('tracking_link_pcc_network_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_source' => $get_tracker_row['ppc_network_name'], 'new_source' => $row['ppc_network_name'], 'user' => $user_row['username']]);
+				$slack->push('tracking_link_ppc_account_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_account' => $get_tracker_row['ppc_account_name'], 'new_account' => $row['ppc_account_name'], 'user' => $user_row['username']]);
 			}
 
 			if (isset($_POST['cost_type']) && $_POST['cost_type'] == 'cpc') {
 				if ($get_tracker_row['click_cpc'] == null) {
-					$slack->push('tracking_link_cost_type_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_type' => 'CPA', 'new_type' => 'CPC', 'user' => $user_row['username']));
+					$slack->push('tracking_link_cost_type_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_type' => 'CPA', 'new_type' => 'CPC', 'user' => $user_row['username']]);
 				} else {
 					if ($click_cpc != $get_tracker_row['click_cpc']) {
-						$slack->push('tracking_link_cost_value_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_value' => $get_tracker_row['click_cpc'], 'new_value' => $click_cpc, 'user' => $user_row['username']));
+						$slack->push('tracking_link_cost_value_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_value' => $get_tracker_row['click_cpc'], 'new_value' => $click_cpc, 'user' => $user_row['username']]);
 					}
 				}
 
 			} else if ($_POST['cost_type'] == 'cpa') {
 				if ($get_tracker_row['click_cpa'] == null) {
-					$slack->push('tracking_link_cost_type_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_type' => 'CPC', 'new_type' => 'CPA', 'user' => $user_row['username']));
+					$slack->push('tracking_link_cost_type_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_type' => 'CPC', 'new_type' => 'CPA', 'user' => $user_row['username']]);
 				} else if ($click_cpa != $get_tracker_row['click_cpa']) {
-					$slack->push('tracking_link_cost_value_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_value' => $get_tracker_row['click_cpa'], 'new_value' => $click_cpa, 'user' => $user_row['username']));
+					$slack->push('tracking_link_cost_value_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_value' => $get_tracker_row['click_cpa'], 'new_value' => $click_cpa, 'user' => $user_row['username']]);
 				}
 			}
 
@@ -369,7 +370,7 @@ $html = array();
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
-					$slack->push('tracking_link_rotator_changed', array('type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_rotator' => $get_tracker_row['name'], 'new_rotator' => $row['name'], 'user' => $user_row['username']));
+					$slack->push('tracking_link_rotator_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_rotator' => $get_tracker_row['name'], 'new_rotator' => $row['name'], 'user' => $user_row['username']]);
 				}
 			}
 		}
@@ -421,9 +422,9 @@ $html = array();
 	
 	if (($_POST['method_of_promotion'] == 'landingpage') or ($_POST['tracker_type'] == 1)) {
 
-		$destination_url = (isset($parsed_url['scheme']) ? $parsed_url['scheme'] : 'http') . '://' . 
-		                   (isset($parsed_url['host']) ? $parsed_url['host'] : '') . 
-		                   (isset($parsed_url['path']) ? $parsed_url['path'] : '') . '?';
+		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' . 
+		                   ($parsed_url['host'] ?? '') . 
+		                   ($parsed_url['path'] ?? '') . '?';
 		if (!empty($parsed_url['query'])) {
 			$destination_url .= $parsed_url['query'] . '&';  ;
 		}

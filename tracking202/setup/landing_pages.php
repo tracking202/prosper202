@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -18) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -11,19 +11,19 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 }
 
 // Initialize variables to prevent undefined variable warnings
-$error = array();
-$html = array();
-$mysql = array();
-$selected = array();
+$error = [];
+$html = [];
+$mysql = [];
+$selected = [];
 $add_success = false;
 $delete_success = false;
 $editing = false;
 $copying = false;
 $append = '';
-$aff_campaign_row = array();
-$aff_network_row = array();
-$landing_page_row = array();
-$url = array();
+$aff_campaign_row = [];
+$aff_network_row = [];
+$landing_page_row = [];
+$url = [];
 
 
 $slack = false;
@@ -58,17 +58,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
-	$landing_page_nickname = isset($_POST['landing_page_nickname']) ? trim($_POST['landing_page_nickname']) : '';
+	$landing_page_nickname = isset($_POST['landing_page_nickname']) ? trim((string) $_POST['landing_page_nickname']) : '';
 	if (empty($landing_page_nickname)) {
 		$error['landing_page_nickname'] = '<div class="error">Give this landing page a nickname</div>';
 	}
 
-	$landing_page_url = isset($_POST['landing_page_url']) ? trim($_POST['landing_page_url']) : '';
+	$landing_page_url = isset($_POST['landing_page_url']) ? trim((string) $_POST['landing_page_url']) : '';
 	if (empty($landing_page_url)) {
 		$error['landing_page_url'] = '<div class="error">What is the URL of your landing page?</div>';
 	}
 
-	if (isset($_POST['landing_page_url']) && !empty($_POST['landing_page_url']) && (substr($_POST['landing_page_url'], 0, 7) != 'http://') and (substr($_POST['landing_page_url'], 0, 8) != 'https://')) {
+	if (isset($_POST['landing_page_url']) && !empty($_POST['landing_page_url']) && (!str_starts_with((string) $_POST['landing_page_url'], 'http://')) and (!str_starts_with((string) $_POST['landing_page_url'], 'https://'))) {
 		if (!isset($error['landing_page_url'])) {
 			$error['landing_page_url'] = '';
 		}
@@ -143,7 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$lp_type = 'advanced'; // Default value
 				if (isset($_POST['landing_page_type']) && $_POST['landing_page_type'] == '0') {
 					if (isset($landing_page_row['aff_campaign_id'], $_POST['aff_campaign_id']) && $landing_page_row['aff_campaign_id'] != $_POST['aff_campaign_id']) {
-						$slack->push('simple_landing_page_campaign_changed', array('name' => $_POST['landing_page_nickname'] ?? '', 'old_campaign' => $landing_page_row['aff_campaign_name'] ?? '', 'new_campaign' => $aff_campaign_row['aff_campaign_name'] ?? '', 'user' => $user_row['username'] ?? ''));
+						$slack->push('simple_landing_page_campaign_changed', ['name' => $_POST['landing_page_nickname'] ?? '', 'old_campaign' => $landing_page_row['aff_campaign_name'] ?? '', 'new_campaign' => $aff_campaign_row['aff_campaign_name'] ?? '', 'user' => $user_row['username'] ?? '']);
 					}
 
 					$lp_type = 'simple';
@@ -152,20 +152,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				}
 
 				if (isset($landing_page_row['landing_page_nickname'], $_POST['landing_page_nickname']) && $landing_page_row['landing_page_nickname'] != $_POST['landing_page_nickname']) {
-					$slack->push($lp_type . '_landing_page_name_changed', array('name' => $_POST['landing_page_nickname'] ?? '', 'old_name' => $landing_page_row['landing_page_nickname'] ?? '', 'new_name' => $_POST['landing_page_nickname'] ?? '', 'user' => $user_row['username'] ?? ''));
+					$slack->push($lp_type . '_landing_page_name_changed', ['name' => $_POST['landing_page_nickname'] ?? '', 'old_name' => $landing_page_row['landing_page_nickname'] ?? '', 'new_name' => $_POST['landing_page_nickname'] ?? '', 'user' => $user_row['username'] ?? '']);
 				}
 
 				if (isset($landing_page_row['landing_page_url'], $_POST['landing_page_url']) && $landing_page_row['landing_page_url'] != $_POST['landing_page_url']) {
-					$slack->push($lp_type . '_landing_page_url_changed', array('name' => $_POST['landing_page_nickname'] ?? '', 'old_url' => $landing_page_row['landing_page_url'] ?? '', 'new_url' => $_POST['landing_page_url'] ?? '', 'user' => $user_row['username'] ?? ''));
+					$slack->push($lp_type . '_landing_page_url_changed', ['name' => $_POST['landing_page_nickname'] ?? '', 'old_url' => $landing_page_row['landing_page_url'] ?? '', 'new_url' => $_POST['landing_page_url'] ?? '', 'user' => $user_row['username'] ?? '']);
 				}
 			}
 			header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php');
 		} else {
 			if ($slack) {
 				if (isset($_POST['landing_page_type']) && $_POST['landing_page_type'] == '0') {
-					$slack->push('simple_landing_page_created', array('name' => $_POST['landing_page_nickname'] ?? '', 'user' => $user_row['username'] ?? ''));
+					$slack->push('simple_landing_page_created', ['name' => $_POST['landing_page_nickname'] ?? '', 'user' => $user_row['username'] ?? '']);
 				} else if (isset($_POST['landing_page_type']) && $_POST['landing_page_type'] == '1') {
-					$slack->push('advanced_landing_page_created', array('name' => $_POST['landing_page_nickname'] ?? '', 'user' => $user_row['username'] ?? ''));
+					$slack->push('advanced_landing_page_created', ['name' => $_POST['landing_page_nickname'] ?? '', 'user' => $user_row['username'] ?? '']);
 				}
 			}
 		}
@@ -173,7 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($editing != true) {
 			//if this landing page is brand new, add on a landing_page_id_public
 			$landing_page_row['landing_page_id'] = $db->insert_id;
-			$landing_page_id_public = rand(1, 9) . $landing_page_row['landing_page_id'] . rand(1, 9);
+			$landing_page_id_public = random_int(1, 9) . $landing_page_row['landing_page_id'] . random_int(1, 9);
 			$mysql['landing_page_id_public'] = $db->real_escape_string((string)$landing_page_id_public);
 			$mysql['landing_page_id'] = $db->real_escape_string((string)$landing_page_row['landing_page_id']);
 
@@ -201,9 +201,9 @@ if (isset($_GET['delete_landing_page_id'])) {
 			$delete_success = true;
 			if ($slack) {
 				if (isset($_GET['delete_landing_page_type']) && $_GET['delete_landing_page_type'] == '0') {
-					$slack->push('simple_landing_page_deleted', array('name' => $_GET['delete_landing_page_name'] ?? '', 'user' => $user_row['username'] ?? ''));
+					$slack->push('simple_landing_page_deleted', ['name' => $_GET['delete_landing_page_name'] ?? '', 'user' => $user_row['username'] ?? '']);
 				} else if (isset($_GET['delete_landing_page_type']) && $_GET['delete_landing_page_type'] == '1') {
-					$slack->push('advanced_landing_page_deleted', array('name' => $_GET['delete_landing_page_name'] ?? '', 'user' => $user_row['username'] ?? ''));
+					$slack->push('advanced_landing_page_deleted', ['name' => $_GET['delete_landing_page_name'] ?? '', 'user' => $user_row['username'] ?? '']);
 				}
 			}
 		}
@@ -266,7 +266,7 @@ if ((($editing == true) or ($add_success != true)) and (isset($mysql['aff_campai
 	$html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
-template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
+template_top('Landing Page Setup');  ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
@@ -279,7 +279,7 @@ template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
 							else echo "success"; ?> pull-right" style="margin-top: 20px;">
 					<small>
 						<?php if ($error) { ?>
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo isset($error['token']) ? $error['token'] : ''; ?>
+							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
 						<?php } ?>
 						<?php if ($add_success == true) { ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
@@ -309,9 +309,9 @@ template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
 		<span class="infotext">Here you can add different landing pages you might use with your marketing.</span>
 
 		<form method="post" action="<?php if ($delete_success == true) {
-										echo isset($_SERVER['REDIRECT_URL']) ? $_SERVER['REDIRECT_URL'] : '';
+										echo $_SERVER['REDIRECT_URL'] ?? '';
 									} ?>" class="form-horizontal" role="form" style="margin:15px 0px;">
-			<input name="landing_page_id" type="hidden" value="<?php echo isset($html['landing_page_id']) ? $html['landing_page_id'] : ''; ?>" />
+			<input name="landing_page_id" type="hidden" value="<?php echo $html['landing_page_id'] ?? ''; ?>" />
 			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
 				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Landing Page Type <span class="fui-info-circle" data-toggle="tooltip" title="A Simple Landing Page is a landing page that only has one offer associated with it. Where as an Advanced Landing Page is a landing page that can run several offers on it. An example would be a retail landing page where you have outgoing links to several different products."></span></label>
 
@@ -358,14 +358,14 @@ template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
 			<div class="form-group <?php if (isset($error['landing_page_nickname'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 				<label for="landing_page_nickname" class="col-xs-4 control-label" style="text-align: left;">LP Nickname:</label>
 				<div class="col-xs-6" style="margin-top: 10px;">
-					<input type="text" class="form-control input-sm" id="landing_page_nickname" name="landing_page_nickname" value="<?php echo isset($html['landing_page_nickname']) ? $html['landing_page_nickname'] : ''; ?>">
+					<input type="text" class="form-control input-sm" id="landing_page_nickname" name="landing_page_nickname" value="<?php echo $html['landing_page_nickname'] ?? ''; ?>">
 				</div>
 			</div>
 
 			<div class="form-group <?php if (isset($error['landing_page_url'])) echo "has-error"; ?>" style="margin-bottom: 10px;">
 				<label for="landing_page_url" class="col-xs-4 control-label" style="text-align: left;">Landing Page URL:</label>
 				<div class="col-xs-6" style="margin-top: 10px;">
-					<textarea class="form-control input-sm" rows="3" id="landing_page_url" name="landing_page_url" placeholder="http://"><?php echo isset($html['landing_page_url']) ? $html['landing_page_url'] : ''; ?></textarea>
+					<textarea class="form-control input-sm" rows="3" id="landing_page_url" name="landing_page_url" placeholder="http://"><?php echo $html['landing_page_url'] ?? ''; ?></textarea>
 				</div>
 			</div>
 			<div class="form-group" style="margin-bottom: 10px;">
@@ -406,7 +406,7 @@ template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
 								<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>
 							</div>
 							<div class="col-xs-6">
-								<input type="hidden" name="pixel_id" value="<?php echo isset($selected['pixel_id']) ? $selected['pixel_id'] : ''; ?>">
+								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'] ?? ''; ?>">
 								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url(); ?>tracking202/setup/landing_pages.php'; return false;">Cancel</button>
 							</div>
 						</div>
@@ -463,7 +463,7 @@ template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
 
 																	while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
 																		$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		$url['aff_network_id'] = urlencode($aff_network_row['aff_network_id']);
+																		$url['aff_network_id'] = urlencode((string) $aff_network_row['aff_network_id']);
 
 																		printf('<li>%s</li>', $html['aff_network_name']);
 
@@ -516,9 +516,9 @@ template_top('Landing Page Setup', NULL, NULL, NULL);  ?>
 <script type="text/javascript">
 	$(document).ready(function() {
 
-		load_aff_network_id('<?php echo isset($html['aff_network_id']) ? $html['aff_network_id'] : ''; ?>');
+		load_aff_network_id('<?php echo $html['aff_network_id'] ?? ''; ?>');
 		<?php if (isset($html['aff_network_id']) && $html['aff_network_id'] != '') { ?>
-			load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>', '<?php echo isset($html['aff_campaign_id']) ? $html['aff_campaign_id'] : ''; ?>');
+			load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>', '<?php echo $html['aff_campaign_id'] ?? ''; ?>');
 		<?php } ?>
 
 		var advLpOptions = {

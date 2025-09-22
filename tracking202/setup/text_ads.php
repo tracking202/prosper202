@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-18) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
@@ -10,10 +10,10 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 }
 
 // Initialize variables to prevent undefined variable warnings
-$error = array();
-$html = array();
-$mysql = array();
-$selected = array();
+$error = [];
+$html = [];
+$mysql = [];
+$selected = [];
 $add_success = false;
 $delete_success = false;
 $editing = false;
@@ -56,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 	
 	if ($_POST['text_ad_type'] == 1) { 
-		$landing_page_id = trim($_POST['landing_page_id']);
+		$landing_page_id = trim((string) $_POST['landing_page_id']);
 		if (empty($landing_page_id)) { $error['landing_page_id'] = '<div class="error">Please select a landing page.</div>'; }
 
 		$mysql['landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);
@@ -71,16 +71,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 		
 		
-	$text_ad_name = trim($_POST['text_ad_name']);
+	$text_ad_name = trim((string) $_POST['text_ad_name']);
 	if (empty($text_ad_name)) { $error['text_ad_name'] = '<div class="error">Give this ad variation a nickname</div>'; }
 	
-	$text_ad_headline = trim($_POST['text_ad_headline']);
+	$text_ad_headline = trim((string) $_POST['text_ad_headline']);
 	if (empty($text_ad_headline)) { $error['text_ad_headline'] = '<div class="error">What is your ad headline?</div>'; }
 	
-	$text_ad_description = trim($_POST['text_ad_description']);
+	$text_ad_description = trim((string) $_POST['text_ad_description']);
 	if (empty($text_ad_description)) { $error['text_ad_description'] = '<div class="error">What is your ad description?</div>'; }
 	
-	$text_ad_display_url = trim($_POST['text_ad_display_url']);
+	$text_ad_display_url = trim((string) $_POST['text_ad_display_url']);
 	if (empty($text_ad_display_url)) { $error['text_ad_display_url'] = '<div class="error">What is your ad display URL?</div>'; }
 	
 
@@ -141,37 +141,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if ($slack) {
 				if ($_POST['text_ad_type'] == 0) {
 					if ($text_ad_row['text_add_aff_campaign_id'] != $_POST['aff_campaign_id']) {
-						$slack->push('ad_copy_campaign_changed', array('name' => $text_ad_row['text_ad_name'], 'old_campaign' => $text_ad_row['text_add_aff_campaign_name'], 'new_campaign' => $aff_campaign_row['aff_campaign_name'], 'user' => $user_row['username']));
+						$slack->push('ad_copy_campaign_changed', ['name' => $text_ad_row['text_ad_name'], 'old_campaign' => $text_ad_row['text_add_aff_campaign_name'], 'new_campaign' => $aff_campaign_row['aff_campaign_name'], 'user' => $user_row['username']]);
 					}
 				}
 
 				if ($_POST['text_ad_type'] == 1) {
 					if ($text_ad_row['text_add_landing_page_id'] != $_POST['landing_page_id']) {
-						$slack->push('ad_copy_landing_page_changed', array('name' => $text_ad_row['text_ad_name'], 'old_lp' => $text_ad_row['text_add_landing_page_nickname'], 'new_lp' => $landing_page_row['landing_page_nickname'], 'user' => $user_row['username']));
+						$slack->push('ad_copy_landing_page_changed', ['name' => $text_ad_row['text_ad_name'], 'old_lp' => $text_ad_row['text_add_landing_page_nickname'], 'new_lp' => $landing_page_row['landing_page_nickname'], 'user' => $user_row['username']]);
 					}
 				}
 
 				if ($text_ad_row['text_ad_name'] != $_POST['text_ad_name']) {
-					$slack->push('ad_copy_name_changed', array('old_name' => $text_ad_row['text_ad_name'], 'new_name' => $_POST['text_ad_name'], 'user' => $user_row['username']));
+					$slack->push('ad_copy_name_changed', ['old_name' => $text_ad_row['text_ad_name'], 'new_name' => $_POST['text_ad_name'], 'user' => $user_row['username']]);
 				}
 
 				if ($text_ad_row['text_ad_headline'] != $_POST['text_ad_headline']) {
-					$slack->push('ad_copy_headline_changed', array('name' => $_POST['text_ad_name'], 'old_headline' => $text_ad_row['text_ad_headline'], 'new_headline' => $_POST['text_ad_headline'], 'user' => $user_row['username']));
+					$slack->push('ad_copy_headline_changed', ['name' => $_POST['text_ad_name'], 'old_headline' => $text_ad_row['text_ad_headline'], 'new_headline' => $_POST['text_ad_headline'], 'user' => $user_row['username']]);
 				}
 
 				if ($text_ad_row['text_ad_description'] != $_POST['text_ad_description']) {
-					$slack->push('ad_copy_description_changed', array('name' => $_POST['text_ad_name'], 'old_description' => $text_ad_row['text_ad_description'], 'new_description' => $_POST['text_ad_description'], 'user' => $user_row['username']));
+					$slack->push('ad_copy_description_changed', ['name' => $_POST['text_ad_name'], 'old_description' => $text_ad_row['text_ad_description'], 'new_description' => $_POST['text_ad_description'], 'user' => $user_row['username']]);
 				}
 
 				if ($text_ad_row['text_ad_display_url'] != $_POST['text_ad_display_url']) {
-					$slack->push('ad_copy_display_url_changed', array('name' => $_POST['text_ad_name'], 'old_url' => $text_ad_row['text_ad_display_url'], 'new_url' => $_POST['text_ad_display_url'], 'user' => $user_row['username']));
+					$slack->push('ad_copy_display_url_changed', ['name' => $_POST['text_ad_name'], 'old_url' => $text_ad_row['text_ad_display_url'], 'new_url' => $_POST['text_ad_display_url'], 'user' => $user_row['username']]);
 				}
 			}
 			header('location: '.get_absolute_url().'tracking202/setup/text_ads.php');   
 			
 		} else {
 			if($slack)
-				$slack->push('ad_copy_created', array('name' => $_POST['text_ad_name'], 'user' => $user_row['username']));
+				$slack->push('ad_copy_created', ['name' => $_POST['text_ad_name'], 'user' => $user_row['username']]);
 		}
 		
 		$editing = false;
@@ -195,7 +195,7 @@ if (isset($_GET['delete_text_ad_id'])) {
 		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_result)) {
 			$delete_success = true;
 			if($slack)
-				$slack->push('ad_copy_deleted', array('name' => $_GET['delete_text_ad_name'], 'user' => $user_row['username']));
+				$slack->push('ad_copy_deleted', ['name' => $_GET['delete_text_ad_name'], 'user' => $user_row['username']]);
 		}
 	} else {
 		header('location: '.get_absolute_url().'tracking202/setup/text_ads.php');
@@ -276,7 +276,7 @@ if ((($editing === true) || ($add_success !== true)) && !empty($mysql['aff_campa
     $html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
-template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
+template_top('Text Ads Setup');  ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
@@ -288,7 +288,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 				<div class="<?php if($error) echo "error"; else echo "success";?> pull-right" style="margin-top: 20px;">
 					<small>
 						<?php if ($error) { ?> 
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo isset($error['token']) ? $error['token'] : ''; ?>
+							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
 						<?php } ?>
 						<?php if ($add_success == true) { ?>
 							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
@@ -316,8 +316,8 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 		<small><strong>Add Your Text Ads</strong></small><br/>
 		<span class="infotext">Here you can add different text ads you might use with your PPC marketing.</span>
 		
-		<form method="post" action="<?php if ($delete_success == true) { echo isset($_SERVER['REDIRECT_URL']) ? $_SERVER['REDIRECT_URL'] : ''; }?>" class="form-horizontal" role="form" style="margin:15px 0px;">
-			<input name="text_ad_id" type="hidden" value="<?php echo isset($html['text_ad_id']) ? $html['text_ad_id'] : ''; ?>"/>
+		<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL'] ?? ''; }?>" class="form-horizontal" role="form" style="margin:15px 0px;">
+			<input name="text_ad_id" type="hidden" value="<?php echo $html['text_ad_id'] ?? ''; ?>"/>
 
 			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
 				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Text Ad For: </label>
@@ -369,7 +369,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
                 <div class="form-group <?php if (!empty($error['text_ad_name'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
 		        <label for="text_ad_name" class="col-xs-4 control-label" style="text-align: left;">Ad Nickname <span class="fui-info-circle" data-toggle="tooltip" title="The ad nickname is the nickname we store for you, this is used for when you have several ads, you can quickly find the ones you are looking for by assigning each ad a unique nickname."></span></label>
 		        <div class="col-xs-6" style="margin-top: 10px;">
-	                <input type="text" class="form-control input-sm" id="text_ad_name" name="text_ad_name" value="<?php echo isset($html['text_ad_name']) ? $html['text_ad_name'] : ''; ?>">
+	                <input type="text" class="form-control input-sm" id="text_ad_name" name="text_ad_name" value="<?php echo $html['text_ad_name'] ?? ''; ?>">
 		        </div>
 		    </div>
 
@@ -389,21 +389,21 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 		    <div class="form-group <?php if(isset($error['text_ad_headline'])) echo "has-error";?>" style="margin-bottom: 0px;">
 		        <label for="text_ad_headline" class="col-xs-4 control-label" style="text-align: left;">Ad Headline: </label>
 		        <div class="col-xs-6" style="margin-top: 10px;">
-	                <input type="text" class="form-control input-sm" id="text_ad_headline" name="text_ad_headline" value="<?php echo isset($html['text_ad_headline']) ? $html['text_ad_headline'] : ''; ?>">
+	                <input type="text" class="form-control input-sm" id="text_ad_headline" name="text_ad_headline" value="<?php echo $html['text_ad_headline'] ?? ''; ?>">
 		        </div>
 		    </div>
 
 		    <div class="form-group <?php if(isset($error['text_ad_description'])) echo "has-error";?>" style="margin-bottom: 0px;">
 		        <label for="text_ad_description" class="col-xs-4 control-label" style="text-align: left;">Ad Description: </label>
 		        <div class="col-xs-6" style="margin-top: 10px;">
-					<textarea class="form-control" name="text_ad_description" id="text_ad_description" rows="2"><?php echo isset($html['text_ad_description']) ? $html['text_ad_description'] : ''; ?></textarea>
+					<textarea class="form-control" name="text_ad_description" id="text_ad_description" rows="2"><?php echo $html['text_ad_description'] ?? ''; ?></textarea>
 				</div>
 		    </div>
 
 		    <div class="form-group <?php if(isset($error['text_ad_display_url'])) echo "has-error";?>" style="margin-bottom: 10px;">
 		        <label for="text_ad_display_url" class="col-xs-4 control-label" style="text-align: left;">Display URL: </label>
 		        <div class="col-xs-6" style="margin-top: 10px;">
-	                <input type="text" class="form-control input-sm" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo isset($html['text_ad_display_url']) ? $html['text_ad_display_url'] : ''; ?>">
+	                <input type="text" class="form-control input-sm" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo $html['text_ad_display_url'] ?? ''; ?>">
 		        </div>
 		    </div>
 
@@ -415,7 +415,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 					    		<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>					
 					    	</div>
 					    	<div class="col-xs-6">
-								<input type="hidden" name="pixel_id" value="<?php echo isset($selected['pixel_id']) ? $selected['pixel_id'] : '';?>">
+								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'] ?? '';?>">
 								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url();?>tracking202/setup/text_ads.php'; return false;">Cancel</button>					    		</div>
 					    	</div>
 				    <?php } else { ?>
@@ -480,7 +480,7 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 					
 					while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
 						$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-						$url['aff_network_id'] = urlencode($aff_network_row['aff_network_id']);
+						$url['aff_network_id'] = urlencode((string) $aff_network_row['aff_network_id']);
 						
 						printf('<li>%s</li>', $html['aff_network_name']);
 						
@@ -535,11 +535,11 @@ template_top('Text Ads Setup',NULL,NULL,NULL);  ?>
 <script type="text/javascript">
 $(document).ready(function() {
 
-    load_landing_page(0, <?php echo isset($html['landing_page_id']) ? $html['landing_page_id'] : 0; if (isset($html['landing_page_id']) && !$html['landing_page_id']) { echo 0; } ?>, 'advlandingpage');
+    load_landing_page(0, <?php echo $html['landing_page_id'] ?? 0; if (isset($html['landing_page_id']) && !$html['landing_page_id']) { echo 0; } ?>, 'advlandingpage');
 
-   	load_aff_network_id('<?php echo isset($html['aff_network_id']) ? $html['aff_network_id'] : ''; ?>');
+   	load_aff_network_id('<?php echo $html['aff_network_id'] ?? ''; ?>');
     <?php if (isset($html['aff_network_id']) && $html['aff_network_id'] != '') { ?>
-        load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>','<?php echo isset($html['aff_campaign_id']) ? $html['aff_campaign_id'] : ''; ?>');
+        load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>','<?php echo $html['aff_campaign_id'] ?? ''; ?>');
     <?php } ?>
 });
 </script>

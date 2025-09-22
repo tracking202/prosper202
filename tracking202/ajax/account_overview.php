@@ -1,8 +1,8 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/connect.php');
-include_once(substr(dirname(__FILE__), 0, -17) . '/202-config/class-dataengine.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/class-dataengine.php');
 
 AUTH::require_user();
 
@@ -16,7 +16,7 @@ $mysql['from'] = $db->real_escape_string((string)$time['from']);
 
 
 //show real or filtered clicks
-$aff_campaigns = array();
+$aff_campaigns = [];
 $count = 0;
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -27,8 +27,8 @@ $user_sql = "SELECT 2p.user_pref_show, 2p.user_cpc_or_cpv, 2ac.aff_campaign_name
 				 WHERE 2p.user_id=" . $mysql['user_id'] . "";
 $user_result = _mysqli_query($user_sql); //($user_sql);
 
-$aff_campaigns = array();
-$campaign_ids = array();
+$aff_campaigns = [];
+$campaign_ids = [];
 while ($user_row2 = $user_result->fetch_assoc()) {
 	$user_row['user_pref_show'] = $user_row2['user_pref_show'];
 	$user_row['user_cpc_or_cpv'] = $user_row2['user_cpc_or_cpv'];
@@ -37,7 +37,7 @@ while ($user_row2 = $user_result->fetch_assoc()) {
 	
 	// Only add campaign if it hasn't been added already
 	if ($user_row2['aff_campaign_id'] && !in_array($user_row2['aff_campaign_id'], $campaign_ids)) {
-		$aff_campaigns[] = array('aff_campaign_id' => $user_row2['aff_campaign_id'], 'aff_campaign_name' => $user_row2['aff_campaign_name']);
+		$aff_campaigns[] = ['aff_campaign_id' => $user_row2['aff_campaign_id'], 'aff_campaign_name' => $user_row2['aff_campaign_name']];
 		$campaign_ids[] = $user_row2['aff_campaign_id'];
 	}
 }
@@ -146,7 +146,7 @@ if ($userObj->hasPermission("access_to_campaign_data")) {
 <?php
 $dr = new DisplayData();
 $campaignsData = ($de->getReportData('campaignOverview', $mysql['from'], $mysql['to'], $cpv));
-$lpsData = array();
+$lpsData = [];
 $lpsData = ($de->getReportData('LpOverview', $mysql['from'], $mysql['to'], $cpv));
 
 $dr->displayReport('LpOverview', $lpsData);

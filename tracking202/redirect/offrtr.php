@@ -13,8 +13,8 @@ if(!isset($_COOKIE['tracking202subid']) || !is_numeric($_COOKIE['tracking202subi
     die();
 } 
 
-include_once (substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect2.php');
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/class-dataengine-slim.php');
+include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
 $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
 $mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
@@ -151,7 +151,7 @@ $default = true;
 
 foreach ($rule_row as $rule) {
 	
-	$rotate = array();
+	$rotate = [];
 	$count = 0;
 
 	$mysql['rule_id'] = $db->real_escape_string($rule['rule_id']);
@@ -171,7 +171,7 @@ foreach ($rule_row as $rule) {
 			break;
 		}
 
-		$values = explode(',', $criteria['value']);
+		$values = explode(',', (string) $criteria['value']);
 
 		if (in_array('ALL', $values)) {
 			
@@ -310,7 +310,7 @@ $click_sql = "
 		rotator_id='".$mysql['rotator_id']."',
 		rule_id='".$mysql['rule_id']."',
 		rule_redirect_id = '".$mysql['rule_redirect_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+$click_result = $db->query($click_sql) or record_mysql_error($db);
 
 if ($default == false) {
 
@@ -346,7 +346,7 @@ if ($default == false) {
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
 				WHERE 2c.click_id='".$mysql['click_id']."'"; 
-		$rule_redirect_row = memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+		$rule_redirect_row = memcache_mysql_fetch_assoc($db, $rule_redirect_sql);
 
 			if ($rule_redirect_row['redirect_campaign'] != null) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string($rule_redirect_row['aff_campaign_id']);
@@ -364,7 +364,7 @@ if ($default == false) {
 					WHERE
 						2c.click_id='" . $mysql['click_id'] . "'
 				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 				if (($rule_redirect_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
 				(($rule_redirect_row['click_cloaking'] == - 1) and ($rule_redirect_row['aff_campaign_cloaking'] == 1)) or ((! isset($rule_redirect_row['click_cloaking'])) and ($rule_redirect_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
@@ -385,10 +385,10 @@ if ($default == false) {
 					WHERE
 						click_id='" . $mysql['click_id'] . "'
 				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-				$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
+				$click_outbound_site_url_id = INDEXES::get_site_url_id($db);
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_site_url_id);
 
 				if ($cloaking_on == true) {
@@ -398,7 +398,7 @@ if ($default == false) {
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
 
-				$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
+				$click_redirect_site_url_id = INDEXES::get_site_url_id($db);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
 
 				$update_sql = "
@@ -410,7 +410,7 @@ if ($default == false) {
 					WHERE
 						click_id='" . $mysql['click_id'] . "'
 				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 				$de = new DataEngine();
 				$data = $de->setDirtyHour($mysql['click_id']);
@@ -472,7 +472,7 @@ if ($default == false) {
 				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id
 				WHERE 2c.click_id='".$mysql['click_id']."'"; 
-				$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
+			$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
 
 				$mysql['aff_campaign_id'] = $db->real_escape_string($rotator_row['aff_campaign_id']);
 				$mysql['click_payout'] = $db->real_escape_string($rotator_row['aff_campaign_payout']);
@@ -489,7 +489,7 @@ if ($default == false) {
 					WHERE
 						2c.click_id='" . $mysql['click_id'] . "'
 				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 				if (($click_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
 				(($click_row['click_cloaking'] == - 1) and ($rotator_row['aff_campaign_cloaking'] == 1)) or ((! isset($click_row['click_cloaking'])) and ($rotator_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
@@ -510,10 +510,10 @@ if ($default == false) {
 					WHERE
 						click_id='" . $mysql['click_id'] . "'
 				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-				$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
+				$click_outbound_site_url_id = INDEXES::get_site_url_id($db);
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_site_url_id);
 
 				if ($cloaking_on == true) {
@@ -523,7 +523,7 @@ if ($default == false) {
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
 
-				$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
+				$click_redirect_site_url_id = INDEXES::get_site_url_id($db);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
 
 				$update_sql = "
@@ -535,7 +535,7 @@ if ($default == false) {
 					WHERE
 						click_id='" . $mysql['click_id'] . "'
 				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db, $update_sql);
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 				$de = new DataEngine();
 				$data = $de->setDirtyHour($mysql['click_id']);

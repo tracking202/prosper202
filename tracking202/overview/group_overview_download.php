@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/connect.php');
-include_once(substr(dirname( __FILE__ ), 0,-21) . '/202-config/ReportSummaryForm.class.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php');
+include_once(substr(__DIR__, 0,-21) . '/202-config/ReportSummaryForm.class.php');
 
 AUTH::require_user();
 
@@ -32,9 +32,9 @@ AUTH::require_user();
 	}
 	
 	$summary_form = new ReportSummaryForm();
-	$summary_form->setDetails(array($user_row['user_pref_group_1'],$user_row['user_pref_group_2'],$user_row['user_pref_group_3'],$user_row['user_pref_group_4']));
-	$summary_form->setDetailsSort(array(ReportBasicForm::SORT_NAME));
-	$summary_form->setDisplayType(array(ReportBasicForm::DISPLAY_TYPE_TABLE));
+	$summary_form->setDetails([$user_row['user_pref_group_1'],$user_row['user_pref_group_2'],$user_row['user_pref_group_3'],$user_row['user_pref_group_4']]);
+	$summary_form->setDetailsSort([ReportBasicForm::SORT_NAME]);
+	$summary_form->setDisplayType([ReportBasicForm::DISPLAY_TYPE_TABLE]);
 	$summary_form->setStartTime($mysql['from']);
 	$summary_form->setEndTime($mysql['to']);
 
@@ -62,7 +62,7 @@ AUTH::require_user();
 		foreach ($summary_form->getReportData()->getChildArrayBySort() as $summary_form_detail_1) {
 			if (count($summary_form_detail_1->getChildArrayBySort()) > 0) {
 				/* @var $summary_form_detail_2 Form */
-				foreach ($summary_form_detail_1->getChildArrayBySort() as $key => $summary_form_detail_2) {
+				foreach ($summary_form_detail_1->getChildArrayBySort() as $summary_form_detail_2) {
 					if (count($summary_form_detail_2->getChildArrayBySort()) > 0) {
 						/* @var $summary_form_detail_3 Form */
 						foreach ($summary_form_detail_2->getChildArrayBySort() as $summary_form_detail_3) {
