@@ -15,8 +15,6 @@ declare(strict_types=1);
 class XmlToArray
 {
 
-    var $xml = '';
-
     /** 
      * Default Constructor 
      * @param $xml = xml data 
@@ -24,9 +22,8 @@ class XmlToArray
      */
 
     // PHP4-style constructor replaced with __construct for PHP 7+
-    function __construct($xml)
+    function __construct(public $xml)
     {
-        $this->xml = $xml;
     }
 
     /** 
@@ -43,7 +40,7 @@ class XmlToArray
 
     function _struct_to_array($values, &$i)
     {
-        $child = array();
+        $child = [];
         if (isset($values[$i]['value'])) array_push($child, $values[$i]['value']);
 
         while ($i++ < count($values)) {
@@ -65,7 +62,7 @@ class XmlToArray
 
                 case 'open':
                     $name = $values[$i]['tag'];
-                    $size = isset($child[$name]) ? sizeof($child[$name]) : 0;
+                    $size = isset($child[$name]) ? count($child[$name]) : 0;
                     $child[$name][$size] = $this->_struct_to_array($values, $i);
                     break;
 
@@ -89,17 +86,17 @@ class XmlToArray
     function createArray()
     {
         $xml    = $this->xml;
-        $values = array();
-        $index  = array();
-        $array  = array();
+        $values = [];
+        $index  = [];
+        $array  = [];
         $parser = xml_parser_create();
         xml_parser_set_option($parser, XML_OPTION_SKIP_WHITE, 1);
         xml_parser_set_option($parser, XML_OPTION_CASE_FOLDING, 0);
-        xml_parse_into_struct($parser, $xml, $values, $index);
+        xml_parse_into_struct($parser, (string) $xml, $values, $index);
         xml_parser_free($parser);
         $i = 0;
         $name = $values[$i]['tag'];
-        $array[$name] = isset($values[$i]['attributes']) ? $values[$i]['attributes'] : '';
+        $array[$name] = $values[$i]['attributes'] ?? '';
         $array[$name] = $this->_struct_to_array($values, $i);
         return $array;
     } //createArray 

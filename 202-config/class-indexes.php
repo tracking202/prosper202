@@ -1,5 +1,9 @@
 <?php
 
+if (class_exists('INDEXES')) {
+    return;
+}
+
 class INDEXES
 {
 
@@ -173,7 +177,7 @@ class INDEXES
             return 0;
         }
 
-        $mysql['ip_address'] = $db->real_escape_string(trim($ip_address));
+        $mysql['ip_address'] = $db->real_escape_string(trim((string) $ip_address));
         $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
         $ip_result = $db->query($ip_sql); // or record_mysql_error($ip_sql);
 
@@ -212,7 +216,7 @@ class INDEXES
         global $db; // Use global $db
 
         // Validate and sanitize the input IP address string
-        $ip_address_string = trim($ip_address_string);
+        $ip_address_string = trim((string) $ip_address_string);
         if (empty($ip_address_string)) {
             error_log("Empty IP address provided to insert_ip.");
             return 0; // Or handle as an error
@@ -286,7 +290,7 @@ class INDEXES
             return 0;
         }
 
-        $site_domain = parse_url($site_url, PHP_URL_HOST);
+        $site_domain = parse_url((string) $site_url, PHP_URL_HOST);
         $mysql['site_domain'] = $db->real_escape_string(trim($site_domain));
         $site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain='" . $mysql['site_domain'] . "'";
         $site_domain_result = $db->query($site_domain_sql); // or record_mysql_error($site_domain_sql);
@@ -312,7 +316,7 @@ class INDEXES
             return 0;
         }
 
-        $mysql['site_url'] = $db->real_escape_string(trim($site_url));
+        $mysql['site_url'] = $db->real_escape_string(trim((string) $site_url));
         $site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_url='" . $mysql['site_url'] . "'";
         $site_url_result = $db->query($site_url_sql); // or record_mysql_error($site_url_sql);
 
@@ -341,7 +345,7 @@ class INDEXES
             return 0;
         }
 
-        $mysql['keyword_name'] = $db->real_escape_string(trim($keyword_name));
+        $mysql['keyword_name'] = $db->real_escape_string(trim((string) $keyword_name));
         $keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword_name='" . $mysql['keyword_name'] . "'";
         $keyword_result = $db->query($keyword_sql); // or record_mysql_error($keyword_sql);
 
@@ -364,7 +368,7 @@ class INDEXES
         $db = $database->getConnection();
 
         // only grab the first 350 charactesr of c1
-        $c1 = substr($c1, 0, 350);
+        $c1 = substr((string) $c1, 0, 350);
 
         if ($memcacheWorking) {
             $time = 2592000; // 7 days in sec
@@ -420,7 +424,7 @@ class INDEXES
         $db = $database->getConnection();
 
         // only grab the first 350 charactesr of c2
-        $c2 = substr($c2, 0, 350);
+        $c2 = substr((string) $c2, 0, 350);
 
         if ($memcacheWorking) {
             $time = 2592000; // 7 days in sec
@@ -476,7 +480,7 @@ class INDEXES
         $db = $database->getConnection();
 
         // only grab the first 350 charactesr of c3
-        $c3 = substr($c3, 0, 350);
+        $c3 = substr((string) $c3, 0, 350);
 
         if ($memcacheWorking) {
             $time = 2592000; // 7 days in sec
@@ -532,7 +536,7 @@ class INDEXES
         $db = $database->getConnection();
 
         // only grab the first 350 charactesr of c4
-        $c4 = substr($c4, 0, 350);
+        $c4 = substr((string) $c4, 0, 350);
 
         if ($memcacheWorking) {
             $time = 2592000; // 7 days in sec
@@ -589,7 +593,7 @@ class INDEXES
             return 0;
         }
 
-        $mysql['browser_name'] = $db->real_escape_string(trim($browser_name));
+        $mysql['browser_name'] = $db->real_escape_string(trim((string) $browser_name));
         $browser_sql = "SELECT browser_id FROM 202_browsers WHERE browser_name='" . $mysql['browser_name'] . "'";
         $browser_result = $db->query($browser_sql); // or record_mysql_error($browser_sql);
 
@@ -613,7 +617,7 @@ class INDEXES
             return 0;
         }
 
-        $mysql['platform_name'] = $db->real_escape_string(trim($platform_name));
+        $mysql['platform_name'] = $db->real_escape_string(trim((string) $platform_name));
         $platform_sql = "SELECT platform_id FROM 202_platforms WHERE platform_name='" . $mysql['platform_name'] . "'";
         $platform_result = $db->query($platform_sql); // or record_mysql_error($platform_sql);
 
@@ -637,7 +641,7 @@ class INDEXES
             return 0;
         }
 
-        $mysql['device_name'] = $db->real_escape_string(trim($device_name));
+        $mysql['device_name'] = $db->real_escape_string(trim((string) $device_name));
         $device_sql = "SELECT device_id FROM 202_devices WHERE device_name='" . $mysql['device_name'] . "'";
         $device_result = $db->query($device_sql); // or record_mysql_error($device_sql);
 

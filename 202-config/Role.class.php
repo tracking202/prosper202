@@ -9,11 +9,11 @@ class Role
         try {
             $database = DB::getInstance();
             self::$db = $database->getConnection();
-        } catch (Exception $e) {
+        } catch (Exception) {
             self::$db = false;
         }
 
-        $this->permissionList = array();
+        $this->permissionList = [];
     }
  
     public static function getRole($role_id)

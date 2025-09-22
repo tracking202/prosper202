@@ -95,11 +95,11 @@ class ReportBasicForm
 	const DETAIL_INTERVAL_MONTH = 3;
 	const DETAIL_INTERVAL_HOUR = 4;
 
-	private static $DISPLAY_LEVEL_ARRAY = array(self::DISPLAY_LEVEL_TITLE, self::DISPLAY_LEVEL_CLICK_COUNT, self::DISPLAY_LEVEL_LEAD_COUNT, self::DISPLAY_LEVEL_SU, self::DISPLAY_LEVEL_PAYOUT, self::DISPLAY_LEVEL_EPC, self::DISPLAY_LEVEL_CPC, self::DISPLAY_LEVEL_INCOME, self::DISPLAY_LEVEL_COST, self::DISPLAY_LEVEL_NET, self::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK, ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT, ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK, ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE, ReportBasicForm::DETAIL_LEVEL_KEYWORD, ReportBasicForm::DETAIL_LEVEL_TEXT_AD, ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_COUNTRY, ReportBasicForm::DETAIL_LEVEL_REGION, ReportBasicForm::DETAIL_LEVEL_CITY, ReportBasicForm::DETAIL_LEVEL_ISP, ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME, ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE, ReportBasicForm::DETAIL_LEVEL_BROWSER, ReportBasicForm::DETAIL_LEVEL_PLATFORM, ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT, ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE, ReportBasicForm::DETAIL_LEVEL_UTM_TERM, ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2, ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ ReportBasicForm::DETAIL_LEVEL_ROTATOR, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT, ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_PUBLISHERS);
-	private static $SORT_LEVEL_ARRAY = array(self::SORT_NAME, self::SORT_CLICK, self::SORT_LEAD, self::SORT_SU, self::SORT_PAYOUT, self::SORT_EPC, self::SORT_CPC, self::SORT_INCOME, self::SORT_COST, self::SORT_NET, self::SORT_ROI);
+	private static $DISPLAY_LEVEL_ARRAY = [self::DISPLAY_LEVEL_TITLE, self::DISPLAY_LEVEL_CLICK_COUNT, self::DISPLAY_LEVEL_LEAD_COUNT, self::DISPLAY_LEVEL_SU, self::DISPLAY_LEVEL_PAYOUT, self::DISPLAY_LEVEL_EPC, self::DISPLAY_LEVEL_CPC, self::DISPLAY_LEVEL_INCOME, self::DISPLAY_LEVEL_COST, self::DISPLAY_LEVEL_NET, self::DISPLAY_LEVEL_ROI];
+	private static $DETAIL_LEVEL_ARRAY = [ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK, ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT, ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK, ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE, ReportBasicForm::DETAIL_LEVEL_KEYWORD, ReportBasicForm::DETAIL_LEVEL_TEXT_AD, ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_COUNTRY, ReportBasicForm::DETAIL_LEVEL_REGION, ReportBasicForm::DETAIL_LEVEL_CITY, ReportBasicForm::DETAIL_LEVEL_ISP, ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME, ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE, ReportBasicForm::DETAIL_LEVEL_BROWSER, ReportBasicForm::DETAIL_LEVEL_PLATFORM, ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT, ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE, ReportBasicForm::DETAIL_LEVEL_UTM_TERM, ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2, ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ ReportBasicForm::DETAIL_LEVEL_ROTATOR, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT, ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_PUBLISHERS];
+	private static $SORT_LEVEL_ARRAY = [self::SORT_NAME, self::SORT_CLICK, self::SORT_LEAD, self::SORT_SU, self::SORT_PAYOUT, self::SORT_EPC, self::SORT_CPC, self::SORT_INCOME, self::SORT_COST, self::SORT_NET, self::SORT_ROI];
 
-	private static $DETAIL_INTERVAL_ARRAY = array(self::DETAIL_INTERVAL_DAY, self::DETAIL_INTERVAL_WEEK, self::DETAIL_INTERVAL_MONTH);
+	private static $DETAIL_INTERVAL_ARRAY = [self::DETAIL_INTERVAL_DAY, self::DETAIL_INTERVAL_WEEK, self::DETAIL_INTERVAL_MONTH];
 
 	// Instance properties
 	protected $start_time;
@@ -114,7 +114,7 @@ class ReportBasicForm
 	const DETAIL_PAY_CHANGES_PAYOUT = 3;
 	const DETAIL_PAY_CHANGES_ADJUSTMENT = 4;
 
-	private static $DETAIL_PAY_CHANGES_ARRAY = array(self::DETAIL_PAY_CHANGES_ALL, self::DETAIL_PAY_CHANGES_BOUNTY, self::DETAIL_PAY_CHANGES_PAYOUT, self::DETAIL_PAY_CHANGES_ADJUSTMENT);
+	private static $DETAIL_PAY_CHANGES_ARRAY = [self::DETAIL_PAY_CHANGES_ALL, self::DETAIL_PAY_CHANGES_BOUNTY, self::DETAIL_PAY_CHANGES_PAYOUT, self::DETAIL_PAY_CHANGES_ADJUSTMENT];
 
 	const FILTER_OPERATION_NONE = 0;
 	const FILTER_OPERATION_EQUAL_TO = 1;
@@ -124,7 +124,7 @@ class ReportBasicForm
 	const FILTER_OPERATION_GREATER_THAN = 5;
 	const FILTER_OPERATION_GREATER_THAN_OR_EQUAL_TO = 6;
 
-	private static $FILTER_OPERATION_ARRAY = array(self::FILTER_OPERATION_GREATER_THAN_OR_EQUAL_TO, self::FILTER_OPERATION_GREATER_THAN, self::FILTER_OPERATION_LESS_THAN_OR_EQUAL_TO, self::FILTER_OPERATION_LESS_THAN, self::FILTER_OPERATION_EQUAL_TO, self::FILTER_OPERATION_NOT_EQUAL_TO);
+	private static $FILTER_OPERATION_ARRAY = [self::FILTER_OPERATION_GREATER_THAN_OR_EQUAL_TO, self::FILTER_OPERATION_GREATER_THAN, self::FILTER_OPERATION_LESS_THAN_OR_EQUAL_TO, self::FILTER_OPERATION_LESS_THAN, self::FILTER_OPERATION_EQUAL_TO, self::FILTER_OPERATION_NOT_EQUAL_TO];
 
 	const DATE_FORM_ISO = 'c';
 	const DATE_FORM_MDY = 'm/d/Y';
@@ -297,7 +297,7 @@ class ReportBasicForm
 			if ($context !== null && method_exists($context, 'getController')) {
 				$this->account_user_list = $context->getController()->getForm("Blue Terra", "AccountUserList");
 			} else {
-				$this->account_user_list = array(); // Default to empty array if context not available
+				$this->account_user_list = []; // Default to empty array if context not available
 			}
 		}
 		return $this->account_user_list;
@@ -330,7 +330,7 @@ class ReportBasicForm
 			if ($context !== null && method_exists($context, 'getController')) {
 				$this->advertiser_list = $context->getController()->getForm("Blue Terra", "ReportingAdvertiserList");
 			} else {
-				$this->advertiser_list = array(); // Default to empty array if context not available
+				$this->advertiser_list = []; // Default to empty array if context not available
 			}
 		}
 		return $this->advertiser_list;
@@ -363,7 +363,7 @@ class ReportBasicForm
 			if ($context !== null && method_exists($context, 'getController')) {
 				$this->publisher_list = $context->getController()->getForm("Blue Terra", "ReportingPublisherList");
 			} else {
-				$this->publisher_list = array(); // Default to empty array if context not available
+				$this->publisher_list = []; // Default to empty array if context not available
 			}
 		}
 		return $this->publisher_list;
@@ -396,7 +396,7 @@ class ReportBasicForm
 			if ($context !== null && method_exists($context, 'getController')) {
 				$this->offer_list = $context->getController()->getForm("Blue Terra", "ReportingOfferListNew");
 			} else {
-				$this->offer_list = array(); // Default to empty array if context not available
+				$this->offer_list = []; // Default to empty array if context not available
 			}
 		}
 		return $this->offer_list;
@@ -459,7 +459,7 @@ class ReportBasicForm
 	function getDomainList()
 	{
 		if (is_null($this->domain_list)) {
-			$this->domain_list = array(); // Default to empty array since Controller is not defined
+			$this->domain_list = []; // Default to empty array since Controller is not defined
 			// Original code was using a static Controller class that doesn't seem to be available
 			// $this->domain_list = Controller::getInstance()->getContext()->getController()->getForm('Blue Terra', 'ReportingDomainList');
 		}
@@ -603,7 +603,7 @@ class ReportBasicForm
 	function getDisplayCheck()
 	{
 		if (is_null($this->display_check)) {
-			$this->display_check = array();
+			$this->display_check = [];
 		}
 		return $this->display_check;
 	}
@@ -653,7 +653,7 @@ class ReportBasicForm
 	 */
 	function getDisplayArray()
 	{
-		$tmp_array = array();
+		$tmp_array = [];
 		foreach ($this->getDisplay() as $display_item_key) {
 			$tmp_array[] = $display_item_key;
 		}
@@ -690,7 +690,7 @@ class ReportBasicForm
 	function getDisplay()
 	{
 		if (is_null($this->display)) {
-			$this->display = array();
+			$this->display = [];
 		}
 		return $this->display;
 	}
@@ -711,7 +711,7 @@ class ReportBasicForm
 	function addDisplay($arg0, $key = 0)
 	{
 		if (is_null($this->display)) {
-			$this->display = array();
+			$this->display = [];
 		}
 		$tmp_array = $this->getDisplay();
 		if (is_null($key)) {
@@ -753,7 +753,7 @@ class ReportBasicForm
 	function getDisplayOrder()
 	{
 		if (is_null($this->display_order)) {
-			$this->display_order = array();
+			$this->display_order = [];
 		}
 		return $this->display_order;
 	}
@@ -774,7 +774,7 @@ class ReportBasicForm
 	function addDisplayOrder($arg0, $key = 0)
 	{
 		if (is_null($this->display_order)) {
-			$this->display_order = array();
+			$this->display_order = [];
 		}
 		$tmp_array = $this->getDisplayOrder();
 		if (is_null($key)) {
@@ -792,7 +792,7 @@ class ReportBasicForm
 	function getFilterDisplay()
 	{
 		if (is_null($this->filter_display)) {
-			$this->filter_display = array();
+			$this->filter_display = [];
 		}
 		return $this->filter_display;
 	}
@@ -813,7 +813,7 @@ class ReportBasicForm
 	function getDetailsCheck()
 	{
 		if (is_null($this->details_check)) {
-			$this->details_check = array();
+			$this->details_check = [];
 		}
 		return $this->details_check;
 	}
@@ -834,7 +834,7 @@ class ReportBasicForm
 	function addDetailsCheck($arg0, $key = 0)
 	{
 		if (is_null($this->details_check)) {
-			$this->details_check = array();
+			$this->details_check = [];
 		}
 		$tmp_array = $this->getDetailsCheck();
 		if (is_null($key)) {
@@ -867,7 +867,7 @@ class ReportBasicForm
 	function getDetails()
 	{
 		if (is_null($this->details)) {
-			$this->details = array();
+			$this->details = [];
 		}
 		return $this->details;
 	}
@@ -888,7 +888,7 @@ class ReportBasicForm
 	function addDetails($arg0, $key = 0)
 	{
 		if (is_null($this->details)) {
-			$this->details = array();
+			$this->details = [];
 		}
 		$tmp_array = $this->getDetails();
 		if (is_null($key)) {
@@ -947,7 +947,7 @@ class ReportBasicForm
 	function getDetailsSort()
 	{
 		if (is_null($this->details_sort)) {
-			$this->details_sort = array();
+			$this->details_sort = [];
 		}
 		return $this->details_sort;
 	}
@@ -1007,7 +1007,7 @@ class ReportBasicForm
 	function getDetailColumnsSort()
 	{
 		if (is_null($this->detail_columns_sort)) {
-			$this->detail_columns_sort = array();
+			$this->detail_columns_sort = [];
 		}
 		return $this->detail_columns_sort;
 	}
@@ -1079,7 +1079,7 @@ class ReportBasicForm
 	 */
 	function getCurrentDetailByKey($key)
 	{
-		$key = $key - 1;
+		$key -= 1;
 		$details = $this->getDetails();
 		if (array_key_exists($key, $details)) {
 			return $details[$key];
@@ -1171,7 +1171,7 @@ class ReportBasicForm
 	public function getDetailColumns()
 	{
 		if (is_null($this->detail_columns)) {
-			$this->detail_columns = array();
+			$this->detail_columns = [];
 		}
 		return $this->detail_columns;
 	}
@@ -1296,7 +1296,7 @@ class ReportBasicForm
 	public function getFilterDetailLevel()
 	{
 		if (is_null($this->filter_detail_level)) {
-			$this->filter_detail_level = array();
+			$this->filter_detail_level = [];
 		}
 		return $this->filter_detail_level;
 	}
@@ -1333,7 +1333,7 @@ class ReportBasicForm
 	 */
 	public function getFilterKeysByDetailLevel($detail_level_id)
 	{
-		$keys = array();
+		$keys = [];
 
 		foreach ($this->getFilterDetailLevel() as $key => $filter_detail_level) {
 			if ($filter_detail_level == $detail_level_id) {
@@ -1350,7 +1350,7 @@ class ReportBasicForm
 	 */
 	public function getFilterKeysByDetailAndDisplayLevel($detail_level_id, $display_level_id)
 	{
-		$keys = array();
+		$keys = [];
 		$filter_display_levels = $this->getFilterDisplayLevel();
 
 		foreach ($this->getFilterDetailLevel() as $key => $filter_detail_level) {
@@ -1371,7 +1371,7 @@ class ReportBasicForm
 	public function getFilterDisplayLevel()
 	{
 		if (is_null($this->filter_display_level)) {
-			$this->filter_display_level = array();
+			$this->filter_display_level = [];
 		}
 		return $this->filter_display_level;
 	}
@@ -1437,7 +1437,7 @@ class ReportBasicForm
 	public function getFilterOperation()
 	{
 		if (is_null($this->filter_operation)) {
-			$this->filter_operation = array();
+			$this->filter_operation = [];
 		}
 		return $this->filter_operation;
 	}
@@ -1503,7 +1503,7 @@ class ReportBasicForm
 	public function getFilterValue()
 	{
 		if (is_null($this->filter_value)) {
-			$this->filter_value = array();
+			$this->filter_value = [];
 		}
 		return $this->filter_value;
 	}
@@ -2171,7 +2171,7 @@ class ReportBasicForm
 	{
 		$filter_operation = $this->getFilterOperationByKey($filter_key);
 		$filter_value = $this->getFilterValueByKey($filter_key);
-		$is_percentage = strpos($filter_value, '%');
+		$is_percentage = strpos((string) $filter_value, '%');
 		if ($is_percentage !== false) {
 			if ($parent_value == 0) {
 				return false;
@@ -2273,7 +2273,7 @@ class ReportBasicForm
 	public function getStartDate()
 	{
 		if ($this->getCalculateDates()) {
-			return date("m/d/Y g:i a", (int)self::getStartTime($this->getDateOption()));
+			return date("m/d/Y g:i a", (int)self::getStartTime());
 		}
 		return date("m/d/Y g:i a");
 	}
@@ -2284,7 +2284,7 @@ class ReportBasicForm
 	 */
 	public function getStartDateTime()
 	{
-		return date('m/d/Y g:i a', (int)self::getStartTime($this->getDateOption()));
+		return date('m/d/Y g:i a', (int)self::getStartTime());
 	}
 
 	/**
@@ -2295,7 +2295,7 @@ class ReportBasicForm
 	public function getEndDate()
 	{
 		if ($this->getCalculateDates()) {
-			return date("m/d/Y g:i a", (int)self::getEndTime($this->getDateOption()));
+			return date("m/d/Y g:i a", (int)self::getEndTime());
 		}
 		return date("m/d/Y g:i a");
 	}
@@ -2306,7 +2306,7 @@ class ReportBasicForm
 	 */
 	public function getEndDateTime()
 	{
-		return date('m/d/Y g:i a', (int)self::getEndTime($this->getDateOption()));
+		return date('m/d/Y g:i a', (int)self::getEndTime());
 	}
 
 	/**
@@ -2502,15 +2502,15 @@ class ReportBasicForm
 		//1-7, monday-sunday
 		$dayInWeek = date("N", $datetime);
 
-		$weekStartEndPosition = array(
-			1 => array("start" => 0, "end" => 6),
-			2 => array("start" => -1, "end" => 5),
-			3 => array("start" => -2, "end" => 4),
-			4 => array("start" => -3, "end" => 3),
-			5 => array("start" => -4, "end" => 2),
-			6 => array("start" => -5, "end" => 1),
-			7 => array("start" => -6, "end" => 0)
-		);
+		$weekStartEndPosition = [
+			1 => ["start" => 0, "end" => 6],
+			2 => ["start" => -1, "end" => 5],
+			3 => ["start" => -2, "end" => 4],
+			4 => ["start" => -3, "end" => 3],
+			5 => ["start" => -4, "end" => 2],
+			6 => ["start" => -5, "end" => 1],
+			7 => ["start" => -6, "end" => 0]
+		];
 		return mktime(0, 0, 0, (int)date("n", $datetime), (int)date("j", $datetime) + $weekStartEndPosition[$dayInWeek]["start"], (int)date("Y", $datetime));
 	}
 
@@ -2519,15 +2519,15 @@ class ReportBasicForm
 		//1-7, monday-sunday
 		$dayInWeek = date("N", $datetime);
 
-		$weekStartEndPosition = array(
-			1 => array("start" => 0, "end" => 6),
-			2 => array("start" => -1, "end" => 5),
-			3 => array("start" => -2, "end" => 4),
-			4 => array("start" => -3, "end" => 3),
-			5 => array("start" => -4, "end" => 2),
-			6 => array("start" => -5, "end" => 1),
-			7 => array("start" => -6, "end" => 0)
-		);
+		$weekStartEndPosition = [
+			1 => ["start" => 0, "end" => 6],
+			2 => ["start" => -1, "end" => 5],
+			3 => ["start" => -2, "end" => 4],
+			4 => ["start" => -3, "end" => 3],
+			5 => ["start" => -4, "end" => 2],
+			6 => ["start" => -5, "end" => 1],
+			7 => ["start" => -6, "end" => 0]
+		];
 		return mktime(23, 59, 59, (int)date("n", $datetime), (int)date("j", $datetime) + $weekStartEndPosition[$dayInWeek]["end"], (int)date("Y", $datetime));
 	}
 
@@ -2544,12 +2544,12 @@ class ReportBasicForm
 	public function getTimePeriodCounter()
 	{
 		if (is_null($this->date_intervals)) {
-			$dates = array();
+			$dates = [];
 			$start_time = strtotime($this->getStartDate());
 			$end_time = strtotime($this->getEndDate());
 			if ($this->getDetailInterval() == self::DETAIL_INTERVAL_DAY) {
 				for ($current_time = $start_time; $current_time <= $end_time; $current_time = strtotime('+1 day', $current_time)) {
-					$date_interval = array();
+					$date_interval = [];
 					$date_interval["start"] = mktime(0, 0, 0, (int)date("n", $current_time), (int)date("j", $current_time), (int)date("Y", $current_time));
 					$date_interval["end"] = mktime(23, 59, 59, (int)date("n", $current_time), (int)date("j", $current_time), (int)date("Y", $current_time));
 					$dates[] = $date_interval;
@@ -2558,7 +2558,7 @@ class ReportBasicForm
 				$start_time = self::getWeekStart(strtotime($this->getStartDate()));
 				$end_time = self::getWeekEnd(strtotime($this->getEndDate()));
 				for ($current_time = $start_time; $current_time <= $end_time; $current_time = strtotime('+7 day', $current_time)) {
-					$date_interval = array();
+					$date_interval = [];
 					$start_of_week = self::getWeekStart($current_time);
 					if ($start_of_week < strtotime($this->getStartDate())) {
 						$start_of_week = strtotime($this->getStartDate());
@@ -2575,7 +2575,7 @@ class ReportBasicForm
 				$start_time = self::getMonthStart(strtotime($this->getStartDate()));
 				$end_time = self::getMonthEnd(strtotime($this->getEndDate()));
 				for ($current_time = $start_time; $current_time <= $end_time; $current_time = strtotime("+1 month", strtotime(date("F", $current_time) . "1"))) {
-					$date_interval = array();
+					$date_interval = [];
 					$start_of_month = self::getMonthStart($current_time);
 					if ($start_of_month < strtotime($this->getStartDate())) {
 						$start_of_month = strtotime($this->getStartDate());
@@ -2806,17 +2806,17 @@ class ReportBasicForm
 	{
 		$report_row = '';
 
-		$class = ($forced_class) ? $forced_class : 'sub';
+		$class = $forced_class ?: 'sub';
 
 		/* if display totals at the top */
 		if (!$parent_last) {
 			$report_row .= $this->getRowHtml($data, $class . " " . $build_class);
 		}
 		//Check for more child forms and get their rows as well
-		if (is_callable(array($data, 'getChildArrayBySort'), false)) {
+		if (is_callable([$data, 'getChildArrayBySort'], false)) {
 
 			foreach ($data->getChildArrayBySort() as $child_key => $child_data) {
-				$child_class = ($forced_class) ? $forced_class : self::getNextCssRowClass($child_key == 0);
+				$child_class = $forced_class ?: self::getNextCssRowClass($child_key == 0);
 				if ($this->getRollupSubTables()) {
 					$build_class = 'rollup_sub_row_' . $data->getDetailId() . '_' . $data->getId();
 					$child_class .=  ' ' . $build_class . '_close';
@@ -3000,15 +3000,15 @@ class ReportBasicForm
 	{
 		$report_row = '';
 
-		$class = ($forced_class) ? $forced_class : 'sub';
+		$class = $forced_class ?: 'sub';
 		if (!$parent_last) {
 			$report_row .= $this->getPrintRowHtml($data, $class);
 		}
 
 		//Check for more child forms and get their rows as well
-		if (is_callable(array($data, 'getChildArrayBySort'), false)) {
+		if (is_callable([$data, 'getChildArrayBySort'], false)) {
 			foreach ($data->getChildArrayBySort() as $child_key => $child_data) {
-				$child_class = ($forced_class) ? $forced_class : self::getNextCssRowClass($child_key == 0);
+				$child_class = $forced_class ?: self::getNextCssRowClass($child_key == 0);
 				$report_row .= $this->getPrintReportRowHtml($child_data, $child_class);
 			}
 		}
@@ -3047,11 +3047,7 @@ class ReportBasicForm
 	{
 		// This is a stub implementation to avoid errors when the method is called
 		// The actual implementation should be in ReportSummaryForm
-		return (object)['getChildArray' => function () {
-			return [];
-		}, 'getChildArrayBySort' => function () {
-			return [];
-		}];
+		return (object)['getChildArray' => fn() => [], 'getChildArrayBySort' => fn() => []];
 	}
 
 	/**

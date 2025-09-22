@@ -10,7 +10,7 @@ declare(strict_types=1);
 
 // Include dependencies.
 @set_time_limit(0);
-require_once dirname(__FILE__) . "/ReportBasicForm.class.php";
+require_once __DIR__ . "/ReportBasicForm.class.php";
 
 class ReportSummaryForm extends ReportBasicForm
 {
@@ -20,9 +20,9 @@ class ReportSummaryForm extends ReportBasicForm
 	// +-----------------------------------------------------------------------+
 	const DEBUG = 'MO_DEBUG';
 
-	private static $DISPLAY_LEVEL_ARRAY = array(ReportBasicForm::DISPLAY_LEVEL_TITLE, ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT, ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT, ReportBasicForm::DISPLAY_LEVEL_SU, ReportBasicForm::DISPLAY_LEVEL_PAYOUT, ReportBasicForm::DISPLAY_LEVEL_EPC, ReportBasicForm::DISPLAY_LEVEL_CPC, ReportBasicForm::DISPLAY_LEVEL_INCOME, ReportBasicForm::DISPLAY_LEVEL_COST, ReportBasicForm::DISPLAY_LEVEL_NET, ReportBasicForm::DISPLAY_LEVEL_ROI);
-	private static $DETAIL_LEVEL_ARRAY = array(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK, ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT, ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK, ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE, ReportBasicForm::DETAIL_LEVEL_KEYWORD, ReportBasicForm::DETAIL_LEVEL_TEXT_AD, ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_COUNTRY, ReportBasicForm::DETAIL_LEVEL_REGION, ReportBasicForm::DETAIL_LEVEL_CITY, ReportBasicForm::DETAIL_LEVEL_ISP, ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME, ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE, ReportBasicForm::DETAIL_LEVEL_BROWSER, ReportBasicForm::DETAIL_LEVEL_PLATFORM, ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT, ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE, ReportBasicForm::DETAIL_LEVEL_UTM_TERM, ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2, ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ ReportBasicForm::DETAIL_LEVEL_ROTATOR, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT, ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_PUBLISHERS);
-	private static $SORT_LEVEL_ARRAY = array(ReportBasicForm::SORT_NAME, ReportBasicForm::SORT_CLICK, ReportBasicForm::SORT_LEAD, ReportBasicForm::SORT_SU, ReportBasicForm::SORT_PAYOUT, ReportBasicForm::SORT_EPC, ReportBasicForm::SORT_CPC, ReportBasicForm::SORT_INCOME, ReportBasicForm::SORT_COST, ReportBasicForm::SORT_NET, ReportBasicForm::SORT_ROI);
+	private static $DISPLAY_LEVEL_ARRAY = [ReportBasicForm::DISPLAY_LEVEL_TITLE, ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT, ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT, ReportBasicForm::DISPLAY_LEVEL_SU, ReportBasicForm::DISPLAY_LEVEL_PAYOUT, ReportBasicForm::DISPLAY_LEVEL_EPC, ReportBasicForm::DISPLAY_LEVEL_CPC, ReportBasicForm::DISPLAY_LEVEL_INCOME, ReportBasicForm::DISPLAY_LEVEL_COST, ReportBasicForm::DISPLAY_LEVEL_NET, ReportBasicForm::DISPLAY_LEVEL_ROI];
+	private static $DETAIL_LEVEL_ARRAY = [ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK, ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT, ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK, ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE, ReportBasicForm::DETAIL_LEVEL_KEYWORD, ReportBasicForm::DETAIL_LEVEL_TEXT_AD, ReportBasicForm::DETAIL_LEVEL_REFERER, ReportBasicForm::DETAIL_LEVEL_COUNTRY, ReportBasicForm::DETAIL_LEVEL_REGION, ReportBasicForm::DETAIL_LEVEL_CITY, ReportBasicForm::DETAIL_LEVEL_ISP, ReportBasicForm::DETAIL_LEVEL_DEVICE_NAME, ReportBasicForm::DETAIL_LEVEL_DEVICE_TYPE, ReportBasicForm::DETAIL_LEVEL_BROWSER, ReportBasicForm::DETAIL_LEVEL_PLATFORM, ReportBasicForm::DETAIL_LEVEL_IP, ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN, ReportBasicForm::DETAIL_LEVEL_UTM_CONTENT, ReportBasicForm::DETAIL_LEVEL_UTM_MEDIUM, ReportBasicForm::DETAIL_LEVEL_UTM_SOURCE, ReportBasicForm::DETAIL_LEVEL_UTM_TERM, ReportBasicForm::DETAIL_LEVEL_C1, ReportBasicForm::DETAIL_LEVEL_C2, ReportBasicForm::DETAIL_LEVEL_C3, ReportBasicForm::DETAIL_LEVEL_C4,/*ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_PARAMETER,ReportBasicForm::DETAIL_LEVEL_CUSTOM_VAR_VALUE*/ ReportBasicForm::DETAIL_LEVEL_ROTATOR, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE, ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT, ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_PUBLISHERS];
+	private static $SORT_LEVEL_ARRAY = [ReportBasicForm::SORT_NAME, ReportBasicForm::SORT_CLICK, ReportBasicForm::SORT_LEAD, ReportBasicForm::SORT_SU, ReportBasicForm::SORT_PAYOUT, ReportBasicForm::SORT_EPC, ReportBasicForm::SORT_CPC, ReportBasicForm::SORT_INCOME, ReportBasicForm::SORT_COST, ReportBasicForm::SORT_NET, ReportBasicForm::SORT_ROI];
 
 	// +-----------------------------------------------------------------------+
 	// | PRIVATE VARIABLES                                                     |
@@ -34,7 +34,7 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Used to throw tabindexes on elements
 	 * @var unknown_type
 	 */
-	private $tabIndexArray = array();
+	private $tabIndexArray = [];
 	protected $start_time;
 	protected $end_time;
 
@@ -79,7 +79,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the start time used for report filtering
 	 * @return string
 	 */
-	function getStartTime()
+	#[\Override]
+    function getStartTime()
 	{
 		if (is_null($this->start_time)) {
 			$this->start_time = strtotime($this->getStartDate() . " " . $this->getStartHour() . ":" . $this->getStartMinute() . ":00");
@@ -91,7 +92,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the end time used for report filtering
 	 * @return string
 	 */
-	function getEndTime()
+	#[\Override]
+    function getEndTime()
 	{
 		if (is_null($this->end_time)) {
 			$this->end_time = strtotime($this->getEndDate() . " " . $this->getEndHour() . ":" . $this->getEndMinute() . ":59");
@@ -176,9 +178,10 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the DISPLAY_LEVEL_ARRAY
 	 * @return array
 	 */
-	function getDisplayArray()
+	#[\Override]
+    function getDisplayArray()
 	{
-		$tmp_array = array();
+		$tmp_array = [];
 		foreach ($this->getDisplay() as $display_item_key) {
 			$tmp_array[] = $display_item_key;
 		}
@@ -194,7 +197,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the DETAIL_LEVEL_ARRAY
 	 * @return array
 	 */
-	static function getDetailArray()
+	#[\Override]
+    static function getDetailArray()
 	{
 		return self::$DETAIL_LEVEL_ARRAY;
 	}
@@ -203,7 +207,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the SORT_LEVEL_ARRAY
 	 * @return array
 	 */
-	static function getSortArray()
+	#[\Override]
+    static function getSortArray()
 	{
 		return self::$SORT_LEVEL_ARRAY;
 	}
@@ -212,10 +217,11 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the display (overloaded from ReportBasicForm)
 	 * @return array
 	 */
-	function getDisplay()
+	#[\Override]
+    function getDisplay()
 	{
 		if (is_null($this->display)) {
-			$this->display = array(ReportBasicForm::DISPLAY_LEVEL_TITLE, ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT, ReportBasicForm::DISPLAY_LEVEL_CLICK_OUT_COUNT, ReportBasicForm::DISPLAY_LEVEL_CTR, ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT, ReportBasicForm::DISPLAY_LEVEL_SU, ReportBasicForm::DISPLAY_LEVEL_PAYOUT, ReportBasicForm::DISPLAY_LEVEL_EPC, ReportBasicForm::DISPLAY_LEVEL_CPC, ReportBasicForm::DISPLAY_LEVEL_INCOME, ReportBasicForm::DISPLAY_LEVEL_COST, ReportBasicForm::DISPLAY_LEVEL_NET, ReportBasicForm::DISPLAY_LEVEL_ROI);
+			$this->display = [ReportBasicForm::DISPLAY_LEVEL_TITLE, ReportBasicForm::DISPLAY_LEVEL_CLICK_COUNT, ReportBasicForm::DISPLAY_LEVEL_CLICK_OUT_COUNT, ReportBasicForm::DISPLAY_LEVEL_CTR, ReportBasicForm::DISPLAY_LEVEL_LEAD_COUNT, ReportBasicForm::DISPLAY_LEVEL_SU, ReportBasicForm::DISPLAY_LEVEL_PAYOUT, ReportBasicForm::DISPLAY_LEVEL_EPC, ReportBasicForm::DISPLAY_LEVEL_CPC, ReportBasicForm::DISPLAY_LEVEL_INCOME, ReportBasicForm::DISPLAY_LEVEL_COST, ReportBasicForm::DISPLAY_LEVEL_NET, ReportBasicForm::DISPLAY_LEVEL_ROI];
 		}
 		return $this->display;
 	}
@@ -224,7 +230,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the report_data
 	 * @return ReportSummaryGroupForm
 	 */
-	function getReportData()
+	#[\Override]
+    function getReportData()
 	{
 		if (is_null($this->report_data)) {
 			$this->report_data = new ReportSummaryGroupForm();
@@ -435,7 +442,7 @@ class ReportSummaryForm extends ReportBasicForm
 	function getGroupBy()
 	{
 		$details = $this->getDetails();
-		$detail_key_array = array();
+		$detail_key_array = [];
 		foreach ($details as $detail_id) {
 			$key = self::translateDetailKeyById($detail_id);
 			if (strlen($key) > 0) {
@@ -444,7 +451,7 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 		$detail_list = '';
 		if (count($detail_key_array) > 0) {
-			$detail_key_array_wrapped = array_map(array($this, 'wrapGroupBy'), $detail_key_array);
+			$detail_key_array_wrapped = array_map($this->wrapGroupBy(...), $detail_key_array);
 			$detail_list = 'GROUP BY ' . implode(',', $detail_key_array_wrapped);
 		}
 
@@ -494,7 +501,7 @@ class ReportSummaryForm extends ReportBasicForm
 			case 'utm_source_id':
 			case 'utm_term_id':
 			case 'utm_campaign_id': {
-					$gb = '2u' . substr($gb, 4, 3) . "." . $gb;
+					$gb = '2u' . substr((string) $gb, 4, 3) . "." . $gb;
 					$groupby_null = '0';
 					break;
 				}
@@ -1038,7 +1045,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the html for an entire row header
 	 * @return String
 	 */
-	function getRowHeaderHtml($tr_class = "")
+	#[\Override]
+    function getRowHeaderHtml($tr_class = "")
 	{
 
 		$html_val = "";
@@ -1086,7 +1094,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the html for an entire row header
 	 * @return String
 	 */
-	function getPrintRowHeaderHtml($tr_class = "")
+	#[\Override]
+    function getPrintRowHeaderHtml($tr_class = "")
 	{
 		$html_val = "";
 
@@ -1292,7 +1301,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the html for an entire row
 	 * @return String
 	 */
-	function getRowHtml($row, $tr_class = "")
+	#[\Override]
+    function getRowHtml($row, $tr_class = "")
 	{
 		global $userObj;
 
@@ -1414,7 +1424,8 @@ class ReportSummaryForm extends ReportBasicForm
 	 * Returns the print html for an entire row
 	 * @return String
 	 */
-	function getPrintRowHtml($row, $tr_class = "")
+	#[\Override]
+    function getPrintRowHtml($row, $tr_class = "")
 	{
 
 		$html_val = "";
@@ -1697,7 +1708,8 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm
 	 * Alias for getPpcNetworkId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getPpcNetworkId();
 	}
@@ -1706,7 +1718,8 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm
 	 * Alias for getPpcNetworkName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getPpcNetworkName();
 	}
@@ -1715,7 +1728,8 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Traffic Source]';
@@ -1727,7 +1741,8 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Traffic Source]';
@@ -1747,7 +1762,8 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm
 	 * Alias for getPpcAccountId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getPpcAccountId();
 	}
@@ -1756,7 +1772,8 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm
 	 * Alias for getPpcAccountName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getPpcAccountName();
 	}
@@ -1765,7 +1782,8 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Traffic Source Account]';
@@ -1777,7 +1795,8 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Traffic Source Account]';
@@ -1797,7 +1816,8 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm
 	 * Alias for getAffiliateNetworkId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getAffiliateNetworkId();
 	}
@@ -1806,7 +1826,8 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm
 	 * Alias for getAffiliateNetworkName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getAffiliateNetworkName();
 	}
@@ -1815,7 +1836,8 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Category]';
@@ -1827,7 +1849,8 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Category]';
@@ -1847,7 +1870,8 @@ class ReportSummaryLandingPageForm extends ReportSummaryTotalForm
 	 * Alias for getLandingPageId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getLandingPageId();
 	}
@@ -1856,7 +1880,8 @@ class ReportSummaryLandingPageForm extends ReportSummaryTotalForm
 	 * Alias for getLandingPageName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getLandingPageName();
 	}
@@ -1865,7 +1890,8 @@ class ReportSummaryLandingPageForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Landing Page]';
@@ -1877,7 +1903,8 @@ class ReportSummaryLandingPageForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Landing Page]';
@@ -1897,7 +1924,8 @@ class ReportSummaryKeywordForm extends ReportSummaryTotalForm
 	 * Alias for getKeywordId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getKeywordId();
 	}
@@ -1906,7 +1934,8 @@ class ReportSummaryKeywordForm extends ReportSummaryTotalForm
 	 * Alias for getKeywordName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getKeywordName();
 	}
@@ -1915,7 +1944,8 @@ class ReportSummaryKeywordForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Keyword]';
@@ -1927,7 +1957,8 @@ class ReportSummaryKeywordForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Keyword]';
@@ -1947,7 +1978,8 @@ class ReportSummaryTextAdForm extends ReportSummaryTotalForm
 	 * Alias for getTextAdId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getTextAdId();
 	}
@@ -1956,7 +1988,8 @@ class ReportSummaryTextAdForm extends ReportSummaryTotalForm
 	 * Alias for getTextAdName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getTextAdName();
 	}
@@ -1965,7 +1998,8 @@ class ReportSummaryTextAdForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Text Ad]';
@@ -1977,7 +2011,8 @@ class ReportSummaryTextAdForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Text Ad]';
@@ -1997,7 +2032,8 @@ class ReportSummaryRefererForm extends ReportSummaryTotalForm
 	 * Alias for getRefererId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getRefererId();
 	}
@@ -2006,7 +2042,8 @@ class ReportSummaryRefererForm extends ReportSummaryTotalForm
 	 * Alias for getRefererName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getRefererName();
 	}
@@ -2015,7 +2052,8 @@ class ReportSummaryRefererForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Referer]';
@@ -2027,7 +2065,8 @@ class ReportSummaryRefererForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Referer]';
@@ -2047,7 +2086,8 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm
 	 * Alias for getRedirectId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getRedirectId();
 	}
@@ -2056,7 +2096,8 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm
 	 * Alias for getRedirectName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getRedirectName();
 	}
@@ -2065,7 +2106,8 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Redirect]';
@@ -2077,7 +2119,8 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Redirect]';
@@ -2097,7 +2140,8 @@ class ReportSummaryCountryForm extends ReportSummaryTotalForm
 	 * Alias for getCountryId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getCountryId();
 	}
@@ -2106,7 +2150,8 @@ class ReportSummaryCountryForm extends ReportSummaryTotalForm
 	 * Alias for getCountryName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getCountryName();
 	}
@@ -2115,7 +2160,8 @@ class ReportSummaryCountryForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Country]';
@@ -2127,7 +2173,8 @@ class ReportSummaryCountryForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Country]';
@@ -2148,7 +2195,8 @@ class ReportSummaryRegionForm extends ReportSummaryTotalForm
 	 * Alias for getCountryId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getRegionId();
 	}
@@ -2157,7 +2205,8 @@ class ReportSummaryRegionForm extends ReportSummaryTotalForm
 	 * Alias for getCountryName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getRegionName();
 	}
@@ -2166,7 +2215,8 @@ class ReportSummaryRegionForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Region]';
@@ -2178,7 +2228,8 @@ class ReportSummaryRegionForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Region]';
@@ -2199,7 +2250,8 @@ class ReportSummaryCityForm extends ReportSummaryTotalForm
 	 * Alias for getCityId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getCityId();
 	}
@@ -2208,7 +2260,8 @@ class ReportSummaryCityForm extends ReportSummaryTotalForm
 	 * Alias for getCityName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getCityName();
 	}
@@ -2217,7 +2270,8 @@ class ReportSummaryCityForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No City]';
@@ -2229,7 +2283,8 @@ class ReportSummaryCityForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No City]';
@@ -2250,7 +2305,8 @@ class ReportSummaryIspForm extends ReportSummaryTotalForm
 	 * Alias for getIspId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getIspId();
 	}
@@ -2259,7 +2315,8 @@ class ReportSummaryIspForm extends ReportSummaryTotalForm
 	 * Alias for getIspName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getIspName();
 	}
@@ -2268,7 +2325,8 @@ class ReportSummaryIspForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Isp]';
@@ -2280,7 +2338,8 @@ class ReportSummaryIspForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Isp]';
@@ -2301,7 +2360,8 @@ class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm
 	 * Alias for getIspId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getDeviceId();
 	}
@@ -2310,7 +2370,8 @@ class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm
 	 * Alias for getIspName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getDeviceName();
 	}
@@ -2319,7 +2380,8 @@ class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Device]';
@@ -2331,7 +2393,8 @@ class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Device]';
@@ -2351,7 +2414,8 @@ class ReportSummaryDeviceTypeForm extends ReportSummaryTotalForm
 	 * Alias for getIspId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getTypeId();
 	}
@@ -2360,7 +2424,8 @@ class ReportSummaryDeviceTypeForm extends ReportSummaryTotalForm
 	 * Alias for getIspName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getTypeName();
 	}
@@ -2369,7 +2434,8 @@ class ReportSummaryDeviceTypeForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Device Type]';
@@ -2381,7 +2447,8 @@ class ReportSummaryDeviceTypeForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Device Type]';
@@ -2401,7 +2468,8 @@ class ReportSummaryBrowserForm extends ReportSummaryTotalForm
 	 * Alias for getIspId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getBrowserId();
 	}
@@ -2410,7 +2478,8 @@ class ReportSummaryBrowserForm extends ReportSummaryTotalForm
 	 * Alias for getIspName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getBrowserName();
 	}
@@ -2419,7 +2488,8 @@ class ReportSummaryBrowserForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Browser]';
@@ -2431,7 +2501,8 @@ class ReportSummaryBrowserForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Browser]';
@@ -2451,7 +2522,8 @@ class ReportSummaryPlatformForm extends ReportSummaryTotalForm
 	 * Alias for getIspId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getPlatformId();
 	}
@@ -2460,7 +2532,8 @@ class ReportSummaryPlatformForm extends ReportSummaryTotalForm
 	 * Alias for getIspName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getPlatformName();
 	}
@@ -2469,7 +2542,8 @@ class ReportSummaryPlatformForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Platform]';
@@ -2481,7 +2555,8 @@ class ReportSummaryPlatformForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Platform]';
@@ -2502,7 +2577,8 @@ class ReportSummaryIpForm extends ReportSummaryTotalForm
 	 * Alias for getIpId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getIpId();
 	}
@@ -2511,7 +2587,8 @@ class ReportSummaryIpForm extends ReportSummaryTotalForm
 	 * Alias for getIpName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getIpName();
 	}
@@ -2520,7 +2597,8 @@ class ReportSummaryIpForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No IP]';
@@ -2532,7 +2610,8 @@ class ReportSummaryIpForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No IP]';
@@ -2552,7 +2631,8 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm
 	 * Alias for getAffiliateCampaignId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getAffiliateCampaignId();
 	}
@@ -2561,7 +2641,8 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm
 	 * Alias for getAffiliateCampaignName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getAffiliateCampaignName();
 	}
@@ -2570,7 +2651,8 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[Advanced Landing Page/Smart Redirector Campaign]';
@@ -2582,7 +2664,8 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[Landing Page/Smart Redirector Campaign]';
@@ -2601,7 +2684,8 @@ class ReportSummaryUtmCampaignForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getUtmCampaign();
 	}
@@ -2610,7 +2694,8 @@ class ReportSummaryUtmCampaignForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getUtmCampaign();
 	}
@@ -2619,7 +2704,8 @@ class ReportSummaryUtmCampaignForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_campaign]';
@@ -2631,7 +2717,8 @@ class ReportSummaryUtmCampaignForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_campaign]';
@@ -2650,7 +2737,8 @@ class ReportSummaryUtmContentForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getUtmContent();
 	}
@@ -2659,7 +2747,8 @@ class ReportSummaryUtmContentForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getUtmContent();
 	}
@@ -2668,7 +2757,8 @@ class ReportSummaryUtmContentForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_content]';
@@ -2680,7 +2770,8 @@ class ReportSummaryUtmContentForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_content]';
@@ -2699,7 +2790,8 @@ class ReportSummaryUtmMediumForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getUtmMedium();
 	}
@@ -2708,7 +2800,8 @@ class ReportSummaryUtmMediumForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getUtmMedium();
 	}
@@ -2717,7 +2810,8 @@ class ReportSummaryUtmMediumForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_medium]';
@@ -2729,7 +2823,8 @@ class ReportSummaryUtmMediumForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_medium]';
@@ -2748,7 +2843,8 @@ class ReportSummaryUtmSourceForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getUtmSource();
 	}
@@ -2757,7 +2853,8 @@ class ReportSummaryUtmSourceForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getUtmSource();
 	}
@@ -2766,7 +2863,8 @@ class ReportSummaryUtmSourceForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_source]';
@@ -2778,7 +2876,8 @@ class ReportSummaryUtmSourceForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_source]';
@@ -2797,7 +2896,8 @@ class ReportSummaryUtmTermForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getUtmTerm();
 	}
@@ -2806,7 +2906,8 @@ class ReportSummaryUtmTermForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getUtmTerm();
 	}
@@ -2815,7 +2916,8 @@ class ReportSummaryUtmTermForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_term]';
@@ -2827,7 +2929,8 @@ class ReportSummaryUtmTermForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No utm_term]';
@@ -2842,7 +2945,8 @@ class ReportSummaryCustomVarParameterForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getCustomVariableName();
 	}
@@ -2851,7 +2955,8 @@ class ReportSummaryCustomVarParameterForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getCustomVariableName();
 	}
@@ -2860,7 +2965,8 @@ class ReportSummaryCustomVarParameterForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Variable Name]';
@@ -2872,7 +2978,8 @@ class ReportSummaryCustomVarParameterForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Variable Name]';
@@ -2887,7 +2994,8 @@ class ReportSummaryCustomVarValueForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getCustomVariableValue();
 	}
@@ -2896,7 +3004,8 @@ class ReportSummaryCustomVarValueForm extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getCustomVariableValue();
 	}
@@ -2905,7 +3014,8 @@ class ReportSummaryCustomVarValueForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Variable]';
@@ -2917,7 +3027,8 @@ class ReportSummaryCustomVarValueForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Variable]';
@@ -2936,7 +3047,8 @@ class ReportSummaryC1Form extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getC1();
 	}
@@ -2945,7 +3057,8 @@ class ReportSummaryC1Form extends ReportSummaryTotalForm
 	 * Alias for getC1
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getC1();
 	}
@@ -2954,7 +3067,8 @@ class ReportSummaryC1Form extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No c1]';
@@ -2966,7 +3080,8 @@ class ReportSummaryC1Form extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No c1]';
@@ -2985,7 +3100,8 @@ class ReportSummaryC2Form extends ReportSummaryTotalForm
 	 * Alias for getC2
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getC2();
 	}
@@ -2994,7 +3110,8 @@ class ReportSummaryC2Form extends ReportSummaryTotalForm
 	 * Alias for getC2
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getC2();
 	}
@@ -3003,7 +3120,8 @@ class ReportSummaryC2Form extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No c2]';
@@ -3015,7 +3133,8 @@ class ReportSummaryC2Form extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No c2]';
@@ -3034,7 +3153,8 @@ class ReportSummaryC3Form extends ReportSummaryTotalForm
 	 * Alias for getC3
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getC3();
 	}
@@ -3043,7 +3163,8 @@ class ReportSummaryC3Form extends ReportSummaryTotalForm
 	 * Alias for getC3
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getC3();
 	}
@@ -3052,7 +3173,8 @@ class ReportSummaryC3Form extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No c3]';
@@ -3064,7 +3186,8 @@ class ReportSummaryC3Form extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No c3]';
@@ -3083,7 +3206,8 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getC4();
 	}
@@ -3092,7 +3216,8 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getC4();
 	}
@@ -3101,7 +3226,8 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No c4]';
@@ -3113,7 +3239,8 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No c4]';
@@ -3128,7 +3255,8 @@ class ReportSummaryRotatorForm extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getRotatorId();
 	}
@@ -3137,7 +3265,8 @@ class ReportSummaryRotatorForm extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getRotatorName();
 	}
@@ -3146,7 +3275,8 @@ class ReportSummaryRotatorForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No rotator]';
@@ -3158,7 +3288,8 @@ class ReportSummaryRotatorForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No rotator]';
@@ -3173,7 +3304,8 @@ class ReportSummaryRotatorRuleForm extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getRuleId();
 	}
@@ -3182,7 +3314,8 @@ class ReportSummaryRotatorRuleForm extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getRuleName();
 	}
@@ -3191,7 +3324,8 @@ class ReportSummaryRotatorRuleForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No rule]';
@@ -3203,7 +3337,8 @@ class ReportSummaryRotatorRuleForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No rotator]';
@@ -3218,7 +3353,8 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getRuleRedirectId();
 	}
@@ -3227,7 +3363,8 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getRuleRedirectName();
 	}
@@ -3236,7 +3373,8 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			//return '[Default redirect1]';
@@ -3248,7 +3386,8 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[Default redirect2]';
@@ -3263,7 +3402,8 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getConvId();
 	}
@@ -3272,7 +3412,8 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 	 * Alias for getC4
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getTransactionIDName();
 	}
@@ -3281,7 +3422,8 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Transaction ID]';
@@ -3293,7 +3435,8 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Transaction ID]';
@@ -3308,7 +3451,8 @@ class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 	 * Alias for getPublisherId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getPublisherId();
 	}
@@ -3317,7 +3461,8 @@ class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 	 * Alias for getPublisherIDName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getPublisherIDName();
 	}
@@ -3326,7 +3471,8 @@ class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Publisher/User]';
@@ -3338,7 +3484,8 @@ class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 	 * Alias for getName()
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		if ($this->getName() == '') {
 			return '[No Publisher/User]';
@@ -3360,7 +3507,8 @@ class ReportSummaryIntervalForm extends ReportSummaryTotalForm
 	 * Alias for getIntervalId
 	 * @return integer
 	 */
-	function getId()
+	#[\Override]
+    function getId()
 	{
 		return $this->getIntervalId();
 	}
@@ -3369,7 +3517,8 @@ class ReportSummaryIntervalForm extends ReportSummaryTotalForm
 	 * Alias for getIntervalName
 	 * @return integer
 	 */
-	function getName()
+	#[\Override]
+    function getName()
 	{
 		return $this->getFormattedIntervalName();
 	}
@@ -3378,7 +3527,8 @@ class ReportSummaryIntervalForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getTitle()
+	#[\Override]
+    function getTitle()
 	{
 		return $this->getName();
 	}
@@ -3388,7 +3538,8 @@ class ReportSummaryIntervalForm extends ReportSummaryTotalForm
 	 * Alias
 	 * @return string
 	 */
-	function getPrintTitle()
+	#[\Override]
+    function getPrintTitle()
 	{
 		$html = $this->getName();
 		return $html;
@@ -3859,7 +4010,7 @@ class ReportSummaryTotalForm
 	 */
 	function setKeywordName($arg0)
 	{
-		$this->keyword_name = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->keyword_name = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -3943,7 +4094,7 @@ class ReportSummaryTotalForm
 	 */
 	function setRefererName($arg0)
 	{
-		$this->referer_name = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->referer_name = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4408,7 +4559,7 @@ class ReportSummaryTotalForm
 	 */
 	function setAffiliateCampaignName($arg0)
 	{
-		$this->affiliate_campaign_name = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->affiliate_campaign_name = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4429,7 +4580,7 @@ class ReportSummaryTotalForm
 	 */
 	function setUtmCampaign($arg0)
 	{
-		$this->utm_campaign = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->utm_campaign = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4450,7 +4601,7 @@ class ReportSummaryTotalForm
 	 */
 	function setUtmContent($arg0)
 	{
-		$this->utm_content = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->utm_content = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4471,7 +4622,7 @@ class ReportSummaryTotalForm
 	 */
 	function setUtmMedium($arg0)
 	{
-		$this->utm_medium = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->utm_medium = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4513,7 +4664,7 @@ class ReportSummaryTotalForm
 	 */
 	function setUtmTerm($arg0)
 	{
-		$this->utm_term = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->utm_term = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	function getCustomVariableName()
@@ -4527,7 +4678,7 @@ class ReportSummaryTotalForm
 
 	function setCustomVariableName($arg0)
 	{
-		$this->custom_variable_name = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->custom_variable_name = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	function getCustomVariableValue()
@@ -4541,7 +4692,7 @@ class ReportSummaryTotalForm
 
 	function setCustomVariableValue($arg0)
 	{
-		$this->custom_variable_value = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->custom_variable_value = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 
@@ -4585,7 +4736,7 @@ class ReportSummaryTotalForm
 	 */
 	function setC1($arg0)
 	{
-		$this->c1 = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->c1 = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4627,7 +4778,7 @@ class ReportSummaryTotalForm
 	 */
 	function setC2($arg0)
 	{
-		$this->c2 = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->c2 = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4648,7 +4799,7 @@ class ReportSummaryTotalForm
 	 */
 	function setC3($arg0)
 	{
-		$this->c3 = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->c3 = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4669,7 +4820,7 @@ class ReportSummaryTotalForm
 	 */
 	function setC4($arg0)
 	{
-		$this->c4 = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->c4 = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
@@ -4803,7 +4954,7 @@ class ReportSummaryTotalForm
 
 	function setPublisherId($arg0)
 	{
-		$this->publisher_id = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->publisher_id = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	function getConvId()
@@ -4836,7 +4987,7 @@ class ReportSummaryTotalForm
 
 	function setTransactionId($arg0)
 	{
-		$this->transaction_id = htmlspecialchars($arg0, ENT_QUOTES);
+		$this->transaction_id = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	function getPublisherId()
@@ -4979,31 +5130,31 @@ class ReportSummaryTotalForm
 		$reportParams = $this->getReportParameters();
 		$child_sort = is_object($reportParams) ? $reportParams->getDetailsSortByKey($this->getDetailId()) : 0;
 		if (is_null($this->child_array)) {
-			$this->child_array = array();
+			$this->child_array = [];
 		}
 
 		if ($child_sort == ReportBasicForm::SORT_ROI) {
-			usort($this->child_array, array($this, "roiSort"));
+			usort($this->child_array, $this->roiSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_NET) {
-			usort($this->child_array, array($this, "netSort"));
+			usort($this->child_array, $this->netSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_COST) {
-			usort($this->child_array, array($this, "costSort"));
+			usort($this->child_array, $this->costSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_INCOME) {
-			usort($this->child_array, array($this, "incomeSort"));
+			usort($this->child_array, $this->incomeSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_CPC) {
-			usort($this->child_array, array($this, "cpcSort"));
+			usort($this->child_array, $this->cpcSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_EPC) {
-			usort($this->child_array, array($this, "epcSort"));
+			usort($this->child_array, $this->epcSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_PAYOUT) {
-			usort($this->child_array, array($this, "payoutSort"));
+			usort($this->child_array, $this->payoutSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_SU) {
-			usort($this->child_array, array($this, "suSort"));
+			usort($this->child_array, $this->suSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_LEAD) {
-			usort($this->child_array, array($this, "leadSort"));
+			usort($this->child_array, $this->leadSort(...));
 		} else if ($child_sort == ReportBasicForm::SORT_CLICK) {
-			usort($this->child_array, array($this, "clickSort"));
+			usort($this->child_array, $this->clickSort(...));
 		} else {
-			usort($this->child_array, array($this, "nameSort"));
+			usort($this->child_array, $this->nameSort(...));
 		}
 		return $this->child_array;
 	}
@@ -5012,107 +5163,77 @@ class ReportSummaryTotalForm
 	{
 		$aRev = $a->getName();
 		$bRev = $b->getName();
-		return (strcasecmp($aRev, $bRev));
+		return (strcasecmp((string) $aRev, (string) $bRev));
 	}
 
 	static function roiSort($a, $b)
 	{
 		$aRev = $a->getRoi();
 		$bRev = $b->getRoi();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function netSort($a, $b)
 	{
 		$aRev = $a->getNet();
 		$bRev = $b->getNet();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function costSort($a, $b)
 	{
 		$aRev = $a->getCost();
 		$bRev = $b->getCost();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function incomeSort($a, $b)
 	{
 		$aRev = $a->getIncome();
 		$bRev = $b->getIncome();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function cpcSort($a, $b)
 	{
 		$aRev = $a->getCpc();
 		$bRev = $b->getCpc();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function epcSort($a, $b)
 	{
 		$aRev = $a->getEpc();
 		$bRev = $b->getEpc();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function payoutSort($a, $b)
 	{
 		$aRev = $a->getPayout();
 		$bRev = $b->getPayout();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function suSort($a, $b)
 	{
 		$aRev = $a->getSu();
 		$bRev = $b->getSu();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function leadSort($a, $b)
 	{
 		$aRev = $a->getLeads();
 		$bRev = $b->getLeads();
-		if ($aRev == $bRev) {
-			return 0;
-		}
-		return (($aRev < $bRev) ? 1 : -1);
+        return $bRev <=> $aRev;
 	}
 
 	static function clickSort($a, $b)
 	{
 		$aClick = $a->getClicks();
 		$bClick = $b->getClicks();
-		if ($aClick == $bClick) {
-			return 0;
-		}
-		return (($aClick < $bClick) ? 1 : -1);
+        return $bClick <=> $aClick;
 	}
 
 	/**
@@ -5122,7 +5243,7 @@ class ReportSummaryTotalForm
 	function getChildArray()
 	{
 		if (is_null($this->child_array)) {
-			$this->child_array = array();
+			$this->child_array = [];
 		}
 		return $this->child_array;
 	}
@@ -5147,43 +5268,37 @@ class ReportSummaryTotalForm
 			// Attempt to populate the form
 			foreach ($arg0 as $key => $value) {
 				if (is_array($value)) {
-					$entry = preg_replace_callback("/_([a-zA-Z0-9])/", function ($m) {
-						return strtoupper($m[1]);
-					}, $key);
-					if (is_callable(array($this, 'add' . ucfirst($entry)))) {
+					$entry = preg_replace_callback("/_([a-zA-Z0-9])/", fn($m) => strtoupper((string) $m[1]), (string) $key);
+					if (is_callable([$this, 'add' . ucfirst((string) $entry)])) {
 
 						foreach ($value as $key2 => $value1) {
 							if (is_string($value1)) {
-								$this->{'add' . ucfirst($entry)}(trim($value1), $key2);
+								$this->{'add' . ucfirst((string) $entry)}(trim($value1), $key2);
 							} else {
-								$this->{'add' . ucfirst($entry)}($value1, $key2);
+								$this->{'add' . ucfirst((string) $entry)}($value1, $key2);
 							}
 						}
 					} else {
-						$entry = preg_replace_callback("/_([a-zA-Z0-9])/", function ($m) {
-							return strtoupper($m[1]);
-						}, $key);
-						if (is_callable(array($this, 'set' . ucfirst($entry)))) {
+						$entry = preg_replace_callback("/_([a-zA-Z0-9])/", fn($m) => strtoupper((string) $m[1]), (string) $key);
+						if (is_callable([$this, 'set' . ucfirst((string) $entry)])) {
 							if (is_string($value)) {
-								$this->{'set' . ucfirst($entry)}(trim($value));
+								$this->{'set' . ucfirst((string) $entry)}(trim($value));
 							} else {
-								$this->{'set' . ucfirst($entry)}($value);
+								$this->{'set' . ucfirst((string) $entry)}($value);
 							}
 						}
 					}
 				} else {
 
-					$entry = preg_replace_callback("/_([a-zA-Z0-9])/", function ($m) {
-						return strtoupper($m[1]);
-					}, $key);
-					if (is_callable(array($this, 'set' . ucfirst($entry)))) {
+					$entry = preg_replace_callback("/_([a-zA-Z0-9])/", fn($m) => strtoupper((string) $m[1]), (string) $key);
+					if (is_callable([$this, 'set' . ucfirst((string) $entry)])) {
 
 						if (is_string($value)) {
-							$this->{'set' . ucfirst($entry)}(trim($value));
+							$this->{'set' . ucfirst((string) $entry)}(trim($value));
 						} else {
-							$this->{'set' . ucfirst($entry)}($value);
+							$this->{'set' . ucfirst((string) $entry)}($value);
 						}
-					} else if (is_callable(array($this, '__set'))) {
+					} else if (is_callable($this->__set(...))) {
 						if (is_string($value)) {
 							$this->__set($entry, trim($value));
 						} else {

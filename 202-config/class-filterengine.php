@@ -3,7 +3,7 @@ declare(strict_types=1);
 class FilterEngine
 {
 
-    private $mysql = Array();
+    private $mysql = [];
 
     private static $db;
 
@@ -12,7 +12,7 @@ class FilterEngine
         try {
             $database = DB::getInstance();
             self::$db = $database->getConnection();
-        } catch (Exception $e) {
+        } catch (Exception) {
             self::$db = false;
         }
         $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
@@ -27,17 +27,17 @@ class FilterEngine
         
         $result = _mysqli_query($sql);
         $row = $result->fetch_assoc();
-        $enumList = explode(",", str_replace("'", "", substr($row['COLUMN_TYPE'], 5, (strlen($row['COLUMN_TYPE']) - 6))));
+        $enumList = explode(",", str_replace("'", "", substr((string) $row['COLUMN_TYPE'], 5, (strlen((string) $row['COLUMN_TYPE']) - 6))));
         $showSelected = '';
         $selected = self::getFilter($column_name, $filter_id);
         $selectDropdown .= "<option value=''>--</option>";
         if ($enumList) {
             foreach ($enumList as $value) {
-                
-                if (strcmp($selected, $value) == 0) {
+
+                if (strcmp((string) $selected, $value) == 0) {
                     $showSelected = 'SELECTED';
                 }
-                
+
                 $selectDropdown .= '<option value="' . $value . '" ' . $showSelected . '>' . $value . '</option>';
                 $showSelected = ''; // reset value for next loop
                                       
@@ -147,7 +147,7 @@ class FilterEngine
     function getFilterNameMapping($filter_id)
     {
         
-        $filterNameMapping = array(
+        $filterNameMapping = [
             "Clicks" => "getClicks",
             "Click Throughs" => "getClickOut",
             "LP CTR" => "getCtr",
@@ -161,7 +161,7 @@ class FilterEngine
             "Cost" => "getCost",
             "Net" => "getNet",
             "ROI" => "getRoi"
-        );
+        ];
         return $filterNameMapping[self::getFilter('filter_name', $filter_id)];
     }
 

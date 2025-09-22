@@ -72,7 +72,7 @@ class curl
 	 * @var array
 	 */
 
-	var $m_caseless;
+	public $m_caseless;
 
 	/**
 	 * The handle for the current curl session.
@@ -81,7 +81,7 @@ class curl
 	 * @var CurlHandle|null
 	 */
 
-	var $m_handle;
+	public $m_handle;
 
 	/**
 	 * The parsed contents of the HTTP header if one happened in the
@@ -113,7 +113,7 @@ class curl
 	 * @var mixed
 	 */
 
-	var $m_header;
+	public $m_header;
 
 	/**
 	 * Current setting of the curl options.
@@ -122,7 +122,7 @@ class curl
 	 * @var mixed
 	 */
 
-	var $m_options;
+	public $m_options;
 
 	/**
 	 * Status information for the last executed http request.  Includes the errno and error
@@ -139,7 +139,7 @@ class curl
 	 * @var mixed
 	 */
 
-	var $m_status;
+	public $m_status;
 
 	/**
 	 * Collection of headers when curl follows redirections as per CURLOPTION_FOLLOWLOCATION.
@@ -149,7 +149,7 @@ class curl
 	 * @var array
 	 */
 
-	var $m_followed;
+	public $m_followed;
 
 	/**
 	 * curl class constructor
@@ -245,7 +245,7 @@ class curl
 
 		if ($this->getOption(CURLOPT_HEADER)) {
 
-			$this->m_followed = array();
+			$this->m_followed = [];
 			$rv = $theReturnValue;
 
 			while (count($this->m_followed) <= $this->m_status['redirect_count']) {
@@ -308,11 +308,7 @@ class curl
 
 	function getOption($theOption)
 	{
-		if (isset($this->m_options[$theOption])) {
-			return $this->m_options[$theOption];
-		}
-
-		return null;
+		return $this->m_options[$theOption] ?? null;
 	}
 
 	/**
@@ -350,7 +346,7 @@ class curl
 
 	function parseHeader($theHeader)
 	{
-		$this->m_caseless = array();
+		$this->m_caseless = [];
 
 		$theArray = preg_split("/(\r\n)+/", $theHeader);
 
@@ -363,7 +359,7 @@ class curl
 		}
 
 		foreach ($theArray as $theHeaderString) {
-			$theHeaderStringArray = preg_split("/\s*:\s*/", $theHeaderString, 2);
+			$theHeaderStringArray = preg_split("/\s*:\s*/", (string) $theHeaderString, 2);
 
 			$theCaselessTag = strtoupper($theHeaderStringArray[0]);
 
@@ -422,8 +418,8 @@ class curl
 
 	function &fromPostString(&$thePostString)
 	{
-		$return = array();
-		$fields = explode('&', $thePostString);
+		$return = [];
+		$fields = explode('&', (string) $thePostString);
 		foreach ($fields as $aField) {
 			$xxx = explode('=', $aField);
 			$return[$xxx[0]] = urldecode($xxx[1]);
@@ -457,7 +453,7 @@ class curl
 				}
 			}
 		} else {
-			$thePostString .= '&' . urlencode((string)$thePrefix) . '=' . urlencode($theData);
+			$thePostString .= '&' . urlencode((string)$thePrefix) . '=' . urlencode((string) $theData);
 		}
 
 		$xxx = &substr($thePostString, 1);
@@ -477,10 +473,10 @@ class curl
 
 	function getFollowedHeaders()
 	{
-		$theHeaders = array();
+		$theHeaders = [];
 		if ($this->m_followed) {
 			foreach ($this->m_followed as $aHeader) {
-				$theHeaders[] = explode("\r\n", $aHeader);
+				$theHeaders[] = explode("\r\n", (string) $aHeader);
 			};
 			return $theHeaders;
 		}

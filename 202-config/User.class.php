@@ -10,20 +10,20 @@ class User
         try {
             $database = DB::getInstance();
             self::$db = $database->getConnection();
-        } catch (Exception $e) {
+        } catch (Exception) {
             self::$db = false;
             return; // Exit constructor if DB connection fails
         }
 
         // Skip loading roles during installation
         if (
-            strpos($_SERVER['PHP_SELF'], '202-config/install.php') !== false ||
-            strpos($_SERVER['PHP_SELF'], '202-config/get_apikey.php') !== false
+            str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php') ||
+            str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')
         ) {
             return;
         }
 
-        $this->userRoles = array();
+        $this->userRoles = [];
 
         try {
             $mysql['user_id'] = self::$db->real_escape_string($user_id);
@@ -33,7 +33,7 @@ class User
                 $row = $results->fetch_assoc();
                 $this->loadRoles($row['user_id']);
             }
-        } catch (mysqli_sql_exception $e) {
+        } catch (mysqli_sql_exception) {
             // Table doesn't exist yet or other DB error, just return
             return;
         }
@@ -62,12 +62,6 @@ class User
         if (!isset($this->userRoles) || !is_array($this->userRoles)) {
             return false;
         }
-
-        foreach ($this->userRoles as $role) {
-            if ($role && $role->verifyPermission($permission)) {
-                return true;
-            }
-        }
-        return false;
+        return array_any($this->userRoles, fn($role) => $role && $role->verifyPermission($permission));
     }
 }

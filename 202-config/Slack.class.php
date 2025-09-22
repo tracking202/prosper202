@@ -2,19 +2,20 @@
 declare(strict_types=1);
 class Slack {
 
-  private $webhook_url;
-
-  function __construct($webhook_url){
-    $this->webhook_url = $webhook_url;
+  function __construct(private $webhook_url)
+  {
   }
 
-  public function push($placeholder, $vars = array()){
-  	$message = $this->getMessage($placeholder, $vars);
-  	return $this->sendMessage($message);
+  public function push($placeholder, $vars = []){
+	$message = $this->getMessage($placeholder, $vars);
+	if ($message === '') {
+		return false;
+	}
+	return $this->sendMessage($message);
   }
 
-  private function getMessage($placeholder, $vars = array()) {
-  	static $messages = array(
+  private function getMessage($placeholder, $vars = []) {
+  	static $messages = [
   		
   		//Traffic Source
   		'traffic_source_created' => 'Traffice Source: [name] Created by #[user]',
@@ -146,12 +147,16 @@ class Slack {
       //Failed Login Attempt
       'failed_login' => 'Failed Login Attempt:\n - Username: [username]\n - IP Address: [ip]',
 
-    );
+    ];
 
-  	$message = $messages[$placeholder];
+	if (!isset($messages[$placeholder])) {
+		return '';
+	}
 
-  	foreach($vars as $key => $value){
-	    $message = str_replace('['.$key.']', $value, $message);
+	$message = $messages[$placeholder];
+
+	foreach ($vars as $key => $value) {
+		$message = str_replace('[' . $key . ']', (string)($value ?? ''), $message);
 	}
 
 	return $message;
@@ -159,12 +164,12 @@ class Slack {
 
   private function sendMessage($message) {
 
-    $data = "payload=" . json_encode(array(
+    $data = "payload=" . json_encode([
             "channel"  		=> "#prosper202",
-            "text"      	=> urlencode($message),
+            "text"      	=> urlencode((string) $message),
             "username" 		=> $_SERVER['SERVER_NAME'],
             "icon_url"    	=> "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2015-02-28/3879263534_1958d0336574bea6f52d_48.jpg"
-    		));
+    		]);
 
     $ch = curl_init($this->webhook_url);
     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");

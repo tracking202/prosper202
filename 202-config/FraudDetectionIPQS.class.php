@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 if (!defined('ROOT_PATH')) {
-    define('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
+    define('ROOT_PATH', substr(__DIR__, 0, -10));
 }
 include_once (ROOT_PATH . '/202-interfaces/FraudDetectionInterface.php');
 
@@ -24,7 +24,7 @@ class FraudDetectionIPQS implements FraudDetectionInterface
     
     function verifyKey()
     {
-        $result = json_decode($this->get_IPQ_URL(sprintf('https://www.ipqualityscore.com/api/json/account/%s', $this->key)), true);
+        $result = json_decode((string) $this->get_IPQ_URL(sprintf('https://www.ipqualityscore.com/api/json/account/%s', $this->key)), true);
         
         if($result !== null){
             if(isset($result['success']) && $result['success'] == true) {
@@ -39,7 +39,7 @@ class FraudDetectionIPQS implements FraudDetectionInterface
 
     function isFraud($ip)
     {
-        $result = json_decode($this->get_IPQ_URL(sprintf('https://www.ipqualityscore.com/api/json/ip/%s/%s?user_agent=%s&fast=true&user_language=%s;&strictness=%s&allow_public_access_points=true', $this->key, $this->ip->address, $this->user_agent, $this->language, $this->strictness)), true);
+        $result = json_decode((string) $this->get_IPQ_URL(sprintf('https://www.ipqualityscore.com/api/json/ip/%s/%s?user_agent=%s&fast=true&user_language=%s;&strictness=%s&allow_public_access_points=true', $this->key, $this->ip->address, $this->user_agent, $this->language, $this->strictness)), true);
         if($result !== null){
             if(isset($result['fraud_score']) && $result['fraud_score'] >= 80) {
                 return true;

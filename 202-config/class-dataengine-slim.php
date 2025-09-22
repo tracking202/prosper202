@@ -12,7 +12,7 @@ if (!class_exists('DataEngine')) {
     {
         private $total_clicks = '';
 
-        private $mysql = array();
+        private $mysql = [];
 
         private static $db;
         private static $found_rows;
@@ -23,7 +23,7 @@ if (!class_exists('DataEngine')) {
             try {
                 $database = DB::getInstance();
                 self::$db = $database->getConnection();
-            } catch (Exception $e) {
+            } catch (Exception) {
                 self::$db = false;
             }
             // $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
@@ -74,7 +74,7 @@ if (!class_exists('DataEngine')) {
                            ORDER BY        202_clicks.click_id DESC
                            LIMIT           1';
 
-                $click_result1 = $db->query($click_sql1) or record_mysql_error($db, $click_sql1);
+                $click_result1 = $db->query($click_sql1) or record_mysql_error($db);
                 $click_row1 = $click_result1->fetch_assoc();
                 //empy  $mysql array
 
