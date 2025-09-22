@@ -4,9 +4,9 @@ declare(strict_types=1);
 ignore_user_abort(true);
 set_time_limit(0);
 //include mysql settings
-include_once(dirname(__FILE__) . '/connect.php');
-include_once(dirname(__FILE__) . '/class-dataengine.php');
-include_once(dirname(__FILE__) . '/functions-upgrade.php');
+include_once(__DIR__ . '/connect.php');
+include_once(__DIR__ . '/class-dataengine.php');
+include_once(__DIR__ . '/functions-upgrade.php');
 
 //check to see if this is already installed, if so don't do anything
 if (upgrade_needed() == false) {
@@ -22,7 +22,7 @@ if (!php_version_supported()) {
 
 // Get Database version
 $mysqlversion = $db->server_info;
-if (preg_match('/-(10\..+)-MariaDB/i', $mysqlversion, $match)) {
+if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
 	// Support For MariaDB
 	$mysqlversion = $match[1];
 	$dbwording = "MariaDB >= 10.0.12";
@@ -36,7 +36,7 @@ if (preg_match('/-(10\..+)-MariaDB/i', $mysqlversion, $match)) {
 	}
 }
 
-$html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
+$html['mysqlversion'] = htmlentities((string) $mysqlversion, ENT_QUOTES, 'UTF-8');
 
 if (!function_exists('curl_version')) {
 	$version_error['curl'] = 'Prosper202 requires CURL to be installed.';
@@ -52,7 +52,7 @@ if ($version_error) {
 		<br></br>
 		<?php
 
-		$partners = json_decode(getData('https://my.tracking202.com/api/v2/hostings'), true);
+		$partners = json_decode((string) getData('https://my.tracking202.com/api/v2/hostings'), true);
 
 		foreach ($partners as $partner) { ?>
 			<div class="media">
@@ -274,7 +274,7 @@ if ($version_error) {
 			<form method="post" id="upgrade-form" action="">
 				<?php if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
 					$first_click_sql = "select DATE_FORMAT(FROM_UNIXTIME(min(click_time)),'%d-%m-%Y') as first_click_time from 202_clicks";
-					$first_click_row = memcache_mysql_fetch_assoc($first_click_sql);
+					$first_click_row = memcache_mysql_fetch_assoc($db, $first_click_sql);
 
 				?>
 					<div class="form-group">

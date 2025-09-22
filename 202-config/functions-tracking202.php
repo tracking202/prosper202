@@ -3,7 +3,7 @@
 use UAParser\Parser;
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.
-function record_mysql_error($sql)
+function record_mysql_error($sql): never
 {
     $database = DB::getInstance();
     $db = $database->getConnection();
@@ -28,11 +28,11 @@ function record_mysql_error($sql)
     $site_id = INDEXES::get_site_url_id($site_url);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 
-    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string(strip_tags($_SESSION['user_id'])) : 0;
+    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id'])) : 0;
     $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
     $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags($_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags($_SERVER['SERVER_NAME']));
+    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
+    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
     $mysql['mysql_error_time'] = time();
 
     $report_sql = "INSERT     INTO  202_mysql_errors
@@ -52,7 +52,7 @@ function record_mysql_error($sql)
 					time: ' . date('r', time()) . '<br/>
 					server_name: ' . $_SERVER['SERVER_NAME'] . '<br/><br/>
 					
-					user_id: ' . (isset($_SESSION['user_id']) ? $_SESSION['user_id'] : 'N/A') . '<br/>
+					user_id: ' . ($_SESSION['user_id'] ?? 'N/A') . '<br/>
 					script_url: ' . $site_url . '<br/>
 					$_SERVER: ' . serialize($_SERVER) . '<br/><br/>
 					
@@ -78,7 +78,7 @@ function record_mysql_error($sql)
 
 <?php
 
-    template_bottom($server_row);
+    template_bottom();
     die();
 }
 
@@ -154,36 +154,36 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $user_result = _mysqli_query($user_sql);
     $user_row = $user_result->fetch_assoc();
 
-    $html['user_pref_aff_network_id'] = htmlentities($user_row['user_pref_aff_network_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_aff_campaign_id'] = htmlentities($user_row['user_pref_aff_campaign_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_text_ad_id'] = htmlentities($user_row['user_pref_text_ad_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_method_of_promotion'] = htmlentities($user_row['user_pref_method_of_promotion'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_landing_page_id'] = htmlentities($user_row['user_pref_landing_page_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_ppc_network_id'] = htmlentities($user_row['user_pref_ppc_network_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_ppc_account_id'] = htmlentities($user_row['user_pref_ppc_account_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_1'] = htmlentities($user_row['user_pref_group_1'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_2'] = htmlentities($user_row['user_pref_group_2'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_3'] = htmlentities($user_row['user_pref_group_3'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_4'] = htmlentities($user_row['user_pref_group_4'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_aff_network_id'] = htmlentities((string) $user_row['user_pref_aff_network_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_aff_campaign_id'] = htmlentities((string) $user_row['user_pref_aff_campaign_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_text_ad_id'] = htmlentities((string) $user_row['user_pref_text_ad_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_method_of_promotion'] = htmlentities((string) $user_row['user_pref_method_of_promotion'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_landing_page_id'] = htmlentities((string) $user_row['user_pref_landing_page_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_ppc_network_id'] = htmlentities((string) $user_row['user_pref_ppc_network_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_ppc_account_id'] = htmlentities((string) $user_row['user_pref_ppc_account_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_group_1'] = htmlentities((string) $user_row['user_pref_group_1'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_group_2'] = htmlentities((string) $user_row['user_pref_group_2'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_group_3'] = htmlentities((string) $user_row['user_pref_group_3'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_group_4'] = htmlentities((string) $user_row['user_pref_group_4'], ENT_QUOTES, 'UTF-8');
 
     $time = grab_timeframe();
     $html['from'] = date('m/d/Y', $time['from']);
     $html['to'] = date('m/d/Y', $time['to']);
-    $html['ip'] = htmlentities($user_row['user_pref_ip'], ENT_QUOTES, 'UTF-8');
+    $html['ip'] = htmlentities((string) $user_row['user_pref_ip'], ENT_QUOTES, 'UTF-8');
     if ($user_row['user_pref_subid'] != '0' && !empty($user_row['user_pref_subid'])) {
-        $html['subid'] = htmlentities($user_row['user_pref_subid'], ENT_QUOTES, 'UTF-8');
+        $html['subid'] = htmlentities((string) $user_row['user_pref_subid'], ENT_QUOTES, 'UTF-8');
     } else {
         $html['subid'] = '';
     }
-    $html['user_pref_country_id'] = htmlentities($user_row['user_pref_country_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_region_id'] = htmlentities($user_row['user_pref_region_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_isp_id'] = htmlentities($user_row['user_pref_isp_id'], ENT_QUOTES, 'UTF-8');
-    $html['referer'] = htmlentities($user_row['user_pref_referer'], ENT_QUOTES, 'UTF-8');
-    $html['keyword'] = htmlentities($user_row['user_pref_keyword'], ENT_QUOTES, 'UTF-8');
-    $html['page'] = htmlentities($page, ENT_QUOTES, 'UTF-8');
-    $html['user_pref_device_id'] = htmlentities($user_row['user_pref_device_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_browser_id'] = htmlentities($user_row['user_pref_browser_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_platform_id'] = htmlentities($user_row['user_pref_platform_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_country_id'] = htmlentities((string) $user_row['user_pref_country_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_region_id'] = htmlentities((string) $user_row['user_pref_region_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_isp_id'] = htmlentities((string) $user_row['user_pref_isp_id'], ENT_QUOTES, 'UTF-8');
+    $html['referer'] = htmlentities((string) $user_row['user_pref_referer'], ENT_QUOTES, 'UTF-8');
+    $html['keyword'] = htmlentities((string) $user_row['user_pref_keyword'], ENT_QUOTES, 'UTF-8');
+    $html['page'] = htmlentities((string) $page, ENT_QUOTES, 'UTF-8');
+    $html['user_pref_device_id'] = htmlentities((string) $user_row['user_pref_device_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_browser_id'] = htmlentities((string) $user_row['user_pref_browser_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_platform_id'] = htmlentities((string) $user_row['user_pref_platform_id'], ENT_QUOTES, 'UTF-8');
 ?>
 
     <div class="row" style="margin-bottom: 15px;">
@@ -278,7 +278,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                                                     } ?>">
                             <div class="col-xs-12" style="margin-top: 5px;">
                                 <div class="row">
-                                    <?php if (!$_SESSION['publisher']) { ?>
+                                    <?php if (empty($_SESSION['publisher'])) { ?>
                                         <div class="col-xs-6">
                                             <label>Traffic Source/Account: </label>
 
@@ -313,7 +313,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                             </div>
                                         </div>
                                     </div>
-                                    <?php if (!$_SESSION['publisher']) { ?>
+                                    <?php if (empty($_SESSION['publisher'])) { ?>
                                         <div class="col-xs-6">
                                             <label>Category/Campaign: </label>
                                             <div class="form-group">
@@ -943,33 +943,33 @@ function display_calendar2($page, $show_time, $show_adv, $show_bottom, $show_lim
     $time = grab_timeframe();
     $html['from'] = date('m/d/Y', $time['from']);
     $html['to'] = date('m/d/Y', $time['to']);
-    $html['ip'] = htmlentities($user_row['user_pref_ip'], ENT_QUOTES, 'UTF-8');
+    $html['ip'] = htmlentities((string) $user_row['user_pref_ip'], ENT_QUOTES, 'UTF-8');
     if ($user_row['user_pref_subid'] != '0' && !empty($user_row['user_pref_subid'])) {
-        $html['subid'] = htmlentities($user_row['user_pref_subid'], ENT_QUOTES, 'UTF-8');
+        $html['subid'] = htmlentities((string) $user_row['user_pref_subid'], ENT_QUOTES, 'UTF-8');
     } else {
         $html['subid'] = '';
     }
 
 
-    $html['filter_name1'] = htmlentities($filterEngine->getFilter('filter_name', 1), ENT_QUOTES, 'UTF-8');
-    $html['filter_name2'] = htmlentities($filterEngine->getFilter('filter_name', 2), ENT_QUOTES, 'UTF-8');
-    $html['filter_name3'] = htmlentities($filterEngine->getFilter('filter_name', 3), ENT_QUOTES, 'UTF-8');
-    $html['filter_condition1'] = htmlentities($filterEngine->getFilter('filter_condition', 1), ENT_QUOTES, 'UTF-8');
-    $html['filter_condition2'] = htmlentities($filterEngine->getFilter('filter_condition', 2), ENT_QUOTES, 'UTF-8');
-    $html['filter_condition3'] = htmlentities($filterEngine->getFilter('filter_condition', 3), ENT_QUOTES, 'UTF-8');
-    $html['filter_value1'] = htmlentities($filterEngine->getFilter('filter_value', 1), ENT_QUOTES, 'UTF-8');
-    $html['filter_value2'] = htmlentities($filterEngine->getFilter('filter_value', 2), ENT_QUOTES, 'UTF-8');
-    $html['filter_value3'] = htmlentities($filterEngine->getFilter('filter_value', 3), ENT_QUOTES, 'UTF-8');
+    $html['filter_name1'] = htmlentities((string) $filterEngine->getFilter('filter_name', 1), ENT_QUOTES, 'UTF-8');
+    $html['filter_name2'] = htmlentities((string) $filterEngine->getFilter('filter_name', 2), ENT_QUOTES, 'UTF-8');
+    $html['filter_name3'] = htmlentities((string) $filterEngine->getFilter('filter_name', 3), ENT_QUOTES, 'UTF-8');
+    $html['filter_condition1'] = htmlentities((string) $filterEngine->getFilter('filter_condition', 1), ENT_QUOTES, 'UTF-8');
+    $html['filter_condition2'] = htmlentities((string) $filterEngine->getFilter('filter_condition', 2), ENT_QUOTES, 'UTF-8');
+    $html['filter_condition3'] = htmlentities((string) $filterEngine->getFilter('filter_condition', 3), ENT_QUOTES, 'UTF-8');
+    $html['filter_value1'] = htmlentities((string) $filterEngine->getFilter('filter_value', 1), ENT_QUOTES, 'UTF-8');
+    $html['filter_value2'] = htmlentities((string) $filterEngine->getFilter('filter_value', 2), ENT_QUOTES, 'UTF-8');
+    $html['filter_value3'] = htmlentities((string) $filterEngine->getFilter('filter_value', 3), ENT_QUOTES, 'UTF-8');
 
-    $html['user_pref_country_id'] = htmlentities($user_row['user_pref_country_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_region_id'] = htmlentities($user_row['user_pref_region_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_isp_id'] = htmlentities($user_row['user_pref_isp_id'], ENT_QUOTES, 'UTF-8');
-    $html['referer'] = htmlentities($user_row['user_pref_referer'], ENT_QUOTES, 'UTF-8');
-    $html['keyword'] = htmlentities($user_row['user_pref_keyword'], ENT_QUOTES, 'UTF-8');
-    $html['page'] = htmlentities($page, ENT_QUOTES, 'UTF-8');
-    $html['user_pref_device_id'] = htmlentities($user_row['user_pref_device_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_browser_id'] = htmlentities($user_row['user_pref_browser_id'], ENT_QUOTES, 'UTF-8');
-    $html['user_pref_platform_id'] = htmlentities($user_row['user_pref_platform_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_country_id'] = htmlentities((string) $user_row['user_pref_country_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_region_id'] = htmlentities((string) $user_row['user_pref_region_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_isp_id'] = htmlentities((string) $user_row['user_pref_isp_id'], ENT_QUOTES, 'UTF-8');
+    $html['referer'] = htmlentities((string) $user_row['user_pref_referer'], ENT_QUOTES, 'UTF-8');
+    $html['keyword'] = htmlentities((string) $user_row['user_pref_keyword'], ENT_QUOTES, 'UTF-8');
+    $html['page'] = htmlentities((string) $page, ENT_QUOTES, 'UTF-8');
+    $html['user_pref_device_id'] = htmlentities((string) $user_row['user_pref_device_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_browser_id'] = htmlentities((string) $user_row['user_pref_browser_id'], ENT_QUOTES, 'UTF-8');
+    $html['user_pref_platform_id'] = htmlentities((string) $user_row['user_pref_platform_id'], ENT_QUOTES, 'UTF-8');
 ?>
 
     <div class="row" style="margin-bottom: 15px;">
@@ -1900,7 +1900,18 @@ function getTrackingDomain()
 }
 
 // the above, if true, are options to turn on specific filtering techniques.
-function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_order, $offset, $pref_limit, $count, $isspy = false)
+function query(
+    $command,
+    $db_table = null,
+    $pref_time = null,
+    $pref_adv = null,
+    $pref_show = null,
+    $pref_order = null,
+    $offset = null,
+    $pref_limit = null,
+    $count = null,
+    $isspy = false
+)
 {
     $database = DB::getInstance();
     if ($isspy) {
@@ -1916,6 +1927,32 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
     $user_result = _mysqli_query($user_sql); // ($user_sql);
     $user_row = $user_result->fetch_assoc();
 
+    // Apply sane defaults when optional arguments are omitted
+    if ($db_table === null) {
+        $db_table = '2c';
+    }
+    if ($pref_time === null) {
+        $pref_time = true;
+    }
+    if ($pref_adv === null) {
+        $pref_adv = true;
+    }
+    if ($pref_show === null) {
+        $pref_show = true;
+    }
+    if ($pref_order === null) {
+        $pref_order = 'click_time DESC';
+    }
+    if ($offset === null) {
+        $offset = 0;
+    }
+    if ($pref_limit === null) {
+        $pref_limit = true;
+    }
+    if ($count === null) {
+        $count = true;
+    }
+
     $count_sql = "SELECT count(*) AS count FROM 202_dataengine AS 2c ";
     $theWheres = '';
 
@@ -1925,11 +1962,11 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         // if Traffic Source lookup with no individual Traffic Source account lookup do this
         if ($user_row['user_pref_ppc_network_id'] and ! ($user_row['user_pref_ppc_account_id'])) {
 
-            if (! preg_match('/202_ppc_accounts/', $command)) {
+            if (! preg_match('/202_ppc_accounts/', (string) $command)) {
                 $command .= " LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id) ";
             }
 
-            if (! preg_match('/202_ppc_networks/', $command)) {
+            if (! preg_match('/202_ppc_networks/', (string) $command)) {
                 $command .= " LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id) ";
             }
 
@@ -1940,11 +1977,11 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         // if Category lookup with no individual  campaign lookup do this
         if ($user_row['user_pref_aff_network_id'] and ! ($user_row['user_pref_aff_campaign_id'])) {
 
-            if (! preg_match('/202_aff_campaigns/', $command)) {
+            if (! preg_match('/202_aff_campaigns/', (string) $command)) {
                 $command .= " LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id) ";
             }
 
-            if (! preg_match('/202_aff_networks/', $command)) {
+            if (! preg_match('/202_aff_networks/', (string) $command)) {
                 $command .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id) ";
             }
 
@@ -1955,15 +1992,15 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         // if domain lookup
         if ($user_row['user_pref_referer']) {
 
-            if (! preg_match('/202_clicks_site/', $command)) {
+            if (! preg_match('/202_clicks_site/', (string) $command)) {
                 $command .= " LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) ";
             }
 
-            if (! preg_match('/202_site_urls/', $command)) {
+            if (! preg_match('/202_site_urls/', (string) $command)) {
                 $command .= " LEFT JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id = 2su.site_url_id) ";
             }
 
-            if (! preg_match('/202_site_domains/', $command)) {
+            if (! preg_match('/202_site_domains/', (string) $command)) {
                 $command .= " LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id) ";
             }
             $count_sql .= " LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) ";
@@ -1977,7 +2014,7 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 
         // if there is a keyword lookup, and we have not joined the 202 keywords table. do so now
         if ($user_row['user_pref_keyword']) {
-            if (! preg_match('/202_keywords/', $command)) {
+            if (! preg_match('/202_keywords/', (string) $command)) {
                 $command .= " LEFT JOIN 202_keywords AS 2k ON (2ca.keyword_id = 2k.keyword_id) ";
             }
             $count_sql .= " LEFT JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id) ";
@@ -1985,30 +2022,30 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 
         // if there is a ip lookup, and we have not joined the 202 ip table. do so now
         if ($user_row['user_pref_ip']) {
-            if (! preg_match('/202_ips/', $command)) {
+            if (! preg_match('/202_ips/', (string) $command)) {
                 $command .= " LEFT JOIN 202_ips AS 2i ON (2ca.ip_id = 2i.ip_id) ";
             }
             $count_sql .= " LEFT JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id) ";
         }
 
         // if there is a country lookup, and we have not joined the 202 country table. do so now
-        if ($user_row['user_pref_country_id'] and ! preg_match('/202_locations_country/', $command)) {
+        if ($user_row['user_pref_country_id'] and ! preg_match('/202_locations_country/', (string) $command)) {
             $command .= " LEFT JOIN 202_locations_country AS 2cy ON (2ca.country_id = 2cy.country_id) ";
         }
 
         // if there is a region lookup, and we have not joined the 202 region table. do so now
-        if ($user_row['user_pref_region_id'] and ! preg_match('/202_locations_region/', $command)) {
+        if ($user_row['user_pref_region_id'] and ! preg_match('/202_locations_region/', (string) $command)) {
             $command .= " LEFT JOIN 202_locations_region AS 2rg ON (2ca.region_id = 2rg.region_id) ";
         }
 
         // if there is a isp lookup, and we have not joined the 202 isp table. do so now
-        if ($user_row['user_pref_isp_id'] and ! preg_match('/202_locations_isp/', $command)) {
+        if ($user_row['user_pref_isp_id'] and ! preg_match('/202_locations_isp/', (string) $command)) {
             $command .= " LEFT JOIN 202_locations_isp AS 2is ON (2ca.isp_id = 2is.isp_id) ";
         }
 
         // if there is a device lookup, and we have not joined the 202 device table. do so now
         if ($user_row['user_pref_device_id']) {
-            if (! preg_match('/202_device_models/', $command)) {
+            if (! preg_match('/202_device_models/', (string) $command)) {
                 $command .= " LEFT JOIN 202_device_models AS 2d ON (2ca.device_id = 2d.device_id) ";
             }
 
@@ -2016,18 +2053,19 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         }
 
         // if there is a browser lookup, and we have not joined the 202 browser table. do so now
-        if ($user_row['user_pref_browser_id'] and ! preg_match('/202_browsers/', $command)) {
+        if ($user_row['user_pref_browser_id'] and ! preg_match('/202_browsers/', (string) $command)) {
             $command .= " LEFT JOIN 202_browsers AS 2b ON (2ca.browser_id = 2b.browser_id) ";
         }
 
         // if there is a platform lookup, and we have not joined the 202 platform table. do so now
-        if ($user_row['user_pref_platform_id'] and ! preg_match('/202_platforms/', $command)) {
+        if ($user_row['user_pref_platform_id'] and ! preg_match('/202_platforms/', (string) $command)) {
             $command .= " LEFT JOIN 202_platforms AS 2p ON (2ca.platform_id = 2p.platform_id) ";
         }
     }
 
     $count_where = ''; //initialize count_where variable
-    if ($_SESSION['publisher'] == false) { //user is able to see all camapigns
+    $isPublisher = !empty($_SESSION['publisher']);
+    if (!$isPublisher) { //user is able to see all campaigns
         $click_sql = $command . " WHERE $db_table.user_id!='0' ";
         $count_where = " WHERE $db_table.user_id!='0' ";
     } else {
@@ -2187,134 +2225,88 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
         $click_sql .= " AND click_time > " . $from . " ";
     }
     // set limit preferences
-    if ($pref_order == true) {
-        $click_sql .= $pref_order;
+    if ($pref_order) {
+        $orderClause = trim($pref_order);
+        if ($orderClause !== '') {
+            if (!preg_match('/^\s*ORDER\s+BY/i', $orderClause)) {
+                $orderClause = ' ORDER BY ' . $orderClause;
+            } else {
+                $orderClause = ' ' . $orderClause;
+            }
+            $click_sql .= $orderClause;
+        }
     }
 
     // only if we want to count stuff like the click history clicks do we need to do any of the stuff below.
-    if ($count == true) {
-        if ($isspy)
-            $count_sql = "select count(*) as count from 202_clicks_spy";
-        else
-            $count_sql = $count_sql . $count_where;
+    $limitValue = null;
+    $userPrefLimit = isset($user_row['user_pref_limit']) ? (int)$user_row['user_pref_limit'] : 0;
+    if ($userPrefLimit <= 0) {
+        $userPrefLimit = 50;
+    }
 
+    if (is_numeric($pref_limit)) {
+        $limitValue = max(0, (int)$pref_limit);
+    } elseif ($pref_limit === true) {
+        $limitValue = $userPrefLimit;
+    }
+    if ($limitValue !== null && $limitValue <= 0) {
+        $limitValue = null;
+    }
+
+    $rows = null;
+    if ($count == true || $limitValue !== null || $pref_limit !== false) {
+        $count_sql_to_run = $isspy ? "select count(*) as count from 202_clicks_spy" : $count_sql . $count_where;
         if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
-            $join = " AND 2c.";
-            if ($isspy) {
-                $join = " WHERE ";
-            }
-
-            $count_sql .= $join . "click_id='" . $mysql['user_landing_subid'] . "'";
+            $join = $isspy ? " WHERE " : " AND 2c.";
+            $count_sql_to_run .= $join . "click_id='" . $mysql['user_landing_subid'] . "'";
         }
-
-        if ($pref_limit == true) {
-            $count_sql .= " LIMIT " . $pref_limit;
-        }
-
-        // before it limits, we want to know the TOTAL number of rows
-        $count_result = _mysqli_query($count_sql);
+        $count_result = _mysqli_query($count_sql_to_run);
         $count_row = $count_result->fetch_assoc();
-        $rows = $count_row['count'];
-        // $rows=1;
+        $rows = (int)($count_row['count'] ?? 0);
+    }
 
-        // only if there is a limit set, run this code
-        if ($pref_limit == true) {
+    if ($count == true) {
+        $query['rows'] = $rows;
+        $query['offset'] = (int)$offset;
+    }
 
-            // rows is the total count of rows in this query.
-            $query['rows'] = $rows;
-            $query['offset'] = $offset;
+    if ($limitValue !== null) {
+        $click_sql .= " LIMIT ";
+        $offsetValue = (is_numeric($offset) && $offset >= 0) ? (int)$offset : 0;
+        if ($offsetValue > 0) {
+            $limitOffset = $offsetValue * $limitValue;
+            $click_sql .= $db->real_escape_string((string)$limitOffset) . ",";
+        }
+        $click_sql .= $limitValue;
 
-            if ((is_numeric($offset) and ($pref_limit == true)) or ($pref_limit == true)) {
-                $click_sql .= " LIMIT ";
-            }
-
-            if (is_numeric($offset) and ($pref_limit == true)) {
-                $mysql['offset'] = $db->real_escape_string((string)($offset * $user_row['user_pref_limit']));
-                $click_sql .= $mysql['offset'] . ",";
-
-                // declare starting row number
-                $query['from'] = ($query['offset'] * $user_row['user_pref_limit']) + 1;
-            } else {
-                $query['from'] = 1;
-            }
-
-            if ($pref_limit == true) {
-
-                if (is_numeric($pref_limit)) {
-                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$pref_limit);
-                } else {
-                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$user_row['user_pref_limit']);
-                }
-                $click_sql .= $mysql['user_pref_limit'];
-
-                // declare the number of pages
-                $query['pages'] = ceil($query['rows'] / $user_row['user_pref_limit']) + 1;
-
-                // declare end starting row number
-                $query['to'] = ($query['from'] + $mysql['user_pref_limit']) - 1;
-                if ($query['to'] > $query['rows']) {
-                    $query['to'] = $query['rows'];
-                }
-            } else {
-                $query['pages'] = 1;
-                $query['to'] = $query['rows'];
-            }
-
-            if (($query['from'] == 1) and ($query['to'] == 0)) {
-                $query['from'] = 0;
-            }
+        $fromRow = $offsetValue > 0 ? ($offsetValue * $limitValue) + 1 : 1;
+        $toRow = $fromRow + $limitValue - 1;
+        if ($rows !== null && $toRow > $rows) {
+            $toRow = $rows;
         }
     } else {
-        // only if there is a limit set, run this code
-        if ($pref_limit != false) {
-            // before it limits, we want to know the TOTAL number of rows
-            $count_result = _mysqli_query($count_sql);
-            $count_row = $count_result->fetch_assoc();
-            $rows = $count_row['count'];
+        $fromRow = ($rows !== null && $rows > 0) ? 1 : 0;
+        $toRow = $rows ?? 0;
+    }
 
-            // rows is the total count of rows in this query.
+    if ($count == true) {
+        $query['from'] = $fromRow;
+        $query['to'] = $toRow;
+        $query['pages'] = ($limitValue !== null && $limitValue > 0) ? ceil($rows / $limitValue) + 1 : 1;
+        if (($query['from'] == 1) && ($query['to'] == 0)) {
+            $query['from'] = 0;
+        }
+    } else {
+        if ($rows !== null) {
             $query['rows'] = $rows;
-            $query['offset'] = $offset;
-
-            if ((is_numeric($offset) and ($pref_limit == true)) or ($pref_limit == true)) {
-                $click_sql .= " LIMIT ";
-            }
-
-            if (is_numeric($offset) and ($pref_limit == true)) {
-                $mysql['offset'] = $db->real_escape_string((string)($offset * $user_row['user_pref_limit']));
-                $click_sql .= $mysql['offset'] . ",";
-
-                // declare starting row number
-                $query['from'] = ($query['offset'] * $user_row['user_pref_limit']) + 1;
-            } else {
-                $query['from'] = 1;
-            }
-
-            if ($pref_limit == true) {
-
-                if (is_numeric($pref_limit)) {
-                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$pref_limit);
-                } else {
-                    $mysql['user_pref_limit'] = $db->real_escape_string((string)$user_row['user_pref_limit']);
-                }
-                $click_sql .= $mysql['user_pref_limit'];
-
-                // declare the number of pages
-                $query['pages'] = ceil($query['rows'] / $user_row['user_pref_limit']) + 1;
-
-                // declare end starting row number
-                $query['to'] = ($query['from'] + $user_row['user_pref_limit']) - 1;
-                if ($query['to'] > $query['rows']) {
-                    $query['to'] = $query['rows'];
-                }
-            } else {
-                $query['pages'] = 1;
-                $query['to'] = $query['rows'];
-            }
-
-            if (($query['from'] == 1) and ($query['to'] == 0)) {
-                $query['from'] = 0;
-            }
+        }
+        $query['offset'] = (int)$offset;
+        $query['from'] = $fromRow;
+        $query['to'] = $toRow;
+        $limitForPages = ($limitValue !== null && $limitValue > 0) ? $limitValue : ($rows ?? 0);
+        $query['pages'] = ($limitForPages > 0) ? ceil(($rows ?? 0) / $limitForPages) + 1 : 1;
+        if (($query['from'] == 1) && ($query['to'] == 0)) {
+            $query['from'] = 0;
         }
     }
 
@@ -2331,296 +2323,296 @@ function query($command, $db_table, $pref_time, $pref_adv, $pref_show, $pref_ord
 function pcc_network_icon($ppc_network_name, $ppc_account_name)
 {
     // 7search
-    if ((preg_match("/7search/i", $ppc_network_name)) or (preg_match("/7 search/i", $ppc_network_name))) {
+    if ((preg_match("/7search/i", (string) $ppc_network_name)) or (preg_match("/7 search/i", (string) $ppc_network_name))) {
         $ppc_network_icon = '7search.ico';
     }
 
     // adbrite
-    if (preg_match("/adbrite/i", $ppc_network_name)) {
+    if (preg_match("/adbrite/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'adbrite.ico';
     }
 
     // adoori
-    if (preg_match("/adoori/i", $ppc_network_name)) {
+    if (preg_match("/adoori/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'adoori.ico';
     }
 
     // adTegrity
-    if ((preg_match("/adtegrity/i", $ppc_network_name)) or (preg_match("/ad tegrity/i", $ppc_network_name))) {
+    if ((preg_match("/adtegrity/i", (string) $ppc_network_name)) or (preg_match("/ad tegrity/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adtegrity.png';
     }
 
     // ask
-    if (preg_match("/ask/i", $ppc_network_name)) {
+    if (preg_match("/ask/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'ask.ico';
     }
 
     // adblade
-    if ((preg_match("/adblade/i", $ppc_network_name)) or (preg_match("/ad blade/i", $ppc_network_name))) {
+    if ((preg_match("/adblade/i", (string) $ppc_network_name)) or (preg_match("/ad blade/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adblade.ico';
     }
 
     // adsonar
-    if ((preg_match("/adsonar/i", $ppc_network_name)) or (preg_match("/ad sonar/i", $ppc_network_name)) or (preg_match("/quigo/i", $ppc_network_name))) {
+    if ((preg_match("/adsonar/i", (string) $ppc_network_name)) or (preg_match("/ad sonar/i", (string) $ppc_network_name)) or (preg_match("/quigo/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adsonar.png';
     }
 
     // marchex
-    if ((preg_match("/marchex/i", $ppc_network_name)) or (preg_match("/goclick/i", $ppc_network_name))) {
+    if ((preg_match("/marchex/i", (string) $ppc_network_name)) or (preg_match("/goclick/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'marchex.png';
     }
 
     // bidvertiser
-    if (preg_match("/bidvertiser/i", $ppc_network_name)) {
+    if (preg_match("/bidvertiser/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'bidvertiser.gif';
     }
 
     // enhance
-    if (preg_match("/enhance/i", $ppc_network_name)) {
+    if (preg_match("/enhance/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'enhance.ico';
     }
 
     // facebook
-    if ((preg_match("/facebook/i", $ppc_network_name)) or (preg_match("/fb/i", $ppc_network_name))) {
+    if ((preg_match("/facebook/i", (string) $ppc_network_name)) or (preg_match("/fb/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'facebook.ico';
     }
 
     // findology
-    if (preg_match("/findology/i", $ppc_network_name)) {
+    if (preg_match("/findology/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'findology.png';
     }
 
     // google
-    if ((preg_match("/google/i", $ppc_network_name)) or (preg_match("/adwords/i", $ppc_network_name))) {
+    if ((preg_match("/google/i", (string) $ppc_network_name)) or (preg_match("/adwords/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'google.ico';
     }
 
     // instagram
-    if (preg_match("/instagram/i", $ppc_network_name)) {
+    if (preg_match("/instagram/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'instagram.ico';
     }
 
     // kanoodle
-    if (preg_match("/kanoodle/i", $ppc_network_name)) {
+    if (preg_match("/kanoodle/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'kanoodle.ico';
     }
 
     // looksmart
-    if (preg_match("/looksmart/i", $ppc_network_name)) {
+    if (preg_match("/looksmart/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'looksmart.gif';
     }
 
     // hi5
-    if ((preg_match("/hi5/i", $ppc_network_name)) or (preg_match("/hi 5/i", $ppc_network_name))) {
+    if ((preg_match("/hi5/i", (string) $ppc_network_name)) or (preg_match("/hi 5/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'hi5.ico';
     }
 
     // miva
-    if ((preg_match("/miva/i", $ppc_network_name)) or (preg_match("/searchfeed/i", $ppc_network_name))) {
+    if ((preg_match("/miva/i", (string) $ppc_network_name)) or (preg_match("/searchfeed/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'miva.ico';
     }
 
     // mailchimp
-    if ((preg_match("/mailchimp/i", $ppc_network_name)) or (preg_match("/searchfeed/i", $ppc_network_name))) {
+    if ((preg_match("/mailchimp/i", (string) $ppc_network_name)) or (preg_match("/searchfeed/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'mailchimp.ico';
     }
 
     // msn
-    if ((preg_match("/microsoft/i", $ppc_network_name)) or (preg_match("/MSN/i", $ppc_network_name)) or (preg_match("/bing/i", $ppc_network_name)) or (preg_match("/adcenter/i", $ppc_network_name))) {
+    if ((preg_match("/microsoft/i", (string) $ppc_network_name)) or (preg_match("/MSN/i", (string) $ppc_network_name)) or (preg_match("/bing/i", (string) $ppc_network_name)) or (preg_match("/adcenter/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'msn.ico';
     }
 
     // pinterest
-    if ((preg_match("/pinterest/i", $ppc_network_name))) {
+    if ((preg_match("/pinterest/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'pinterest.ico';
     }
 
     // pulse360
-    if ((preg_match("/pulse360/i", $ppc_network_name)) or (preg_match("/pulse 360/i", $ppc_network_name))) {
+    if ((preg_match("/pulse360/i", (string) $ppc_network_name)) or (preg_match("/pulse 360/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'pulse360.ico';
     }
 
     // quora
-    if (preg_match("/quora/i", $ppc_network_name)) {
+    if (preg_match("/quora/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'quora.ico';
     }
 
     // snapchat
-    if (preg_match("/snapchat/i", $ppc_network_name)) {
+    if (preg_match("/snapchat/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'snapchat.ico';
     }
     // search123
-    if ((preg_match("/search123/i", $ppc_network_name)) or (preg_match("/search 123/i", $ppc_network_name))) {
+    if ((preg_match("/search123/i", (string) $ppc_network_name)) or (preg_match("/search 123/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'google.ico';
     }
 
     // searchfeed
-    if (preg_match("/searchfeed/i", $ppc_network_name)) {
+    if (preg_match("/searchfeed/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'searchfeed.gif';
     }
 
     // yahoo
-    if ((preg_match("/yahoo/i", $ppc_network_name)) or (preg_match("/YSM/i", $ppc_network_name))) {
+    if ((preg_match("/yahoo/i", (string) $ppc_network_name)) or (preg_match("/YSM/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'yahoo.ico';
     }
 
     // mediatraffic
-    if ((preg_match("/mediatraffic/i", $ppc_network_name)) or (preg_match("/media traffic/i", $ppc_network_name))) {
+    if ((preg_match("/mediatraffic/i", (string) $ppc_network_name)) or (preg_match("/media traffic/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'mediatraffic.png';
     }
 
     // mochi
-    if ((preg_match("/mochi/i", $ppc_network_name)) or (preg_match("/mochimedia/i", $ppc_network_name)) or (preg_match("/mochi media/i", $ppc_network_name))) {
+    if ((preg_match("/mochi/i", (string) $ppc_network_name)) or (preg_match("/mochimedia/i", (string) $ppc_network_name)) or (preg_match("/mochi media/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'mochi.ico';
     }
 
     // myspace
-    if ((preg_match("/myspace/i", $ppc_network_name)) or (preg_match("/my space/i", $ppc_network_name)) or (preg_match("/myads/i", $ppc_network_name)) or (preg_match("/my ads/i", $ppc_network_name))) {
+    if ((preg_match("/myspace/i", (string) $ppc_network_name)) or (preg_match("/my space/i", (string) $ppc_network_name)) or (preg_match("/myads/i", (string) $ppc_network_name)) or (preg_match("/my ads/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'myspace.ico';
     }
 
     // fox audience network
-    if (preg_match("/fox/i", $ppc_network_name)) {
+    if (preg_match("/fox/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'foxnetwork.ico';
     }
 
     // adsdaq
-    if (preg_match("/adsdaq/i", $ppc_network_name)) {
+    if (preg_match("/adsdaq/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'adsdaq.png';
     }
 
     // twitter
-    if (preg_match("/twitter/i", $ppc_network_name)) {
+    if (preg_match("/twitter/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'twitter.ico';
     }
 
     // amazon
-    if (preg_match("/amazon/i", $ppc_network_name)) {
+    if (preg_match("/amazon/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'amazon.ico';
     }
 
     // adengage
-    if ((preg_match("/adengage/i", $ppc_network_name)) or (preg_match("/ad engage/i", $ppc_network_name))) {
+    if ((preg_match("/adengage/i", (string) $ppc_network_name)) or (preg_match("/ad engage/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adengage.ico';
     }
 
     // adtoll
-    if ((preg_match("/adtoll/i", $ppc_network_name)) or (preg_match("/ad toll/i", $ppc_network_name))) {
+    if ((preg_match("/adtoll/i", (string) $ppc_network_name)) or (preg_match("/ad toll/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adtoll.ico';
     }
 
     // ezanga
-    if ((preg_match("/ezangag/i", $ppc_network_name)) or (preg_match("/e zanga/i", $ppc_network_name))) {
+    if ((preg_match("/ezangag/i", (string) $ppc_network_name)) or (preg_match("/e zanga/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'ezanga.ico';
     }
 
     // aol
-    if ((preg_match("/aol/i", $ppc_network_name)) or (preg_match("/quigo/i", $ppc_network_name))) {
+    if ((preg_match("/aol/i", (string) $ppc_network_name)) or (preg_match("/quigo/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'aol.ico';
     }
 
     // aol
-    if ((preg_match("/revtwt/i", $ppc_network_name)) or (preg_match("/rev twt/i", $ppc_network_name))) {
+    if ((preg_match("/revtwt/i", (string) $ppc_network_name)) or (preg_match("/rev twt/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'revtwt.ico';
     }
 
     // advertising.com
-    if (preg_match("/advertising.com/i", $ppc_network_name)) {
+    if (preg_match("/advertising.com/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'advertising.com.ico';
     }
 
     // advertise.com
-    if (preg_match("/advertise.com/i", $ppc_network_name)) {
+    if (preg_match("/advertise.com/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'advertise.com.gif';
     }
 
     // adready
-    if ((preg_match("/adready/i", $ppc_network_name)) or (preg_match("/ad ready/i", $ppc_network_name))) {
+    if ((preg_match("/adready/i", (string) $ppc_network_name)) or (preg_match("/ad ready/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adready.ico';
     }
 
     // abc search
-    if ((preg_match("/abcsearch/i", $ppc_network_name)) or (preg_match("/abc search/i", $ppc_network_name))) {
+    if ((preg_match("/abcsearch/i", (string) $ppc_network_name)) or (preg_match("/abc search/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'abcsearch.png';
     }
 
     // abc search
-    if ((preg_match("/megaclick/i", $ppc_network_name)) or (preg_match("/mega click/i", $ppc_network_name))) {
+    if ((preg_match("/megaclick/i", (string) $ppc_network_name)) or (preg_match("/mega click/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'megaclick.ico';
     }
 
     // etology
-    if (preg_match("/etology/i", $ppc_network_name)) {
+    if (preg_match("/etology/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'etology.ico';
     }
 
     // youtube
-    if ((preg_match("/youtube/i", $ppc_network_name)) or (preg_match("/you tube/i", $ppc_network_name))) {
+    if ((preg_match("/youtube/i", (string) $ppc_network_name)) or (preg_match("/you tube/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'youtube.ico';
     }
 
     // social media
-    if ((preg_match("/socialmedia/i", $ppc_network_name)) or (preg_match("/social media/i", $ppc_network_name))) {
+    if ((preg_match("/socialmedia/i", (string) $ppc_network_name)) or (preg_match("/social media/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'socialmedia.ico';
     }
 
     // zango
-    if ((preg_match("/zango/i", $ppc_network_name)) or (preg_match("/leadimpact/i", $ppc_network_name)) or (preg_match("/lead impact/i", $ppc_network_name))) {
+    if ((preg_match("/zango/i", (string) $ppc_network_name)) or (preg_match("/leadimpact/i", (string) $ppc_network_name)) or (preg_match("/lead impact/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'zango.ico';
     }
 
     // jema media
-    if ((preg_match("/jema media/i", $ppc_network_name)) or (preg_match("/jemamedia/i", $ppc_network_name))) {
+    if ((preg_match("/jema media/i", (string) $ppc_network_name)) or (preg_match("/jemamedia/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'jemamedia.png';
     }
 
     // direct cpv
-    if ((preg_match("/directcpv/i", $ppc_network_name)) or (preg_match("/direct cpv/i", $ppc_network_name))) {
+    if ((preg_match("/directcpv/i", (string) $ppc_network_name)) or (preg_match("/direct cpv/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'directcpv.png';
     }
 
     // linksador
-    if ((preg_match("/linksador/i", $ppc_network_name))) {
+    if ((preg_match("/linksador/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'linksador.png';
     }
 
     // adon network
-    if ((preg_match("/adonnetwork/i", $ppc_network_name)) or (preg_match("/adon network/i", $ppc_network_name)) or (preg_match("/Adon/i", $ppc_network_name)) or (preg_match("/ad-on/i", $ppc_network_name))) {
+    if ((preg_match("/adonnetwork/i", (string) $ppc_network_name)) or (preg_match("/adon network/i", (string) $ppc_network_name)) or (preg_match("/Adon/i", (string) $ppc_network_name)) or (preg_match("/ad-on/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adonnetwork.ico';
     }
 
     // plenty of fish
-    if ((preg_match("/plentyoffish/i", $ppc_network_name)) or (preg_match("/plenty of fish/i", $ppc_network_name)) or (preg_match("/pof/i", $ppc_network_name))) {
+    if ((preg_match("/plentyoffish/i", (string) $ppc_network_name)) or (preg_match("/plenty of fish/i", (string) $ppc_network_name)) or (preg_match("/pof/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'plentyoffish.ico';
     }
 
     // clicksor
-    if (preg_match("/clicksor/i", $ppc_network_name)) {
+    if (preg_match("/clicksor/i", (string) $ppc_network_name)) {
         $ppc_network_icon = 'clicksor.ico';
     }
 
     // traffic vance
-    if ((preg_match("/trafficvance/i", $ppc_network_name)) or (preg_match("/traffic vance/i", $ppc_network_name))) {
+    if ((preg_match("/trafficvance/i", (string) $ppc_network_name)) or (preg_match("/traffic vance/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'trafficvance.ico';
     }
 
     // adknowledge
-    if ((preg_match("/adknowledge/i", $ppc_network_name)) or (preg_match("/bidsystem/i", $ppc_network_name)) or (preg_match("/bid system/i", $ppc_network_name)) or (preg_match("/cubics/i", $ppc_network_name))) {
+    if ((preg_match("/adknowledge/i", (string) $ppc_network_name)) or (preg_match("/bidsystem/i", (string) $ppc_network_name)) or (preg_match("/bid system/i", (string) $ppc_network_name)) or (preg_match("/cubics/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adknowledge.ico';
     }
 
     //admob
-    if ((preg_match("/admob/i", $ppc_network_name)) or (preg_match("/ad mob/i", $ppc_network_name))) {
+    if ((preg_match("/admob/i", (string) $ppc_network_name)) or (preg_match("/ad mob/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'admob.ico';
     }
 
     //adside
-    if ((preg_match("/adside/i", $ppc_network_name)) or (preg_match("/ad side/i", $ppc_network_name))) {
+    if ((preg_match("/adside/i", (string) $ppc_network_name)) or (preg_match("/ad side/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'adside.ico';
     }
 
     //linkedin
-    if ((preg_match("/linkedin/i", $ppc_network_name)) or (preg_match("/ad side/i", $ppc_network_name))) {
+    if ((preg_match("/linkedin/i", (string) $ppc_network_name)) or (preg_match("/ad side/i", (string) $ppc_network_name))) {
         $ppc_network_icon = 'linkedin.ico';
     }
 
@@ -2870,7 +2862,7 @@ class INDEXES
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 } else {
                     //insert ip
-                    $ip_id = INDEXES::insert_ip($db, $ip);
+                    $ip_id = INDEXES::insert_ip($db);
                     // add to memcached
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 }
@@ -2883,7 +2875,7 @@ class INDEXES
                 $ip_id = $ip_row['ip_id'];
             } else {
                 //insert ip
-                $ip_id = INDEXES::insert_ip($db, $ip);
+                $ip_id = INDEXES::insert_ip($db);
             }
         }
 
@@ -2924,7 +2916,7 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        $parsed_url = @parse_url($site_url_address);
+        $parsed_url = @parse_url((string) $site_url_address);
         $site_domain_host = $parsed_url['host'];
         $site_domain_host = str_replace('www.', '', $site_domain_host);
 
@@ -3117,7 +3109,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of c1
-        $c1 = substr($c1, 0, 350);
+        $c1 = substr((string) $c1, 0, 350);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -3178,7 +3170,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of c2
-        $c2 = substr($c2, 0, 350);
+        $c2 = substr((string) $c2, 0, 350);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -3239,7 +3231,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of c3
-        $c3 = substr($c3, 0, 350);
+        $c3 = substr((string) $c3, 0, 350);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -3300,7 +3292,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of c4
-        $c4 = substr($c4, 0, 350);
+        $c4 = substr((string) $c4, 0, 350);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -3404,7 +3396,7 @@ function foreach_memcache_mysql_fetch_assoc($sql, $allowCaching = 1)
     global $memcacheWorking, $memcache;
 
     if ($memcacheWorking == false) {
-        $row = array();
+        $row = [];
         $result = _mysqli_query($sql); // ($sql);
         while ($fetch = $result->fetch_assoc()) {
             $row[] = $fetch;
@@ -3413,7 +3405,7 @@ function foreach_memcache_mysql_fetch_assoc($sql, $allowCaching = 1)
     } else {
 
         if ($allowCaching == 0) {
-            $row = array();
+            $row = [];
             $result = _mysqli_query($sql); // ($sql);
             while ($fetch = $result->fetch_assoc()) {
                 $row[] = $fetch;
@@ -3424,7 +3416,7 @@ function foreach_memcache_mysql_fetch_assoc($sql, $allowCaching = 1)
             $getCache = $memcache->get(md5($sql . systemHash()));
             if ($getCache === false) {
                 // if data is NOT cache, cache this data
-                $row = array();
+                $row = [];
                 $result = _mysqli_query($sql); // ($sql);
                 while ($fetch = $result->fetch_assoc()) {
                     $row[] = $fetch;
@@ -3450,12 +3442,12 @@ function delay_sql($delayed_sql)
     $mysql['delayed_time'] = time();
 
     $delayed_sql = "INSERT INTO  202_delayed_sqls 
-					
+
 					(
 						delayed_sql ,
 						delayed_time
 					)
-					
+
 					VALUES 
 					(
 						'" . $mysql['delayed_sql'] . "',
@@ -3487,7 +3479,7 @@ function get_user_data_feedback($user_id)
     $result = _mysqli_query($sql);
     $row = $result->fetch_assoc();
 
-    return array(
+    return [
         'user_email' => $row['user_email'],
         'time_stamp' => $row['user_time_register'],
         'api_key' => $row['p202_customer_api_key'],
@@ -3495,7 +3487,7 @@ function get_user_data_feedback($user_id)
         'user_hash' => $row['user_hash'],
         'modal_status' => $row['modal_status'],
         'vip_perks_status' => $row['vip_perks_status']
-    );
+    ];
 }
 
 function clickserver_api_upgrade_url($key)
@@ -3508,7 +3500,7 @@ function clickserver_api_upgrade_url($key)
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode($_SERVER['HTTP_HOST']));
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode((string) $_SERVER['HTTP_HOST']));
     // Execute
     $result = curl_exec($ch);
 
@@ -3534,7 +3526,7 @@ function clickserver_api_key_validate($key)
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode($_SERVER['HTTP_HOST']));
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode((string) $_SERVER['HTTP_HOST']));
     // Execute
     $result = curl_exec($ch);
 
@@ -3552,7 +3544,7 @@ function clickserver_api_key_validate($key)
 
 function api_key_validate($key)
 {
-    $post = array();
+    $post = [];
     $post['key'] = $key;
     $fields = http_build_query($post);
 
@@ -3589,66 +3581,23 @@ function systemHash()
 
 function getBrowserIcon($name)
 {
-    switch ($name) {
-        case 'Chrome':
-            $icon = 'chrome';
-            break;
-
-        case 'Chrome Frame':
-            $icon = 'chrome';
-            break;
-
-        case 'Edge':
-            $icon = 'edge';
-            break;
-
-        case 'Android':
-            $icon = 'android';
-            break;
-
-        case 'Chrome Mobile':
-            $icon = 'chrome';
-            break;
-
-        case 'Chrome Mobile iOS':
-            $icon = 'chrome';
-            break;
-
-        case 'Firefox':
-            $icon = 'firefox';
-            break;
-
-        case 'IE':
-            $icon = 'ie';
-            break;
-
-        case 'Mobile Safari':
-            $icon = 'safari';
-            break;
-
-        case 'Safari':
-            $icon = 'safari';
-            break;
-
-        case 'Opera':
-            $icon = 'opera';
-            break;
-
-        case 'Opera Tablet':
-            $icon = 'opera';
-            break;
-
-        case 'Opera Mobile':
-            $icon = 'opera';
-            break;
-
-        case 'WebKit Nightly':
-            $icon = 'webkitnightly';
-            break;
-
-        default:
-            $icon = 'other';
-    }
+    $icon = match ($name) {
+        'Chrome' => 'chrome',
+        'Chrome Frame' => 'chrome',
+        'Edge' => 'edge',
+        'Android' => 'android',
+        'Chrome Mobile' => 'chrome',
+        'Chrome Mobile iOS' => 'chrome',
+        'Firefox' => 'firefox',
+        'IE' => 'ie',
+        'Mobile Safari' => 'safari',
+        'Safari' => 'safari',
+        'Opera' => 'opera',
+        'Opera Tablet' => 'opera',
+        'Opera Mobile' => 'opera',
+        'WebKit Nightly' => 'webkitnightly',
+        default => 'other',
+    };
 
     return $icon;
 }
@@ -3761,7 +3710,7 @@ function changelogPremium()
 
 function callAutoCron($endpoint)
 {
-    $protocol = stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
     $domain = $protocol . '' . getTrackingDomain() . get_absolute_url();
     $domain = base64_encode($domain);
 
@@ -3784,7 +3733,7 @@ function callAutoCron($endpoint)
 
 function registerDailyEmail($time, $timezone, $hash)
 {
-    $protocol = stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
     $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
     $domain = base64_encode($domain);
 
@@ -3813,7 +3762,7 @@ function registerDailyEmail($time, $timezone, $hash)
 
 function tagUserByNetwork($install_hash, $type, $network)
 {
-    $post = array();
+    $post = [];
     $post['network'] = $network;
     $fields = http_build_query($post);
 
@@ -3841,7 +3790,7 @@ function tagUserByNetwork($install_hash, $type, $network)
 
 function getDNIHost()
 {
-    $protocol = stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
     $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
     return base64_encode($domain);
 }
@@ -3866,11 +3815,11 @@ function getAllDniNetworks($install_hash)
 
 function authDniNetworks($hash, $network, $key, $affId)
 {
-    $fields = array(
+    $fields = [
         'api_key' => $key,
         'affiliate_id' => $affId,
         'host' => getDNIHost()
-    );
+    ];
     $fields = http_build_query($fields);
 
     $ch = curl_init();
@@ -3883,29 +3832,29 @@ function authDniNetworks($hash, $network, $key, $affId)
     $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     if ($httpcode !== 200) {
-        return array(
+        return [
             'auth' => false
-        );
+        ];
     } else {
         $json = json_decode($result, true);
-        return array(
+        return [
             'auth' => true,
             'processed' => $json['processed'],
             'currency' => $json['currency']
-        );
+        ];
     }
 }
 
 function getDniOffers($hash, $network, $key, $affId, $currency, $offset, $limit, $sort_by, $filter_by)
 {
-    $fields = array(
+    $fields = [
         'api_key' => $key,
         'affiliate_id' => $affId,
         'currency' => $currency,
         'host' => getDNIHost(),
         'sort' => $sort_by,
         'filter' => $filter_by
-    );
+    ];
     $fields = http_build_query($fields);
 
     $ch = curl_init();
@@ -3921,11 +3870,11 @@ function getDniOffers($hash, $network, $key, $affId, $currency, $offset, $limit,
 
 function getDniOfferById($hash, $network, $key, $affId, $id)
 {
-    $fields = array(
+    $fields = [
         'api_key' => $key,
         'affiliate_id' => $affId,
         'host' => getDNIHost()
-    );
+    ];
     $fields = http_build_query($fields);
 
     $ch = curl_init();
@@ -3941,11 +3890,11 @@ function getDniOfferById($hash, $network, $key, $affId, $id)
 
 function requestDniOfferAccess($hash, $network, $key, $affId, $id, $type)
 {
-    $fields = array(
+    $fields = [
         'api_key' => $key,
         'affiliate_id' => $affId,
         'host' => getDNIHost()
-    );
+    ];
     $fields = http_build_query($fields);
 
     $ch = curl_init();
@@ -3961,12 +3910,12 @@ function requestDniOfferAccess($hash, $network, $key, $affId, $id, $type)
 
 function submitDniOfferAnswers($hash, $network, $api_key, $affId, $id, $answers)
 {
-    $fields = array(
+    $fields = [
         'api_key' => $api_key,
         'affiliate_id' => $affId,
         'host' => getDNIHost(),
         'answers' => $answers
-    );
+    ];
     $fields = http_build_query($fields);
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/answers/' . $id);
@@ -3981,13 +3930,13 @@ function submitDniOfferAnswers($hash, $network, $api_key, $affId, $id, $answers)
 
 function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
 {
-    $fields = array(
+    $fields = [
         'api_key' => $key,
         'affiliate_id' => $affId,
         'currency' => $currency,
         'host' => getDNIHost(),
         'ddlci' => $ddlci
-    );
+    ];
     $fields = http_build_query($fields);
 
     $ch = curl_init();
@@ -4007,9 +3956,9 @@ function getDNICacheProgress($hash, $data)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/cache/progress');
     curl_setopt($ch, CURLOPT_HEADER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, false);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
         "Content-type: application/json"
-    ));
+    ]);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
     $results = curl_exec($ch);
@@ -4019,12 +3968,12 @@ function getDNICacheProgress($hash, $data)
 
 function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
 {
-    $fields = array(
+    $fields = [
         'api_key' => $key,
         'affiliate_id' => $affId,
         'host' => getDNIHost(),
         'ddlci' => $ddlci
-    );
+    ];
 
     $url = 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/setup/track/';
 
@@ -4047,11 +3996,11 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
 
 function getForeignPayout($currency, $payout_currency, $payout)
 {
-    $fields = array(
+    $fields = [
         'currency' => $currency,
         'payout_currency' => $payout_currency,
         'payout' => $payout
-    );
+    ];
 
     $fields = http_build_query($fields);
 
@@ -4071,9 +4020,9 @@ function getForeignPayout($currency, $payout_currency, $payout)
 
 function validateCustomersApiKey($key)
 {
-    $fields = array(
+    $fields = [
         'key' => $key
-    );
+    ];
 
     $fields = http_build_query($fields);
 
@@ -4093,10 +4042,10 @@ function validateCustomersApiKey($key)
 
 function validateRevContentCredentials($id, $secret)
 {
-    $fields = array(
+    $fields = [
         'id' => $id,
         'secret' => $secret
-    );
+    ];
 
     $fields = http_build_query($fields);
 
@@ -4116,13 +4065,13 @@ function validateRevContentCredentials($id, $secret)
 
 function pushToRevContent($id, $secret, $boost, $boost_id, array $ads)
 {
-    $fields = array(
+    $fields = [
         'id' => $id,
         'secret' => $secret,
         'boost' => $boost,
         'boost_id' => $boost_id,
         'ads' => $ads
-    );
+    ];
 
     $fields = http_build_query($fields);
 
@@ -4142,11 +4091,11 @@ function pushToRevContent($id, $secret, $boost, $boost_id, array $ads)
 
 function pushToFacebook($api_key, $group, $ad_set_id, array $ads)
 {
-    $fields = array(
+    $fields = [
         'campaign_name' => $group,
         'ad_set_id' => $ad_set_id,
         'ads' => $ads
-    );
+    ];
 
     $fields = http_build_query($fields);
 
@@ -4326,9 +4275,9 @@ function getDashEmail()
 
 function getSetDashEmail($key)
 {
-    $fields = array(
+    $fields = [
         'key' => $key
-    );
+    ];
 
     $fields = http_build_query($fields);
 
@@ -4361,7 +4310,7 @@ function  upgrade_config()
 
 
     //check to see if the directory is writable
-    if (!is_writable(substr(dirname(__FILE__), 0, -10) . '/')) {
+    if (!is_writable(substr(__DIR__, 0, -10) . '/')) {
         // _die("Sorry your 202-config.php needs upgrading but I can't update it automatically because I can't write to the directory.<br>You'll have to either change the permissions on your Prosper202 directory or create your 202-config.php manually by copying from 202-config-sample.php.");
         return;
     }
@@ -4429,30 +4378,17 @@ function  upgrade_config()
 
     $handle = fopen('202-config.php', 'w');
 
-    foreach ($configFile as $line_num => $line) {
+    foreach ($configFile as $line) {
         preg_match($re, $line, $matches);
-        switch ($matches[1]) {
-            case '$dbname':
-                fwrite($handle, str_replace("putyourdbnamehere", $dbname, $line));
-                break;
-            case '$dbuser':
-                fwrite($handle, str_replace("'usernamehere'", "'$dbuser'", $line));
-                break;
-            case '$dbpass':
-                fwrite($handle, str_replace("'yourpasswordhere'", "'$dbpass'", $line));
-                break;
-            case '$dbhost':
-                fwrite($handle, str_replace("localhost", $dbhost, $line));
-                break;
-            case '$dbhostro':
-                fwrite($handle, str_replace("localhost", $dbhostro, $line));
-                break;
-            case '$mchost':
-                fwrite($handle, str_replace("localhost", $mchost, $line));
-                break;
-            default:
-                fwrite($handle, $line);
-        }
+        match ($matches[1]) {
+            '$dbname' => fwrite($handle, str_replace("putyourdbnamehere", $dbname, $line)),
+            '$dbuser' => fwrite($handle, str_replace("'usernamehere'", "'$dbuser'", $line)),
+            '$dbpass' => fwrite($handle, str_replace("'yourpasswordhere'", "'$dbpass'", $line)),
+            '$dbhost' => fwrite($handle, str_replace("localhost", $dbhost, $line)),
+            '$dbhostro' => fwrite($handle, str_replace("localhost", $dbhostro, $line)),
+            '$mchost' => fwrite($handle, str_replace("localhost", $mchost, $line)),
+            default => fwrite($handle, $line),
+        };
     }
     fclose($handle);
 

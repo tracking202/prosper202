@@ -28,94 +28,106 @@ if (!function_exists('memcache_set')) {
     }
 }
 
-function query($sql)
-{
-    $result = _mysqli_query($sql);
-    return $result;
+if (!function_exists('query')) {
+    function query($sql)
+    {
+        return _mysqli_query($sql);
+    }
 }
 
-function memcache_mysql_fetch_assoc($result)
-{
-    $row = memcache_get($result);
-    if ($row) {
-        return $row;
-    } else {
-        // Only use mysqli's fetch_assoc method, removing the deprecated mysql_fetch_assoc call
+if (!function_exists('memcache_mysql_fetch_assoc')) {
+    function memcache_mysql_fetch_assoc($result)
+    {
+        $row = memcache_get($result);
+        if ($row) {
+            return $row;
+        }
+
         if (is_object($result)) {
             $row = $result->fetch_assoc();
         } else {
-            // If result is not an object (possibly a resource or something else),
-            // we can't reliably fetch data, so return false
             return false;
         }
 
         if ($row) {
             memcache_set($result, $row);
         }
+
         return $row;
     }
 }
 
-function foreach_memcache_mysql_fetch_assoc($result)
-{
-    $rows = [];
-    while ($row = memcache_mysql_fetch_assoc($result)) {
-        $rows[] = $row;
+if (!function_exists('foreach_memcache_mysql_fetch_assoc')) {
+    function foreach_memcache_mysql_fetch_assoc($result)
+    {
+        $rows = [];
+        while ($row = memcache_mysql_fetch_assoc($result)) {
+            $rows[] = $row;
+        }
+        return $rows;
     }
-    return $rows;
 }
 
-function delay_sql($sql, $delay)
-{
-    sleep($delay);
-    return query($sql);
+if (!function_exists('delay_sql')) {
+    function delay_sql($sql, $delay = 0)
+    {
+        if ($delay > 0) {
+            sleep($delay);
+        }
+
+        return _mysqli_query($sql);
+    }
 }
 
-function user_cache_time($user_id)
-{
-    $cache_time = memcache_get('user_cache_time_' . $user_id);
-    if ($cache_time) {
-        return $cache_time;
-    } else {
+if (!function_exists('user_cache_time')) {
+    function user_cache_time($user_id)
+    {
+        $cache_time = memcache_get('user_cache_time_' . $user_id);
+        if ($cache_time) {
+            return $cache_time;
+        }
+
         $cache_time = time();
         memcache_set('user_cache_time_' . $user_id, $cache_time);
+
         return $cache_time;
     }
 }
 
-function get_user_data_feedback($user_id)
-{
-    $cache_key = 'user_data_feedback_' . $user_id;
-    $data = memcache_get($cache_key);
-    if ($data) {
-        return $data;
-    } else {
-        // Check if table exists before querying
+if (!function_exists('get_user_data_feedback')) {
+    function get_user_data_feedback($user_id)
+    {
+        $cache_key = 'user_data_feedback_' . $user_id;
+        $data = memcache_get($cache_key);
+        if ($data) {
+            return $data;
+        }
+
         try {
             $sql = "SELECT * FROM user_data_feedback WHERE user_id = " . intval($user_id);
-            $result = query($sql);
+            $result = _mysqli_query($sql);
             $data = foreach_memcache_mysql_fetch_assoc($result);
 
             if ($data) {
                 memcache_set($cache_key, $data);
                 return $data;
             }
-        } catch (Exception $e) {
-            // Table doesn't exist or other DB error - return default structure
+        } catch (Exception) {
+            // Table doesn't exist or other DB error - fall through to defaults
         }
 
-        // Default values when table doesn't exist or is empty
-        $default_data = array(
+        $default_data = [
             'install_hash' => '',
             'user_email' => '',
             'user_hash' => '',
             'time_stamp' => time(),
             'api_key' => '',
             'vip_perks_status' => 0,
-            'modal_status' => 1 // Set to 1 to prevent modal popup
-        );
+            'modal_status' => 1,
+        ];
 
         memcache_set($cache_key, $default_data);
+
         return $default_data;
     }
 }

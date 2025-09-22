@@ -13,7 +13,7 @@ if (is_installed() == true) {
 	}
 }
 
-$html['user_api'] = isset($_GET['customers_api_key']) ? htmlentities($_GET['customers_api_key'], ENT_QUOTES, 'UTF-8') : '';
+$html['user_api'] = isset($_GET['customers_api_key']) ? htmlentities((string) $_GET['customers_api_key'], ENT_QUOTES, 'UTF-8') : '';
 
 info_top(); ?>
 <div class="main col-xs-7 install">
@@ -73,7 +73,7 @@ info_top(); ?>
 </script>
 
 <?php
-if (isset($_SERVER["HTTPS"]) && strtolower($_SERVER["HTTPS"]) == "on") {
+if (isset($_SERVER["HTTPS"]) && strtolower((string) $_SERVER["HTTPS"]) == "on") {
 	$strProtocol = 'https://';
 } else {
 	$strProtocol = 'http://';

@@ -1,21 +1,21 @@
 <?php
 declare(strict_types=1);
 //include functions
-require_once(dirname(__FILE__) . '/functions.php');
+require_once(__DIR__ . '/functions.php');
 
 
 //check to see if the sample config file exists
-if (!file_exists(substr(dirname(__FILE__), 0, -10) . '/202-config-sample.php')) {
+if (!file_exists(substr(__DIR__, 0, -10) . '/202-config-sample.php')) {
 	_die('Sorry, I need a 202-config-sample.php file to work from. Please re-upload this file from your Prosper202 installation.');
 }
 
 
 //lets make a new config file
-$configFile = file(substr(dirname(__FILE__), 0, -10) . '/202-config-sample.php');
+$configFile = file(substr(__DIR__, 0, -10) . '/202-config-sample.php');
 
 
 //check to see if the directory is writable
-if (!is_writable(substr(dirname(__FILE__), 0, -10) . '/')) {
+if (!is_writable(substr(__DIR__, 0, -10) . '/')) {
 	_die("Sorry, I can't write to the directory. You'll have to either change the permissions on your Prosper202 directory or create your 202-config.php manually.");
 }
 
@@ -25,12 +25,16 @@ if (file_exists('../202-config.php')) {
 	//_die("<p>The file '202-config.php' already exists. If you need to reset any of the configuration items in this file, please delete it first. You may try <a href='install.php'>installing now</a>.</p>");
 	$re = '/(\$\w*) = \'(\w*)\';/i';
 
-	$handle = fopen(substr(dirname(__FILE__), 0, -10) . '/202-config.php', 'r');
+	$handle = fopen(substr(__DIR__, 0, -10) . '/202-config.php', 'r');
 	$old = [];
 	while (!feof($handle)) {
 		$line = fgets($handle);
-		preg_match($re, $line, $matches);
-		switch ($matches[1]) {
+		if ($line === false) {
+			continue;
+		}
+		$matches = [];
+		if (preg_match($re, $line, $matches) && isset($matches[1])) {
+			switch ($matches[1]) {
 			case '$dbname':
 				$odbname = $matches[2];
 				break;
@@ -49,9 +53,10 @@ if (file_exists('../202-config.php')) {
 			case '$mchost':
 				$omchost = $matches[2];
 				break;
+			}
 		}
 	}
-	fclose($file);
+	fclose($handle);
 }
 
 
@@ -117,7 +122,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbname" class="col-xs-4 control-label" style="text-align:left"><strong>Database Name:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbname" name="dbname" value="<?php echo (isset($odbname) ? $odbname : 'prosper202'); ?>">
+						<input type="text" class="form-control input-sm" id="dbname" name="dbname" value="<?php echo ($odbname ?? 'prosper202'); ?>">
 						<span class="help-block" style="font-size: 10px;">The name of the database you want to run Prosper202 in.</span>
 					</div>
 				</div>
@@ -125,7 +130,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbuser" class="col-xs-4 control-label" style="text-align:left"><strong>User Name:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbuser" name="dbuser" value="<?php echo (isset($odbuser) ? $odbuser : 'username'); ?>">
+						<input type="text" class="form-control input-sm" id="dbuser" name="dbuser" value="<?php echo ($odbuser ?? 'root'); ?>">
 						<span class="help-block" style="font-size: 10px;">Your MySQL username</span>
 					</div>
 				</div>
@@ -133,7 +138,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbpass" class="col-xs-4 control-label" style="text-align:left"><strong>Password:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbpass" name="dbpass" value="<?php echo (isset($odbpass) ? $odbpass : 'password'); ?>">
+						<input type="text" class="form-control input-sm" id="dbpass" name="dbpass" value="<?php echo ($odbpass ?? 'root_password'); ?>">
 						<span class="help-block" style="font-size: 10px;">...and MySQL password.</span>
 					</div>
 				</div>
@@ -141,7 +146,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbhost" class="col-xs-4 control-label" style="text-align:left"><strong>Database Host:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbhost" name="dbhost" value="<?php echo (isset($odbhost) ? $odbhost : 'localhost'); ?>">
+						<input type="text" class="form-control input-sm" id="dbhost" name="dbhost" value="<?php echo ($odbhost ?? 'localhost'); ?>">
 						<span class="help-block" style="font-size: 10px;">99% chance you won't need to change this value.</span>
 					</div>
 				</div>
@@ -149,7 +154,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbhost" class="col-xs-4 control-label" style="text-align:left"><strong>Reporting Database:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbhostro" name="dbhostro" value="<?php echo (isset($odbhostro) ? $odbhostro : 'localhost'); ?>">
+						<input type="text" class="form-control input-sm" id="dbhostro" name="dbhostro" value="<?php echo ($odbhostro ?? 'localhost'); ?>">
 						<span class="help-block" style="font-size: 10px;">If you have a dedicated db for running reports, enter it here. If not, leave as localhost. </span>
 					</div>
 				</div>
@@ -157,7 +162,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="mchost" class="col-xs-4 control-label" style="text-align:left"><strong>Memcache Host:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="mchost" name="mchost" value="<?php echo (isset($omchost) ? $omchost : 'localhost'); ?>">
+						<input type="text" class="form-control input-sm" id="mchost" name="mchost" value="<?php echo ($omchost ?? 'localhost'); ?>">
 						<span class="help-block" style="font-size: 10px;">If you don't know what this is, leave it alone.</span>
 					</div>
 				</div>
@@ -180,22 +185,31 @@ switch ($step) {
 
 	case 2:
 	case 2.2:
-		$dbname  = trim($_POST['dbname']);
-		$dbuser   = trim($_POST['dbuser']);
-		$dbpass = trim($_POST['dbpass']);
-		$dbhost  = trim($_POST['dbhost']);
-		$dbhostro  = trim($_POST['dbhostro']);
-		$mchost  = trim($_POST['mchost']);
+		$dbname  = trim((string) $_POST['dbname']);
+		$dbuser   = trim((string) $_POST['dbuser']);
+		$dbpass = trim((string) $_POST['dbpass']);
+		$dbhost  = trim((string) $_POST['dbhost']);
+		$dbhostro  = trim((string) $_POST['dbhostro']);
+		$mchost  = trim((string) $_POST['mchost']);
 
-		//see if it can connect to the mysql host server
-		// Removed error suppression (@) to capture the error message
-		$connect = mysqli_connect($dbhost, $dbuser, $dbpass, $dbname);
+		// Try to connect to the MySQL host server and gracefully handle mysqli strict mode
+		$db_error_msg = '';
+		$db_error_no = 0;
+		try {
+			$connect = mysqli_connect($dbhost, $dbuser, $dbpass, $dbname);
+		} catch (mysqli_sql_exception $e) {
+			$connect = false;
+			$db_error_msg = $e->getMessage();
+			$db_error_no = (int) $e->getCode();
+		}
 
 		//if it could not connect, error
 		if (!$connect) {
-			// Get the specific MySQL connection error
-			$db_error_msg = mysqli_connect_error();
-			$db_error_no = mysqli_connect_errno();
+			// Fall back to mysqli helper if the exception didn't capture the message
+			if ($db_error_msg === '') {
+				$db_error_msg = mysqli_connect_error();
+				$db_error_no = mysqli_connect_errno();
+			}
 
 			_die("<h6>Error establishing a database connection</h6>
 			<p><small>This either means that the username and password information is incorrect or we can't contact the database server at <code>$dbhost</code>. This could mean your host's database server is down.</small></p>
@@ -215,35 +229,22 @@ switch ($step) {
 		//regex to find values in the config file
 		$re = '/(\$\w*) = \'(\w*)\';/i';
 
-		$handle = fopen(substr(dirname(__FILE__), 0, -10) . '/202-config.php', 'w');
+		$handle = fopen(substr(__DIR__, 0, -10) . '/202-config.php', 'w');
 
-		foreach ($configFile as $line_num => $line) {
+		foreach ($configFile as $line) {
 			preg_match($re, $line, $matches);
-			switch ($matches[1]) {
-				case '$dbname':
-					fwrite($handle, str_replace("putyourdbnamehere", $dbname, $line));
-					break;
-				case '$dbuser':
-					fwrite($handle, str_replace("'usernamehere'", "'$dbuser'", $line));
-					break;
-				case '$dbpass':
-					fwrite($handle, str_replace("'yourpasswordhere'", "'$dbpass'", $line));
-					break;
-				case '$dbhost':
-					fwrite($handle, str_replace("localhost", $dbhost, $line));
-					break;
-				case '$dbhostro':
-					fwrite($handle, str_replace("localhost", $dbhostro, $line));
-					break;
-				case '$mchost':
-					fwrite($handle, str_replace("localhost", $mchost, $line));
-					break;
-				default:
-					fwrite($handle, $line);
-			}
+			match ($matches[1]) {
+                '$dbname' => fwrite($handle, str_replace("putyourdbnamehere", $dbname, $line)),
+                '$dbuser' => fwrite($handle, str_replace("'usernamehere'", "'$dbuser'", $line)),
+                '$dbpass' => fwrite($handle, str_replace("'yourpasswordhere'", "'$dbpass'", $line)),
+                '$dbhost' => fwrite($handle, str_replace("localhosthere", $dbhost, $line)),
+                '$dbhostro' => fwrite($handle, str_replace("localhostreplica", $dbhostro, $line)),
+                '$mchost' => fwrite($handle, str_replace("localhostmemcache", $mchost, $line)),
+                default => fwrite($handle, $line),
+            };
 		}
 		fclose($handle);
-		chmod(substr(dirname(__FILE__), 0, -10) . '/202-config.php', 0666);
+		chmod(substr(__DIR__, 0, -10) . '/202-config.php', 0666);
 
 		_die("<p>All right sparky! You've made it through this part of the installation. Prosper202 can now communicate with your database. If you are ready, go ahead and <a class='btn btn-xs btn-p202' href=\"install.php\">run the install!</a></p>");
 		break;

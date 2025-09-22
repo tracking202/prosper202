@@ -4,7 +4,7 @@ declare(strict_types=1);
 class SessionManager
 {
 
-	var $life_time;
+	public $life_time;
 
 	// PHP4-style constructor replaced with __construct for PHP 7+
 	function __construct()
@@ -13,12 +13,12 @@ class SessionManager
 		$session_maxlifetime = 43200;
 		$this->life_time = $session_maxlifetime;
 		session_set_save_handler(
-			array(&$this, "open"),
-			array(&$this, "close"),
-			array(&$this, "read"),
-			array(&$this, "write"),
-			array(&$this, "destroy"),
-			array(&$this, "gc")
+			$this->open(...),
+			$this->close(...),
+			$this->read(...),
+			$this->write(...),
+			$this->destroy(...),
+			$this->gc(...)
 		);
 	}
 

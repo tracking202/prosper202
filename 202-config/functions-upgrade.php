@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 // Include DataEngine class if not already loaded
 if (!class_exists('DataEngine')) {
-    include_once(dirname(__FILE__) . '/class-dataengine.php');
+    include_once(__DIR__ . '/class-dataengine.php');
 }
 class PROSPER202
 {
@@ -889,7 +889,7 @@ class UPGRADE
 										  ADD COLUMN `vip_perks_status` int(1) NOT NULL;";
             $result = _mysqli_query($sql);
 
-            $hash = md5(uniqid((string)rand(), TRUE));
+            $hash = md5(uniqid((string)random_int(0, mt_getrandmax()), TRUE));
             // $user_hash = intercomHash($hash); // Removed intercomHash call
             $user_hash = ''; // Default empty value
 
@@ -1225,7 +1225,7 @@ class UPGRADE
                     $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . $partition_time . ") ENGINE = InnoDB,";
                     $p_count = $i;
                 }
-                $p_count = $p_count + 1;
+                $p_count += 1;
                 $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
                 $result = _mysqli_query($sql);
             }
@@ -1691,7 +1691,7 @@ class UPGRADE
                     $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . $partition_time . ") ENGINE = InnoDB,";
                     $p_count = $i;
                 }
-                $p_count = $p_count + 1;
+                $p_count += 1;
                 $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
                 $result = _mysqli_query($sql);
             }
@@ -1862,7 +1862,7 @@ class UPGRADE
             $result = _mysqli_query($sql);
             if ($result->num_rows > 0) {
                 while ($row = $result->fetch_assoc()) {
-                    _mysqli_query("UPDATE 202_rotators SET public_id = '" . rand(1, 9) . $row['id'] . rand(1, 9) . "' WHERE id = '" . $row['id'] . "'");
+                    _mysqli_query("UPDATE 202_rotators SET public_id = '" . random_int(1, 9) . $row['id'] . random_int(1, 9) . "' WHERE id = '" . $row['id'] . "'");
                 }
             }
 
@@ -2103,7 +2103,7 @@ class UPGRADE
             $row = '';
 
             while ($sql_row = $result->fetch_assoc()) {
-                $vars = (explode(',', $sql_row['variables']));
+                $vars = (explode(',', (string) $sql_row['variables']));
 
                 foreach ($vars as $var) {
                     $row .= "(" . $sql_row['variable_set_id'] . "," . $var . "),";
@@ -2530,7 +2530,7 @@ class UPGRADE
             $row = '';
 
             while ($sql_row = $result->fetch_assoc()) {
-                $vars = (explode(',', $sql_row['variables']));
+                $vars = (explode(',', (string) $sql_row['variables']));
 
                 foreach ($vars as $var) {
                     $row .= "(" . $sql_row['variable_set_id'] . "," . $var . "),";

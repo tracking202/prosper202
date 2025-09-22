@@ -14,8 +14,8 @@ if ($_SERVER['SERVER_NAME'] == '_') {
     $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'];
 }
 
-DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
-DEFINE('CONFIG_PATH', dirname(__FILE__));
+DEFINE('ROOT_PATH', substr(__DIR__, 0, -10));
+DEFINE('CONFIG_PATH', __DIR__);
 @ini_set('auto_detect_line_endings', '1');
 // Deprecated in PHP 5.4
 // @ini_set('register_globals', 0);
@@ -70,7 +70,7 @@ if (function_exists('mysqli_report')) {
     @ini_set('display_errors', 'On');
 }
 
-$install_path = substr(ROOT_PATH, strlen($_SERVER['DOCUMENT_ROOT']));
+$install_path = substr(ROOT_PATH, strlen((string) $_SERVER['DOCUMENT_ROOT']));
 
 $re = '/\b(api|tracking202|202-\w+).*/';
 $str = (string)($_SERVER['REQUEST_URI'] ?? '');
@@ -94,31 +94,18 @@ foreach ($navigation as $key => $row) {
 }
 
 //get the real ip
-switch (true) {
-    case (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_CF_CONNECTING_IP'];
-        break;
-    case (!empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_CLUSTER_CLIENT_IP'];
-        break;
-    case (!empty($_SERVER['HTTP_X_SUCURI_CLIENTIP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_SUCURI_CLIENTIP'];
-        break;
-    case (!empty($_SERVER['HTTP_X_REAL_IP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_REAL_IP'];
-        break;
-    case (!empty($_SERVER['HTTP_CLIENT_IP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_CLIENT_IP'];
-        break;
-    case (!empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_FORWARDED_FOR'];
-        break;
-    default:
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['REMOTE_ADDR'];
-}
+$_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
+    !empty($_SERVER['HTTP_CF_CONNECTING_IP']) => $_SERVER['HTTP_CF_CONNECTING_IP'],
+    !empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP']) => $_SERVER['HTTP_X_CLUSTER_CLIENT_IP'],
+    !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
+    !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
+    !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
+    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
+    default => $_SERVER['REMOTE_ADDR'],
+};
 
 
-$tempip = explode(",", $_SERVER['HTTP_X_FORWARDED_FOR']);
+$tempip = explode(",", (string) $_SERVER['HTTP_X_FORWARDED_FOR']);
 $_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
 
 // Store the IP address temporarily, we'll pass it to ipAddress() after functions.php is included
@@ -170,6 +157,7 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
         $memcacheWorking = true;
     } else {
         $memcacheWorking = false;
+    }
 } else {
     if (extension_loaded('memcached') && class_exists('Memcached')) {
         $whatCache = 'memcached';
@@ -180,6 +168,7 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
             $memcacheWorking = true;
         } else {
             $memcacheWorking = false;
+        }
     }
 }
 
@@ -293,7 +282,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
 //set token to prevent CSRF attacks
 if (!isset($_SESSION['token'])) {
-    $_SESSION['token'] = md5(uniqid(rand(), TRUE));
+    $_SESSION['token'] = md5(uniqid((string)random_int(0, mt_getrandmax()), TRUE));
 }
 
 
@@ -334,13 +323,13 @@ switch ($navigation[1]) {
 }
 
 // Skip user initialization during installation
-if (strpos($_SERVER['PHP_SELF'], '202-config/install.php') === false) {
+if (!str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php')) {
     $userObj = new User($_SESSION['user_own_id'] ?? null);
 } else {
     $userObj = null;
 }
 
-if (!$_SESSION['ipv6']) {
+if (!isset($_SESSION['ipv6']) || !$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
     $result = $db->query($sql);
 

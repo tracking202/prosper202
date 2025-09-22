@@ -15,28 +15,28 @@ define('MAGPIE_USER_AGENT', $_SERVER['HTTP_HOST'] ?? 'localhost');
 
 class MagpieRSS
 {
-	var $parser;
-	var $current_item	= array();	// item currently being parsed
-	var $items			= array();	// collection of parsed items
-	var $channel		= array();	// hash of channel fields
-	var $textinput		= array();
-	var $image			= array();
-	var $feed_type;
-	var $feed_version;
+	public $parser;
+	public $current_item	= [];	// item currently being parsed
+	public $items			= [];	// collection of parsed items
+	public $channel		= [];	// hash of channel fields
+	public $textinput		= [];
+	public $image			= [];
+	public $feed_type;
+	public $feed_version;
 
 	// parser variables
-	var $stack				= array(); // parser stack
-	var $inchannel			= false;
-	var $initem 			= false;
-	var $incontent			= false; // if in Atom <content mode="xml"> field
-	var $intextinput		= false;
-	var $inimage 			= false;
-	var $current_field		= '';
-	var $current_namespace	= false;
+	public $stack				= []; // parser stack
+	public $inchannel			= false;
+	public $initem 			= false;
+	public $incontent			= false; // if in Atom <content mode="xml"> field
+	public $intextinput		= false;
+	public $inimage 			= false;
+	public $current_field		= '';
+	public $current_namespace	= false;
 
 	//var $ERROR = "";
 
-	var $_CONTENT_CONSTRUCTS = array('content', 'summary', 'info', 'title', 'tagline', 'copyright');
+	public $_CONTENT_CONSTRUCTS = ['content', 'summary', 'info', 'title', 'tagline', 'copyright'];
 
 	// PHP4-style constructor replaced with __construct for PHP 7+
 	function __construct($source)
@@ -67,7 +67,7 @@ class MagpieRSS
 
 		xml_set_character_data_handler($this->parser, 'feed_cdata');
 
-		$status = xml_parse($this->parser, $source);
+		$status = xml_parse($this->parser, (string) $source);
 
 		if (! $status) {
 			$errorcode = xml_get_error_code($this->parser);
@@ -88,13 +88,13 @@ class MagpieRSS
 
 	function feed_start_element($p, $element, &$attrs)
 	{
-		$el = $element = strtolower($element);
+		$el = $element = strtolower((string) $element);
 		$attrs = array_change_key_case($attrs, CASE_LOWER);
 
 		// check for a namespace, and split if found
 		$ns	= false;
 		if (strpos($element, ':')) {
-			list($ns, $el) = explode(':', $element, 2);
+			[$ns, $el] = explode(':', $element, 2);
 		}
 		if ($ns and $ns != 'rdf') {
 			$this->current_namespace = $ns;
@@ -156,7 +156,7 @@ class MagpieRSS
 		// if inside an Atom content construct (e.g. content or summary) field treat tags as text
 		elseif ($this->feed_type == ATOM and $this->incontent) {
 			// if tags are inlined, then flatten
-			$attrs_str = join(
+			$attrs_str = implode(
 				' ',
 				array_map(
 					'map_attrs',
@@ -197,18 +197,18 @@ class MagpieRSS
 		if ($this->feed_type == ATOM and $this->incontent) {
 			$this->append_content($text);
 		} else {
-			$current_el = join('_', array_reverse($this->stack));
+			$current_el = implode('_', array_reverse($this->stack));
 			$this->append($current_el, $text);
 		}
 	}
 
 	function feed_end_element($p, $el)
 	{
-		$el = strtolower($el);
+		$el = strtolower((string) $el);
 
 		if ($el == 'item' or $el == 'entry') {
 			$this->items[] = $this->current_item;
-			$this->current_item = array();
+			$this->current_item = [];
 			$this->initem = false;
 		} elseif ($this->feed_type == RSS and $this->current_namespace == '' and $el == 'textinput') {
 			$this->intextinput = false;
@@ -370,7 +370,7 @@ class MagpieRSS
 		}
 	}
 }
-require_once(dirname(__FILE__) . '/class-snoopy.php');
+require_once(__DIR__ . '/class-snoopy.php');
 
 if (!function_exists('fetch_rss')) :
 	function fetch_rss($url)
@@ -410,7 +410,7 @@ if (!function_exists('fetch_rss')) :
 
 
 			$cache_status 	 = 0;		// response of check_cache
-			$request_headers = array(); // HTTP headers to send with fetch
+			$request_headers = []; // HTTP headers to send with fetch
 			$rss 			 = 0;		// parsed RSS object
 			$errormsg		 = 0;		// errors, if any
 
@@ -468,7 +468,7 @@ if (!function_exists('fetch_rss')) :
 					if ($resp->error) {
 						# compensate for Snoopy's annoying habbit to tacking
 						# on '\n'
-						$http_error = substr($resp->error, 0, -2);
+						$http_error = substr((string) $resp->error, 0, -2);
 						$errormsg .= "(HTTP Error: $http_error)";
 					} else {
 						$errormsg .=  "(HTTP Response: " . $resp->response_code . ')';
@@ -521,8 +521,8 @@ function _response_to_rss($resp)
 		// find Etag, and Last-Modified
 		foreach ($resp->headers as $h) {
 			// 2003-03-02 - Nicola Asuni (www.tecnick.com) - fixed bug "Undefined offset: 1"
-			if (strpos($h, ": ")) {
-				list($field, $val) = explode(": ", $h, 2);
+			if (strpos((string) $h, ": ")) {
+				[$field, $val] = explode(": ", (string) $h, 2);
 			} else {
 				$field = $h;
 				$val = "";
@@ -588,9 +588,9 @@ function init()
 		$ua = $_SERVER['HTTP_HOST']; //'WordPress/' . $GLOBALS['wp_version'];
 
 		if (MAGPIE_CACHE_ON) {
-			$ua = $ua . ')';
+			$ua .= ')';
 		} else {
-			$ua = $ua . '; No cache)';
+			$ua .= '; No cache)';
 		}
 
 		define('MAGPIE_USER_AGENT', $ua);
@@ -638,9 +638,9 @@ function is_server_error($sc)
 
 class RSSCache
 {
-	var $BASE_CACHE = 'wp-content/cache';	// where the cache files are stored
-	var $MAX_AGE	= 43200;  		// when are files stale, default twelve hours
-	var $ERROR 		= '';			// accumulate error messages
+	public $BASE_CACHE = 'wp-content/cache';	// where the cache files are stored
+	public $MAX_AGE	= 43200;  		// when are files stale, default twelve hours
+	public $ERROR 		= '';			// accumulate error messages
 
 	public function __construct($base = '', $age = '')
 	{
@@ -754,7 +754,7 @@ class RSSCache
 \*=======================================================================*/
 	function file_name($url)
 	{
-		return md5($url);
+		return md5((string) $url);
 	}
 
 	/*=======================================================================*\
@@ -790,17 +790,17 @@ if (!function_exists('parse_w3cdtf')) :
 		# regex to match wc3dtf
 		$pat = "/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(:(\d{2}))?(?:([-+])(\d{2}):?(\d{2})|(Z))?/";
 
-		if (preg_match($pat, $date_str, $match)) {
-			list($year, $month, $day, $hours, $minutes, $seconds) =
-				array($match[1], $match[2], $match[3], $match[4], $match[5], $match[7]);			# calc epoch for current date assuming GMT
+		if (preg_match($pat, (string) $date_str, $match)) {
+			[$year, $month, $day, $hours, $minutes, $seconds] =
+				[$match[1], $match[2], $match[3], $match[4], $match[5], $match[7]];			# calc epoch for current date assuming GMT
 			$epoch = gmmktime((int)$hours, (int)$minutes, (int)$seconds, (int)$month, (int)$day, (int)$year);
 
 			$offset = 0;
 			if ($match[11] == 'Z') {
 				# zulu time, aka GMT
 			} else {
-				list($tz_mod, $tz_hour, $tz_min) =
-					array($match[8], $match[9], $match[10]);
+				[$tz_mod, $tz_hour, $tz_min] =
+					[$match[8], $match[9], $match[10]];
 
 				# zero out the variables
 				if (! $tz_hour) {
@@ -815,12 +815,12 @@ if (!function_exists('parse_w3cdtf')) :
 				# is timezone ahead of GMT?  then subtract offset
 				#
 				if ($tz_mod == '+') {
-					$offset_secs = $offset_secs * -1;
+					$offset_secs *= -1;
 				}
 
 				$offset = $offset_secs;
 			}
-			$epoch = $epoch + $offset;
+			$epoch += $offset;
 			return $epoch;
 		} else {
 			return -1;
@@ -842,8 +842,8 @@ if (!function_exists('wp_rss')) :
 				printf(
 					'<li><a href="%1$s" title="%2$s">%3$s</a></li>',
 					clean_url($item['link']),
-					attribute_escape(strip_tags($item['description'])),
-					htmlentities($item['title'])
+					attribute_escape(strip_tags((string) $item['description'])),
+					htmlentities((string) $item['title'])
 				);
 			}
 
@@ -863,7 +863,7 @@ if (!function_exists('get_rss')) :
 			foreach ($rss->items as $item) {
 				echo "<li>\n";
 				echo "<a href='$item[link]' title='$item[description]'>";
-				echo htmlentities($item['title']);
+				echo htmlentities((string) $item['title']);
 				echo "</a><br />\n";
 				echo "</li>\n";
 			}

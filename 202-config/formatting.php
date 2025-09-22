@@ -50,7 +50,7 @@ function wptexturize($text)
 	$next = true;
 	$output = '';
 	$curl = '';
-	$textarr = preg_split('/(<.*>)/Us', $text, -1, PREG_SPLIT_DELIM_CAPTURE);
+	$textarr = preg_split('/(<.*>)/Us', (string) $text, -1, PREG_SPLIT_DELIM_CAPTURE);
 	$stop = count($textarr);
 
 	// if a plugin has provided an autocorrect array, use it
@@ -58,15 +58,15 @@ function wptexturize($text)
 		$cockney = array_keys($wp_cockneyreplace);
 		$cockneyreplace = array_values($wp_cockneyreplace);
 	} else {
-		$cockney = array("'tain't", "'twere", "'twas", "'tis", "'twill", "'til", "'bout", "'nuff", "'round", "'cause");
-		$cockneyreplace = array("&#8217;tain&#8217;t", "&#8217;twere", "&#8217;twas", "&#8217;tis", "&#8217;twill", "&#8217;til", "&#8217;bout", "&#8217;nuff", "&#8217;round", "&#8217;cause");
+		$cockney = ["'tain't", "'twere", "'twas", "'tis", "'twill", "'til", "'bout", "'nuff", "'round", "'cause"];
+		$cockneyreplace = ["&#8217;tain&#8217;t", "&#8217;twere", "&#8217;twas", "&#8217;tis", "&#8217;twill", "&#8217;til", "&#8217;bout", "&#8217;nuff", "&#8217;round", "&#8217;cause"];
 	}
 
-	$static_characters = array_merge(array('---', ' -- ', '--', 'xn&#8211;', '...', '``', '\'s', '\'\'', ' (tm)'), $cockney);
-	$static_replacements = array_merge(array('&#8212;', ' &#8212; ', '&#8211;', 'xn--', '&#8230;', '&#8220;', '&#8217;s', '&#8221;', ' &#8482;'), $cockneyreplace);
+	$static_characters = array_merge(['---', ' -- ', '--', 'xn&#8211;', '...', '``', '\'s', '\'\'', ' (tm)'], $cockney);
+	$static_replacements = array_merge(['&#8212;', ' &#8212; ', '&#8211;', 'xn--', '&#8230;', '&#8220;', '&#8217;s', '&#8221;', ' &#8482;'], $cockneyreplace);
 
-	$dynamic_characters = array('/\'(\d\d(?:&#8217;|\')?s)/', '/(\s|\A|")\'/', '/(\d+)"/', '/(\d+)\'/', '/(\S)\'([^\'\s])/', '/(\s|\A)"(?!\s)/', '/"(\s|\S|\Z)/', '/\'([\s.]|\Z)/', '/(\d+)x(\d+)/');
-	$dynamic_replacements = array('&#8217;$1', '$1&#8216;', '$1&#8243;', '$1&#8242;', '$1&#8217;$2', '$1&#8220;$2', '&#8221;$1', '&#8217;$1', '$1&#215;$2');
+	$dynamic_characters = ['/\'(\d\d(?:&#8217;|\')?s)/', '/(\s|\A|")\'/', '/(\d+)"/', '/(\d+)\'/', '/(\S)\'([^\'\s])/', '/(\s|\A)"(?!\s)/', '/"(\s|\S|\Z)/', '/\'([\s.]|\Z)/', '/(\d+)x(\d+)/'];
+	$dynamic_replacements = ['&#8217;$1', '$1&#8216;', '$1&#8243;', '$1&#8242;', '$1&#8217;$2', '$1&#8220;$2', '&#8221;$1', '&#8217;$1', '$1&#215;$2'];
 
 	for ($i = 0; $i < $stop; $i++) {
 		$curl = $textarr[$i];
@@ -76,13 +76,13 @@ function wptexturize($text)
 			$curl = str_replace($static_characters, $static_replacements, $curl);
 			// regular expressions
 			$curl = preg_replace($dynamic_characters, $dynamic_replacements, $curl);
-		} elseif (strpos($curl, '<code') !== false || strpos($curl, '<pre') !== false || strpos($curl, '<kbd') !== false || strpos($curl, '<style') !== false || strpos($curl, '<script') !== false) {
+		} elseif (str_contains($curl, '<code') || str_contains($curl, '<pre') || str_contains($curl, '<kbd') || str_contains($curl, '<style') || str_contains($curl, '<script')) {
 			$next = false;
 		} else {
 			$next = true;
 		}
 
-		$curl = preg_replace('/&([^#])(?![a-zA-Z1-4]{1,8};)/', '&#038;$1', $curl);
+		$curl = preg_replace('/&([^#])(?![a-zA-Z1-4]{1,8};)/', '&#038;$1', (string) $curl);
 		$output .= $curl;
 	}
 
@@ -94,7 +94,7 @@ function wptexturize($text)
 
 function seems_utf8($Str)
 { # by bmorel at ssi dot fr
-	for ($i = 0; $i < strlen($Str); $i++) {
+	for ($i = 0; $i < strlen((string) $Str); $i++) {
 		if (ord($Str[$i]) < 0x80) continue; # 0bbbbbbb
 		elseif ((ord($Str[$i]) & 0xE0) == 0xC0) $n = 1; # 110bbbbb
 		elseif ((ord($Str[$i]) & 0xF0) == 0xE0) $n = 2; # 1110bbbb
@@ -103,7 +103,7 @@ function seems_utf8($Str)
 		elseif ((ord($Str[$i]) & 0xFE) == 0xFC) $n = 5; # 1111110b
 		else return false; # Does not match any model
 		for ($j = 0; $j < $n; $j++) { # n bytes matching 10bbbbbb follow ?
-			if ((++$i == strlen($Str)) || ((ord($Str[$i]) & 0xC0) != 0x80))
+			if ((++$i == strlen((string) $Str)) || ((ord($Str[$i]) & 0xC0) != 0x80))
 				return false;
 		}
 	}
@@ -132,10 +132,10 @@ function wp_specialchars($text, $quotes = 0)
 function utf8_uri_encode($utf8_string, $length = 0)
 {
 	$unicode = '';
-	$values = array();
+	$values = [];
 	$num_octets = 1;
 
-	for ($i = 0; $i < strlen($utf8_string); $i++) {
+	for ($i = 0; $i < strlen((string) $utf8_string); $i++) {
 
 		$value = ord($utf8_string[$i]);
 
@@ -157,7 +157,7 @@ function utf8_uri_encode($utf8_string, $length = 0)
 					$unicode .= '%' . dechex($values[0]) . '%' . dechex($values[1]);
 				}
 
-				$values = array();
+				$values = [];
 				$num_octets = 1;
 			}
 		}
@@ -169,34 +169,34 @@ function utf8_uri_encode($utf8_string, $length = 0)
 
 function sanitize_file_name($name)
 { // Like sanitize_title, but with periods
-	$name = strtolower($name);
+	$name = strtolower((string) $name);
 	$name = preg_replace('/&.+?;/', '', $name); // kill entities
 	$name = str_replace('_', '-', $name);
-	$name = preg_replace('/[^a-z0-9\s-.]/', '', $name);
-	$name = preg_replace('/\s+/', '-', $name);
-	$name = preg_replace('|-+|', '-', $name);
-	$name = trim($name, '-');
+	$name = preg_replace('/[^a-z0-9\s\-.]/', '', $name);
+	$name = preg_replace('/\s+/', '-', (string) $name);
+	$name = preg_replace('|-+|', '-', (string) $name);
+	$name = trim((string) $name, '-');
 	return $name;
 }
 
 function sanitize_user($username, $strict = false)
 {
 	$raw_username = $username;
-	$username = strip_tags($username);
+	$username = strip_tags((string) $username);
 	// Kill octets
 	$username = preg_replace('|%([a-fA-F0-9][a-fA-F0-9])|', '', $username);
-	$username = preg_replace('/&.+?;/', '', $username); // Kill entities
+	$username = preg_replace('/&.+?;/', '', (string) $username); // Kill entities
 
 	// If strict, reduce to ASCII for max portability.
 	if ($strict)
-		$username = preg_replace('|[^a-z0-9 _.\-@]|i', '', $username);
+		$username = preg_replace('|[^a-z0-9 _.\-@]|i', '', (string) $username);
 
 	return apply_filters('sanitize_user', $username, $raw_username, $strict);
 }
 
 function sanitize_title($title, $fallback_title = '')
 {
-	$title = strip_tags($title);
+	$title = strip_tags((string) $title);
 	$title = apply_filters('sanitize_title', $title);
 
 	if (empty($title)) {
@@ -210,7 +210,7 @@ function sanitize_title($title, $fallback_title = '')
 function convert_chars($content, $flag = 'obsolete')
 {
 	// Translation of invalid Unicode references range to valid range
-	$wp_htmltranswinuni = array(
+	$wp_htmltranswinuni = [
 		'&#128;' => '&#8364;', // the Euro sign
 		'&#129;' => '',
 		'&#130;' => '&#8218;', // these are Windows CP1252 specific characters
@@ -243,14 +243,14 @@ function convert_chars($content, $flag = 'obsolete')
 		'&#157;' => '',
 		'&#158;' => '',
 		'&#159;' => '&#376;'
-	);
+	];
 
 	// Remove metadata tags
-	$content = preg_replace('/<title>(.+?)<\/title>/', '', $content);
-	$content = preg_replace('/<category>(.+?)<\/category>/', '', $content);
+	$content = preg_replace('/<title>(.+?)<\/title>/', '', (string) $content);
+	$content = preg_replace('/<category>(.+?)<\/category>/', '', (string) $content);
 
 	// Converts lone & characters into &#38; (a.k.a. &amp;)
-	$content = preg_replace('/&([^#])(?![a-z1-4]{1,8};)/i', '&#038;$1', $content);
+	$content = preg_replace('/&([^#])(?![a-z1-4]{1,8};)/i', '&#038;$1', (string) $content);
 
 	// Fix Word pasting
 	$content = strtr($content, $wp_htmltranswinuni);
@@ -281,8 +281,8 @@ function zeroise($number, $threshold)
 
 function backslashit($string)
 {
-	$string = preg_replace('/^([0-9])/', '\\\\\\\\\1', $string);
-	$string = preg_replace('/([a-z])/i', '\\\\\1', $string);
+	$string = preg_replace('/^([0-9])/', '\\\\\\\\\1', (string) $string);
+	$string = preg_replace('/([a-z])/i', '\\\\\1', (string) $string);
 	return $string;
 }
 
@@ -293,7 +293,7 @@ function trailingslashit($string)
 
 function untrailingslashit($string)
 {
-	return rtrim($string, '/');
+	return rtrim((string) $string, '/');
 }
 
 function addslashes_gpc($gpc)
@@ -309,7 +309,7 @@ function stripslashes_deep($value)
 {
 	$value = is_array($value) ?
 		array_map('stripslashes_deep', $value) :
-		stripslashes($value);
+		stripslashes((string) $value);
 
 	return $value;
 }
@@ -318,7 +318,7 @@ function urlencode_deep($value)
 {
 	$value = is_array($value) ?
 		array_map('urlencode_deep', $value) :
-		urlencode($value);
+		urlencode((string) $value);
 
 	return $value;
 }
@@ -357,8 +357,8 @@ function clean_url($url, $protocols = null, $context = 'display')
 	$original_url = $url;
 
 	if ('' == $url) return $url;
-	$url = preg_replace('|[^a-z0-9-~+_.?#=!&;,/:%@]|i', '', $url);
-	$strip = array('%0d', '%0a');
+	$url = preg_replace('|[^a-z0-9-~+_.?#=!&;,/:%@]|i', '', (string) $url);
+	$strip = ['%0d', '%0a'];
 	$url = str_replace($strip, '', $url);
 	$url = str_replace(';//', '://', $url);
 	/* If the URL doesn't appear to contain a scheme, we
@@ -366,8 +366,8 @@ function clean_url($url, $protocols = null, $context = 'display')
 	 * link starting with / or a php file).
 	*/
 	if (
-		strpos($url, ':') === false &&
-		substr($url, 0, 1) != '/' && !preg_match('/^[a-z0-9-]+?\.php/i', $url)
+		!str_contains($url, ':') &&
+		!str_starts_with($url, '/') && !preg_match('/^[a-z0-9-]+?\.php/i', $url)
 	)
 		$url = 'http://' . $url;
 
@@ -376,7 +376,7 @@ function clean_url($url, $protocols = null, $context = 'display')
 		$url = preg_replace('/&([^#])(?![a-z]{2,8};)/', '&#038;$1', $url);
 
 	if (!is_array($protocols))
-		$protocols = array('http', 'https', 'ftp', 'ftps', 'mailto', 'news', 'irc', 'gopher', 'nntp', 'feed', 'telnet');
+		$protocols = ['http', 'https', 'ftp', 'ftps', 'mailto', 'news', 'irc', 'gopher', 'nntp', 'feed', 'telnet'];
 	if (wp_kses_bad_protocol($url, $protocols) != $url)
 		return '';
 
@@ -394,8 +394,8 @@ function sanitize_url($url, $protocols = null)
 function js_escape($text)
 {
 	$safe_text = wp_specialchars($text, 'double');
-	$safe_text = preg_replace('/&#(x)?0*(?(1)27|39);?/i', "'", stripslashes($safe_text));
-	$safe_text = preg_replace("/\r?\n/", "\\n", addslashes($safe_text));
+	$safe_text = preg_replace('/&#(x)?0*(?(1)27|39);?/i', "'", stripslashes((string) $safe_text));
+	$safe_text = preg_replace("/\r?\n/", "\\n", addslashes((string) $safe_text));
 	return apply_filters('js_escape', $safe_text, $text);
 }
 

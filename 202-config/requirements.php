@@ -1,10 +1,10 @@
 <?php
 declare(strict_types=1);
 //include mysql settings
-include_once(dirname( __FILE__ ) . '/connect.php');
+include_once(__DIR__ . '/connect.php');
 
 // Initialize variables
-$version_error = array();
+$version_error = [];
 $memcacheInstalled = (extension_loaded('memcache') || extension_loaded('memcached'));
 
 //check to see if this is already installed, if so don't do anything
@@ -15,7 +15,7 @@ if (is_installed() == true) {
 
     // Get Database version
 	$mysqlversion = $db->server_info;
-	if (preg_match('/-(10\..+)-MariaDB/i', $mysqlversion, $match)) {
+	if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
 	    // Support For MariaDB
 	    $mysqlversion = $match[1];
 	    $dbwording="MariaDB >= 10.6";
@@ -31,7 +31,7 @@ if (is_installed() == true) {
 	     
 	}
 	
-	$html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
+	$html['mysqlversion'] = htmlentities((string) $mysqlversion, ENT_QUOTES, 'UTF-8');
 
         if (!php_version_supported()) {
                 $version_error['phpversion'] = 'Prosper202 requires PHP ' . PROSPER202_MIN_PHP_VERSION . ', or newer.';
@@ -66,34 +66,34 @@ info_top(); ?>
 	<h6>For Best Performance - Host With The Prosper202 Official Hosting Partners:</h6>
 	<?php 
 		$partners_data = getData('https://my.tracking202.com/api/v2/hostings');
-		$partners = array();
+		$partners = [];
 		
 		if ($partners_data) {
-			$partners = json_decode($partners_data, true);
+			$partners = json_decode((string) $partners_data, true);
 		}
 		
 		// Fallback if API is unavailable
 		if (!$partners || !is_array($partners)) {
-			$partners = array(
-				array(
+			$partners = [
+				[
 					'title' => 'Visit Official Hosting Partners',
 					'description' => 'Get recommended hosting for Prosper202',
 					'url' => 'https://my.tracking202.com/hosting',
 					'thumb' => '202-img/prosper202.png'
-				)
-			);
+				]
+			];
 		}
 
 		foreach ($partners as $partner) { ?>
 			<div class="media">
 			  <div class="media-left">
-			    <a href="<?php echo htmlspecialchars($partner['url']);?>">
-			      <img class="media-object" style="width: 64px; height: 64px;" src="<?php echo htmlspecialchars($partner['thumb']);?>">
+			    <a href="<?php echo htmlspecialchars((string) $partner['url']);?>">
+			      <img class="media-object" style="width: 64px; height: 64px;" src="<?php echo htmlspecialchars((string) $partner['thumb']);?>">
 			    </a>
 			  </div>
 			  <div class="media-body">
-			    <a href="<?php echo htmlspecialchars($partner['url']);?>" style="color: #337ab7;"><strong><?php echo htmlspecialchars($partner['title']);?></strong></a>
-			    <p class="infotext"><a href="<?php echo htmlspecialchars($partner['url']);?>" style="color: #333;"><?php echo htmlspecialchars($partner['description']);?></a></p>
+			    <a href="<?php echo htmlspecialchars((string) $partner['url']);?>" style="color: #337ab7;"><strong><?php echo htmlspecialchars((string) $partner['title']);?></strong></a>
+			    <p class="infotext"><a href="<?php echo htmlspecialchars((string) $partner['url']);?>" style="color: #333;"><?php echo htmlspecialchars((string) $partner['description']);?></a></p>
 			  </div>
 			</div>
 		<?php }
@@ -154,13 +154,13 @@ info_top(); ?>
 		foreach ($partners as $partner) { ?>
 			<div class="media">
 			  <div class="media-left">
-			    <a href="<?php echo htmlspecialchars($partner['url']);?>">
-			      <img class="media-object" style="width: 64px; height: 64px;" src="<?php echo htmlspecialchars($partner['thumb']);?>">
+			    <a href="<?php echo htmlspecialchars((string) $partner['url']);?>">
+			      <img class="media-object" style="width: 64px; height: 64px;" src="<?php echo htmlspecialchars((string) $partner['thumb']);?>">
 			    </a>
 			  </div>
 			  <div class="media-body">
-			    <a href="<?php echo htmlspecialchars($partner['url']);?>" style="color: #337ab7;"><strong><?php echo htmlspecialchars($partner['title']);?></strong></a>
-			    <p class="infotext"><a href="<?php echo htmlspecialchars($partner['url']);?>" style="color: #333;"><?php echo htmlspecialchars($partner['description']);?></a></p>
+			    <a href="<?php echo htmlspecialchars((string) $partner['url']);?>" style="color: #337ab7;"><strong><?php echo htmlspecialchars((string) $partner['title']);?></strong></a>
+			    <p class="infotext"><a href="<?php echo htmlspecialchars((string) $partner['url']);?>" style="color: #333;"><?php echo htmlspecialchars((string) $partner['description']);?></a></p>
 			  </div>
 			</div>
 		<?php }

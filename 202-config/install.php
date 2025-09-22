@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 //include mysql settings
-include_once(dirname(__FILE__) . '/connect.php');
-include_once(dirname(__FILE__) . '/functions-install.php');
+include_once(__DIR__ . '/connect.php');
+include_once(__DIR__ . '/functions-install.php');
 
 // Initialize the success variable to false by default
 $success = false;
@@ -23,7 +23,7 @@ $error = [
 ];
 
 if (isset($_COOKIE['user_api'])) {
-	$html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
+	$html['user_api'] = htmlentities((string) $_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
 } else {
 	header("Location: " . get_absolute_url() . "202-config/get_apikey.php");
 }
@@ -46,10 +46,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if ($_POST['user_name'] == '') {
 		$error['user_name'] = '<div class="error">You must type in your desired username</div>';
 	}
-	if (!ctype_alnum($_POST['user_name'])) {
+	if (!ctype_alnum((string) $_POST['user_name'])) {
 		$error['user_name'] .= '<div class="error">Your username may only contain alphanumeric characters</div>';
 	}
-	if ((strlen($_POST['user_name']) < 4) or (strlen($_POST['user_name']) > 20)) {
+	if ((strlen((string) $_POST['user_name']) < 4) or (strlen((string) $_POST['user_name']) > 20)) {
 		$error['user_name'] .= '<div class="error">Your username must be between 4 and 20 characters long</div>';
 	}
 
@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// Check password length only if password was provided
-	if (isset($_POST['user_pass']) && !empty($_POST['user_pass']) && (strlen($_POST['user_pass']) < 6 || strlen($_POST['user_pass']) > 35)) {
+	if (isset($_POST['user_pass']) && !empty($_POST['user_pass']) && (strlen((string) $_POST['user_pass']) < 6 || strlen((string) $_POST['user_pass']) > 35)) {
 		$error['user_pass'] = isset($error['user_pass']) ? $error['user_pass'] . '<div class="error">Your password must be at least 6 characters long</div>' : '<div class="error">Your password must be at least 6 characters long</div>';
 	}
 
@@ -89,8 +89,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		//md5 the user pass with salt
 	 	$user_pass = salt_user_pass($_POST['user_pass']);
 		$mysql['user_pass'] = $db->real_escape_string($user_pass);      
- 		
- 		$hash = md5(uniqid(rand(), TRUE));
+
+ 		$hash = md5(uniqid(random_int(0, mt_getrandmax()), TRUE));
 		// $user_hash = intercomHash($hash); // Removed intercomHash call
 		$user_hash = ''; // Default empty value
 
@@ -159,9 +159,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$html['user_email'] = htmlentities($_POST['user_email'], ENT_QUOTES, 'UTF-8');
 	}
 	if (isset($_POST['user_name'])) {
-		$html['user_name'] = htmlentities($_POST['user_name'], ENT_QUOTES, 'UTF-8');
+		$html['user_name'] = htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8');
 	}
-	$html['user_api'] = htmlentities($_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
+	$html['user_api'] = htmlentities((string) $_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
 	// Don't store password in HTML for security reasons
 }
 
@@ -181,7 +181,7 @@ if (!$success) {
 
 	// Get Database version
 	$mysqlversion = $db->server_info;
-	if (preg_match('/-(10\..+)-MariaDB/i', $mysqlversion, $match)) {
+	if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
 		// Support For MariaDB
 		$mysqlversion = $match[1];
 		$dbwording = "MariaDB >= 10.0.12";
@@ -195,7 +195,7 @@ if (!$success) {
 		}
 	}
 
-	$html['mysqlversion'] = htmlentities($mysqlversion, ENT_QUOTES, 'UTF-8');
+	$html['mysqlversion'] = htmlentities((string) $mysqlversion, ENT_QUOTES, 'UTF-8');
 
 	if (!function_exists('curl_version')) {
 		$version_error['curl'] = 'Prosper202 requires CURL to be installed.';

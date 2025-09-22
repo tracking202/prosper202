@@ -1,7 +1,7 @@
 <?php
 set_time_limit(0);
 
-include_once(dirname(__FILE__) . '/functions-upgrade.php');
+include_once(__DIR__ . '/functions-upgrade.php');
 
 class INSTALL
 {
@@ -95,7 +95,7 @@ class INSTALL
           `user_fname` varchar(50) DEFAULT NULL,
           `user_lname` varchar(50) DEFAULT NULL,
           `user_name` varchar(50) NOT NULL,
-          `user_pass` char(32) NOT NULL,
+          `user_pass` varchar(255) NOT NULL,
           `user_email` varchar(100) NOT NULL,
           `user_dash_email` varchar(100) NOT NULL,
 		  `user_public_publisher_id` varchar(10) DEFAULT NULL,
@@ -1463,7 +1463,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1475,7 +1475,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1487,7 +1487,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1500,7 +1500,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1512,7 +1512,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1528,7 +1528,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . $partition_time . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1540,7 +1540,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1552,7 +1552,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1564,7 +1564,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1576,7 +1576,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1588,7 +1588,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1600,7 +1600,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1612,7 +1612,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1624,7 +1624,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1639,7 +1639,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . $partition_time . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1651,7 +1651,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }
@@ -1663,7 +1663,7 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         $sql .= "PARTITION p" . $i . " VALUES LESS THAN (" . (500000 * $i) . ") ENGINE = InnoDB,";
         $p_count = $i;
       }
-      $p_count = $p_count + 1;
+      $p_count += 1;
       $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
       $result = $db->query($sql);
     }

@@ -2,18 +2,46 @@
 
 use GuzzleHttp\json_decode;
 
-include_once(dirname(__FILE__) . '/functions-upgrade.php');
+include_once(__DIR__ . '/functions-upgrade.php');
+
+// Add ipAddress function
+function ipAddress($ip_address)
+{
+    $ip = new stdClass;
+    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
+        $ip->address = $ip_address;
+        if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $ip->type = 'ipv4';
+        } else {
+            $ip->type = 'ipv6';
+        }
+    } else {
+        $ip->type = 'invalid';
+        $ip->address = '127.0.0.1'; // fallback
+    }
+    
+    // Skip the tracking check for now to avoid dependency issues
+    $ip->address = @inet_ntop(inet_pton($ip->address)); //format ip address in standard form
+    return $ip;
+}
+
 //our own die, that will display the them around the error message
+
+// Add prosper_log function
+function prosper_log($category, $message) {
+    // Simple logging function - you can expand this as needed
+    error_log("[Prosper202][$category] $message");
+}
 
 function get_absolute_url()
 {
-	$absolutepath = substr(substr(dirname(__FILE__), 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
+	$absolutepath = substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 	$absolutepath = str_replace('\\', '/', $absolutepath);
 	return $absolutepath;
 }
 
 
-function _die($message)
+function _die($message): never
 {
 
 	info_top();
@@ -42,13 +70,40 @@ function salt_user_pass($user_pass)
 	return $user_pass;
 }
 
+if (!function_exists('array_any')) {
+	function array_any(array $items, callable $callback): bool
+	{
+		$parameterCount = null;
+
+		foreach ($items as $key => $value) {
+			if ($parameterCount === null) {
+				try {
+					$reflection = is_array($callback)
+						? new \ReflectionMethod($callback[0], $callback[1])
+						: new \ReflectionFunction($callback);
+					$parameterCount = $reflection->getNumberOfParameters();
+				} catch (\ReflectionException) {
+					$parameterCount = 1;
+				}
+			}
+
+			$result = $parameterCount >= 2 ? $callback($value, $key) : $callback($value);
+			if ($result) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+}
+
 
 function is_installed()
 {
 	// Skip the check if we're accessing the installer or API key setup
 	if (
-		strpos($_SERVER['PHP_SELF'], '202-config/install.php') !== false ||
-		strpos($_SERVER['PHP_SELF'], '202-config/get_apikey.php') !== false
+		str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php') ||
+		str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')
 	) {
 		return false;
 	}
@@ -63,7 +118,7 @@ function is_installed()
 		if ($user_result) {
 			return true;
 		}
-	} catch (mysqli_sql_exception $e) {
+	} catch (mysqli_sql_exception) {
 		// Table doesn't exist yet, return false
 		return false;
 	}
@@ -189,22 +244,22 @@ function info_top()
 
 	function html2txt($document)
 	{
-		$search = array(
+		$search = [
 			'@<script[^>]*?>.*?</script>@si',  // Strip out javascript
 			'@<style[^>]*?>.*?</style>@siU',    // Strip style tags properly
 			'@<[\/\!]*?[^<>]*?>@si',            // Strip out HTML tags
 			'@<![\s\S]*?--[ \t\n\r]*>@'        // Strip multi-line comments including CDATA
-		);
-		$text = preg_replace($search, '', $document);
+		];
+		$text = preg_replace($search, '', (string) $document);
 		return $text;
 	}
 
 	function temp_exists()
 	{
-		if (is_dir(dirname(__FILE__) . '/temp/')) {
+		if (is_dir(__DIR__ . '/temp/')) {
 			return true;
 		} else {
-			if (@mkdir(dirname(__FILE__) . '/temp/', 0755)) {
+			if (@mkdir(__DIR__ . '/temp/', 0755)) {
 				return true;
 			} else {
 				return false;
@@ -221,7 +276,7 @@ function info_top()
 		$rssData = getData('https://my.tracking202.com/api/v2/premium-p202/version');
 		$rss = null;
 		if ($rssData !== false && !empty($rssData)) {
-			$rss = json_decode($rssData);
+			$rss = json_decode((string) $rssData);
 		}
 		if (isset($rss->items) && 0 != count($rss->items)) {
 
@@ -238,13 +293,13 @@ function info_top()
 				$autoupgrade = false;
 
 				if (is_array($item)) {
-					$latest_version = isset($item['title']) ? $item['title'] : null;
-					$link = isset($item['link']) ? $item['link'] : null;
-					$autoupgrade = isset($item['autoupgrade']) ? $item['autoupgrade'] : 'false';
+					$latest_version = $item['title'] ?? null;
+					$link = $item['link'] ?? null;
+					$autoupgrade = $item['autoupgrade'] ?? 'false';
 				} elseif (is_object($item)) {
-					$latest_version = isset($item->title) ? $item->title : null;
-					$link = isset($item->link) ? $item->link : null;
-					$autoupgrade = isset($item->autoupgrade) ? $item->autoupgrade : 'false';
+					$latest_version = $item->title ?? null;
+					$link = $item->link ?? null;
+					$autoupgrade = $item->autoupgrade ?? 'false';
 				}
 
 				if ($latest_version === null) {
@@ -254,7 +309,7 @@ function info_top()
 				//if current version, is older than the latest version, return true for an update is now needed.
 				if (version_compare($version, $latest_version) == '-1') {
 
-					if (!is_writable(dirname(__FILE__) . '/') || !class_exists('ZipArchive')) {
+					if (!is_writable(__DIR__ . '/') || !class_exists('ZipArchive')) {
 						$_SESSION['auto_upgraded_not_possible'] = true;
 						return true;
 					}
@@ -278,27 +333,27 @@ function info_top()
 								$FilesUpdated = false;
 
 								if (temp_exists()) {
-									$downloadUpdate = @file_put_contents(dirname(__FILE__) . '/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
+									$downloadUpdate = @file_put_contents(__DIR__ . '/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
 									if ($downloadUpdate) {
 										$zip = new ZipArchive();
-										$zipResult = $zip->open(dirname(__FILE__) . '/temp/prosper202_' . $latest_version . '.zip');
+										$zipResult = $zip->open(__DIR__ . '/temp/prosper202_' . $latest_version . '.zip');
 
 										if ($zipResult === TRUE) {
 
 											for ($i = 0; $i < $zip->numFiles; $i++) {
 												$thisFileName = $zip->getNameIndex($i);
 
-												if (substr($thisFileName, -1, 1) == '/') {
-													if (is_dir(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName)) {
+												if (str_ends_with($thisFileName, '/')) {
+													if (is_dir(substr(__DIR__, 0, -10) . '/' . $thisFileName)) {
 														// Directory already exists
 													} else {
-														@mkdir(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName, 0755, true);
+														@mkdir(substr(__DIR__, 0, -10) . '/' . $thisFileName, 0755, true);
 													}
 												} else {
 													$contents = $zip->getFromIndex($i);
 													$file_ext = array_pop(explode(".", $thisFileName));
 
-													if ($updateThis = @fopen(substr(dirname(__FILE__), 0, -10) . '/' . $thisFileName, 'wb')) {
+													if ($updateThis = @fopen(substr(__DIR__, 0, -10) . '/' . $thisFileName, 'wb')) {
 														fwrite($updateThis, $contents);
 														fclose($updateThis);
 														unset($contents);
@@ -323,7 +378,7 @@ function info_top()
 							if ($FilesUpdated == true) {
 								// Clear all PHP caches
 								clear_php_caches();
-								include_once(dirname(__FILE__) . '/functions-upgrade.php');
+								include_once(__DIR__ . '/functions-upgrade.php');
 
 								if (UPGRADE::upgrade_databases(null) == true) {
 									$version = $latest_version;
@@ -361,9 +416,9 @@ function info_top()
 	{
 		global $version;
 		$json = @getData('https://my.tracking202.com/api/v2/premium-p202/version');
-		$array = json_decode($json, true);
+		$array = json_decode((string) $json, true);
 		if ((version_compare($version, $array['version']) == '-1')) {
-			if (!is_writable(dirname(__FILE__) . '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
+			if (!is_writable(__DIR__ . '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
 				$_SESSION['auto_upgraded_not_possible'] = true;
 			}
 			$_SESSION['premium_p202_details'] = $array;
@@ -379,7 +434,7 @@ function info_top()
 		if ($_GET['iphone']) {
 			return true;
 		}
-		if (preg_match("/iphone/i", $_SERVER["HTTP_USER_AGENT"])) {
+		if (preg_match("/iphone/i", (string) $_SERVER["HTTP_USER_AGENT"])) {
 			return true;
 		} else {
 			return false;
@@ -414,13 +469,13 @@ function info_top()
 	//function get file extension
 	function getFileExtension($str)
 	{
-		$i = strrpos($str, ".");
+		$i = strrpos((string) $str, ".");
 		if (!$i) {
 			return "";
 		}
 
-		$l = strlen($str) - $i;
-		$ext = substr($str, $i + 1, $l);
+		$l = strlen((string) $str) - $i;
+		$ext = substr((string) $str, $i + 1, $l);
 
 		return $ext;
 	}
@@ -429,7 +484,7 @@ function info_top()
 	{
 		$url = "http" . (!empty($_SERVER['HTTPS']) ? "s" : "") .
 			"://" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-		$dirs = explode('/', trim(preg_replace('/\/+/', '/', $path), '/'));
+		$dirs = explode('/', trim(preg_replace('/\/+/', '/', (string) $path), '/'));
 		foreach ($dirs as $key => $value)
 			if (empty($value))  unset($dirs[$key]);
 		$parsedUrl = parse_url($url);
@@ -437,7 +492,7 @@ function info_top()
 		foreach ($pathUrl as $key => $value)
 			if (empty($value))  unset($pathUrl[$key]);
 		$count = count($pathUrl);
-		foreach ($dirs as $key => $dir)
+		foreach ($dirs as $dir)
 			if ($dir === '..')
 				if ($count > 0)
 					array_pop($pathUrl);
@@ -496,9 +551,9 @@ function info_top()
 	function deleteAdFromS3($user, $key, $ad)
 	{
 
-		$fields = array(
+		$fields = [
 			'ad' => $ad
-		);
+		];
 
 		$fields = http_build_query($fields);
 
@@ -549,9 +604,9 @@ function info_top()
 
 	function getWallpaper($key = '')
 	{
-		$fields = array(
+		$fields = [
 			'key' => $key
-		);
+		];
 
 		$fields = http_build_query($fields);
 
@@ -566,10 +621,10 @@ function info_top()
 		curl_close($ch);
 
 		if (strlen($result) > 2000 || !$result) {
-			$result = array(
+			$result = [
 				'wallpaperImg' => 'https://tracking202-static.s3.amazonaws.com/wallpaper202.jpg',
 				'wallpaperUrl' => 'https://prosper.tracking202.com/apps/?utm_source=p202profb'
-			);
+			];
 			return $result;
 		}
 		$result = json_decode($result, true);

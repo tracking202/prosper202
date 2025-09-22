@@ -3,14 +3,131 @@
 declare(strict_types=1);
 ob_start();
 
-function template_top($title = 'Prosper202 ClickServer')
+/**
+ * Render the standard Prosper202 page chrome.
+ *
+ * Historically template_top() accepted up to four loosely defined positional
+ * arguments (title, meta description, keywords, body/body-class tweaks). Some
+ * legacy pages – and the static analysers that scan them – still pass those
+ * extra values. To remain backwards compatible we now accept a flexible
+ * options payload while keeping the simple "just pass a title" usage working.
+ *
+ * Supported invocations:
+ *   template_top();
+ *   template_top('My Page Title');
+ *   template_top('Title', 'Meta description', 'Meta keywords', 'extra-body-class');
+ *   template_top('Title', ['meta_description' => '...', 'meta_keywords' => '...',
+ *                          'body_class' => 'dashboard', 'body_id' => 'home',
+ *                          'body_style' => 'background: #000;',
+ *                          'extra_head' => '<link rel="...">']);
+ *
+ * Any unrecognised legacy positional arguments are ignored safely.
+ *
+ * @param string $title Page title (default: 'Prosper202 ClickServer')
+ * @param mixed ...$legacyArgs Variable number of legacy arguments:
+ *   - $legacyArgs[0]: string|array Meta description OR options array
+ *   - $legacyArgs[1]: string Meta keywords (legacy format only)
+ *   - $legacyArgs[2]: string Extra head content (legacy format only)
+ *   - $legacyArgs[3]: string Body class (legacy format only)
+ *   - $legacyArgs[4]: string Body ID (legacy format only)
+ *   - $legacyArgs[5]: string Body style (legacy format only)
+ * @return void
+ * @since 1.0.0
+ */
+function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 {
 	global $navigation;
-	global $version;
+
 	global $userObj;
+	$user_data = [];
 	if (!isset($_SESSION['publisher'])) {
-		$user_data = get_user_data_feedback($_SESSION['user_id']);
+		if (isset($_SESSION['user_id'])) {
+			$user_data = get_user_data_feedback($_SESSION['user_id']);
+		}
 	}
+
+	// Normalise primary argument to string for HTML output.
+	$title = (string) $title;
+
+	// Default page metadata / presentation.
+	$metaDescription = 'description';
+	$metaKeywords = 'keywords';
+	$extraHeadMarkup = '';
+	$bodyAttributes = [];
+	$defaultBodyStyle = "background-image: url(https://dp5k1x6z3k332.cloudfront.net/p202bg.jpg);\n  -webkit-background-size: cover;\n  -moz-background-size: cover;\n  -o-background-size: cover;\n  background-size: cover;\n  background-repeat: no-repeat;\n  background-position: center;\n  background-attachment: fixed;";
+	$bodyStyle = $defaultBodyStyle;
+
+	$options = [];
+
+	if ($legacyArgs !== []) {
+		$firstArg = $legacyArgs[0] ?? null;
+		if (is_array($firstArg)) {
+			$options = $firstArg;
+		} elseif ($firstArg !== null) {
+			$options['meta_description'] = $firstArg;
+		}
+
+		if (isset($legacyArgs[1]) && $legacyArgs[1] !== null) {
+			$options['meta_keywords'] = $legacyArgs[1];
+		}
+
+		if (isset($legacyArgs[2]) && $legacyArgs[2] !== null) {
+			// Historically this slot was occasionally used for extra head markup.
+			$options['extra_head'] = ($options['extra_head'] ?? '') . (string) $legacyArgs[2];
+		}
+
+		if (isset($legacyArgs[3]) && $legacyArgs[3] !== null) {
+			$options['body_class'] = $legacyArgs[3];
+		}
+
+		// Allow fifth & sixth positional arguments for completeness (e.g. body id/style)
+		if (isset($legacyArgs[4]) && $legacyArgs[4] !== null) {
+			$options['body_id'] = $legacyArgs[4];
+		}
+
+		if (isset($legacyArgs[5]) && $legacyArgs[5] !== null) {
+			$options['body_style'] = $legacyArgs[5];
+		}
+	}
+
+	if (isset($options['meta_description'])) {
+		$metaDescription = (string) $options['meta_description'];
+	}
+
+	if (isset($options['meta_keywords'])) {
+		$metaKeywords = (string) $options['meta_keywords'];
+	}
+
+	if (isset($options['extra_head'])) {
+		$extraHeadMarkup = (string) $options['extra_head'];
+	}
+
+	$bodyClassValue = null;
+	if (isset($options['body_class'])) {
+		$bodyClassValue = $options['body_class'];
+		if (is_array($bodyClassValue)) {
+			$bodyClassValue = implode(' ', array_filter(array_map('strval', $bodyClassValue)));
+		}
+		$bodyClassValue = trim((string) $bodyClassValue);
+	}
+
+	if ($bodyClassValue !== null && $bodyClassValue !== '') {
+		$bodyAttributes[] = 'class="' . htmlspecialchars($bodyClassValue, ENT_QUOTES, 'UTF-8') . '"';
+	}
+
+	if (isset($options['body_id'])) {
+		$bodyId = trim((string) $options['body_id']);
+		if ($bodyId !== '') {
+			$bodyAttributes[] = 'id="' . htmlspecialchars($bodyId, ENT_QUOTES, 'UTF-8') . '"';
+		}
+	}
+
+	if (isset($options['body_style'])) {
+		$bodyStyle = (string) $options['body_style'];
+	}
+
+	$bodyAttributes[] = 'style="' . htmlspecialchars($bodyStyle, ENT_QUOTES, 'UTF-8') . '"';
+	$bodyAttributeString = $bodyAttributes ? ' ' . implode(' ', $bodyAttributes) : '';
 ?>
 
 	<!DOCTYPE html>
@@ -19,8 +136,8 @@ function template_top($title = 'Prosper202 ClickServer')
 	<head>
 		<meta http-equiv="X-UA-Compatible" content="IE=edge">
 		<title><?php echo $title; ?></title>
-		<meta name="description" content="description" />
-		<meta name="keywords" content="keywords" />
+		<meta name="description" content="<?php echo htmlspecialchars($metaDescription, ENT_QUOTES, 'UTF-8'); ?>" />
+		<meta name="keywords" content="<?php echo htmlspecialchars($metaKeywords, ENT_QUOTES, 'UTF-8'); ?>" />
 		<meta name="copyright" content="Prosper202, Inc" />
 		<meta name="author" content="Prosper202, Inc" />
 		<meta name="MSSmartTagsPreventParsing" content="TRUE" />
@@ -39,7 +156,7 @@ function template_top($title = 'Prosper202 ClickServer')
 		<!-- Loading Tags Input CSS -->
 		<link href="<?php echo get_absolute_url(); ?>202-css/css/bootstrap-tokenfield.min.css" rel="stylesheet">
 		<link href="<?php echo get_absolute_url(); ?>202-css/css/tokenfield-typeahead.min.css" rel="stylesheet">
-		<?php if (($navigation[2] == "setup") and ($navigation[3] == "aff_campaigns.php")) { ?>
+		<?php if (isset($navigation[2]) && isset($navigation[3]) && ($navigation[2] == "setup") and ($navigation[3] == "aff_campaigns.php")) { ?>
 			<link href="https://dp5k1x6z3k332.cloudfront.net/jquery.tablesorter.pager.min.css" rel="stylesheet">
 			<link href="https://dp5k1x6z3k332.cloudfront.net/theme.bootstrap.min.css" rel="stylesheet">
 		<?php } ?>
@@ -63,30 +180,33 @@ function template_top($title = 'Prosper202 ClickServer')
 		<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/iio-rum.min.js"></script>
 		<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/list.min.js"></script>
 		<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/list.fuzzysearch.min.js"></script>
-		<?php switch ($navigation[1]) {
+		<?php if ($extraHeadMarkup !== '') {
+			echo $extraHeadMarkup;
+		} ?>
+		<?php if (isset($navigation[1])) { switch ($navigation[1]) {
 
 			case "tracking202": ?>
 				<script type="text/javascript" src="https://code.highcharts.com/highcharts.js"></script>
 				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/chart.theme.js"></script>
-				<?php if (($navigation[2] == "setup") and ($navigation[3] == "aff_campaigns.php")) { ?>
+				<?php if (isset($navigation[2]) && isset($navigation[3]) && ($navigation[2] == "setup") and ($navigation[3] == "aff_campaigns.php")) { ?>
 					<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery.tablesorter.min.js"></script>
 					<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery.tablesorter.widgets.js"></script>
 					<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery.tablesorter.pager.min.js"></script>
 					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/dni.search.offers.tablesorter.php?ddlci=<?php echo urlencode($_GET['ddlci'] ?? ''); ?>"></script>
 				<?php } ?>
-				<?php if (($navigation[2] == "setup") and ($navigation[3] == "ads.php")) { ?>
+				<?php if (isset($navigation[2]) && isset($navigation[3]) && ($navigation[2] == "setup") and ($navigation[3] == "ads.php")) { ?>
 					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/dropzone.js"></script>
 				<?php } ?>
 			<?php break;
 
 			case "202-account": ?>
-				<?php if (($navigation[1] == "202-account") and !$navigation[2]) { ?>
+				<?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] == "202-account") and !$navigation[2]) { ?>
 					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/home.php"></script>
 				<?php } ?>
 
 				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/account.php"></script>
 		<?php break;
-		} ?>
+		} } // End isset navigation check ?>
 		<script src="https://dp5k1x6z3k332.cloudfront.net/select2.min.js"></script>
 		<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/custom.php"></script>
 		<script>
@@ -103,26 +223,19 @@ function template_top($title = 'Prosper202 ClickServer')
 
 	</head>
 
-	<body style="background-image: url(https://dp5k1x6z3k332.cloudfront.net/p202bg.jpg); 
-  -webkit-background-size: cover;
-  -moz-background-size: cover;
-  -o-background-size: cover;
-  background-size: cover;
-  background-repeat: no-repeat; 
-  background-position: center; 
-  background-attachment: fixed;
-  ">
+	<body<?php echo $bodyAttributeString; ?>>
 
 		<!-- START MAIN CONTAINER -->
 		<div class="container">
 			<div class="main_wrapper">
 				<div class="row">
 					<div class="col-xs-3">
-						<div style="background-color: white;left:15px;width:100%  
+						<div style="background-color: white;left:15px;width:100%;
   float: none;
   background-color: white;
   border: 2px solid #EBEBEB;
   -webkit-appearance: none;
+  appearance: none;
   border-radius: 6px;
   -webkit-box-shadow: none;
   box-shadow: none;
@@ -135,39 +248,39 @@ function template_top($title = 'Prosper202 ClickServer')
 					<div class="col-xs-9">
 						<nav class="navbar navbar-default" role="navigation">
 							<ul class="nav navbar-nav">
-								<li <?php if (($navigation[1] == '202-account') and !$navigation[2]) {
+								<li <?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] == '202-account') and !$navigation[2]) {
 										echo 'class="active";';
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-account/" id="HomePage"><span class="fui-home"></span> Home </a></li>
-								<li <?php if ($navigation[1] == 'tracking202') {
+								<li <?php if (isset($navigation[1]) && $navigation[1] == 'tracking202') {
 										echo 'class="active";';
 									} ?>><a href="<?php echo get_absolute_url(); ?>tracking202/" id="ClickServerPage"><span class="fui-heart"></span> Prosper202 CS </a></li>
-								<li <?php if ($navigation[1] == '202-tv') {
+								<li <?php if (isset($navigation[1]) && $navigation[1] == '202-tv') {
 										echo 'class="active";';
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-tv/" id="Tv202Page"><span class="fui-video" aria-hidden="true"></span> Watch TV202 </a> </li>
-								<li <?php if ($navigation[1] == '202-resources') {
+								<li <?php if (isset($navigation[1]) && $navigation[1] == '202-resources') {
 										echo 'class="active";';
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-resources/" id="ResourcesPage"><span class="fui-star-2"></span> Hot Deals & Discounts </a></li>
 							</ul>
 							<ul class="nav navbar-nav navbar-right">
-								<li id="account-dropdown" class="dropdown <?php if ($navigation[1] == '202-account' and $navigation[2]) {
+								<li id="account-dropdown" class="dropdown <?php if (isset($navigation[1]) && isset($navigation[2]) && $navigation[1] == '202-account' and $navigation[2]) {
 																				echo 'active';
 																			} ?>">
-									<a href="#" class="dropdown-toggle" data-toggle="dropdown">My Account <?php if ($user_data['vip_perks_status']) echo '<span class="label label-important" id="notification">1</span>'; ?><b class="caret"></b></a>
+									<a href="#" class="dropdown-toggle" data-toggle="dropdown">My Account <?php if (isset($user_data['vip_perks_status']) && $user_data['vip_perks_status']) echo '<span class="label label-important" id="notification">1</span>'; ?><b class="caret"></b></a>
 									<span class="dropdown-arrow"></span>
 									<ul class="dropdown-menu">
 										<li <?php if ($navigation[2] == 'account.php') {
 												echo 'class="active";';
 											} ?>><a href="<?php echo get_absolute_url(); ?>202-account/account.php" id="PersonalSettingsPage">Personal Settings</a></li>
-										<?php if ($userObj->hasPermission("access_to_vip_perks")) { ?><li <?php if ($navigation[2] == 'vip-perks.php') {
+										<?php if (isset($userObj) && $userObj->hasPermission("access_to_vip_perks")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'vip-perks.php') {
 																												echo 'class="active";';
-																											} ?>><a href="<?php echo get_absolute_url(); ?>202-account/vip-perks.php" id="VIPPerksPage">VIP Perks Profile</a> <?php if ($user_data['vip_perks_status']) echo '<span class="label label-important" id="notification-perks">1</span>'; ?></li><?php } ?>
-										<?php if ($userObj->hasPermission("access_to_api_integrations")) { ?><li <?php if ($navigation[2] == 'api-integrations.php') {
+																											} ?>><a href="<?php echo get_absolute_url(); ?>202-account/vip-perks.php" id="VIPPerksPage">VIP Perks Profile</a> <?php if (isset($user_data['vip_perks_status']) && $user_data['vip_perks_status']) echo '<span class="label label-important" id="notification-perks">1</span>'; ?></li><?php } ?>
+										<?php if (isset($userObj) && $userObj->hasPermission("access_to_api_integrations")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'api-integrations.php') {
 																														echo 'class="active";';
 																													} ?>><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php" id="3rdPartyAPIPage">3rd Party API Integrations</a></li><?php } ?>
-										<?php if ($userObj->hasPermission("add_users")) { ?><li <?php if ($navigation[2] == 'user-management.php') {
+										<?php if (isset($userObj) && $userObj->hasPermission("add_users")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'user-management.php') {
 																									echo 'class="active";';
 																								} ?>><a href="<?php echo get_absolute_url(); ?>202-account/user-management.php" id="UserManagementPage">User Management</a></li><?php } ?>
-										<?php if ($userObj->hasPermission("access_to_settings")) { ?><li <?php if ($navigation[2] == 'administration.php') {
+										<?php if (isset($userObj) && $userObj->hasPermission("access_to_settings")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'administration.php') {
 																												echo 'class="active";';
 																											} ?>><a href="<?php echo get_absolute_url(); ?>202-account/administration.php" id="SettingsPage"><span class="fui-gear icon-navbar"></span> Settings</a></li><?php } ?>
 										<li <?php if ($navigation[2] == 'help.php') {
@@ -183,7 +296,7 @@ function template_top($title = 'Prosper202 ClickServer')
 				<div id="update_needed"></div>
 
 				<?php if ($navigation[1] == 'tracking202') {
-					include_once(substr(dirname(__FILE__), 0, -10) . '/tracking202/_config/top.php');
+					include_once(substr(__DIR__, 0, -10) . '/tracking202/_config/top.php');
 				} ?>
 				<div class="main" <?php if ($navigation[2] == 'setup') {
 										echo 'style="border-top-left-radius:0px;"';
@@ -191,7 +304,7 @@ function template_top($title = 'Prosper202 ClickServer')
 
 					<?php if ($navigation[1] == 'tracking202') {
 						if (($navigation[2] == 'setup') or ($navigation[2] == 'bots') or ($navigation[2] == 'overview') or ($navigation[2] == 'analyze') or ($navigation[2] == 'update') or ($navigation[2] == 'export')) {
-							include_once(substr(dirname(__FILE__), 0, -10) . '/tracking202/_config/sub-menu.php');
+							include_once(substr(__DIR__, 0, -10) . '/tracking202/_config/sub-menu.php');
 						}
 					} ?>
 
@@ -247,11 +360,11 @@ function template_top($title = 'Prosper202 ClickServer')
 
 		<!-- Support widget removed -->
 		<?php
-		if (!isset($_SESSION['publisher']) || $_SESSION['publisher'] !== true) {
-			$user_data = get_user_data_feedback($_SESSION['user_id']);
-			
-			if (!$user_data['modal_status']) {
-																$data = getSurveyData($user_data['install_hash']); ?>
+				if (!isset($_SESSION['publisher']) || $_SESSION['publisher'] !== true) {
+					$user_data = get_user_data_feedback($_SESSION['user_id']);
+
+					if (!$user_data['modal_status']) {
+						$data = getSurveyData($user_data['install_hash']); ?>
 
 				<script type="text/javascript">
 					$(window).load(function() {
@@ -275,31 +388,31 @@ function template_top($title = 'Prosper202 ClickServer')
 								<span id="perks-error" class="small error" style="display:none; position:absolute; right: 23px; margin-top: 39px;"><span class="fui-alert"></span> Whoops! Looks like you forget to answer some questions.</span>
 
 								<form class="form-horizontal" role="form" id="survey-form">
-									<?php $count_groups = array();
-																foreach ($data['questions'] as $question) {
+									<?php $count_groups = [];
+									foreach ($data['questions'] as $question) {
 
-																	if (empty($question['answer'])) {
-																		if (!array_key_exists($question['group_id'], $count_groups)) { ?>
+										if (empty($question['answer'])) {
+											if (!array_key_exists($question['group_id'], $count_groups)) { ?>
 												<?php foreach ($data['question_groups'] as $group) {
-																				if ($group['id'] == $question['group_id']) {
-																					echo "<h6>" . $group['title'] . "</h6>";
-																				}
-																			} ?>
+													if ($group['id'] == $question['group_id']) {
+														echo "<h6>" . $group['title'] . "</h6>";
+													}
+												} ?>
 
 												<div class="row form_seperator">
 													<div class="col-xs-12"></div>
 												</div>
 											<?php }
 
-																		$count_groups[$question['group_id']] = true;
+											$count_groups[$question['group_id']] = true;
 
-																		$highlighted = false;
+											$highlighted = false;
 
-																		$answer = false;
+											$answer = false;
 
-																		if ($question['highlighted']) {
-																			$highlighted = true;
-																		}
+											if ($question['highlighted']) {
+												$highlighted = true;
+											}
 											?>
 											<div class="form-group">
 												<label for="<?php echo $question['id']; ?>" class="col-sm-8 control-label"><?php echo $question['name']; ?> <?php if ($highlighted) echo '<span class="label label-important">New!</span>'; ?></label>

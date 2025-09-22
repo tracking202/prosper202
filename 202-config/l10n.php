@@ -39,11 +39,11 @@ function _e($text, $domain = 'default') {
 
 function _c($text, $domain = 'default') {
 	$whole = translate($text, $domain);
-	$last_bar = strrpos($whole, '|');
+	$last_bar = strrpos((string) $whole, '|');
 	if ( false == $last_bar ) {
 		return $whole;
 	} else {
-		return substr($whole, 0, $last_bar);
+		return substr((string) $whole, 0, $last_bar);
 	}
 }
 

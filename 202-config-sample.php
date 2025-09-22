@@ -4,9 +4,9 @@ declare(strict_types=1);
 $dbname = 'putyourdbnamehere'; // The name of the database
 $dbuser = 'usernamehere'; // Your MySQL username
 $dbpass = 'yourpasswordhere'; // ...and password
-$dbhost = 'localhost'; // 99% chance you won't need to change this value
-$dbhostro = 'localhost'; // Only change this to use a read replica for reading data
-$mchost = 'localhost'; // this is the memcache server host, if you don't know what this is, don't touch it.
+$dbhost = 'localhosthere'; // 99% chance you won't need to change this value
+$dbhostro = 'localhostreplica'; // Only change this to use a read replica for reading data
+$mchost = 'localhostmemcache'; // this is the memcache server host, if you don't know what this is, don't touch it.
 
 /*---DONT EDIT ANYTHING BELOW THIS LINE!---*/
 
@@ -56,7 +56,7 @@ try {
         $database = DB::getInstance();
         $db = $database->getConnection();
         $dbro = $database->getConnectionro();
-} catch (Exception $e) {
+} catch (Exception) {
         $db = false;
         $dbro = false;
 }

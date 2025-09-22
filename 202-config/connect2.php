@@ -2,8 +2,6 @@
 
 use UAParser\Parser;
 use GeoIp2\Database\Reader;
-use Memcache;
-use Memcached;
 
 $version = '1.9.55';
 
@@ -13,8 +11,8 @@ if ($_SERVER['SERVER_NAME'] == '_') {
     $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'];
 }
 
-DEFINE('ROOT_PATH', substr(dirname(__FILE__), 0, -10));
-DEFINE('CONFIG_PATH', dirname(__FILE__));
+DEFINE('ROOT_PATH', substr(__DIR__, 0, -10));
+DEFINE('CONFIG_PATH', __DIR__);
 //@ini_set('register_globals', 0);
 @ini_set('display_errors', 'On');
 @ini_set('error_reporting', 6135);
@@ -82,6 +80,19 @@ function setCache($key, $value, $exp = null)
 
 include_once(CONFIG_PATH . '/geo/inc/geoipcity.inc');
 include_once(CONFIG_PATH . '/geo/inc/geoipregionvars.php');
+include_once(CONFIG_PATH . '/functions-auth.php');
+if (!function_exists('array_any')) {
+    function array_any(array $items, callable $callback): bool
+    {
+        foreach ($items as $key => $value) {
+            if ($callback($value, $key)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
 include_once(CONFIG_PATH . '/Mobile_Detect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
@@ -154,30 +165,17 @@ if (!isset($_SESSION['privacy'])) {
 
 
 // get the real ip
-switch (true) {
-    case (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_CF_CONNECTING_IP'];
-        break;
-    case (!empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_CLUSTER_CLIENT_IP'];
-        break;
-    case (!empty($_SERVER['HTTP_X_SUCURI_CLIENTIP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_SUCURI_CLIENTIP'];
-        break;
-    case (!empty($_SERVER['HTTP_X_REAL_IP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_REAL_IP'];
-        break;
-    case (!empty($_SERVER['HTTP_CLIENT_IP'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_CLIENT_IP'];
-        break;
-    case (!empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR'])):
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['HTTP_X_FORWARDED_FOR'];
-        break;
-    default:
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = $_SERVER['REMOTE_ADDR'];
-}
+$_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
+    !empty($_SERVER['HTTP_CF_CONNECTING_IP']) => $_SERVER['HTTP_CF_CONNECTING_IP'],
+    !empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP']) => $_SERVER['HTTP_X_CLUSTER_CLIENT_IP'],
+    !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
+    !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
+    !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
+    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
+    default => $_SERVER['REMOTE_ADDR'],
+};
 
-$tempip = explode(",", $_SERVER['HTTP_X_FORWARDED_FOR']);
+$tempip = explode(",", (string) $_SERVER['HTTP_X_FORWARDED_FOR']);
 $_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
 $ip_address = ipAddress($_SERVER['HTTP_X_FORWARDED_FOR']);
 
@@ -194,12 +192,12 @@ function trackingEnabled()
 
 function _mysqli_query($db, $sql)
 {
-    $result = $db->query($sql) or record_mysql_error($db, $sql); //or die($db->error . '<br/><br/>' . $sql);
+    $result = $db->query($sql) or record_mysql_error($db); //or die($db->error . '<br/><br/>' . $sql);
     return $result;
 }
 
 // our own die, that will display the them around the error message
-function _die($message)
+function _die($message): never
 {
     echo $message;
     die();
@@ -212,12 +210,12 @@ function delay_sql($db, $delayed_sql)
     $mysql['delayed_time'] = time();
 
     $delayed_sql = "INSERT INTO  202_delayed_sqls 
-					
+
 					(
 						delayed_sql ,
 						delayed_time
 					)
-					
+
 					VALUES 
 					(
 						'" . $mysql['delayed_sql'] . "',
@@ -380,7 +378,7 @@ function rotateTrackerUrl($db, $tracker_row)
         return $tracker_row['aff_campaign_url'];
 
     $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
-    $urls = array();
+    $urls = [];
     array_push($urls, $tracker_row['aff_campaign_url']);
 
     if ($tracker_row['aff_campaign_url_2'])
@@ -421,13 +419,13 @@ function rotateTrackerUrl($db, $tracker_row)
     return $url;
 }
 
-function replaceTrackerPlaceholdersOpt($db, $url, $click_id, $mysql = array())
+function replaceTrackerPlaceholdersOpt($db, $url, $click_id, $mysql = [])
 {
 
     // get the tracker placeholder values
     $mysql['click_id'] = $db->real_escape_string($click_id);
     //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
-    $tokens = array(
+    $tokens = [
         "subid" => $mysql['click_id'],
         "t202kw" => $mysql['keyword'],
         "t202pubid" => $mysql['t202pubid'],
@@ -454,7 +452,7 @@ function replaceTrackerPlaceholdersOpt($db, $url, $click_id, $mysql = array())
         "random" => mt_rand(1000000, 9999999),
         "referer" => $mysql['referer'],
         "sourceid" => $mysql['ppc_account']
-    );
+    ];
 
     $url = (replaceTokens($url, $tokens));
 
@@ -462,7 +460,7 @@ function replaceTrackerPlaceholdersOpt($db, $url, $click_id, $mysql = array())
     return $url;
 }
 
-function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
+function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
 {
 
     // get the tracker placeholder values
@@ -471,7 +469,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
 
     if (isset($mysql) && $mysql != '') {
         $mysql['click_id'] = $db->real_escape_string((string)$click_id);
-        $tokens = @array(
+        $tokens = @[
             "subid" => $mysql['click_id'],
             "t202kw" => $mysql['keyword'],
             "t202pubid" => $mysql['public_pub_id'],
@@ -499,12 +497,12 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
             "random" => mt_rand(1000000, 9999999),
             "referer" => $mysql['referer'],
             "sourceid" => $mysql['ppc_account']
-        );
+        ];
         $url = (replaceTokens($url, $tokens));
     }
 
 
-    if (preg_match('/\[\[(.*)\]\]/', $url)) {
+    if (preg_match('/\[\[(.*)\]\]/', (string) $url)) {
         $click_sql = "
 			SELECT 2c.click_id, 
                 2tc1.c1, 
@@ -606,7 +604,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
             $mysql['region'] = '';
             $mysql['city'] = '';
         }
-        $mysql['referer'] = urlencode($db->real_escape_string($_SERVER['HTTP_REFERER']));
+        $mysql['referer'] = urlencode((string) $db->real_escape_string($_SERVER['HTTP_REFERER']));
         if ($db->real_escape_string($click_row['ppc_account_id']) == '0') {
             $mysql['ppc_account'] = '';
         } else {
@@ -615,7 +613,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
 
         //prepare $mysql to make sure none of the keys are unset
 
-        $_202keys = array('click_id', 't202kw', 't202pubid', 'c1', 'c2', 'c3', 'c4', 'gclid', 'msclkid', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'country', 'country_code', 'region', 'city', 'cpc', 'cpc', 'cpa', 'click_payout', 'referer', 'ppc_account');
+        $_202keys = ['click_id', 't202kw', 't202pubid', 'c1', 'c2', 'c3', 'c4', 'gclid', 'msclkid', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'country', 'country_code', 'region', 'city', 'cpc', 'cpc', 'cpa', 'click_payout', 'referer', 'ppc_account'];
 
         foreach ($_202keys as $key) {
             if (!isset($mysql[$key])) {
@@ -623,7 +621,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
             }
         }
 
-        $tokens = array(
+        $tokens = [
             "subid" => $mysql['click_id'],
             "t202kw" => $mysql['t202kw'],
             "t202pubid" => $mysql['t202pubid'],
@@ -651,7 +649,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = array())
             "random" => mt_rand(1000000, 9999999),
             "referer" => $mysql['referer'],
             "sourceid" => $mysql['ppc_account']
-        );
+        ];
 
         $url = (replaceTokens($url, $tokens, 1)); //call replace tokens and allow it to fill all unset tokens with blanks
     }
@@ -671,16 +669,16 @@ function setClickIdCookie($click_id, $campaign_id = 0)
 
         //legacy cookies
 
-        setcookie('tracking202subid-legacy', $click_id, $expire, '/', $domain);
-        setcookie('tracking202subid_a_' . $campaign_id . '-legacy', $click_id, $expire, '/', $domain);
+        setcookie('tracking202subid-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202subid_a_' . $campaign_id . '-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
 
         //samesite=none secure cookies
         if (PHP_VERSION_ID < 70300) {
             header('Set-Cookie: tracking202subid=' . $click_id . ';max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
             header('Set-Cookie: tracking202subid_a_' . $campaign_id . '=' . $click_id . '; max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
         } else {
-            setcookie('tracking202subid', $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-            setcookie('tracking202subid_a_' . $campaign_id, $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+            setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+            setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
         }
     }
 }
@@ -698,13 +696,13 @@ function setClickIdCookieForLp($click_id_public, $lp_public_id)
 
 
         //legacy cookies
-        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', $click_id_public, $expire, '/', $domain);
+        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
 
         //samesite=none secure cookies
         if (PHP_VERSION_ID < 70300) {
             header('Set-Cookie: tracking202rlp_' . $lp_public_id . '=' . $click_id_public . ';max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
         } else {
-            setcookie('tracking202rlp_' . $lp_public_id, $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+            setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
         }
     }
 }
@@ -848,12 +846,12 @@ class PLATFORMS
             $device_type = $type;
         }
 
-        $data = array(
+        $data = [
             'browser' => $browser_id,
             'platform' => $platform_id,
             'device' => $device_id,
             'type' => $device_type
-        );
+        ];
 
         return $data;
     }
@@ -870,7 +868,7 @@ class PLATFORMS
 
         if (!$getFromCache) {
 
-            $ranges = array(
+            $ranges = [
                 '199.60.28.0/24',
                 '199.103.122.0/24',
                 '192.197.157.0/24',
@@ -911,9 +909,9 @@ class PLATFORMS
                 '173.252.112.0/24',
                 '17.0.0.0/8',
                 '157.55.39.0/24'
-            );
+            ];
 
-            foreach ($ranges as $key => $value) {
+            foreach ($ranges as $value) {
                 if (PLATFORMS::check_ip_range($ip, $value)) {
                     if ($memcacheWorking) {
                         setCache(md5("ip-bot" . $ip->address . systemHash()), true);
@@ -936,13 +934,13 @@ class PLATFORMS
             return false;
         }
         
-        if (strpos($range, '/') == false) {
+        if (!str_contains((string) $range, '/')) {
             $range .= '/32';
         }
-        list($range, $netmask) = explode('/', $range, 2);
+        [$range, $netmask] = explode('/', (string) $range, 2);
         $range_decimal = ip2long($range);
         $ip_decimal = ip2long($ip->address);
-        $wildcard_decimal = pow(2, (32 - $netmask)) - 1;
+        $wildcard_decimal = 2 ** (32 - $netmask) - 1;
         $netmask_decimal = ~$wildcard_decimal;
         return (($ip_decimal & $netmask_decimal) == ($range_decimal & $netmask_decimal));
     }
@@ -1184,17 +1182,33 @@ class INDEXES
     }
 
     // this returns the ip_id, when a ip_address is given
-    public static function get_ip_id($db, $ip)
+    public static function get_ip_id($arg1, $arg2 = null)
     {
         global $memcacheWorking, $memcache;
+
+        if ($arg1 instanceof mysqli) {
+            $db = $arg1;
+            $ip = $arg2;
+        } else {
+            global $db;
+            $ip = $arg1;
+        }
+
+        if (!$db) {
+            return null;
+        }
 
         // Handle both string and object input
         if (is_string($ip)) {
             $ip_address = $ip;
             $ip_type = (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) ? 'ipv6' : 'ipv4';
+            $ip_object = new stdClass();
+            $ip_object->address = $ip_address;
+            $ip_object->type = $ip_type;
         } else {
             $ip_address = $ip->address ?? '';
             $ip_type = $ip->type ?? 'ipv4';
+            $ip_object = $ip;
         }
 
         $mysql['ip_address'] = $db->real_escape_string($ip_address);
@@ -1227,15 +1241,7 @@ class INDEXES
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 } else {
                     //insert ip
-                    // Create IP object if we received a string
-                    if (is_string($ip)) {
-                        $ip_obj = new stdClass();
-                        $ip_obj->address = $ip_address;
-                        $ip_obj->type = $ip_type;
-                        $ip_id = INDEXES::insert_ip($db, $ip_obj);
-                    } else {
-                        $ip_id = INDEXES::insert_ip($db, $ip);
-                    }
+                    $ip_id = INDEXES::insert_ip($db, $ip_object);
                     // add to memcached
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 }
@@ -1247,16 +1253,7 @@ class INDEXES
                 // if this ip already exists, return the ip_id for it.
                 $ip_id = $ip_row['ip_id'];
             } else {
-                //insert ip
-                // Create IP object if we received a string
-                if (is_string($ip)) {
-                    $ip_obj = new stdClass();
-                    $ip_obj->address = $ip_address;
-                    $ip_obj->type = $ip_type;
-                    $ip_id = INDEXES::insert_ip($db, $ip_obj);
-                } else {
-                    $ip_id = INDEXES::insert_ip($db, $ip);
-                }
+                $ip_id = INDEXES::insert_ip($db, $ip_object);
             }
         }
 
@@ -1303,7 +1300,7 @@ class INDEXES
             $site_url_address = '';
         }
 
-        $parsed_url = @parse_url(trim($db->real_escape_string((string)$site_url_address)));
+        $parsed_url = @parse_url(trim((string) $db->real_escape_string((string)$site_url_address)));
 
         if (isset($parsed_url)) {
             if (isset($parsed_url['host'])) {
@@ -1439,7 +1436,7 @@ class INDEXES
         $time = 2592000; // 30 days in sec - Define $time
 
         // only grab the first 350 characters of the utm variable
-        $utm_var = substr($utm_var, 0, 350);
+        $utm_var = substr((string) $utm_var, 0, 350);
 
         $mysql['utm_var'] = $db->real_escape_string($utm_var);
         $mysql['utm_type'] = $db->real_escape_string($utm_type);
@@ -1496,7 +1493,7 @@ class INDEXES
         $time = 2592000; // 30 days in sec - Define $time
 
         // only grab the first 350 characters of the variable
-        $variable = substr($variable, 0, 350);
+        $variable = substr((string) $variable, 0, 350);
 
         $mysql['var'] = $db->real_escape_string($variable);
         $mysql['ppc_variable_id'] = $db->real_escape_string($ppc_variable_id);
@@ -1569,7 +1566,7 @@ class INDEXES
                     $var_id = $db->insert_id;
                     $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
 
-                    $var_sets = explode(",", $mysql['variables']);
+                    $var_sets = explode(",", (string) $mysql['variables']);
                     $row = ''; // Initialize $row
                     foreach ($var_sets as $var) {
                         $row .= "(" .  $var_id . "," . $var . "),";
@@ -1594,7 +1591,7 @@ class INDEXES
                 $var_sql = "INSERT INTO 202_variable_sets SET variables = '" . $mysql['variables'] . "'";
                 $var_result = _mysqli_query($db, $var_sql);
                 $var_id = $db->insert_id;
-                $var_sets = explode(",", $mysql['variables']);
+                $var_sets = explode(",", (string) $mysql['variables']);
                 $row = ''; // Initialize $row
                 foreach ($var_sets as $var) {
                     $row .= "(" .  $var_id . "," . $var . "),";
@@ -1667,7 +1664,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of custom_var
-        $custom_var_data = substr($custom_var_data, 0, 350);
+        $custom_var_data = substr((string) $custom_var_data, 0, 350);
         $mysql[$custom_var_name] = $db->real_escape_string($custom_var_data);
 
         if ($memcacheWorking) {
@@ -1721,7 +1718,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of c1
-        $c1 = substr($c1, 0, 350);
+        $c1 = substr((string) $c1, 0, 350);
 
         $mysql['c1'] = $db->real_escape_string($c1);
 
@@ -1774,7 +1771,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of c2
-        $c2 = substr($c2, 0, 350);
+        $c2 = substr((string) $c2, 0, 350);
 
         $mysql['c2'] = $db->real_escape_string($c2);
 
@@ -1827,7 +1824,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of c3
-        $c3 = substr($c3, 0, 350);
+        $c3 = substr((string) $c3, 0, 350);
 
         $mysql['c3'] = $db->real_escape_string($c3);
 
@@ -1880,7 +1877,7 @@ class INDEXES
         global $memcacheWorking, $memcache;
 
         // only grab the first 350 charactesr of c4
-        $c4 = substr($c4, 0, 350);
+        $c4 = substr((string) $c4, 0, 350);
 
         $mysql['c4'] = $db->real_escape_string($c4);
 
@@ -1928,18 +1925,58 @@ class INDEXES
     }
 }
 
-function memcache_mysql_fetch_assoc($db, $sql, $allowCaching = 1, $minutes = 3)
+function memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1, $minutes = 3)
 {
-    global $memcacheWorking, $memcache;
+    global $memcacheWorking, $memcache, $db;
+
+    // Support legacy invocation styles:
+    //  - memcache_mysql_fetch_assoc($sql)
+    //  - memcache_mysql_fetch_assoc($db, $sql)
+    //  - memcache_mysql_fetch_assoc($sql, $allowCaching, $minutes)
+    //  - memcache_mysql_fetch_assoc($mysqliResult)
+    if ($arg1 instanceof mysqli_result) {
+        return $arg1->fetch_assoc();
+    }
+
+    $connection = null;
+    $sql = null;
+
+    if ($arg1 instanceof mysqli) {
+        $connection = $arg1;
+        if (is_string($arg2)) {
+            $sql = $arg2;
+            if (func_num_args() > 2) {
+                $allowCaching = (int) func_get_arg(2);
+            }
+            if (func_num_args() > 3) {
+                $minutes = (int) func_get_arg(3);
+            }
+        } else {
+            throw new InvalidArgumentException('SQL query string required when providing mysqli connection to memcache_mysql_fetch_assoc.');
+        }
+    } else {
+        $connection = $db;
+        $sql = (string) $arg1;
+        if ($arg2 !== null) {
+            $allowCaching = (int) $arg2;
+        }
+        if (func_num_args() > 2) {
+            $minutes = (int) func_get_arg(2);
+        }
+    }
+
+    if (!$connection || $sql === '') {
+        return false;
+    }
 
     if ($memcacheWorking == false) {
-        $result = _mysqli_query($db, $sql);
+        $result = _mysqli_query($connection, $sql);
         $row = $result->fetch_assoc();
         return $row;
     } else {
 
         if ($allowCaching == 0) {
-            $result = _mysqli_query($db, $sql);
+            $result = _mysqli_query($connection, $sql);
             $row = $result->fetch_assoc();
             return $row;
         } else {
@@ -1948,7 +1985,7 @@ function memcache_mysql_fetch_assoc($db, $sql, $allowCaching = 1, $minutes = 3)
 
             if ($getCache === false) {
                 // cache this data
-                $result = _mysqli_query($db, $sql);
+                $result = _mysqli_query($connection, $sql);
                 $fetchArray = $result->fetch_assoc();
                 $setCache = setCache(md5($sql . systemHash()), serialize($fetchArray), 60 * $minutes);
 
@@ -1965,13 +2002,38 @@ function memcache_mysql_fetch_assoc($db, $sql, $allowCaching = 1, $minutes = 3)
     }
 }
 
-function foreach_memcache_mysql_fetch_assoc($db, $sql, $allowCaching = 1)
+function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1)
 {
-    global $memcacheWorking, $memcache;
+    global $memcacheWorking, $memcache, $db;
+
+    $connection = null;
+    $sql = null;
+
+    if ($arg1 instanceof mysqli) {
+        $connection = $arg1;
+        if (is_string($arg2)) {
+            $sql = $arg2;
+            if (func_num_args() > 2) {
+                $allowCaching = (int) func_get_arg(2);
+            }
+        } else {
+            throw new InvalidArgumentException('SQL query string required when providing mysqli connection to foreach_memcache_mysql_fetch_assoc.');
+        }
+    } else {
+        $connection = $db;
+        $sql = (string) $arg1;
+        if ($arg2 !== null) {
+            $allowCaching = (int) $arg2;
+        }
+    }
+
+    if (!$connection || $sql === '') {
+        return [];
+    }
 
     if ($memcacheWorking == false) {
-        $row = array();
-        $result = _mysqli_query($db, $sql); // ($sql);
+        $row = [];
+        $result = _mysqli_query($connection, $sql); // ($sql);
         while ($fetch = $result->fetch_assoc()) {
             $row[] = $fetch;
         }
@@ -1979,8 +2041,8 @@ function foreach_memcache_mysql_fetch_assoc($db, $sql, $allowCaching = 1)
     } else {
 
         if ($allowCaching == 0) {
-            $row = array();
-            $result = _mysqli_query($db, $sql); // ($sql);
+            $row = [];
+            $result = _mysqli_query($connection, $sql); // ($sql);
             while ($fetch = $result->fetch_assoc()) {
                 $row[] = $fetch;
             }
@@ -1990,8 +2052,8 @@ function foreach_memcache_mysql_fetch_assoc($db, $sql, $allowCaching = 1)
             $getCache = $memcache->get(md5($sql . systemHash()));
             if ($getCache === false) {
                 // if data is NOT cache, cache this data
-                $row = array();
-                $result = _mysqli_query($db, $sql); // ($sql);
+                $row = [];
+                $result = _mysqli_query($connection, $sql); // ($sql);
                 while ($fetch = $result->fetch_assoc()) {
                     $row[] = $fetch;
                 }
@@ -2008,68 +2070,68 @@ function foreach_memcache_mysql_fetch_assoc($db, $sql, $allowCaching = 1)
     }
 }
 
-function replaceTokens($url, $tokens = array(), $fillblanks = 0)
+function replaceTokens($url, $tokens = [], $fillblanks = 0)
 {
     $tokens = array_map('rawurlencode202', $tokens);
 
     if (isset($tokens['c1']) || $fillblanks)
-        $url = preg_replace('/\[\[c1\]\]/i', $tokens['c1'], $url);
+        $url = preg_replace('/\[\[c1\]\]/i', (string) $tokens['c1'], (string) $url);
     if (isset($tokens['c2']) || $fillblanks)
-        $url = preg_replace('/\[\[c2\]\]/i', $tokens['c2'], $url);
+        $url = preg_replace('/\[\[c2\]\]/i', (string) $tokens['c2'], (string) $url);
     if (isset($tokens['c3']) || $fillblanks)
-        $url = preg_replace('/\[\[c3\]\]/i', $tokens['c3'], $url);
+        $url = preg_replace('/\[\[c3\]\]/i', (string) $tokens['c3'], (string) $url);
     if (isset($tokens['c4']) || $fillblanks)
-        $url = preg_replace('/\[\[c4\]\]/i', $tokens['c4'], $url);
+        $url = preg_replace('/\[\[c4\]\]/i', (string) $tokens['c4'], (string) $url);
     if (isset($tokens['t202pubid']) || $fillblanks)
-        $url = preg_replace('/\[\[t202pubid\]\]/i', $tokens['t202pubid'], $url);
+        $url = preg_replace('/\[\[t202pubid\]\]/i', (string) $tokens['t202pubid'], (string) $url);
     if (isset($tokens['gclid']) || $fillblanks)
-        $url = preg_replace('/\[\[gclid\]\]/i', $tokens['gclid'], $url);
+        $url = preg_replace('/\[\[gclid\]\]/i', (string) $tokens['gclid'], (string) $url);
     if (isset($tokens['msclkid']) || $fillblanks)
-        $url = preg_replace('/\[\[msclkid\]\]/i', $tokens['msclkid'], $url);
+        $url = preg_replace('/\[\[msclkid\]\]/i', (string) $tokens['msclkid'], (string) $url);
     if (isset($tokens['fbclid']) || $fillblanks)
-        $url = preg_replace('/\[\[fbclid\]\]/i', $tokens['fbclid'], $url);
+        $url = preg_replace('/\[\[fbclid\]\]/i', (string) $tokens['fbclid'], (string) $url);
     if (isset($tokens['utm_source']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_source\]\]/i', $tokens['utm_source'], $url);
+        $url = preg_replace('/\[\[utm_source\]\]/i', (string) $tokens['utm_source'], (string) $url);
     if (isset($tokens['utm_medium']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_medium\]\]/i', $tokens['utm_medium'], $url);
+        $url = preg_replace('/\[\[utm_medium\]\]/i', (string) $tokens['utm_medium'], (string) $url);
     if (isset($tokens['utm_campaign']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_campaign\]\]/i', $tokens['utm_campaign'], $url);
+        $url = preg_replace('/\[\[utm_campaign\]\]/i', (string) $tokens['utm_campaign'], (string) $url);
     if (isset($tokens['utm_term']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_term\]\]/i', $tokens['utm_term'], $url);
+        $url = preg_replace('/\[\[utm_term\]\]/i', (string) $tokens['utm_term'], (string) $url);
     if (isset($tokens['utm_content']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_content\]\]/i', $tokens['utm_content'], $url);
+        $url = preg_replace('/\[\[utm_content\]\]/i', (string) $tokens['utm_content'], (string) $url);
     if (isset($tokens['subid']) || $fillblanks)
-        $url = preg_replace('/\[\[subid\]\]/i', $tokens['subid'], $url);
+        $url = preg_replace('/\[\[subid\]\]/i', (string) $tokens['subid'], (string) $url);
     if (isset($tokens['t202kw']) || $fillblanks)
-        $url = preg_replace('/\[\[t202kw\]\]/i', $tokens['t202kw'], $url);
+        $url = preg_replace('/\[\[t202kw\]\]/i', (string) $tokens['t202kw'], (string) $url);
     if (isset($tokens['payout']) || $fillblanks)
-        $url = preg_replace('/\[\[payout\]\]/i', $tokens['payout'], $url);
+        $url = preg_replace('/\[\[payout\]\]/i', (string) $tokens['payout'], (string) $url);
     if (isset($tokens['random']) || $fillblanks)
-        $url = preg_replace('/\[\[random\]\]/i', $tokens['random'], $url);
+        $url = preg_replace('/\[\[random\]\]/i', (string) $tokens['random'], (string) $url);
     if (isset($tokens['cpc']) || $fillblanks)
-        $url = preg_replace('/\[\[cpc\]\]/i', $tokens['cpc'], $url);
+        $url = preg_replace('/\[\[cpc\]\]/i', (string) $tokens['cpc'], (string) $url);
     if (isset($tokens['cpc2']) || $fillblanks)
-        $url = preg_replace('/\[\[cpc2\]\]/i', $tokens['cpc2'], $url);
+        $url = preg_replace('/\[\[cpc2\]\]/i', (string) $tokens['cpc2'], (string) $url);
     if (isset($tokens['cpa']) || $fillblanks)
-        $url = preg_replace('/\[\[cpa\]\]/i', $tokens['cpa'], $url);
+        $url = preg_replace('/\[\[cpa\]\]/i', (string) $tokens['cpa'], (string) $url);
     if (isset($tokens['timestamp']) || $fillblanks)
-        $url = preg_replace('/\[\[timestamp\]\]/i', $tokens['timestamp'], $url);
+        $url = preg_replace('/\[\[timestamp\]\]/i', (string) $tokens['timestamp'], (string) $url);
     if (isset($tokens['country']) || $fillblanks)
-        $url = preg_replace('/\[\[country\]\]/i', $tokens['country'], $url);
+        $url = preg_replace('/\[\[country\]\]/i', (string) $tokens['country'], (string) $url);
     if (isset($tokens['country_code']) || $fillblanks)
-        $url = preg_replace('/\[\[country_code\]\]/i', $tokens['country_code'], $url);
+        $url = preg_replace('/\[\[country_code\]\]/i', (string) $tokens['country_code'], (string) $url);
     if (isset($tokens['region']) || $fillblanks)
-        $url = preg_replace('/\[\[region\]\]/i', $tokens['region'], $url);
+        $url = preg_replace('/\[\[region\]\]/i', (string) $tokens['region'], (string) $url);
     if (isset($tokens['city']) || $fillblanks)
-        $url = preg_replace('/\[\[city\]\]/i', $tokens['city'], $url);
+        $url = preg_replace('/\[\[city\]\]/i', (string) $tokens['city'], (string) $url);
     if (isset($tokens['referer']) || $fillblanks) {
-        $url = preg_replace('/\[\[referer\]\]/i', $tokens['referer'], $url);
-        $url = preg_replace('/\[\[referrer\]\]/i', $tokens['referer'], $url);
+        $url = preg_replace('/\[\[referer\]\]/i', (string) $tokens['referer'], (string) $url);
+        $url = preg_replace('/\[\[referrer\]\]/i', (string) $tokens['referer'], (string) $url);
     }
     if (isset($tokens['sourceid']) || $fillblanks)
-        $url = preg_replace('/\[\[sourceid\]\]/i', $tokens['sourceid'], $url);
+        $url = preg_replace('/\[\[sourceid\]\]/i', (string) $tokens['sourceid'], (string) $url);
     if (isset($tokens['transactionid']) || $fillblanks)
-        $url = preg_replace('/\[\[(transactionid|t202txid)\]\]/i', $tokens['transactionid'], $url);
+        $url = preg_replace('/\[\[(transactionid|t202txid)\]\]/i', (string) $tokens['transactionid'], (string) $url);
     return $url;
 }
 
@@ -2093,9 +2155,9 @@ function getGeoData($ip)
     }
 
     // Check if GeoIP2 Reader class exists
-    if (!class_exists('GeoIp2\Database\Reader')) {
+    if (!class_exists(\GeoIp2\Database\Reader::class)) {
         // Fallback to legacy method
-        return array(
+        return [
             'country' => '',
             'country_code' => '',
             'is_european_union' => false,
@@ -2104,7 +2166,7 @@ function getGeoData($ip)
             'region' => '',
             'region_code' => '',
             'postal' => ''
-        );
+        ];
     }
 
     $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
@@ -2118,7 +2180,7 @@ function getGeoData($ip)
         $region = $record->mostSpecificSubdivision->name;
         $region_code = $record->mostSpecificSubdivision->isoCode;
         $postal = $record->postal->code;
-    } catch (\Exception $e) {
+    } catch (\Exception) {
         $record = '';
         $country = '';
         $country_code = '';
@@ -2165,7 +2227,7 @@ function getGeoData($ip)
         }
     }
 
-    $geoData = array(
+    $geoData = [
         'country' => $country,
         'country_code' => $country_code,
         'is_european_union' => $is_european_union,
@@ -2174,7 +2236,7 @@ function getGeoData($ip)
         'region_code' => $region_code,
         'city' => $city,
         'postal_code' => $postal
-    );
+    ];
 
     $reader->close();
 
@@ -2183,7 +2245,7 @@ function getGeoData($ip)
 
 function getIspData($ip)
 {
-    $isp_file = substr(dirname(__FILE__), 0, -10) . "/202-config/geo/GeoIPISP.dat";
+    $isp_file = substr(__DIR__, 0, -10) . "/202-config/geo/GeoIPISP.dat";
 
     // Define the missing constant if it doesn't exist
     if (!defined('GEOIP_MEMORY_CACHE')) {
@@ -2219,7 +2281,7 @@ function getIspData($ip)
     }
 
     if (file_exists($isp_file)) {
-        $giisp = geoip_open(substr(dirname(__FILE__), 0, -10) . "/202-config/geo/GeoIPISP.dat", GEOIP_MEMORY_CACHE);
+        $giisp = geoip_open(substr(__DIR__, 0, -10) . "/202-config/geo/GeoIPISP.dat", GEOIP_MEMORY_CACHE);
         $isp = geoip_org_by_addr($giisp, $ip->address);
 
         if (! $isp) {
@@ -2252,13 +2314,13 @@ function setPCIdCookie($click_id_public)
         $httponly = FALSE;
 
         //legacy cookies
-        setcookie('tracking202pci-legacy', $click_id_public, $expire, '/', $domain);
+        setcookie('tracking202pci-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
 
         //samesite=none secure cookies
         if (PHP_VERSION_ID < 70300) {
             header('Set-Cookie: tracking202pci=' . $click_id_public . ';max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
         } else {
-            setcookie('tracking202pci', $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+            setcookie('tracking202pci', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
         }
     }
 }
@@ -2275,13 +2337,13 @@ function setOutboundCookie($outbound_site_url)
         $httponly = FALSE;
 
         //legacy cookies
-        setcookie('tracking202outbound-legacy', $outbound_site_url, $expire, '/', $domain);
+        setcookie('tracking202outbound-legacy', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
 
         //samesite=none secure cookies
         if (PHP_VERSION_ID < 70300) {
             header('Set-Cookie: tracking202outbound=' . $outbound_site_url . ';max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
         } else {
-            setcookie('tracking202outbound', $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+            setcookie('tracking202outbound', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
         }
     }
 }
@@ -2289,7 +2351,7 @@ function setOutboundCookie($outbound_site_url)
 function getPrePopVars($vars)
 {
     $urlvars = '';
-    $stoplist = array(
+    $stoplist = [
         'subid',
         'c1',
         'c2',
@@ -2313,7 +2375,7 @@ function getPrePopVars($vars)
         'utm_campaign',
         'utm_term',
         'utm_content'
-    );
+    ];
 
     foreach ($vars as $key => $value) {
         if (! in_array($key, $stoplist)) {
@@ -2329,14 +2391,14 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
     if (isset($urlvars) && $urlvars != '') {
 
         // remove & at the end of the string
-        $urlvars = rtrim($urlvars, '&');
+        $urlvars = rtrim((string) $urlvars, '&');
         if ($b64) {
             $urlvars = "202vars=" . base64_encode($urlvars);
         }
-        if (! parse_url($redirect_site_url, PHP_URL_QUERY)) {
+        if (! parse_url((string) $redirect_site_url, PHP_URL_QUERY)) {
 
             // if there is no query url the add a ? to thecVars but before doing that remove case where there may be a ? at the end of the url and nothing else
-            $redirect_site_url = rtrim($redirect_site_url, '?');
+            $redirect_site_url = rtrim((string) $redirect_site_url, '?');
 
             // remove the & from thecVars and put a ? in fron t of it
 
@@ -2350,7 +2412,7 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
     return $redirect_site_url;
 }
 
-function record_mysql_error($db, $sql)
+function record_mysql_error($db, $sql): never
 {
     global $server_row, $ip_address; // Add global $ip_address
 
@@ -2362,18 +2424,19 @@ function record_mysql_error($db, $sql)
     echo $sql . '<br/><br/>' . $clean['mysql_error_text'] . '<br/><br/>';
 
 
-    $ip_id = INDEXES::get_ip_id($db, $ip_address);
+    $ipForError = $ip_address ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? ''));
+    $ip_id = INDEXES::get_ip_id($db, $ipForError);
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
     $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-    $site_id = INDEXES::get_site_url_id($db, $site_url);
+    $site_id = INDEXES::get_site_url_id($db);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 
-    $mysql['user_id'] = $db->real_escape_string(strip_tags($_SESSION['user_id']));
+    $mysql['user_id'] = $db->real_escape_string(strip_tags((string) $_SESSION['user_id']));
     $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
     $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags($_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags($_SERVER['SERVER_NAME']));
+    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
+    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
     $mysql['mysql_error_time'] = time();
 
     $report_sql = "INSERT     INTO  202_mysql_errors
@@ -2431,7 +2494,7 @@ function getSplitTestValue(array $values)
         if ($value['weight'] == 0) {
             unset($values[$key]);
         } else {
-            $sum = $sum + $value['weight'];
+            $sum += $value['weight'];
         }
     }
 
@@ -2447,7 +2510,7 @@ function getSplitTestValue(array $values)
 
 function get_absolute_url()
 {
-    return substr(substr(dirname(__FILE__), 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
+    return substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 }
 
 function getTrackingDomain()
@@ -2465,7 +2528,7 @@ function getTrackingDomain()
     $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql); //($user_sql);
     $tracking_domain_row = $tracking_domain_result->fetch_assoc();
     $tracking_domain = $_SERVER['SERVER_NAME'];
-    if (strlen($tracking_domain_row['user_tracking_domain']) > 0) {
+    if (strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
         $tracking_domain = $tracking_domain_row['user_tracking_domain'];
     }
     return $tracking_domain;
@@ -2515,34 +2578,34 @@ function parseUaForRotatorCriteria($detect, $parser, $ua)
 
 function ip_in_range($ip, $range)
 {
-    if (strpos($range, '/') !== false) {
-        list($range, $netmask) = explode('/', $range, 2);
-        if (strpos($netmask, '.') !== false) {
+    if (str_contains((string) $range, '/')) {
+        [$range, $netmask] = explode('/', (string) $range, 2);
+        if (str_contains($netmask, '.')) {
             $netmask = str_replace('*', '0', $netmask);
             $netmask_dec = ip2long($netmask);
             return ((ip2long($ip) & $netmask_dec) == (ip2long($range) & $netmask_dec));
         } else {
             $x = explode('.', $range);
             while (count($x) < 4) $x[] = '0';
-            list($a, $b, $c, $d) = $x;
+            [$a, $b, $c, $d] = $x;
             $range = sprintf("%u.%u.%u.%u", empty($a) ? '0' : $a, empty($b) ? '0' : $b, empty($c) ? '0' : $c, empty($d) ? '0' : $d);
             $range_dec = ip2long($range);
             $ip_dec = ip2long($ip);
 
-            $wildcard_dec = pow(2, (32 - $netmask)) - 1;
+            $wildcard_dec = 2 ** (32 - $netmask) - 1;
             $netmask_dec = ~$wildcard_dec;
 
             return (($ip_dec & $netmask_dec) == ($range_dec & $netmask_dec));
         }
     } else {
-        if (strpos($range, '*') !== false) {
+        if (str_contains((string) $range, '*')) {
             $lower = str_replace('*', '0', $range);
             $upper = str_replace('*', '255', $range);
             $range = "$lower-$upper";
         }
 
-        if (strpos($range, '-') !== false) { // A-B format
-            list($lower, $upper) = explode('-', $range, 2);
+        if (str_contains((string) $range, '-')) { // A-B format
+            [$lower, $upper] = explode('-', (string) $range, 2);
             $lower_dec = (float)sprintf("%u", ip2long($lower));
             $upper_dec = (float)sprintf("%u", ip2long($upper));
             $ip_dec = (float)sprintf("%u", ip2long($ip));
@@ -2592,7 +2655,7 @@ function getPublisher($pubid)
 
 function getTokens($mysql)
 {
-    $tokens = array(
+    $tokens = [
         "subid" => $mysql['click_id'],
         "t202kw" => $mysql['t202kw'],
         "c1" => $mysql['c1'],
@@ -2615,7 +2678,7 @@ function getTokens($mysql)
         "referer" => $mysql['referer'],
         "sourceid" => $mysql['ppc_account_id'],
         "transactionid" => $mysql['txid']
-    );
+    ];
 
     return $tokens;
 }
@@ -2648,10 +2711,10 @@ function maskIpAddress($ip)
 {
 
     if ($ip->type == 'ipv4') {
-        $bits = explode('.', $ip->address);
+        $bits = explode('.', (string) $ip->address);
         $masked = implode(".", array_slice($bits, 0, 3)) . ".0";
     } else if ($ip->type == 'ipv6') {
-        $bits = explode(':', $ip->address);
+        $bits = explode(':', (string) $ip->address);
         $masked = implode(":", array_slice($bits, 0, 3)) . ":0000:0000:0000:0000:0000";
     }
     if (isset($masked)) {
@@ -2716,7 +2779,7 @@ function getTrackerDetail(&$mysql)
     $mysql['user_pref_referer_data'] = $db->real_escape_string($tracker_row['user_pref_referer_data']);
     // set cpc use dynamic variable if set or the default if not
     if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
-        $_GET['t202b'] = ltrim($_GET['t202b'], '$');
+        $_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
         if (is_numeric($_GET['t202b'])) {
             $bid = number_format($_GET['t202b'], 5, '.', '');
             $mysql['click_cpc'] = $db->real_escape_string($bid);
@@ -2786,7 +2849,7 @@ function getTrackerDetailPT(&$mysql)
     $mysql['user_pref_referer_data'] = $db->real_escape_string($tracker_row['user_pref_referer_data']);
     // set cpc use dynamic variable if set or the default if not
     if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
-        $_GET['t202b'] = ltrim($_GET['t202b'], '$');
+        $_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
         if (is_numeric($_GET['t202b'])) {
             $bid = number_format($_GET['t202b'], 5, '.', '');
             $mysql['click_cpc'] = $db->real_escape_string($bid);
@@ -2816,7 +2879,7 @@ function getClickId()
     global $db;
 
     $click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
-    $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+    $click_result = $db->query($click_sql) or record_mysql_error($db);
 
     //now gather the info for the advance click insert
     $click_id = $db->insert_id;
@@ -2827,7 +2890,7 @@ function getClickIdPublic($click_id)
 {
     global $db;
 
-    return $db->real_escape_string(rand(1, 9) . $click_id . rand(1, 9));
+    return $db->real_escape_string(random_int(1, 9) . $click_id . random_int(1, 9));
 }
 
 function insertClicks($mysql)
@@ -2889,7 +2952,7 @@ function insertClicks($mysql)
             break;
     }
 
-    return $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+    return $click_result = $db->query($click_sql) or record_mysql_error($db);
 }
 
 function insertGclid($mysql)
@@ -2905,7 +2968,7 @@ function insertGclid($mysql)
                             utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
                             utm_term_id = '" . $mysql['utm_term_id'] . "',
                             utm_content_id = '" . $mysql['utm_content_id'] . "'";
-        return $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+        return $click_result = $db->query($click_sql) or record_mysql_error($db);
     }
 }
 
@@ -2987,7 +3050,7 @@ function insertMsclkid($mysql)
                             utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
                             utm_term_id = '" . $mysql['utm_term_id'] . "',
                             utm_content_id = '" . $mysql['utm_content_id'] . "'";
-        return $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+        return $click_result = $db->query($click_sql) or record_mysql_error($db);
     }
 }
 
@@ -3004,17 +3067,17 @@ function insertFbclid($mysql)
                             utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
                             utm_term_id = '" . $mysql['utm_term_id'] . "',
                             utm_content_id = '" . $mysql['utm_content_id'] . "'";
-        return $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+        return $click_result = $db->query($click_sql) or record_mysql_error($db);
     }
 }
 
 function insertClicksVariable($mysql, $tracker_row)
 {
     global $db;
-    $custom_var_ids = array();
+    $custom_var_ids = [];
 
-    $ppc_variable_ids = explode(',', $tracker_row['ppc_variable_ids']);
-    $parameters = explode(',', $tracker_row['parameters']);
+    $ppc_variable_ids = explode(',', (string) $tracker_row['ppc_variable_ids']);
+    $parameters = explode(',', (string) $tracker_row['parameters']);
 
     foreach ($parameters as $key => $value) {
         if (isset($_GET[$value])) {
@@ -3041,7 +3104,7 @@ function insertClicksVariable($mysql, $tracker_row)
         $mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);
 
         $var_sql = "INSERT IGNORE INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
-        return $var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+        return $var_result = $db->query($var_sql) or record_mysql_error($db);
     }
 }
 
@@ -3082,7 +3145,7 @@ function insertClicksSite($mysql)
     }
 
 
-    return $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+    return $click_result = $db->query($click_sql) or record_mysql_error($db);
 }
 
 function insertClicksRecord($mysql)
@@ -3094,7 +3157,7 @@ function insertClicksRecord($mysql)
 							click_cloaking='" . $mysql['click_cloaking'] . "',
 							click_in='" . $mysql['click_in'] . "',
 							click_out='" . $mysql['click_out'] . "'";
-    return $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+    return $click_result = $db->query($click_sql) or record_mysql_error($db);
 }
 
 function insertClicksAdvance($mysql)
@@ -3112,7 +3175,7 @@ function insertClicksAdvance($mysql)
 							platform_id='" . $mysql['platform_id'] . "',
 							browser_id='" . $mysql['browser_id'] . "',
                             device_id='" . $mysql['device_id'] . "'";
-    return $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+    return $click_result = $db->query($click_sql) or record_mysql_error($db);
 }
 
 function insertClicksTracking($mysql)
@@ -3126,7 +3189,7 @@ function insertClicksTracking($mysql)
 		c2_id = '" . $mysql['c2_id'] . "',
 		c3_id = '" . $mysql['c3_id'] . "',
 		c4_id = '" . $mysql['c4_id'] . "'";
-    $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+    $click_result = $db->query($click_sql) or record_mysql_error($db);
     return $click_result;
 }
 
@@ -3391,7 +3454,7 @@ function getKeyword(&$mysql)
     global $db;
     /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
     //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
-    $referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
+    $referer_url_parsed = @parse_url((string) $_SERVER['HTTP_REFERER']);
     $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
 
     $referer_query = []; // Initialize $referer_query as an empty array
@@ -3451,8 +3514,8 @@ function getKeyword(&$mysql)
             break;
     }
 
-    if (substr($keyword, 0, 8) == 't202var_') {
-        $t202var = substr($keyword, strpos($keyword, "_") + 1);
+    if (str_starts_with((string) $keyword, 't202var_')) {
+        $t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
         if (isset($_GET[$t202var])) {
             $keyword = $_GET[$t202var];
@@ -3470,7 +3533,7 @@ function getReferer(&$mysql)
     global $db;
 
     // Parse the referer URL query string
-    $referer_url_parsed = @parse_url($_SERVER['HTTP_REFERER']);
+    $referer_url_parsed = @parse_url((string) $_SERVER['HTTP_REFERER']);
     $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
     $referer_query = []; // Initialize $referer_query as an empty array
     @parse_str($referer_url_query, $referer_query);
@@ -3479,12 +3542,12 @@ function getReferer(&$mysql)
     if ($mysql['user_pref_referer_data'] == 't202ref') {
         if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
             $mysql['t202ref'] = $db->real_escape_string($_GET['t202ref']);
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $mysql['t202ref']);
+            $click_referer_site_url_id = INDEXES::get_site_url_id($db);
         } else { //if not found revert to what we usually do
             if (isset($referer_query['url'])) {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+                $click_referer_site_url_id = INDEXES::get_site_url_id($db);
             } else {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER']);
+                $click_referer_site_url_id = INDEXES::get_site_url_id($db);
             }
         }
     } else { //user wants the real referer first
@@ -3492,9 +3555,9 @@ function getReferer(&$mysql)
         // now lets get variables for clicks site
         // so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
         if (isset($referer_query['url'])) {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+            $click_referer_site_url_id = INDEXES::get_site_url_id($db);
         } else {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER']);
+            $click_referer_site_url_id = INDEXES::get_site_url_id($db);
         }
     }
 
@@ -3503,11 +3566,11 @@ function getReferer(&$mysql)
 
 function getForeignPayout($currency, $payout_currency, $payout)
 {
-    $fields = array(
+    $fields = [
         'currency' => $currency,
         'payout_currency' => $payout_currency,
         'payout' => $payout * 10000   //multiply by 10000 to get more accurate exchange rate
-    );
+    ];
 
     $fields = http_build_query($fields);
 
@@ -3524,7 +3587,7 @@ function getForeignPayout($currency, $payout_currency, $payout)
     curl_close($ch);
     $result = json_decode($result, true);
 
-    $result['exchange_payout'] = $result['exchange_payout'] / 10000;
+    $result['exchange_payout'] /= 10000;
     return $result;
 }
 
@@ -3613,7 +3676,7 @@ function getPayout(&$mysql)
 function getUrlVars202()
 {
     $urlvarslist = [];
-    $temp = explode('&', $_SERVER['QUERY_STRING']);
+    $temp = explode('&', (string) $_SERVER['QUERY_STRING']);
 
     foreach ($temp as $key => $value) {
         $subkv = explode('=', $value);
