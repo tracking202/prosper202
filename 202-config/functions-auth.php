@@ -2,6 +2,50 @@
 
 declare(strict_types=1);
 
+/**
+ * Password helper functions live here to avoid bootstrap order issues.
+ * They support both legacy salted MD5 hashes and modern password_hash()-based hashes.
+ */
+if (!function_exists('hash_user_pass')) {
+    function hash_user_pass(string $password): string
+    {
+        return password_hash($password, PASSWORD_DEFAULT);
+    }
+}
+
+if (!function_exists('verify_user_pass')) {
+    /**
+     * @return array{valid: bool, needsRehash: bool}
+     */
+    function verify_user_pass(string $password, string $storedHash): array
+    {
+        $storedHash = trim($storedHash);
+        if ($storedHash === '') {
+            return ['valid' => false, 'needsRehash' => false];
+        }
+
+        $hashInfo = password_get_info($storedHash);
+        if (($hashInfo['algo'] ?? 0) !== 0) {
+            $valid = password_verify($password, $storedHash);
+            return [
+                'valid' => $valid,
+                'needsRehash' => $valid && password_needs_rehash($storedHash, PASSWORD_DEFAULT),
+            ];
+        }
+
+        $legacyHash = function_exists('salt_user_pass') ? salt_user_pass($password) : md5($password);
+        if (hash_equals((string) $legacyHash, $storedHash)) {
+            return ['valid' => true, 'needsRehash' => true];
+        }
+
+        if (hash_equals(md5($password), $storedHash)) {
+            return ['valid' => true, 'needsRehash' => true];
+        }
+
+        return ['valid' => false, 'needsRehash' => false];
+    }
+}
+
 //error_reporting(E_ALL);
 class AUTH
 {
