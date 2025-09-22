@@ -8,19 +8,16 @@ namespace GeoIp2\Exception;
  */
 class InvalidRequestException extends HttpException
 {
-    /**
-     * The code returned by the MaxMind web service.
-     */
-    public $error;
-
     public function __construct(
         $message,
-        $error,
+        /**
+         * The code returned by the MaxMind web service.
+         */
+        public $error,
         $httpStatus,
         $uri,
-        \Exception $previous = null
+        ?\Exception $previous = null
     ) {
-        $this->error = $error;
         parent::__construct($message, $httpStatus, $uri, $previous);
     }
 }

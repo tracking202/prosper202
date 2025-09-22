@@ -28,11 +28,9 @@ class Client
     private $connectTimeout;
     private $host = 'api.maxmind.com';
     private $httpRequestFactory;
-    private $licenseKey;
     private $proxy;
     private $timeout;
     private $userAgentPrefix;
-    private $accountId;
 
     /**
      * @param int    $accountId  your MaxMind account ID
@@ -47,16 +45,11 @@ class Client
      *                           username, and password, e.g., `http://username:password@127.0.0.1:10`.
      */
     public function __construct(
-        $accountId,
-        $licenseKey,
+        private $accountId,
+        private $licenseKey,
         $options = []
     ) {
-        $this->accountId = $accountId;
-        $this->licenseKey = $licenseKey;
-
-        $this->httpRequestFactory = isset($options['httpRequestFactory'])
-            ? $options['httpRequestFactory']
-            : new RequestFactory();
+        $this->httpRequestFactory = $options['httpRequestFactory'] ?? new RequestFactory();
 
         if (isset($options['host'])) {
             $this->host = $options['host'];
@@ -113,7 +106,7 @@ class Client
             ['Content-Type: application/json']
         );
 
-        list($statusCode, $contentType, $body) = $request->post($body);
+        [$statusCode, $contentType, $body] = $request->post($body);
 
         return $this->handleResponse(
             $statusCode,
@@ -128,7 +121,7 @@ class Client
     {
         $request = $this->createRequest($path);
 
-        list($statusCode, $contentType, $body) = $request->get();
+        [$statusCode, $contentType, $body] = $request->get();
 
         return $this->handleResponse(
             $statusCode,
@@ -211,20 +204,14 @@ class Client
     private function jsonErrorDescription()
     {
         $errno = json_last_error();
-        switch ($errno) {
-            case JSON_ERROR_DEPTH:
-                return 'The maximum stack depth has been exceeded.';
-            case JSON_ERROR_STATE_MISMATCH:
-                return 'Invalid or malformed JSON.';
-            case JSON_ERROR_CTRL_CHAR:
-                return 'Control character error.';
-            case JSON_ERROR_SYNTAX:
-                return 'Syntax error.';
-            case JSON_ERROR_UTF8:
-                return 'Malformed UTF-8 characters.';
-            default:
-                return "Other JSON error ($errno).";
-        }
+        return match ($errno) {
+            JSON_ERROR_DEPTH => 'The maximum stack depth has been exceeded.',
+            JSON_ERROR_STATE_MISMATCH => 'Invalid or malformed JSON.',
+            JSON_ERROR_CTRL_CHAR => 'Control character error.',
+            JSON_ERROR_SYNTAX => 'Syntax error.',
+            JSON_ERROR_UTF8 => 'Malformed UTF-8 characters.',
+            default => "Other JSON error ($errno).",
+        };
     }
 
     /**
@@ -369,7 +356,7 @@ class Client
      *
      * @throws HttpException
      */
-    private function handle5xx($statusCode, $service, $path)
+    private function handle5xx($statusCode, $service, $path): never
     {
         throw new HttpException(
             "Received a server error ($statusCode) for $service",
@@ -385,7 +372,7 @@ class Client
      *
      * @throws HttpException
      */
-    private function handleUnexpectedStatus($statusCode, $service, $path)
+    private function handleUnexpectedStatus($statusCode, $service, $path): never
     {
         throw new HttpException(
             'Received an unexpected HTTP status ' .
@@ -438,7 +425,7 @@ class Client
 
         // Check if the cert is inside a phar. If so, we need to copy the cert
         // to a temp file so that curl can see it.
-        if (substr($cert, 0, 7) === 'phar://') {
+        if (str_starts_with($cert, 'phar://')) {
             $tempDir = sys_get_temp_dir();
             $newCert = tempnam($tempDir, 'geoip2-');
             if ($newCert === false) {
@@ -457,7 +444,7 @@ class Client
             // destructor isn't called on a fatal error such as an uncaught
             // exception.
             register_shutdown_function(
-                function () use ($newCert) {
+                function () use ($newCert): void {
                     unlink($newCert);
                 }
             );

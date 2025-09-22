@@ -63,9 +63,7 @@ class QuestionHelper extends Helper
             return $this->doAsk($output, $question);
         }
 
-        $interviewer = function () use ($output, $question) {
-            return $this->doAsk($output, $question);
-        };
+        $interviewer = (fn() => $this->doAsk($output, $question));
 
         return $this->validateAttempts($interviewer, $output, $question);
     }
@@ -140,7 +138,7 @@ class QuestionHelper extends Helper
         $message = $question->getQuestion();
 
         if ($question instanceof ChoiceQuestion) {
-            $maxWidth = max(array_map(array($this, 'strlen'), array_keys($question->getChoices())));
+            $maxWidth = max(array_map($this->strlen(...), array_keys($question->getChoices())));
 
             $messages = (array) $question->getQuestion();
             foreach ($question->getChoices() as $key => $value) {
@@ -215,7 +213,7 @@ class QuestionHelper extends Helper
                 }
 
                 // Pop the last character off the end of our string
-                $ret = substr($ret, 0, $i);
+                $ret = substr((string) $ret, 0, $i);
             } elseif ("\033" === $c) {
                 // Did we read an escape sequence?
                 $c .= fread($inputStream, 2);
@@ -238,8 +236,8 @@ class QuestionHelper extends Helper
                     if ($numMatches > 0 && -1 !== $ofs) {
                         $ret = $matches[$ofs];
                         // Echo out remaining chars for current match
-                        $output->write(substr($ret, $i));
-                        $i = strlen($ret);
+                        $output->write(substr((string) $ret, $i));
+                        $i = strlen((string) $ret);
                     }
 
                     if ("\n" === $c) {
@@ -261,7 +259,7 @@ class QuestionHelper extends Helper
 
                 foreach ($autocomplete as $value) {
                     // If typed characters match the beginning chunk of value (e.g. [AcmeDe]moBundle)
-                    if (0 === strpos($value, $ret) && $i !== strlen($value)) {
+                    if (str_starts_with((string) $value, $ret) && $i !== strlen((string) $value)) {
                         $matches[$numMatches++] = $value;
                     }
                 }
@@ -274,7 +272,7 @@ class QuestionHelper extends Helper
                 // Save cursor position
                 $output->write("\0337");
                 // Write highlighted text
-                $output->write('<hl>'.OutputFormatter::escapeTrailingBackslash(substr($matches[$ofs], $i)).'</hl>');
+                $output->write('<hl>'.OutputFormatter::escapeTrailingBackslash(substr((string) $matches[$ofs], $i)).'</hl>');
                 // Restore cursor position
                 $output->write("\0338");
             }
@@ -300,7 +298,7 @@ class QuestionHelper extends Helper
             $exe = __DIR__.'/../Resources/bin/hiddeninput.exe';
 
             // handle code running from a phar
-            if ('phar:' === substr(__FILE__, 0, 5)) {
+            if (str_starts_with(__FILE__, 'phar:')) {
                 $tmpExe = sys_get_temp_dir().'/hiddeninput.exe';
                 copy($exe, $tmpExe);
                 $exe = $tmpExe;
@@ -369,7 +367,7 @@ class QuestionHelper extends Helper
                 return call_user_func($question->getValidator(), $interviewer());
             } catch (RuntimeException $e) {
                 throw $e;
-            } catch (\Exception $error) {
+            } catch (\Exception) {
             }
         }
 
@@ -392,7 +390,7 @@ class QuestionHelper extends Helper
         if (file_exists('/usr/bin/env')) {
             // handle other OSs with bash/zsh/ksh/csh if available to hide the answer
             $test = "/usr/bin/env %s -c 'echo OK' 2> /dev/null";
-            foreach (array('bash', 'zsh', 'ksh', 'csh') as $sh) {
+            foreach (['bash', 'zsh', 'ksh', 'csh'] as $sh) {
                 if ('OK' === rtrim(shell_exec(sprintf($test, $sh)))) {
                     self::$shell = $sh;
                     break;

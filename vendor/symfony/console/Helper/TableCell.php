@@ -16,18 +16,15 @@ use Symfony\Component\Console\Exception\InvalidArgumentException;
 /**
  * @author Abdellatif Ait boudad <a.aitboudad@gmail.com>
  */
-class TableCell
+class TableCell implements \Stringable
 {
-    private $value;
-    private $options = array(
+    private $options = [
         'rowspan' => 1,
         'colspan' => 1,
-    );
+    ];
 
-    public function __construct(string $value = '', array $options = array())
+    public function __construct(private readonly string $value = '', array $options = [])
     {
-        $this->value = $value;
-
         // check option names
         if ($diff = array_diff(array_keys($options), array_keys($this->options))) {
             throw new InvalidArgumentException(sprintf('The TableCell does not support the following options: \'%s\'.', implode('\', \'', $diff)));
@@ -41,7 +38,7 @@ class TableCell
      *
      * @return string
      */
-    public function __toString()
+    public function __toString(): string
     {
         return $this->value;
     }

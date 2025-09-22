@@ -43,11 +43,11 @@ if (!empty($_GET['delete_user_id'])) {
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 $user_sql = "SELECT user_fname,user_lname,user_name,user_id,user_email,user_time_register,user_timezone,install_hash,user_hash,role_name FROM 202_users LEFT JOIN 202_user_role USING (user_id) LEFT JOIN 202_roles USING (role_id) WHERE user_id!=1 and user_deleted!=1";
-$user_result = _mysqli_query($db, $user_sql);
+$user_result = _mysqli_query($user_sql);
 //$user_row = $user_result->fetch_assoc();
 
 $user_sql = "SELECT user_id,user_email,user_time_register,user_timezone,install_hash,user_hash,modal_status,vip_perks_status FROM 202_users WHERE user_id=1";
-$user_result2 = _mysqli_query($db, $user_sql);
+$user_result2 = _mysqli_query($user_sql);
 $user_row2 = $user_result2->fetch_assoc();
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -67,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['user_email'] = '<div class="error help-block">Enter an email address.</div>';
 	} else {
 		$check_user_email = "select user_name,user_id from 202_users where user_email='" . $mysql['user_email'] . "'";
-		$check_user_email_result = _mysqli_query($db, $check_user_email);
+		$check_user_email_result = _mysqli_query($check_user_email);
 		$user_email_row = $check_user_email_result->fetch_array(MYSQLI_ASSOC);
 
 		if ($check_user_email_result->num_rows != 0) {
@@ -83,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (!empty($mysql['user_name']) && !$editing) {
 		$check_user = "select user_name,user_id from 202_users where user_name='" . $mysql['user_name'] . "'";
-		$check_user_result = _mysqli_query($db, $check_user);
+		$check_user_result = _mysqli_query($check_user);
 		$user_name_row = $check_user_result->fetch_array(MYSQLI_ASSOC);
 		if ($user_result->num_rows != 0 && $user_name_row['user_id'] != $mysql['form_user_id']) {
 			$error['user_name'] = '<div class="error help-block">The username you entered already exists.</div>';
@@ -128,7 +128,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		// Only hash password if it's set (for new users or when changing password)
 		if (isset($mysql['user_password'])) {
-			$mysql['user_pass'] = $db->real_escape_string(salt_user_pass($mysql['user_password']));
+			$hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
+			$mysql['user_pass'] = $db->real_escape_string($hasher($mysql['user_password']));
 		}
 		$hash = md5(uniqid((string)random_int(0, mt_getrandmax()), TRUE));
 		// $user_hash = intercomHash($hash); // Removed intercomHash call
@@ -168,22 +169,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		if ($editing == true) {
 			$user_sql  .= "WHERE user_id='" . $mysql['form_user_id'] . "'";
-			$user_result = _mysqli_query($db, $user_sql);
+			$user_result = _mysqli_query($user_sql);
 
 			$role_sql = "UPDATE 202_user_role SET role_id = '" . $mysql['user_role'] . "' WHERE user_id = '" . $mysql['form_user_id'] . "'";
 		} else {
-			$user_result = _mysqli_query($db, $user_sql);
+			$user_result = _mysqli_query($user_sql);
 			$user_id = $db->insert_id;
 
 			$role_sql = "INSERT INTO 202_user_role SET user_id = '" . $user_id . "', role_id = '" . $mysql['user_role'] . "'";
 			$pref_sql = "INSERT INTO 202_users_pref SET user_id = '" . $user_id . "'";
 		}
 
-		$role_result = _mysqli_query($db, $role_sql);
+		$role_result = _mysqli_query($role_sql);
 		
 		// Only run pref_sql when creating a new user (not editing)
 		if (!$editing) {
-			$pref_result = _mysqli_query($db, $pref_sql);
+			$pref_result = _mysqli_query($pref_sql);
 		}
 
 		$add_success = true;
@@ -226,7 +227,7 @@ if ($editing == true) {
 	$mysql['user_id'] = $db->real_escape_string(trim(filter_input(INPUT_GET, 'edit_user_id', FILTER_SANITIZE_NUMBER_INT)));
 	$user_sql_edit = "SELECT user_fname,user_lname,user_name,user_id,user_email,user_time_register,user_active,role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id=" . $mysql['user_id'];
 
-	$user_result_edit = _mysqli_query($db, $user_sql_edit);
+$user_result_edit = _mysqli_query($user_sql_edit);
 	$user_row_edit = $user_result_edit->fetch_assoc();
 
 	if ($user_row_edit['role_id'] == '2') {
@@ -249,11 +250,11 @@ if ($deleting == true) {
 	}
 
 	$user_sql_delete = "UPDATE 202_users SET user_deleted = '1' WHERE user_id = " . $mysql['user_id'];
-	$user_result_delete = _mysqli_query($db, $user_sql_delete);
+$user_result_delete = _mysqli_query($user_sql_delete);
 
 	if ($slack) {
 		$sql = "SELECT user_name, role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id = " . $mysql['user_id'];
-		$result = _mysqli_query($db, $sql);
+		$result = _mysqli_query($sql);
 		$row = $result->fetch_assoc();
 
 		switch ($row['role_id']) {

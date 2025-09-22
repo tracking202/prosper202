@@ -18,12 +18,11 @@ use UAParser\Util\Fetcher;
 
 class FetchCommand extends Command
 {
-    /** @var string */
-    private $defaultYamlFile;
-
-    public function __construct($defaultYamlFile)
+    /**
+     * @param string $defaultYamlFile
+     */
+    public function __construct(private $defaultYamlFile)
     {
-        $this->defaultYamlFile = $defaultYamlFile;
         parent::__construct();
     }
 

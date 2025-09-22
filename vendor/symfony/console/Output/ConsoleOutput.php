@@ -36,7 +36,7 @@ class ConsoleOutput extends StreamOutput implements ConsoleOutputInterface
      * @param bool|null                     $decorated Whether to decorate messages (null for auto-guessing)
      * @param OutputFormatterInterface|null $formatter Output formatter instance (null to use default OutputFormatter)
      */
-    public function __construct(int $verbosity = self::VERBOSITY_NORMAL, bool $decorated = null, OutputFormatterInterface $formatter = null)
+    public function __construct(int $verbosity = self::VERBOSITY_NORMAL, ?bool $decorated = null, ?OutputFormatterInterface $formatter = null)
     {
         parent::__construct($this->openOutputStream(), $verbosity, $decorated, $formatter);
 
@@ -51,6 +51,7 @@ class ConsoleOutput extends StreamOutput implements ConsoleOutputInterface
     /**
      * {@inheritdoc}
      */
+    #[\Override]
     public function setDecorated($decorated)
     {
         parent::setDecorated($decorated);
@@ -60,6 +61,7 @@ class ConsoleOutput extends StreamOutput implements ConsoleOutputInterface
     /**
      * {@inheritdoc}
      */
+    #[\Override]
     public function setFormatter(OutputFormatterInterface $formatter)
     {
         parent::setFormatter($formatter);
@@ -69,6 +71,7 @@ class ConsoleOutput extends StreamOutput implements ConsoleOutputInterface
     /**
      * {@inheritdoc}
      */
+    #[\Override]
     public function setVerbosity($level)
     {
         parent::setVerbosity($level);
@@ -121,11 +124,11 @@ class ConsoleOutput extends StreamOutput implements ConsoleOutputInterface
      */
     private function isRunningOS400()
     {
-        $checks = array(
+        $checks = [
             function_exists('php_uname') ? php_uname('s') : '',
             getenv('OSTYPE'),
             PHP_OS,
-        );
+        ];
 
         return false !== stripos(implode(';', $checks), 'OS400');
     }

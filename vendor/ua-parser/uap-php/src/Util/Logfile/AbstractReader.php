@@ -14,7 +14,7 @@ use UAParser\Exception\ReaderException;
 abstract class AbstractReader implements ReaderInterface
 {
     /** @var ReaderInterface[] */
-    private static $readers = array();
+    private static $readers = [];
 
     /**
      * @param string $line
@@ -60,11 +60,11 @@ abstract class AbstractReader implements ReaderInterface
 
     protected function match($line)
     {
-        if (preg_match($this->getRegex(), $line, $matches)) {
+        if (preg_match($this->getRegex(), (string) $line, $matches)) {
             return $matches;
         }
 
-        return array();
+        return [];
     }
 
     abstract protected function getRegex();

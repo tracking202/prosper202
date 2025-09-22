@@ -18,12 +18,11 @@ use UAParser\Util\Fetcher;
 
 class UpdateCommand extends Command
 {
-    /** @var string */
-    private $resourceDirectory;
-
-    public function __construct($resourceDirectory)
+    /**
+     * @param string $resourceDirectory
+     */
+    public function __construct(private $resourceDirectory)
     {
-        $this->resourceDirectory = $resourceDirectory;
         parent::__construct();
     }
 

@@ -8,11 +8,6 @@ namespace MaxMind\Exception;
 class HttpException extends WebServiceException
 {
     /**
-     * The URI queried.
-     */
-    private $uri;
-
-    /**
      * @param string     $message    a message describing the error
      * @param int        $httpStatus the HTTP status code of the response
      * @param string     $uri        the URI used in the request
@@ -21,10 +16,9 @@ class HttpException extends WebServiceException
     public function __construct(
         $message,
         $httpStatus,
-        $uri,
-        \Exception $previous = null
+        private $uri,
+        ?\Exception $previous = null
     ) {
-        $this->uri = $uri;
         parent::__construct($message, $httpStatus, $previous);
     }
 

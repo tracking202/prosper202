@@ -155,6 +155,8 @@ include_once(CONFIG_PATH . '/functions-utils.php');
 include_once(CONFIG_PATH . '/functions-empty.php');
 
 $whatCache = false;
+$memcacheInstalled = false;
+$memcacheWorking = false;
 
 // try to connect to memcache server
 if (extension_loaded('memcache') && class_exists('Memcache')) {

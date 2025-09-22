@@ -16,14 +16,15 @@ abstract class AbstractVersionedSoftware extends AbstractSoftware
     abstract public function toVersion();
 
     /** @return string */
+    #[\Override]
     public function toString()
     {
-        return join(' ', array_filter(array($this->family, $this->toVersion())));
+        return implode(' ', array_filter([$this->family, $this->toVersion()]));
     }
 
     /** @return string */
     protected function formatVersion()
     {
-        return join('.', array_filter(func_get_args(), 'is_numeric'));
+        return implode('.', array_filter(func_get_args(), 'is_numeric'));
     }
 }

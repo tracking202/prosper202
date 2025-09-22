@@ -18,23 +18,21 @@ namespace Symfony\Component\Finder\Iterator;
  */
 class ExcludeDirectoryFilterIterator extends \FilterIterator implements \RecursiveIterator
 {
-    private $iterator;
     private $isRecursive;
-    private $excludedDirs = array();
+    private $excludedDirs = [];
     private $excludedPattern;
 
     /**
      * @param \Iterator $iterator    The Iterator to filter
      * @param array     $directories An array of directories to exclude
      */
-    public function __construct(\Iterator $iterator, array $directories)
+    public function __construct(private readonly \Iterator $iterator, array $directories)
     {
-        $this->iterator = $iterator;
-        $this->isRecursive = $iterator instanceof \RecursiveIterator;
-        $patterns = array();
+        $this->isRecursive = $this->iterator instanceof \RecursiveIterator;
+        $patterns = [];
         foreach ($directories as $directory) {
-            $directory = rtrim($directory, '/');
-            if (!$this->isRecursive || false !== strpos($directory, '/')) {
+            $directory = rtrim((string) $directory, '/');
+            if (!$this->isRecursive || str_contains($directory, '/')) {
                 $patterns[] = preg_quote($directory, '#');
             } else {
                 $this->excludedDirs[$directory] = true;
@@ -44,7 +42,7 @@ class ExcludeDirectoryFilterIterator extends \FilterIterator implements \Recursi
             $this->excludedPattern = '#(?:^|/)(?:'.implode('|', $patterns).')(?:/|$)#';
         }
 
-        parent::__construct($iterator);
+        parent::__construct($this->iterator);
     }
 
     /**
@@ -75,7 +73,7 @@ class ExcludeDirectoryFilterIterator extends \FilterIterator implements \Recursi
 
     public function getChildren()
     {
-        $children = new self($this->iterator->getChildren(), array());
+        $children = new self($this->iterator->getChildren(), []);
         $children->excludedDirs = $this->excludedDirs;
         $children->excludedPattern = $this->excludedPattern;
 

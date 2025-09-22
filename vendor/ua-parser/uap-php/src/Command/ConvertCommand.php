@@ -18,16 +18,12 @@ use UAParser\Util\Converter;
 
 class ConvertCommand extends Command
 {
-    /** @var string */
-    private $resourceDirectory;
-
-    /** @var string */
-    private $defaultYamlFile;
-
-    public function __construct($resourceDirectory, $defaultYamlFile)
+    /**
+     * @param string $resourceDirectory
+     * @param string $defaultYamlFile
+     */
+    public function __construct(private $resourceDirectory, private $defaultYamlFile)
     {
-        $this->resourceDirectory = $resourceDirectory;
-        $this->defaultYamlFile = $defaultYamlFile;
         parent::__construct();
     }
 

@@ -38,7 +38,7 @@ use Symfony\Component\Console\Exception\RuntimeException;
  * @see http://www.gnu.org/software/libc/manual/html_node/Argument-Syntax.html
  * @see http://www.opengroup.org/onlinepubs/009695399/basedefs/xbd_chap12.html#tag_12_02
  */
-class ArgvInput extends Input
+class ArgvInput extends Input implements \Stringable
 {
     private $tokens;
     private $parsed;
@@ -47,7 +47,7 @@ class ArgvInput extends Input
      * @param array|null           $argv       An array of parameters from the CLI (in the argv format)
      * @param InputDefinition|null $definition A InputDefinition instance
      */
-    public function __construct(array $argv = null, InputDefinition $definition = null)
+    public function __construct(?array $argv = null, ?InputDefinition $definition = null)
     {
         if (null === $argv) {
             $argv = $_SERVER['argv'];
@@ -78,7 +78,7 @@ class ArgvInput extends Input
                 $this->parseArgument($token);
             } elseif ($parseOptions && '--' == $token) {
                 $parseOptions = false;
-            } elseif ($parseOptions && 0 === strpos($token, '--')) {
+            } elseif ($parseOptions && str_starts_with((string) $token, '--')) {
                 $this->parseLongOption($token);
             } elseif ($parseOptions && '-' === $token[0] && '-' !== $token) {
                 $this->parseShortOption($token);
@@ -168,7 +168,7 @@ class ArgvInput extends Input
         // if input is expecting another argument, add it
         if ($this->definition->hasArgument($c)) {
             $arg = $this->definition->getArgument($c);
-            $this->arguments[$arg->getName()] = $arg->isArray() ? array($token) : $token;
+            $this->arguments[$arg->getName()] = $arg->isArray() ? [$token] : $token;
 
         // if last argument isArray(), append token to last argument
         } elseif ($this->definition->hasArgument($c - 1) && $this->definition->getArgument($c - 1)->isArray()) {
@@ -223,11 +223,11 @@ class ArgvInput extends Input
             throw new RuntimeException(sprintf('The "--%s" option does not accept a value.', $name));
         }
 
-        if (in_array($value, array('', null), true) && $option->acceptValue() && count($this->parsed)) {
+        if (in_array($value, ['', null], true) && $option->acceptValue() && count($this->parsed)) {
             // if option accepts an optional or mandatory argument
             // let's see if there is one provided
             $next = array_shift($this->parsed);
-            if ((isset($next[0]) && '-' !== $next[0]) || in_array($next, array('', null), true)) {
+            if ((isset($next[0]) && '-' !== $next[0]) || in_array($next, ['', null], true)) {
                 $value = $next;
             } else {
                 array_unshift($this->parsed, $next);
@@ -280,8 +280,8 @@ class ArgvInput extends Input
                 // Options with values:
                 //   For long options, test for '--option=' at beginning
                 //   For short options, test for '-o' at beginning
-                $leading = 0 === strpos($value, '--') ? $value.'=' : $value;
-                if ($token === $value || '' !== $leading && 0 === strpos($token, $leading)) {
+                $leading = str_starts_with((string) $value, '--') ? $value.'=' : $value;
+                if ($token === $value || '' !== $leading && str_starts_with((string) $token, (string) $leading)) {
                     return true;
                 }
             }
@@ -311,9 +311,9 @@ class ArgvInput extends Input
                 // Options with values:
                 //   For long options, test for '--option=' at beginning
                 //   For short options, test for '-o' at beginning
-                $leading = 0 === strpos($value, '--') ? $value.'=' : $value;
-                if ('' !== $leading && 0 === strpos($token, $leading)) {
-                    return substr($token, strlen($leading));
+                $leading = str_starts_with((string) $value, '--') ? $value.'=' : $value;
+                if ('' !== $leading && str_starts_with((string) $token, (string) $leading)) {
+                    return substr((string) $token, strlen((string) $leading));
                 }
             }
         }
@@ -326,7 +326,7 @@ class ArgvInput extends Input
      *
      * @return string
      */
-    public function __toString()
+    public function __toString(): string
     {
         $tokens = array_map(function ($token) {
             if (preg_match('{^(-[^=]+=)(.+)}', $token, $match)) {

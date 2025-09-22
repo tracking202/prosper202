@@ -2226,7 +2226,7 @@ function query(
     }
     // set limit preferences
     if ($pref_order) {
-        $orderClause = trim($pref_order);
+        $orderClause = trim((string) $pref_order);
         if ($orderClause !== '') {
             if (!preg_match('/^\s*ORDER\s+BY/i', $orderClause)) {
                 $orderClause = ' ORDER BY ' . $orderClause;

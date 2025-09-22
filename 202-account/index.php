@@ -3,7 +3,7 @@ include_once(str_repeat("../", 1) . '202-config/connect.php');
 
 AUTH::require_user();
 
-$strProtocol = stripos($_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+$strProtocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
 
 template_top();  ?>
 

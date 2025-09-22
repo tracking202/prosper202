@@ -484,7 +484,7 @@ function info_top()
 	{
 		$url = "http" . (!empty($_SERVER['HTTPS']) ? "s" : "") .
 			"://" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-		$dirs = explode('/', trim(preg_replace('/\/+/', '/', (string) $path), '/'));
+		$dirs = explode('/', trim((string) preg_replace('/\/+/', '/', (string) $path), '/'));
 		foreach ($dirs as $key => $value)
 			if (empty($value))  unset($dirs[$key]);
 		$parsedUrl = parse_url($url);

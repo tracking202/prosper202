@@ -25,15 +25,13 @@ use Symfony\Component\Console\Output\OutputInterface;
  */
 class CommandTester
 {
-    private $command;
     private $input;
     private $output;
-    private $inputs = array();
+    private $inputs = [];
     private $statusCode;
 
-    public function __construct(Command $command)
+    public function __construct(private readonly Command $command)
     {
-        $this->command = $command;
     }
 
     /**
@@ -50,7 +48,7 @@ class CommandTester
      *
      * @return int The command exit code
      */
-    public function execute(array $input, array $options = array())
+    public function execute(array $input, array $options = [])
     {
         // set the command name automatically if the application requires
         // this argument and no command name was passed
@@ -58,7 +56,7 @@ class CommandTester
             && (null !== $application = $this->command->getApplication())
             && $application->getDefinition()->hasArgument('command')
         ) {
-            $input = array_merge(array('command' => $this->command->getName()), $input);
+            $input = array_merge(['command' => $this->command->getName()], $input);
         }
 
         $this->input = new ArrayInput($input);
@@ -71,7 +69,7 @@ class CommandTester
         }
 
         $this->output = new StreamOutput(fopen('php://memory', 'w', false));
-        $this->output->setDecorated(isset($options['decorated']) ? $options['decorated'] : false);
+        $this->output->setDecorated($options['decorated'] ?? false);
         if (isset($options['verbosity'])) {
             $this->output->setVerbosity($options['verbosity']);
         }

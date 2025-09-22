@@ -16,7 +16,7 @@ class InvalidArgumentException extends BaseInvalidArgumentException
     public static function oneOfCommandArguments()
     {
         return new static(
-            sprintf('One of the command arguments "%s" is required', join('", "', func_get_args()))
+            sprintf('One of the command arguments "%s" is required', implode('", "', func_get_args()))
         );
     }
 

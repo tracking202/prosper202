@@ -120,7 +120,7 @@ if (isset($_POST['maxmind'])) {
 
 template_top('Administration');
 $click_sql = "SELECT `AUTO_INCREMENT`-1 as clicks FROM  INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '202_clicks_counter';";
-$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
+$click_row = memcache_mysql_fetch_assoc($click_sql);
 $clicks = $click_row['clicks'];
 //$click_sql = "SELECT count(*) clicks FROM 202_clicks_total";
 //$click_row = memcache_mysql_fetch_assoc($click_sql);

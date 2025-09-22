@@ -28,6 +28,7 @@ class SymfonyQuestionHelper extends QuestionHelper
     /**
      * {@inheritdoc}
      */
+    #[\Override]
     protected function writePrompt(OutputInterface $output, Question $question)
     {
         $text = OutputFormatter::escapeTrailingBackslash($question->getQuestion());
@@ -72,7 +73,7 @@ class SymfonyQuestionHelper extends QuestionHelper
             $width = max(array_map('strlen', array_keys($question->getChoices())));
 
             foreach ($question->getChoices() as $key => $value) {
-                $output->writeln(sprintf("  [<comment>%-${width}s</comment>] %s", $key, $value));
+                $output->writeln(sprintf("  [<comment>%-{$width}s</comment>] %s", $key, $value));
             }
         }
 
@@ -82,6 +83,7 @@ class SymfonyQuestionHelper extends QuestionHelper
     /**
      * {@inheritdoc}
      */
+    #[\Override]
     protected function writeError(OutputInterface $output, \Exception $error)
     {
         if ($output instanceof SymfonyStyle) {

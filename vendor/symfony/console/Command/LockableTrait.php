@@ -49,7 +49,7 @@ trait LockableTrait
             $store = new FlockStore();
         }
 
-        $this->lock = (new Factory($store))->createLock($name ?: $this->getName());
+        $this->lock = new Factory($store)->createLock($name ?: $this->getName());
         if (!$this->lock->acquire($blocking)) {
             $this->lock = null;
 

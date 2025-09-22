@@ -52,7 +52,8 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 
 	if (!$error) {
 
-		$user_pass = salt_user_pass($_POST['user_pass']);
+		$hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
+		$user_pass = $hasher($_POST['user_pass']);
 		$mysql['user_pass'] = $db->real_escape_string($user_pass);
 
 		$mysql['user_id'] = $db->real_escape_string($user_row['user_id']);

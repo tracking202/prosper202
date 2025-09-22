@@ -24,13 +24,13 @@ class HelperSet implements \IteratorAggregate
     /**
      * @var Helper[]
      */
-    private $helpers = array();
+    private $helpers = [];
     private $command;
 
     /**
      * @param Helper[] $helpers An array of helper
      */
-    public function __construct(array $helpers = array())
+    public function __construct(array $helpers = [])
     {
         foreach ($helpers as $alias => $helper) {
             $this->set($helper, is_int($alias) ? null : $alias);
@@ -83,7 +83,7 @@ class HelperSet implements \IteratorAggregate
         return $this->helpers[$name];
     }
 
-    public function setCommand(Command $command = null)
+    public function setCommand(?Command $command = null)
     {
         $this->command = $command;
     }

@@ -38,7 +38,7 @@ final class ProgressBar
     private $stepWidth;
     private $percent = 0.0;
     private $formatLineCount;
-    private $messages = array();
+    private $messages = [];
     private $overwrite = true;
     private $terminal;
     private $firstRun = true;
@@ -101,7 +101,7 @@ final class ProgressBar
             self::$formatters = self::initPlaceholderFormatters();
         }
 
-        return isset(self::$formatters[$name]) ? self::$formatters[$name] : null;
+        return self::$formatters[$name] ?? null;
     }
 
     /**
@@ -134,7 +134,7 @@ final class ProgressBar
             self::$formats = self::initFormats();
         }
 
-        return isset(self::$formats[$name]) ? self::$formats[$name] : null;
+        return self::$formats[$name] ?? null;
     }
 
     /**
@@ -247,7 +247,7 @@ final class ProgressBar
      *
      * @param int|null $max Number of steps to complete the bar (0 if indeterminate), null to leave unchanged
      */
-    public function start(int $max = null)
+    public function start(?int $max = null)
     {
         $this->startTime = time();
         $this->step = 0;
@@ -397,22 +397,17 @@ final class ProgressBar
 
     private function determineBestFormat(): string
     {
-        switch ($this->output->getVerbosity()) {
-            // OutputInterface::VERBOSITY_QUIET: display is disabled anyway
-            case OutputInterface::VERBOSITY_VERBOSE:
-                return $this->max ? 'verbose' : 'verbose_nomax';
-            case OutputInterface::VERBOSITY_VERY_VERBOSE:
-                return $this->max ? 'very_verbose' : 'very_verbose_nomax';
-            case OutputInterface::VERBOSITY_DEBUG:
-                return $this->max ? 'debug' : 'debug_nomax';
-            default:
-                return $this->max ? 'normal' : 'normal_nomax';
-        }
+        return match ($this->output->getVerbosity()) {
+            OutputInterface::VERBOSITY_VERBOSE => $this->max ? 'verbose' : 'verbose_nomax',
+            OutputInterface::VERBOSITY_VERY_VERBOSE => $this->max ? 'very_verbose' : 'very_verbose_nomax',
+            OutputInterface::VERBOSITY_DEBUG => $this->max ? 'debug' : 'debug_nomax',
+            default => $this->max ? 'normal' : 'normal_nomax',
+        };
     }
 
     private static function initPlaceholderFormatters(): array
     {
-        return array(
+        return [
             'bar' => function (ProgressBar $bar, OutputInterface $output) {
                 $completeBars = floor($bar->getMaxSteps() > 0 ? $bar->getProgressPercent() * $bar->getBarWidth() : $bar->getProgress() % $bar->getBarWidth());
                 $display = str_repeat($bar->getBarCharacter(), $completeBars);
@@ -423,9 +418,7 @@ final class ProgressBar
 
                 return $display;
             },
-            'elapsed' => function (ProgressBar $bar) {
-                return Helper::formatTime(time() - $bar->getStartTime());
-            },
+            'elapsed' => fn(ProgressBar $bar) => Helper::formatTime(time() - $bar->getStartTime()),
             'remaining' => function (ProgressBar $bar) {
                 if (!$bar->getMaxSteps()) {
                     throw new LogicException('Unable to display the remaining time if the maximum number of steps is not set.');
@@ -452,24 +445,16 @@ final class ProgressBar
 
                 return Helper::formatTime($estimated);
             },
-            'memory' => function (ProgressBar $bar) {
-                return Helper::formatMemory(memory_get_usage(true));
-            },
-            'current' => function (ProgressBar $bar) {
-                return str_pad($bar->getProgress(), $bar->getStepWidth(), ' ', STR_PAD_LEFT);
-            },
-            'max' => function (ProgressBar $bar) {
-                return $bar->getMaxSteps();
-            },
-            'percent' => function (ProgressBar $bar) {
-                return floor($bar->getProgressPercent() * 100);
-            },
-        );
+            'memory' => fn(ProgressBar $bar) => Helper::formatMemory(memory_get_usage(true)),
+            'current' => fn(ProgressBar $bar) => str_pad($bar->getProgress(), $bar->getStepWidth(), ' ', STR_PAD_LEFT),
+            'max' => fn(ProgressBar $bar) => $bar->getMaxSteps(),
+            'percent' => fn(ProgressBar $bar) => floor($bar->getProgressPercent() * 100),
+        ];
     }
 
     private static function initFormats(): array
     {
-        return array(
+        return [
             'normal' => ' %current%/%max% [%bar%] %percent:3s%%',
             'normal_nomax' => ' %current% [%bar%]',
 
@@ -481,7 +466,7 @@ final class ProgressBar
 
             'debug' => ' %current%/%max% [%bar%] %percent:3s%% %elapsed:6s%/%estimated:-6s% %memory:6s%',
             'debug_nomax' => ' %current% [%bar%] %elapsed:6s% %memory:6s%',
-        );
+        ];
     }
 
     private function buildLine(): string
@@ -502,12 +487,10 @@ final class ProgressBar
 
             return $text;
         };
-        $line = preg_replace_callback($regex, $callback, $this->format);
+        $line = preg_replace_callback($regex, $callback, (string) $this->format);
 
         // gets string length for each sub line with multiline format
-        $linesLength = array_map(function ($subLine) {
-            return Helper::strlenWithoutDecoration($this->output->getFormatter(), rtrim($subLine, "\r"));
-        }, explode("\n", $line));
+        $linesLength = array_map(fn($subLine) => Helper::strlenWithoutDecoration($this->output->getFormatter(), rtrim((string) $subLine, "\r")), explode("\n", (string) $line));
 
         $linesWidth = max($linesLength);
 
@@ -518,6 +501,6 @@ final class ProgressBar
 
         $this->setBarWidth($this->barWidth - $linesWidth + $terminalWidth);
 
-        return preg_replace_callback($regex, $callback, $this->format);
+        return preg_replace_callback($regex, $callback, (string) $this->format);
     }
 }

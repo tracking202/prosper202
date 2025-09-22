@@ -7,16 +7,13 @@ namespace GeoIp2\Model;
  */
 abstract class AbstractModel implements \JsonSerializable
 {
-    protected $raw;
-
     /**
      * @ignore
      *
      * @param mixed $raw
      */
-    public function __construct($raw)
+    public function __construct(protected $raw)
     {
-        $this->raw = $raw;
     }
 
     /**
@@ -29,7 +26,7 @@ abstract class AbstractModel implements \JsonSerializable
         if (isset($this->raw[$field])) {
             return $this->raw[$field];
         }
-        if (preg_match('/^is_/', $field)) {
+        if (preg_match('/^is_/', (string) $field)) {
             return false;
         }
 

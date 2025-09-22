@@ -37,7 +37,7 @@ class Command
     private $application;
     private $name;
     private $processTitle;
-    private $aliases = array();
+    private $aliases = [];
     private $definition;
     private $hidden = false;
     private $help;
@@ -46,8 +46,8 @@ class Command
     private $applicationDefinitionMerged = false;
     private $applicationDefinitionMergedWithArgs = false;
     private $code;
-    private $synopsis = array();
-    private $usages = array();
+    private $synopsis = [];
+    private $usages = [];
     private $helperSet;
 
     /**
@@ -55,7 +55,7 @@ class Command
      */
     public static function getDefaultName()
     {
-        $class = get_called_class();
+        $class = static::class;
         $r = new \ReflectionProperty($class, 'defaultName');
 
         return $class === $r->class ? static::$defaultName : null;
@@ -66,7 +66,7 @@ class Command
      *
      * @throws LogicException When the command name is empty
      */
-    public function __construct(string $name = null)
+    public function __construct(?string $name = null)
     {
         $this->definition = new InputDefinition();
 
@@ -87,7 +87,7 @@ class Command
         $this->ignoreValidationErrors = true;
     }
 
-    public function setApplication(Application $application = null)
+    public function setApplication(?Application $application = null)
     {
         $this->application = $application;
         if ($application) {
@@ -156,7 +156,7 @@ class Command
      *
      * @see setCode()
      */
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): never
     {
         throw new LogicException('You must override the execute() method in the concrete command class.');
     }
@@ -520,14 +520,14 @@ class Command
     {
         $name = $this->name;
 
-        $placeholders = array(
+        $placeholders = [
             '%command.name%',
             '%command.full_name%',
-        );
-        $replacements = array(
+        ];
+        $replacements = [
             $name,
             $_SERVER['PHP_SELF'].' '.$name,
-        );
+        ];
 
         return str_replace($placeholders, $replacements, $this->getHelp() ?: $this->getDescription());
     }
@@ -593,7 +593,7 @@ class Command
      */
     public function addUsage($usage)
     {
-        if (0 !== strpos($usage, $this->name)) {
+        if (!str_starts_with($usage, (string) $this->name)) {
             $usage = sprintf('%s %s', $this->name, $usage);
         }
 

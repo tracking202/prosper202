@@ -43,7 +43,6 @@ use MaxMind\WebService\Client as WsClient;
  */
 class Client implements ProviderInterface
 {
-    private $locales;
     private $client;
     private static $basePath = '/geoip/v2.1';
 
@@ -67,11 +66,9 @@ class Client implements ProviderInterface
     public function __construct(
         $userId,
         $licenseKey,
-        $locales = ['en'],
+        private $locales = ['en'],
         $options = []
     ) {
-        $this->locales = $locales;
-
         // This is for backwards compatibility. Do not remove except for a
         // major version bump.
         if (is_string($options)) {

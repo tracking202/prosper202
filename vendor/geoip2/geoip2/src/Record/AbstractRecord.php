@@ -13,7 +13,7 @@ abstract class AbstractRecord implements \JsonSerializable
      */
     public function __construct($record)
     {
-        $this->record = isset($record) ? $record : [];
+        $this->record = $record ?? [];
     }
 
     /**
@@ -29,7 +29,7 @@ abstract class AbstractRecord implements \JsonSerializable
         if ($this->__isset($attr)) {
             return $this->record[$key];
         } elseif ($this->validAttribute($attr)) {
-            if (preg_match('/^is_/', $key)) {
+            if (preg_match('/^is_/', (string) $key)) {
                 return false;
             }
 
@@ -46,7 +46,7 @@ abstract class AbstractRecord implements \JsonSerializable
 
     private function attributeToKey($attr)
     {
-        return strtolower(preg_replace('/([A-Z])/', '_\1', $attr));
+        return strtolower((string) preg_replace('/([A-Z])/', '_\1', (string) $attr));
     }
 
     private function validAttribute($attr)

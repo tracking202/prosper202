@@ -87,7 +87,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['user_time_register'] = $db->real_escape_string(time());
 
 		//md5 the user pass with salt
-	 	$user_pass = salt_user_pass($_POST['user_pass']);
+	 	$hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
+	 	$user_pass = $hasher($_POST['user_pass']);
 		$mysql['user_pass'] = $db->real_escape_string($user_pass);      
 
  		$hash = md5(uniqid(random_int(0, mt_getrandmax()), TRUE));

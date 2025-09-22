@@ -52,14 +52,14 @@ class LogfileCommand extends Command
                 'i',
                 InputOption::VALUE_IS_ARRAY | InputOption::VALUE_REQUIRED,
                 'Include glob expressions for log files in the log directory',
-                array('*.log', '*.log*.gz', '*.log*.bz2')
+                ['*.log', '*.log*.gz', '*.log*.bz2']
             )
             ->addOption(
                 'exclude',
                 'e',
                 InputOption::VALUE_IS_ARRAY | InputOption::VALUE_REQUIRED,
                 'Exclude glob expressions for log files in the log directory',
-                array('*error*')
+                ['*error*']
             )
         ;
     }
@@ -71,7 +71,7 @@ class LogfileCommand extends Command
         }
 
         $parser = Parser::create();
-        $undefinedClients = array();
+        $undefinedClients = [];
         /** @var $file SplFileInfo */
         foreach ($this->getFiles($input) as $file) {
 
@@ -102,7 +102,7 @@ class LogfileCommand extends Command
 
                 try {
                     $userAgentString = $reader->read($line);
-                } catch (ReaderException $e) {
+                } catch (ReaderException) {
                     $count = $this->outputProgress($output, 'E', $count, $totalCount);
                     continue;
                 }
@@ -112,7 +112,7 @@ class LogfileCommand extends Command
                 $result = $this->getResult($client);
                 if ($result !== '.') {
                     $undefinedClients[] = json_encode(
-                        array($client->toString(), $userAgentString),
+                        [$client->toString(), $userAgentString],
                         JSON_UNESCAPED_SLASHES
                     );
                 }
@@ -126,13 +126,13 @@ class LogfileCommand extends Command
         $undefinedClients = $this->filter($undefinedClients);
 
         $fs = new Filesystem();
-        $fs->dumpFile($input->getArgument('output'), join(PHP_EOL, $undefinedClients));
+        $fs->dumpFile($input->getArgument('output'), implode(PHP_EOL, $undefinedClients));
     }
 
     private function outputProgress(OutputInterface $output, $result, $count, $totalCount, $end = false)
     {
         if (($count % 70) === 0 || $end) {
-            $formatString = '%s  %' . strlen($totalCount) . 'd / %-' . strlen($totalCount) . 'd (%3d%%)';
+            $formatString = '%s  %' . strlen((string) $totalCount) . 'd / %-' . strlen((string) $totalCount) . 'd (%3d%%)';
             $result = $end ? str_repeat(' ', 70 - ($count % 70)) : $result;
             $output->writeln(sprintf($formatString, $result, $count, $totalCount, $count / $totalCount * 100));
         } else {
@@ -165,14 +165,14 @@ class LogfileCommand extends Command
 
         if ($input->getOption('log-file')) {
             $file = $input->getOption('log-file');
-            $finder->append(Finder::create()->in(dirname($file))->name(basename($file)));
+            $finder->append(Finder::create()->in(dirname((string) $file))->name(basename((string) $file)));
         }
 
         if ($input->getOption('log-dir')) {
             $dirFinder = Finder::create()
                 ->in($input->getOption('log-dir'));
-            array_map(array($dirFinder, 'name'), $input->getOption('include'));
-            array_map(array($dirFinder, 'notName'), $input->getOption('exclude'));
+            array_map($dirFinder->name(...), $input->getOption('include'));
+            array_map($dirFinder->notName(...), $input->getOption('exclude'));
 
             $finder->append($dirFinder);
         }
@@ -187,19 +187,11 @@ class LogfileCommand extends Command
 
     private function getPath(SplFileInfo $file)
     {
-        switch ($file->getExtension()) {
-            case 'gz':
-                $path = 'compress.zlib://' . $file->getPathname();
-                break;
-
-            case 'bz2':
-                $path = 'compress.bzip2://' . $file->getPathname();
-                break;
-
-            default:
-                $path = $file->getPathname();
-                break;
-        }
+        $path = match ($file->getExtension()) {
+            'gz' => 'compress.zlib://' . $file->getPathname(),
+            'bz2' => 'compress.bzip2://' . $file->getPathname(),
+            default => $file->getPathname(),
+        };
 
         return $path;
     }

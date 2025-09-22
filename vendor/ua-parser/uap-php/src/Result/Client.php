@@ -21,15 +21,11 @@ class Client extends AbstractClient
     /** @var Device */
     public $device;
 
-    /** @var string */
-    public $originalUserAgent;
-
     /**
      * @param string $originalUserAgent
      */
-    public function __construct($originalUserAgent)
+    public function __construct(public $originalUserAgent)
     {
-        $this->originalUserAgent = $originalUserAgent;
     }
 
     public function toString()

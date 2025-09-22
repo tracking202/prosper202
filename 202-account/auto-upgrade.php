@@ -45,7 +45,7 @@ if (($_POST['start_upgrade'] == '1') == false) {
 	//Do check for landing page upgrade to ssl 
 	$ssl_upgrade = '1'; //default to upgrade ssl
 
-	if (version_compare(PROSPER202::prosper202_version(), '1.9.55', '<')) {
+	if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) {
 		if (isset($_POST['lp_ssl']) && $_POST['lp_ssl'] == 0) {
 			$ssl_upgrade = '0';  //set to no upgrade if users doesn't want it
 		}
@@ -214,7 +214,7 @@ if ($update_needed == true) {
 					</div>
 					<br></br>
 				<?php } ?>
-				<?php if (version_compare(PROSPER202::prosper202_version(), '1.9.55', '<')) { ?>
+				<?php if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) { ?>
 					<div class="form-group">
 						Google Chrome 80+ requires all landing pages to be HTTPS, or your tracking won't work. Can Prosper202 automatically upgrade your old landing page URLs to HTTPS?<br />
 						<br></br>

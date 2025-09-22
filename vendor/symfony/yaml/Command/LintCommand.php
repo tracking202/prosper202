@@ -36,7 +36,7 @@ class LintCommand extends Command
     private $directoryIteratorProvider;
     private $isReadableProvider;
 
-    public function __construct(string $name = null, callable $directoryIteratorProvider = null, callable $isReadableProvider = null)
+    public function __construct(?string $name = null, ?callable $directoryIteratorProvider = null, ?callable $isReadableProvider = null)
     {
         parent::__construct($name);
 
@@ -89,14 +89,14 @@ EOF
                 throw new \RuntimeException('Please provide a filename or pipe file content to STDIN.');
             }
 
-            return $this->display($io, array($this->validate($stdin, $flags)));
+            return $this->display($io, [$this->validate($stdin, $flags)]);
         }
 
         if (!$this->isReadable($filename)) {
             throw new \RuntimeException(sprintf('File or directory "%s" is not readable.', $filename));
         }
 
-        $filesInfo = array();
+        $filesInfo = [];
         foreach ($this->getFiles($filename) as $file) {
             $filesInfo[] = $this->validate(file_get_contents($file), $flags, $file);
         }
@@ -117,24 +117,21 @@ EOF
         try {
             $this->getParser()->parse($content, Yaml::PARSE_CONSTANT | $flags);
         } catch (ParseException $e) {
-            return array('file' => $file, 'line' => $e->getParsedLine(), 'valid' => false, 'message' => $e->getMessage());
+            return ['file' => $file, 'line' => $e->getParsedLine(), 'valid' => false, 'message' => $e->getMessage()];
         } finally {
             restore_error_handler();
         }
 
-        return array('file' => $file, 'valid' => true);
+        return ['file' => $file, 'valid' => true];
     }
 
     private function display(SymfonyStyle $io, array $files)
     {
-        switch ($this->format) {
-            case 'txt':
-                return $this->displayTxt($io, $files);
-            case 'json':
-                return $this->displayJson($io, $files);
-            default:
-                throw new \InvalidArgumentException(sprintf('The format "%s" is not supported.', $this->format));
-        }
+        return match ($this->format) {
+            'txt' => $this->displayTxt($io, $files),
+            'json' => $this->displayJson($io, $files),
+            default => throw new \InvalidArgumentException(sprintf('The format "%s" is not supported.', $this->format)),
+        };
     }
 
     private function displayTxt(SymfonyStyle $io, array $filesInfo)
@@ -165,7 +162,7 @@ EOF
     {
         $errors = 0;
 
-        array_walk($filesInfo, function (&$v) use (&$errors) {
+        array_walk($filesInfo, function (&$v) use (&$errors): void {
             $v['file'] = (string) $v['file'];
             if (!$v['valid']) {
                 ++$errors;
@@ -186,7 +183,7 @@ EOF
         }
 
         foreach ($this->getDirectoryIterator($fileOrDirectory) as $file) {
-            if (!in_array($file->getExtension(), array('yml', 'yaml'))) {
+            if (!in_array($file->getExtension(), ['yml', 'yaml'])) {
                 continue;
             }
 
@@ -219,12 +216,10 @@ EOF
 
     private function getDirectoryIterator($directory)
     {
-        $default = function ($directory) {
-            return new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::FOLLOW_SYMLINKS),
-                \RecursiveIteratorIterator::LEAVES_ONLY
-            );
-        };
+        $default = (fn($directory) => new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::FOLLOW_SYMLINKS),
+            \RecursiveIteratorIterator::LEAVES_ONLY
+        ));
 
         if (null !== $this->directoryIteratorProvider) {
             return call_user_func($this->directoryIteratorProvider, $directory, $default);
@@ -235,9 +230,7 @@ EOF
 
     private function isReadable($fileOrDirectory)
     {
-        $default = function ($fileOrDirectory) {
-            return is_readable($fileOrDirectory);
-        };
+        $default = (fn($fileOrDirectory) => is_readable($fileOrDirectory));
 
         if (null !== $this->isReadableProvider) {
             return call_user_func($this->isReadableProvider, $fileOrDirectory, $default);

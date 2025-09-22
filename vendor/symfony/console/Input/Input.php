@@ -29,11 +29,11 @@ abstract class Input implements InputInterface, StreamableInputInterface
 {
     protected $definition;
     protected $stream;
-    protected $options = array();
-    protected $arguments = array();
+    protected $options = [];
+    protected $arguments = [];
     protected $interactive = true;
 
-    public function __construct(InputDefinition $definition = null)
+    public function __construct(?InputDefinition $definition = null)
     {
         if (null === $definition) {
             $this->definition = new InputDefinition();
@@ -48,8 +48,8 @@ abstract class Input implements InputInterface, StreamableInputInterface
      */
     public function bind(InputDefinition $definition)
     {
-        $this->arguments = array();
-        $this->options = array();
+        $this->arguments = [];
+        $this->options = [];
         $this->definition = $definition;
 
         $this->parse();
@@ -68,9 +68,7 @@ abstract class Input implements InputInterface, StreamableInputInterface
         $definition = $this->definition;
         $givenArguments = $this->arguments;
 
-        $missingArguments = array_filter(array_keys($definition->getArguments()), function ($argument) use ($definition, $givenArguments) {
-            return !array_key_exists($argument, $givenArguments) && $definition->getArgument($argument)->isRequired();
-        });
+        $missingArguments = array_filter(array_keys($definition->getArguments()), fn($argument) => !array_key_exists($argument, $givenArguments) && $definition->getArgument($argument)->isRequired());
 
         if (count($missingArguments) > 0) {
             throw new RuntimeException(sprintf('Not enough arguments (missing: "%s").', implode(', ', $missingArguments)));
@@ -110,7 +108,7 @@ abstract class Input implements InputInterface, StreamableInputInterface
             throw new InvalidArgumentException(sprintf('The "%s" argument does not exist.', $name));
         }
 
-        return isset($this->arguments[$name]) ? $this->arguments[$name] : $this->definition->getArgument($name)->getDefault();
+        return $this->arguments[$name] ?? $this->definition->getArgument($name)->getDefault();
     }
 
     /**

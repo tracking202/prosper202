@@ -21,23 +21,19 @@ use Symfony\Component\Console\Exception\LogicException;
  */
 class Question
 {
-    private $question;
     private $attempts;
     private $hidden = false;
     private $hiddenFallback = true;
     private $autocompleterValues;
     private $validator;
-    private $default;
     private $normalizer;
 
     /**
      * @param string $question The question to ask to the user
      * @param mixed  $default  The default answer to return if the user enters nothing
      */
-    public function __construct(string $question, $default = null)
+    public function __construct(private readonly string $question, private $default = null)
     {
-        $this->question = $question;
-        $this->default = $default;
     }
 
     /**
@@ -160,7 +156,7 @@ class Question
      *
      * @return $this
      */
-    public function setValidator(callable $validator = null)
+    public function setValidator(?callable $validator = null)
     {
         $this->validator = $validator;
 

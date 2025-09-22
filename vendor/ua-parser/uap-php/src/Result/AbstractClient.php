@@ -10,13 +10,13 @@ declare(strict_types=1);
  */
 namespace UAParser\Result;
 
-abstract class AbstractClient
+abstract class AbstractClient implements \Stringable
 {
     /** @return string */
     abstract public function toString();
 
     /** @return string */
-    public function __toString()
+    public function __toString(): string
     {
         return $this->toString();
     }

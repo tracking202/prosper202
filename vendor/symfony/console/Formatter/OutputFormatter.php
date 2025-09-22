@@ -20,8 +20,7 @@ use Symfony\Component\Console\Exception\InvalidArgumentException;
  */
 class OutputFormatter implements OutputFormatterInterface
 {
-    private $decorated;
-    private $styles = array();
+    private $styles = [];
     private $styleStack;
 
     /**
@@ -49,7 +48,7 @@ class OutputFormatter implements OutputFormatterInterface
      */
     public static function escapeTrailingBackslash($text)
     {
-        if ('\\' === substr($text, -1)) {
+        if (str_ends_with($text, '\\')) {
             $len = strlen($text);
             $text = rtrim($text, '\\');
             $text = str_replace("\0", '', $text);
@@ -65,10 +64,8 @@ class OutputFormatter implements OutputFormatterInterface
      * @param bool                            $decorated Whether this formatter should actually decorate strings
      * @param OutputFormatterStyleInterface[] $styles    Array of "name => FormatterStyle" instances
      */
-    public function __construct(bool $decorated = false, array $styles = array())
+    public function __construct(private bool $decorated = false, array $styles = [])
     {
-        $this->decorated = $decorated;
-
         $this->setStyle('error', new OutputFormatterStyle('white', 'red'));
         $this->setStyle('info', new OutputFormatterStyle('green'));
         $this->setStyle('comment', new OutputFormatterStyle('yellow'));
@@ -151,13 +148,13 @@ class OutputFormatter implements OutputFormatterInterface
             if ($open = '/' != $text[1]) {
                 $tag = $matches[1][$i][0];
             } else {
-                $tag = isset($matches[3][$i][0]) ? $matches[3][$i][0] : '';
+                $tag = $matches[3][$i][0] ?? '';
             }
 
             if (!$open && !$tag) {
                 // </>
                 $this->styleStack->pop();
-            } elseif (false === $style = $this->createStyleFromString(strtolower($tag))) {
+            } elseif (false === $style = $this->createStyleFromString(strtolower((string) $tag))) {
                 $output .= $this->applyCurrentStyle($text);
             } elseif ($open) {
                 $this->styleStack->push($style);
@@ -168,8 +165,8 @@ class OutputFormatter implements OutputFormatterInterface
 
         $output .= $this->applyCurrentStyle(substr($message, $offset));
 
-        if (false !== strpos($output, "\0")) {
-            return strtr($output, array("\0" => '\\', '\\<' => '<'));
+        if (str_contains($output, "\0")) {
+            return strtr($output, ["\0" => '\\', '\\<' => '<']);
         }
 
         return str_replace('\\<', '<', $output);

@@ -30,7 +30,6 @@ use Symfony\Component\Console\Output\StreamOutput;
  */
 class ApplicationTester
 {
-    private $application;
     private $input;
     private $statusCode;
     /**
@@ -39,9 +38,8 @@ class ApplicationTester
     private $output;
     private $captureStreamsIndependently = false;
 
-    public function __construct(Application $application)
+    public function __construct(private readonly Application $application)
     {
-        $this->application = $application;
     }
 
     /**
@@ -59,7 +57,7 @@ class ApplicationTester
      *
      * @return int The command exit code
      */
-    public function run(array $input, $options = array())
+    public function run(array $input, $options = [])
     {
         $this->input = new ArrayInput($input);
         if (isset($options['interactive'])) {
@@ -77,8 +75,8 @@ class ApplicationTester
             }
         } else {
             $this->output = new ConsoleOutput(
-                isset($options['verbosity']) ? $options['verbosity'] : ConsoleOutput::VERBOSITY_NORMAL,
-                isset($options['decorated']) ? $options['decorated'] : null
+                $options['verbosity'] ?? ConsoleOutput::VERBOSITY_NORMAL,
+                $options['decorated'] ?? null
             );
 
             $errorOutput = new StreamOutput(fopen('php://memory', 'w', false));
@@ -88,12 +86,10 @@ class ApplicationTester
 
             $reflectedOutput = new \ReflectionObject($this->output);
             $strErrProperty = $reflectedOutput->getProperty('stderr');
-            $strErrProperty->setAccessible(true);
             $strErrProperty->setValue($this->output, $errorOutput);
 
             $reflectedParent = $reflectedOutput->getParentClass();
             $streamProperty = $reflectedParent->getProperty('stream');
-            $streamProperty->setAccessible(true);
             $streamProperty->setValue($this->output, fopen('php://memory', 'w', false));
         }
 

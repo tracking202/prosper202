@@ -21,7 +21,7 @@ use Symfony\Component\Process\PhpProcess;
 class CaBundle
 {
     private static $caPath;
-    private static $caFileValidity = array();
+    private static $caFileValidity = [];
     private static $useOpensslParse;
 
     /**
@@ -61,7 +61,7 @@ class CaBundle
      * @param  LoggerInterface $logger optional logger for information about which CA files were loaded
      * @return string          path to a CA bundle file or directory
      */
-    public static function getSystemCaRootBundlePath(LoggerInterface $logger = null)
+    public static function getSystemCaRootBundlePath(?LoggerInterface $logger = null)
     {
         if (self::$caPath !== null) {
             return self::$caPath;
@@ -91,7 +91,7 @@ class CaBundle
             return self::$caPath = $configured;
         }
 
-        $caBundlePaths = array(
+        $caBundlePaths = [
             '/etc/pki/tls/certs/ca-bundle.crt', // Fedora, RHEL, CentOS (ca-certificates package)
             '/etc/ssl/certs/ca-certificates.crt', // Debian, Ubuntu, Gentoo, Arch Linux (ca-certificates package)
             '/etc/ssl/ca-bundle.pem', // SUSE, openSUSE (ca-certificates package)
@@ -103,7 +103,7 @@ class CaBundle
             '/etc/ssl/cert.pem', // OpenBSD
             '/usr/local/etc/ssl/cert.pem', // FreeBSD 10.x
             '/usr/local/etc/openssl/cert.pem', // OS X homebrew, openssl package
-        );
+        ];
 
         foreach ($caBundlePaths as $caBundle) {
             if (@is_readable($caBundle) && static::validateCaFile($caBundle, $logger)) {
@@ -134,13 +134,13 @@ class CaBundle
 
         // cURL does not understand 'phar://' paths
         // see https://github.com/composer/ca-bundle/issues/10
-        if (0 === strpos($caBundleFile, 'phar://')) {
+        if (str_starts_with($caBundleFile, 'phar://')) {
             file_put_contents(
                 $tempCaBundleFile = tempnam(sys_get_temp_dir(), 'openssl-ca-bundle-'),
                 file_get_contents($caBundleFile)
             );
 
-            register_shutdown_function(function() use ($tempCaBundleFile) {
+            register_shutdown_function(function() use ($tempCaBundleFile): void {
                 @unlink($tempCaBundleFile);
             });
 
@@ -158,7 +158,7 @@ class CaBundle
      *
      * @return bool
      */
-    public static function validateCaFile($filename, LoggerInterface $logger = null)
+    public static function validateCaFile($filename, ?LoggerInterface $logger = null)
     {
         static $warned = false;
 
@@ -273,7 +273,7 @@ EOT;
         try {
             $process = new PhpProcess($script);
             $process->mustRun();
-        } catch (\Exception $e) {
+        } catch (\Exception) {
             // In the case of any exceptions just accept it is not possible to
             // determine the safety of openssl_x509_parse and bail out.
             return self::$useOpensslParse = false;
@@ -301,7 +301,7 @@ EOT;
      */
     public static function reset()
     {
-        self::$caFileValidity = array();
+        self::$caFileValidity = [];
         self::$caPath = null;
         self::$useOpensslParse = null;
     }

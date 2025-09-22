@@ -62,10 +62,10 @@ class Dumper
             $dumpAsMap = Inline::isHash($input);
 
             foreach ($input as $key => $value) {
-                if ($inline >= 1 && Yaml::DUMP_MULTI_LINE_LITERAL_BLOCK & $flags && is_string($value) && false !== strpos($value, "\n") && false === strpos($value, "\r\n")) {
+                if ($inline >= 1 && Yaml::DUMP_MULTI_LINE_LITERAL_BLOCK & $flags && is_string($value) && str_contains($value, "\n") && !str_contains($value, "\r\n")) {
                     // If the first line starts with a space character, the spec requires a blockIndicationIndicator
                     // http://www.yaml.org/spec/1.2/spec.html#id2793979
-                    $blockIndentationIndicator = (' ' === substr($value, 0, 1)) ? (string) $this->indentation : '';
+                    $blockIndentationIndicator = (str_starts_with($value, ' ')) ? (string) $this->indentation : '';
                     $output .= sprintf("%s%s%s |%s\n", $prefix, $dumpAsMap ? Inline::dump($key, $flags).':' : '-', '', $blockIndentationIndicator);
 
                     foreach (preg_split('/\n|\r\n/', $value) as $row) {

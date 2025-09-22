@@ -24,7 +24,7 @@ class OperatingSystemParser extends AbstractParser
     {
         $os = new OperatingSystem();
 
-        list($regex, $matches) = $this->tryMatch($this->regexes['os_parsers'], $userAgent);
+        [$regex, $matches] = $this->tryMatch($this->regexes['os_parsers'], $userAgent);
 
         if ($matches) {
             $os->family = $this->replaceString($regex, 'os_replacement', $matches[1]);

@@ -11,17 +11,12 @@ use MaxMind\Exception\HttpException;
  */
 class CurlRequest implements Request
 {
-    private $url;
-    private $options;
-
     /**
      * @param $url
      * @param $options
      */
-    public function __construct($url, $options)
+    public function __construct(private $url, private $options)
     {
-        $this->url = $url;
-        $this->options = $options;
     }
 
     /**

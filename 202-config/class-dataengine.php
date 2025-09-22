@@ -369,7 +369,7 @@ class DataEngine
         $mysql['keyword'] = self::$db->real_escape_string($keyword);
 
         $keyword_sql = "SELECT group_concat(keyword_id) as keyword_id FROM 202_keywords WHERE keyword like '%" . $mysql['keyword'] . "%'";
-        $keyword_row = memcache_mysql_fetch_assoc(self::$db, $keyword_sql);
+        $keyword_row = memcache_mysql_fetch_assoc($keyword_sql);
         $keyword_id[] = $keyword_row['keyword_id'];
         return $keyword_id[0];
     }

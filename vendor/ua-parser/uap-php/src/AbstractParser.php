@@ -18,7 +18,7 @@ abstract class AbstractParser
     public static $defaultFile;
 
     /** @var array */
-    protected $regexes = array();
+    protected $regexes = [];
 
     public function __construct(array $regexes)
     {
@@ -47,7 +47,7 @@ abstract class AbstractParser
     {
         return static::createInstance(
             static::getDefaultFile(),
-            array('UAParser\Exception\FileNotFoundException', 'defaultFileNotFound')
+            \UAParser\Exception\FileNotFoundException::defaultFileNotFound(...)
         );
     }
 
@@ -59,7 +59,7 @@ abstract class AbstractParser
     {
         return static::createInstance(
             $file,
-            array('UAParser\Exception\FileNotFoundException', 'customRegexFileNotFound')
+            \UAParser\Exception\FileNotFoundException::customRegexFileNotFound(...)
         );
     }
 
@@ -80,22 +80,22 @@ abstract class AbstractParser
     protected function tryMatch(array $regexes, $userAgent)
     {
         foreach ($regexes as $regex) {
-            $flag = isset($regex['regex_flag']) ? $regex['regex_flag'] : '';
+            $flag = $regex['regex_flag'] ?? '';
             if (preg_match('@' . $regex['regex'] . '@' . $flag, $userAgent, $matches)) {
 
-                $defaults = array(
+                $defaults = [
                     1 => 'Other',
                     2 => null,
                     3 => null,
                     4 => null,
                     5 => null,
-                );
+                ];
 
-                return array($regex, $matches + $defaults);
+                return [$regex, $matches + $defaults];
             }
         }
 
-        return array(null, null);
+        return [null, null];
     }
 
     /**
@@ -128,9 +128,7 @@ abstract class AbstractParser
         
         $replacement = preg_replace_callback(
             "|\\$(?<key>\d)|",
-            function ($m) use ($matches){
-                return isset($matches[$m['key']]) ? $matches[$m['key']] : "";
-            },
+            fn($m) => $matches[$m['key']] ?? "",
             $regex[$key]
         );
         
@@ -144,8 +142,6 @@ abstract class AbstractParser
      */
     protected static function getDefaultFile()
     {
-        return static::$defaultFile
-            ? static::$defaultFile
-            : realpath(__DIR__ . '/../resources') . DIRECTORY_SEPARATOR . 'regexes.php';
+        return static::$defaultFile ?: realpath(__DIR__ . '/../resources') . DIRECTORY_SEPARATOR . 'regexes.php';
     }
 }

@@ -24,10 +24,6 @@ class ApplicationDescription
 {
     const GLOBAL_NAMESPACE = '_global';
 
-    private $application;
-    private $namespace;
-    private $showHidden;
-
     /**
      * @var array
      */
@@ -43,11 +39,8 @@ class ApplicationDescription
      */
     private $aliases;
 
-    public function __construct(Application $application, string $namespace = null, bool $showHidden = false)
+    public function __construct(private readonly Application $application, private readonly ?string $namespace = null, private readonly bool $showHidden = false)
     {
-        $this->application = $application;
-        $this->namespace = $namespace;
-        $this->showHidden = $showHidden;
     }
 
     /**
@@ -87,17 +80,17 @@ class ApplicationDescription
             throw new CommandNotFoundException(sprintf('Command %s does not exist.', $name));
         }
 
-        return isset($this->commands[$name]) ? $this->commands[$name] : $this->aliases[$name];
+        return $this->commands[$name] ?? $this->aliases[$name];
     }
 
     private function inspectApplication()
     {
-        $this->commands = array();
-        $this->namespaces = array();
+        $this->commands = [];
+        $this->namespaces = [];
 
         $all = $this->application->all($this->namespace ? $this->application->findNamespace($this->namespace) : null);
         foreach ($this->sortCommands($all) as $namespace => $commands) {
-            $names = array();
+            $names = [];
 
             /** @var Command $command */
             foreach ($commands as $name => $command) {
@@ -114,14 +107,14 @@ class ApplicationDescription
                 $names[] = $name;
             }
 
-            $this->namespaces[$namespace] = array('id' => $namespace, 'commands' => $names);
+            $this->namespaces[$namespace] = ['id' => $namespace, 'commands' => $names];
         }
     }
 
     private function sortCommands(array $commands): array
     {
-        $namespacedCommands = array();
-        $globalCommands = array();
+        $namespacedCommands = [];
+        $globalCommands = [];
         foreach ($commands as $name => $command) {
             $key = $this->application->extractNamespace($name, 1);
             if (!$key) {

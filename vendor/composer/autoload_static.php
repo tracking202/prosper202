@@ -6,88 +6,88 @@ namespace Composer\Autoload;
 
 class ComposerStaticInit50366ac3f8366fa7d2639275079fb818
 {
-    public static $files = array (
+    public static $files =  [
         '0e6d7bf4a5811bfa5cf40c5ccd6fae6a' => __DIR__ . '/..' . '/symfony/polyfill-mbstring/bootstrap.php',
-    );
+    ];
 
-    public static $prefixLengthsPsr4 = array (
+    public static $prefixLengthsPsr4 =  [
         'U' => 
-        array (
+         [
             'UAParser\\' => 9,
-        ),
+        ],
         'T' => 
-        array (
+         [
             'Tracking202\\' => 12,
-        ),
+        ],
         'S' => 
-        array (
+         [
             'Symfony\\Polyfill\\Mbstring\\' => 26,
             'Symfony\\Component\\Yaml\\' => 23,
             'Symfony\\Component\\Finder\\' => 25,
             'Symfony\\Component\\Filesystem\\' => 29,
             'Symfony\\Component\\Console\\' => 26,
-        ),
+        ],
         'P' => 
-        array (
+         [
             'Prosper202\\' => 11,
             'Prosper202Interfaces\\' => 21,
-        ),
+        ],
         'A' => 
-        array (
+         [
             'Api\\' => 4,
-        ),
-    );
+        ],
+    ];
 
-    public static $prefixDirsPsr4 = array (
+    public static $prefixDirsPsr4 =  [
         'UAParser\\' => 
-        array (
+         [
             0 => __DIR__ . '/..' . '/ua-parser/uap-php/src',
-        ),
+        ],
         'Tracking202\\' => 
-        array (
+         [
             0 => __DIR__ . '/../..' . '/tracking202',
-        ),
+        ],
         'Symfony\\Polyfill\\Mbstring\\' => 
-        array (
+         [
             0 => __DIR__ . '/..' . '/symfony/polyfill-mbstring',
-        ),
+        ],
         'Symfony\\Component\\Yaml\\' => 
-        array (
+         [
             0 => __DIR__ . '/..' . '/symfony/yaml',
-        ),
+        ],
         'Symfony\\Component\\Finder\\' => 
-        array (
+         [
             0 => __DIR__ . '/..' . '/symfony/finder',
-        ),
+        ],
         'Symfony\\Component\\Filesystem\\' => 
-        array (
+         [
             0 => __DIR__ . '/..' . '/symfony/filesystem',
-        ),
+        ],
         'Symfony\\Component\\Console\\' => 
-        array (
+         [
             0 => __DIR__ . '/..' . '/symfony/console',
-        ),
+        ],
         'Prosper202\\' => 
-        array (
+         [
             0 => __DIR__ . '/../..' . '/202-config',
-        ),
+        ],
         'Prosper202Interfaces\\' => 
-        array (
+         [
             0 => __DIR__ . '/../..' . '/202-interfaces',
-        ),
+        ],
         'Api\\' => 
-        array (
+         [
             0 => __DIR__ . '/../..' . '/api',
-        ),
-    );
+        ],
+    ];
 
-    public static $classMap = array (
-        'Composer\\InstalledVersions' => __DIR__ . '/..' . '/composer/InstalledVersions.php',
-    );
+    public static $classMap =  [
+        \Composer\InstalledVersions::class => __DIR__ . '/..' . '/composer/InstalledVersions.php',
+    ];
 
     public static function getInitializer(ClassLoader $loader)
     {
-        return \Closure::bind(function () use ($loader) {
+        return \Closure::bind(function () use ($loader): void {
             $loader->prefixLengthsPsr4 = ComposerStaticInit50366ac3f8366fa7d2639275079fb818::$prefixLengthsPsr4;
             $loader->prefixDirsPsr4 = ComposerStaticInit50366ac3f8366fa7d2639275079fb818::$prefixDirsPsr4;
             $loader->classMap = ComposerStaticInit50366ac3f8366fa7d2639275079fb818::$classMap;

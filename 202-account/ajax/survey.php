@@ -14,9 +14,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	$user_data = get_user_data_feedback($_SESSION['user_id']);
-	$response = updateSurveyData($user_data['install_hash'], $_POST);
+	$install_hash = $user_data['install_hash'] ?? '';
 
-	if ($response['updated']) {
+	if ($install_hash === '') {
+		echo '<span class="fui-alert"></span> Unable to determine install reference. Please try again later.';
+		die();
+	}
+
+	$response = updateSurveyData($install_hash, $_POST);
+	$wasUpdated = is_array($response) && !empty($response['updated']);
+
+	if ($wasUpdated) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$sql = "UPDATE 202_users SET modal_status='1', vip_perks_status='0' WHERE user_id='".$mysql['user_id']."'";
 		$result = $db->query($sql);

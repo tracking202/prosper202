@@ -64,7 +64,7 @@ class Reader
 
         $start = $this->findMetadataStart($database);
         $metadataDecoder = new Decoder($this->fileHandle, $start);
-        list($metadataArray) = $metadataDecoder->decode($start);
+        [$metadataArray] = $metadataDecoder->decode($start);
         $this->metadata = new Metadata($metadataArray);
         $this->decoder = new Decoder(
             $this->fileHandle,
@@ -191,24 +191,24 @@ class Reader
         switch ($this->metadata->recordSize) {
             case 24:
                 $bytes = Util::read($this->fileHandle, $baseOffset + $index * 3, 3);
-                list(, $node) = unpack('N', "\x00" . $bytes);
+                [, $node] = unpack('N', "\x00" . $bytes);
 
                 return $node;
             case 28:
                 $middleByte = Util::read($this->fileHandle, $baseOffset + 3, 1);
-                list(, $middle) = unpack('C', $middleByte);
+                [, $middle] = unpack('C', (string) $middleByte);
                 if ($index === 0) {
                     $middle = (0xF0 & $middle) >> 4;
                 } else {
                     $middle = 0x0F & $middle;
                 }
                 $bytes = Util::read($this->fileHandle, $baseOffset + $index * 4, 3);
-                list(, $node) = unpack('N', chr($middle) . $bytes);
+                [, $node] = unpack('N', chr($middle) . $bytes);
 
                 return $node;
             case 32:
                 $bytes = Util::read($this->fileHandle, $baseOffset + $index * 4, 4);
-                list(, $node) = unpack('N', $bytes);
+                [, $node] = unpack('N', (string) $bytes);
 
                 return $node;
             default:
@@ -229,7 +229,7 @@ class Reader
             );
         }
 
-        list($data) = $this->decoder->decode($resolved);
+        [$data] = $this->decoder->decode($resolved);
 
         return $data;
     }

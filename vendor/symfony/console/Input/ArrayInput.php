@@ -23,14 +23,10 @@ use Symfony\Component\Console\Exception\InvalidOptionException;
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class ArrayInput extends Input
+class ArrayInput extends Input implements \Stringable
 {
-    private $parameters;
-
-    public function __construct(array $parameters, InputDefinition $definition = null)
+    public function __construct(private readonly array $parameters, ?InputDefinition $definition = null)
     {
-        $this->parameters = $parameters;
-
         parent::__construct($definition);
     }
 
@@ -101,9 +97,9 @@ class ArrayInput extends Input
      *
      * @return string
      */
-    public function __toString()
+    public function __toString(): string
     {
-        $params = array();
+        $params = [];
         foreach ($this->parameters as $param => $val) {
             if ($param && '-' === $param[0]) {
                 if (is_array($val)) {
@@ -114,7 +110,7 @@ class ArrayInput extends Input
                     $params[] = $param.('' != $val ? '='.$this->escapeToken($val) : '');
                 }
             } else {
-                $params[] = is_array($val) ? implode(' ', array_map(array($this, 'escapeToken'), $val)) : $this->escapeToken($val);
+                $params[] = is_array($val) ? implode(' ', array_map($this->escapeToken(...), $val)) : $this->escapeToken($val);
             }
         }
 
@@ -130,10 +126,10 @@ class ArrayInput extends Input
             if ('--' === $key) {
                 return;
             }
-            if (0 === strpos($key, '--')) {
-                $this->addLongOption(substr($key, 2), $value);
+            if (str_starts_with((string) $key, '--')) {
+                $this->addLongOption(substr((string) $key, 2), $value);
             } elseif ('-' === $key[0]) {
-                $this->addShortOption(substr($key, 1), $value);
+                $this->addShortOption(substr((string) $key, 1), $value);
             } else {
                 $this->addArgument($key, $value);
             }

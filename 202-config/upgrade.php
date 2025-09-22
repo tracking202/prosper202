@@ -15,6 +15,8 @@ if (upgrade_needed() == false) {
 			   <small>Your Prosper202 version $version is already upgraded. <a href='" . get_absolute_url() . "202-login.php'>log in</a></small>");
 }
 
+// Initialize version error tracking array
+$version_error = [];
 
 if (!php_version_supported()) {
 	$version_error['phpversion'] = 'Prosper202 requires PHP ' . PROSPER202_MIN_PHP_VERSION . ', or newer.';
@@ -42,7 +44,11 @@ if (!function_exists('curl_version')) {
 	$version_error['curl'] = 'Prosper202 requires CURL to be installed.';
 }
 
-if ($version_error) {
+if (!function_exists('xml_parser_create')) {
+	$version_error['xml_parser_create'] = 'Prosper202 requires XML parser to be installed.';
+}
+
+if (!empty($version_error)) {
 	// header("Location: /202-config/requirements.php");
 	info_top();
 
@@ -180,6 +186,10 @@ if ($version_error) {
 
 	if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+		// Initialize upgrade result variables
+		$error = false;
+		$success = false;
+
 		if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
 
 			$date = DateTime::createFromFormat('d-m-Y', $_POST['date_from']);
@@ -205,6 +215,10 @@ if ($version_error) {
 
 	//only show install setup, if it, of course, isn't installed already.
 	info_top();
+
+	// Initialize upgrade result variables for display
+	if (!isset($error)) $error = false;
+	if (!isset($success)) $success = false;
 
 	if (version_compare(PROSPER202::prosper202_version(), $version) > 0) {
 		$task_202 = "Downgrade";
@@ -274,7 +288,7 @@ if ($version_error) {
 			<form method="post" id="upgrade-form" action="">
 				<?php if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
 					$first_click_sql = "select DATE_FORMAT(FROM_UNIXTIME(min(click_time)),'%d-%m-%Y') as first_click_time from 202_clicks";
-					$first_click_row = memcache_mysql_fetch_assoc($db, $first_click_sql);
+					$first_click_row = memcache_mysql_fetch_assoc($first_click_sql);
 
 				?>
 					<div class="form-group">
@@ -283,7 +297,7 @@ if ($version_error) {
 					</div>
 					<br></br>
 				<?php } ?>
-				<?php if (version_compare(PROSPER202::prosper202_version(), '1.9.55', '<')) { ?>
+				<?php if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) { ?>
 					<div class="form-group">
 						Google Chrome 80+ requires all landing pages to be HTTPS, or your tracking won't work. Can Prosper202 automatically upgrade your old landing page URLs to HTTPS?<br />
 						<br></br>

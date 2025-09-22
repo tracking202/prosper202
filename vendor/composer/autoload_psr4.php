@@ -5,15 +5,15 @@
 $vendorDir = dirname(__DIR__);
 $baseDir = dirname($vendorDir);
 
-return array(
-    'UAParser\\' => array($vendorDir . '/ua-parser/uap-php/src'),
-    'Tracking202\\' => array($baseDir . '/tracking202'),
-    'Symfony\\Polyfill\\Mbstring\\' => array($vendorDir . '/symfony/polyfill-mbstring'),
-    'Symfony\\Component\\Yaml\\' => array($vendorDir . '/symfony/yaml'),
-    'Symfony\\Component\\Finder\\' => array($vendorDir . '/symfony/finder'),
-    'Symfony\\Component\\Filesystem\\' => array($vendorDir . '/symfony/filesystem'),
-    'Symfony\\Component\\Console\\' => array($vendorDir . '/symfony/console'),
-    'Prosper202\\' => array($baseDir . '/202-config'),
-    'Prosper202Interfaces\\' => array($baseDir . '/202-interfaces'),
-    'Api\\' => array($baseDir . '/api'),
-);
+return [
+    'UAParser\\' => [$vendorDir . '/ua-parser/uap-php/src'],
+    'Tracking202\\' => [$baseDir . '/tracking202'],
+    'Symfony\\Polyfill\\Mbstring\\' => [$vendorDir . '/symfony/polyfill-mbstring'],
+    'Symfony\\Component\\Yaml\\' => [$vendorDir . '/symfony/yaml'],
+    'Symfony\\Component\\Finder\\' => [$vendorDir . '/symfony/finder'],
+    'Symfony\\Component\\Filesystem\\' => [$vendorDir . '/symfony/filesystem'],
+    'Symfony\\Component\\Console\\' => [$vendorDir . '/symfony/console'],
+    'Prosper202\\' => [$baseDir . '/202-config'],
+    'Prosper202Interfaces\\' => [$baseDir . '/202-interfaces'],
+    'Api\\' => [$baseDir . '/api'],
+];

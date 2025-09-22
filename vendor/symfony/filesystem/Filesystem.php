@@ -57,7 +57,7 @@ class Filesystem
             }
 
             // Stream context created to allow files overwrite when using FTP stream wrapper - disabled by default
-            if (false === $target = @fopen($targetFile, 'w', null, stream_context_create(array('ftp' => array('overwrite' => true))))) {
+            if (false === $target = @fopen($targetFile, 'w', null, stream_context_create(['ftp' => ['overwrite' => true]]))) {
                 throw new IOException(sprintf('Failed to copy "%s" to "%s" because target file could not be opened for writing.', $originFile, $targetFile), 0, null, $originFile);
             }
 
@@ -121,7 +121,7 @@ class Filesystem
         $maxPathLength = PHP_MAXPATHLEN - 2;
 
         foreach ($this->toIterable($files) as $file) {
-            if (strlen($file) > $maxPathLength) {
+            if (strlen((string) $file) > $maxPathLength) {
                 throw new IOException(sprintf('Could not check if file exist because path length exceeds %d characters.', $maxPathLength), 0, null, $file);
             }
 
@@ -164,7 +164,7 @@ class Filesystem
         if ($files instanceof \Traversable) {
             $files = iterator_to_array($files, false);
         } elseif (!is_array($files)) {
-            $files = array($files);
+            $files = [$files];
         }
         $files = array_reverse($files);
         foreach ($files as $file) {
@@ -284,7 +284,7 @@ class Filesystem
         if (true !== @rename($origin, $target)) {
             if (is_dir($origin)) {
                 // See https://bugs.php.net/bug.php?id=54097 & http://php.net/manual/en/function.rename.php#113943
-                $this->mirror($origin, $target, null, array('override' => $overwrite, 'delete' => $overwrite));
+                $this->mirror($origin, $target, null, ['override' => $overwrite, 'delete' => $overwrite]);
                 $this->remove($origin);
 
                 return;
@@ -393,7 +393,7 @@ class Filesystem
     {
         $report = error_get_last();
         if (is_array($report)) {
-            if ('\\' === DIRECTORY_SEPARATOR && false !== strpos($report['message'], 'error code(1314)')) {
+            if ('\\' === DIRECTORY_SEPARATOR && str_contains($report['message'], 'error code(1314)')) {
                 throw new IOException(sprintf('Unable to create %s link due to error code 1314: \'A required privilege is not held by the client\'. Do you have the required Administrator-rights?', $linkType), 0, null, $target);
             }
         }
@@ -466,7 +466,7 @@ class Filesystem
         }
 
         $stripDriveLetter = function ($path) {
-            if (strlen($path) > 2 && ':' === $path[1] && '/' === $path[2] && ctype_alpha($path[0])) {
+            if (strlen($path) > 2 && ':' === $path[1] && '/' === $path[2] && ctype_alpha((string) $path[0])) {
                 return substr($path, 2);
             }
 
@@ -477,11 +477,11 @@ class Filesystem
         $startPath = $stripDriveLetter($startPath);
 
         // Split the paths into arrays
-        $startPathArr = explode('/', trim($startPath, '/'));
-        $endPathArr = explode('/', trim($endPath, '/'));
+        $startPathArr = explode('/', trim((string) $startPath, '/'));
+        $endPathArr = explode('/', trim((string) $endPath, '/'));
 
         $normalizePathArray = function ($pathSegments) {
-            $result = array();
+            $result = [];
 
             foreach ($pathSegments as $segment) {
                 if ('..' === $segment) {
@@ -540,7 +540,7 @@ class Filesystem
      *
      * @throws IOException When file type is unknown
      */
-    public function mirror($originDir, $targetDir, \Traversable $iterator = null, $options = array())
+    public function mirror($originDir, $targetDir, ?\Traversable $iterator = null, $options = [])
     {
         $targetDir = rtrim($targetDir, '/\\');
         $originDir = rtrim($originDir, '/\\');
@@ -555,7 +555,7 @@ class Filesystem
             }
             $targetDirLen = strlen($targetDir);
             foreach ($deleteIterator as $file) {
-                $origin = $originDir.substr($file->getPathname(), $targetDirLen);
+                $origin = $originDir.substr((string) $file->getPathname(), $targetDirLen);
                 if (!$this->exists($origin)) {
                     $this->remove($file);
                 }
@@ -577,11 +577,11 @@ class Filesystem
         }
 
         foreach ($iterator as $file) {
-            $target = $targetDir.substr($file->getPathname(), $originDirLen);
+            $target = $targetDir.substr((string) $file->getPathname(), $originDirLen);
 
             if ($copyOnWindows) {
                 if (is_file($file)) {
-                    $this->copy($file, $target, isset($options['override']) ? $options['override'] : false);
+                    $this->copy($file, $target, $options['override'] ?? false);
                 } elseif (is_dir($file)) {
                     $this->mkdir($target);
                 } else {
@@ -593,7 +593,7 @@ class Filesystem
                 } elseif (is_dir($file)) {
                     $this->mkdir($target);
                 } elseif (is_file($file)) {
-                    $this->copy($file, $target, isset($options['override']) ? $options['override'] : false);
+                    $this->copy($file, $target, $options['override'] ?? false);
                 } else {
                     throw new IOException(sprintf('Unable to guess "%s" file type.', $file), 0, null, $file);
                 }
@@ -630,7 +630,7 @@ class Filesystem
      */
     public function tempnam($dir, $prefix)
     {
-        list($scheme, $hierarchy) = $this->getSchemeAndHierarchy($dir);
+        [$scheme, $hierarchy] = $this->getSchemeAndHierarchy($dir);
 
         // If no scheme or scheme is "file" or "gs" (Google Cloud) create temp file in local filesystem
         if (null === $scheme || 'file' === $scheme || 'gs' === $scheme) {
@@ -731,7 +731,7 @@ class Filesystem
 
     private function toIterable($files): iterable
     {
-        return is_array($files) || $files instanceof \Traversable ? $files : array($files);
+        return is_iterable($files) ? $files : [$files];
     }
 
     /**
@@ -741,6 +741,6 @@ class Filesystem
     {
         $components = explode('://', $filename, 2);
 
-        return 2 === count($components) ? array($components[0], $components[1]) : array(null, $components[0]);
+        return 2 === count($components) ? [$components[0], $components[1]] : [null, $components[0]];
     }
 }

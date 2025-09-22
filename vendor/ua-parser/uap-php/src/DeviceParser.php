@@ -24,7 +24,7 @@ class DeviceParser extends AbstractParser
     {
         $device = new Device();
 
-        list($regex, $matches) = $this->tryMatch($this->regexes['device_parsers'], $userAgent);
+        [$regex, $matches] = $this->tryMatch($this->regexes['device_parsers'], $userAgent);
 
         if ($matches) {
             $device->family = $this->multiReplace($regex, 'device_replacement', $matches[1], $matches);            

@@ -23,8 +23,6 @@ class SortableIterator implements \IteratorAggregate
     const SORT_BY_ACCESSED_TIME = 3;
     const SORT_BY_CHANGED_TIME = 4;
     const SORT_BY_MODIFIED_TIME = 5;
-
-    private $iterator;
     private $sort;
 
     /**
@@ -33,14 +31,10 @@ class SortableIterator implements \IteratorAggregate
      *
      * @throws \InvalidArgumentException
      */
-    public function __construct(\Traversable $iterator, $sort)
+    public function __construct(private readonly \Traversable $iterator, $sort)
     {
-        $this->iterator = $iterator;
-
         if (self::SORT_BY_NAME === $sort) {
-            $this->sort = function ($a, $b) {
-                return strcmp($a->getRealpath() ?: $a->getPathname(), $b->getRealpath() ?: $b->getPathname());
-            };
+            $this->sort = (fn($a, $b) => strcmp((string) $a->getRealpath() ?: (string) $a->getPathname(), (string) $b->getRealpath() ?: (string) $b->getPathname()));
         } elseif (self::SORT_BY_TYPE === $sort) {
             $this->sort = function ($a, $b) {
                 if ($a->isDir() && $b->isFile()) {
@@ -49,20 +43,14 @@ class SortableIterator implements \IteratorAggregate
                     return 1;
                 }
 
-                return strcmp($a->getRealpath() ?: $a->getPathname(), $b->getRealpath() ?: $b->getPathname());
+                return strcmp((string) $a->getRealpath() ?: (string) $a->getPathname(), (string) $b->getRealpath() ?: (string) $b->getPathname());
             };
         } elseif (self::SORT_BY_ACCESSED_TIME === $sort) {
-            $this->sort = function ($a, $b) {
-                return $a->getATime() - $b->getATime();
-            };
+            $this->sort = (fn($a, $b) => $a->getATime() - $b->getATime());
         } elseif (self::SORT_BY_CHANGED_TIME === $sort) {
-            $this->sort = function ($a, $b) {
-                return $a->getCTime() - $b->getCTime();
-            };
+            $this->sort = (fn($a, $b) => $a->getCTime() - $b->getCTime());
         } elseif (self::SORT_BY_MODIFIED_TIME === $sort) {
-            $this->sort = function ($a, $b) {
-                return $a->getMTime() - $b->getMTime();
-            };
+            $this->sort = (fn($a, $b) => $a->getMTime() - $b->getMTime());
         } elseif (is_callable($sort)) {
             $this->sort = $sort;
         } else {

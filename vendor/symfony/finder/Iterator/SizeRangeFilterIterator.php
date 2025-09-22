@@ -20,16 +20,12 @@ use Symfony\Component\Finder\Comparator\NumberComparator;
  */
 class SizeRangeFilterIterator extends \FilterIterator
 {
-    private $comparators = array();
-
     /**
      * @param \Iterator          $iterator    The Iterator to filter
      * @param NumberComparator[] $comparators An array of NumberComparator instances
      */
-    public function __construct(\Iterator $iterator, array $comparators)
+    public function __construct(\Iterator $iterator, private readonly array $comparators)
     {
-        $this->comparators = $comparators;
-
         parent::__construct($iterator);
     }
 

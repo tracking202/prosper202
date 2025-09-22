@@ -4,17 +4,14 @@ namespace GeoIp2\Record;
 
 abstract class AbstractPlaceRecord extends AbstractRecord
 {
-    private $locales;
-
     /**
      * @ignore
      *
      * @param mixed $record
      * @param mixed $locales
      */
-    public function __construct($record, $locales = ['en'])
+    public function __construct($record, private $locales = ['en'])
     {
-        $this->locales = $locales;
         parent::__construct($record);
     }
 
@@ -23,6 +20,7 @@ abstract class AbstractPlaceRecord extends AbstractRecord
      *
      * @param mixed $attr
      */
+    #[\Override]
     public function __get($attr)
     {
         if ($attr === 'name') {
@@ -37,6 +35,7 @@ abstract class AbstractPlaceRecord extends AbstractRecord
      *
      * @param mixed $attr
      */
+    #[\Override]
     public function __isset($attr)
     {
         if ($attr === 'name') {

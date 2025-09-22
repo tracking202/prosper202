@@ -4,10 +4,6 @@ namespace MaxMind\Db\Reader;
 
 class Decoder
 {
-    private $fileStream;
-    private $pointerBase;
-    // This is only used for unit testing
-    private $pointerTestHack;
     private $switchByteOrder;
 
     private $types = [
@@ -30,22 +26,18 @@ class Decoder
     ];
 
     public function __construct(
-        $fileStream,
-        $pointerBase = 0,
-        $pointerTestHack = false
+        private $fileStream,
+        private $pointerBase = 0,
+        private $pointerTestHack = false
     ) {
-        $this->fileStream = $fileStream;
-        $this->pointerBase = $pointerBase;
-        $this->pointerTestHack = $pointerTestHack;
-
         $this->switchByteOrder = $this->isPlatformLittleEndian();
     }
 
     public function decode($offset)
     {
-        list(, $ctrlByte) = unpack(
+        [, $ctrlByte] = unpack(
             'C',
-            Util::read($this->fileStream, $offset, 1)
+            (string) Util::read($this->fileStream, $offset, 1)
         );
         $offset++;
 
@@ -55,22 +47,22 @@ class Decoder
         // use the size to determine the length of the pointer and then follow
         // it.
         if ($type === 'pointer') {
-            list($pointer, $offset) = $this->decodePointer($ctrlByte, $offset);
+            [$pointer, $offset] = $this->decodePointer($ctrlByte, $offset);
 
             // for unit testing
             if ($this->pointerTestHack) {
                 return [$pointer];
             }
 
-            list($result) = $this->decode($pointer);
+            [$result] = $this->decode($pointer);
 
             return [$result, $offset];
         }
 
         if ($type === 'extended') {
-            list(, $nextByte) = unpack(
+            [, $nextByte] = unpack(
                 'C',
-                Util::read($this->fileStream, $offset, 1)
+                (string) Util::read($this->fileStream, $offset, 1)
             );
 
             $typeNum = $nextByte + 7;
@@ -88,7 +80,7 @@ class Decoder
             $offset++;
         }
 
-        list($size, $offset) = $this->sizeFromCtrlByte($ctrlByte, $offset);
+        [$size, $offset] = $this->sizeFromCtrlByte($ctrlByte, $offset);
 
         return $this->decodeByType($type, $offset, $size);
     }
@@ -148,7 +140,7 @@ class Decoder
         $array = [];
 
         for ($i = 0; $i < $size; $i++) {
-            list($value, $offset) = $this->decode($offset);
+            [$value, $offset] = $this->decode($offset);
             array_push($array, $value);
         }
 
@@ -163,7 +155,7 @@ class Decoder
     private function decodeDouble($bits)
     {
         // XXX - Assumes IEEE 754 double on platform
-        list(, $double) = unpack('d', $this->maybeSwitchByteOrder($bits));
+        [, $double] = unpack('d', (string) $this->maybeSwitchByteOrder($bits));
 
         return $double;
     }
@@ -171,7 +163,7 @@ class Decoder
     private function decodeFloat($bits)
     {
         // XXX - Assumes IEEE 754 floats on platform
-        list(, $float) = unpack('f', $this->maybeSwitchByteOrder($bits));
+        [, $float] = unpack('f', (string) $this->maybeSwitchByteOrder($bits));
 
         return $float;
     }
@@ -179,7 +171,7 @@ class Decoder
     private function decodeInt32($bytes)
     {
         $bytes = $this->zeroPadLeft($bytes, 4);
-        list(, $int) = unpack('l', $this->maybeSwitchByteOrder($bytes));
+        [, $int] = unpack('l', (string) $this->maybeSwitchByteOrder($bytes));
 
         return $int;
     }
@@ -189,8 +181,8 @@ class Decoder
         $map = [];
 
         for ($i = 0; $i < $size; $i++) {
-            list($key, $offset) = $this->decode($offset);
-            list($value, $offset) = $this->decode($offset);
+            [$key, $offset] = $this->decode($offset);
+            [$value, $offset] = $this->decode($offset);
             $map[$key] = $value;
         }
 
@@ -209,7 +201,7 @@ class Decoder
         $pointerSize = (($ctrlByte >> 3) & 0x3) + 1;
 
         $buffer = Util::read($this->fileStream, $offset, $pointerSize);
-        $offset = $offset + $pointerSize;
+        $offset += $pointerSize;
 
         $packed = $pointerSize === 4
             ? $buffer
@@ -224,7 +216,7 @@ class Decoder
 
     private function decodeUint($bytes)
     {
-        list(, $int) = unpack('N', $this->zeroPadLeft($bytes, 4));
+        [, $int] = unpack('N', (string) $this->zeroPadLeft($bytes, 4));
 
         return $int;
     }
@@ -240,7 +232,7 @@ class Decoder
         $numberOfLongs = ceil($byteLength / 4);
         $paddedLength = $numberOfLongs * 4;
         $paddedBytes = $this->zeroPadLeft($bytes, $paddedLength);
-        $unpacked = array_merge(unpack("N$numberOfLongs", $paddedBytes));
+        $unpacked = array_merge(unpack("N$numberOfLongs", (string) $paddedBytes));
 
         $integer = 0;
 
@@ -254,7 +246,7 @@ class Decoder
             } elseif (extension_loaded('gmp')) {
                 $integer = gmp_strval(gmp_add(gmp_mul($integer, $twoTo32), $part));
             } elseif (extension_loaded('bcmath')) {
-                $integer = bcadd(bcmul($integer, $twoTo32), $part);
+                $integer = bcadd(bcmul($integer, $twoTo32), (string) $part);
             } else {
                 throw new \RuntimeException(
                     'The gmp or bcmath extension must be installed to read this database.'
@@ -293,12 +285,12 @@ class Decoder
 
     private function zeroPadLeft($content, $desiredLength)
     {
-        return str_pad($content, $desiredLength, "\x00", STR_PAD_LEFT);
+        return str_pad((string) $content, $desiredLength, "\x00", STR_PAD_LEFT);
     }
 
     private function maybeSwitchByteOrder($bytes)
     {
-        return $this->switchByteOrder ? strrev($bytes) : $bytes;
+        return $this->switchByteOrder ? strrev((string) $bytes) : $bytes;
     }
 
     private function isPlatformLittleEndian()

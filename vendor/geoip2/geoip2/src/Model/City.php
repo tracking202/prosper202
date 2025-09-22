@@ -99,6 +99,7 @@ class City extends Country
      *
      * @param mixed $attr
      */
+    #[\Override]
     public function __get($attr)
     {
         if ($attr === 'mostSpecificSubdivision') {
@@ -113,6 +114,7 @@ class City extends Country
      *
      * @param mixed $attr
      */
+    #[\Override]
     public function __isset($attr)
     {
         if ($attr === 'mostSpecificSubdivision') {

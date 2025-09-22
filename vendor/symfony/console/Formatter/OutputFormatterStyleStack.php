@@ -25,7 +25,7 @@ class OutputFormatterStyleStack
 
     private $emptyStyle;
 
-    public function __construct(OutputFormatterStyleInterface $emptyStyle = null)
+    public function __construct(?OutputFormatterStyleInterface $emptyStyle = null)
     {
         $this->emptyStyle = $emptyStyle ?: new OutputFormatterStyle();
         $this->reset();
@@ -36,7 +36,7 @@ class OutputFormatterStyleStack
      */
     public function reset()
     {
-        $this->styles = array();
+        $this->styles = [];
     }
 
     /**
@@ -54,7 +54,7 @@ class OutputFormatterStyleStack
      *
      * @throws InvalidArgumentException When style tags incorrectly nested
      */
-    public function pop(OutputFormatterStyleInterface $style = null)
+    public function pop(?OutputFormatterStyleInterface $style = null)
     {
         if (empty($this->styles)) {
             return $this->emptyStyle;

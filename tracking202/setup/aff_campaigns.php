@@ -255,7 +255,7 @@ if (!empty($_GET['edit_aff_campaign_id'])) {
 	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 
 	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'];
-	$html = array_map(function($value) { return htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'); }, $aff_campaign_row);
+	$html = array_map(fn($value) => htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'), $aff_campaign_row);
 	$html['aff_campaign_id'] = htmlentities((string)($_GET['edit_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
@@ -273,7 +273,7 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 
 	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'];
-	$html = array_map(function($value) { return htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'); }, $aff_campaign_row);
+	$html = array_map(fn($value) => htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'), $aff_campaign_row);
 	$html['aff_campaign_id'] = htmlentities((string)($_GET['copy_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['aff_campaign_name'] .= " (Copy)"; //append (Copy) to the campaign name so the user knows its a copy 
 

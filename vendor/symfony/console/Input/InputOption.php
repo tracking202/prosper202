@@ -30,7 +30,6 @@ class InputOption
     private $shortcut;
     private $mode;
     private $default;
-    private $description;
 
     /**
      * @param string       $name        The option name
@@ -41,9 +40,9 @@ class InputOption
      *
      * @throws InvalidArgumentException If option mode is invalid or incompatible
      */
-    public function __construct(string $name, $shortcut = null, int $mode = null, string $description = '', $default = null)
+    public function __construct(string $name, $shortcut = null, ?int $mode = null, private readonly string $description = '', $default = null)
     {
-        if (0 === strpos($name, '--')) {
+        if (str_starts_with($name, '--')) {
             $name = substr($name, 2);
         }
 
@@ -77,7 +76,6 @@ class InputOption
         $this->name = $name;
         $this->shortcut = $shortcut;
         $this->mode = $mode;
-        $this->description = $description;
 
         if ($this->isArray() && !$this->acceptValue()) {
             throw new InvalidArgumentException('Impossible to have an option mode VALUE_IS_ARRAY if the option does not accept a value.');
@@ -161,7 +159,7 @@ class InputOption
 
         if ($this->isArray()) {
             if (null === $default) {
-                $default = array();
+                $default = [];
             } elseif (!is_array($default)) {
                 throw new LogicException('A default value for an array option must be an array.');
             }
