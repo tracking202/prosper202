@@ -221,6 +221,87 @@ class INSTALL
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
     $result = _mysqli_query($sql);
 
+    $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_models` (
+		  `model_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `user_id` mediumint(8) unsigned NOT NULL,
+		  `model_name` varchar(255) NOT NULL,
+		  `model_slug` varchar(191) NOT NULL,
+		  `model_type` varchar(50) NOT NULL,
+		  `weighting_config` longtext,
+		  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+		  `is_default` tinyint(1) NOT NULL DEFAULT '0',
+		  `created_at` int(10) unsigned NOT NULL,
+		  `updated_at` int(10) unsigned NOT NULL,
+		  PRIMARY KEY (`model_id`),
+		  UNIQUE KEY `model_slug_user` (`user_id`,`model_slug`),
+		  KEY `user_default` (`user_id`,`is_default`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+    $result = _mysqli_query($sql);
+
+    $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_snapshots` (
+		  `snapshot_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `model_id` bigint(20) unsigned NOT NULL,
+		  `user_id` mediumint(8) unsigned NOT NULL,
+		  `scope_type` varchar(50) NOT NULL,
+		  `scope_id` bigint(20) unsigned DEFAULT NULL,
+		  `date_hour` int(10) unsigned NOT NULL,
+		  `lookback_start` int(10) unsigned NOT NULL,
+		  `lookback_end` int(10) unsigned NOT NULL,
+		  `attributed_clicks` int(10) unsigned NOT NULL DEFAULT '0',
+		  `attributed_conversions` int(10) unsigned NOT NULL DEFAULT '0',
+		  `attributed_revenue` decimal(12,4) NOT NULL DEFAULT '0.0000',
+		  `attributed_cost` decimal(12,4) NOT NULL DEFAULT '0.0000',
+		  `created_at` int(10) unsigned NOT NULL,
+		  PRIMARY KEY (`snapshot_id`),
+		  KEY `model_hour_scope` (`model_id`,`date_hour`,`scope_type`,`scope_id`),
+		  KEY `user_hour` (`user_id`,`date_hour`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+    $result = _mysqli_query($sql);
+
+    $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_touchpoints` (
+		  `touchpoint_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `snapshot_id` bigint(20) unsigned NOT NULL,
+		  `conv_id` int(11) unsigned NOT NULL,
+		  `click_id` bigint(20) unsigned NOT NULL,
+		  `position` smallint(5) unsigned NOT NULL DEFAULT '0',
+		  `credit` decimal(10,5) NOT NULL DEFAULT '0.00000',
+		  `weight` decimal(10,5) NOT NULL DEFAULT '0.00000',
+		  `created_at` int(10) unsigned NOT NULL,
+		  PRIMARY KEY (`touchpoint_id`),
+		  KEY `snapshot_conv` (`snapshot_id`,`conv_id`),
+		  KEY `click_lookup` (`click_id`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+    $result = _mysqli_query($sql);
+
+    $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_settings` (
+		  `setting_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `user_id` mediumint(8) unsigned NOT NULL,
+		  `scope_type` varchar(50) NOT NULL,
+		  `scope_id` bigint(20) unsigned DEFAULT NULL,
+		  `model_id` bigint(20) unsigned NOT NULL,
+		  `effective_at` int(10) unsigned NOT NULL,
+		  `created_at` int(10) unsigned NOT NULL,
+		  `updated_at` int(10) unsigned NOT NULL,
+		  PRIMARY KEY (`setting_id`),
+		  UNIQUE KEY `user_scope` (`user_id`,`scope_type`,`scope_id`),
+		  KEY `model_lookup` (`model_id`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+    $result = _mysqli_query($sql);
+
+    $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_audit` (
+		  `audit_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+		  `user_id` mediumint(8) unsigned NOT NULL,
+		  `model_id` bigint(20) unsigned DEFAULT NULL,
+		  `action` varchar(50) NOT NULL,
+		  `metadata` longtext,
+		  `created_at` int(10) unsigned NOT NULL,
+		  PRIMARY KEY (`audit_id`),
+		  KEY `user_lookup` (`user_id`),
+		  KEY `model_lookup` (`model_id`),
+		  KEY `action_lookup` (`action`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+    $result = _mysqli_query($sql);
+
     //create c1 table
     $sql = "CREATE TABLE IF NOT EXISTS `202_tracking_c1` (
 		  `c1_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -404,8 +485,8 @@ class INSTALL
     $result = _mysqli_query($sql);
 
     $sql = "INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`)
-			   VALUES
-			   (1, 'a:3:{i:0;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:6:\"clicks\";}i:1;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:9:\"click_out\";}i:2;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:5:\"leads\";}}', 'days');";
+				   VALUES
+				   (1, 'a:3:{i:0;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:6:\"clicks\";}i:1;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:9:\"click_out\";}i:2;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:5:\"leads\";}}', 'days');";
     $result = _mysqli_query($sql);
 
     //create the click table
@@ -1074,7 +1155,9 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         (18, 'access_to_clickservers'),
         (19, 'access_to_api_integrations'),
         (20, 'access_to_settings'),
-        (21, 'remove_tracker');";
+        (21, 'remove_tracker'),
+        (22, 'view_attribution_reports'),
+        (23, 'manage_attribution_models');";
     $result = _mysqli_query($sql);
 
     $sql = "CREATE TABLE IF NOT EXISTS `202_roles` (
@@ -1127,6 +1210,8 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         (1, 19),
         (1, 20),
         (1, 21),
+        (1, 22),
+        (1, 23),
         (2, 1),
         (2, 3),
         (2, 4),
@@ -1147,9 +1232,12 @@ CREATE TABLE IF NOT EXISTS `202_last_ips` (
         (2, 19),
         (2, 20),
         (2, 21),
+        (2, 22),
+        (2, 23),
         (3, 12),
         (3, 14),
         (3, 15),
+        (3, 22),
         (4, 12);";
     $result = _mysqli_query($sql);
 
