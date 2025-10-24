@@ -2827,11 +2827,32 @@ class UPGRADE
             $prosper202_version = '1.9.56';
         }
 
+        if ($prosper202_version == '1.9.56') {
+
+            $sql = "CREATE TABLE IF NOT EXISTS `202_conversion_touchpoints` (
+              `touchpoint_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `conv_id` int(11) unsigned NOT NULL,
+              `click_id` bigint(20) unsigned NOT NULL,
+              `click_time` int(10) unsigned NOT NULL,
+              `position` smallint(5) unsigned NOT NULL DEFAULT '0',
+              `created_at` int(10) unsigned NOT NULL,
+              PRIMARY KEY (`touchpoint_id`),
+              KEY `conv_id` (`conv_id`),
+              KEY `click_lookup` (`click_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "UPDATE 202_version SET version='1.9.57'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.57';
+        }
+
         //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.56') {
+        if ($prosper202_version > '1.9.57') {
 
 
-            $prosper202_version = '1.9.56';
+            $prosper202_version = '1.9.57';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }

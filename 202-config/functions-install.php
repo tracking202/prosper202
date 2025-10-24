@@ -201,8 +201,8 @@ class INSTALL
     $result = _mysqli_query($sql);
 
     $sql = "CREATE TABLE IF NOT EXISTS `202_conversion_logs` (
-		  `conv_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-		  `click_id` bigint(20) unsigned NOT NULL,
+                  `conv_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                  `click_id` bigint(20) unsigned NOT NULL,
 		  `transaction_id` varchar(255) DEFAULT NULL,
 		  `campaign_id` mediumint(8) unsigned NOT NULL,
 		  `click_payout` decimal(11,5) NOT NULL,
@@ -214,16 +214,29 @@ class INSTALL
 		  `pixel_type` int(11) unsigned NOT NULL,
 		  `user_agent` text NOT NULL,
 		  `deleted` tinyint(4) NOT NULL DEFAULT '0',
-		  PRIMARY KEY (`conv_id`),
-		  KEY `click_id` (`click_id`),
-		  KEY `user_id` (`user_id`),
-		  KEY `campaign_id` (`campaign_id`)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+                  PRIMARY KEY (`conv_id`),
+                  KEY `click_id` (`click_id`),
+                  KEY `user_id` (`user_id`),
+                  KEY `campaign_id` (`campaign_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+    $result = _mysqli_query($sql);
+
+    $sql = "CREATE TABLE IF NOT EXISTS `202_conversion_touchpoints` (
+                  `touchpoint_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                  `conv_id` int(11) unsigned NOT NULL,
+                  `click_id` bigint(20) unsigned NOT NULL,
+                  `click_time` int(10) unsigned NOT NULL,
+                  `position` smallint(5) unsigned NOT NULL DEFAULT '0',
+                  `created_at` int(10) unsigned NOT NULL,
+                  PRIMARY KEY (`touchpoint_id`),
+                  KEY `conv_id` (`conv_id`),
+                  KEY `click_lookup` (`click_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
     $result = _mysqli_query($sql);
 
     $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_models` (
-		  `model_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-		  `user_id` mediumint(8) unsigned NOT NULL,
+                  `model_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                  `user_id` mediumint(8) unsigned NOT NULL,
 		  `model_name` varchar(255) NOT NULL,
 		  `model_slug` varchar(191) NOT NULL,
 		  `model_type` varchar(50) NOT NULL,

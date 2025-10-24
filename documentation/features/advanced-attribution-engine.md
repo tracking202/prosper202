@@ -13,8 +13,8 @@ This guide tracks the remaining work to deliver the Advanced Attribution Engine 
 - [x] Implement core repositories (MySQL + fallbacks) and service factory wiring.
 - [x] Provide baseline strategies (last-touch, time-decay, position-based, assisted) and job runner.
 - [x] Implement per-strategy touchpoint credit calculations (last-touch, time-decay, position-based, assisted).
-- [ ] Extend position-based and assisted models to support true multi-touch journeys when touch history is available.
-  - Plan: Persist ordered touchpoint history per conversion (`202_clicks_advance` + new mapping table) and update strategies to apportion credit across multiple touches; add regression tests and ensure cron batches hydrate historical journeys before scoring.
+- [x] Extend position-based and assisted models to support true multi-touch journeys when touch history is available.
+  - Implemented shared journey persistence via `202_conversion_touchpoints`, hydrated repositories, and regression coverage for multi-touch batches. Historical conversions can be retrofitted using `202-cronjobs/backfill-conversion-journeys.php`.
 - [x] Add validation for model weighting configs and scope rules (reject invalid payloads with actionable errors).
 - [x] Add batching/pagination to conversion fetches to protect memory during large backfills.
 
