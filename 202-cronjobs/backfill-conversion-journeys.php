@@ -8,6 +8,14 @@ use Throwable;
 
 require_once __DIR__ . '/../202-config/connect.php';
 
+$autoloadPath = __DIR__ . '/../vendor/autoload.php';
+if (is_file($autoloadPath)) {
+    require_once $autoloadPath;
+} else {
+    fwrite(STDERR, "Unable to locate Composer autoload file. Run composer install before executing this script.\n");
+    exit(1);
+}
+
 $options = getopt('', ['user::', 'start::', 'end::', 'batch-size::']);
 $batchSize = isset($options['batch-size']) ? max(1, (int) $options['batch-size']) : 500;
 $endTime = isset($options['end']) ? (int) $options['end'] : time();
