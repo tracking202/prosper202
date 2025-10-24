@@ -120,7 +120,7 @@ FROM 202_clicks
 WHERE user_id = ?
   AND aff_campaign_id = ?
   AND click_time BETWEEN ? AND ?
-ORDER BY click_time ASC, click_id ASC
+ORDER BY click_time DESC, click_id DESC
 LIMIT ?
 SQL;
 
