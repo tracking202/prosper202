@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -21,15 +20,16 @@ class Client extends AbstractClient
     /** @var Device */
     public $device;
 
-    /**
-     * @param string $originalUserAgent
-     */
-    public function __construct(public $originalUserAgent)
+    /** @var string */
+    public $originalUserAgent;
+
+    public function __construct(string $originalUserAgent)
     {
+        $this->originalUserAgent = $originalUserAgent;
     }
 
-    public function toString()
+    public function toString(): string
     {
-        return $this->ua->toString() . '/' . $this->os->toString();
+        return $this->ua->toString().'/'.$this->os->toString();
     }
 }
