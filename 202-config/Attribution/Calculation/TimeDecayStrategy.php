@@ -153,8 +153,11 @@ final class TimeDecayStrategy implements AttributionStrategyInterface
 
         $normalisedTotal = array_sum($weights);
         if (abs($normalisedTotal - 1.0) > 0.0001) {
-            $lastIndex = array_key_last($weights) ?? (count($journey) - 1);
-            $weights[$lastIndex] = max(0.0, ($weights[$lastIndex] ?? 0.0) + (1.0 - $normalisedTotal));
+            // Guard against empty $weights to avoid invalid array index
+            if ($weights !== []) {
+                $lastIndex = array_key_last($weights) ?? (count($journey) - 1);
+                $weights[$lastIndex] = max(0.0, ($weights[$lastIndex] ?? 0.0) + (1.0 - $normalisedTotal));
+            }
         }
 
         return $weights;
