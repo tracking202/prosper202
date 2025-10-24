@@ -94,9 +94,7 @@ while (true) {
         }
     }
 
-    if ($totalProcessed % $batchSize === 0) {
-        fwrite(STDOUT, sprintf("Processed %d conversions...\n", $totalProcessed));
-    }
+    fwrite(STDOUT, sprintf("Processed %d conversions...\n", $totalProcessed));
 }
 
 fwrite(STDOUT, sprintf(
