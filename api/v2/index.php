@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use Api\Attribution\Controller;
 use Prosper202\Attribution\AttributionServiceFactory;
-use Throwable;
 
 require_once __DIR__ . '/../../202-config/connect.php';
 

@@ -15,7 +15,15 @@ jobs:
           php-version: '8.0'
       - name: PHP Syntax Check
         run: |
-          find . -type f -name '*.php' -print0 | xargs -0 -r -n1 php -l
+          find . \
+            -path './vendor' -prune -o \
+            -path './.git' -prune -o \
+            -type f -name '*.php' -print0 \
+            | xargs -0 -r -n1 php -l
       - name: Shell Script Syntax Check
         run: |
-          find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+          find . \
+            -path './vendor' -prune -o \
+            -path './.git' -prune -o \
+            -type f -name '*.sh' -print0 \
+            | xargs -0 -r -n1 bash -n
