@@ -7,14 +7,21 @@ namespace Prosper202\Attribution\Repository\Mysql;
 use mysqli;
 use mysqli_stmt;
 use Prosper202\Attribution\Calculation\ConversionBatch;
-use Prosper202\Attribution\Calculation\ConversionRecord;
 use Prosper202\Attribution\Repository\ConversionRepositoryInterface;
 use RuntimeException;
 
 final class MysqlConversionRepository implements ConversionRepositoryInterface
 {
-    public function __construct(private readonly mysqli $connection)
-    {
+    private readonly ConversionJourneyRepository $journeyRepository;
+    private readonly ConversionHydrator $hydrator;
+
+    public function __construct(
+        private readonly mysqli $connection,
+        ?ConversionJourneyRepository $journeyRepository = null,
+        ?ConversionHydrator $hydrator = null
+    ) {
+        $this->journeyRepository = $journeyRepository ?? new ConversionJourneyRepository($connection);
+        $this->hydrator = $hydrator ?? new ConversionHydrator();
     }
 
     public function fetchForUser(int $userId, int $startTime, int $endTime, ?int $afterConversionId = null, int $limit = 5000): ConversionBatch
@@ -49,23 +56,21 @@ SQL;
         $stmt->bind_param('iiiii', $userId, $startTime, $endTime, $lastId, $limit);
         $stmt->execute();
         $result = $stmt->get_result();
-        $records = [];
+        $conversionRows = [];
         if ($result) {
             while ($row = $result->fetch_assoc()) {
-                $records[] = new ConversionRecord(
-                    conversionId: (int) $row['conv_id'],
-                    clickId: (int) $row['click_id'],
-                    userId: (int) $row['user_id'],
-                    campaignId: (int) $row['campaign_id'],
-                    ppcAccountId: (int) $row['ppc_account_id'],
-                    convTime: (int) $row['conv_time'],
-                    clickTime: (int) $row['click_time'],
-                    clickPayout: (float) $row['click_payout'],
-                    clickCost: (float) $row['click_cpc']
-                );
+                $conversionRows[] = $row;
             }
         }
         $stmt->close();
+
+        $conversionIds = array_map(
+            static fn (array $row): int => (int) $row['conv_id'],
+            $conversionRows
+        );
+
+        $journeys = $this->journeyRepository->fetchJourneysForConversions($conversionIds);
+        $records = $this->hydrator->hydrate($conversionRows, $journeys);
 
         return new ConversionBatch($userId, $startTime, $endTime, $records);
     }

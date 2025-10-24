@@ -1,5 +1,8 @@
 <?php
 declare(strict_types=1);
+
+use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
+use Throwable;
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-snoopy.php');
@@ -300,7 +303,24 @@ if (is_numeric($mysql['click_id'])) {
 					ip = '".$mysql['ip']."',
 					pixel_type = '3',
 					user_agent = '".$mysql['user_agent']."'";
-	$db->query($log_sql);
+        $db->query($log_sql);
+        $conversionId = (int) $db->insert_id;
+
+        if ($conversionId > 0) {
+                try {
+                        $journeyRepository = new ConversionJourneyRepository($db);
+                        $journeyRepository->persistJourney(
+                                conversionId: $conversionId,
+                                userId: (int) $mysql['click_user_id'],
+                                campaignId: (int) $mysql['campaign_id'],
+                                conversionTime: (int) $mysql['conv_time'],
+                                primaryClickId: (int) $mysql['click_id'],
+                                primaryClickTime: (int) $mysql['click_time']
+                        );
+                } catch (Throwable $journeyError) {
+                        error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
+                }
+        }
 
 	//set dirty hour
 	$de = new DataEngine();

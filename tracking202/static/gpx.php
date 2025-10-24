@@ -1,5 +1,8 @@
 <?php
 declare(strict_types=1);
+
+use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
+use Throwable;
 //write out a transparent 1x1 gif
 header("content-type: image/gif"); 
 header('Content-Length: 43');
@@ -141,7 +144,24 @@ if (is_numeric($mysql['click_id'])) {
 					ip = '".$mysql['ip']."',
 					pixel_type = '1',
 					user_agent = '".$mysql['user_agent']."'";
-		$db->query($log_sql);
+                $db->query($log_sql);
+                $conversionId = (int) $db->insert_id;
+
+                if ($conversionId > 0) {
+                        try {
+                                $journeyRepository = new ConversionJourneyRepository($db);
+                                $journeyRepository->persistJourney(
+                                        conversionId: $conversionId,
+                                        userId: (int) $mysql['click_user_id'],
+                                        campaignId: (int) $mysql['campaign_id'],
+                                        conversionTime: (int) $mysql['conv_time'],
+                                        primaryClickId: (int) $mysql['click_id'],
+                                        primaryClickTime: (int) $mysql['click_time']
+                                );
+                        } catch (Throwable $journeyError) {
+                                error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
+                        }
+                }
 
 		//set dirty hour
 		$de = new DataEngine();

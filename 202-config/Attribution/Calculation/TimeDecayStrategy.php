@@ -28,7 +28,8 @@ final class TimeDecayStrategy implements AttributionStrategyInterface
 
         foreach ($batch->conversions as $conversion) {
             $bucket = (int) ($conversion->convTime - ($conversion->convTime % 3600));
-            $credit = $this->calculateCredit($conversion, $decayConstant, $now);
+            $journey = $conversion->getJourney();
+            $credits = $this->calculateJourneyCredits($journey, $conversion->convTime, $decayConstant);
 
             if (!isset($snapshotsByHour[$bucket])) {
                 $snapshotsByHour[$bucket] = new Snapshot(
@@ -49,8 +50,51 @@ final class TimeDecayStrategy implements AttributionStrategyInterface
                 $touchpointsByHour[$bucket] = [];
             }
 
+            $attributedClicks = 0;
+            $attributedRevenue = 0.0;
+            $attributedCost = 0.0;
+
+            foreach ($journey as $position => $touch) {
+                $credit = $credits[$position] ?? 0.0;
+                if ($credit <= 0.0) {
+                    continue;
+                }
+
+                $attributedClicks++;
+                $attributedRevenue += $conversion->clickPayout * $credit;
+                $attributedCost += $conversion->clickCost * $credit;
+
+                $touchpointsByHour[$bucket][] = new Touchpoint(
+                    touchpointId: null,
+                    snapshotId: null,
+                    conversionId: $conversion->conversionId,
+                    clickId: $touch->clickId,
+                    position: $position,
+                    credit: $credit,
+                    weight: $credit,
+                    createdAt: $now
+                );
+            }
+
+            if ($attributedClicks === 0) {
+                $touchpointsByHour[$bucket][] = new Touchpoint(
+                    touchpointId: null,
+                    snapshotId: null,
+                    conversionId: $conversion->conversionId,
+                    clickId: $conversion->clickId,
+                    position: max(0, count($journey) - 1),
+                    credit: 1.0,
+                    weight: 1.0,
+                    createdAt: $now
+                );
+
+                $attributedClicks = 1;
+                $attributedRevenue = $conversion->clickPayout;
+                $attributedCost = $conversion->clickCost;
+            }
+
             $snapshot = $snapshotsByHour[$bucket];
-            $snapshot = new Snapshot(
+            $snapshotsByHour[$bucket] = new Snapshot(
                 snapshotId: null,
                 modelId: $snapshot->modelId,
                 userId: $snapshot->userId,
@@ -59,24 +103,11 @@ final class TimeDecayStrategy implements AttributionStrategyInterface
                 dateHour: $snapshot->dateHour,
                 lookbackStart: $snapshot->lookbackStart,
                 lookbackEnd: $snapshot->lookbackEnd,
-                attributedClicks: $snapshot->attributedClicks + 1,
+                attributedClicks: $snapshot->attributedClicks + $attributedClicks,
                 attributedConversions: $snapshot->attributedConversions + 1,
-                attributedRevenue: $snapshot->attributedRevenue + ($conversion->clickPayout * $credit),
-                attributedCost: $snapshot->attributedCost + ($conversion->clickCost * $credit),
+                attributedRevenue: $snapshot->attributedRevenue + $attributedRevenue,
+                attributedCost: $snapshot->attributedCost + $attributedCost,
                 createdAt: $snapshot->createdAt
-            );
-
-            $snapshotsByHour[$bucket] = $snapshot;
-
-            $touchpointsByHour[$bucket][] = new Touchpoint(
-                touchpointId: null,
-                snapshotId: null,
-                conversionId: $conversion->conversionId,
-                clickId: $conversion->clickId,
-                position: 0,
-                credit: $credit,
-                weight: $credit,
-                createdAt: $now
             );
         }
 
@@ -93,9 +124,42 @@ final class TimeDecayStrategy implements AttributionStrategyInterface
         return self::DEFAULT_HALF_LIFE_HOURS;
     }
 
-    private function calculateCredit(ConversionRecord $conversion, float $decayConstant, int $now): float
+    /**
+     * @param ConversionTouchpoint[] $journey
+     * @return array<int, float>
+     */
+    private function calculateJourneyCredits(array $journey, int $conversionTime, float $decayConstant): array
     {
-        $hours = max(0, ($now - $conversion->convTime) / 3600);
-        return (float) exp(-$decayConstant * $hours);
+        if ($journey === []) {
+            return [];
+        }
+
+        $weights = [];
+        foreach ($journey as $index => $touch) {
+            $hours = max(0, ($conversionTime - $touch->clickTime) / 3600);
+            $weights[$index] = (float) exp(-$decayConstant * $hours);
+        }
+
+        $total = array_sum($weights);
+        if ($total <= 0.0) {
+            $count = count($journey);
+            $share = 1.0 / $count;
+            return array_fill(0, $count, $share);
+        }
+
+        foreach ($weights as $index => $weight) {
+            $weights[$index] = max(0.0, $weight / $total);
+        }
+
+        $normalisedTotal = array_sum($weights);
+        if (abs($normalisedTotal - 1.0) > 0.0001) {
+            // Guard against empty $weights to avoid invalid array index
+            if ($weights !== []) {
+                $lastIndex = array_key_last($weights) ?? (count($journey) - 1);
+                $weights[$lastIndex] = max(0.0, ($weights[$lastIndex] ?? 0.0) + (1.0 - $normalisedTotal));
+            }
+        }
+
+        return $weights;
     }
 }
