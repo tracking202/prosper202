@@ -217,7 +217,7 @@ SQL;
         }
 
         $hashSeed = function_exists('systemHash') ? systemHash() : '';
-        $cacheKey = md5('attribution_journey_' . $conversionId . $hashSeed);
+        $cacheKey = md5(sprintf('attribution_journey_%d_%s', $conversionId, $hashSeed));
 
         if (isset($GLOBALS['memcache']) && $GLOBALS['memcache'] instanceof \Memcache) {
             /** @var \Memcache $memcache */
