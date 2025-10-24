@@ -14,8 +14,11 @@ use Prosper202\Attribution\ScopeType;
  */
 final class Controller
 {
-    public function __construct(private readonly AttributionService $service)
+    private AttributionService $service;
+
+    public function __construct(AttributionService $service)
     {
+        $this->service = $service;
     }
 
     /**
