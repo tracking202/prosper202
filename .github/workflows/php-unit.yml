@@ -20,6 +20,16 @@ jobs:
           php-version: '8.3'
           extensions: mysqli, pdo, pdo_mysql, memcached, mbstring, curl, zip, dom, xml, gd, zlib
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
       - name: Set up Composer trusted keys
         run: |
           composer_home="${COMPOSER_HOME:-$HOME/.config/composer}"
@@ -27,9 +37,19 @@ jobs:
           curl -sS https://composer.github.io/pubkeys.html > "${composer_home}/keys.dev.pub"
           curl -sS https://composer.github.io/pubkeys-tags.html > "${composer_home}/keys.tags.pub"
 
+      - name: Configure Composer authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            composer config -g github-oauth.github.com "${GITHUB_TOKEN}"
+          fi
+
       - name: Install dependencies and run tests
         id: test_pipeline
         continue-on-error: true
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
         run: |
           set +e
 
