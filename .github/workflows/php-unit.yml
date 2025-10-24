@@ -20,8 +20,14 @@ jobs:
           php-version: '8.3'
           extensions: mysqli, pdo, pdo_mysql, memcached, mbstring, curl, zip, dom, xml, gd, zlib
 
+      - name: Set up Composer trusted keys
+        run: |
+          curl -s https://composer.github.io/pubkeys.html \
+            | grep -oE '[A-Za-z0-9+/=]{32,}' \
+            | xargs -I {} composer config --global --trusted-keys {}
+
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
+        run: composer install --prefer-dist --no-interaction --no-progress
 
       - name: Validate Dependencies
         run: composer diagnose
