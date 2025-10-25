@@ -20,6 +20,12 @@ final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryI
     public const MAX_TOUCHES = 25;
 
     private readonly mysqli $connection;
+    /**
+     * Cached references used for the most recent mysqli parameter binding.
+     *
+     * @var array<int, mixed>
+     */
+    private array $boundParameterValues = [];
 
     public function __construct(mysqli $connection)
     {
@@ -390,12 +396,13 @@ SQL;
      */
     private function bind(\mysqli_stmt $stmt, string $types, array $params): void
     {
-        $refs = [];
-        foreach ($params as $index => $value) {
-            $refs[$index] = &$params[$index];
-        }
+        $this->boundParameterValues = array_values($params);
 
-        $values = array_merge([$types], $refs);
+        $values = [$types];
+        foreach ($this->boundParameterValues as $index => &$value) {
+            $values[] = &$this->boundParameterValues[$index];
+        }
+        unset($value);
 
         if (!call_user_func_array([$stmt, 'bind_param'], $values)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');

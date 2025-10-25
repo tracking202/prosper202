@@ -13,6 +13,14 @@ use RuntimeException;
 
 final class MysqlSettingRepository implements SettingsRepositoryInterface
 {
+    /**
+     * Holds references to the most recent parameter values to satisfy mysqli's
+     * requirement that bound variables remain in scope until execution.
+     *
+     * @var array<int, mixed>
+     */
+    private array $boundParameterValues = [];
+
     public function __construct(
         private readonly mysqli $writeConnection,
         private readonly ?mysqli $readConnection = null
@@ -213,12 +221,13 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
      */
     private function bind(mysqli_stmt $statement, string $types, array $values): void
     {
-        $refs = [];
-        foreach ($values as $index => $value) {
-            $refs[$index] = &$values[$index];
-        }
+        $this->boundParameterValues = array_values($values);
 
-        $params = array_merge([$types], $refs);
+        $params = [$types];
+        foreach ($this->boundParameterValues as $index => &$value) {
+            $params[] = &$this->boundParameterValues[$index];
+        }
+        unset($value);
 
         if (!call_user_func_array([$statement, 'bind_param'], $params)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
