@@ -13,13 +13,7 @@ use RuntimeException;
 
 final class MysqlSettingRepository implements SettingsRepositoryInterface
 {
-    /**
-     * Holds references to the most recent parameter values to satisfy mysqli's
-     * requirement that bound variables remain in scope until execution.
-     *
-     * @var array<int, mixed>
-     */
-    private array $boundParameterValues = [];
+    use MysqliStatementBinder;
 
     public function __construct(
         private readonly mysqli $writeConnection,
@@ -70,7 +64,7 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
 
         $sql = 'SELECT * FROM 202_attribution_settings WHERE user_id = ? AND (' . implode(' OR ', $parts) . ')';
         $stmt = $this->prepareRead($sql);
-        $this->bind($stmt, $types, $params);
+        $this->bindStatement($stmt, $types, $params);
         $stmt->execute();
         $result = $stmt->get_result();
 
@@ -216,21 +210,4 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
         return sprintf('%s:%s', $scopeType->value, $scopeId === null ? 'null' : $scopeId);
     }
 
-    /**
-     * @param array<int, mixed> $values
-     */
-    private function bind(mysqli_stmt $statement, string $types, array $values): void
-    {
-        $this->boundParameterValues = array_values($values);
-
-        $params = [$types];
-        foreach ($this->boundParameterValues as $index => &$value) {
-            $params[] = &$this->boundParameterValues[$index];
-        }
-        unset($value);
-
-        if (!call_user_func_array([$statement, 'bind_param'], $params)) {
-            throw new RuntimeException('Failed to bind MySQL parameters.');
-        }
-    }
 }

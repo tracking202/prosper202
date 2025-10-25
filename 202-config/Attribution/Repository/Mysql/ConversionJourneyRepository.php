@@ -16,16 +16,12 @@ use Throwable;
  */
 final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryInterface
 {
+    use MysqliStatementBinder;
+
     public const DEFAULT_LOOKBACK_WINDOW = 30 * 24 * 60 * 60; // 30 days
     public const MAX_TOUCHES = 25;
 
     private readonly mysqli $connection;
-    /**
-     * Cached references used for the most recent mysqli parameter binding.
-     *
-     * @var array<int, mixed>
-     */
-    private array $boundParameterValues = [];
 
     public function __construct(mysqli $connection)
     {
@@ -368,7 +364,7 @@ SQL;
             throw new RuntimeException('Unable to prepare conversion lookup statement: ' . $this->connection->error);
         }
 
-        $this->bind($stmt, $types, $params);
+        $this->bindStatement($stmt, $types, $params);
         $stmt->execute();
         $result = $stmt->get_result();
 
@@ -391,21 +387,4 @@ SQL;
         return $rows;
     }
 
-    /**
-     * @param array<int, mixed> $params
-     */
-    private function bind(\mysqli_stmt $stmt, string $types, array $params): void
-    {
-        $this->boundParameterValues = array_values($params);
-
-        $values = [$types];
-        foreach ($this->boundParameterValues as $index => &$value) {
-            $values[] = &$this->boundParameterValues[$index];
-        }
-        unset($value);
-
-        if (!call_user_func_array([$stmt, 'bind_param'], $values)) {
-            throw new RuntimeException('Failed to bind MySQL parameters.');
-        }
-    }
 }
