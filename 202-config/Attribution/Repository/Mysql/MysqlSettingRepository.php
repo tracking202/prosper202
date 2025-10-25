@@ -213,10 +213,12 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
      */
     private function bind(mysqli_stmt $statement, string $types, array $values): void
     {
-        $params = [$types];
+        $refs = [];
         foreach ($values as $index => $value) {
-            $params[] = &$values[$index];
+            $refs[$index] = &$values[$index];
         }
+
+        $params = array_merge([$types], $refs);
 
         if (!call_user_func_array([$statement, 'bind_param'], $params)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');

@@ -344,6 +344,8 @@ if (is_numeric($mysql['click_id'])) {
         $db->query($log_sql);
         $conversionId = (int) $db->insert_id;
 
+        $advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
+
         if ($conversionId > 0) {
                 $scope = [
                         'user_id' => (int) $mysql['click_user_id'],
@@ -374,5 +376,3 @@ if (is_numeric($mysql['click_id'])) {
 	$de = new DataEngine();
 	$data=($de->setDirtyHour($mysql['click_id']));
 }
-
-$advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
