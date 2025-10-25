@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
-use Throwable;
+
 //write out a transparent 1x1 gif
 header("content-type: image/gif"); 
 header('Content-Length: 43');
