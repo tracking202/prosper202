@@ -345,6 +345,8 @@ if (is_numeric($mysql['click_id'])) {
         $conversionId = (int) $db->insert_id;
         $advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
 
+        $advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
+
         if ($conversionId > 0) {
                 $scope = [
                         'user_id' => (int) $mysql['click_user_id'],

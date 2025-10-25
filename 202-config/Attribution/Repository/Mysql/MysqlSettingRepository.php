@@ -13,6 +13,8 @@ use RuntimeException;
 
 final class MysqlSettingRepository implements SettingsRepositoryInterface
 {
+    use MysqliStatementBinder;
+
     public function __construct(
         private readonly mysqli $writeConnection,
         private readonly ?mysqli $readConnection = null
@@ -62,7 +64,7 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
 
         $sql = 'SELECT * FROM 202_attribution_settings WHERE user_id = ? AND (' . implode(' OR ', $parts) . ')';
         $stmt = $this->prepareRead($sql);
-        $this->bind($stmt, $types, $params);
+        $this->bindStatement($stmt, $types, $params);
         $stmt->execute();
         $result = $stmt->get_result();
 

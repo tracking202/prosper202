@@ -16,6 +16,8 @@ use Throwable;
  */
 final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryInterface
 {
+    use MysqliStatementBinder;
+
     public const DEFAULT_LOOKBACK_WINDOW = 30 * 24 * 60 * 60; // 30 days
     public const MAX_TOUCHES = 25;
 
@@ -362,7 +364,7 @@ SQL;
             throw new RuntimeException('Unable to prepare conversion lookup statement: ' . $this->connection->error);
         }
 
-        $this->bind($stmt, $types, $params);
+        $this->bindStatement($stmt, $types, $params);
         $stmt->execute();
         $result = $stmt->get_result();
 
