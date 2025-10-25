@@ -53,6 +53,8 @@ This runbook covers operational validation for the multi-touch attribution stack
 ## 5. Maintenance Cron & Dashboard Verification
 
 1. The hourly attribution cron is required to populate snapshots/touchpoints and is the maintenance heartbeat for multi-touch QA. Recommended schedule (15 minutes past the hour):
+
+   > **Note:** If the hourly attribution cron is not configured or fails to run, snapshots and touchpoints will become stale, attribution data will not reflect recent conversions or model changes, and dashboards/BI exports may show outdated or incomplete results. This can lead to inaccurate reporting and missed attribution events. Ensure the cron is scheduled and monitored for successful completion.
    ```cron
    15 * * * * /usr/bin/php /path/to/prosper202/202-cronjobs/attribution-rebuild.php >> /var/log/prosper202/attribution-cron.log 2>&1
    ```
