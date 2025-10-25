@@ -390,12 +390,12 @@ SQL;
      */
     private function bind(\mysqli_stmt $stmt, string $types, array $params): void
     {
-        $values = [$types];
+        $refs = [];
         foreach ($params as $index => $value) {
-            $values[] = &$params[$index];
+            $refs[$index] = &$params[$index];
         }
 
-        if (!call_user_func_array([$stmt, 'bind_param'], $values)) {
+        if (!call_user_func_array([$stmt, 'bind_param'], array_merge([$types], $refs))) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }
