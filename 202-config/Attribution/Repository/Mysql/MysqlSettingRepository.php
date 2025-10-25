@@ -210,4 +210,19 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
         return sprintf('%s:%s', $scopeType->value, $scopeId === null ? 'null' : $scopeId);
     }
 
+    /**
+     * @param array<int, mixed> $values
+     */
+    private function bind(mysqli_stmt $statement, string $types, array $values): void
+    {
+        $refs = [];
+        foreach ($values as $index => $value) {
+            $refs[$index] = &$values[$index];
+        }
+        $params = array_merge([$types], $refs);
+
+        if (!call_user_func_array([$statement, 'bind_param'], $params)) {
+            throw new RuntimeException('Failed to bind MySQL parameters.');
+        }
+    }
 }

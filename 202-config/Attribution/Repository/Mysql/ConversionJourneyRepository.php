@@ -387,4 +387,18 @@ SQL;
         return $rows;
     }
 
+    /**
+     * @param array<int, mixed> $params
+     */
+    private function bind(\mysqli_stmt $stmt, string $types, array $params): void
+    {
+        $refs = [];
+        foreach ($params as $index => $value) {
+            $refs[$index] = &$params[$index];
+        }
+
+        if (!call_user_func_array([$stmt, 'bind_param'], array_merge([$types], $refs))) {
+            throw new RuntimeException('Failed to bind MySQL parameters.');
+        }
+    }
 }

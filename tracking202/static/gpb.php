@@ -343,6 +343,7 @@ if (is_numeric($mysql['click_id'])) {
 					user_agent = '".$mysql['user_agent']."'";
         $db->query($log_sql);
         $conversionId = (int) $db->insert_id;
+        $advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
 
         $advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
 
