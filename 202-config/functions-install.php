@@ -289,16 +289,21 @@ class INSTALL
     $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_settings` (
 		  `setting_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 		  `user_id` mediumint(8) unsigned NOT NULL,
-		  `scope_type` varchar(50) NOT NULL,
-		  `scope_id` bigint(20) unsigned DEFAULT NULL,
-		  `model_id` bigint(20) unsigned NOT NULL,
-		  `effective_at` int(10) unsigned NOT NULL,
-		  `created_at` int(10) unsigned NOT NULL,
-		  `updated_at` int(10) unsigned NOT NULL,
-		  PRIMARY KEY (`setting_id`),
-		  UNIQUE KEY `user_scope` (`user_id`,`scope_type`,`scope_id`),
-		  KEY `model_lookup` (`model_id`)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+                  `scope_type` varchar(50) NOT NULL,
+                  `scope_id` bigint(20) unsigned DEFAULT NULL,
+                  `model_id` bigint(20) unsigned NOT NULL,
+                  `multi_touch_enabled` tinyint(1) unsigned NOT NULL DEFAULT '1',
+                  `multi_touch_enabled_at` int(10) unsigned DEFAULT NULL,
+                  `multi_touch_disabled_at` int(10) unsigned DEFAULT NULL,
+                  `effective_at` int(10) unsigned NOT NULL,
+                  `created_at` int(10) unsigned NOT NULL,
+                  `updated_at` int(10) unsigned NOT NULL,
+                  PRIMARY KEY (`setting_id`),
+                  UNIQUE KEY `user_scope` (`user_id`,`scope_type`,`scope_id`),
+                  UNIQUE KEY `user_scope_model` (`user_id`,`scope_type`,`scope_id`,`model_id`),
+                  UNIQUE KEY `user_scope_multi_touch` (`user_id`,`scope_type`,`scope_id`,`multi_touch_enabled`),
+                  KEY `model_lookup` (`model_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
     $result = _mysqli_query($sql);
 
     $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_audit` (

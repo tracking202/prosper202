@@ -6,14 +6,18 @@ namespace Prosper202\Attribution\Repository\Mysql;
 
 use mysqli;
 use mysqli_result;
+use Prosper202\Attribution\Repository\JourneyMaintenanceRepositoryInterface;
+use Prosper202\Attribution\ScopeType;
 use RuntimeException;
 use Throwable;
 
 /**
  * Persists and retrieves ordered touchpoint journeys for conversions.
  */
-final class ConversionJourneyRepository
+final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryInterface
 {
+    use MysqliStatementBinder;
+
     public const DEFAULT_LOOKBACK_WINDOW = 30 * 24 * 60 * 60; // 30 days
     public const MAX_TOUCHES = 25;
 
@@ -59,6 +63,85 @@ final class ConversionJourneyRepository
         }
 
         $this->purgeJourneyCache($conversionId);
+    }
+
+    public function purgeByScope(int $userId, ScopeType $scopeType, ?int $scopeId = null): int
+    {
+        $afterConvId = 0;
+        $purged = 0;
+
+        while (true) {
+            $conversions = $this->fetchConversions(
+                userId: $userId,
+                scopeType: $scopeType,
+                scopeId: $scopeId,
+                startTime: 0,
+                endTime: time(),
+                afterConvId: $afterConvId,
+                limit: 500
+            );
+
+            if ($conversions === []) {
+                break;
+            }
+
+            foreach ($conversions as $row) {
+                $convId = (int) $row['conv_id'];
+                $afterConvId = $convId;
+                $this->deleteExistingJourney($convId);
+                $this->purgeJourneyCache($convId);
+                $purged++;
+            }
+        }
+
+        return $purged;
+    }
+
+    public function hydrateScope(
+        int $userId,
+        ScopeType $scopeType,
+        ?int $scopeId = null,
+        ?int $startTime = null,
+        ?int $endTime = null,
+        int $batchSize = 500
+    ): int {
+        $start = $startTime ?? max(0, time() - self::DEFAULT_LOOKBACK_WINDOW);
+        $end = $endTime ?? time();
+        $afterConvId = 0;
+        $hydrated = 0;
+
+        while (true) {
+            $conversions = $this->fetchConversions(
+                userId: $userId,
+                scopeType: $scopeType,
+                scopeId: $scopeId,
+                startTime: $start,
+                endTime: $end,
+                afterConvId: $afterConvId,
+                limit: $batchSize
+            );
+
+            if ($conversions === []) {
+                break;
+            }
+
+            foreach ($conversions as $row) {
+                $conversionId = (int) $row['conv_id'];
+                $afterConvId = $conversionId;
+
+                $this->persistJourney(
+                    conversionId: $conversionId,
+                    userId: $userId,
+                    campaignId: (int) $row['campaign_id'],
+                    conversionTime: (int) $row['conv_time'],
+                    primaryClickId: (int) $row['click_id'],
+                    primaryClickTime: (int) $row['click_time']
+                );
+                $hydrated++;
+            }
+        }
+
+        return $hydrated;
     }
 
     /**
@@ -230,6 +313,92 @@ SQL;
             /** @var \Memcached $memcache */
             $memcache = $GLOBALS['memcache'];
             $memcache->delete($cacheKey);
+        }
+    }
+
+    /**
+     * @return list<array{conv_id: int, click_id: int, campaign_id: int, conv_time: int, click_time: int}>
+     */
+    private function fetchConversions(
+        int $userId,
+        ScopeType $scopeType,
+        ?int $scopeId,
+        int $startTime,
+        int $endTime,
+        int $afterConvId,
+        int $limit
+    ): array {
+        $sql = 'SELECT cl.conv_id, cl.click_id, cl.campaign_id, cl.conv_time, cl.click_time '
+            . 'FROM 202_conversion_logs cl';
+        $types = 'iiii';
+        $params = [$userId, $afterConvId, $startTime, $endTime];
+
+        if ($scopeType === ScopeType::ADVERTISER) {
+            if ($scopeId === null) {
+                return [];
+            }
+
+            $sql .= ' INNER JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id';
+        }
+
+        $sql .= ' WHERE cl.user_id = ? AND cl.conv_id > ? AND cl.deleted = 0 AND cl.conv_time BETWEEN ? AND ?';
+
+        if ($scopeType === ScopeType::CAMPAIGN && $scopeId !== null) {
+            $sql .= ' AND cl.campaign_id = ?';
+            $types .= 'i';
+            $params[] = $scopeId;
+        }
+
+        if ($scopeType === ScopeType::ADVERTISER && $scopeId !== null) {
+            $sql .= ' AND ac.aff_network_id = ?';
+            $types .= 'i';
+            $params[] = $scopeId;
+        }
+
+        $sql .= ' ORDER BY cl.conv_id ASC LIMIT ?';
+        $types .= 'i';
+        $params[] = $limit;
+
+        $stmt = $this->connection->prepare($sql);
+        if ($stmt === false) {
+            throw new RuntimeException('Unable to prepare conversion lookup statement: ' . $this->connection->error);
+        }
+
+        $this->bindStatement($stmt, $types, $params);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        $rows = [];
+        if ($result instanceof mysqli_result) {
+            while ($row = $result->fetch_assoc()) {
+                $rows[] = [
+                    'conv_id' => (int) $row['conv_id'],
+                    'click_id' => (int) $row['click_id'],
+                    'campaign_id' => (int) $row['campaign_id'],
+                    'conv_time' => (int) $row['conv_time'],
+                    'click_time' => (int) $row['click_time'],
+                ];
+            }
+            $result->free();
+        }
+
+        $stmt->close();
+
+        return $rows;
+    }
+
+    /**
+     * @param array<int, mixed> $params
+     */
+    private function bind(\mysqli_stmt $stmt, string $types, array $params): void
+    {
+        $refs = [];
+        foreach ($params as $index => $value) {
+            $refs[$index] = &$params[$index];
+        }
+
+        if (!call_user_func_array([$stmt, 'bind_param'], array_merge([$types], $refs))) {
+            throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }
 }

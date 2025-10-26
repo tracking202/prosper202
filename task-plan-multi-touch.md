@@ -22,7 +22,7 @@
 ### 3. Extend attribution strategies for full journeys
 - [x] Ensure position-based, assisted, and time-decay strategies can apportion credit across arbitrarily long journeys.
 - [x] Add guard rails for missing/partial journeys (fallback to last touch with telemetry).
-- [ ] Provide configuration toggles to enable/disable multi-touch per advertiser or campaign.
+- [x] Provide configuration toggles to enable/disable multi-touch per advertiser or campaign.
 
 ### 4. Validate with integration tests and analytics
 - [x] Add integration tests that simulate multi-touch conversions end-to-end through the repository layer.

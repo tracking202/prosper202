@@ -6,6 +6,8 @@ namespace Prosper202\Attribution;
 
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\AuditRepositoryInterface;
+use Prosper202\Attribution\Repository\JourneyMaintenanceRepositoryInterface;
+use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlAuditRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlConversionRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlModelRepository;
@@ -13,9 +15,13 @@ use Prosper202\Attribution\Repository\Mysql\MysqlSnapshotRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlTouchpointRepository;
 use Prosper202\Attribution\Repository\NullConversionRepository;
 use Prosper202\Attribution\Repository\NullModelRepository;
+use Prosper202\Attribution\Repository\NullSettingsRepository;
 use Prosper202\Attribution\Repository\NullSnapshotRepository;
 use Prosper202\Attribution\Repository\NullTouchpointRepository;
 use Prosper202\Attribution\Repository\NullAuditRepository;
+use Prosper202\Attribution\Repository\SettingsRepositoryInterface;
+use Prosper202\Attribution\Repository\Mysql\MysqlSettingRepository;
+use Prosper202\Attribution\Service\AttributionSettingsService as SettingsService;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
 use Prosper202\Attribution\Repository\ConversionRepositoryInterface;
@@ -78,6 +84,30 @@ final class AttributionServiceFactory
             $touchpointRepository ?? new NullTouchpointRepository(),
             $conversionRepository ?? new NullConversionRepository(),
             $auditRepository ?? new NullAuditRepository()
+        );
+    }
+
+    public static function createSettingsService(
+        ?SettingsRepositoryInterface $settingsRepository = null,
+        ?ModelRepositoryInterface $modelRepository = null,
+        ?JourneyMaintenanceRepositoryInterface $journeyRepository = null
+    ): SettingsService {
+        if ($settingsRepository === null || $modelRepository === null || $journeyRepository === null) {
+            $db = \DB::getInstance();
+            $writeConnection = $db?->getConnection();
+            $readConnection = $db?->getConnectionro();
+
+            if ($writeConnection instanceof \mysqli) {
+                $settingsRepository ??= new MysqlSettingRepository($writeConnection, $readConnection);
+                $modelRepository ??= new MysqlModelRepository($writeConnection, $readConnection);
+                $journeyRepository ??= new ConversionJourneyRepository($writeConnection);
+            }
+        }
+
+        return new SettingsService(
+            $settingsRepository ?? new NullSettingsRepository(),
+            $modelRepository ?? new NullModelRepository(),
+            $journeyRepository
         );
     }
 }
