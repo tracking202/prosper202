@@ -256,7 +256,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
                                                                 <li <?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] === '202-account') and !$navigation[2]) {
 										echo 'class="active";';
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-account/" id="HomePage"><span class="fui-home"></span> Home </a></li>
-                                                                <li <?php if (isset($navigation[1]) && $navigation[1] == 'tracking202') {
+                                                                <li <?php if (isset($navigation[1]) && $navigation[1] === 'tracking202') {
                                                                                 echo 'class="active";';
                                                                         } ?>><a href="<?php echo get_absolute_url(); ?>tracking202/" id="ClickServerPage"><span class="fui-heart"></span> Prosper202 CS </a></li>
                                                                 <?php if (isset($userObj) && $userObj->hasPermission("view_attribution_reports")) { ?>
