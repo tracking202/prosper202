@@ -634,7 +634,7 @@
                     placeholder.setAttribute('selected', 'selected');
                     modelSelect.appendChild(placeholder);
                     disableControls();
-                    showError('Create an attribution model to begin analysing performance.');
+                    showError('Create an attribution model to begin analyzing performance.');
                     return;
                 }
 
