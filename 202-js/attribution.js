@@ -247,6 +247,8 @@
                     if (Number.isNaN(state.scopeId)) {
                         state.scopeId = null;
                     }
+                } else {
+                    state.scopeId = null;
                 }
             } else {
                 scopeIdInput.value = '';
