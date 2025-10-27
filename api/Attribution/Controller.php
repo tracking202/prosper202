@@ -212,6 +212,67 @@ final class Controller
 
     /**
      * @param array<string, mixed> $params
+     * @param array<string, mixed> $path
+     *
+     * @return array{status:int,payload:array<string,mixed>}
+     */
+    public function listExports(array $params, array $path): array
+    {
+        $userId = isset($params['user_id']) ? (int) $params['user_id'] : 0;
+        $modelId = isset($path['modelId']) ? (int) $path['modelId'] : 0;
+        $limit = isset($params['limit']) ? max(1, min(100, (int) $params['limit'])) : 20;
+
+        try {
+            $jobs = $this->service->listSnapshotExports($userId, $modelId, $limit);
+        } catch (InvalidArgumentException $exception) {
+            return [
+                'status' => 400,
+                'payload' => [
+                    'error' => true,
+                    'message' => $exception->getMessage(),
+                ],
+            ];
+        }
+
+        return [
+            'status' => 200,
+            'payload' => [
+                'error' => false,
+                'data' => $jobs,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function scheduleExport(int $modelId, array $payload): array
+    {
+        $userId = (int) ($payload['user_id'] ?? 0);
+
+        try {
+            $job = $this->service->scheduleSnapshotExport($userId, $modelId, $payload);
+        } catch (InvalidArgumentException $exception) {
+            return [
+                'status' => 400,
+                'payload' => [
+                    'error' => true,
+                    'message' => $exception->getMessage(),
+                ],
+            ];
+        }
+
+        return [
+            'status' => 201,
+            'payload' => [
+                'error' => false,
+                'data' => $job,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $params
      *
      * @return array{status:int,payload:array<string,mixed>}
      */
