@@ -260,7 +260,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
                                                                                 echo 'class="active";';
                                                                         } ?>><a href="<?php echo get_absolute_url(); ?>tracking202/" id="ClickServerPage"><span class="fui-heart"></span> Prosper202 CS </a></li>
                                                                 <?php if (isset($userObj) && $userObj->hasPermission("view_attribution_reports")) { ?>
-                                                                        <li <?php if (isset($navigation[1]) && isset($navigation[2]) && $navigation[1] == '202-account' && $navigation[2] == 'attribution.php') {
+                                                                        <li <?php if (isset($navigation[1]) && isset($navigation[2]) && $navigation[1] === '202-account' && $navigation[2] === 'attribution.php') {
                                                                                         echo 'class="active";';
                                                                                 } ?>><a href="<?php echo get_absolute_url(); ?>202-account/attribution.php" id="AttributionPage"><span class="fui-graph"></span> Attribution </a></li>
                                                                 <?php } ?>
@@ -288,7 +288,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 																														echo 'class="active";';
 																													} ?>><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php" id="3rdPartyAPIPage">3rd Party API Integrations</a></li><?php } ?>
                                                                                 <?php if (isset($userObj) && $userObj->hasPermission("view_attribution_reports")) { ?>
-                                                                                        <li <?php if (isset($navigation[2]) && $navigation[2] == 'attribution.php') {
+                                                                                        <li <?php if (isset($navigation[2]) && $navigation[2] === 'attribution.php') {
                                                                                                         echo 'class="active";';
                                                                                                 } ?>>
                                                                                                 <a href="<?php echo get_absolute_url(); ?>202-account/attribution.php" id="AttributionAnalyticsPage">Attribution Analytics</a>
