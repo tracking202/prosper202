@@ -9,6 +9,11 @@ use Prosper202\Attribution\Repository\AuditRepositoryInterface;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
+use Prosper202\Attribution\Analytics\AnalyticsSummary;
+use Prosper202\Attribution\Analytics\AnalyticsSnapshot;
+use Prosper202\Attribution\Analytics\TouchpointMix;
+use Prosper202\Attribution\Analytics\AnomalyAlert;
+use Prosper202\Attribution\Touchpoint;
 use Prosper202\Attribution\ModelDefinition;
 use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\Snapshot;
@@ -61,6 +66,44 @@ final class AttributionService
                 'attributed_cost' => $snapshot->attributedCost,
             ];
         }, $snapshots);
+    }
+
+    public function getAnalyticsOverview(
+        int $userId,
+        int $modelId,
+        ScopeType $scope,
+        ?int $scopeId,
+        int $startHour,
+        int $endHour,
+        int $limit = 168
+    ): AnalyticsSummary {
+        $this->requireOwnedModel($userId, $modelId);
+
+        $limit = max(1, min(500, $limit));
+        $snapshots = $this->snapshotRepository->findForRange($modelId, $scope, $scopeId, $startHour, $endHour, $limit, 0);
+
+        $analyticsSnapshots = array_map(
+            static fn (Snapshot $snapshot): AnalyticsSnapshot => new AnalyticsSnapshot(
+                $snapshot->snapshotId,
+                $snapshot->dateHour,
+                $snapshot->attributedClicks,
+                $snapshot->attributedConversions,
+                $snapshot->attributedRevenue,
+                $snapshot->attributedCost
+            ),
+            $snapshots
+        );
+
+        usort(
+            $analyticsSnapshots,
+            static fn (AnalyticsSnapshot $a, AnalyticsSnapshot $b): int => $a->dateHour <=> $b->dateHour
+        );
+
+        $totals = $this->calculateTotals($analyticsSnapshots);
+        $mix = $this->buildTouchpointMix($snapshots);
+        $anomalies = $this->detectAnomalies($analyticsSnapshots);
+
+        return new AnalyticsSummary($totals, $analyticsSnapshots, $mix, $anomalies);
     }
 
     /**
@@ -307,5 +350,166 @@ final class AttributionService
         }
 
         return $model;
+    }
+
+    /**
+     * @param AnalyticsSnapshot[] $snapshots
+     * @return array<string, float|null>
+     */
+    private function calculateTotals(array $snapshots): array
+    {
+        $totals = [
+            'revenue' => 0.0,
+            'conversions' => 0.0,
+            'clicks' => 0.0,
+            'cost' => 0.0,
+            'roi' => null,
+        ];
+
+        foreach ($snapshots as $snapshot) {
+            $totals['revenue'] += $snapshot->attributedRevenue;
+            $totals['conversions'] += $snapshot->attributedConversions;
+            $totals['clicks'] += $snapshot->attributedClicks;
+            $totals['cost'] += $snapshot->attributedCost;
+        }
+
+        if ($totals['cost'] > 0.0) {
+            $totals['roi'] = (($totals['revenue'] - $totals['cost']) / $totals['cost']) * 100.0;
+        }
+
+        return $totals;
+    }
+
+    /**
+     * @param Snapshot[] $snapshots
+     * @return TouchpointMix[]
+     */
+    private function buildTouchpointMix(array $snapshots): array
+    {
+        if ($snapshots === []) {
+            return [];
+        }
+
+        $buckets = [
+            'first_touch' => ['label' => 'First Touch', 'credit' => 0.0, 'touches' => 0],
+            'assist_touch' => ['label' => 'Assist', 'credit' => 0.0, 'touches' => 0],
+            'last_touch' => ['label' => 'Last Touch', 'credit' => 0.0, 'touches' => 0],
+        ];
+
+        foreach ($snapshots as $snapshot) {
+            if ($snapshot->snapshotId === null) {
+                continue;
+            }
+
+            $touchpoints = $this->touchpointRepository->findBySnapshot($snapshot->snapshotId);
+            if ($touchpoints === []) {
+                continue;
+            }
+
+            $maxPosition = max(array_map(static fn (Touchpoint $touchpoint): int => $touchpoint->position, $touchpoints));
+
+            foreach ($touchpoints as $touchpoint) {
+                $bucketKey = 'assist_touch';
+                if ($touchpoint->position === 0) {
+                    $bucketKey = 'first_touch';
+                } elseif ($touchpoint->position === $maxPosition) {
+                    $bucketKey = 'last_touch';
+                }
+
+                $buckets[$bucketKey]['credit'] += $touchpoint->credit;
+                $buckets[$bucketKey]['touches']++;
+            }
+        }
+
+        $totalCredit = array_reduce(
+            $buckets,
+            static fn (float $carry, array $bucket): float => $carry + (float) $bucket['credit'],
+            0.0
+        );
+
+        $mix = [];
+        foreach ($buckets as $key => $bucket) {
+            $share = $totalCredit > 0.0 ? ($bucket['credit'] / $totalCredit) * 100.0 : 0.0;
+            $mix[] = new TouchpointMix(
+                $key,
+                $bucket['label'],
+                (float) $bucket['credit'],
+                (int) $bucket['touches'],
+                $share
+            );
+        }
+
+        return $mix;
+    }
+
+    /**
+     * @param AnalyticsSnapshot[] $snapshots
+     * @return AnomalyAlert[]
+     */
+    private function detectAnomalies(array $snapshots): array
+    {
+        $count = count($snapshots);
+        if ($count < 2) {
+            return [];
+        }
+
+        $recent = $snapshots[$count - 1];
+        $history = array_slice($snapshots, 0, -1);
+
+        $alerts = [];
+        $alerts = array_merge(
+            $alerts,
+            $this->buildMetricAlert(
+                'conversions',
+                array_map(static fn (AnalyticsSnapshot $snapshot): float => (float) $snapshot->attributedConversions, $history),
+                (float) $recent->attributedConversions
+            )
+        );
+
+        $alerts = array_merge(
+            $alerts,
+            $this->buildMetricAlert(
+                'revenue',
+                array_map(static fn (AnalyticsSnapshot $snapshot): float => $snapshot->attributedRevenue, $history),
+                $recent->attributedRevenue
+            )
+        );
+
+        return $alerts;
+    }
+
+    /**
+     * @param float[] $historicalValues
+     * @return AnomalyAlert[]
+     */
+    private function buildMetricAlert(string $metric, array $historicalValues, float $latest): array
+    {
+        $historyCount = count($historicalValues);
+        if ($historyCount === 0) {
+            return [];
+        }
+
+        $historyAverage = array_sum($historicalValues) / $historyCount;
+        if ($historyAverage <= 0.0) {
+            return [];
+        }
+
+        $delta = ($latest - $historyAverage) / $historyAverage;
+        $severityThreshold = 0.25;
+
+        if (abs($delta) < $severityThreshold) {
+            return [];
+        }
+
+        $severity = abs($delta) >= 0.5 ? 'critical' : 'warning';
+        $direction = $delta >= 0 ? 'up' : 'down';
+        $percentageChange = round($delta * 100.0, 2);
+        $message = sprintf(
+            'Latest %s changed by %s%% compared to the trailing average.',
+            $metric,
+            number_format(abs($percentageChange), 2)
+        );
+
+        return [new AnomalyAlert($metric, $severity, $direction, $percentageChange, $message)];
     }
 }
