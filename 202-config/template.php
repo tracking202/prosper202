@@ -277,6 +277,13 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 										<?php if (isset($userObj) && $userObj->hasPermission("access_to_api_integrations")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'api-integrations.php') {
 																														echo 'class="active";';
 																													} ?>><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php" id="3rdPartyAPIPage">3rd Party API Integrations</a></li><?php } ?>
+                                                                                <?php if (isset($userObj) && $userObj->hasPermission("view_attribution_reports")) { ?>
+                                                                                        <li <?php if (isset($navigation[2]) && $navigation[2] == 'attribution') {
+                                                                                                        echo 'class="active";';
+                                                                                                } ?>>
+                                                                                                <a href="<?php echo get_absolute_url(); ?>202-account/attribution/" id="AttributionAnalyticsPage">Attribution Analytics</a>
+                                                                                        </li>
+                                                                                <?php } ?>
 										<?php if (isset($userObj) && $userObj->hasPermission("add_users")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'user-management.php') {
 																									echo 'class="active";';
 																								} ?>><a href="<?php echo get_absolute_url(); ?>202-account/user-management.php" id="UserManagementPage">User Management</a></li><?php } ?>
