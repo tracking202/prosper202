@@ -516,7 +516,6 @@
             if (startHour === null) {
                 startHour = state.startHour;
             }
-
             var endHour = exportEndInput ? fromDateTimeLocal(exportEndInput.value) : state.endHour;
             if (endHour === null) {
                 endHour = state.endHour;
