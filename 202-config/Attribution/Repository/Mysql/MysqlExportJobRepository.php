@@ -24,57 +24,69 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
         $sql = 'INSERT INTO 202_attribution_exports (user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, options, webhook_url, webhook_secret, webhook_headers, file_path, rows_exported, queued_at, started_at, completed_at, failed_at, last_error, webhook_attempted_at, webhook_status_code, webhook_response_body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
         $stmt = $this->prepareWrite($sql);
 
-        $values = [
-            (int) $row['user_id'],
-            (int) $row['model_id'],
-            (string) $row['scope_type'],
-            $row['scope_id'],
-            (int) $row['start_hour'],
-            (int) $row['end_hour'],
-            (string) $row['requested_format'],
-            (string) $row['status'],
-            $row['options'],
-            $row['webhook_url'],
-            $row['webhook_secret'],
-            $row['webhook_headers'],
-            $row['file_path'],
-            $row['rows_exported'],
-            (int) $row['queued_at'],
-            $row['started_at'],
-            $row['completed_at'],
-            $row['failed_at'],
-            $row['last_error'],
-            $row['webhook_attempted_at'],
-            $row['webhook_status_code'],
-            $row['webhook_response_body'],
-            (int) $row['created_at'],
-            (int) $row['updated_at'],
+        $orderedColumns = [
+            'user_id',
+            'model_id',
+            'scope_type',
+            'scope_id',
+            'start_hour',
+            'end_hour',
+            'requested_format',
+            'status',
+            'options',
+            'webhook_url',
+            'webhook_secret',
+            'webhook_headers',
+            'file_path',
+            'rows_exported',
+            'queued_at',
+            'started_at',
+            'completed_at',
+            'failed_at',
+            'last_error',
+            'webhook_attempted_at',
+            'webhook_status_code',
+            'webhook_response_body',
+            'created_at',
+            'updated_at',
         ];
 
-        $types = 'i'; // user_id
-        $types .= 'i'; // model_id
-        $types .= 's'; // scope_type
-        $types .= 'i'; // scope_id
-        $types .= 'i'; // start_hour
-        $types .= 'i'; // end_hour
-        $types .= 's'; // requested_format
-        $types .= 's'; // status
-        $types .= 's'; // options
-        $types .= 's'; // webhook_url
-        $types .= 's'; // webhook_secret
-        $types .= 's'; // webhook_headers
-        $types .= 's'; // file_path
-        $types .= 'i'; // rows_exported
-        $types .= 'i'; // queued_at
-        $types .= 'i'; // started_at
-        $types .= 'i'; // completed_at
-        $types .= 'i'; // failed_at
-        $types .= 's'; // last_error
-        $types .= 'i'; // webhook_attempted_at
-        $types .= 'i'; // webhook_status_code
-        $types .= 's'; // webhook_response_body
-        $types .= 'i'; // created_at
-        $types .= 'i'; // updated_at
+        $intColumns = [
+            'user_id',
+            'model_id',
+            'scope_id',
+            'start_hour',
+            'end_hour',
+            'rows_exported',
+            'queued_at',
+            'started_at',
+            'completed_at',
+            'failed_at',
+            'webhook_attempted_at',
+            'webhook_status_code',
+            'created_at',
+            'updated_at',
+        ];
+
+        $types = '';
+        $values = [];
+
+        foreach ($orderedColumns as $column) {
+            $value = $row[$column] ?? null;
+            if ($value === null) {
+                $types .= 's';
+                $values[] = null;
+                continue;
+            }
+
+            if (in_array($column, $intColumns, true)) {
+                $types .= 'i';
+                $values[] = (int) $value;
+            } else {
+                $types .= 's';
+                $values[] = (string) $value;
+            }
+        }
 
         $this->bind($stmt, $types, $values);
         $stmt->execute();
@@ -201,12 +213,13 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
      */
     private function bind(mysqli_stmt $statement, string $types, array $values): void
     {
-        $params = [$types];
-        foreach ($values as $index => $value) {
-            $params[] = &$values[$index];
+        $references = [];
+        foreach ($values as $index => &$value) {
+            $references[$index] = &$value;
         }
+        unset($value);
 
-        if (!call_user_func_array([$statement, 'bind_param'], $params)) {
+        if (!$statement->bind_param($types, ...$references)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }

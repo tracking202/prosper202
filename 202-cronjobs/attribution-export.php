@@ -188,7 +188,7 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         'end_hour' => $job->endHour,
         'rows_exported' => $fileInfo['rows'],
         'file_name' => basename($fileInfo['path']),
-        'file_contents' => base64_encode((string) file_get_contents($fileInfo['path'])),
+        'download_url' => '/downloads/exports/' . basename($fileInfo['path']),
         'completed_at' => $fileInfo['completed_at'],
     ];
 
