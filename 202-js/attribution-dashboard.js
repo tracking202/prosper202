@@ -513,7 +513,13 @@
             }
 
             var startHour = exportStartInput ? fromDateTimeLocal(exportStartInput.value) : state.startHour;
+            if (startHour === null) {
+                startHour = state.startHour;
+            }
             var endHour = exportEndInput ? fromDateTimeLocal(exportEndInput.value) : state.endHour;
+            if (endHour === null) {
+                endHour = state.endHour;
+            }
 
             if (startHour === null || endHour === null) {
                 displayExportFeedback('Provide valid start and end timestamps for the export.', true);

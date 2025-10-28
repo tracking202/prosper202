@@ -28,7 +28,7 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
             (int) $row['user_id'],
             (int) $row['model_id'],
             (string) $row['scope_type'],
-            $row['scope_id'],
+            $row['scope_id'] !== null ? (int) $row['scope_id'] : null,
             (int) $row['start_hour'],
             (int) $row['end_hour'],
             (string) $row['requested_format'],
@@ -38,43 +38,20 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
             $row['webhook_secret'],
             $row['webhook_headers'],
             $row['file_path'],
-            $row['rows_exported'],
+            $row['rows_exported'] !== null ? (int) $row['rows_exported'] : null,
             (int) $row['queued_at'],
-            $row['started_at'],
-            $row['completed_at'],
-            $row['failed_at'],
+            $row['started_at'] !== null ? (int) $row['started_at'] : null,
+            $row['completed_at'] !== null ? (int) $row['completed_at'] : null,
+            $row['failed_at'] !== null ? (int) $row['failed_at'] : null,
             $row['last_error'],
-            $row['webhook_attempted_at'],
-            $row['webhook_status_code'],
+            $row['webhook_attempted_at'] !== null ? (int) $row['webhook_attempted_at'] : null,
+            $row['webhook_status_code'] !== null ? (int) $row['webhook_status_code'] : null,
             $row['webhook_response_body'],
             (int) $row['created_at'],
             (int) $row['updated_at'],
         ];
 
-        $types = 'i'; // user_id
-        $types .= 'i'; // model_id
-        $types .= 's'; // scope_type
-        $types .= 'i'; // scope_id
-        $types .= 'i'; // start_hour
-        $types .= 'i'; // end_hour
-        $types .= 's'; // requested_format
-        $types .= 's'; // status
-        $types .= 's'; // options
-        $types .= 's'; // webhook_url
-        $types .= 's'; // webhook_secret
-        $types .= 's'; // webhook_headers
-        $types .= 's'; // file_path
-        $types .= 'i'; // rows_exported
-        $types .= 'i'; // queued_at
-        $types .= 'i'; // started_at
-        $types .= 'i'; // completed_at
-        $types .= 'i'; // failed_at
-        $types .= 's'; // last_error
-        $types .= 'i'; // webhook_attempted_at
-        $types .= 'i'; // webhook_status_code
-        $types .= 's'; // webhook_response_body
-        $types .= 'i'; // created_at
-        $types .= 'i'; // updated_at
+        $types = $this->inferParameterTypes($values);
 
         $this->bind($stmt, $types, $values);
         $stmt->execute();
@@ -199,14 +176,34 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
     /**
      * @param array<int, mixed> $values
      */
-    private function bind(mysqli_stmt $statement, string $types, array $values): void
+    private function inferParameterTypes(array $values): string
     {
-        $params = [$types];
-        foreach ($values as $index => $value) {
-            $params[] = &$values[$index];
+        $types = '';
+        foreach ($values as $value) {
+            if (is_int($value) || is_bool($value)) {
+                $types .= 'i';
+            } elseif (is_float($value)) {
+                $types .= 'd';
+            } else {
+                $types .= 's';
+            }
         }
 
-        if (!call_user_func_array([$statement, 'bind_param'], $params)) {
+        return $types;
+    }
+
+    /**
+     * @param array<int, mixed> $values
+     */
+    private function bind(mysqli_stmt $statement, string $types, array $values): void
+    {
+        $references = [];
+        foreach ($values as $index => &$value) {
+            $references[$index] = &$value;
+        }
+        unset($value);
+
+        if (!$statement->bind_param($types, ...$references)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }
