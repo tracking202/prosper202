@@ -170,9 +170,7 @@ function buildWebhookDownloadUrl(ExportJob $job): ?string
 
     $path = '/202-account/attribution/download.php';
     $query = http_build_query(['export_id' => $job->exportId], '', '&', PHP_QUERY_RFC3986);
-    if ($query !== '') {
-        $path .= '?' . $query;
-    }
+    $path .= '?' . $query;
 
     $scheme = null;
     if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
