@@ -162,6 +162,50 @@ function writeRow($handle, ExportFormat $format, array $row): void
     fputcsv($handle, $row);
 }
 
+function buildWebhookDownloadUrl(ExportJob $job): ?string
+{
+    if ($job->exportId === null) {
+        return null;
+    }
+
+    $path = '/202-account/attribution/download.php';
+    $query = http_build_query(['export_id' => $job->exportId], '', '&', PHP_QUERY_RFC3986);
+    $path .= '?' . $query;
+
+    $scheme = null;
+    if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+        $schemeCandidates = explode(',', (string) $_SERVER['HTTP_X_FORWARDED_PROTO']);
+        $scheme = $schemeCandidates[0] ?? null;
+    }
+
+    if ($scheme === null && !empty($_SERVER['REQUEST_SCHEME'])) {
+        $scheme = (string) $_SERVER['REQUEST_SCHEME'];
+    }
+
+    if ($scheme === null && !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+        $scheme = 'https';
+    }
+
+    if ($scheme === null) {
+        $scheme = 'http';
+    }
+
+    $scheme = in_array($scheme, ['http', 'https'], true) ? $scheme : 'https';
+
+    $host = getTrackingDomain();
+    if (empty($host)) {
+        $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
+    }
+
+    $basePath = trim((string) get_absolute_url(), '/');
+    $baseUrl = $scheme . '://' . $host;
+    if ($basePath !== '') {
+        $baseUrl .= '/' . $basePath;
+    }
+
+    return $baseUrl . $path;
+}
+
 /**
  * @return array{success:bool,attempted_at:int,status_code:?int,response_body:?string,error?:string}
  */
@@ -188,9 +232,7 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         'end_hour' => $job->endHour,
         'rows_exported' => $fileInfo['rows'],
         'file_name' => basename($fileInfo['path']),
-        'download_url' => $job->exportId !== null
-            ? '/202-account/attribution/download.php?export_id=' . $job->exportId
-            : null,
+        'download_url' => buildWebhookDownloadUrl($job),
         'completed_at' => $fileInfo['completed_at'],
     ];
 
