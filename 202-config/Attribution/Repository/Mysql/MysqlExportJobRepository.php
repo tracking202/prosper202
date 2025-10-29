@@ -24,57 +24,51 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
         $sql = 'INSERT INTO 202_attribution_exports (user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, options, webhook_url, webhook_secret, webhook_headers, file_path, rows_exported, queued_at, started_at, completed_at, failed_at, last_error, webhook_attempted_at, webhook_status_code, webhook_response_body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
         $stmt = $this->prepareWrite($sql);
 
-        $values = [
-            (int) $row['user_id'],
-            (int) $row['model_id'],
-            (string) $row['scope_type'],
-            $row['scope_id'],
-            (int) $row['start_hour'],
-            (int) $row['end_hour'],
-            (string) $row['requested_format'],
-            (string) $row['status'],
-            $row['options'],
-            $row['webhook_url'],
-            $row['webhook_secret'],
-            $row['webhook_headers'],
-            $row['file_path'],
-            $row['rows_exported'],
-            (int) $row['queued_at'],
-            $row['started_at'],
-            $row['completed_at'],
-            $row['failed_at'],
-            $row['last_error'],
-            $row['webhook_attempted_at'],
-            $row['webhook_status_code'],
-            $row['webhook_response_body'],
-            (int) $row['created_at'],
-            (int) $row['updated_at'],
-        ];
+        $types = '';
+        $values = [];
 
-        $types = 'i'; // user_id
-        $types .= 'i'; // model_id
-        $types .= 's'; // scope_type
-        $types .= 'i'; // scope_id
-        $types .= 'i'; // start_hour
-        $types .= 'i'; // end_hour
-        $types .= 's'; // requested_format
-        $types .= 's'; // status
-        $types .= 's'; // options
-        $types .= 's'; // webhook_url
-        $types .= 's'; // webhook_secret
-        $types .= 's'; // webhook_headers
-        $types .= 's'; // file_path
-        $types .= 'i'; // rows_exported
-        $types .= 'i'; // queued_at
-        $types .= 'i'; // started_at
-        $types .= 'i'; // completed_at
-        $types .= 'i'; // failed_at
-        $types .= 's'; // last_error
-        $types .= 'i'; // webhook_attempted_at
-        $types .= 'i'; // webhook_status_code
-        $types .= 's'; // webhook_response_body
-        $types .= 'i'; // created_at
-        $types .= 'i'; // updated_at
+        $this->addIntParam($types, $values, (int) $row['user_id']);
+        $this->addIntParam($types, $values, (int) $row['model_id']);
+        $this->addStringParam($types, $values, (string) $row['scope_type']);
+
+        $scopeId = $row['scope_id'];
+        $this->addIntParam($types, $values, $scopeId === null ? null : (int) $scopeId);
+
+        $this->addIntParam($types, $values, (int) $row['start_hour']);
+        $this->addIntParam($types, $values, (int) $row['end_hour']);
+        $this->addStringParam($types, $values, (string) $row['requested_format']);
+        $this->addStringParam($types, $values, (string) $row['status']);
+        $this->addStringParam($types, $values, $row['options']);
+        $this->addStringParam($types, $values, $row['webhook_url']);
+        $this->addStringParam($types, $values, $row['webhook_secret']);
+        $this->addStringParam($types, $values, $row['webhook_headers']);
+        $this->addStringParam($types, $values, $row['file_path']);
+
+        $rowsExported = $row['rows_exported'];
+        $this->addIntParam($types, $values, $rowsExported === null ? null : (int) $rowsExported);
+
+        $this->addIntParam($types, $values, (int) $row['queued_at']);
+
+        $startedAt = $row['started_at'];
+        $this->addIntParam($types, $values, $startedAt === null ? null : (int) $startedAt);
+
+        $completedAt = $row['completed_at'];
+        $this->addIntParam($types, $values, $completedAt === null ? null : (int) $completedAt);
+
+        $failedAt = $row['failed_at'];
+        $this->addIntParam($types, $values, $failedAt === null ? null : (int) $failedAt);
+
+        $this->addStringParam($types, $values, $row['last_error']);
+
+        $webhookAttemptedAt = $row['webhook_attempted_at'];
+        $this->addIntParam($types, $values, $webhookAttemptedAt === null ? null : (int) $webhookAttemptedAt);
+
+        $webhookStatusCode = $row['webhook_status_code'];
+        $this->addIntParam($types, $values, $webhookStatusCode === null ? null : (int) $webhookStatusCode);
+
+        $this->addStringParam($types, $values, $row['webhook_response_body']);
+        $this->addIntParam($types, $values, (int) $row['created_at']);
+        $this->addIntParam($types, $values, (int) $row['updated_at']);
 
         $this->bind($stmt, $types, $values);
         $stmt->execute();
@@ -152,7 +146,17 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
     {
         $sql = 'UPDATE 202_attribution_exports SET webhook_attempted_at = ?, webhook_status_code = ?, webhook_response_body = ?, updated_at = ? WHERE export_id = ? LIMIT 1';
         $stmt = $this->prepareWrite($sql);
-        $stmt->bind_param('iisii', $timestamp, $statusCode, $responseBody, $timestamp, $jobId);
+
+        $types = '';
+        $values = [];
+
+        $this->addIntParam($types, $values, $timestamp);
+        $this->addIntParam($types, $values, $statusCode);
+        $this->addStringParam($types, $values, $responseBody);
+        $this->addIntParam($types, $values, $timestamp);
+        $this->addIntParam($types, $values, $jobId);
+
+        $this->bind($stmt, $types, $values);
         $stmt->execute();
         $stmt->close();
     }
@@ -201,13 +205,33 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
      */
     private function bind(mysqli_stmt $statement, string $types, array $values): void
     {
-        $params = [$types];
-        foreach ($values as $index => $value) {
-            $params[] = &$values[$index];
+        foreach ($values as &$value) {
+            // mysqli requires parameters to be passed by reference.
         }
 
-        if (!call_user_func_array([$statement, 'bind_param'], $params)) {
+        if (!$statement->bind_param($types, ...$values)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
+
+        unset($value);
+    }
+
+    private function addIntParam(string &$types, array &$values, ?int $value): void
+    {
+        if ($value === null) {
+            $types .= 's';
+            $values[] = null;
+
+            return;
+        }
+
+        $types .= 'i';
+        $values[] = $value;
+    }
+
+    private function addStringParam(string &$types, array &$values, ?string $value): void
+    {
+        $types .= 's';
+        $values[] = $value;
     }
 }

@@ -14,7 +14,7 @@
     }
 
     function resolveRoi(value) {
-        if (value === null || Number.isNaN(value)) {
+        if (value === null || isNaN(value)) {
             return '–';
         }
 
@@ -43,7 +43,7 @@
         }
 
         var date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
+        if (isNaN(date.getTime())) {
             return null;
         }
 
@@ -513,7 +513,14 @@
             }
 
             var startHour = exportStartInput ? fromDateTimeLocal(exportStartInput.value) : state.startHour;
+            if (startHour === null) {
+                startHour = state.startHour;
+            }
+
             var endHour = exportEndInput ? fromDateTimeLocal(exportEndInput.value) : state.endHour;
+            if (endHour === null) {
+                endHour = state.endHour;
+            }
 
             if (startHour === null || endHour === null) {
                 displayExportFeedback('Provide valid start and end timestamps for the export.', true);
