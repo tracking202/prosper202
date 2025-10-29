@@ -52,11 +52,6 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
         $placeholders = [];
         $values = [];
         foreach ($columns as $column => $value) {
-            if ($value === null) {
-                $placeholders[] = 'NULL';
-                continue;
-            }
-
             $placeholders[] = '?';
             $values[] = $value;
         }
