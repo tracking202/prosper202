@@ -21,39 +21,59 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
     public function create(ExportJob $job): ExportJob
     {
         $row = $job->toDatabaseRow();
-        $sql = 'INSERT INTO 202_attribution_exports (user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, options, webhook_url, webhook_secret, webhook_headers, file_path, rows_exported, queued_at, started_at, completed_at, failed_at, last_error, webhook_attempted_at, webhook_status_code, webhook_response_body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-        $stmt = $this->prepareWrite($sql);
 
-        $values = [
-            (int) $row['user_id'],
-            (int) $row['model_id'],
-            (string) $row['scope_type'],
-            $row['scope_id'] !== null ? (int) $row['scope_id'] : null,
-            (int) $row['start_hour'],
-            (int) $row['end_hour'],
-            (string) $row['requested_format'],
-            (string) $row['status'],
-            $row['options'],
-            $row['webhook_url'],
-            $row['webhook_secret'],
-            $row['webhook_headers'],
-            $row['file_path'],
-            $row['rows_exported'] !== null ? (int) $row['rows_exported'] : null,
-            (int) $row['queued_at'],
-            $row['started_at'] !== null ? (int) $row['started_at'] : null,
-            $row['completed_at'] !== null ? (int) $row['completed_at'] : null,
-            $row['failed_at'] !== null ? (int) $row['failed_at'] : null,
-            $row['last_error'],
-            $row['webhook_attempted_at'] !== null ? (int) $row['webhook_attempted_at'] : null,
-            $row['webhook_status_code'] !== null ? (int) $row['webhook_status_code'] : null,
-            $row['webhook_response_body'],
-            (int) $row['created_at'],
-            (int) $row['updated_at'],
+        $columns = [
+            'user_id' => (int) $row['user_id'],
+            'model_id' => (int) $row['model_id'],
+            'scope_type' => (string) $row['scope_type'],
+            'scope_id' => $row['scope_id'] !== null ? (int) $row['scope_id'] : null,
+            'start_hour' => (int) $row['start_hour'],
+            'end_hour' => (int) $row['end_hour'],
+            'requested_format' => (string) $row['requested_format'],
+            'status' => (string) $row['status'],
+            'options' => $row['options'],
+            'webhook_url' => $row['webhook_url'],
+            'webhook_secret' => $row['webhook_secret'],
+            'webhook_headers' => $row['webhook_headers'],
+            'file_path' => $row['file_path'],
+            'rows_exported' => $row['rows_exported'] !== null ? (int) $row['rows_exported'] : null,
+            'queued_at' => (int) $row['queued_at'],
+            'started_at' => $row['started_at'] !== null ? (int) $row['started_at'] : null,
+            'completed_at' => $row['completed_at'] !== null ? (int) $row['completed_at'] : null,
+            'failed_at' => $row['failed_at'] !== null ? (int) $row['failed_at'] : null,
+            'last_error' => $row['last_error'],
+            'webhook_attempted_at' => $row['webhook_attempted_at'] !== null ? (int) $row['webhook_attempted_at'] : null,
+            'webhook_status_code' => $row['webhook_status_code'] !== null ? (int) $row['webhook_status_code'] : null,
+            'webhook_response_body' => $row['webhook_response_body'],
+            'created_at' => (int) $row['created_at'],
+            'updated_at' => (int) $row['updated_at'],
         ];
 
-        $types = $this->inferParameterTypes($values);
+        $placeholders = [];
+        $values = [];
+        foreach ($columns as $column => $value) {
+            if ($value === null) {
+                $placeholders[] = 'NULL';
+                continue;
+            }
 
-        $this->bind($stmt, $types, $values);
+            $placeholders[] = '?';
+            $values[] = $value;
+        }
+
+        $sql = sprintf(
+            'INSERT INTO 202_attribution_exports (%s) VALUES (%s)',
+            implode(', ', array_keys($columns)),
+            implode(', ', $placeholders)
+        );
+
+        $stmt = $this->prepareWrite($sql);
+
+        if ($values !== []) {
+            $types = $this->inferParameterTypes($values);
+            $this->bind($stmt, $types, $values);
+        }
+
         $stmt->execute();
         $insertId = $stmt->insert_id ?: $this->writeConnection->insert_id;
         $stmt->close();
@@ -195,7 +215,7 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
     /**
      * @param array<int, mixed> $values
      */
-    private function bind(mysqli_stmt $statement, string $types, array $values): void
+    private function bind(mysqli_stmt $statement, string $types, array &$values): void
     {
         $references = [];
         foreach ($values as $index => &$value) {
