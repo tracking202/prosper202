@@ -43,7 +43,7 @@
         }
 
         var date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
+        if (isNaN(date.getTime())) {
             return null;
         }
 
