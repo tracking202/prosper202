@@ -56,6 +56,9 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
             $values[] = $value;
         }
 
+        // SECURITY: Column names are hardcoded in the $columns array above and never come from
+        // external input. This ensures the SQL query is safe from injection. Do not modify this
+        // pattern to accept column names from external sources without proper validation.
         $sql = sprintf(
             'INSERT INTO 202_attribution_exports (%s) VALUES (%s)',
             implode(', ', array_keys($columns)),
