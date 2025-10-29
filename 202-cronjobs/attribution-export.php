@@ -221,6 +221,9 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         ];
     }
 
+    $contents = file_get_contents($fileInfo['path']);
+    $encodedContents = $contents === false ? null : base64_encode($contents);
+
     $payload = [
         'export_id' => $job->exportId,
         'model_id' => $job->modelId,
@@ -232,6 +235,7 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         'end_hour' => $job->endHour,
         'rows_exported' => $fileInfo['rows'],
         'file_name' => basename($fileInfo['path']),
+        'file_contents' => $encodedContents,
         'download_url' => buildWebhookDownloadUrl($job),
         'completed_at' => $fileInfo['completed_at'],
     ];
