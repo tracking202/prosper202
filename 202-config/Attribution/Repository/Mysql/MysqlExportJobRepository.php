@@ -204,9 +204,8 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
      */
     private function bind(mysqli_stmt $statement, string $types, array $values): void
     {
-        foreach ($values as &$value) {
-            // mysqli requires parameters to be passed by reference.
-        }
+        // Ensure all values are passed by reference for mysqli bind_param.
+        array_walk($values, function (&$v) {});
 
         if (!$statement->bind_param($types, ...$values)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
