@@ -222,7 +222,16 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
     }
 
     $contents = file_get_contents($fileInfo['path']);
-    $encodedContents = $contents === false ? null : base64_encode($contents);
+    if ($contents === false) {
+        return [
+            'success' => false,
+            'attempted_at' => time(),
+            'status_code' => null,
+            'response_body' => null,
+            'error' => 'Failed to read file: ' . $fileInfo['path'],
+        ];
+    }
+    $encodedContents = base64_encode($contents);
 
     $payload = [
         'export_id' => $job->exportId,
