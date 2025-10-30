@@ -134,6 +134,63 @@ $apiBase = rtrim(get_absolute_url(), '/') . '/api/v2/attribution';
                         </div>
                     </div>
                 </div>
+
+                <div class="row" style="margin-top: 30px;">
+                    <div class="col-md-6">
+                        <h4>Schedule snapshot export</h4>
+                        <p class="text-muted">Exports are processed asynchronously. You'll receive a downloadable file once the job completes.</p>
+                        <form data-role="export-form">
+                            <div class="form-group">
+                                <label for="export-start" class="control-label">Start (UTC)</label>
+                                <input type="datetime-local" id="export-start" class="form-control" data-role="export-start">
+                                <span class="help-block">Defaults to 24 hours before the selected analytics window.</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="export-end" class="control-label">End (UTC)</label>
+                                <input type="datetime-local" id="export-end" class="form-control" data-role="export-end">
+                            </div>
+                            <div class="form-group">
+                                <label class="control-label">Webhook URL (optional)</label>
+                                <input type="url" class="form-control" placeholder="https://example.com/callback" data-role="webhook-url">
+                                <span class="help-block">Provide a webhook endpoint to receive the export payload as JSON.</span>
+                            </div>
+                            <div class="form-group">
+                                <label class="control-label">Webhook secret</label>
+                                <input type="text" class="form-control" placeholder="Optional signing secret" data-role="webhook-secret">
+                            </div>
+                            <div class="form-group">
+                                <label class="control-label">Webhook headers</label>
+                                <textarea class="form-control" rows="3" placeholder="X-Custom: Value" data-role="webhook-headers"></textarea>
+                                <span class="help-block">One header per line in <code>Name: Value</code> format.</span>
+                            </div>
+                            <div class="form-group">
+                                <button type="button" class="btn btn-primary" data-export-format="csv">Request CSV Export</button>
+                                <button type="button" class="btn btn-default" data-export-format="xls">Request XLS Export</button>
+                                <span class="help-block" data-role="export-feedback" style="display: none;"></span>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="col-md-6">
+                        <h4>Recent export jobs</h4>
+                        <table class="table table-striped table-condensed" data-role="export-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Status</th>
+                                    <th>Queued</th>
+                                    <th>Rows</th>
+                                    <th>Completed</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="text-muted" data-role="export-empty-row">
+                                    <td colspan="6">No exports have been scheduled yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

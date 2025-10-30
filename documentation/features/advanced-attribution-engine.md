@@ -30,8 +30,8 @@ This guide tracks the remaining work to deliver the Advanced Attribution Engine 
   - Plan: Add a new “Attribution” tab in the account dashboard, reuse existing chart components with API-driven datasets, and implement model switcher + status widgets fed by `/api/v2/attribution/models`.
 - [ ] Implement sandbox workflow UI (model toggles, confidence hints, promote-to-default action).
   - Plan: Create a modal/standalone page consuming `/api/v2/attribution/sandbox`, display comparison metrics, and wire “Promote” button to PATCH endpoint with optimistic updates.
-- [ ] Provide CSV/XLS exports + webhook integrations for snapshots.
-  - Plan: Extend export queue tables with attribution job type, build background exporter that streams snapshots/touchpoints, and add configurable webhooks triggered after rebuild completion.
+- [x] Provide CSV/XLS exports + webhook integrations for snapshots.
+  - Implemented asynchronous export queue (`202_attribution_exports`), API scheduling endpoint, cron processor (`202-cronjobs/attribution-export.php`), and UI controls with optional webhooks/downloads.
 - [x] Surface documentation links/tooltips inside UI.
 
 ### 4. Security, Permissions & Audit
