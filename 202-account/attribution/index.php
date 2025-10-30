@@ -42,6 +42,7 @@ $extraHead = <<<HTML
         .attribution-dashboard .empty-state { padding: 30px; text-align: center; color: #7f8c8d; }
     </style>
     <script src="{$assetBase}202-js/attribution-dashboard.js"></script>
+    <script src="{$assetBase}202-js/attribution.js"></script>
 HTML;
 
 template_top('Attribution Analytics', [
@@ -57,7 +58,10 @@ $apiBase = rtrim(get_absolute_url(), '/') . '/api/v2/attribution';
         <div class="panel panel-default dashboard-panel">
             <div class="panel-heading clearfix">
                 <h3 class="panel-title pull-left">Multi-touch Attribution Analytics</h3>
-                <span class="pull-right text-muted" data-role="last-refreshed">&nbsp;</span>
+                <div class="pull-right panel-heading-controls">
+                    <span class="text-muted" data-role="last-refreshed">&nbsp;</span>
+                    <button type="button" class="btn btn-primary btn-sm" data-role="open-sandbox" aria-haspopup="dialog" aria-controls="attribution-sandbox-modal">Model sandbox</button>
+                </div>
             </div>
             <div class="panel-body">
                 <div class="row control-row">
@@ -132,6 +136,62 @@ $apiBase = rtrim(get_absolute_url(), '/') . '/api/v2/attribution';
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<div class="attribution-sandbox" data-role="sandbox-modal" id="attribution-sandbox-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="attribution-sandbox-title" hidden>
+    <div class="attribution-sandbox__backdrop" data-role="sandbox-dismiss" tabindex="-1"></div>
+    <div class="attribution-sandbox__dialog" data-role="sandbox-dialog" tabindex="-1">
+        <header class="attribution-sandbox__header">
+            <h4 class="attribution-sandbox__title" id="attribution-sandbox-title">Attribution model sandbox</h4>
+            <button type="button" class="close" aria-label="Close sandbox" data-role="sandbox-close">
+                <span aria-hidden="true">&times;</span>
+            </button>
+        </header>
+        <div class="attribution-sandbox__body">
+            <p class="attribution-sandbox__intro">
+                Compare attribution models using the current dashboard filters. Select one or more candidates to preview metrics and promote the winning configuration when you are ready.
+            </p>
+            <div class="row">
+                <div class="col-sm-5">
+                    <div class="form-group">
+                        <label for="sandbox-models" class="control-label">Candidate models</label>
+                        <select id="sandbox-models" class="form-control" data-role="sandbox-models" size="8" multiple aria-describedby="sandbox-models-helper"></select>
+                        <span class="help-block" id="sandbox-models-helper" data-role="sandbox-helper">Pick at least one model to start the comparison.</span>
+                    </div>
+                </div>
+                <div class="col-sm-7">
+                    <div class="attribution-sandbox__summary" data-role="sandbox-summary" aria-live="polite"></div>
+                </div>
+            </div>
+            <div class="attribution-sandbox__feedback" data-role="sandbox-error" role="alert" aria-live="assertive"></div>
+            <div class="attribution-sandbox__table" role="region" aria-live="polite" aria-label="Sandbox comparison results">
+                <div class="attribution-sandbox__placeholder" data-role="sandbox-placeholder">
+                    Select models to view comparison metrics.
+                </div>
+                <table class="table table-striped attribution-sandbox__results" data-role="sandbox-results">
+                    <thead>
+                        <tr>
+                            <th scope="col">Model</th>
+                            <th scope="col">Type</th>
+                            <th scope="col">Revenue</th>
+                            <th scope="col">Conversions</th>
+                            <th scope="col">ROI</th>
+                        </tr>
+                    </thead>
+                    <tbody data-role="sandbox-results-body"></tbody>
+                </table>
+            </div>
+        </div>
+        <footer class="attribution-sandbox__footer">
+            <div class="attribution-sandbox__status" data-role="sandbox-promote-status" aria-live="polite"></div>
+            <div class="attribution-sandbox__actions">
+                <button type="button" class="btn btn-link" data-role="sandbox-close">Close</button>
+                <button type="button" class="btn btn-success" data-role="sandbox-promote" disabled>
+                    Promote to default
+                </button>
+            </div>
+        </footer>
     </div>
 </div>
 
