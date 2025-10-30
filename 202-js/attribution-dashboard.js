@@ -27,6 +27,29 @@
         return { start: start, end: end };
     }
 
+    function toDateTimeLocal(timestamp) {
+        var date = new Date(timestamp * 1000);
+        var year = date.getUTCFullYear();
+        var month = String(date.getUTCMonth() + 1).padStart(2, '0');
+        var day = String(date.getUTCDate()).padStart(2, '0');
+        var hours = String(date.getUTCHours()).padStart(2, '0');
+        var minutes = String(date.getUTCMinutes()).padStart(2, '0');
+        return year + '-' + month + '-' + day + 'T' + hours + ':' + minutes;
+    }
+
+    function fromDateTimeLocal(value) {
+        if (!value) {
+            return null;
+        }
+
+        var date = new Date(value);
+        if (isNaN(date.getTime())) {
+            return null;
+        }
+
+        return Math.floor(date.getTime() / 1000);
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         var root = document.querySelector('[data-attribution-dashboard]');
         if (!root) {
@@ -37,6 +60,7 @@
         if (!apiBase) {
             return;
         }
+        var siteBase = apiBase.replace(/\/api\/v2\/attribution$/, '/');
 
         var modelSelect = root.querySelector('[data-role="model-select"]');
         var modelHelper = root.querySelector('[data-role="model-helper"]');
@@ -48,6 +72,15 @@
         var disabledAlert = root.querySelector('[data-role="analytics-disabled"]');
         var emptyState = root.querySelector('[data-role="empty-state"]');
         var lastRefreshed = root.querySelector('[data-role="last-refreshed"]');
+        var exportStartInput = root.querySelector('[data-role="export-start"]');
+        var exportEndInput = root.querySelector('[data-role="export-end"]');
+        var exportButtons = root.querySelectorAll('[data-export-format]');
+        var webhookUrlInput = root.querySelector('[data-role="webhook-url"]');
+        var webhookSecretInput = root.querySelector('[data-role="webhook-secret"]');
+        var webhookHeadersInput = root.querySelector('[data-role="webhook-headers"]');
+        var exportFeedback = root.querySelector('[data-role="export-feedback"]');
+        var exportTable = root.querySelector('[data-role="export-table"]');
+        var exportEmptyRow = root.querySelector('[data-role="export-empty-row"]');
 
         var state = {
             modelId: null,
@@ -56,6 +89,7 @@
             startHour: null,
             endHour: null,
             chart: null,
+            exports: [],
         };
 
         function setLoading(isLoading) {
@@ -243,6 +277,26 @@
             });
         }
 
+        function postJson(url, payload) {
+            return fetch(url, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload || {})
+            }).then(function (response) {
+                if (!response.ok) {
+                    var error = new Error('Request failed with status ' + response.status);
+                    error.status = response.status;
+                    throw error;
+                }
+
+                return response.json();
+            });
+        }
+
         function loadMetrics() {
             if (!state.modelId) {
                 return;
@@ -281,6 +335,7 @@
                     renderChart(data.snapshots || []);
                     toggleEmptyState((data.snapshots || []).length > 0);
                     updateLastRefreshed();
+                    updateExportWindow(state.startHour, state.endHour);
                 })
                 .catch(function (error) {
                     var message = 'Attribution analytics could not be retrieved.';
@@ -292,6 +347,217 @@
                 })
                 .finally(function () {
                     setLoading(false);
+                });
+        }
+
+        function updateExportWindow(startHour, endHour) {
+            if (!exportStartInput || !exportEndInput) {
+                return;
+            }
+
+            if (typeof startHour === 'number' && !Number.isNaN(startHour)) {
+                exportStartInput.value = toDateTimeLocal(startHour);
+            }
+
+            if (typeof endHour === 'number' && !Number.isNaN(endHour)) {
+                exportEndInput.value = toDateTimeLocal(endHour);
+            }
+        }
+
+        function loadExports() {
+            if (!state.modelId) {
+                return;
+            }
+
+            fetchJson(apiBase + '/models/' + state.modelId + '/exports')
+                .then(function (payload) {
+                    if (!payload || payload.error) {
+                        throw new Error('Unable to load export jobs.');
+                    }
+
+                    renderExports(payload.data || []);
+                })
+                .catch(function (error) {
+                    displayExportFeedback(error.message || 'Failed to load export jobs.', true);
+                });
+        }
+
+        function renderExports(jobs) {
+            state.exports = jobs;
+            if (exportFeedback) {
+                exportFeedback.style.display = 'none';
+            }
+            if (!exportTable) {
+                return;
+            }
+
+            var tbody = exportTable.querySelector('tbody');
+            if (!tbody) {
+                return;
+            }
+
+            while (tbody.firstChild) {
+                tbody.removeChild(tbody.firstChild);
+            }
+
+            if (!jobs || jobs.length === 0) {
+                if (exportEmptyRow) {
+                    tbody.appendChild(exportEmptyRow.cloneNode(true));
+                }
+                return;
+            }
+
+            jobs.forEach(function (job) {
+                var row = document.createElement('tr');
+
+                var idCell = document.createElement('td');
+                idCell.textContent = job.export_id || '—';
+                row.appendChild(idCell);
+
+                var statusCell = document.createElement('td');
+                statusCell.textContent = job.status || 'pending';
+                row.appendChild(statusCell);
+
+                var queuedCell = document.createElement('td');
+                queuedCell.textContent = job.queued_at ? new Date(job.queued_at * 1000).toLocaleString() : '—';
+                row.appendChild(queuedCell);
+
+                var rowsCell = document.createElement('td');
+                rowsCell.textContent = typeof job.rows_exported === 'number' ? job.rows_exported : '—';
+                row.appendChild(rowsCell);
+
+                var completedCell = document.createElement('td');
+                completedCell.textContent = job.completed_at ? new Date(job.completed_at * 1000).toLocaleString() : '—';
+                row.appendChild(completedCell);
+
+                var actionCell = document.createElement('td');
+                if (job.export_id && job.file_path && job.status === 'completed') {
+                    var link = document.createElement('a');
+                    link.href = siteBase + '202-account/attribution/download.php?export_id=' + job.export_id;
+                    link.textContent = 'Download';
+                    link.className = 'btn btn-xs btn-success';
+                    actionCell.appendChild(link);
+                } else if (job.status === 'failed' && job.last_error) {
+                    actionCell.textContent = job.last_error;
+                    actionCell.className = 'text-danger';
+                }
+                row.appendChild(actionCell);
+
+                tbody.appendChild(row);
+            });
+        }
+
+        function parseWebhookHeaders(raw) {
+            var headers = {};
+            if (!raw) {
+                return headers;
+            }
+
+            raw.split(/\r?\n/).forEach(function (line) {
+                var trimmed = line.trim();
+                if (!trimmed) {
+                    return;
+                }
+
+                var parts = trimmed.split(':');
+                if (parts.length < 2) {
+                    return;
+                }
+
+                var name = parts.shift().trim();
+                var value = parts.join(':').trim();
+                if (name) {
+                    headers[name] = value;
+                }
+            });
+
+            return headers;
+        }
+
+        function collectWebhookConfig() {
+            var url = webhookUrlInput && webhookUrlInput.value ? webhookUrlInput.value.trim() : '';
+            var secret = webhookSecretInput && webhookSecretInput.value ? webhookSecretInput.value.trim() : '';
+            var headers = webhookHeadersInput ? parseWebhookHeaders(webhookHeadersInput.value) : {};
+
+            if (!url && !secret && Object.keys(headers).length === 0) {
+                return null;
+            }
+
+            return {
+                url: url,
+                secret: secret,
+                headers: headers,
+            };
+        }
+
+        function displayExportFeedback(message, isError) {
+            if (!exportFeedback) {
+                return;
+            }
+
+            exportFeedback.textContent = message;
+            exportFeedback.style.display = 'block';
+            if (isError) {
+                exportFeedback.classList.add('text-danger');
+                exportFeedback.classList.remove('text-success');
+            } else {
+                exportFeedback.classList.remove('text-danger');
+                exportFeedback.classList.add('text-success');
+            }
+        }
+
+        function scheduleExport(format) {
+            if (!state.modelId) {
+                displayExportFeedback('Select an attribution model first.', true);
+                return;
+            }
+
+            var startHour = exportStartInput ? fromDateTimeLocal(exportStartInput.value) : state.startHour;
+            if (startHour === null) {
+                startHour = state.startHour;
+            }
+            var endHour = exportEndInput ? fromDateTimeLocal(exportEndInput.value) : state.endHour;
+            if (endHour === null) {
+                endHour = state.endHour;
+            }
+
+            if (startHour === null || endHour === null) {
+                displayExportFeedback('Provide valid start and end timestamps for the export.', true);
+                return;
+            }
+
+            if (startHour >= endHour) {
+                displayExportFeedback('Start time must be before the end time for exports.', true);
+                return;
+            }
+
+            var payload = {
+                format: format,
+                scope: state.scope,
+                start_hour: startHour,
+                end_hour: endHour,
+            };
+
+            if (state.scopeId) {
+                payload.scope_id = state.scopeId;
+            }
+
+            var webhook = collectWebhookConfig();
+            if (webhook && webhook.url) {
+                payload.webhook = webhook;
+            }
+
+            postJson(apiBase + '/models/' + state.modelId + '/exports', payload)
+                .then(function (response) {
+                    if (!response || response.error) {
+                        throw new Error(response && response.message ? response.message : 'Export scheduling failed.');
+                    }
+
+                    displayExportFeedback('Export queued successfully. Refresh the jobs list for updates.', false);
+                    loadExports();
+                })
+                .catch(function (error) {
+                    displayExportFeedback(error.message || 'Failed to schedule export.', true);
                 });
         }
 
@@ -361,7 +627,17 @@
             var value = modelSelect.value;
             state.modelId = value ? parseInt(value, 10) : null;
             loadMetrics();
+            loadExports();
         });
+
+        if (exportButtons && exportButtons.length) {
+            exportButtons.forEach(function (button) {
+                button.addEventListener('click', function () {
+                    var format = button.getAttribute('data-export-format') || 'csv';
+                    scheduleExport(format);
+                });
+            });
+        }
 
         updateScopeState();
         loadModels();
