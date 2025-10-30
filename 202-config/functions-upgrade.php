@@ -2928,11 +2928,47 @@ class UPGRADE
             $prosper202_version = '1.9.58';
         }
 
+        if ($prosper202_version == '1.9.58') {
+
+            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_exports` (
+              `export_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `user_id` mediumint(8) unsigned NOT NULL,
+              `model_id` bigint(20) unsigned NOT NULL,
+              `scope_type` varchar(50) NOT NULL,
+              `scope_id` bigint(20) unsigned DEFAULT NULL,
+              `start_hour` int(10) unsigned NOT NULL,
+              `end_hour` int(10) unsigned NOT NULL,
+              `format` varchar(10) NOT NULL,
+              `status` varchar(20) NOT NULL,
+              `file_path` varchar(255) DEFAULT NULL,
+              `download_token` varchar(64) DEFAULT NULL,
+              `webhook_url` varchar(255) DEFAULT NULL,
+              `webhook_method` varchar(10) DEFAULT NULL,
+              `webhook_headers` text DEFAULT NULL,
+              `webhook_status_code` smallint(5) unsigned DEFAULT NULL,
+              `webhook_response_body` text DEFAULT NULL,
+              `last_attempted_at` int(10) unsigned DEFAULT NULL,
+              `completed_at` int(10) unsigned DEFAULT NULL,
+              `error_message` text DEFAULT NULL,
+              `created_at` int(10) unsigned NOT NULL,
+              `updated_at` int(10) unsigned NOT NULL,
+              PRIMARY KEY (`export_id`),
+              KEY `user_status` (`user_id`,`status`),
+              KEY `model_status` (`model_id`,`status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "UPDATE 202_version SET version='1.9.59'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.59';
+        }
+
         //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.58') {
+        if ($prosper202_version > '1.9.59') {
 
 
-            $prosper202_version = '1.9.58';
+            $prosper202_version = '1.9.59';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }
