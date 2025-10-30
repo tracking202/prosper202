@@ -1133,3 +1133,104 @@ small, .small {
 }
 
 th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no-sort):after{content:'';float:right;margin-top:7px;border-width:0 4px 4px;border-style:solid;border-color:#404040 transparent;visibility:hidden;opacity:0;-ms-user-select:none;-webkit-user-select:none;-moz-user-select:none;user-select:none}th[aria-sort=ascending]:not(.no-sort):after{border-bottom:none;border-width:4px 4px 0}th[aria-sort]:not(.no-sort):after{visibility:visible;opacity:.4}th[role=columnheader]:not(.no-sort):hover:after{visibility:visible;opacity:1}
+/* Attribution dashboard */
+.attribution-page {
+  margin-top: 10px;
+}
+
+.attribution-page .attribution-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 15px;
+}
+
+.attribution-page .attribution-header h6 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.attribution-page .attribution-alert {
+  margin-top: 10px;
+}
+
+.attribution-page .attribution-panel {
+  margin-bottom: 20px;
+}
+
+.attribution-page .attribution-filters {
+  margin-bottom: 15px;
+}
+
+.attribution-page .attribution-date-range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.attribution-page .attribution-date-separator {
+  color: #7f8c9a;
+  font-size: 12px;
+}
+
+.attribution-page .attribution-loading {
+  margin: 10px 0 20px;
+  padding: 10px 15px;
+  background-color: #f5f8fb;
+  border: 1px solid #EBEBEB;
+  border-radius: 4px;
+  color: #267da8;
+  font-size: 13px;
+}
+
+.attribution-page .attribution-kpis .attribution-kpi-card {
+  background: #f9fbfd;
+  border: 1px solid #EBEBEB;
+  border-radius: 6px;
+  padding: 15px;
+  text-align: center;
+  margin-bottom: 15px;
+  height: 100%;
+}
+
+.attribution-page .attribution-kpis .attribution-kpi-card .label {
+  display: block;
+  text-transform: uppercase;
+  font-size: 12px;
+  color: #7f8c9a;
+  letter-spacing: 0.05em;
+}
+
+.attribution-page .attribution-kpis .attribution-kpi-card .metric {
+  display: block;
+  font-size: 24px;
+  font-weight: 600;
+  color: #34495e;
+  margin-top: 6px;
+}
+
+.attribution-page .attribution-chart {
+  min-height: 300px;
+}
+
+.attribution-page .attribution-empty {
+  margin-top: 15px;
+  padding: 15px;
+  text-align: center;
+  border: 1px dashed #dfe6ee;
+  border-radius: 4px;
+  color: #7f8c9a;
+  font-size: 13px;
+}
+
+.attribution-page.is-loading .attribution-kpi-card,
+.attribution-page.is-loading .attribution-chart {
+  opacity: 0.6;
+}
+
+.attribution-page .panel-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
