@@ -15,63 +15,61 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
     public function __construct(
         private readonly mysqli $writeConnection,
         private readonly ?mysqli $readConnection = null
-    ) {
-    }
+    ) {}
 
     public function create(ExportJob $job): ExportJob
     {
         $row = $job->toDatabaseRow();
-
-        $columns = [
-            'user_id' => (int) $row['user_id'],
-            'model_id' => (int) $row['model_id'],
-            'scope_type' => (string) $row['scope_type'],
-            'scope_id' => $row['scope_id'] !== null ? (int) $row['scope_id'] : null,
-            'start_hour' => (int) $row['start_hour'],
-            'end_hour' => (int) $row['end_hour'],
-            'requested_format' => (string) $row['requested_format'],
-            'status' => (string) $row['status'],
-            'options' => $row['options'],
-            'webhook_url' => $row['webhook_url'],
-            'webhook_secret' => $row['webhook_secret'],
-            'webhook_headers' => $row['webhook_headers'],
-            'file_path' => $row['file_path'],
-            'rows_exported' => $row['rows_exported'] !== null ? (int) $row['rows_exported'] : null,
-            'queued_at' => (int) $row['queued_at'],
-            'started_at' => $row['started_at'] !== null ? (int) $row['started_at'] : null,
-            'completed_at' => $row['completed_at'] !== null ? (int) $row['completed_at'] : null,
-            'failed_at' => $row['failed_at'] !== null ? (int) $row['failed_at'] : null,
-            'last_error' => $row['last_error'],
-            'webhook_attempted_at' => $row['webhook_attempted_at'] !== null ? (int) $row['webhook_attempted_at'] : null,
-            'webhook_status_code' => $row['webhook_status_code'] !== null ? (int) $row['webhook_status_code'] : null,
-            'webhook_response_body' => $row['webhook_response_body'],
-            'created_at' => (int) $row['created_at'],
-            'updated_at' => (int) $row['updated_at'],
-        ];
-
-        $placeholders = [];
-        $values = [];
-        foreach ($columns as $column => $value) {
-            $placeholders[] = '?';
-            $values[] = $value;
-        }
-
-        // SECURITY: Column names are hardcoded in the $columns array above and never come from
-        // external input. This ensures the SQL query is safe from injection. Do not modify this
-        // pattern to accept column names from external sources without proper validation.
-        $sql = sprintf(
-            'INSERT INTO 202_attribution_exports (%s) VALUES (%s)',
-            implode(', ', array_keys($columns)),
-            implode(', ', $placeholders)
-        );
-
+        $sql = 'INSERT INTO 202_attribution_exports (user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, options, webhook_url, webhook_secret, webhook_headers, file_path, rows_exported, queued_at, started_at, completed_at, failed_at, last_error, webhook_attempted_at, webhook_status_code, webhook_response_body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
         $stmt = $this->prepareWrite($sql);
 
-        if ($values !== []) {
-            $types = $this->inferParameterTypes($values);
-            $this->bind($stmt, $types, $values);
-        }
+        $types = '';
+        $values = [];
 
+        $this->addIntParam($types, $values, (int) $row['user_id']);
+        $this->addIntParam($types, $values, (int) $row['model_id']);
+        $this->addStringParam($types, $values, (string) $row['scope_type']);
+
+        $scopeId = $row['scope_id'];
+        $this->addIntParam($types, $values, $scopeId === null ? null : (int) $scopeId);
+
+        $this->addIntParam($types, $values, (int) $row['start_hour']);
+        $this->addIntParam($types, $values, (int) $row['end_hour']);
+        $this->addStringParam($types, $values, (string) $row['requested_format']);
+        $this->addStringParam($types, $values, (string) $row['status']);
+        $this->addStringParam($types, $values, $row['options']);
+        $this->addStringParam($types, $values, $row['webhook_url']);
+        $this->addStringParam($types, $values, $row['webhook_secret']);
+        $this->addStringParam($types, $values, $row['webhook_headers']);
+        $this->addStringParam($types, $values, $row['file_path']);
+
+        $rowsExported = $row['rows_exported'];
+        $this->addIntParam($types, $values, $rowsExported === null ? null : (int) $rowsExported);
+
+        $this->addIntParam($types, $values, (int) $row['queued_at']);
+
+        $startedAt = $row['started_at'];
+        $this->addIntParam($types, $values, $startedAt === null ? null : (int) $startedAt);
+
+        $completedAt = $row['completed_at'];
+        $this->addIntParam($types, $values, $completedAt === null ? null : (int) $completedAt);
+
+        $failedAt = $row['failed_at'];
+        $this->addIntParam($types, $values, $failedAt === null ? null : (int) $failedAt);
+
+        $this->addStringParam($types, $values, $row['last_error']);
+
+        $webhookAttemptedAt = $row['webhook_attempted_at'];
+        $this->addIntParam($types, $values, $webhookAttemptedAt === null ? null : (int) $webhookAttemptedAt);
+
+        $webhookStatusCode = $row['webhook_status_code'];
+        $this->addIntParam($types, $values, $webhookStatusCode === null ? null : (int) $webhookStatusCode);
+
+        $this->addStringParam($types, $values, $row['webhook_response_body']);
+        $this->addIntParam($types, $values, (int) $row['created_at']);
+        $this->addIntParam($types, $values, (int) $row['updated_at']);
+
+        $this->bind($stmt, $types, $values);
         $stmt->execute();
         $insertId = $stmt->insert_id ?: $this->writeConnection->insert_id;
         $stmt->close();
@@ -147,7 +145,17 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
     {
         $sql = 'UPDATE 202_attribution_exports SET webhook_attempted_at = ?, webhook_status_code = ?, webhook_response_body = ?, updated_at = ? WHERE export_id = ? LIMIT 1';
         $stmt = $this->prepareWrite($sql);
-        $stmt->bind_param('iisii', $timestamp, $statusCode, $responseBody, $timestamp, $jobId);
+
+        $types = '';
+        $values = [];
+
+        $this->addIntParam($types, $values, $timestamp);
+        $this->addIntParam($types, $values, $statusCode);
+        $this->addStringParam($types, $values, $responseBody);
+        $this->addIntParam($types, $values, $timestamp);
+        $this->addIntParam($types, $values, $jobId);
+
+        $this->bind($stmt, $types, $values);
         $stmt->execute();
         $stmt->close();
     }
@@ -194,35 +202,34 @@ final class MysqlExportJobRepository implements ExportJobRepositoryInterface
     /**
      * @param array<int, mixed> $values
      */
-    private function inferParameterTypes(array $values): string
+    private function bind(mysqli_stmt $statement, string $types, array $values): void
     {
-        $types = '';
-        foreach ($values as $value) {
-            if (is_int($value) || is_bool($value)) {
-                $types .= 'i';
-            } elseif (is_float($value)) {
-                $types .= 'd';
-            } else {
-                $types .= 's';
-            }
-        }
+        // Ensure all values are passed by reference for mysqli bind_param.
+        array_walk($values, function (&$v) {});
 
-        return $types;
-    }
-
-    /**
-     * @param array<int, mixed> $values
-     */
-    private function bind(mysqli_stmt $statement, string $types, array &$values): void
-    {
-        $references = [];
-        foreach ($values as $index => &$value) {
-            $references[$index] = &$value;
-        }
-        unset($value);
-
-        if (!$statement->bind_param($types, ...$references)) {
+        if (!$statement->bind_param($types, ...$values)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
+
+        unset($value);
+    }
+
+    private function addIntParam(string &$types, array &$values, ?int $value): void
+    {
+        if ($value === null) {
+            $types .= 's';
+            $values[] = null;
+
+            return;
+        }
+
+        $types .= 'i';
+        $values[] = $value;
+    }
+
+    private function addStringParam(string &$types, array &$values, ?string $value): void
+    {
+        $types .= 's';
+        $values[] = $value;
     }
 }
