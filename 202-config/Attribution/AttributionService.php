@@ -6,6 +6,7 @@ namespace Prosper202\Attribution;
 
 use InvalidArgumentException;
 use Prosper202\Attribution\Repository\AuditRepositoryInterface;
+use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
@@ -21,6 +22,10 @@ use Prosper202\Attribution\Touchpoint;
 use Prosper202\Attribution\ModelDefinition;
 use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\Snapshot;
+use Prosper202\Attribution\ExportJob;
+use Prosper202\Attribution\ExportFormat;
+use Prosper202\Attribution\ExportStatus;
+use Prosper202\Attribution\ExportWebhook;
 
 /**
  * High-level façade for attribution operations consumed by controllers and CLI jobs.
@@ -109,6 +114,109 @@ final class AttributionService
         $anomalies = $this->detectAnomalies($analyticsSnapshots);
 
         return new AnalyticsSummary($totals, $analyticsSnapshots, $mix, $anomalies);
+    }
+
+    /**
+     * Schedules an export job for attribution snapshots.
+     *
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function scheduleSnapshotExport(int $userId, int $modelId, array $payload): array
+    {
+        $model = $this->requireOwnedModel($userId, $modelId);
+
+        $scopeValue = isset($payload['scope']) ? (string) $payload['scope'] : ScopeType::GLOBAL->value;
+        $scopeType = ScopeType::tryFrom($scopeValue);
+        if ($scopeType === null) {
+            throw new InvalidArgumentException('Invalid scope value supplied.');
+        }
+
+        $scopeId = null;
+        if ($scopeType->requiresIdentifier()) {
+            if (!isset($payload['scope_id']) || !is_numeric($payload['scope_id'])) {
+                throw new InvalidArgumentException('Scope identifier required for the selected scope.');
+            }
+            $scopeId = (int) $payload['scope_id'];
+        }
+
+        $startHour = isset($payload['start_hour']) ? (int) $payload['start_hour'] : (time() - (24 * 3600));
+        $endHour = isset($payload['end_hour']) ? (int) $payload['end_hour'] : time();
+        if ($startHour >= $endHour) {
+            throw new InvalidArgumentException('Start hour must be before end hour for exports.');
+        }
+
+        $formatValue = isset($payload['format']) ? strtolower((string) $payload['format']) : ExportFormat::CSV->value;
+        $format = ExportFormat::tryFrom($formatValue);
+        if ($format === null) {
+            throw new InvalidArgumentException('Unsupported export format requested.');
+        }
+
+        $webhook = null;
+        if (isset($payload['webhook']) && is_array($payload['webhook'])) {
+            $webhookPayload = array_filter($payload['webhook'], static fn ($value) => $value !== null && $value !== '');
+            if (!empty($webhookPayload)) {
+                $webhook = ExportWebhook::fromArray($webhookPayload);
+            }
+        }
+
+        $queuedAt = time();
+        $options = [
+            'requested_by' => $userId,
+            'created_via' => 'api',
+        ];
+
+        $job = new ExportJob(
+            exportId: null,
+            userId: $userId,
+            modelId: $model->modelId ?? $modelId,
+            scopeType: $scopeType,
+            scopeId: $scopeId,
+            startHour: $startHour,
+            endHour: $endHour,
+            format: $format,
+            options: $options,
+            webhook: $webhook,
+            status: ExportStatus::PENDING,
+            queuedAt: $queuedAt,
+            startedAt: null,
+            completedAt: null,
+            failedAt: null,
+            filePath: null,
+            rowsExported: null,
+            lastError: null,
+            webhookAttemptedAt: null,
+            webhookStatusCode: null,
+            webhookResponseBody: null,
+            createdAt: $queuedAt,
+            updatedAt: $queuedAt
+        );
+
+        $created = $this->exportRepository->create($job);
+
+        $this->auditRepository->record($userId, $modelId, 'export_scheduled', [
+            'export_id' => $created->exportId,
+            'scope' => $created->scopeType->value,
+            'scope_id' => $created->scopeId,
+            'start_hour' => $created->startHour,
+            'end_hour' => $created->endHour,
+            'format' => $created->format->value,
+            'webhook' => $created->webhook?->url,
+        ]);
+
+        return $created->toSummary();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function listSnapshotExports(int $userId, int $modelId, int $limit = 20): array
+    {
+        $this->requireOwnedModel($userId, $modelId);
+        $jobs = $this->exportRepository->listRecentForModel($userId, $modelId, $limit);
+
+        return array_map(static fn (ExportJob $job): array => $job->toSummary(), $jobs);
     }
 
     /**

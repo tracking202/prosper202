@@ -25,6 +25,7 @@ use Prosper202\Attribution\Repository\NullSettingsRepository;
 use Prosper202\Attribution\Repository\NullSnapshotRepository;
 use Prosper202\Attribution\Repository\NullTouchpointRepository;
 use Prosper202\Attribution\Repository\NullAuditRepository;
+use Prosper202\Attribution\Repository\NullExportJobRepository;
 use Prosper202\Attribution\Repository\SettingsRepositoryInterface;
 use Prosper202\Attribution\Repository\Mysql\MysqlSettingRepository;
 use Prosper202\Attribution\Service\AttributionSettingsService as SettingsService;
@@ -32,6 +33,8 @@ use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
 use Prosper202\Attribution\Repository\ConversionRepositoryInterface;
 use Prosper202\Attribution\AttributionJobRunner;
+use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
+use Prosper202\Attribution\Repository\Mysql\MysqlExportJobRepository;
 
 /**
  * Simple factory used to wire default attribution services.
@@ -45,7 +48,7 @@ final class AttributionServiceFactory
         ?AuditRepositoryInterface $auditRepository = null,
         ?ExportRepositoryInterface $exportRepository = null
     ): AttributionService {
-        if ($modelRepository === null || $snapshotRepository === null || $touchpointRepository === null || $auditRepository === null) {
+        if ($modelRepository === null || $snapshotRepository === null || $touchpointRepository === null || $auditRepository === null || $exportRepository === null) {
             $db = \DB::getInstance();
             $writeConnection = $db?->getConnection();
             $readConnection = $db?->getConnectionro();

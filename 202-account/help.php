@@ -25,9 +25,9 @@ template_top('Help Resources');  ?>
 				<p><small><em>Prosper202 Blog:</em> <a href="http://prosper.tracking202.com/blog/" target="_blank">http://prosper.tracking202.com/blog/</a></small></p>
 
 				<h6 class="mt-30">Advanced Attribution</h6>
-				<p><small><em>Setup Guide:</em> <a href="<?php echo get_absolute_url(); ?>documentation/tutorials-and-guides/14-advanced-attribution-engine.md" target="_blank">Advanced Attribution Engine</a></small></p>
-				<p><small><em>Troubleshooting:</em> <a href="<?php echo get_absolute_url(); ?>documentation/tutorials-and-guides/15-advanced-attribution-troubleshooting.md" target="_blank">Troubleshooting Guide</a></small></p>
-				<p><small><em>API Reference:</em> <a href="<?php echo get_absolute_url(); ?>documentation/api/00-api-integrations.md" target="_blank">Attribution API Endpoints</a></small></p>
+				<p><small><em>Setup Guide:</em> <a href="docs.php?doc=attribution-engine" target="_blank">Advanced Attribution Engine</a></small></p>
+				<p><small><em>Troubleshooting:</em> <a href="docs.php?doc=attribution-troubleshooting" target="_blank">Troubleshooting Guide</a></small></p>
+				<p><small><em>API Reference:</em> <a href="docs.php?doc=api-integrations" target="_blank">Attribution API Endpoints</a></small></p>
 				
 			</div>
 

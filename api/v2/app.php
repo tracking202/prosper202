@@ -61,6 +61,29 @@ function register_attribution_routes(\Slim\Slim $app, Controller $controller): v
             respond_json($app, $result['payload'], $result['status']);
         })->add(attribution_authorization_middleware($app, 'view_attribution_reports'));
 
+        $app->get('/models/:modelId/exports', function ($modelId) use ($app, $controller): void {
+            $params = $app->request()->params();
+            $auth = attribution_authorized_request($app);
+            if ($auth !== null) {
+                $params['user_id'] = $auth;
+            }
+
+            $result = $controller->listExports($params, ['modelId' => $modelId]);
+            respond_json($app, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+
+        $app->post('/models/:modelId/exports', function ($modelId) use ($app, $controller): void {
+            $params = $app->request()->params();
+            $auth = attribution_authorized_request($app);
+            if ($auth !== null) {
+                $params['user_id'] = $auth;
+            }
+
+            $payload = array_merge($params, decode_json_body($app));
+            $result = $controller->scheduleExport((int) $modelId, $payload);
+            respond_json($app, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+
         $app->patch('/models/:modelId', function ($modelId) use ($app, $controller): void {
             $params = $app->request()->params();
             $auth = attribution_authorized_request($app);

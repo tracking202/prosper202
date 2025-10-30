@@ -307,17 +307,50 @@ class INSTALL
     $result = _mysqli_query($sql);
 
     $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_audit` (
-		  `audit_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-		  `user_id` mediumint(8) unsigned NOT NULL,
-		  `model_id` bigint(20) unsigned DEFAULT NULL,
-		  `action` varchar(50) NOT NULL,
-		  `metadata` longtext,
-		  `created_at` int(10) unsigned NOT NULL,
-		  PRIMARY KEY (`audit_id`),
-		  KEY `user_lookup` (`user_id`),
-		  KEY `model_lookup` (`model_id`),
-		  KEY `action_lookup` (`action`)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+                  `audit_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                  `user_id` mediumint(8) unsigned NOT NULL,
+                  `model_id` bigint(20) unsigned DEFAULT NULL,
+                  `action` varchar(50) NOT NULL,
+                  `metadata` longtext,
+                  `created_at` int(10) unsigned NOT NULL,
+                  PRIMARY KEY (`audit_id`),
+                  KEY `user_lookup` (`user_id`),
+                  KEY `model_lookup` (`model_id`),
+                  KEY `action_lookup` (`action`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
+    $result = _mysqli_query($sql);
+
+    $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_exports` (
+                  `export_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                  `user_id` mediumint(8) unsigned NOT NULL,
+                  `model_id` int(11) unsigned NOT NULL,
+                  `scope_type` varchar(32) NOT NULL,
+                  `scope_id` bigint(20) unsigned DEFAULT NULL,
+                  `start_hour` int(10) unsigned NOT NULL,
+                  `end_hour` int(10) unsigned NOT NULL,
+                  `requested_format` varchar(16) NOT NULL DEFAULT 'csv',
+                  `status` varchar(20) NOT NULL DEFAULT 'pending',
+                  `options` longtext DEFAULT NULL,
+                  `webhook_url` varchar(500) DEFAULT NULL,
+                  `webhook_secret` varchar(255) DEFAULT NULL,
+                  `webhook_headers` text DEFAULT NULL,
+                  `file_path` varchar(500) DEFAULT NULL,
+                  `rows_exported` int(11) unsigned DEFAULT NULL,
+                  `queued_at` int(10) unsigned NOT NULL,
+                  `started_at` int(10) unsigned DEFAULT NULL,
+                  `completed_at` int(10) unsigned DEFAULT NULL,
+                  `failed_at` int(10) unsigned DEFAULT NULL,
+                  `last_error` text DEFAULT NULL,
+                  `webhook_attempted_at` int(10) unsigned DEFAULT NULL,
+                  `webhook_status_code` int(11) DEFAULT NULL,
+                  `webhook_response_body` mediumtext DEFAULT NULL,
+                  `created_at` int(10) unsigned NOT NULL,
+                  `updated_at` int(10) unsigned NOT NULL,
+                  PRIMARY KEY (`export_id`),
+                  KEY `model_status` (`model_id`,`status`),
+                  KEY `user_status` (`user_id`,`status`),
+                  KEY `queued_at` (`queued_at`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
     $result = _mysqli_query($sql);
 
     //create c1 table

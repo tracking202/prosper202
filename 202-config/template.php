@@ -203,15 +203,14 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 				<?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] == "202-account") and !$navigation[2]) { ?>
 					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/home.php"></script>
 				<?php } ?>
+				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/account.php"></script>
 				<?php if (isset($navigation[2]) && $navigation[2] == 'attribution.php') { ?>
 					<script type="text/javascript" src="https://code.highcharts.com/highcharts.js"></script>
 					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/chart.theme.js"></script>
 					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/attribution.js"></script>
 				<?php } ?>
-
-				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/account.php"></script>
-		<?php break;
-		} } // End isset navigation check ?>
+                <?php break;
+                } } // End isset navigation check ?>
 		<script src="https://dp5k1x6z3k332.cloudfront.net/select2.min.js"></script>
 		<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/custom.php"></script>
 		<script>
@@ -253,15 +252,20 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 					<div class="col-xs-9">
 						<nav class="navbar navbar-default" role="navigation">
 							<ul class="nav navbar-nav">
-								<li <?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] == '202-account') and !$navigation[2]) {
+                                                                <li <?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] === '202-account') and !$navigation[2]) {
 										echo 'class="active";';
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-account/" id="HomePage"><span class="fui-home"></span> Home </a></li>
-								<li <?php if (isset($navigation[1]) && $navigation[1] == 'tracking202') {
-										echo 'class="active";';
-									} ?>><a href="<?php echo get_absolute_url(); ?>tracking202/" id="ClickServerPage"><span class="fui-heart"></span> Prosper202 CS </a></li>
-								<li <?php if (isset($navigation[1]) && $navigation[1] == '202-tv') {
-										echo 'class="active";';
-									} ?>><a href="<?php echo get_absolute_url(); ?>202-tv/" id="Tv202Page"><span class="fui-video" aria-hidden="true"></span> Watch TV202 </a> </li>
+                                                                <li <?php if (isset($navigation[1]) && $navigation[1] === 'tracking202') {
+                                                                                echo 'class="active";';
+                                                                        } ?>><a href="<?php echo get_absolute_url(); ?>tracking202/" id="ClickServerPage"><span class="fui-heart"></span> Prosper202 CS </a></li>
+                                                                <?php if (isset($userObj) && $userObj->hasPermission("view_attribution_reports")) { ?>
+                                                                        <li <?php if (isset($navigation[1]) && isset($navigation[2]) && $navigation[1] === '202-account' && $navigation[2] === 'attribution.php') {
+                                                                                        echo 'class="active";';
+                                                                                } ?>><a href="<?php echo get_absolute_url(); ?>202-account/attribution.php" id="AttributionPage"><span class="fui-graph"></span> Attribution </a></li>
+                                                                <?php } ?>
+                                                                <li <?php if (isset($navigation[1]) && $navigation[1] == '202-tv') {
+                                                                                echo 'class="active";';
+                                                                        } ?>><a href="<?php echo get_absolute_url(); ?>202-tv/" id="Tv202Page"><span class="fui-video" aria-hidden="true"></span> Watch TV202 </a> </li>
 								<li <?php if (isset($navigation[1]) && $navigation[1] == '202-resources') {
 										echo 'class="active";';
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-resources/" id="ResourcesPage"><span class="fui-star-2"></span> Hot Deals & Discounts </a></li>
@@ -283,7 +287,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 																														echo 'class="active";';
 																													} ?>><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php" id="3rdPartyAPIPage">3rd Party API Integrations</a></li><?php } ?>
                                                                                 <?php if (isset($userObj) && $userObj->hasPermission("view_attribution_reports")) { ?>
-                                                                                        <li <?php if (isset($navigation[2]) && $navigation[2] == 'attribution.php') {
+                                                                                        <li <?php if (isset($navigation[2]) && $navigation[2] === 'attribution.php') {
                                                                                                         echo 'class="active";';
                                                                                                 } ?>>
                                                                                                 <a href="<?php echo get_absolute_url(); ?>202-account/attribution.php" id="AttributionAnalyticsPage">Attribution Analytics</a>
