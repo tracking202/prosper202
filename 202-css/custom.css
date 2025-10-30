@@ -1133,7 +1133,177 @@ small, .small {
 }
 
 th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no-sort):after{content:'';float:right;margin-top:7px;border-width:0 4px 4px;border-style:solid;border-color:#404040 transparent;visibility:hidden;opacity:0;-ms-user-select:none;-webkit-user-select:none;-moz-user-select:none;user-select:none}th[aria-sort=ascending]:not(.no-sort):after{border-bottom:none;border-width:4px 4px 0}th[aria-sort]:not(.no-sort):after{visibility:visible;opacity:.4}th[role=columnheader]:not(.no-sort):hover:after{visibility:visible;opacity:1}
-/* Attribution dashboard */
+
+/* Attribution Sandbox Modal */
+.panel-heading-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.panel-heading-controls .btn {
+  white-space: nowrap;
+}
+
+.attribution-sandbox-open {
+  overflow: hidden;
+}
+
+.attribution-sandbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.attribution-sandbox[hidden] {
+  display: none !important;
+}
+
+.attribution-sandbox__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.attribution-sandbox__dialog {
+  position: relative;
+  background: #ffffff;
+  width: 100%;
+  max-width: 960px;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+.attribution-sandbox__header,
+.attribution-sandbox__footer {
+  padding: 16px 24px;
+  border-bottom: 1px solid #e5e5e5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.attribution-sandbox__footer {
+  border-top: 1px solid #e5e5e5;
+  border-bottom: none;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.attribution-sandbox__body {
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+}
+
+.attribution-sandbox__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.attribution-sandbox__intro {
+  margin-top: 0;
+  margin-bottom: 16px;
+  color: #6c7a89;
+}
+
+.attribution-sandbox__summary-message {
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.attribution-sandbox__summary-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.attribution-sandbox__summary-meta dt {
+  font-weight: 600;
+  color: #34495e;
+}
+
+.attribution-sandbox__summary-meta dd {
+  margin: 0 0 8px;
+  color: #7f8c8d;
+}
+
+.attribution-sandbox__table {
+  margin-top: 16px;
+  border: 1px solid #ecf0f1;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.attribution-sandbox__results {
+  margin-bottom: 0;
+}
+
+.attribution-sandbox__results th,
+.attribution-sandbox__results td {
+  vertical-align: middle;
+}
+
+.attribution-sandbox__placeholder {
+  padding: 24px;
+  text-align: center;
+  color: #7f8c8d;
+  font-style: italic;
+}
+
+.attribution-sandbox__feedback {
+  margin-top: 8px;
+  margin-bottom: 0;
+  color: #c0392b;
+}
+
+.attribution-sandbox__status {
+  flex: 1 1 auto;
+  color: #2c3e50;
+}
+
+.attribution-sandbox__actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.attribution-sandbox__actions .btn-success[disabled] {
+  opacity: 0.65;
+}
+
+@media (max-width: 768px) {
+  .attribution-sandbox__dialog {
+    max-width: 100%;
+    height: 100%;
+    border-radius: 0;
+  }
+
+  .attribution-sandbox__body {
+    padding: 16px;
+  }
+
+  .attribution-sandbox__header,
+  .attribution-sandbox__footer {
+    padding: 12px 16px;
+  }
+
+  .attribution-sandbox__table {
+    overflow-x: auto;
+  }
+}
+
+/* Attribution Dashboard */
 .attribution-page {
   margin-top: 10px;
 }
