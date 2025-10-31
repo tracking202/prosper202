@@ -453,7 +453,9 @@
             }
 
             modelSelect.innerHTML = '';
-            sandboxSelect.innerHTML = '';
+            if (sandboxSelect) {
+                sandboxSelect.innerHTML = '';
+            }
 
             models.forEach(function (model) {
                 var option = document.createElement('option');
