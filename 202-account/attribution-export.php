@@ -37,7 +37,7 @@ if (!$writeConnection instanceof \mysqli) {
 $repository = new \Prosper202\Attribution\Repository\Mysql\MysqlExportRepository($writeConnection, $readConnection);
 $job = $repository->findById($exportId);
 
-if ($job === null || $job->userId !== (int) ($_SESSION['user_id'] ?? 0) || $job->downloadToken !== $token) {
+if ($job === null || $job->userId !== (int) ($_SESSION['user_id'] ?? 0) || !hash_equals((string)$job->downloadToken, (string)$token)) {
     http_response_code(404);
     echo 'Export not found.';
     return;
