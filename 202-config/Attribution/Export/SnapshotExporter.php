@@ -21,7 +21,7 @@ final class SnapshotExporter
     public function export(ExportJob $job, array $snapshots): string
     {
         $directory = $this->basePath;
-        if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+        if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
             throw new \RuntimeException('Unable to initialise export directory: ' . $directory);
         }
 
