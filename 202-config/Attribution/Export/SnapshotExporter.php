@@ -26,7 +26,13 @@ final class SnapshotExporter
         }
 
         $timestamp = time();
-        $fileBase = sprintf('attribution-export-%d-%d-%d', $job->userId, $job->modelId, $timestamp);
+        // Use exportId if available, otherwise use a hash of userId, modelId, and timestamp
+        if (property_exists($job, 'exportId') && !empty($job->exportId)) {
+            $fileBase = sprintf('attribution-export-%s-%d', $job->exportId, $timestamp);
+        } else {
+            $hash = sha1($job->userId . '-' . $job->modelId . '-' . $timestamp);
+            $fileBase = sprintf('attribution-export-%s-%d', $hash, $timestamp);
+        }
 
         return match ($job->format) {
             ExportFormat::CSV => $this->writeCsv($directory, $fileBase, $snapshots),
