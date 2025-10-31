@@ -12,6 +12,12 @@ final class WebhookDispatcher
             return new WebhookResult(null, null, null);
         }
 
+        // Validate webhook URL to prevent SSRF attacks
+        $validationError = $this->validateWebhookUrl($job->webhookUrl);
+        if ($validationError !== null) {
+            return new WebhookResult(null, null, $validationError);
+        }
+
         if (!is_file($filePath) || !is_readable($filePath)) {
             return new WebhookResult(null, null, 'Export file is not readable.');
         }
@@ -85,7 +91,7 @@ final class WebhookDispatcher
             ],
         ]);
 
-        $response = @file_get_contents($url, false, $context);
+        $response = file_get_contents($url, false, $context);
         $error = $response === false ? error_get_last()['message'] ?? 'Unknown stream error.' : null;
         $statusCode = null;
         if (isset($http_response_header) && is_array($http_response_header)) {
@@ -98,5 +104,170 @@ final class WebhookDispatcher
         }
 
         return new WebhookResult($statusCode, $response ?: null, $error);
+    }
+
+    /**
+     * Validates webhook URL to prevent SSRF attacks.
+     * 
+     * @param string $url The URL to validate
+     * @return string|null Error message if validation fails, null if valid
+     */
+    private function validateWebhookUrl(string $url): ?string
+    {
+        // Parse the URL
+        $parsed = parse_url($url);
+        if ($parsed === false || !isset($parsed['scheme']) || !isset($parsed['host'])) {
+            return 'Invalid webhook URL format.';
+        }
+
+        // Only allow http and https schemes
+        $scheme = strtolower($parsed['scheme']);
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            return 'Webhook URL must use http or https scheme.';
+        }
+
+        $host = $parsed['host'];
+
+        // Reject localhost and loopback addresses
+        $localhostPatterns = [
+            'localhost',
+            'localhost.localdomain',
+            '127.0.0.1',
+            '::1',
+            '0.0.0.0',
+            '::',
+        ];
+
+        foreach ($localhostPatterns as $pattern) {
+            if (strcasecmp($host, $pattern) === 0) {
+                return 'Webhook URL cannot target localhost or loopback addresses.';
+            }
+        }
+
+        // Resolve hostname to IP address if it's not already an IP
+        $ip = $host;
+        if (!filter_var($host, FILTER_VALIDATE_IP)) {
+            // It's a hostname, resolve it
+            $resolvedIp = gethostbyname($host);
+            if ($resolvedIp === $host) {
+                // DNS resolution failed, but we'll allow it and let the request fail naturally
+                // This avoids blocking valid domains that might have temporary DNS issues
+                return null;
+            }
+            $ip = $resolvedIp;
+        }
+
+        // Validate the IP address
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return $this->validateIPv4Address($ip);
+        }
+
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            return $this->validateIPv6Address($ip);
+        }
+
+        return 'Webhook URL resolves to an invalid IP address.';
+    }
+
+    /**
+     * Validates an IPv4 address to ensure it's not in private or reserved ranges.
+     * 
+     * @param string $ip The IPv4 address to validate
+     * @return string|null Error message if validation fails, null if valid
+     */
+    private function validateIPv4Address(string $ip): ?string
+    {
+        // Check for private and reserved IP ranges
+        $ipLong = ip2long($ip);
+        if ($ipLong === false) {
+            return 'Invalid IPv4 address.';
+        }
+
+        // 10.0.0.0/8 - Private network
+        if (($ipLong & 0xFF000000) === 0x0A000000) {
+            return 'Webhook URL cannot target private IP ranges (10.0.0.0/8).';
+        }
+
+        // 172.16.0.0/12 - Private network
+        if (($ipLong & 0xFFF00000) === 0xAC100000) {
+            return 'Webhook URL cannot target private IP ranges (172.16.0.0/12).';
+        }
+
+        // 192.168.0.0/16 - Private network
+        if (($ipLong & 0xFFFF0000) === 0xC0A80000) {
+            return 'Webhook URL cannot target private IP ranges (192.168.0.0/16).';
+        }
+
+        // 169.254.0.0/16 - Link-local
+        if (($ipLong & 0xFFFF0000) === 0xA9FE0000) {
+            return 'Webhook URL cannot target link-local addresses (169.254.0.0/16).';
+        }
+
+        // 127.0.0.0/8 - Loopback
+        if (($ipLong & 0xFF000000) === 0x7F000000) {
+            return 'Webhook URL cannot target loopback addresses (127.0.0.0/8).';
+        }
+
+        // 0.0.0.0/8 - Current network (only valid as source address)
+        if (($ipLong & 0xFF000000) === 0x00000000) {
+            return 'Webhook URL cannot target unspecified addresses (0.0.0.0/8).';
+        }
+
+        // 224.0.0.0/4 - Multicast
+        if (($ipLong & 0xF0000000) === 0xE0000000) {
+            return 'Webhook URL cannot target multicast addresses (224.0.0.0/4).';
+        }
+
+        // 240.0.0.0/4 - Reserved
+        if (($ipLong & 0xF0000000) === 0xF0000000) {
+            return 'Webhook URL cannot target reserved addresses (240.0.0.0/4).';
+        }
+
+        return null;
+    }
+
+    /**
+     * Validates an IPv6 address to ensure it's not in private or reserved ranges.
+     * 
+     * @param string $ip The IPv6 address to validate
+     * @return string|null Error message if validation fails, null if valid
+     */
+    private function validateIPv6Address(string $ip): ?string
+    {
+        // Convert IPv6 address to binary for comparison
+        $binary = inet_pton($ip);
+        if ($binary === false) {
+            return 'Invalid IPv6 address.';
+        }
+
+        // Get first byte for range checks
+        $firstByte = ord($binary[0]);
+
+        // ::1/128 - Loopback
+        if ($binary === inet_pton('::1')) {
+            return 'Webhook URL cannot target loopback addresses (::1).';
+        }
+
+        // ::/128 - Unspecified
+        if ($binary === inet_pton('::')) {
+            return 'Webhook URL cannot target unspecified addresses (::).';
+        }
+
+        // fe80::/10 - Link-local
+        if ($firstByte === 0xFE && (ord($binary[1]) & 0xC0) === 0x80) {
+            return 'Webhook URL cannot target link-local addresses (fe80::/10).';
+        }
+
+        // fc00::/7 - Unique local addresses
+        if (($firstByte & 0xFE) === 0xFC) {
+            return 'Webhook URL cannot target unique local addresses (fc00::/7).';
+        }
+
+        // ff00::/8 - Multicast
+        if ($firstByte === 0xFF) {
+            return 'Webhook URL cannot target multicast addresses (ff00::/8).';
+        }
+
+        return null;
     }
 }
