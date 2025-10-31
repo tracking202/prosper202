@@ -53,7 +53,7 @@ final class MysqlExportRepository implements ExportRepositoryInterface
         $modelId = $job->modelId;
 
         $stmt->bind_param(
-            'iisiissssssssississi',
+            'iississssssssssssssi',
             $userId,
             $modelId,
             $scopeType,
@@ -109,7 +109,7 @@ final class MysqlExportRepository implements ExportRepositoryInterface
         $exportId = $job->exportId;
 
         $stmt->bind_param(
-            'ssssssississi',
+            'ssssssssssssi',
             $status,
             $filePath,
             $downloadToken,
