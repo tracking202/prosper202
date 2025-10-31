@@ -6,6 +6,18 @@ namespace Prosper202\Attribution\Export;
 
 final class WebhookDispatcher
 {
+    /**
+     * Maximum file size for webhook dispatch (10MB default).
+     * Files larger than this will not be dispatched to prevent memory exhaustion.
+     */
+    private const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+
+    /**
+     * Chunk size for reading files (1MB).
+     * Files are read and base64-encoded in chunks to reduce memory usage.
+     */
+    private const CHUNK_SIZE_BYTES = 1024 * 1024;
+
     public function dispatch(ExportJob $job, string $filePath): WebhookResult
     {
         if ($job->webhookUrl === null || $job->webhookUrl === '') {
@@ -16,6 +28,21 @@ final class WebhookDispatcher
             return new WebhookResult(null, null, 'Export file is not readable.');
         }
 
+        $fileSize = filesize($filePath);
+        if ($fileSize === false || $fileSize > self::MAX_FILE_SIZE_BYTES) {
+            $maxSizeMB = self::MAX_FILE_SIZE_BYTES / (1024 * 1024);
+            return new WebhookResult(
+                null,
+                null,
+                sprintf('Export file exceeds maximum size limit of %d MB for webhook dispatch.', $maxSizeMB)
+            );
+        }
+
+        $base64Content = $this->encodeFileBase64($filePath);
+        if ($base64Content === null) {
+            return new WebhookResult(null, null, 'Failed to encode export file.');
+        }
+
         $body = [
             'export_id' => $job->exportId,
             'model_id' => $job->modelId,
@@ -24,7 +51,7 @@ final class WebhookDispatcher
             'generated_at' => time(),
             'file_name' => basename($filePath),
             'file_mime' => $job->format === ExportFormat::CSV ? 'text/csv' : 'application/vnd.ms-excel',
-            'file_content' => base64_encode((string) file_get_contents($filePath)),
+            'file_content' => $base64Content,
         ];
 
         $headers = array_merge(['Content-Type' => 'application/json'], $job->webhookHeaders);
@@ -35,6 +62,51 @@ final class WebhookDispatcher
         }
 
         return $this->dispatchWithStream($job->webhookUrl, $method, $headers, json_encode($body, JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Encode file content to base64 using chunked reading to minimize memory usage.
+     */
+    private function encodeFileBase64(string $filePath): ?string
+    {
+        $handle = fopen($filePath, 'rb');
+        if ($handle === false) {
+            return null;
+        }
+
+        $base64 = '';
+        $remainder = '';
+
+        while (!feof($handle)) {
+            $chunk = fread($handle, self::CHUNK_SIZE_BYTES);
+            if ($chunk === false) {
+                fclose($handle);
+                return null;
+            }
+
+            // Combine with any remainder from previous iteration
+            $data = $remainder . $chunk;
+
+            // Base64 encoding works best with data length divisible by 3
+            // to avoid padding issues between chunks
+            $dataLength = strlen($data);
+            $encodeLength = $dataLength - ($dataLength % 3);
+
+            if ($encodeLength > 0) {
+                $base64 .= base64_encode(substr($data, 0, $encodeLength));
+                $remainder = substr($data, $encodeLength);
+            } else {
+                $remainder = $data;
+            }
+        }
+
+        // Encode any remaining data
+        if ($remainder !== '') {
+            $base64 .= base64_encode($remainder);
+        }
+
+        fclose($handle);
+        return $base64;
     }
 
     private function dispatchWithCurl(string $url, string $method, array $headers, string $payload): WebhookResult
