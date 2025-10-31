@@ -413,7 +413,7 @@ final class AttributionService
             throw new \InvalidArgumentException('Start hour must be before end hour.');
         }
 
-        $token = bin2hex(random_bytes(16));
+        $token = bin2hex(random_bytes(32));
         $timestamp = time();
 
         $headers = $this->normaliseWebhookHeaders($webhookOptions['headers'] ?? []);
