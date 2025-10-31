@@ -131,13 +131,17 @@ final class WebhookDispatcher
         // Resolve hostname to IP address if it's not already an IP
         $ip = $host;
         if (!filter_var($host, FILTER_VALIDATE_IP)) {
-            // It's a hostname, resolve it
-            $resolvedIp = gethostbyname($host);
-            if ($resolvedIp === $host) {
+            // It's a hostname, resolve it (supports both IPv4 and IPv6)
+            $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+            if ($records === false || empty($records)) {
                 // DNS resolution failed - reject to prevent bypassing IP-based restrictions
                 return 'Webhook URL hostname could not be resolved.';
             }
-            $ip = $resolvedIp;
+            // Use the first resolved IP address
+            $ip = $records[0]['ip'] ?? $records[0]['ipv6'] ?? null;
+            if ($ip === null) {
+                return 'Webhook URL hostname could not be resolved.';
+            }
         }
 
         // Validate the IP address
@@ -162,41 +166,7 @@ final class WebhookDispatcher
     {
         // Use filter_var for validation which is reliable across different architectures
         if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-            // Check if it's a private or reserved range
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                // It's a valid IPv4 but in private or reserved range
-                $ipLong = ip2long($ip);
-                
-                // Additional specific checks for clarity in error messages
-                // 10.0.0.0/8 - Private network
-                if (($ipLong & 0xFF000000) === 0x0A000000) {
-                    return 'Webhook URL cannot target private IP ranges (10.0.0.0/8).';
-                }
-                
-                // 172.16.0.0/12 - Private network
-                if (($ipLong & 0xFFF00000) === 0xAC100000) {
-                    return 'Webhook URL cannot target private IP ranges (172.16.0.0/12).';
-                }
-                
-                // 192.168.0.0/16 - Private network
-                if (($ipLong & 0xFFFF0000) === 0xC0A80000) {
-                    return 'Webhook URL cannot target private IP ranges (192.168.0.0/16).';
-                }
-                
-                // 169.254.0.0/16 - Link-local
-                if (($ipLong & 0xFFFF0000) === 0xA9FE0000) {
-                    return 'Webhook URL cannot target link-local addresses (169.254.0.0/16).';
-                }
-                
-                // 127.0.0.0/8 - Loopback
-                if (($ipLong & 0xFF000000) === 0x7F000000) {
-                    return 'Webhook URL cannot target loopback addresses (127.0.0.0/8).';
-                }
-                
-                // Generic message for other private/reserved ranges
-                return 'Webhook URL cannot target private or reserved IP addresses.';
-            }
-            return 'Invalid IPv4 address.';
+            return 'Webhook URL cannot target private or reserved IP addresses.';
         }
 
         return null;
@@ -210,46 +180,9 @@ final class WebhookDispatcher
      */
     private function validateIPv6Address(string $ip): ?string
     {
-        // Use filter_var for initial validation
+        // Use filter_var for validation
         if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-                // It's a valid IPv6 but in private or reserved range
-                $binary = inet_pton($ip);
-                if ($binary === false) {
-                    return 'Invalid IPv6 address.';
-                }
-
-                $firstByte = ord($binary[0]);
-
-                // ::1/128 - Loopback
-                if ($binary === inet_pton('::1')) {
-                    return 'Webhook URL cannot target loopback addresses (::1).';
-                }
-
-                // ::/128 - Unspecified
-                if ($binary === inet_pton('::')) {
-                    return 'Webhook URL cannot target unspecified addresses (::).';
-                }
-
-                // fe80::/10 - Link-local
-                if ($firstByte === 0xFE && (ord($binary[1]) & 0xC0) === 0x80) {
-                    return 'Webhook URL cannot target link-local addresses (fe80::/10).';
-                }
-
-                // fc00::/7 - Unique local addresses
-                if (($firstByte & 0xFE) === 0xFC) {
-                    return 'Webhook URL cannot target unique local addresses (fc00::/7).';
-                }
-
-                // ff00::/8 - Multicast
-                if ($firstByte === 0xFF) {
-                    return 'Webhook URL cannot target multicast addresses (ff00::/8).';
-                }
-
-                // Generic message for other private/reserved ranges
-                return 'Webhook URL cannot target private or reserved IPv6 addresses.';
-            }
-            return 'Invalid IPv6 address.';
+            return 'Webhook URL cannot target private or reserved IPv6 addresses.';
         }
 
         return null;
