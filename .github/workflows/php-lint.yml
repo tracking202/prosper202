@@ -18,4 +18,45 @@ jobs:
         with:
           php-version: '8.3'
       - name: Run php -l
-        run: ./scripts/php-lint.sh
+        id: php_lint
+        continue-on-error: true
+        run: |
+          set +e
+          ./scripts/php-lint.sh
+          status=$?
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          if [ "${status}" -ne 0 ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "::error::PHP lint reported syntax issues. Review logs above." >&2
+          else
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          fi
+          exit ${status}
+      - name: Summarize lint results
+        if: always()
+        run: |
+          status="${{ steps.php_lint.outputs.status }}"
+
+          if [ "${status}" = "failed" ]; then
+            result="❌ Failed"
+            note="> Syntax issues were detected. Review the job log for file details."
+          elif [ "${status}" = "passed" ]; then
+            result="✅ Passed"
+            note="> No syntax errors were detected."
+          else
+            result="⚠️ Unknown"
+            note="> Lint status could not be determined."
+          fi
+
+          {
+            echo "### PHP Lint Results"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| php -l | ${result} |"
+            echo ""
+            echo "${note}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail when lint errors detected
+        if: ${{ steps.php_lint.outputs.exit_code != '0' }}
+        run: exit 1

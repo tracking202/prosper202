@@ -11,6 +11,7 @@ enum ScopeType: string
 {
     case GLOBAL = 'global';
     case ACCOUNT = 'account';
+    case ADVERTISER = 'advertiser';
     case CAMPAIGN = 'campaign';
     case ADGROUP = 'adgroup';
     case LANDING_PAGE = 'landing_page';

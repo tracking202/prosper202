@@ -20,6 +20,16 @@ jobs:
           php-version: '8.3'
           extensions: mysqli, pdo, pdo_mysql, memcached, mbstring, curl, zip, dom, xml, gd, zlib
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
       - name: Set up Composer trusted keys
         run: |
           composer_home="${COMPOSER_HOME:-$HOME/.config/composer}"
@@ -27,14 +37,116 @@ jobs:
           curl -sS https://composer.github.io/pubkeys.html > "${composer_home}/keys.dev.pub"
           curl -sS https://composer.github.io/pubkeys-tags.html > "${composer_home}/keys.tags.pub"
 
-      - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Configure Composer authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            composer config -g github-oauth.github.com "${GITHUB_TOKEN}"
+          fi
 
-      - name: Validate Dependencies
-        run: composer diagnose
+      - name: Install dependencies and run tests
+        id: test_pipeline
+        continue-on-error: true
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: |
+          set +e
 
-      - name: Create build directory
-        run: mkdir -p build/logs
+          overall="passed"
+          final_status=0
 
-      - name: Run PHPUnit (Unit Tests Only)  
-        run: vendor/bin/phpunit --configuration phpunit.ci.xml --verbose --exclude-group integration --no-coverage
+          composer install --prefer-dist --no-interaction --no-progress
+          install_status=$?
+          if [ "${install_status}" -ne 0 ]; then
+            install_state="failed"
+            overall="failed"
+            final_status=1
+            echo "::error::Composer install failed with exit code ${install_status}." >&2
+          else
+            install_state="passed"
+          fi
+
+          composer diagnose
+          diagnose_status=$?
+          if [ "${diagnose_status}" -ne 0 ]; then
+            diagnose_state="failed"
+            overall="failed"
+            final_status=1
+            echo "::error::composer diagnose detected issues (exit ${diagnose_status})." >&2
+          else
+            diagnose_state="passed"
+          fi
+
+          mkdir -p build/logs
+          mkdir_status=$?
+          if [ "${mkdir_status}" -ne 0 ]; then
+            mkdir_state="failed"
+            overall="failed"
+            final_status=1
+            echo "::error::Unable to prepare build/logs directory (exit ${mkdir_status})." >&2
+          else
+            mkdir_state="passed"
+          fi
+
+          if [ "${install_state}" = "failed" ]; then
+            phpunit_state="skipped"
+            phpunit_status=0
+            echo "::warning::Skipping PHPUnit because dependency installation failed." >&2
+          else
+            vendor/bin/phpunit --configuration phpunit.ci.xml --verbose --exclude-group integration --no-coverage
+            phpunit_status=$?
+            if [ "${phpunit_status}" -ne 0 ]; then
+              phpunit_state="failed"
+              overall="failed"
+              final_status=1
+              echo "::error::PHPUnit reported failures (exit ${phpunit_status})." >&2
+            else
+              phpunit_state="passed"
+            fi
+          fi
+
+          echo "install_state=${install_state}" >> "$GITHUB_OUTPUT"
+          echo "diagnose_state=${diagnose_state}" >> "$GITHUB_OUTPUT"
+          echo "mkdir_state=${mkdir_state}" >> "$GITHUB_OUTPUT"
+          echo "phpunit_state=${phpunit_state}" >> "$GITHUB_OUTPUT"
+          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+
+          status_label() {
+            case "$1" in
+              passed)
+                echo "✅ Passed"
+                ;;
+              failed)
+                echo "❌ Failed"
+                ;;
+              skipped)
+                echo "⚠️ Skipped"
+                ;;
+              *)
+                echo "⚠️ Unknown"
+                ;;
+            esac
+          }
+
+          {
+            echo "### PHPUnit Workflow"
+            echo ""
+            echo "| Task | Result |"
+            echo "| --- | --- |"
+            echo "| Composer install | $(status_label "${install_state}") |"
+            echo "| composer diagnose | $(status_label "${diagnose_state}") |"
+            echo "| Prepare build/logs | $(status_label "${mkdir_state}") |"
+            echo "| PHPUnit (unit tests) | $(status_label "${phpunit_state}") |"
+            echo ""
+            if [ "${overall}" = "failed" ]; then
+              echo "> One or more tasks reported problems. Review the job logs for full details."
+            else
+              echo "> All tasks completed without detected issues."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit ${final_status}
+      - name: Fail when PHPUnit reports issues
+        if: ${{ steps.test_pipeline.outputs.overall == 'failed' }}
+        run: exit 1

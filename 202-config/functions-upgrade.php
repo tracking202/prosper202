@@ -2808,6 +2808,39 @@ class UPGRADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
             $result = _mysqli_query($sql);
 
+            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_exports` (
+              `export_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `user_id` mediumint(8) unsigned NOT NULL,
+              `model_id` int(11) unsigned NOT NULL,
+              `scope_type` varchar(32) NOT NULL,
+              `scope_id` bigint(20) unsigned DEFAULT NULL,
+              `start_hour` int(10) unsigned NOT NULL,
+              `end_hour` int(10) unsigned NOT NULL,
+              `requested_format` varchar(16) NOT NULL DEFAULT 'csv',
+              `status` varchar(20) NOT NULL DEFAULT 'pending',
+              `options` longtext DEFAULT NULL,
+              `webhook_url` varchar(500) DEFAULT NULL,
+              `webhook_secret` varchar(255) DEFAULT NULL,
+              `webhook_headers` text DEFAULT NULL,
+              `file_path` varchar(500) DEFAULT NULL,
+              `rows_exported` int(11) unsigned DEFAULT NULL,
+              `queued_at` int(10) unsigned NOT NULL,
+              `started_at` int(10) unsigned DEFAULT NULL,
+              `completed_at` int(10) unsigned DEFAULT NULL,
+              `failed_at` int(10) unsigned DEFAULT NULL,
+              `last_error` text DEFAULT NULL,
+              `webhook_attempted_at` int(10) unsigned DEFAULT NULL,
+              `webhook_status_code` int(11) DEFAULT NULL,
+              `webhook_response_body` mediumtext DEFAULT NULL,
+              `created_at` int(10) unsigned NOT NULL,
+              `updated_at` int(10) unsigned NOT NULL,
+              PRIMARY KEY (`export_id`),
+              KEY `model_status` (`model_id`,`status`),
+              KEY `user_status` (`user_id`,`status`),
+              KEY `queued_at` (`queued_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
             $sql = "INSERT IGNORE INTO `202_permissions` (`permission_id`, `permission_description`) VALUES
                     (22, 'view_attribution_reports'),
                     (23, 'manage_attribution_models');";
@@ -2848,11 +2881,91 @@ class UPGRADE
             $prosper202_version = '1.9.57';
         }
 
+        if ($prosper202_version == '1.9.57') {
+
+            $database = DB::getInstance();
+            $connection = $database?->getConnection();
+
+            if ($connection instanceof \mysqli) {
+                $connection->begin_transaction();
+
+                try {
+                    $columnChecks = [
+                        'multi_touch_enabled' => "ALTER TABLE `202_attribution_settings` ADD COLUMN `multi_touch_enabled` TINYINT(1) UNSIGNED NOT NULL DEFAULT '1' AFTER `model_id`",
+                        'multi_touch_enabled_at' => "ALTER TABLE `202_attribution_settings` ADD COLUMN `multi_touch_enabled_at` INT(10) UNSIGNED NULL DEFAULT NULL AFTER `multi_touch_enabled`",
+                        'multi_touch_disabled_at' => "ALTER TABLE `202_attribution_settings` ADD COLUMN `multi_touch_disabled_at` INT(10) UNSIGNED NULL DEFAULT NULL AFTER `multi_touch_enabled_at`",
+                    ];
+
+                    foreach ($columnChecks as $column => $alterSql) {
+                        $columnResult = $connection->query("SHOW COLUMNS FROM `202_attribution_settings` LIKE '" . $connection->real_escape_string($column) . "'");
+                        if ($columnResult instanceof \mysqli_result && $columnResult->num_rows > 0) {
+                            $columnResult->free();
+                            continue;
+                        }
+
+                        if ($columnResult instanceof \mysqli_result) {
+                            $columnResult->free();
+                        }
+
+                        if ($connection->query($alterSql) === false) {
+                            throw new \RuntimeException('Failed to alter 202_attribution_settings: ' . $connection->error);
+                        }
+                    }
+
+                    $indexChecks = [
+                        'user_scope_model' => "ALTER TABLE `202_attribution_settings` ADD UNIQUE KEY `user_scope_model` (`user_id`,`scope_type`,`scope_id`,`model_id`)",
+                        'user_scope_multi_touch' => "ALTER TABLE `202_attribution_settings` ADD UNIQUE KEY `user_scope_multi_touch` (`user_id`,`scope_type`,`scope_id`,`multi_touch_enabled`)"
+                    ];
+
+                    foreach ($indexChecks as $index => $alterSql) {
+                        $indexResult = $connection->query("SHOW INDEX FROM `202_attribution_settings` WHERE Key_name = '" . $connection->real_escape_string($index) . "'");
+                        if ($indexResult instanceof \mysqli_result && $indexResult->num_rows > 0) {
+                            $indexResult->free();
+                            continue;
+                        }
+
+                        if ($indexResult instanceof \mysqli_result) {
+                            $indexResult->free();
+                        }
+
+                        if ($connection->query($alterSql) === false) {
+                            throw new \RuntimeException('Failed to add index ' . $index . ' to 202_attribution_settings: ' . $connection->error);
+                        }
+                    }
+
+                    $seedSql = "UPDATE `202_attribution_settings`
+                        SET multi_touch_enabled = COALESCE(multi_touch_enabled, 1),
+                            multi_touch_enabled_at = CASE
+                                WHEN multi_touch_enabled = 1 AND multi_touch_enabled_at IS NULL THEN created_at
+                                ELSE multi_touch_enabled_at
+                            END,
+                            multi_touch_disabled_at = CASE
+                                WHEN multi_touch_enabled = 0 AND multi_touch_disabled_at IS NULL THEN updated_at
+                                ELSE multi_touch_disabled_at
+                            END";
+
+                    if ($connection->query($seedSql) === false) {
+                        throw new \RuntimeException('Failed to seed attribution setting toggles: ' . $connection->error);
+                    }
+
+                    $connection->commit();
+                } catch (\Throwable $upgradeException) {
+                    $connection->rollback();
+                    throw $upgradeException;
+                }
+            }
+
+            $sql = "UPDATE 202_version SET version='1.9.58'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.58';
+        }
+
         //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.57') {
+        if ($prosper202_version > '1.9.58') {
 
 
-            $prosper202_version = '1.9.57';
+            $prosper202_version = '1.9.58';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }
