@@ -40,7 +40,7 @@ final class MysqlExportRepository implements ExportRepositoryInterface
         $downloadToken = $job->downloadToken;
         $webhookUrl = $job->webhookUrl;
         $webhookMethod = $job->webhookMethod;
-        $webhookHeaders = $job->webhookHeaders !== [] ? json_encode($job->webhookHeaders, JSON_THROW_ON_ERROR) : null;
+        $webhookHeaders = $this->encodeWebhookHeaders($job->webhookHeaders);
         $webhookStatusCode = $job->webhookStatusCode;
         $webhookResponse = $job->webhookResponseBody;
         $lastAttempted = $job->lastAttemptedAt;
@@ -99,7 +99,7 @@ final class MysqlExportRepository implements ExportRepositoryInterface
         $downloadToken = $job->downloadToken;
         $webhookUrl = $job->webhookUrl;
         $webhookMethod = $job->webhookMethod;
-        $webhookHeaders = $job->webhookHeaders !== [] ? json_encode($job->webhookHeaders, JSON_THROW_ON_ERROR) : null;
+        $webhookHeaders = $this->encodeWebhookHeaders($job->webhookHeaders);
         $webhookStatusCode = $job->webhookStatusCode;
         $webhookResponse = $job->webhookResponseBody;
         $lastAttempted = $job->lastAttemptedAt;
@@ -241,6 +241,14 @@ final class MysqlExportRepository implements ExportRepositoryInterface
         $stmt->close();
 
         return $jobs;
+    }
+
+    /**
+     * @param array<string, string> $headers
+     */
+    private function encodeWebhookHeaders(array $headers): ?string
+    {
+        return $headers !== [] ? json_encode($headers, JSON_THROW_ON_ERROR) : null;
     }
 
     /**
