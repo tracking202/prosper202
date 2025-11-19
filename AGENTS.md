@@ -51,6 +51,13 @@ To ensure code quality and functionality:
 
 * **Context Exploration**: Review relevant files in `202-*` directories and configuration files before making changes.
 * **Documentation**: Update or create documentation for significant code changes.
+* **Task Planning for Large Projects**: 
+  * For complex or multi-step tasks, create a detailed task plan in markdown format
+  * Break down the work into specific, actionable items
+  * Save the plan as a `.md` file (e.g., `task-plan-feature-name.md`)
+  * Check off each item as it's completed
+  * It's acceptable to modify the task list as new requirements or issues are discovered
+  * Keep the plan updated throughout the project to maintain visibility and track progress
 * **Pull Request Formatting**:
 
   * **Title**: `[Component] Brief Description`

@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -11,7 +10,7 @@ namespace UAParser\Util\Logfile;
 
 class ApacheCommonLogFormatReader extends AbstractReader
 {
-    protected function getRegex()
+    protected function getRegex(): string
     {
         return '@^
             (?:\S+)                                                 # IP

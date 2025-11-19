@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -12,19 +11,15 @@ namespace UAParser\Result;
 
 abstract class AbstractVersionedSoftware extends AbstractSoftware
 {
-    /** @return string */
-    abstract public function toVersion();
+    abstract public function toVersion(): string;
 
-    /** @return string */
-    #[\Override]
-    public function toString()
+    public function toString(): string
     {
         return implode(' ', array_filter([$this->family, $this->toVersion()]));
     }
 
-    /** @return string */
-    protected function formatVersion()
+    protected function formatVersion(?string ...$args): string
     {
-        return implode('.', array_filter(func_get_args(), 'is_numeric'));
+        return implode('.', array_filter($args, 'is_numeric'));
     }
 }

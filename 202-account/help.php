@@ -23,6 +23,11 @@ template_top('Help Resources');  ?>
 				<p><small><em>Tracking202 Videos:</em> <a href="http://tracking202.com/videos/" target="_blank">http://tracking202.com/videos/</a></small></p>
 
 				<p><small><em>Prosper202 Blog:</em> <a href="http://prosper.tracking202.com/blog/" target="_blank">http://prosper.tracking202.com/blog/</a></small></p>
+
+				<h6 class="mt-30">Advanced Attribution</h6>
+				<p><small><em>Setup Guide:</em> <a href="docs.php?doc=attribution-engine" target="_blank">Advanced Attribution Engine</a></small></p>
+				<p><small><em>Troubleshooting:</em> <a href="docs.php?doc=attribution-troubleshooting" target="_blank">Troubleshooting Guide</a></small></p>
+				<p><small><em>API Reference:</em> <a href="docs.php?doc=api-integrations" target="_blank">Attribution API Endpoints</a></small></p>
 				
 			</div>
 

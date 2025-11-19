@@ -1,0 +1,10 @@
+{
+  "name": "prosper202",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.45.0"
+  },
+  "scripts": {
+    "test:playwright": "playwright test"
+  }
+}

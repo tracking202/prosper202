@@ -60,3 +60,7 @@
 
 - [Resources](tools--resources/00-resources.md)
 - [Common Network SubID Parameters](tools--resources/999-common-network-subid-parameters.md)
+
+### Runbooks
+
+- [Multi-touch Attribution QA Runbook](runbooks/multi-touch-qa.md) – outlines schema/toggle validation, purge/backfill procedures, and the hourly attribution maintenance cron.

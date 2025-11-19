@@ -6,7 +6,6 @@
   "require": {
     "php": ">=8.3",
     "ua-parser/uap-php": "^3.9",
-    "myclabs/deep-copy": "^1.11",
     "geoip2/geoip2": "^3.2"
   },
   "autoload": {
@@ -21,7 +20,8 @@
     "phpunit/phpunit": "^9.5",
     "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
     "phpcompatibility/php-compatibility": "^9.3",
-    "phpstan/phpstan": "^2.1"
+    "phpstan/phpstan": "^2.1",
+    "myclabs/deep-copy": "^1.11"
   },
   "scripts": {
     "test": "phpunit"
