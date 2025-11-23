@@ -1,5 +1,7 @@
 <?php
+
 declare(strict_types=1);
+
 namespace MaxMind\WebService;
 
 use Composer\CaBundle\CaBundle;
@@ -22,37 +24,88 @@ use MaxMind\WebService\Http\RequestFactory;
  */
 class Client
 {
-    const VERSION = '0.2.0';
+    public const VERSION = '0.2.0';
 
+    /**
+     * @var string|null
+     */
     private $caBundle;
+
+    /**
+     * @var float|null
+     */
     private $connectTimeout;
+
+    /**
+     * @var string
+     */
     private $host = 'api.maxmind.com';
+
+    /**
+     * @var bool
+     */
+    private $useHttps = true;
+
+    /**
+     * @var RequestFactory
+     */
     private $httpRequestFactory;
+
+    /**
+     * @var string
+     */
+    private $licenseKey;
+
+    /**
+     * @var string|null
+     */
     private $proxy;
+
+    /**
+     * @var float|null
+     */
     private $timeout;
+
+    /**
+     * @var string
+     */
     private $userAgentPrefix;
 
     /**
-     * @param int    $accountId  your MaxMind account ID
-     * @param string $licenseKey your MaxMind license key
-     * @param array  $options    an array of options. Possible keys:
-     *                           * `host` - The host to use when connecting to the web service.
-     *                           * `userAgent` - The prefix of the User-Agent to use in the request.
-     *                           * `caBundle` - The bundle of CA root certificates to use in the request.
-     *                           * `connectTimeout` - The connect timeout to use for the request.
-     *                           * `timeout` - The timeout to use for the request.
-     *                           * `proxy` - The HTTP proxy to use. May include a schema, port,
-     *                           username, and password, e.g., `http://username:password@127.0.0.1:10`.
+     * @var int
+     */
+    private $accountId;
+
+    /**
+     * @param int                  $accountId  your MaxMind account ID
+     * @param string               $licenseKey your MaxMind license key
+     * @param array<string, mixed> $options    an array of options. Possible keys:
+     *                                         * `host` - The host to use when connecting to the web service.
+     *                                         * `useHttps` - Set to false to disable HTTPS.
+     *                                         * `userAgent` - The prefix of the User-Agent to use in the request.
+     *                                         * `caBundle` - The bundle of CA root certificates to use in the request.
+     *                                         * `connectTimeout` - The connect timeout to use for the request.
+     *                                         * `timeout` - The timeout to use for the request.
+     *                                         * `proxy` - The HTTP proxy to use. May include a schema, port,
+     *                                         username, and password, e.g., `http://username:password@127.0.0.1:10`.
      */
     public function __construct(
-        private $accountId,
-        private $licenseKey,
-        $options = []
+        int $accountId,
+        string $licenseKey,
+        array $options = []
     ) {
-        $this->httpRequestFactory = $options['httpRequestFactory'] ?? new RequestFactory();
+        $this->accountId = $accountId;
+        $this->licenseKey = $licenseKey;
+
+        $this->httpRequestFactory = isset($options['httpRequestFactory'])
+            ? $options['httpRequestFactory']
+            : new RequestFactory();
 
         if (isset($options['host'])) {
             $this->host = $options['host'];
+        }
+        if (isset($options['useHttps'])) {
+            $this->useHttps = $options['useHttps'];
         }
         if (isset($options['userAgent'])) {
             $this->userAgentPrefix = $options['userAgent'] . ' ';
@@ -74,9 +127,9 @@ class Client
     }
 
     /**
-     * @param string $service name of the service querying
-     * @param string $path    the URI path to use
-     * @param array  $input   the data to be posted as JSON
+     * @param string       $service name of the service querying
+     * @param string       $path    the URI path to use
+     * @param array<mixed> $input   the data to be posted as JSON
      *
      * @throws InvalidInputException      when the request has missing or invalid
      *                                    data
@@ -89,12 +142,12 @@ class Client
      * @throws WebServiceException        when some other error occurs. This also
      *                                    serves as the base class for the above exceptions.
      *
-     * @return array The decoded content of a successful response
+     * @return array<mixed>|null The decoded content of a successful response
      */
-    public function post($service, $path, $input)
+    public function post(string $service, string $path, array $input): ?array
     {
-        $body = json_encode($input);
-        if ($body === false) {
+        $requestBody = json_encode($input);
+        if ($requestBody === false) {
             throw new InvalidInputException(
                 'Error encoding input as JSON: '
                 . $this->jsonErrorDescription()
@@ -106,41 +159,49 @@ class Client
             ['Content-Type: application/json']
         );
 
-        [$statusCode, $contentType, $body] = $request->post($body);
+        [$statusCode, $contentType, $responseBody] = $request->post($requestBody);
 
         return $this->handleResponse(
             $statusCode,
             $contentType,
-            $body,
+            $responseBody,
             $service,
             $path
         );
     }
 
-    public function get($service, $path)
+    /**
+     * @return array<mixed>|null
+     */
+    public function get(string $service, string $path): ?array
     {
-        $request = $this->createRequest($path);
+        $request = $this->createRequest(
+            $path
+        );
 
-        [$statusCode, $contentType, $body] = $request->get();
+        [$statusCode, $contentType, $responseBody] = $request->get();
 
         return $this->handleResponse(
             $statusCode,
             $contentType,
-            $body,
+            $responseBody,
             $service,
             $path
         );
     }
 
-    private function userAgent()
+    private function userAgent(): string
     {
         $curlVersion = curl_version();
 
-        return $this->userAgentPrefix . 'MaxMind-WS-API/' . self::VERSION . ' PHP/' . PHP_VERSION .
+        return $this->userAgentPrefix . 'MaxMind-WS-API/' . self::VERSION . ' PHP/' . \PHP_VERSION .
            ' curl/' . $curlVersion['version'];
     }
 
-    private function createRequest($path, $headers = [])
+    /**
+     * @param array<string> $headers
+     */
+    private function createRequest(string $path, array $headers = []): Http\Request
     {
         array_push(
             $headers,
@@ -163,11 +224,11 @@ class Client
     }
 
     /**
-     * @param int    $statusCode  the HTTP status code of the response
-     * @param string $contentType the Content-Type of the response
-     * @param string $body        the response body
-     * @param string $service     the name of the service
-     * @param string $path        the path used in the request
+     * @param int         $statusCode   the HTTP status code of the response
+     * @param string|null $contentType  the Content-Type of the response
+     * @param string|null $responseBody the response body
+     * @param string      $service      the name of the service
+     * @param string      $path         the path used in the request
      *
      * @throws AuthenticationException    when there is an issue authenticating the
      *                                    request
@@ -178,40 +239,52 @@ class Client
      * @throws WebServiceException        when some other error occurs. This also
      *                                    serves as the base class for the above exceptions
      *
-     * @return array The decoded content of a successful response
+     * @return array<mixed>|null The decoded content of a successful response
      */
     private function handleResponse(
-        $statusCode,
-        $contentType,
-        $body,
-        $service,
-        $path
-    ) {
+        int $statusCode,
+        ?string $contentType,
+        ?string $responseBody,
+        string $service,
+        string $path
+    ): ?array {
         if ($statusCode >= 400 && $statusCode <= 499) {
-            $this->handle4xx($statusCode, $contentType, $body, $service, $path);
+            $this->handle4xx($statusCode, $contentType, $responseBody, $service, $path);
         } elseif ($statusCode >= 500) {
             $this->handle5xx($statusCode, $service, $path);
-        } elseif ($statusCode !== 200) {
+        } elseif ($statusCode !== 200 && $statusCode !== 204) {
             $this->handleUnexpectedStatus($statusCode, $service, $path);
         }
 
-        return $this->handleSuccess($body, $service);
+        return $this->handleSuccess($statusCode, $responseBody, $service);
     }
 
     /**
      * @return string describing the JSON error
      */
-    private function jsonErrorDescription()
+    private function jsonErrorDescription(): string
     {
         $errno = json_last_error();
-        return match ($errno) {
-            JSON_ERROR_DEPTH => 'The maximum stack depth has been exceeded.',
-            JSON_ERROR_STATE_MISMATCH => 'Invalid or malformed JSON.',
-            JSON_ERROR_CTRL_CHAR => 'Control character error.',
-            JSON_ERROR_SYNTAX => 'Syntax error.',
-            JSON_ERROR_UTF8 => 'Malformed UTF-8 characters.',
-            default => "Other JSON error ($errno).",
-        };
+
+        switch ($errno) {
+            case \JSON_ERROR_DEPTH:
+                return 'The maximum stack depth has been exceeded.';
+
+            case \JSON_ERROR_STATE_MISMATCH:
+                return 'Invalid or malformed JSON.';
+
+            case \JSON_ERROR_CTRL_CHAR:
+                return 'Control character error.';
+
+            case \JSON_ERROR_SYNTAX:
+                return 'Syntax error.';
+
+            case \JSON_ERROR_UTF8:
+                return 'Malformed UTF-8 characters.';
+
+            default:
+                return "Other JSON error ($errno).";
+        }
     }
 
     /**
@@ -219,17 +292,17 @@ class Client
      *
      * @return string the constructed URL
      */
-    private function urlFor($path)
+    private function urlFor(string $path): string
     {
-        return 'https://' . $this->host . $path;
+        return ($this->useHttps ? 'https://' : 'http://') . $this->host . $path;
     }
 
     /**
-     * @param int    $statusCode  the HTTP status code
-     * @param string $contentType the response content-type
-     * @param string $body        the response body
-     * @param string $service     the service name
-     * @param string $path        the path used in the request
+     * @param int         $statusCode  the HTTP status code
+     * @param string|null $contentType the response content-type
+     * @param string|null $body        the response body
+     * @param string      $service     the service name
+     * @param string      $path        the path used in the request
      *
      * @throws AuthenticationException
      * @throws HttpException
@@ -237,20 +310,20 @@ class Client
      * @throws InvalidRequestException
      */
     private function handle4xx(
-        $statusCode,
-        $contentType,
-        $body,
-        $service,
-        $path
-    ) {
-        if (strlen($body) === 0) {
+        int $statusCode,
+        ?string $contentType,
+        ?string $body,
+        string $service,
+        string $path
+    ): void {
+        if ($body === null || $body === '') {
             throw new HttpException(
                 "Received a $statusCode error for $service with no body",
                 $statusCode,
                 $this->urlFor($path)
             );
         }
-        if (!strstr($contentType, 'json')) {
+        if ($contentType === null || !strstr($contentType, 'json')) {
             throw new HttpException(
                 "Received a $statusCode error for $service with " .
                 'the following body: ' . $body,
@@ -298,11 +371,11 @@ class Client
      * @throws InsufficientFundsException
      */
     private function handleWebServiceError(
-        $message,
-        $code,
-        $statusCode,
-        $path
-    ) {
+        string $message,
+        string $code,
+        int $statusCode,
+        string $path
+    ): void {
         switch ($code) {
             case 'IP_ADDRESS_NOT_FOUND':
             case 'IP_ADDRESS_RESERVED':
@@ -312,6 +385,7 @@ class Client
                     $statusCode,
                     $this->urlFor($path)
                 );
+
             case 'ACCOUNT_ID_REQUIRED':
             case 'ACCOUNT_ID_UNKNOWN':
             case 'AUTHORIZATION_INVALID':
@@ -324,6 +398,7 @@ class Client
                     $statusCode,
                     $this->urlFor($path)
                 );
+
             case 'OUT_OF_QUERIES':
             case 'INSUFFICIENT_FUNDS':
                 throw new InsufficientFundsException(
@@ -332,6 +407,7 @@ class Client
                     $statusCode,
                     $this->urlFor($path)
                 );
+
             case 'PERMISSION_REQUIRED':
                 throw new PermissionRequiredException(
                     $message,
@@ -339,6 +415,7 @@ class Client
                     $statusCode,
                     $this->urlFor($path)
                 );
+
             default:
                 throw new InvalidRequestException(
                     $message,
@@ -356,7 +433,7 @@ class Client
      *
      * @throws HttpException
      */
-    private function handle5xx($statusCode, $service, $path): never
+    private function handle5xx(int $statusCode, string $service, string $path): void
     {
         throw new HttpException(
             "Received a server error ($statusCode) for $service",
@@ -372,7 +449,7 @@ class Client
      *
      * @throws HttpException
      */
-    private function handleUnexpectedStatus($statusCode, $service, $path): never
+    private function handleUnexpectedStatus(int $statusCode, string $service, string $path): void
     {
         throw new HttpException(
             'Received an unexpected HTTP status ' .
@@ -383,17 +460,33 @@ class Client
     }
 
     /**
-     * @param string $body    the successful request body
-     * @param string $service the service name
+     * @param int         $statusCode the HTTP status code
+     * @param string|null $body       the successful request body
+     * @param string      $service    the service name
      *
-     * @throws WebServiceException if the request body cannot be decoded as
-     *                             JSON
+     * @throws WebServiceException if a response body is included but not
+     *                             expected, or is not expected but not
+     *                             included, or is expected and included
+     *                             but cannot be decoded as JSON
      *
-     * @return array the decoded request body
+     * @return array<mixed>|null the decoded request body
      */
-    private function handleSuccess($body, $service)
+    private function handleSuccess(int $statusCode, ?string $body, string $service): ?array
     {
-        if (strlen($body) === 0) {
+        // A 204 should have no response body
+        if ($statusCode === 204) {
+            if ($body !== null && $body !== '') {
+                throw new WebServiceException(
+                    "Received a 204 response for $service along with an " .
+                    "unexpected HTTP body: $body"
+                );
+            }
+
+            return null;
+        }
+
+        // A 200 should have a valid JSON body
+        if ($body === null || $body === '') {
             throw new WebServiceException(
                 "Received a 200 response for $service but did not " .
                 'receive a HTTP body.'
@@ -412,20 +505,20 @@ class Client
         return $decodedContent;
     }
 
-    private function getCaBundle()
+    private function getCaBundle(): ?string
     {
         $curlVersion = curl_version();
 
         // On OS X, when the SSL version is "SecureTransport", the system's
         // keychain will be used.
         if ($curlVersion['ssl_version'] === 'SecureTransport') {
-            return;
+            return null;
         }
         $cert = CaBundle::getSystemCaRootBundlePath();
 
         // Check if the cert is inside a phar. If so, we need to copy the cert
         // to a temp file so that curl can see it.
-        if (str_starts_with($cert, 'phar://')) {
+        if (substr($cert, 0, 7) === 'phar://') {
             $tempDir = sys_get_temp_dir();
             $newCert = tempnam($tempDir, 'geoip2-');
             if ($newCert === false) {
@@ -444,7 +537,7 @@ class Client
             // destructor isn't called on a fatal error such as an uncaught
             // exception.
             register_shutdown_function(
-                function () use ($newCert): void {
+                function () use ($newCert) {
                     unlink($newCert);
                 }
             );

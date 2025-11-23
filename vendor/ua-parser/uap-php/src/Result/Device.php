@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -12,9 +11,9 @@ namespace UAParser\Result;
 
 class Device extends AbstractSoftware
 {
-    /** @var string */
+    /** @var string|null */
     public $brand;
 
-    /** @var string */
+    /** @var string|null */
     public $model;
 }
