@@ -88,7 +88,7 @@ final class DatabaseFunctionsTest extends TestCase
         $this->assertFalse($result);
     }
 
-    public function testMemcacheMysqlFetchAssocReturnsCachedResult(): void
+    public function testMemcacheMySQLFetchAssocReturnsCachedResult(): void
     {
         global $memcache;
 
@@ -100,28 +100,28 @@ final class DatabaseFunctionsTest extends TestCase
         $this->assertSame($cachedData, $result);
     }
 
-    public function testMemcacheMysqlFetchAssocFetchesFromResultObject(): void
+    public function testMemcacheMySQLFetchAssocFetchesFromResultObject(): void
     {
         // This test is skipped because the function tries to use the result object as a cache key
         // which causes a type error with our mock
         $this->markTestSkipped('memcache_mysql_fetch_assoc uses result object as cache key');
     }
 
-    public function testMemcacheMysqlFetchAssocReturnsFalseForNonObject(): void
+    public function testMemcacheMySQLFetchAssocReturnsFalseForNonObject(): void
     {
         $result = memcache_mysql_fetch_assoc('not_in_cache');
 
         $this->assertFalse($result);
     }
 
-    public function testForeachMemcacheMysqlFetchAssocReturnsAllRows(): void
+    public function testForeachMemcacheMySQLFetchAssocReturnsAllRows(): void
     {
         // This test is skipped because the function internally calls memcache_mysql_fetch_assoc
         // which uses the result object as a cache key
         $this->markTestSkipped('foreach_memcache_mysql_fetch_assoc uses result object as cache key internally');
     }
 
-    public function testForeachMemcacheMysqlFetchAssocReturnsEmptyArrayForEmptyResult(): void
+    public function testForeachMemcacheMySQLFetchAssocReturnsEmptyArrayForEmptyResult(): void
     {
         // This test is skipped because the function internally calls memcache_mysql_fetch_assoc
         // which uses the result object as a cache key
