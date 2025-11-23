@@ -1,9 +1,46 @@
 <?php
 declare(strict_types=1);
+
+use Prosper202\Attribution\AttributionServiceFactory;
+use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-snoopy.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
+
+/**
+ * @return int|null
+ */
+function resolveAdvertiserId(\mysqli $db, int $campaignId)
+{
+    if ($campaignId <= 0) {
+        return null;
+    }
+
+    $stmt = $db->prepare('SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1');
+    if ($stmt === false) {
+        return null;
+    }
+
+    $stmt->bind_param('i', $campaignId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result ? $result->fetch_assoc() : null;
+    if ($result) {
+        $result->free();
+    }
+    $stmt->close();
+
+    if (!is_array($row)) {
+        return null;
+    }
+
+    $advertiserId = (int) ($row['aff_network_id'] ?? 0);
+
+    return $advertiserId > 0 ? $advertiserId : null;
+}
+
+$settingsService = AttributionServiceFactory::createSettingsService();
 
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;
@@ -304,10 +341,39 @@ if (is_numeric($mysql['click_id'])) {
 					ip = '".$mysql['ip']."',
 					pixel_type = '2',
 					user_agent = '".$mysql['user_agent']."'";
-	$db->query($log_sql);
+        $db->query($log_sql);
+        $conversionId = (int) $db->insert_id;
+        $advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
+
+        $advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
+
+        if ($conversionId > 0) {
+                $scope = [
+                        'user_id' => (int) $mysql['click_user_id'],
+                        'campaign_id' => (int) $mysql['campaign_id'],
+                ];
+                if ($advertiserId !== null) {
+                        $scope['advertiser_id'] = $advertiserId;
+                }
+
+                if ($settingsService->isMultiTouchEnabled($scope)) {
+                        try {
+                                $journeyRepository = new ConversionJourneyRepository($db);
+                                $journeyRepository->persistJourney(
+                                        conversionId: $conversionId,
+                                        userId: (int) $mysql['click_user_id'],
+                                        campaignId: (int) $mysql['campaign_id'],
+                                        conversionTime: (int) $mysql['conv_time'],
+                                        primaryClickId: (int) $mysql['click_id'],
+                                        primaryClickTime: (int) $mysql['click_time']
+                                );
+                        } catch (Throwable $journeyError) {
+                                error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
+                        }
+                }
+        }
 					
 	//set dirty hour
 	$de = new DataEngine();
 	$data=($de->setDirtyHour($mysql['click_id']));
 }
-

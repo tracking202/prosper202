@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -8,29 +7,27 @@ declare(strict_types=1);
  *
  * Released under the MIT license
  */
+
 namespace UAParser;
 
 use UAParser\Result\Device;
 
 class DeviceParser extends AbstractParser
 {
-    /**
-     * Attempts to see if the user agent matches a device regex from regexes.php
-     *
-     * @param string $userAgent a user agent string to test
-     * @return Device
-     */
-    public function parseDevice($userAgent)
+    use ParserFactoryMethods;
+
+    /** Attempts to see if the user agent matches a device regex from regexes.php */
+    public function parseDevice(string $userAgent): Device
     {
         $device = new Device();
 
-        [$regex, $matches] = $this->tryMatch($this->regexes['device_parsers'], $userAgent);
+        [$regex, $matches] = self::tryMatch($this->regexes['device_parsers'], $userAgent);
 
         if ($matches) {
-            $device->family = $this->multiReplace($regex, 'device_replacement', $matches[1], $matches);            
-            $device->brand  = $this->multiReplace($regex, 'brand_replacement' , null, $matches);
-            $deviceModelDefault = $matches[1] != 'Other' ? $matches[1] : null;
-            $device->model  = $this->multiReplace($regex, 'model_replacement' , $deviceModelDefault, $matches);
+            $device->family = self::multiReplace($regex, 'device_replacement', $matches[1], $matches) ?? $device->family;
+            $device->brand = self::multiReplace($regex, 'brand_replacement', null, $matches);
+            $deviceModelDefault = $matches[1] !== 'Other' ? $matches[1] : null;
+            $device->model = self::multiReplace($regex, 'model_replacement', $deviceModelDefault, $matches);
         }
 
         return $device;

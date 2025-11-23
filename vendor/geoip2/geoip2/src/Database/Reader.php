@@ -1,11 +1,23 @@
 <?php
+
 declare(strict_types=1);
+
 namespace GeoIp2\Database;
 
 use GeoIp2\Exception\AddressNotFoundException;
+use GeoIp2\Model\AnonymousIp;
+use GeoIp2\Model\AnonymousPlus;
+use GeoIp2\Model\Asn;
+use GeoIp2\Model\City;
+use GeoIp2\Model\ConnectionType;
+use GeoIp2\Model\Country;
+use GeoIp2\Model\Domain;
+use GeoIp2\Model\Enterprise;
+use GeoIp2\Model\Isp;
 use GeoIp2\ProviderInterface;
 use MaxMind\Db\Reader as DbReader;
 use MaxMind\Db\Reader\InvalidDatabaseException;
+use MaxMind\Db\Reader\Metadata;
 
 /**
  * Instances of this class provide a reader for the GeoIP2 database format.
@@ -33,23 +45,25 @@ use MaxMind\Db\Reader\InvalidDatabaseException;
  */
 class Reader implements ProviderInterface
 {
-    private $dbReader;
+    private readonly DbReader $dbReader;
+    private readonly string $dbType;
 
     /**
      * Constructor.
      *
-     * @param string $filename the path to the GeoIP2 database file
-     * @param array  $locales  list of locale codes to use in name property
-     *                         from most preferred to least preferred
+     * @param string        $filename the path to the GeoIP2 database file
+     * @param array<string> $locales  list of locale codes to use in name property
+     *                                from most preferred to least preferred
      *
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
      */
     public function __construct(
-        $filename,
-        private $locales = ['en']
+        string $filename,
+        /** @var array<string> */
+        public readonly array $locales = ['en']
     ) {
         $this->dbReader = new DbReader($filename);
+        $this->dbType = $this->dbReader->metadata()->databaseType;
     }
 
     /**
@@ -57,16 +71,13 @@ class Reader implements ProviderInterface
      *
      * @param string $ipAddress an IPv4 or IPv6 address as a string
      *
-     * @throws \GeoIp2\Exception\AddressNotFoundException  if the address is
-     *                                                     not in the database
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
-     *
-     * @return \GeoIp2\Model\City
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
      */
-    public function city($ipAddress)
+    public function city(string $ipAddress): City
     {
-        return $this->modelFor('City', 'City', $ipAddress);
+        return $this->modelFor(City::class, 'City', $ipAddress);
     }
 
     /**
@@ -74,16 +85,13 @@ class Reader implements ProviderInterface
      *
      * @param string $ipAddress an IPv4 or IPv6 address as a string
      *
-     * @throws \GeoIp2\Exception\AddressNotFoundException  if the address is
-     *                                                     not in the database
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
-     *
-     * @return \GeoIp2\Model\Country
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
      */
-    public function country($ipAddress)
+    public function country(string $ipAddress): Country
     {
-        return $this->modelFor('Country', 'Country', $ipAddress);
+        return $this->modelFor(Country::class, 'Country', $ipAddress);
     }
 
     /**
@@ -91,18 +99,33 @@ class Reader implements ProviderInterface
      *
      * @param string $ipAddress an IPv4 or IPv6 address as a string
      *
-     * @throws \GeoIp2\Exception\AddressNotFoundException  if the address is
-     *                                                     not in the database
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
-     *
-     * @return \GeoIp2\Model\AnonymousIp
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
      */
-    public function anonymousIp($ipAddress)
+    public function anonymousIp(string $ipAddress): AnonymousIp
     {
         return $this->flatModelFor(
-            'AnonymousIp',
+            AnonymousIp::class,
             'GeoIP2-Anonymous-IP',
+            $ipAddress
+        );
+    }
+
+    /**
+     * This method returns a GeoIP Anonymous Plus model.
+     *
+     * @param string $ipAddress an IPv4 or IPv6 address as a string
+     *
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
+     */
+    public function anonymousPlus(string $ipAddress): AnonymousPlus
+    {
+        return $this->flatModelFor(
+            AnonymousPlus::class,
+            'GeoIP-Anonymous-Plus',
             $ipAddress
         );
     }
@@ -112,17 +135,14 @@ class Reader implements ProviderInterface
      *
      * @param string $ipAddress an IPv4 or IPv6 address as a string
      *
-     * @throws \GeoIp2\Exception\AddressNotFoundException  if the address is
-     *                                                     not in the database
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
-     *
-     * @return \GeoIp2\Model\Asn
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
      */
-    public function asn($ipAddress)
+    public function asn(string $ipAddress): Asn
     {
         return $this->flatModelFor(
-            'Asn',
+            Asn::class,
             'GeoLite2-ASN',
             $ipAddress
         );
@@ -133,17 +153,14 @@ class Reader implements ProviderInterface
      *
      * @param string $ipAddress an IPv4 or IPv6 address as a string
      *
-     * @throws \GeoIp2\Exception\AddressNotFoundException  if the address is
-     *                                                     not in the database
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
-     *
-     * @return \GeoIp2\Model\ConnectionType
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
      */
-    public function connectionType($ipAddress)
+    public function connectionType(string $ipAddress): ConnectionType
     {
         return $this->flatModelFor(
-            'ConnectionType',
+            ConnectionType::class,
             'GeoIP2-Connection-Type',
             $ipAddress
         );
@@ -154,17 +171,14 @@ class Reader implements ProviderInterface
      *
      * @param string $ipAddress an IPv4 or IPv6 address as a string
      *
-     * @throws \GeoIp2\Exception\AddressNotFoundException  if the address is
-     *                                                     not in the database
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
-     *
-     * @return \GeoIp2\Model\Domain
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
      */
-    public function domain($ipAddress)
+    public function domain(string $ipAddress): Domain
     {
         return $this->flatModelFor(
-            'Domain',
+            Domain::class,
             'GeoIP2-Domain',
             $ipAddress
         );
@@ -175,16 +189,13 @@ class Reader implements ProviderInterface
      *
      * @param string $ipAddress an IPv4 or IPv6 address as a string
      *
-     * @throws \GeoIp2\Exception\AddressNotFoundException  if the address is
-     *                                                     not in the database
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
-     *
-     * @return \GeoIp2\Model\Enterprise
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
      */
-    public function enterprise($ipAddress)
+    public function enterprise(string $ipAddress): Enterprise
     {
-        return $this->modelFor('Enterprise', 'Enterprise', $ipAddress);
+        return $this->modelFor(Enterprise::class, 'Enterprise', $ipAddress);
     }
 
     /**
@@ -192,58 +203,58 @@ class Reader implements ProviderInterface
      *
      * @param string $ipAddress an IPv4 or IPv6 address as a string
      *
-     * @throws \GeoIp2\Exception\AddressNotFoundException  if the address is
-     *                                                     not in the database
-     * @throws \MaxMind\Db\Reader\InvalidDatabaseException if the database
-     *                                                     is corrupt or invalid
-     *
-     * @return \GeoIp2\Model\Isp
+     * @throws AddressNotFoundException if the address is not in the database
+     * @throws InvalidDatabaseException if the database is corrupt or invalid
+     * @throws \BadMethodCallException  if this database type is not supported
      */
-    public function isp($ipAddress)
+    public function isp(string $ipAddress): Isp
     {
         return $this->flatModelFor(
-            'Isp',
+            Isp::class,
             'GeoIP2-ISP',
             $ipAddress
         );
     }
 
-    private function modelFor($class, $type, $ipAddress)
+    private function modelFor(string $class, string $type, string $ipAddress): object
     {
-        $record = $this->getRecord($class, $type, $ipAddress);
+        [$record, $prefixLen] = $this->getRecord($class, $type, $ipAddress);
 
         $record['traits']['ip_address'] = $ipAddress;
-        $class = 'GeoIp2\\Model\\' . $class;
+        $record['traits']['prefix_len'] = $prefixLen;
 
         return new $class($record, $this->locales);
     }
 
-    private function flatModelFor($class, $type, $ipAddress)
+    private function flatModelFor(string $class, string $type, string $ipAddress): object
     {
-        $record = $this->getRecord($class, $type, $ipAddress);
+        [$record, $prefixLen] = $this->getRecord($class, $type, $ipAddress);
 
         $record['ip_address'] = $ipAddress;
-        $class = 'GeoIp2\\Model\\' . $class;
+        $record['prefix_len'] = $prefixLen;
 
         return new $class($record);
     }
 
-    private function getRecord($class, $type, $ipAddress)
+    /**
+     * @return array{0:array<string, mixed>, 1:int}
+     */
+    private function getRecord(string $class, string $type, string $ipAddress): array
     {
-        if (!str_contains((string) $this->metadata()->databaseType, (string) $type)) {
-            $method = lcfirst((string) $class);
+        if (!str_contains($this->dbType, $type)) {
+            $method = lcfirst((new \ReflectionClass($class))->getShortName());
+
             throw new \BadMethodCallException(
-                "The $method method cannot be used to open a "
-                . $this->metadata()->databaseType . ' database'
+                "The $method method cannot be used to open a {$this->dbType} database"
             );
         }
-        $record = $this->dbReader->get($ipAddress);
+        [$record, $prefixLen] = $this->dbReader->getWithPrefixLen($ipAddress);
         if ($record === null) {
             throw new AddressNotFoundException(
                 "The address $ipAddress is not in the database."
             );
         }
-        if (!is_array($record)) {
+        if (!\is_array($record)) {
             // This can happen on corrupt databases. Generally,
             // MaxMind\Db\Reader will throw a
             // MaxMind\Db\Reader\InvalidDatabaseException, but occasionally
@@ -253,20 +264,20 @@ class Reader implements ProviderInterface
             // exceptions go unnoticed.
             throw new InvalidDatabaseException(
                 "Expected an array when looking up $ipAddress but received: "
-                . gettype($record)
+                . \gettype($record)
             );
         }
 
-        return $record;
+        return [$record, $prefixLen];
     }
 
     /**
      * @throws \InvalidArgumentException if arguments are passed to the method
      * @throws \BadMethodCallException   if the database has been closed
      *
-     * @return \MaxMind\Db\Reader\Metadata object for the database
+     * @return Metadata object for the database
      */
-    public function metadata()
+    public function metadata(): Metadata
     {
         return $this->dbReader->metadata();
     }
@@ -274,7 +285,7 @@ class Reader implements ProviderInterface
     /**
      * Closes the GeoIP2 database and returns the resources to the system.
      */
-    public function close()
+    public function close(): void
     {
         $this->dbReader->close();
     }
