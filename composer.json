@@ -16,6 +16,11 @@
       "Api\\": "api/"
     }
   },
+  "autoload-dev": {
+    "psr-4": {
+      "Tests\\": "tests/"
+    }
+  },
   "require-dev": {
     "phpunit/phpunit": "^9.5",
     "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
