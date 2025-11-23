@@ -12,10 +12,79 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.0'
+          php-version: '8.3'
       - name: PHP Syntax Check
+        id: php_lint
+        continue-on-error: true
         run: |
-          find . -type f -name '*.php' -print0 | xargs -0 -r -n1 php -l
+          set +e
+          find . \
+            -path './vendor' -prune -o \
+            -path './.git' -prune -o \
+            -type f -name '*.php' -print0 \
+            | xargs -0 -r -n1 php -l
+          status=$?
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          if [ "${status}" -ne 0 ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "::error::PHP syntax check detected errors. Review logs above." >&2
+          else
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          fi
+          exit ${status}
       - name: Shell Script Syntax Check
+        id: shell_lint
+        continue-on-error: true
         run: |
-          find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+          set +e
+          find . \
+            -path './vendor' -prune -o \
+            -path './.git' -prune -o \
+            -type f -name '*.sh' -print0 \
+            | xargs -0 -r -n1 bash -n
+          status=$?
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          if [ "${status}" -ne 0 ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "::error::Shell script syntax check detected errors. Review logs above." >&2
+          else
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          fi
+          exit ${status}
+      - name: Summarize lint results
+        if: always()
+        run: |
+          php_status="${{ steps.php_lint.outputs.status }}"
+          shell_status="${{ steps.shell_lint.outputs.status }}"
+
+          describe_result() {
+            case "$1" in
+              failed)
+                echo "❌ Failed"
+                ;;
+              passed)
+                echo "✅ Passed"
+                ;;
+              *)
+                echo "⚠️ Unknown"
+                ;;
+            esac
+          }
+
+          {
+            echo "### Pull Request Checks"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| PHP Syntax | $(describe_result "${php_status}") |"
+            echo "| Shell Syntax | $(describe_result "${shell_status}") |"
+            echo ""
+            if [ "${php_status}" = "failed" ] || [ "${shell_status}" = "failed" ]; then
+              echo "> One or more checks reported issues. Review the job logs for details."
+            else
+              echo "> All checks completed without detected errors."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail when lint errors detected
+        if: ${{ steps.php_lint.outputs.exit_code != '0' || steps.shell_lint.outputs.exit_code != '0' }}
+        run: exit 1

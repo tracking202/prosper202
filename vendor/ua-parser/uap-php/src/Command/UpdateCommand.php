@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -18,15 +17,16 @@ use UAParser\Util\Fetcher;
 
 class UpdateCommand extends Command
 {
-    /**
-     * @param string $resourceDirectory
-     */
-    public function __construct(private $resourceDirectory)
+    /** @var string */
+    private $resourceDirectory;
+
+    public function __construct($resourceDirectory)
     {
+        $this->resourceDirectory = $resourceDirectory;
         parent::__construct();
     }
 
-    protected function configure()
+    protected function configure(): void
     {
         $this
             ->setName('ua-parser:update')
@@ -40,11 +40,13 @@ class UpdateCommand extends Command
         ;
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $fetcher = new Fetcher();
         $converter = new Converter($this->resourceDirectory);
 
         $converter->convertString($fetcher->fetch(), !$input->getOption('no-backup'));
+
+        return 0;
     }
 }

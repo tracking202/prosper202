@@ -252,6 +252,25 @@ if ($deleting == true) {
 	$user_sql_delete = "UPDATE 202_users SET user_deleted = '1' WHERE user_id = " . $mysql['user_id'];
 $user_result_delete = _mysqli_query($user_sql_delete);
 
+	// Purge attribution data for the deleted user
+	$attributionCleanupQueries = [
+		"DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'] . ")",
+		"DELETE FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'],
+		"DELETE FROM 202_attribution_settings WHERE user_id = " . $mysql['user_id'],
+		"DELETE FROM 202_attribution_models WHERE user_id = " . $mysql['user_id'],
+		"DELETE FROM 202_attribution_audit WHERE user_id = " . $mysql['user_id']
+	];
+
+	foreach ($attributionCleanupQueries as $cleanupQuery) {
+		try {
+			$db->query($cleanupQuery);
+		} catch (mysqli_sql_exception $exception) {
+			if (function_exists('prosper_log')) {
+				prosper_log('attribution_cleanup', $exception->getMessage());
+			}
+		}
+	}
+
 	if ($slack) {
 		$sql = "SELECT user_name, role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id = " . $mysql['user_id'];
 		$result = _mysqli_query($sql);

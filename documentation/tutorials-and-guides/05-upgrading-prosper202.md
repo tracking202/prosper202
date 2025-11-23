@@ -8,6 +8,13 @@ Upgrading your Prosper202 software is extremely easy. Make sure you back up your
 
 Simply follow the instructions, please follow them exactly.
 
+## What’s new in 1.9.56
+- Installs the Advanced Attribution Engine schema and registers the rebuild cron job (`202-cronjobs/attribution-rebuild.php`).
+- Adds new permissions (`view_attribution_reports`, `manage_attribution_models`). After upgrading, review role assignments under **Administration → User Management**.
+- Re-run composer install if you maintain custom deployments; PHPUnit and GeoIP libraries were updated.
+
+After upgrading, visit **Dashboard → System Checks** to confirm the attribution cron job passes the health check, then schedule the cron as described in [14-Advanced Attribution Engine](./14-advanced-attribution-engine.md).
+
 ## How-to Upgrade Video
 
 **Video:** [Upgrading Your Prosper202 Installation To Version 1.8.3](https://www.youtube.com/watch?v=lc16taRyV3I&feature=youtu.be)

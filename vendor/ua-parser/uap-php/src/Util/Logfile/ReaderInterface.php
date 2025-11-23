@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -11,15 +10,7 @@ namespace UAParser\Util\Logfile;
 
 interface ReaderInterface
 {
-    /**
-     * @param string $line
-     * @return bool
-     */
-    public function test($line);
+    public function test(string $line): bool;
 
-    /**
-     * @param string $line
-     * @return string
-     */
-    public function read($line);
+    public function read(string $line): string;
 }

@@ -15,14 +15,18 @@ use function array_map;
 
 class Converter
 {
+    /** @var string */
+    private $destination;
+
     /** @var CodeGenerator */
     private $codeGenerator;
 
     /** @var Filesystem */
     private $fs;
 
-    public function __construct(private readonly string $destination, ?CodeGenerator $codeGenerator = null, ?Filesystem $fs = null)
+    public function __construct(string $destination, ?CodeGenerator $codeGenerator = null, ?Filesystem $fs = null)
     {
+        $this->destination = $destination;
         $this->codeGenerator = $codeGenerator ?: new CodeGenerator();
         $this->fs = $fs ?: new Filesystem();
     }

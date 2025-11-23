@@ -5,15 +5,15 @@
 $vendorDir = dirname(__DIR__);
 $baseDir = dirname($vendorDir);
 
-return [
-    'UAParser\\' => [$vendorDir . '/ua-parser/uap-php/src'],
-    'Tracking202\\' => [$baseDir . '/tracking202'],
-    'Symfony\\Polyfill\\Mbstring\\' => [$vendorDir . '/symfony/polyfill-mbstring'],
-    'Symfony\\Component\\Yaml\\' => [$vendorDir . '/symfony/yaml'],
-    'Symfony\\Component\\Finder\\' => [$vendorDir . '/symfony/finder'],
-    'Symfony\\Component\\Filesystem\\' => [$vendorDir . '/symfony/filesystem'],
-    'Symfony\\Component\\Console\\' => [$vendorDir . '/symfony/console'],
-    'Prosper202\\' => [$baseDir . '/202-config'],
-    'Prosper202Interfaces\\' => [$baseDir . '/202-interfaces'],
-    'Api\\' => [$baseDir . '/api'],
-];
+return array(
+    'UAParser\\' => array($vendorDir . '/ua-parser/uap-php/src'),
+    'Tracking202\\' => array($baseDir . '/tracking202'),
+    'Prosper202\\' => array($baseDir . '/202-config'),
+    'Prosper202Interfaces\\' => array($baseDir . '/202-interfaces'),
+    'MaxMind\\WebService\\' => array($vendorDir . '/maxmind/web-service-common/src/WebService'),
+    'MaxMind\\Exception\\' => array($vendorDir . '/maxmind/web-service-common/src/Exception'),
+    'MaxMind\\Db\\' => array($vendorDir . '/maxmind-db/reader/src/MaxMind/Db'),
+    'GeoIp2\\' => array($vendorDir . '/geoip2/geoip2/src'),
+    'Composer\\CaBundle\\' => array($vendorDir . '/composer/ca-bundle/src'),
+    'Api\\' => array($baseDir . '/api'),
+);

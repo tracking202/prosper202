@@ -104,6 +104,8 @@ abstract class TestCase extends BaseTestCase
 
                     public function bind_param(string $types, &...$vars): bool
                     {
+                        // The $types parameter is accepted to match the real method signature,
+                        // but is intentionally unused in this mock as type validation is not performed.
                         $this->params = $vars;
                         return true;
                     }
