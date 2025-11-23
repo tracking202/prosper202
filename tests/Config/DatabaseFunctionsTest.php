@@ -88,7 +88,7 @@ final class DatabaseFunctionsTest extends TestCase
         $this->assertFalse($result);
     }
 
-    public function testMemcacheMysqlFetchAssocReturnsCachedResult(): void
+    public function testMemcacheMySQLFetchAssocReturnsCachedResult(): void
     {
         global $memcache;
 
