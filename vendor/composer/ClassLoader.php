@@ -45,19 +45,22 @@ class ClassLoader
     /** @var \Closure(string):void */
     private static $includeFile;
 
+    /** @var string|null */
+    private $vendorDir;
+
     // PSR-4
     /**
      * @var array<string, array<string, int>>
      */
-    private $prefixLengthsPsr4 = [];
+    private $prefixLengthsPsr4 = array();
     /**
      * @var array<string, list<string>>
      */
-    private $prefixDirsPsr4 = [];
+    private $prefixDirsPsr4 = array();
     /**
      * @var list<string>
      */
-    private $fallbackDirsPsr4 = [];
+    private $fallbackDirsPsr4 = array();
 
     // PSR-0
     /**
@@ -67,11 +70,11 @@ class ClassLoader
      *
      * @var array<string, array<string, list<string>>>
      */
-    private $prefixesPsr0 = [];
+    private $prefixesPsr0 = array();
     /**
      * @var list<string>
      */
-    private $fallbackDirsPsr0 = [];
+    private $fallbackDirsPsr0 = array();
 
     /** @var bool */
     private $useIncludePath = false;
@@ -79,7 +82,7 @@ class ClassLoader
     /**
      * @var array<string, string>
      */
-    private $classMap = [];
+    private $classMap = array();
 
     /** @var bool */
     private $classMapAuthoritative = false;
@@ -87,7 +90,7 @@ class ClassLoader
     /**
      * @var array<string, bool>
      */
-    private $missingClasses = [];
+    private $missingClasses = array();
 
     /** @var string|null */
     private $apcuPrefix;
@@ -95,13 +98,14 @@ class ClassLoader
     /**
      * @var array<string, self>
      */
-    private static $registeredLoaders = [];
+    private static $registeredLoaders = array();
 
     /**
      * @param string|null $vendorDir
      */
-    public function __construct(private $vendorDir = null)
+    public function __construct($vendorDir = null)
     {
+        $this->vendorDir = $vendorDir;
         self::initializeIncludeClosure();
     }
 
@@ -114,7 +118,7 @@ class ClassLoader
             return call_user_func_array('array_merge', array_values($this->prefixesPsr0));
         }
 
-        return [];
+        return array();
     }
 
     /**
@@ -382,14 +386,14 @@ class ClassLoader
      */
     public function register($prepend = false)
     {
-        spl_autoload_register($this->loadClass(...), true, $prepend);
+        spl_autoload_register(array($this, 'loadClass'), true, $prepend);
 
         if (null === $this->vendorDir) {
             return;
         }
 
         if ($prepend) {
-            self::$registeredLoaders = [$this->vendorDir => $this] + self::$registeredLoaders;
+            self::$registeredLoaders = array($this->vendorDir => $this) + self::$registeredLoaders;
         } else {
             unset(self::$registeredLoaders[$this->vendorDir]);
             self::$registeredLoaders[$this->vendorDir] = $this;
@@ -403,7 +407,7 @@ class ClassLoader
      */
     public function unregister()
     {
-        spl_autoload_unregister($this->loadClass(...));
+        spl_autoload_unregister(array($this, 'loadClass'));
 
         if (null !== $this->vendorDir) {
             unset(self::$registeredLoaders[$this->vendorDir]);
@@ -526,7 +530,7 @@ class ClassLoader
 
         if (isset($this->prefixesPsr0[$first])) {
             foreach ($this->prefixesPsr0[$first] as $prefix => $dirs) {
-                if (str_starts_with($class, $prefix)) {
+                if (0 === strpos($class, $prefix)) {
                     foreach ($dirs as $dir) {
                         if (file_exists($file = $dir . DIRECTORY_SEPARATOR . $logicalPathPsr0)) {
                             return $file;
@@ -568,7 +572,7 @@ class ClassLoader
          * @param  string $file
          * @return void
          */
-        self::$includeFile = \Closure::bind(static function($file): void {
+        self::$includeFile = \Closure::bind(static function($file) {
             include $file;
         }, null, null);
     }
