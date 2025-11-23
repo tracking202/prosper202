@@ -107,7 +107,7 @@ final class DatabaseFunctionsTest extends TestCase
         $this->markTestSkipped('memcache_mysql_fetch_assoc uses result object as cache key');
     }
 
-    public function testMemcacheMysqlFetchAssocReturnsFalseForNonObject(): void
+    public function testMemcacheMySQLFetchAssocReturnsFalseForNonObject(): void
     {
         $result = memcache_mysql_fetch_assoc('not_in_cache');
 
