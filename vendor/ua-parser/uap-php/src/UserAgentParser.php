@@ -42,7 +42,7 @@ class UserAgentParser extends AbstractParser
 
         if (isset($jsParseBits['js_user_agent_string'])) {
             $jsUserAgentString = $jsParseBits['js_user_agent_string'];
-            if (str_contains($jsUserAgentString, 'Chrome/') && str_contains($userAgent, 'chromeframe')) {
+            if (strpos($jsUserAgentString, 'Chrome/') !== false && strpos($userAgent, 'chromeframe') !== false) {
                 $override = $this->parseUserAgent($jsUserAgentString);
                 $family = $ua->family;
                 $ua->family = 'Chrome Frame';

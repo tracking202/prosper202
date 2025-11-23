@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -18,16 +17,20 @@ use UAParser\Util\Converter;
 
 class ConvertCommand extends Command
 {
-    /**
-     * @param string $resourceDirectory
-     * @param string $defaultYamlFile
-     */
-    public function __construct(private $resourceDirectory, private $defaultYamlFile)
+    /** @var string */
+    private $resourceDirectory;
+
+    /** @var string */
+    private $defaultYamlFile;
+
+    public function __construct($resourceDirectory, $defaultYamlFile)
     {
+        $this->resourceDirectory = $resourceDirectory;
+        $this->defaultYamlFile = $defaultYamlFile;
         parent::__construct();
     }
 
-    protected function configure()
+    protected function configure(): void
     {
         $this
             ->setName('ua-parser:convert')
@@ -47,12 +50,18 @@ class ConvertCommand extends Command
         ;
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $this->getConverter()->convertFile($input->getArgument('file'), $input->getOption('no-backup'));
+        $file = $input->getArgument('file');
+        assert(is_string($file));
+        $noBackup = $input->getOption('no-backup');
+        assert(is_bool($noBackup));
+        $this->getConverter()->convertFile($file, $noBackup);
+
+        return 0;
     }
 
-    private function getConverter()
+    private function getConverter(): Converter
     {
         return new Converter($this->resourceDirectory);
     }

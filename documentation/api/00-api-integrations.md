@@ -18,6 +18,23 @@ The Prosper202 ClickServer uses a simple token based authentication system. The 
 
 The API endpoint for Prosper202 will depend upon your tracking domain, however the general form is as follows: **http://[[your-Prosper202-domain]]/api/v1/**
 
+## Attribution API (Preview)
+
+Prosper202 1.9.56 introduces experimental attribution endpoints under `/api/v2/attribution`. These are RESTful and return JSON.
+
+| Method | Endpoint | Description | Required Permission |
+| ------ | -------- | ----------- | ------------------- |
+| `GET` | `/api/v2/attribution/models` | List attribution models. Supports `type` query parameter (`last_touch`, `time_decay`, etc.). | `view_attribution_reports` (read) or `manage_attribution_models` (write). |
+| `POST` | `/api/v2/attribution/models` | Create a new attribution model. Payload accepts `name`, `type`, optional `weighting_config`, `is_active`, `is_default`. | `manage_attribution_models`. |
+| `GET` | `/api/v2/attribution/models/{modelId}/snapshots` | Retrieve aggregated hourly snapshots for a model. Accepts `scope`, `scope_id`, `start_hour`, `end_hour`, optional `limit` (default 500) and `offset` for pagination. | `view_attribution_reports`. |
+| `PATCH` | `/api/v2/attribution/models/{modelId}` | Update model fields (name, slug, weighting config, status). | `manage_attribution_models`. |
+| `DELETE` | `/api/v2/attribution/models/{modelId}` | Remove a model and associated snapshots/settings. | `manage_attribution_models`. |
+| `GET` | `/api/v2/attribution/sandbox` | Run comparison across multiple models (`models` query parameter) within a defined time window and scope. | `manage_attribution_models`. |
+
+All attribution endpoints use the same API key authentication as existing v1 reports. Responses include pagination metadata where applicable. Because the feature is still evolving, treat the endpoints as beta and validate payload structures against the current release.
+
+> **Authentication**: Supply the API key as the `apikey` query parameter, or call the endpoint from an authenticated browser session. Requests without valid credentials return `401` (missing/invalid key) or `403` (insufficient permissions).
+
 ## Methods
 
 As of now the only supported method is the reports method

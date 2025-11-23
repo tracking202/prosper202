@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -8,15 +7,13 @@ declare(strict_types=1);
  *
  * Released under the MIT license
  */
+
 namespace UAParser;
 
 use UAParser\Exception\FileNotFoundException;
 
 abstract class AbstractParser
 {
-    /** @var string */
-    public static $defaultFile;
-
     /** @var array */
     protected $regexes = [];
 
@@ -25,63 +22,10 @@ abstract class AbstractParser
         $this->regexes = $regexes;
     }
 
-    /**
-     * Create parser instance
-     *
-     * Either pass a custom regexes.php file or leave the argument empty and use the default file.
-     *
-     * @param string $file
-     * @throws FileNotFoundException
-     * @return static
-     */
-    public static function create($file = null)
-    {
-        return $file ? static::createCustom($file) : static::createDefault();
-    }
-
-    /**
-     * @return static
-     * @throws FileNotFoundException
-     */
-    protected static function createDefault()
-    {
-        return static::createInstance(
-            static::getDefaultFile(),
-            \UAParser\Exception\FileNotFoundException::defaultFileNotFound(...)
-        );
-    }
-
-    /**
-     * @return static
-     * @throws FileNotFoundException
-     */
-    protected static function createCustom($file)
-    {
-        return static::createInstance(
-            $file,
-            \UAParser\Exception\FileNotFoundException::customRegexFileNotFound(...)
-        );
-    }
-
-    private static function createInstance($file, $exceptionFactory)
-    {
-        if (!file_exists($file)) {
-            throw call_user_func($exceptionFactory, $file);
-        }
-
-        return new static(include $file);
-    }
-
-    /**
-     * @param array $regexes
-     * @param string $userAgent
-     * @return array
-     */
-    protected function tryMatch(array $regexes, $userAgent)
+    protected static function tryMatch(array $regexes, string $userAgent): array
     {
         foreach ($regexes as $regex) {
-            $flag = $regex['regex_flag'] ?? '';
-            if (preg_match('@' . $regex['regex'] . '@' . $flag, $userAgent, $matches)) {
+            if (preg_match($regex['regex'], $userAgent, $matches)) {
 
                 $defaults = [
                     1 => 'Other',
@@ -98,50 +42,27 @@ abstract class AbstractParser
         return [null, null];
     }
 
-    /**
-     * @param array $regex
-     * @param string $key
-     * @param string $string
-     * @return string
-     */
-    protected function replaceString(array $regex, $key, $string)
+    protected static function multiReplace(array $regex, string $key, ?string $default, array $matches): ?string
     {
         if (!isset($regex[$key])) {
-            return $string;
+            return self::emptyStringToNull($default);
         }
 
-        return str_replace('$1', $string, $regex[$key]);
-    }
-
-    /**
-     * @param array $regex
-     * @param string $key
-     * @param string $default
-     * @param array $matches
-     * @return string
-     */
-    protected function multiReplace(array $regex, $key, $default, array $matches)
-    {
-        if (!isset($regex[$key])) {
-            return $default;
-        }
-        
         $replacement = preg_replace_callback(
-            "|\\$(?<key>\d)|",
-            fn($m) => $matches[$m['key']] ?? "",
+            '|\$(?P<key>\d)|',
+            static function ($m) use ($matches) {
+                return $matches[$m['key']] ?? '';
+            },
             $regex[$key]
         );
-        
-        $replacement = trim($replacement);
 
-        return $replacement == '' ? null : $replacement;
+        return self::emptyStringToNull($replacement);
     }
 
-    /**
-     * @return string
-     */
-    protected static function getDefaultFile()
+    private static function emptyStringToNull(?string $string): ?string
     {
-        return static::$defaultFile ?: realpath(__DIR__ . '/../resources') . DIRECTORY_SEPARATOR . 'regexes.php';
+        $string = trim($string ?? '');
+
+        return $string === '' ? null : $string;
     }
 }

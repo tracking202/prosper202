@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -9,11 +8,11 @@ declare(strict_types=1);
  */
 namespace UAParser\Exception;
 
-class FetcherException extends DomainException
+final class FetcherException extends DomainException
 {
-    public static function httpError($resource, $error)
+    public static function httpError(string $resource, string $error): self
     {
-        return new static(
+        return new self(
             sprintf('Could not fetch HTTP resource "%s": %s', $resource, $error)
         );
     }

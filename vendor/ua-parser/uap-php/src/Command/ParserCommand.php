@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -24,17 +23,20 @@ class ParserCommand extends Command
             ->setDescription('Parses a user agent string and dumps the results.')
             ->addArgument(
                 'user-agent',
-                null,
                 InputArgument::REQUIRED,
                 'User agent string to analyze'
             )
         ;
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $result = Parser::create()->parse($input->getArgument('user-agent'));
+        $userAgent = $input->getArgument('user-agent');
+        assert(is_string($userAgent));
+        $result = Parser::create()->parse($userAgent);
 
         $output->writeln(json_encode($result, JSON_PRETTY_PRINT));
+
+        return 0;
     }
 }
