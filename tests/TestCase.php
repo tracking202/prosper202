@@ -191,6 +191,7 @@ abstract class TestCase extends BaseTestCase
 
             public function set(string $key, $value, $flag = 0, int $expiration = 0): bool
             {
+                // NOTE: $flag and $expiration are intentionally ignored in this mock.
                 $this->cache[$key] = $value;
                 return true;
             }
