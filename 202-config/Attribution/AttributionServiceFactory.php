@@ -13,6 +13,12 @@ use Prosper202\Attribution\Repository\Mysql\MysqlConversionRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlModelRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlSnapshotRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlTouchpointRepository;
+use Prosper202\Attribution\Repository\ExportRepositoryInterface;
+use Prosper202\Attribution\Repository\Mysql\MysqlExportRepository;
+use Prosper202\Attribution\Repository\NullExportRepository;
+use Prosper202\Attribution\Export\SnapshotExporter;
+use Prosper202\Attribution\Export\WebhookDispatcher;
+use Prosper202\Attribution\Export\ExportProcessor;
 use Prosper202\Attribution\Repository\NullConversionRepository;
 use Prosper202\Attribution\Repository\NullModelRepository;
 use Prosper202\Attribution\Repository\NullSettingsRepository;
@@ -40,7 +46,7 @@ final class AttributionServiceFactory
         ?SnapshotRepositoryInterface $snapshotRepository = null,
         ?TouchpointRepositoryInterface $touchpointRepository = null,
         ?AuditRepositoryInterface $auditRepository = null,
-        ?ExportJobRepositoryInterface $exportRepository = null
+        ?ExportRepositoryInterface $exportRepository = null
     ): AttributionService {
         if ($modelRepository === null || $snapshotRepository === null || $touchpointRepository === null || $auditRepository === null || $exportRepository === null) {
             $db = \DB::getInstance();
@@ -52,7 +58,7 @@ final class AttributionServiceFactory
                 $snapshotRepository ??= new MysqlSnapshotRepository($writeConnection, $readConnection);
                 $touchpointRepository ??= new MysqlTouchpointRepository($writeConnection, $readConnection);
                 $auditRepository ??= new MysqlAuditRepository($writeConnection);
-                $exportRepository ??= new MysqlExportJobRepository($writeConnection, $readConnection);
+                $exportRepository ??= new MysqlExportRepository($writeConnection, $readConnection);
             }
         }
 
@@ -61,7 +67,7 @@ final class AttributionServiceFactory
             $snapshotRepository ?? new NullSnapshotRepository(),
             $touchpointRepository ?? new NullTouchpointRepository(),
             $auditRepository ?? new NullAuditRepository(),
-            $exportRepository ?? new NullExportJobRepository()
+            $exportRepository ?? new NullExportRepository()
         );
     }
 
@@ -90,6 +96,35 @@ final class AttributionServiceFactory
             $touchpointRepository ?? new NullTouchpointRepository(),
             $conversionRepository ?? new NullConversionRepository(),
             $auditRepository ?? new NullAuditRepository()
+        );
+    }
+
+    public static function createExportProcessor(
+        ?ExportRepositoryInterface $exportRepository = null,
+        ?SnapshotRepositoryInterface $snapshotRepository = null,
+        ?ModelRepositoryInterface $modelRepository = null,
+        ?SnapshotExporter $snapshotExporter = null,
+        ?WebhookDispatcher $webhookDispatcher = null
+    ): ExportProcessor {
+        $db = \DB::getInstance();
+        $writeConnection = $db?->getConnection();
+        $readConnection = $db?->getConnectionro();
+
+        if ($writeConnection instanceof \mysqli) {
+            $exportRepository ??= new MysqlExportRepository($writeConnection, $readConnection);
+            $snapshotRepository ??= new MysqlSnapshotRepository($writeConnection, $readConnection);
+            $modelRepository ??= new MysqlModelRepository($writeConnection, $readConnection);
+        }
+
+        $snapshotExporter ??= new SnapshotExporter();
+        $webhookDispatcher ??= new WebhookDispatcher();
+
+        return new ExportProcessor(
+            $exportRepository ?? new NullExportRepository(),
+            $snapshotRepository ?? new NullSnapshotRepository(),
+            $modelRepository ?? new NullModelRepository(),
+            $snapshotExporter,
+            $webhookDispatcher
         );
     }
 

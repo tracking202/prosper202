@@ -9,6 +9,7 @@ use Prosper202\Attribution\AttributionService;
 use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Analytics\AnalyticsResponseTransformer;
+use Prosper202\Attribution\Export\ExportFormat;
 
 /**
  * Thin controller that prepares request parameters for the attribution service.
@@ -318,6 +319,106 @@ final class Controller
             'payload' => [
                 'error' => false,
                 'data' => $result,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $params
+     * @return array{status:int,payload:array<string,mixed>}
+     */
+    public function listExports(array $params): array
+    {
+        $userId = isset($params['user_id']) ? (int) $params['user_id'] : 0;
+        $modelId = isset($params['model_id']) ? (int) $params['model_id'] : null;
+        $limit = isset($params['limit']) ? max(1, min(100, (int) $params['limit'])) : 25;
+
+        try {
+            $jobs = $this->service->listExports($userId, $modelId, $limit);
+        } catch (InvalidArgumentException $exception) {
+            return [
+                'status' => 400,
+                'payload' => [
+                    'error' => true,
+                    'message' => $exception->getMessage(),
+                ],
+            ];
+        }
+
+        return [
+            'status' => 200,
+            'payload' => [
+                'error' => false,
+                'data' => $jobs,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function scheduleExport(int $modelId, array $payload): array
+    {
+        $userId = isset($payload['user_id']) ? (int) $payload['user_id'] : 0;
+        $scope = isset($payload['scope']) ? ScopeType::tryFrom((string) $payload['scope']) : ScopeType::GLOBAL;
+        if ($scope === null) {
+            return [
+                'status' => 400,
+                'payload' => [
+                    'error' => true,
+                    'message' => 'Invalid scope value.',
+                ],
+            ];
+        }
+
+        $scopeId = isset($payload['scope_id']) && $payload['scope_id'] !== '' ? (int) $payload['scope_id'] : null;
+        $startHour = isset($payload['start_hour']) ? (int) $payload['start_hour'] : (time() - 86400);
+        $endHour = isset($payload['end_hour']) ? (int) $payload['end_hour'] : time();
+
+        try {
+            $format = ExportFormat::fromString((string) ($payload['format'] ?? 'csv'));
+        } catch (InvalidArgumentException $exception) {
+            return [
+                'status' => 400,
+                'payload' => [
+                    'error' => true,
+                    'message' => $exception->getMessage(),
+                ],
+            ];
+        }
+
+        $webhookOptions = [
+            'url' => $payload['webhook_url'] ?? null,
+            'method' => $payload['webhook_method'] ?? 'POST',
+            'headers' => $payload['webhook_headers'] ?? [],
+        ];
+
+        try {
+            $job = $this->service->scheduleSnapshotExport(
+                $userId,
+                $modelId,
+                $scope,
+                $scopeId,
+                $startHour,
+                $endHour,
+                $format,
+                $webhookOptions
+            );
+        } catch (InvalidArgumentException $exception) {
+            return [
+                'status' => 400,
+                'payload' => [
+                    'error' => true,
+                    'message' => $exception->getMessage(),
+                ],
+            ];
+        }
+
+        return [
+            'status' => 202,
+            'payload' => [
+                'error' => false,
+                'data' => $job,
             ],
         ];
     }

@@ -199,17 +199,16 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 				<?php } ?>
 			<?php break;
 
-                        case "202-account": ?>
-                                <?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] == "202-account") and !$navigation[2]) { ?>
-                                        <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/home.php"></script>
-                                <?php } ?>
-
-                                <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/account.php"></script>
-                                <?php if (isset($navigation[2]) && $navigation[2] == 'attribution.php') { ?>
-                                        <script type="text/javascript" src="https://code.highcharts.com/highcharts.js"></script>
-                                        <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/chart.theme.js"></script>
-                                        <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/attribution.js"></script>
-                                <?php } ?>
+			case "202-account": ?>
+				<?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] == "202-account") and !$navigation[2]) { ?>
+					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/home.php"></script>
+				<?php } ?>
+				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/account.php"></script>
+				<?php if (isset($navigation[2]) && $navigation[2] == 'attribution.php') { ?>
+					<script type="text/javascript" src="https://code.highcharts.com/highcharts.js"></script>
+					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/chart.theme.js"></script>
+					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/attribution.js"></script>
+				<?php } ?>
                 <?php break;
                 } } // End isset navigation check ?>
 		<script src="https://dp5k1x6z3k332.cloudfront.net/select2.min.js"></script>

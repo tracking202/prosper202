@@ -118,6 +118,29 @@ function register_attribution_routes(\Slim\Slim $app, Controller $controller): v
             respond_json($app, $result['payload'], $result['status']);
         })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
 
+        $app->post('/models/:modelId/exports', function ($modelId) use ($app, $controller): void {
+            $params = $app->request()->params();
+            $auth = attribution_authorized_request($app);
+            if ($auth !== null) {
+                $params['user_id'] = $auth;
+            }
+
+            $payload = array_merge($params, decode_json_body($app));
+            $result = $controller->scheduleExport((int) $modelId, $payload);
+            respond_json($app, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+
+        $app->get('/exports', function () use ($app, $controller): void {
+            $params = $app->request()->params();
+            $userId = attribution_authorized_user_id($app);
+            if ($userId !== null) {
+                $params['user_id'] = $userId;
+            }
+
+            $result = $controller->listExports($params);
+            respond_json($app, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware($app, 'view_attribution_reports'));
+
         $app->get('/metrics', function () use ($app, $controller): void {
             $params = $app->request()->params();
             $userId = attribution_authorized_user_id($app);
