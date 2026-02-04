@@ -42,12 +42,25 @@ Use this reference when the Advanced Attribution Engine does not behave as expec
   - Check `202_attribution_audit` for `snapshot_rebuild` entries (metadata includes window, totals).
   - Model CRUD requests log `model_create`, `model_update`, `model_delete` actions with context.
 
-## 6. Performance Considerations
+## 6. Export & Webhook Issues
+- **Symptom:** Export job shows "Failed" status with "exceeds maximum size" error.
+  - Export files larger than 10MB cannot be dispatched via webhook to prevent memory exhaustion.
+  - Solution: Use the download link instead of webhooks for large exports, or reduce the date range.
+- **Symptom:** Webhook delivery fails with timeout or connection errors.
+  - Verify the webhook URL is accessible from the server.
+  - Check the cron logs (`202-cronjobs/attribution-export.php`) for detailed error messages.
+  - Webhook requests timeout after 15 seconds—ensure the receiving endpoint responds quickly.
+- **Symptom:** Export job stuck in "Processing" status.
+  - Check that `202-cronjobs/attribution-export.php` is running regularly.
+  - Review cron logs for PHP errors or database connectivity issues.
+  - Verify the `202_attribution_exports` table is not locked or corrupted.
+
+## 7. Performance Considerations
 - Limit long backfills to at most 24h windows to keep cron runs under a few minutes.
 - Run attribution cron outside peak hours if the database is resource constrained.
 - Consider isolating attribution tables into their own database instance for high-volume installs.
 
-## 7. Support
+## 8. Support
 - Share `202_attribution_audit` entries and cron logs when escalating to support.
 - Provide details about model configurations and cron schedules to accelerate triage.
 
