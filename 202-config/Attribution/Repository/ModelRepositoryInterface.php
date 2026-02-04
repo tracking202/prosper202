@@ -41,5 +41,13 @@ interface ModelRepositoryInterface
      */
     public function promoteToDefault(ModelDefinition $model): void;
 
-    public function delete(int $modelId, int $userId): void;
+    /**
+     * Set a specific model as default for a user
+     */
+    public function setAsDefault(int $userId, int $modelId): bool;
+
+    /**
+     * Delete a model (soft delete)
+     */
+    public function delete(int $modelId): bool;
 }

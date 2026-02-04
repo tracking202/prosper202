@@ -172,12 +172,72 @@ final class MysqlModelRepository implements ModelRepositoryInterface
         }
     }
 
-    public function delete(int $modelId, int $userId): void
+    public function setAsDefault(int $userId, int $modelId): bool
+    {
+        $conn = $this->writeConnection;
+        $conn->begin_transaction();
+        
+        try {
+            // First verify the model exists and belongs to the user
+            $checkStmt = $this->prepareWrite('SELECT 1 FROM 202_attribution_models WHERE model_id = ? AND user_id = ? LIMIT 1');
+            $checkStmt->bind_param('ii', $modelId, $userId);
+            $checkStmt->execute();
+            $result = $checkStmt->get_result();
+            $exists = $result && $result->num_rows > 0;
+            $checkStmt->close();
+            
+            if (!$exists) {
+                $conn->rollback();
+                return false;
+            }
+            
+            // Reset all models for this user to non-default
+            $resetStmt = $this->prepareWrite('UPDATE 202_attribution_models SET is_default = 0 WHERE user_id = ?');
+            $resetStmt->bind_param('i', $userId);
+            $resetStmt->execute();
+            $resetStmt->close();
+            
+            // Set the specified model as default (and activate it)
+            $setStmt = $this->prepareWrite('UPDATE 202_attribution_models SET is_default = 1, is_active = 1 WHERE model_id = ? LIMIT 1');
+            $setStmt->bind_param('i', $modelId);
+            $setStmt->execute();
+            $setStmt->close();
+            
+            $conn->commit();
+            return true;
+        } catch (Throwable $exception) {
+            $conn->rollback();
+            throw $exception;
+        }
+    }
+    
+    public function delete(int $modelId): bool
     {
         $conn = $this->writeConnection;
         $conn->begin_transaction();
 
         try {
+            // Check if model exists and is not default
+            $checkStmt = $this->prepareWrite('SELECT is_default FROM 202_attribution_models WHERE model_id = ? LIMIT 1');
+            $checkStmt->bind_param('i', $modelId);
+            $checkStmt->execute();
+            $result = $checkStmt->get_result();
+            
+            if (!$result || $result->num_rows === 0) {
+                $conn->rollback();
+                return false;
+            }
+            
+            $row = $result->fetch_assoc();
+            $checkStmt->close();
+            
+            // Prevent deletion of default model
+            if ($row['is_default']) {
+                $conn->rollback();
+                return false;
+            }
+            
+            // Delete related data
             $stmt = $this->prepareWrite('DELETE tp FROM 202_attribution_touchpoints tp INNER JOIN 202_attribution_snapshots s ON tp.snapshot_id = s.snapshot_id WHERE s.model_id = ?');
             $stmt->bind_param('i', $modelId);
             $stmt->execute();
@@ -193,12 +253,15 @@ final class MysqlModelRepository implements ModelRepositoryInterface
             $stmt->execute();
             $stmt->close();
 
-            $stmt = $this->prepareWrite('DELETE FROM 202_attribution_models WHERE model_id = ? AND user_id = ?');
-            $stmt->bind_param('ii', $modelId, $userId);
+            // Delete the model
+            $stmt = $this->prepareWrite('DELETE FROM 202_attribution_models WHERE model_id = ? LIMIT 1');
+            $stmt->bind_param('i', $modelId);
             $stmt->execute();
+            $deletedRows = $stmt->affected_rows;
             $stmt->close();
 
             $conn->commit();
+            return $deletedRows > 0;
         } catch (Throwable $exception) {
             $conn->rollback();
             throw $exception;

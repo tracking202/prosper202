@@ -373,7 +373,7 @@ final class AttributionService
     public function deleteModel(int $userId, int $modelId): void
     {
         $existing = $this->requireOwnedModel($userId, $modelId);
-        $this->modelRepository->delete($modelId, $userId);
+        $this->modelRepository->delete($modelId);
         $this->auditRepository->record($userId, $modelId, 'model_delete', [
             'name' => $existing->name,
             'slug' => $existing->slug,
