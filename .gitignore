@@ -2,10 +2,10 @@
 202-config.php
 phpstan.neon
 docker-compose.yaml
-composer.json
 
 # Dependencies
 /node_modules/
+/vendor/
 
 # Build and cache files
 *.cache
