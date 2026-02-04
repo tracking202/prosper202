@@ -58,7 +58,14 @@ function _mysqli_query($sql)
 {
 	global $db;
 
-	$result = @$db->query($sql);
+	// Handle both DB instance and direct mysqli connection
+	if ($db instanceof \mysqli) {
+		$result = @$db->query($sql);
+	} else {
+		// Assume $db is a DB wrapper class with getConnection method
+		$connection = $db->getConnection();
+		$result = @$connection->query($sql);
+	}
 	return $result;
 }
 

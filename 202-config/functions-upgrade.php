@@ -2854,6 +2854,61 @@ class UPGRADE
                     (3, 22);";
             $result = _mysqli_query($sql);
 
+            // Add attribution model reference to campaigns table (check if column exists first)
+            $sql = "SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = DATABASE() 
+                    AND TABLE_NAME = '202_aff_campaigns' 
+                    AND COLUMN_NAME = 'attribution_model_id'";
+            $result = _mysqli_query($sql);
+            $row = mysqli_fetch_assoc($result);
+            
+            if ($row['count'] == 0) {
+                $sql = "ALTER TABLE `202_aff_campaigns` 
+                        ADD COLUMN `attribution_model_id` int(11) DEFAULT NULL 
+                        AFTER `aff_campaign_cloaking`";
+                $result = _mysqli_query($sql);
+            }
+
+            // Create index for attribution model lookups (check if index exists first)
+            $sql = "SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.STATISTICS 
+                    WHERE TABLE_SCHEMA = DATABASE() 
+                    AND TABLE_NAME = '202_aff_campaigns' 
+                    AND INDEX_NAME = 'idx_attribution_model'";
+            $result = _mysqli_query($sql);
+            $row = mysqli_fetch_assoc($result);
+            
+            if ($row['count'] == 0) {
+                $sql = "ALTER TABLE `202_aff_campaigns` 
+                        ADD INDEX `idx_attribution_model` (`attribution_model_id`)";
+                $result = _mysqli_query($sql);
+            }
+
+            // Create default "Last Touch" attribution model for existing users
+            $sql = "INSERT IGNORE INTO `202_attribution_models` (
+                        `user_id`, 
+                        `model_name`, 
+                        `model_slug`, 
+                        `model_type`, 
+                        `weighting_config`, 
+                        `is_active`, 
+                        `is_default`, 
+                        `created_at`, 
+                        `updated_at`
+                    )
+                    SELECT 
+                        `user_id`,
+                        'Last Touch Attribution' as model_name,
+                        'last-touch-default' as model_slug,
+                        'last_touch' as model_type,
+                        NULL as weighting_config,
+                        1 as is_active,
+                        1 as is_default,
+                        UNIX_TIMESTAMP() as created_at,
+                        UNIX_TIMESTAMP() as updated_at
+                    FROM `202_users` 
+                    WHERE `user_id` > 0";
+            $result = _mysqli_query($sql);
+
             $sql = "UPDATE 202_version SET version='1.9.56'";
             $result = _mysqli_query($sql);
 

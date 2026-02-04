@@ -356,7 +356,8 @@ class AUTH
         $charactersLength = strlen($characters);
         $randomString = '';
         for ($i = 0; $i < $length; $i++) {
-            $randomString .= $characters[self::dev_urand(0, $charactersLength - 1)];
+            $index = (int) self::dev_urand(0, $charactersLength - 1);
+            $randomString .= $characters[$index];
         }
         return $randomString;
     }
@@ -365,7 +366,7 @@ class AUTH
     {
         $database = DB::getInstance();
         $db = $database->getConnection();
-        $mysql['user_id'] = $db->escape_string($user_id);
+        $mysql['user_id'] = $db->escape_string((string) $user_id);
         $sql = '
 			SELECT
 				secret_key
@@ -448,10 +449,10 @@ class AUTH
 // 32-bit safe
             $fp = (float) $val / 2147483647.0;
 // convert to [0,1]
-            return round($fp * $diff) + $min;
+            return (int) round($fp * $diff) + $min;
         }
 
         // fallback to less secure mt_rand in case user doesn't have random_bytes
-        return mt_rand($min, $max);
+        return (int) mt_rand($min, $max);
     }
 }
