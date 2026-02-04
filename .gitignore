@@ -6,6 +6,7 @@ composer.json
 
 # Dependencies
 /node_modules/
+/vendor/
 
 # Build and cache files
 *.cache
@@ -26,3 +27,4 @@ CLAUDE.md
 
 # Database
 /mysql_data/
+202-config copy.php
