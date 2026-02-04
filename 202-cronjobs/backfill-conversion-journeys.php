@@ -3,7 +3,47 @@
 
 declare(strict_types=1);
 
+use Prosper202\Attribution\AttributionServiceFactory;
 use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
+
+/**
+ * @param array<int, ?int> $cache
+ */
+function resolveAdvertiserId(\mysqli $connection, int $campaignId, array &$cache): ?int
+{
+    if ($campaignId <= 0) {
+        return null;
+    }
+
+    if (array_key_exists($campaignId, $cache)) {
+        return $cache[$campaignId];
+    }
+
+    $stmt = $connection->prepare('SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1');
+    if ($stmt === false) {
+        $cache[$campaignId] = null;
+        return null;
+    }
+
+    $stmt->bind_param('i', $campaignId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result ? $result->fetch_assoc() : null;
+    if ($result) {
+        $result->free();
+    }
+    $stmt->close();
+
+    if (!is_array($row)) {
+        $cache[$campaignId] = null;
+        return null;
+    }
+
+    $advertiserId = (int) ($row['aff_network_id'] ?? 0);
+    $cache[$campaignId] = $advertiserId > 0 ? $advertiserId : null;
+
+    return $cache[$campaignId];
+}
 
 require_once __DIR__ . '/../202-config/connect.php';
 
@@ -35,6 +75,8 @@ if (!$connection instanceof mysqli) {
 }
 
 $journeyRepository = new ConversionJourneyRepository($connection);
+$settingsService = AttributionServiceFactory::createSettingsService();
+$campaignAdvertiserCache = [];
 $afterConvId = 0;
 $totalProcessed = 0;
 $errors = [];
@@ -82,11 +124,25 @@ while (true) {
         $conversionId = (int) $row['conv_id'];
         $afterConvId = $conversionId;
 
+        $campaignId = (int) $row['campaign_id'];
+        $scope = [
+            'user_id' => (int) $row['user_id'],
+            'campaign_id' => $campaignId,
+        ];
+        $advertiserId = resolveAdvertiserId($connection, $campaignId, $campaignAdvertiserCache);
+        if ($advertiserId !== null) {
+            $scope['advertiser_id'] = $advertiserId;
+        }
+
+        if (!$settingsService->isMultiTouchEnabled($scope)) {
+            continue;
+        }
+
         try {
             $journeyRepository->persistJourney(
                 conversionId: $conversionId,
                 userId: (int) $row['user_id'],
-                campaignId: (int) $row['campaign_id'],
+                campaignId: $campaignId,
                 conversionTime: (int) $row['conv_time'],
                 primaryClickId: (int) $row['click_id'],
                 primaryClickTime: (int) $row['click_time']

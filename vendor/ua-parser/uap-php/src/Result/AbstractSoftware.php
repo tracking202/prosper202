@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -15,7 +14,7 @@ abstract class AbstractSoftware extends AbstractClient
     /** @var string */
     public $family = 'Other';
 
-    public function toString()
+    public function toString(): string
     {
         return $this->family;
     }

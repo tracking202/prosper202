@@ -63,15 +63,16 @@ if (!class_exists('DataEngine')) {
 
                 $daysago = time() - 86400; // 24 hours
 
-                $click_sql1 = 'SELECT  202_clicks.click_id
-                           FROM            202_clicks
-                           LEFT JOIN       202_clicks_advance USING (click_id)
-                           LEFT JOIN       202_ips USING (ip_id)
-                           LEFT JOIN       202_ips_v6 ON (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci)
-                           WHERE           IFNULL(' . $inet6_ntoa . '(202_ips_v6.ip_address),202_ips.ip_address)="' . $mysql['ip_address'] . '"
-                           AND             202_clicks.user_id="' . $mysql['user_id'] . '"
-                           AND             202_clicks.click_time >= "' . $daysago . '"
-                           ORDER BY        202_clicks.click_id DESC
+                // Optimized query: start from IP table for better index usage
+                // Try IPv4 first (most common case)
+                $click_sql1 = 'SELECT c.click_id
+                           FROM            202_ips i
+                           INNER JOIN      202_clicks_advance ca ON (ca.ip_id = i.ip_id)
+                           INNER JOIN      202_clicks c ON (c.click_id = ca.click_id)
+                           WHERE           i.ip_address = "' . $mysql['ip_address'] . '"
+                           AND             c.user_id = "' . $mysql['user_id'] . '"
+                           AND             c.click_time >= "' . $daysago . '"
+                           ORDER BY        c.click_id DESC
                            LIMIT           1';
 
                 $click_result1 = $db->query($click_sql1) or record_mysql_error($db);

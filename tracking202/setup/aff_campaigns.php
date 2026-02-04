@@ -116,6 +116,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['aff_campaign_rotate'] = $db->real_escape_string($post_aff_campaign_rotate);
 		$mysql['aff_campaign_payout'] = $db->real_escape_string(trim($_POST['aff_campaign_payout'] ?? ''));
 		$mysql['aff_campaign_cloaking'] = $db->real_escape_string((string)($_POST['aff_campaign_cloaking'] ?? '0'));
+		
+		// Handle attribution model ID
+		$attributionModelId = null;
+		if (isset($_POST['attribution_model_id']) && $_POST['attribution_model_id'] !== '') {
+			$attributionModelId = (int)$_POST['attribution_model_id'];
+		}
+		$mysql['attribution_model_id'] = $attributionModelId;
+		
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$mysql['aff_campaign_time'] = time();
 
@@ -136,6 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 													  `aff_campaign_rotate`='" . $mysql['aff_campaign_rotate'] . "',
 													  `aff_campaign_payout`='" . $mysql['aff_campaign_payout'] . "',
 													  `aff_campaign_cloaking`='" . $mysql['aff_campaign_cloaking'] . "',
+													  `attribution_model_id`=" . ($mysql['attribution_model_id'] ? "'" . (int)$mysql['attribution_model_id'] . "'" : 'NULL') . ",
 													  `aff_campaign_time`='" . $mysql['aff_campaign_time'] . "'";
 
 		if ($editing == true) {
@@ -275,7 +284,9 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'];
 	$html = array_map(fn($value) => htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'), $aff_campaign_row);
 	$html['aff_campaign_id'] = htmlentities((string)($_GET['copy_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-	$html['aff_campaign_name'] .= " (Copy)"; //append (Copy) to the campaign name so the user knows its a copy 
+	$html['aff_campaign_name'] .= " (Copy)"; //append (Copy) to the campaign name so the user knows its a copy
+	// Clear attribution model ID so user can choose for the copied campaign
+	$html['attribution_model_id'] = ''; 
 
 }
 
@@ -290,6 +301,8 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and (!isset($add_success) || $add_suc
 
 template_top('Affiliate Campaigns Setup');
 ?>
+
+<?php include_once __DIR__ . '/_config/setup_nav.php'; ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
@@ -471,6 +484,9 @@ template_top('Affiliate Campaigns Setup');
 					<input type="text" size="4" class="form-control input-sm" id="aff_campaign_payout" name="aff_campaign_payout" value="<?php echo $html['aff_campaign_payout'] ?? ''; ?>">
 				</div>
 			</div>
+
+			<!-- Attribution Model Selection -->
+			<?php include_once __DIR__ . '/_includes/attribution_model_field.php'; ?>
 
 			<div class="form-group" style="margin-bottom: 0px;">
 				<label for="aff_campaign_cloaking" class="col-xs-4 control-label" style="text-align: left;">Cloaking:</label>

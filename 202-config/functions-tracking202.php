@@ -2830,15 +2830,35 @@ class INDEXES
     // this returns the ip_id, when a ip_address is given
     public static function get_ip_id($ip)
     {
-        global $db, $memcacheWorking, $memcache;
+        global $db, $memcacheWorking, $memcache, $inet6_ntoa, $inet6_aton;
 
-        $mysql['ip_address'] = $db->real_escape_string($ip->address);
+        if (!isset($inet6_ntoa)) {
+            $inet6_ntoa = '';
+        }
 
-        if ($inet6_ntoa == '' && $ip->type == 'ipv6') {
+        if (!isset($inet6_aton)) {
+            $inet6_aton = '';
+        }
+
+        if (is_string($ip) || is_numeric($ip)) {
+            $ip = ipAddress($ip);
+        } elseif (is_array($ip)) {
+            $ip = (object) $ip;
+        }
+
+        if (!is_object($ip) || empty($ip->address)) {
+            return 0;
+        }
+
+        $ipType = $ip->type ?? (filter_var($ip->address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? 'ipv6' : 'ipv4');
+
+        $mysql['ip_address'] = $db->real_escape_string((string) $ip->address);
+
+        if ($inet6_ntoa === '' && $ipType === 'ipv6') {
             $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode for db check
         }
 
-        if ($ip->type === 'ipv6') {
+        if ($ipType === 'ipv6' && $inet6_aton !== '') {
             $ip_sql = 'SELECT  202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address= ' . $inet6_aton . '("' . $mysql['ip_address'] . '") order by 202_ips.ip_id DESC limit 1';
         } else {
             $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
@@ -2862,7 +2882,7 @@ class INDEXES
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 } else {
                     //insert ip
-                    $ip_id = INDEXES::insert_ip($db);
+                    $ip_id = INDEXES::insert_ip($db, $ip);
                     // add to memcached
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 }
@@ -2875,7 +2895,7 @@ class INDEXES
                 $ip_id = $ip_row['ip_id'];
             } else {
                 //insert ip
-                $ip_id = INDEXES::insert_ip($db);
+                $ip_id = INDEXES::insert_ip($db, $ip);
             }
         }
 
@@ -2883,22 +2903,47 @@ class INDEXES
         return $ip_id;
     }
 
-    public static function insert_ip($db, $ip)
+    public static function insert_ip($db, $ip = null)
     {
+        global $inet6_ntoa, $inet6_aton;
 
-        $mysql['ip_address'] = $db->real_escape_string($ip->address);
-
-        if ($inet6_ntoa == '' && $ip->type == 'ipv6') {
-            $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode for db check
+        if (!isset($inet6_ntoa)) {
+            $inet6_ntoa = '';
         }
 
-        if ($ip->type === 'ipv6') {
-            //insert the ipv6 ip address and get the ipv6_id
+        if (!isset($inet6_aton)) {
+            $inet6_aton = '';
+        }
+
+        if ($ip === null && isset($GLOBALS['ip_address'])) {
+            $ip = $GLOBALS['ip_address'];
+        }
+
+        if (is_string($ip) || is_numeric($ip)) {
+            $ip = ipAddress($ip);
+        } elseif (is_array($ip)) {
+            $ip = (object) $ip;
+        }
+
+        if (!is_object($ip) || empty($ip->address)) {
+            return 0;
+        }
+
+        $ipType = $ip->type ?? (filter_var($ip->address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? 'ipv6' : 'ipv4');
+
+        $mysql['ip_address'] = $db->real_escape_string((string) $ip->address);
+
+        if ($inet6_ntoa === '' && $ipType === 'ipv6') {
+            $mysql['ip_address'] = inet6_aton($mysql['ip_address']); // encode for db check
+        }
+
+        if ($ipType === 'ipv6' && $inet6_aton !== '') {
+            // insert the ipv6 ip address and get the ipv6_id
             $ip_sql = 'INSERT INTO 202_ips_v6 SET ip_address=' . $inet6_aton . '("' . $mysql['ip_address'] . '")';
             $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
             $ipv6_id = $db->insert_id;
 
-            //insert the ipv6_id as the ipv4 address for referencing later on
+            // insert the ipv6_id as the ipv4 address for referencing later on
             $ip_sql = "INSERT INTO 202_ips SET ip_address='" . $ipv6_id . "'";
             $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
             $ip_id = $db->insert_id;

@@ -6,12 +6,22 @@ namespace Prosper202\Attribution;
 
 use InvalidArgumentException;
 use Prosper202\Attribution\Repository\AuditRepositoryInterface;
+use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
+use Prosper202\Attribution\Analytics\AnalyticsSummary;
+use Prosper202\Attribution\Analytics\AnalyticsSnapshot;
+use Prosper202\Attribution\Analytics\TouchpointMix;
+use Prosper202\Attribution\Analytics\AnomalyAlert;
+use Prosper202\Attribution\Touchpoint;
 use Prosper202\Attribution\ModelDefinition;
 use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\Snapshot;
+use Prosper202\Attribution\ExportJob;
+use Prosper202\Attribution\ExportFormat;
+use Prosper202\Attribution\ExportStatus;
+use Prosper202\Attribution\ExportWebhook;
 
 /**
  * High-level façade for attribution operations consumed by controllers and CLI jobs.
@@ -22,7 +32,8 @@ final class AttributionService
         private readonly ModelRepositoryInterface $modelRepository,
         private readonly SnapshotRepositoryInterface $snapshotRepository,
         private readonly TouchpointRepositoryInterface $touchpointRepository,
-        private readonly AuditRepositoryInterface $auditRepository
+        private readonly AuditRepositoryInterface $auditRepository,
+        private readonly ExportJobRepositoryInterface $exportRepository
     ) {
     }
 
@@ -61,6 +72,147 @@ final class AttributionService
                 'attributed_cost' => $snapshot->attributedCost,
             ];
         }, $snapshots);
+    }
+
+    public function getAnalyticsOverview(
+        int $userId,
+        int $modelId,
+        ScopeType $scope,
+        ?int $scopeId,
+        int $startHour,
+        int $endHour,
+        int $limit = 168
+    ): AnalyticsSummary {
+        $this->requireOwnedModel($userId, $modelId);
+
+        $limit = max(1, min(500, $limit));
+        $snapshots = $this->snapshotRepository->findForRange($modelId, $scope, $scopeId, $startHour, $endHour, $limit, 0);
+
+        $analyticsSnapshots = array_map(
+            static fn (Snapshot $snapshot): AnalyticsSnapshot => new AnalyticsSnapshot(
+                $snapshot->snapshotId,
+                $snapshot->dateHour,
+                $snapshot->attributedClicks,
+                $snapshot->attributedConversions,
+                $snapshot->attributedRevenue,
+                $snapshot->attributedCost
+            ),
+            $snapshots
+        );
+
+        usort(
+            $analyticsSnapshots,
+            static fn (AnalyticsSnapshot $a, AnalyticsSnapshot $b): int => $a->dateHour <=> $b->dateHour
+        );
+
+        $totals = $this->calculateTotals($analyticsSnapshots);
+        $mix = $this->buildTouchpointMix($snapshots);
+        $anomalies = $this->detectAnomalies($analyticsSnapshots);
+
+        return new AnalyticsSummary($totals, $analyticsSnapshots, $mix, $anomalies);
+    }
+
+    /**
+     * Schedules an export job for attribution snapshots.
+     *
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function scheduleSnapshotExport(int $userId, int $modelId, array $payload): array
+    {
+        $model = $this->requireOwnedModel($userId, $modelId);
+
+        $scopeValue = isset($payload['scope']) ? (string) $payload['scope'] : ScopeType::GLOBAL->value;
+        $scopeType = ScopeType::tryFrom($scopeValue);
+        if ($scopeType === null) {
+            throw new InvalidArgumentException('Invalid scope value supplied.');
+        }
+
+        $scopeId = null;
+        if ($scopeType->requiresIdentifier()) {
+            if (!isset($payload['scope_id']) || !is_numeric($payload['scope_id'])) {
+                throw new InvalidArgumentException('Scope identifier required for the selected scope.');
+            }
+            $scopeId = (int) $payload['scope_id'];
+        }
+
+        $startHour = isset($payload['start_hour']) ? (int) $payload['start_hour'] : (time() - (24 * 3600));
+        $endHour = isset($payload['end_hour']) ? (int) $payload['end_hour'] : time();
+        if ($startHour >= $endHour) {
+            throw new InvalidArgumentException('Start hour must be before end hour for exports.');
+        }
+
+        $formatValue = isset($payload['format']) ? strtolower((string) $payload['format']) : ExportFormat::CSV->value;
+        $format = ExportFormat::tryFrom($formatValue);
+        if ($format === null) {
+            throw new InvalidArgumentException('Unsupported export format requested.');
+        }
+
+        $webhook = null;
+        if (isset($payload['webhook']) && is_array($payload['webhook'])) {
+            $webhookPayload = array_filter($payload['webhook'], static fn ($value) => $value !== null && $value !== '');
+            if (!empty($webhookPayload)) {
+                $webhook = ExportWebhook::fromArray($webhookPayload);
+            }
+        }
+
+        $queuedAt = time();
+        $options = [
+            'requested_by' => $userId,
+            'created_via' => 'api',
+        ];
+
+        $job = new ExportJob(
+            exportId: null,
+            userId: $userId,
+            modelId: $model->modelId ?? $modelId,
+            scopeType: $scopeType,
+            scopeId: $scopeId,
+            startHour: $startHour,
+            endHour: $endHour,
+            format: $format,
+            options: $options,
+            webhook: $webhook,
+            status: ExportStatus::PENDING,
+            queuedAt: $queuedAt,
+            startedAt: null,
+            completedAt: null,
+            failedAt: null,
+            filePath: null,
+            rowsExported: null,
+            lastError: null,
+            webhookAttemptedAt: null,
+            webhookStatusCode: null,
+            webhookResponseBody: null,
+            createdAt: $queuedAt,
+            updatedAt: $queuedAt
+        );
+
+        $created = $this->exportRepository->create($job);
+
+        $this->auditRepository->record($userId, $modelId, 'export_scheduled', [
+            'export_id' => $created->exportId,
+            'scope' => $created->scopeType->value,
+            'scope_id' => $created->scopeId,
+            'start_hour' => $created->startHour,
+            'end_hour' => $created->endHour,
+            'format' => $created->format->value,
+            'webhook' => $created->webhook?->url,
+        ]);
+
+        return $created->toSummary();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function listSnapshotExports(int $userId, int $modelId, int $limit = 20): array
+    {
+        $this->requireOwnedModel($userId, $modelId);
+        $jobs = $this->exportRepository->listRecentForModel($userId, $modelId, $limit);
+
+        return array_map(static fn (ExportJob $job): array => $job->toSummary(), $jobs);
     }
 
     /**
@@ -307,5 +459,166 @@ final class AttributionService
         }
 
         return $model;
+    }
+
+    /**
+     * @param AnalyticsSnapshot[] $snapshots
+     * @return array<string, float|null>
+     */
+    private function calculateTotals(array $snapshots): array
+    {
+        $totals = [
+            'revenue' => 0.0,
+            'conversions' => 0.0,
+            'clicks' => 0.0,
+            'cost' => 0.0,
+            'roi' => null,
+        ];
+
+        foreach ($snapshots as $snapshot) {
+            $totals['revenue'] += $snapshot->attributedRevenue;
+            $totals['conversions'] += $snapshot->attributedConversions;
+            $totals['clicks'] += $snapshot->attributedClicks;
+            $totals['cost'] += $snapshot->attributedCost;
+        }
+
+        if ($totals['cost'] > 0.0) {
+            $totals['roi'] = (($totals['revenue'] - $totals['cost']) / $totals['cost']) * 100.0;
+        }
+
+        return $totals;
+    }
+
+    /**
+     * @param Snapshot[] $snapshots
+     * @return TouchpointMix[]
+     */
+    private function buildTouchpointMix(array $snapshots): array
+    {
+        if ($snapshots === []) {
+            return [];
+        }
+
+        $buckets = [
+            'first_touch' => ['label' => 'First Touch', 'credit' => 0.0, 'touches' => 0],
+            'assist_touch' => ['label' => 'Assist', 'credit' => 0.0, 'touches' => 0],
+            'last_touch' => ['label' => 'Last Touch', 'credit' => 0.0, 'touches' => 0],
+        ];
+
+        foreach ($snapshots as $snapshot) {
+            if ($snapshot->snapshotId === null) {
+                continue;
+            }
+
+            $touchpoints = $this->touchpointRepository->findBySnapshot($snapshot->snapshotId);
+            if ($touchpoints === []) {
+                continue;
+            }
+
+            $maxPosition = max(array_map(static fn (Touchpoint $touchpoint): int => $touchpoint->position, $touchpoints));
+
+            foreach ($touchpoints as $touchpoint) {
+                $bucketKey = 'assist_touch';
+                if ($touchpoint->position === 0) {
+                    $bucketKey = 'first_touch';
+                } elseif ($touchpoint->position === $maxPosition) {
+                    $bucketKey = 'last_touch';
+                }
+
+                $buckets[$bucketKey]['credit'] += $touchpoint->credit;
+                $buckets[$bucketKey]['touches']++;
+            }
+        }
+
+        $totalCredit = array_reduce(
+            $buckets,
+            static fn (float $carry, array $bucket): float => $carry + (float) $bucket['credit'],
+            0.0
+        );
+
+        $mix = [];
+        foreach ($buckets as $key => $bucket) {
+            $share = $totalCredit > 0.0 ? ($bucket['credit'] / $totalCredit) * 100.0 : 0.0;
+            $mix[] = new TouchpointMix(
+                $key,
+                $bucket['label'],
+                (float) $bucket['credit'],
+                (int) $bucket['touches'],
+                $share
+            );
+        }
+
+        return $mix;
+    }
+
+    /**
+     * @param AnalyticsSnapshot[] $snapshots
+     * @return AnomalyAlert[]
+     */
+    private function detectAnomalies(array $snapshots): array
+    {
+        $count = count($snapshots);
+        if ($count < 2) {
+            return [];
+        }
+
+        $recent = $snapshots[$count - 1];
+        $history = array_slice($snapshots, 0, -1);
+
+        $alerts = [];
+        $alerts = array_merge(
+            $alerts,
+            $this->buildMetricAlert(
+                'conversions',
+                array_map(static fn (AnalyticsSnapshot $snapshot): float => (float) $snapshot->attributedConversions, $history),
+                (float) $recent->attributedConversions
+            )
+        );
+
+        $alerts = array_merge(
+            $alerts,
+            $this->buildMetricAlert(
+                'revenue',
+                array_map(static fn (AnalyticsSnapshot $snapshot): float => $snapshot->attributedRevenue, $history),
+                $recent->attributedRevenue
+            )
+        );
+
+        return $alerts;
+    }
+
+    /**
+     * @param float[] $historicalValues
+     * @return AnomalyAlert[]
+     */
+    private function buildMetricAlert(string $metric, array $historicalValues, float $latest): array
+    {
+        $historyCount = count($historicalValues);
+        if ($historyCount === 0) {
+            return [];
+        }
+
+        $historyAverage = array_sum($historicalValues) / $historyCount;
+        if ($historyAverage <= 0.0) {
+            return [];
+        }
+
+        $delta = ($latest - $historyAverage) / $historyAverage;
+        $severityThreshold = 0.25;
+
+        if (abs($delta) < $severityThreshold) {
+            return [];
+        }
+
+        $severity = abs($delta) >= 0.5 ? 'critical' : 'warning';
+        $direction = $delta >= 0 ? 'up' : 'down';
+        $percentageChange = round($delta * 100.0, 2);
+        $message = sprintf(
+            'Latest %s changed by %s%% compared to the trailing average.',
+            $metric,
+            number_format(abs($percentageChange), 2)
+        );
+
+        return [new AnomalyAlert($metric, $severity, $direction, $percentageChange, $message)];
     }
 }

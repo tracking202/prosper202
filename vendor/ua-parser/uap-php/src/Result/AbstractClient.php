@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -10,13 +9,11 @@ declare(strict_types=1);
  */
 namespace UAParser\Result;
 
-abstract class AbstractClient implements \Stringable
+abstract class AbstractClient
 {
-    /** @return string */
-    abstract public function toString();
+    abstract public function toString(): string;
 
-    /** @return string */
-    public function __toString(): string
+    public function __toString()
     {
         return $this->toString();
     }

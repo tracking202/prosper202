@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -18,15 +17,16 @@ use UAParser\Util\Fetcher;
 
 class FetchCommand extends Command
 {
-    /**
-     * @param string $defaultYamlFile
-     */
-    public function __construct(private $defaultYamlFile)
+    /** @var string */
+    private $defaultYamlFile;
+
+    public function __construct($defaultYamlFile)
     {
+        $this->defaultYamlFile = $defaultYamlFile;
         parent::__construct();
     }
 
-    protected function configure()
+    protected function configure(): void
     {
         $this
             ->setName('ua-parser:fetch')
@@ -40,10 +40,13 @@ class FetchCommand extends Command
         ;
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $fs = new Filesystem();
-        $fetcher = new Fetcher();
-        $fs->dumpFile($input->getArgument('file'), $fetcher->fetch());
+        $file = $input->getArgument('file');
+        assert(is_string($file));
+
+        (new Filesystem())->dumpFile($file, (new Fetcher())->fetch());
+
+        return 0;
     }
 }
