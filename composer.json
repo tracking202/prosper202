@@ -5,6 +5,8 @@
   "license": "GPL-2.0-or-later",
   "require": {
     "php": ">=8.3",
+    "slim/slim": "^3.12",
+    "slim/psr7": "^1.6",
     "ua-parser/uap-php": "^3.9",
     "geoip2/geoip2": "^3.2"
   },

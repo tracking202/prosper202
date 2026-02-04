@@ -2515,6 +2515,14 @@ function getTrackingDomain()
 {
     global $db;
 
+    $tracking_domain = $_SERVER['SERVER_NAME'];
+
+    // Add port if non-standard (not 80/443)
+    $port = $_SERVER['SERVER_PORT'] ?? 80;
+    if ($port != 80 && $port != 443) {
+        $tracking_domain .= ':' . $port;
+    }
+
     $tracking_domain_sql = "
 		SELECT
 			`user_tracking_domain`
@@ -2525,8 +2533,7 @@ function getTrackingDomain()
 	";
     $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql); //($user_sql);
     $tracking_domain_row = $tracking_domain_result->fetch_assoc();
-    $tracking_domain = $_SERVER['SERVER_NAME'];
-    if (strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
+    if (isset($tracking_domain_row['user_tracking_domain']) && strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
         $tracking_domain = $tracking_domain_row['user_tracking_domain'];
     }
     return $tracking_domain;
