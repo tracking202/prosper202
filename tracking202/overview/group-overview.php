@@ -1,11 +1,9 @@
-<?php
-declare(strict_types=1);
-include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php');
-include_once(substr(__DIR__, 0,-21) . '/202-config/ReportSummaryForm.class.php');
+<?php include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/connect.php');
+include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/ReportSummaryForm.class.php');
 AUTH::require_user();
 
 //show the template
-template_top('Group Overview');   ?>
+template_top('Group Overview', NULL, NULL, NULL);   ?>
 
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
@@ -14,10 +12,10 @@ template_top('Group Overview');   ?>
 	</div>
 </div>
 
-<?php display_calendar(get_absolute_url().'tracking202/ajax/group_overview.php', true, true, true, false, true, true, true, true);    ?>
+<?php display_calendar(get_absolute_url() . 'tracking202/ajax/group_overview.php', true, true, true, false, true, true, true, true);    ?>
 
 <script type="text/javascript">
-	loadContent('<?php echo get_absolute_url();?>tracking202/ajax/group_overview.php',null);
+	loadContent('<?php echo get_absolute_url(); ?>tracking202/ajax/group_overview.php', null);
 </script>
 
 <?php template_bottom();
