@@ -30,13 +30,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-composer-
 
-      - name: Set up Composer trusted keys
-        run: |
-          composer_home="${COMPOSER_HOME:-$HOME/.config/composer}"
-          mkdir -p "${composer_home}"
-          curl -sS https://composer.github.io/pubkeys.html > "${composer_home}/keys.dev.pub"
-          curl -sS https://composer.github.io/pubkeys-tags.html > "${composer_home}/keys.tags.pub"
-
       - name: Configure Composer authentication
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -47,7 +40,6 @@ jobs:
 
       - name: Install dependencies and run tests
         id: test_pipeline
-        continue-on-error: true
         env:
           COMPOSER_ALLOW_SUPERUSER: 1
         run: |
@@ -111,6 +103,7 @@ jobs:
           echo "mkdir_state=${mkdir_state}" >> "$GITHUB_OUTPUT"
           echo "phpunit_state=${phpunit_state}" >> "$GITHUB_OUTPUT"
           echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+          echo "final_status=${final_status}" >> "$GITHUB_OUTPUT"
 
           status_label() {
             case "$1" in
@@ -146,7 +139,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          exit ${final_status}
+          exit 0
       - name: Fail when PHPUnit reports issues
         if: ${{ steps.test_pipeline.outputs.overall == 'failed' }}
         run: exit 1

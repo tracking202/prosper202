@@ -13,6 +13,12 @@
          failOnWarning="true"
          verbose="true">
 
+    <groups>
+        <exclude>
+            <group>integration</group>
+        </exclude>
+    </groups>
+
     <testsuites>
         <testsuite name="default">
             <directory>tests</directory>

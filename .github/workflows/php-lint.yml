@@ -19,11 +19,12 @@ jobs:
           php-version: '8.3'
       - name: Run php -l
         id: php_lint
-        continue-on-error: true
         run: |
           set +e
           ./scripts/php-lint.sh
           status=$?
+          set -e
+
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           if [ "${status}" -ne 0 ]; then
             echo "status=failed" >> "$GITHUB_OUTPUT"
@@ -31,7 +32,8 @@ jobs:
           else
             echo "status=passed" >> "$GITHUB_OUTPUT"
           fi
-          exit ${status}
+
+          exit 0
       - name: Summarize lint results
         if: always()
         run: |
