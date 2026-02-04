@@ -30,13 +30,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-composer-
 
-      - name: Set up Composer trusted keys
-        run: |
-          composer_home="${COMPOSER_HOME:-$HOME/.config/composer}"
-          mkdir -p "${composer_home}"
-          curl -sS https://composer.github.io/pubkeys.html > "${composer_home}/keys.dev.pub"
-          curl -sS https://composer.github.io/pubkeys-tags.html > "${composer_home}/keys.tags.pub"
-
       - name: Configure Composer authentication
         env:
           GITHUB_TOKEN: ${{ github.token }}
