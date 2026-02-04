@@ -344,6 +344,8 @@ if (!empty($error)) {
 
 template_top('Traffic Sources'); ?>
 
+<?php include_once __DIR__ . '/_config/setup_nav.php'; ?>
+
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
 		<div class="row">

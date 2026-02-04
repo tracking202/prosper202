@@ -172,6 +172,45 @@ final class MysqlModelRepository implements ModelRepositoryInterface
         }
     }
 
+    public function setAsDefault(int $userId, int $modelId): bool
+    {
+        $conn = $this->writeConnection;
+        $conn->begin_transaction();
+
+        try {
+            // First verify the model exists and belongs to the user
+            $checkStmt = $this->prepareWrite('SELECT 1 FROM 202_attribution_models WHERE model_id = ? AND user_id = ? LIMIT 1');
+            $checkStmt->bind_param('ii', $modelId, $userId);
+            $checkStmt->execute();
+            $result = $checkStmt->get_result();
+            $exists = $result && $result->num_rows > 0;
+            $checkStmt->close();
+
+            if (!$exists) {
+                $conn->rollback();
+                return false;
+            }
+
+            // Reset all models for this user to non-default
+            $resetStmt = $this->prepareWrite('UPDATE 202_attribution_models SET is_default = 0 WHERE user_id = ?');
+            $resetStmt->bind_param('i', $userId);
+            $resetStmt->execute();
+            $resetStmt->close();
+
+            // Set the specified model as default (and activate it)
+            $setStmt = $this->prepareWrite('UPDATE 202_attribution_models SET is_default = 1, is_active = 1 WHERE model_id = ? LIMIT 1');
+            $setStmt->bind_param('i', $modelId);
+            $setStmt->execute();
+            $setStmt->close();
+
+            $conn->commit();
+            return true;
+        } catch (Throwable $exception) {
+            $conn->rollback();
+            throw $exception;
+        }
+    }
+
     public function delete(int $modelId, int $userId): void
     {
         $conn = $this->writeConnection;

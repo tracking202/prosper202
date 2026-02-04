@@ -55,6 +55,7 @@ final class FakeMysqli extends \mysqli
 {
     private array $conversionRows;
     private array $journeyRows;
+    public string $error = '';
 
     public function __construct(array $conversionRows, array $journeyRows)
     {

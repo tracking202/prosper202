@@ -42,6 +42,11 @@ final class NullModelRepository implements ModelRepositoryInterface
         // intentionally blank
     }
 
+    public function setAsDefault(int $userId, int $modelId): bool
+    {
+        return false;
+    }
+
     public function delete(int $modelId, int $userId): void
     {
         // intentionally blank

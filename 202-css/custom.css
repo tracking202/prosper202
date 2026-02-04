@@ -1134,6 +1134,109 @@ small, .small {
 
 th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no-sort):after{content:'';float:right;margin-top:7px;border-width:0 4px 4px;border-style:solid;border-color:#404040 transparent;visibility:hidden;opacity:0;-ms-user-select:none;-webkit-user-select:none;-moz-user-select:none;user-select:none}th[aria-sort=ascending]:not(.no-sort):after{border-bottom:none;border-width:4px 4px 0}th[aria-sort]:not(.no-sort):after{visibility:visible;opacity:.4}th[role=columnheader]:not(.no-sort):hover:after{visibility:visible;opacity:1}
 
+/* Attribution Dashboard */
+.attribution-dashboard .attribution-panel,
+.attribution-dashboard .attribution-sandbox,
+.attribution-dashboard .attribution-export,
+.attribution-dashboard .attribution-default-model {
+    margin-top: 20px;
+}
+
+.attribution-dashboard [data-attribution-app].is-loading .panel-body,
+.attribution-dashboard [data-attribution-app].is-loading .panel-footer {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.attribution-dashboard .kpi-card {
+    background-color: #f8fafc;
+    border-radius: 6px;
+    padding: 14px 10px;
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+.attribution-dashboard .kpi-card .label {
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+    display: block;
+    color: #7f8c8d;
+}
+
+.attribution-dashboard .kpi-card .metric {
+    font-size: 1.6rem;
+    font-weight: 600;
+    display: block;
+    margin-top: 4px;
+}
+
+.attribution-dashboard .attribution-chart {
+    min-height: 320px;
+}
+
+.attribution-dashboard .touchpoint-mix {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.attribution-dashboard .touchpoint-mix li {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #ecf0f1;
+}
+
+.attribution-dashboard .touchpoint-mix li:last-child {
+    border-bottom: none;
+}
+
+.attribution-dashboard .attribution-anomalies .alert {
+    margin-bottom: 10px;
+}
+
+.attribution-dashboard .attribution-empty {
+    padding: 20px;
+    text-align: center;
+    color: #7f8c8d;
+    border: 1px dashed #dbe2e8;
+    border-radius: 6px;
+}
+
+.attribution-dashboard .sandbox-table th,
+.attribution-dashboard .sandbox-table td {
+    vertical-align: middle;
+}
+
+.attribution-dashboard .attribution-alert {
+    margin-top: 10px;
+}
+
+.attribution-dashboard .attribution-export .panel-footer {
+    background-color: #fbfcfe;
+}
+
+.attribution-dashboard .attribution-export table td,
+.attribution-dashboard .attribution-export table th {
+    font-size: 0.9rem;
+}
+
+.attribution-dashboard .attribution-controls .help-block,
+.attribution-dashboard .attribution-sandbox .help-block {
+    margin-top: 6px;
+    margin-bottom: 0;
+}
+
+.attribution-dashboard .attribution-sandbox-row .panel-title {
+    font-size: 1.1rem;
+}
+
+.attribution-dashboard [data-role="export-table"] .label,
+.attribution-dashboard [data-role="export-table"] .text-muted {
+    font-size: 0.85rem;
+}
+
 /* Attribution Sandbox Modal */
 .panel-heading-controls {
   display: flex;
@@ -1303,7 +1406,7 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
   }
 }
 
-/* Attribution Dashboard */
+/* Attribution Page */
 .attribution-page {
   margin-top: 10px;
 }
