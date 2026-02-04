@@ -268,6 +268,8 @@ if ((($editing == true) or ($add_success != true)) and (isset($mysql['aff_campai
 
 template_top('Landing Page Setup');  ?>
 
+<?php include_once __DIR__ . '/_config/setup_nav.php'; ?>
+
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
 		<div class="row">
