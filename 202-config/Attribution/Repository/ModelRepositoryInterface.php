@@ -47,7 +47,7 @@ interface ModelRepositoryInterface
     public function setAsDefault(int $userId, int $modelId): bool;
 
     /**
-     * Delete a model (soft delete)
+     * Delete a model and its related data
      */
-    public function delete(int $modelId): bool;
+    public function delete(int $modelId, int $userId): void;
 }

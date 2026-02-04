@@ -5,7 +5,6 @@ docker-compose.yaml
 composer.json
 
 # Dependencies
-/vendor/
 /node_modules/
 
 # Build and cache files

@@ -10,10 +10,6 @@ use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
-use Prosper202\Attribution\Export\ExportFormat;
-use Prosper202\Attribution\Export\ExportJob;
-use Prosper202\Attribution\Export\ExportStatus;
-use Prosper202\Attribution\Repository\ExportRepositoryInterface;
 use Prosper202\Attribution\Analytics\AnalyticsSummary;
 use Prosper202\Attribution\Analytics\AnalyticsSnapshot;
 use Prosper202\Attribution\Analytics\TouchpointMix;
@@ -37,7 +33,7 @@ final class AttributionService
         private readonly SnapshotRepositoryInterface $snapshotRepository,
         private readonly TouchpointRepositoryInterface $touchpointRepository,
         private readonly AuditRepositoryInterface $auditRepository,
-        private readonly ExportRepositoryInterface $exportRepository
+        private readonly ExportJobRepositoryInterface $exportRepository
     ) {
     }
 
@@ -373,136 +369,11 @@ final class AttributionService
     public function deleteModel(int $userId, int $modelId): void
     {
         $existing = $this->requireOwnedModel($userId, $modelId);
-        $this->modelRepository->delete($modelId);
+        $this->modelRepository->delete($modelId, $userId);
         $this->auditRepository->record($userId, $modelId, 'model_delete', [
             'name' => $existing->name,
             'slug' => $existing->slug,
         ]);
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    public function listExports(int $userId, ?int $modelId = null, int $limit = 25): array
-    {
-        if ($modelId !== null) {
-            $this->requireOwnedModel($userId, $modelId);
-        }
-
-        $jobs = $this->exportRepository->findForUser($userId, $modelId, $limit);
-
-        return array_map(fn (ExportJob $job): array => $this->formatExportJob($job), $jobs);
-    }
-
-    /**
-     * @param array<string, mixed> $webhookOptions
-     */
-    public function scheduleSnapshotExport(
-        int $userId,
-        int $modelId,
-        ScopeType $scope,
-        ?int $scopeId,
-        int $startHour,
-        int $endHour,
-        ExportFormat $format,
-        array $webhookOptions = []
-    ): array {
-        $this->requireOwnedModel($userId, $modelId);
-
-        if ($startHour > $endHour) {
-            throw new \InvalidArgumentException('Start hour must be before end hour.');
-        }
-
-        $token = bin2hex(random_bytes(32));
-        $timestamp = time();
-
-        $headers = $this->normaliseWebhookHeaders($webhookOptions['headers'] ?? []);
-        $webhookUrl = isset($webhookOptions['url']) ? trim((string) $webhookOptions['url']) : null;
-        $webhookMethod = isset($webhookOptions['method']) ? strtoupper((string) $webhookOptions['method']) : 'POST';
-
-        $job = new ExportJob(
-            exportId: null,
-            userId: $userId,
-            modelId: $modelId,
-            scopeType: $scope,
-            scopeId: $scopeId,
-            startHour: $startHour,
-            endHour: $endHour,
-            format: $format,
-            status: ExportStatus::PENDING,
-            filePath: null,
-            downloadToken: $token,
-            webhookUrl: $webhookUrl !== '' ? $webhookUrl : null,
-            webhookMethod: $webhookMethod,
-            webhookHeaders: $headers,
-            webhookStatusCode: null,
-            webhookResponseBody: null,
-            lastAttemptedAt: null,
-            completedAt: null,
-            errorMessage: null,
-            createdAt: $timestamp,
-            updatedAt: $timestamp,
-        );
-
-        $saved = $this->exportRepository->create($job);
-
-        return $this->formatExportJob($saved);
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private function normaliseWebhookHeaders(mixed $headers): array
-    {
-        $normalised = [];
-
-        if (is_array($headers)) {
-            foreach ($headers as $key => $value) {
-                $headerKey = trim((string) $key);
-                if ($headerKey === '') {
-                    continue;
-                }
-
-                $headerValue = is_scalar($value) ? trim((string) $value) : '';
-                if ($headerValue === '') {
-                    continue;
-                }
-
-                $normalised[$headerKey] = $headerValue;
-            }
-        }
-
-        return $normalised;
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function formatExportJob(ExportJob $job): array
-    {
-        return [
-            'export_id' => $job->exportId,
-            'user_id' => $job->userId,
-            'model_id' => $job->modelId,
-            'scope_type' => $job->scopeType->value,
-            'scope_id' => $job->scopeId,
-            'start_hour' => $job->startHour,
-            'end_hour' => $job->endHour,
-            'format' => $job->format->value,
-            'status' => $job->status->value,
-            'file_path' => $job->filePath,
-            'download_token' => $job->downloadToken,
-            'webhook_url' => $job->webhookUrl,
-            'webhook_method' => $job->webhookMethod,
-            'webhook_headers' => $job->webhookHeaders,
-            'webhook_status_code' => $job->webhookStatusCode,
-            'webhook_response_body' => $job->webhookResponseBody,
-            'last_attempted_at' => $job->lastAttemptedAt,
-            'completed_at' => $job->completedAt,
-            'error_message' => $job->errorMessage,
-            'created_at' => $job->createdAt,
-            'updated_at' => $job->updatedAt,
-        ];
     }
 
     private static function formatModel(ModelDefinition $model): array

@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 /**
  * ua-parser
  *
@@ -12,19 +11,19 @@ namespace UAParser\Result;
 
 class OperatingSystem extends AbstractVersionedSoftware
 {
-    /** @var string */
+    /** @var string|null */
     public $major;
 
-    /** @var string */
+    /** @var string|null */
     public $minor;
 
-    /** @var string */
+    /** @var string|null */
     public $patch;
 
-    /** @var string */
+    /** @var string|null */
     public $patchMinor;
 
-    public function toVersion()
+    public function toVersion(): string
     {
         return $this->formatVersion($this->major, $this->minor, $this->patch, $this->patchMinor);
     }

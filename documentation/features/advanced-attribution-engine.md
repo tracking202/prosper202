@@ -31,7 +31,7 @@ This guide tracks the remaining work to deliver the Advanced Attribution Engine 
 - [x] Implement sandbox workflow UI (model toggles, confidence hints, promote-to-default action).
   - Sandbox comparison state now wired to `/api/v2/attribution/sandbox` with promote controls and empty-state messaging surfaced in the dashboard panel.
 - [x] Provide CSV/XLS exports + webhook integrations for snapshots.
-  - Added `/api/v2/attribution/models/:id/exports`, background worker `202-cronjobs/attribution-export.php`, and download bridge `202-account/attribution-export.php` backed by the `202_attribution_exports` table.
+  - Implemented asynchronous export queue (`202_attribution_exports`), API scheduling endpoint, cron processor (`202-cronjobs/attribution-export.php`), download bridge `202-account/attribution-export.php`, and UI controls with optional webhooks/downloads.
 - [x] Surface documentation links/tooltips inside UI.
 
 ### 4. Security, Permissions & Audit

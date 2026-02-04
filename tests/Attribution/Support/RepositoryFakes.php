@@ -9,9 +9,9 @@ use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
-use Prosper202\Attribution\Repository\ExportRepositoryInterface;
-use Prosper202\Attribution\Export\ExportJob;
-use Prosper202\Attribution\Export\ExportStatus;
+use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
+use Prosper202\Attribution\ExportJob;
+use Prosper202\Attribution\ExportStatus;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Snapshot;
 use Prosper202\Attribution\Touchpoint;
@@ -274,7 +274,7 @@ final class InMemoryTouchpointRepository implements TouchpointRepositoryInterfac
     }
 }
 
-final class InMemoryExportRepository implements ExportRepositoryInterface
+final class InMemoryExportRepository implements ExportJobRepositoryInterface
 {
     /**
      * @var array<int, ExportJob>
@@ -283,80 +283,180 @@ final class InMemoryExportRepository implements ExportRepositoryInterface
 
     private int $nextId = 1;
 
+    /** @var callable|null */
+    private $clock;
+
     /**
      * @param callable():int|null $clock
      */
-    public function __construct(private readonly ?callable $clock = null)
+    public function __construct(?callable $clock = null)
     {
+        $this->clock = $clock;
     }
 
     public function create(ExportJob $job): ExportJob
     {
-        $job->exportId = $this->nextId++;
-        $this->jobs[$job->exportId] = clone $job;
-
-        return clone $this->jobs[$job->exportId];
-    }
-
-    public function update(ExportJob $job): ExportJob
-    {
-        if ($job->exportId === null) {
-            throw new \RuntimeException('Export identifier is required to update a job.');
-        }
-
-        $this->jobs[$job->exportId] = clone $job;
-
-        return clone $this->jobs[$job->exportId];
-    }
-
-    public function findById(int $exportId): ?ExportJob
-    {
-        return isset($this->jobs[$exportId]) ? clone $this->jobs[$exportId] : null;
-    }
-
-    public function findForUser(int $userId, ?int $modelId = null, int $limit = 25): array
-    {
-        $filtered = array_filter(
-            $this->jobs,
-            static function (ExportJob $job) use ($userId, $modelId): bool {
-                if ($job->userId !== $userId) {
-                    return false;
-                }
-
-                if ($modelId !== null && $job->modelId !== $modelId) {
-                    return false;
-                }
-
-                return true;
-            }
+        $id = $this->nextId++;
+        $created = new ExportJob(
+            exportId: $id,
+            userId: $job->userId,
+            modelId: $job->modelId,
+            scopeType: $job->scopeType,
+            scopeId: $job->scopeId,
+            startHour: $job->startHour,
+            endHour: $job->endHour,
+            format: $job->format,
+            status: $job->status,
+            webhook: $job->webhook,
+            createdAt: $job->createdAt
         );
+        $this->jobs[$id] = $created;
 
-        usort($filtered, static fn (ExportJob $a, ExportJob $b): int => $b->createdAt <=> $a->createdAt);
-        $slice = array_slice($filtered, 0, max(1, $limit));
-
-        return array_map(static fn (ExportJob $job): ExportJob => clone $job, $slice);
+        return clone $created;
     }
 
-    public function claimPending(int $limit = 10): array
+    public function findById(int $jobId): ?ExportJob
+    {
+        return isset($this->jobs[$jobId]) ? clone $this->jobs[$jobId] : null;
+    }
+
+    /**
+     * @return ExportJob[]
+     */
+    public function findPending(int $limit = 10): array
     {
         $pending = array_filter(
             $this->jobs,
             static fn (ExportJob $job): bool => $job->status === ExportStatus::PENDING
         );
 
-        usort($pending, static fn (ExportJob $a, ExportJob $b): int => $a->createdAt <=> $b->createdAt);
+        usort($pending, static fn (ExportJob $a, ExportJob $b): int => ($a->createdAt ?? 0) <=> ($b->createdAt ?? 0));
         $batch = array_slice($pending, 0, max(1, $limit));
 
-        $claimed = [];
-        foreach ($batch as $job) {
-            $timestamp = $this->now();
-            $copy = clone $job;
-            $copy->markProcessing($timestamp);
-            $claimed[] = clone $copy;
-            $this->jobs[$copy->exportId] = clone $copy;
+        return array_map(static fn (ExportJob $job): ExportJob => clone $job, $batch);
+    }
+
+    public function markProcessing(int $jobId, int $timestamp): void
+    {
+        if (!isset($this->jobs[$jobId])) {
+            return;
         }
 
-        return $claimed;
+        $job = $this->jobs[$jobId];
+        $this->jobs[$jobId] = new ExportJob(
+            exportId: $job->exportId,
+            userId: $job->userId,
+            modelId: $job->modelId,
+            scopeType: $job->scopeType,
+            scopeId: $job->scopeId,
+            startHour: $job->startHour,
+            endHour: $job->endHour,
+            format: $job->format,
+            status: ExportStatus::PROCESSING,
+            webhook: $job->webhook,
+            createdAt: $job->createdAt,
+            processedAt: $timestamp
+        );
+    }
+
+    public function markCompleted(int $jobId, string $filePath, int $rowsExported, int $timestamp): void
+    {
+        if (!isset($this->jobs[$jobId])) {
+            return;
+        }
+
+        $job = $this->jobs[$jobId];
+        $this->jobs[$jobId] = new ExportJob(
+            exportId: $job->exportId,
+            userId: $job->userId,
+            modelId: $job->modelId,
+            scopeType: $job->scopeType,
+            scopeId: $job->scopeId,
+            startHour: $job->startHour,
+            endHour: $job->endHour,
+            format: $job->format,
+            status: ExportStatus::COMPLETED,
+            webhook: $job->webhook,
+            createdAt: $job->createdAt,
+            processedAt: $job->processedAt,
+            completedAt: $timestamp,
+            filePath: $filePath,
+            rowsExported: $rowsExported
+        );
+    }
+
+    public function markFailed(int $jobId, string $error, int $timestamp): void
+    {
+        if (!isset($this->jobs[$jobId])) {
+            return;
+        }
+
+        $job = $this->jobs[$jobId];
+        $this->jobs[$jobId] = new ExportJob(
+            exportId: $job->exportId,
+            userId: $job->userId,
+            modelId: $job->modelId,
+            scopeType: $job->scopeType,
+            scopeId: $job->scopeId,
+            startHour: $job->startHour,
+            endHour: $job->endHour,
+            format: $job->format,
+            status: ExportStatus::FAILED,
+            webhook: $job->webhook,
+            createdAt: $job->createdAt,
+            processedAt: $job->processedAt,
+            failedAt: $timestamp,
+            errorMessage: $error
+        );
+    }
+
+    public function recordWebhookAttempt(int $jobId, int $timestamp, ?int $statusCode, ?string $responseBody): void
+    {
+        if (!isset($this->jobs[$jobId])) {
+            return;
+        }
+
+        $job = $this->jobs[$jobId];
+        $this->jobs[$jobId] = new ExportJob(
+            exportId: $job->exportId,
+            userId: $job->userId,
+            modelId: $job->modelId,
+            scopeType: $job->scopeType,
+            scopeId: $job->scopeId,
+            startHour: $job->startHour,
+            endHour: $job->endHour,
+            format: $job->format,
+            status: $job->status,
+            webhook: $job->webhook,
+            createdAt: $job->createdAt,
+            processedAt: $job->processedAt,
+            completedAt: $job->completedAt,
+            failedAt: $job->failedAt,
+            filePath: $job->filePath,
+            rowsExported: $job->rowsExported,
+            errorMessage: $job->errorMessage,
+            webhookAttemptedAt: $timestamp,
+            webhookStatusCode: $statusCode,
+            webhookResponseBody: $responseBody
+        );
+    }
+
+    /**
+     * @return ExportJob[]
+     */
+    public function listRecentForModel(int $userId, int $modelId, int $limit = 20): array
+    {
+        $filtered = array_filter(
+            $this->jobs,
+            static function (ExportJob $job) use ($userId, $modelId): bool {
+                return $job->userId === $userId && $job->modelId === $modelId;
+            }
+        );
+
+        usort($filtered, static fn (ExportJob $a, ExportJob $b): int => ($b->createdAt ?? 0) <=> ($a->createdAt ?? 0));
+        $slice = array_slice($filtered, 0, max(1, $limit));
+
+        return array_map(static fn (ExportJob $job): ExportJob => clone $job, $slice);
     }
 
     /**

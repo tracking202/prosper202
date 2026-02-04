@@ -7,26 +7,9 @@ declare(strict_types=1);
  */
 class DashboardAPI
 {
-    /**
-     * Base URL for the dashboard API.
-     *
-     * @var string
-     */
-    private $baseUrl;
-
-    /**
-     * Request timeout in seconds.
-     *
-     * @var int
-     */
-    private $timeout;
-
-    /**
-     * Maximum number of retry attempts.
-     *
-     * @var int
-     */
-    private $maxRetries;
+    private string $baseUrl;
+    private int $timeout;
+    private int $maxRetries;
 
     public function __construct()
     {
