@@ -11,6 +11,12 @@ docker-compose.yaml
 *.cache
 *.patch
 composer.lock
+build/debug/
+build/logs/
+
+# Config backups
+202-config*.php
+!202-config-sample.php
 
 # Development and documentation
 /docs/
