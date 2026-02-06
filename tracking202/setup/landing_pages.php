@@ -267,46 +267,59 @@ if ((($editing == true) or ($add_success != true)) and (isset($mysql['aff_campai
 }
 
 template_top('Landing Page Setup');  ?>
+<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
-<?php include_once __DIR__ . '/_config/setup_nav.php'; ?>
-
-<div class="row" style="margin-bottom: 15px;">
+<!-- Page Header - Design System -->
+<div class="row" style="margin-bottom: 28px;">
 	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-5">
-				<h6>Landing Page Setup (optional)</h6>
+		<div class="setup-page-header">
+			<div class="setup-page-header__icon">
+				<span class="glyphicon glyphicon-file"></span>
 			</div>
-			<div class="col-xs-7">
-				<div class="<?php if ($error) echo "error";
-							else echo "success"; ?> pull-right" style="margin-top: 20px;">
-					<small>
-						<?php if ($error) { ?>
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-						<?php } ?>
-						<?php if ($add_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
-						<?php } ?>
-						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> You deletion was successful. You have successfully removed a landing page.
-						<?php } ?>
-
-					</small>
-				</div>
+			<div class="setup-page-header__text">
+				<h1 class="setup-page-header__title">Landing Pages</h1>
+				<p class="setup-page-header__subtitle">Configure your landing pages for simple (single offer) or advanced (multiple offers) setups</p>
 			</div>
 		</div>
 	</div>
-	<div class="col-xs-12">
-		<small>Please type in the URL addresses of the landing pages you plan on using. </small>
+</div>
 
+<?php if ($error) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-danger">
+			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
+		</div>
 	</div>
 </div>
+<?php } ?>
+
+<?php if ($add_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
+		</div>
+	</div>
+</div>
+<?php } ?>
+
+<?php if ($delete_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed a landing page.
+		</div>
+	</div>
+</div>
+<?php } ?>
 
 <div class="row form_seperator" style="margin-bottom:15px;">
 	<div class="col-xs-12"></div>
 </div>
 
 <div class="row">
-	<div class="col-xs-7">
+	<div class="col-md-6">
 		<small><strong>Add A Landing Page (optional)</strong></small><br />
 		<span class="infotext">Here you can add different landing pages you might use with your marketing.</span>
 
@@ -421,13 +434,13 @@ template_top('Landing Page Setup');  ?>
 		</form>
 	</div>
 
-	<div class="col-xs-4 col-xs-offset-1">
+	<div class="col-md-6">
 		<div class="panel panel-default">
 			<div class="panel-heading">My Advanced Landing Pages</div>
 			<div class="panel-body">
 				<div id="advLps">
 					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
-					<ul class="list">
+					<ul class="setup-list">
 						<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 						$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='" . $mysql['user_id'] . "' AND landing_page_type='1' AND landing_page_deleted='0'";
@@ -443,9 +456,9 @@ template_top('Landing Page Setup');  ?>
 																		$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 																		if ($userObj->hasPermission("remove_landing_page")) {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> - <a href="?edit_landing_page_id=%s">edit</a> - <a href="?copy_landing_page_id=%s">copy</a> - <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
+																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a> <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
 																		} else {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> - <a href="?edit_landing_page_id=%s">edit</a></li>', $html['landing_page_nickname'], $html['landing_page_id']);
+																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a></li>', $html['landing_page_nickname'], $html['landing_page_id']);
 																		}
 																	} ?>
 					</ul>
@@ -455,7 +468,7 @@ template_top('Landing Page Setup');  ?>
 		<div class="panel panel-default">
 			<div class="panel-heading">My Simple Landing Pages</div>
 			<div class="panel-body">
-				<ul>
+				<ul class="setup-list">
 					<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 					$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
 					$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
@@ -469,7 +482,7 @@ template_top('Landing Page Setup');  ?>
 
 																		printf('<li>%s</li>', $html['aff_network_name']);
 
-																		?><ul><?php
+																		?><ul class="setup-list"><?php
 
 																		//print out the individual accounts per each PPC network
 																		$mysql['aff_network_id'] = $db->real_escape_string($aff_network_row['aff_network_id']);
@@ -483,7 +496,7 @@ template_top('Landing Page Setup');  ?>
 
 																			printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
 
-									?><ul style="margin-top: 0px;"><?php
+									?><ul class="setup-list" style="margin-top: 0px;"><?php
 
 																			$mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_row['aff_campaign_id']);
 																			$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "' AND `landing_page_deleted`='0' AND landing_page_type='0'";
@@ -495,9 +508,9 @@ template_top('Landing Page Setup');  ?>
 																				$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 																				if ($userObj->hasPermission("remove_landing_page")) {
-																					printf('<li>%s - <a href="?edit_landing_page_id=%s">edit</a> - <a href="?copy_landing_page_id=%s">copy</a> - <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=0" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
+																					printf('<li><span class="filter_simple_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a> <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=0" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
 																				} else {
-																					printf('<li>%s - <a href="?edit_landing_page_id=%s">edit</a></li>', $html['landing_page_nickname'], $html['landing_page_id']);
+																					printf('<li><span class="filter_simple_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a></li>', $html['landing_page_nickname'], $html['landing_page_id']);
 																				}
 																			}
 
@@ -534,4 +547,373 @@ template_top('Landing Page Setup');  ?>
 	});
 </script>
 <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/jquery.caret.js"></script>
+
+<style>
+/* ===========================================
+   LANDING PAGES - Modern Design System Styles
+   =========================================== */
+
+/* Header Section */
+.setup-page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    margin-bottom: 28px;
+}
+
+.setup-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+    transition: background 0.3s ease;
+}
+
+.setup-page-header__icon .glyphicon {
+    font-size: 24px;
+    color: #fff;
+}
+
+.setup-page-header__text {
+    flex: 1;
+}
+
+.setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.setup-page-header__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 400;
+}
+
+/* Setup Panel Styles */
+.setup-panel {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.setup-panel:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    border-color: #cbd5e1;
+}
+
+/* Panel Defaults */
+.panel-default {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    transition: box-shadow 0.3s ease;
+}
+
+.panel-default:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.panel-heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 20px;
+    font-weight: 600;
+    color: #1e293b;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+}
+
+.panel-body {
+    padding: 20px;
+    background: #fff;
+}
+
+/* Form Group Styles */
+.setup-form-group {
+    margin-bottom: 18px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.setup-form-group:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.setup-form-group label {
+    font-weight: 500;
+    color: #334155;
+    margin-bottom: 8px;
+    display: block;
+    font-size: 13px;
+    letter-spacing: 0.3px;
+}
+
+.setup-form-group input,
+.setup-form-group textarea,
+.setup-form-group select {
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.setup-form-group input:focus,
+.setup-form-group textarea:focus,
+.setup-form-group select:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+    outline: none;
+}
+
+/* Button Styles */
+.setup-btn {
+    display: inline-block;
+    padding: 10px 20px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-weight: 500;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
+}
+
+.setup-btn:hover {
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);
+    transform: translateY(-1px);
+}
+
+.setup-btn:active {
+    transform: translateY(0);
+}
+
+.setup-btn-secondary {
+    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    box-shadow: 0 2px 8px rgba(107, 114, 128, 0.15);
+}
+
+.setup-btn-secondary:hover {
+    box-shadow: 0 4px 12px rgba(107, 114, 128, 0.25);
+}
+
+.setup-btn-danger {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.15);
+}
+
+.setup-btn-danger:hover {
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+}
+
+/* Alert Styles */
+.setup-alert {
+    padding: 14px 16px;
+    border-radius: 8px;
+    border-left: 4px solid;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.setup-alert-success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border-color: #86efac;
+    color: #166534;
+}
+
+.setup-alert-error {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border-color: #fca5a5;
+    color: #991b1b;
+}
+
+.setup-alert-info {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border-color: #7dd3fc;
+    color: #0c4a6e;
+}
+
+.setup-alert i {
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+/* List Styles */
+.setup-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.setup-list li {
+    padding: 12px 0;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 13px;
+    color: #334155;
+    transition: color 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.setup-list li:last-child {
+    border-bottom: none;
+}
+
+.setup-list li:hover {
+    color: #007bff;
+}
+
+.setup-list li > span {
+    word-break: break-word;
+}
+
+/* Name spans - take up available space */
+.filter_adv_lp_name,
+.filter_simple_lp_name {
+    font-weight: 500;
+    flex: 1;
+    min-width: 100px;
+}
+
+.setup-list .list-action {
+    color: #007bff;
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.3s ease;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.setup-list .list-action:hover {
+    color: #0056b3;
+    text-decoration: none;
+    background: rgba(0, 123, 255, 0.1);
+}
+
+.setup-list .list-action-danger {
+    color: #ef4444;
+}
+
+.setup-list .list-action-danger:hover {
+    color: #dc2626;
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.empty-state {
+    text-align: center;
+    padding: 24px 16px;
+    color: #9ca3af;
+    border: 1px dashed #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+/* Form Separator */
+.form_seperator {
+    border-bottom: 2px solid #e2e8f0;
+    margin-bottom: 24px;
+}
+
+/* Radio and Checkbox Styles */
+.radio,
+.checkbox {
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.radio label,
+.checkbox label {
+    padding-left: 24px;
+    cursor: pointer;
+    font-weight: 400;
+    color: #334155;
+}
+
+.radio input,
+.checkbox input {
+    margin-left: -24px;
+    margin-right: 8px;
+    cursor: pointer;
+}
+
+/* Info Text */
+.infotext {
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 400;
+    line-height: 1.5;
+}
+
+/* Help Block */
+.help-block {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 6px;
+    display: block;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .setup-page-header {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px 16px;
+        margin-bottom: 20px;
+    }
+
+    .setup-page-header__icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    .setup-page-header__icon .glyphicon {
+        font-size: 20px;
+    }
+
+    .setup-page-header__title {
+        font-size: 20px;
+    }
+
+    .setup-page-header__subtitle {
+        font-size: 13px;
+    }
+
+    .setup-form-group {
+        margin-bottom: 16px;
+    }
+
+    .setup-btn {
+        width: 100%;
+        margin-bottom: 8px;
+    }
+}
+</style>
+
 <?php template_bottom();
