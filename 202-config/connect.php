@@ -127,6 +127,11 @@ if (file_exists(ROOT_PATH  . '202-config.php')) {
     die();
 }
 include_once(ROOT_PATH  . '202-config.php');
+// Load Composer autoloader if available for PSR-4 classes.
+$autoloadPath = ROOT_PATH . 'vendor/autoload.php';
+if (file_exists($autoloadPath)) {
+    require_once $autoloadPath;
+}
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');

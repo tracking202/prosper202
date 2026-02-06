@@ -18,20 +18,20 @@ if (isset($html['attribution_model_id']) && $html['attribution_model_id'] !== ''
 // Initialize attribution service
 try {
     // Include required attribution classes
-    require_once dirname(__DIR__, 2) . '/202-config/Attribution/AttributionServiceFactory.php';
-    require_once dirname(__DIR__, 2) . '/202-config/Attribution/AttributionService.php';
-    require_once dirname(__DIR__, 2) . '/202-config/Attribution/ModelType.php';
-    require_once dirname(__DIR__, 2) . '/202-config/Attribution/ModelDefinition.php';
-    require_once dirname(__DIR__, 2) . '/202-config/Attribution/Repository/ModelRepositoryInterface.php';
-    require_once dirname(__DIR__, 2) . '/202-config/Attribution/Repository/Mysql/MysqlModelRepository.php';
-    require_once dirname(__DIR__, 2) . '/202-config/Attribution/AttributionIntegrationService.php';
-    
-    $attributionService = \Prosper202\Attribution\AttributionServiceFactory::create();
+    // Path: _includes -> setup -> tracking202 -> root (3 levels up)
+    require_once dirname(__DIR__, 3) . '/202-config/Attribution/ModelType.php';
+    require_once dirname(__DIR__, 3) . '/202-config/Attribution/ModelDefinition.php';
+    require_once dirname(__DIR__, 3) . '/202-config/Attribution/Repository/ModelRepositoryInterface.php';
+    require_once dirname(__DIR__, 3) . '/202-config/Attribution/Repository/Mysql/MysqlModelRepository.php';
+    require_once dirname(__DIR__, 3) . '/202-config/Attribution/AttributionIntegrationService.php';
+
+    // Create the model repository and integration service directly
+    $modelRepository = new \Prosper202\Attribution\Repository\Mysql\MysqlModelRepository($db, $db);
     $integrationService = new \Prosper202\Attribution\AttributionIntegrationService(
-        $attributionService->getModelRepository(),
+        $modelRepository,
         $db
     );
-    
+
     $userId = (int)$_SESSION['user_own_id'];
     $modelOptions = $integrationService->getModelOptionsForUser($userId, $currentAttributionModelId);
     $defaultModelId = $integrationService->getDefaultModelIdForUser($userId);

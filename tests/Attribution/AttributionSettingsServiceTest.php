@@ -323,6 +323,11 @@ final class FakeModelRepository implements ModelRepositoryInterface
     public function delete(int $modelId, int $userId): void
     {
     }
+
+    public function setAsDefault(int $userId, int $modelId): bool
+    {
+        return true;
+    }
 }
 
 final class FakeJourneyMaintenanceRepository implements JourneyMaintenanceRepositoryInterface

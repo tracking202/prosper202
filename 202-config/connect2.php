@@ -88,7 +88,12 @@ include_once(CONFIG_PATH . '/functions-auth.php');
 if (!function_exists('array_any')) {
     function array_any(array $items, callable $callback): bool
     {
-        return array_any($items, fn($value, $key) => $callback($value, $key));
+        foreach ($items as $key => $value) {
+            if ($callback($value, $key)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 include_once(CONFIG_PATH . '/Mobile_Detect.php');
@@ -153,7 +158,7 @@ if (!isset($_SESSION['privacy'])) {
 				 FROM   	`202_users_pref`
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
-    $privacy = memcache_mysql_fetch_assoc($db);
+    $privacy = memcache_mysql_fetch_assoc($db, $user_sql);
     if (isset($privacy['user_pref_privacy'])) {
         $_SESSION['privacy'] = $privacy['user_pref_privacy'];
     } else {
@@ -274,7 +279,7 @@ class FILTER
 
     public static function checkNetrange($click_id, $ip)
     {
-        $ip_address = ip2long($ip->address);
+        $ip_address = ip2long(is_string($ip) ? $ip : $ip->address);
 
         // check each netrange
         /* google1 */
@@ -1239,7 +1244,7 @@ class INDEXES
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 } else {
                     //insert ip
-                    $ip_id = INDEXES::insert_ip($db);
+                    $ip_id = INDEXES::insert_ip($db, $ip_object);
                     // add to memcached
                     $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
                 }
@@ -1251,7 +1256,7 @@ class INDEXES
                 // if this ip already exists, return the ip_id for it.
                 $ip_id = $ip_row['ip_id'];
             } else {
-                $ip_id = INDEXES::insert_ip($db);
+                $ip_id = INDEXES::insert_ip($db, $ip_object);
             }
         }
 
@@ -1377,7 +1382,7 @@ class INDEXES
             $site_url_address = '';
         }
         
-        $site_domain_id = INDEXES::get_site_domain_id($db);
+        $site_domain_id = INDEXES::get_site_domain_id($db, $site_url_address);
 
         $mysql['site_url_address'] = $db->real_escape_string((string)$site_url_address);
         $mysql['site_domain_id'] = $db->real_escape_string((string)$site_domain_id);
@@ -2423,11 +2428,11 @@ function record_mysql_error($db, $sql): never
 
 
     $ipForError = $ip_address ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? ''));
-    $ip_id = INDEXES::get_ip_id($db);
+    $ip_id = INDEXES::get_ip_id($db, $ipForError);
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
     $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-    $site_id = INDEXES::get_site_url_id($db);
+    $site_id = INDEXES::get_site_url_id($db, $site_url);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 
     $mysql['user_id'] = $db->real_escape_string(strip_tags((string) $_SESSION['user_id']));
@@ -2515,6 +2520,14 @@ function getTrackingDomain()
 {
     global $db;
 
+    $tracking_domain = $_SERVER['SERVER_NAME'];
+
+    // Add port if non-standard (not 80/443)
+    $port = $_SERVER['SERVER_PORT'] ?? 80;
+    if ($port != 80 && $port != 443) {
+        $tracking_domain .= ':' . $port;
+    }
+
     $tracking_domain_sql = "
 		SELECT
 			`user_tracking_domain`
@@ -2525,8 +2538,7 @@ function getTrackingDomain()
 	";
     $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql); //($user_sql);
     $tracking_domain_row = $tracking_domain_result->fetch_assoc();
-    $tracking_domain = $_SERVER['SERVER_NAME'];
-    if (strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
+    if (isset($tracking_domain_row['user_tracking_domain']) && strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
         $tracking_domain = $tracking_domain_row['user_tracking_domain'];
     }
     return $tracking_domain;
@@ -3521,7 +3533,7 @@ function getKeyword(&$mysql)
     }
 
     $keyword = str_replace('%20', ' ', $keyword);
-    $keyword_id = INDEXES::get_keyword_id($db);
+    $keyword_id = INDEXES::get_keyword_id($db, $keyword);
     $mysql['keyword_id'] = $db->real_escape_string($keyword_id);
     $mysql['keyword'] = $db->real_escape_string($keyword);
 }
@@ -3540,12 +3552,12 @@ function getReferer(&$mysql)
     if ($mysql['user_pref_referer_data'] == 't202ref') {
         if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
             $mysql['t202ref'] = $db->real_escape_string($_GET['t202ref']);
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db);
+            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_GET['t202ref']);
         } else { //if not found revert to what we usually do
             if (isset($referer_query['url'])) {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($db);
+                $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
             } else {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($db);
+                $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER'] ?? '');
             }
         }
     } else { //user wants the real referer first
@@ -3553,9 +3565,9 @@ function getReferer(&$mysql)
         // now lets get variables for clicks site
         // so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
         if (isset($referer_query['url'])) {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db);
+            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
         } else {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db);
+            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER'] ?? '');
         }
     }
 

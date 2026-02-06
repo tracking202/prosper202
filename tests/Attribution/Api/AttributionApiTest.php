@@ -285,6 +285,32 @@ final class InMemoryModelRepository implements ModelRepositoryInterface
     {
         unset($this->models[$modelId]);
     }
+
+    public function setAsDefault(int $userId, int $modelId): bool
+    {
+        if (!isset($this->models[$modelId])) {
+            return false;
+        }
+
+        foreach ($this->models as $id => $existing) {
+            if ($existing->userId === $userId) {
+                $this->models[$id] = new ModelDefinition(
+                    modelId: $existing->modelId,
+                    userId: $existing->userId,
+                    name: $existing->name,
+                    slug: $existing->slug,
+                    type: $existing->type,
+                    weightingConfig: $existing->weightingConfig,
+                    isActive: $existing->isActive,
+                    isDefault: $existing->modelId === $modelId,
+                    createdAt: $existing->createdAt,
+                    updatedAt: $existing->updatedAt
+                );
+            }
+        }
+
+        return true;
+    }
 }
 
 final class InMemorySnapshotRepository implements SnapshotRepositoryInterface

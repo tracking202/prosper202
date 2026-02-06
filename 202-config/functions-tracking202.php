@@ -1870,7 +1870,13 @@ function getLastDayOfMonth($month, $year)
 function getTrackingDomain()
 {
     $tracking_domain = $_SERVER['SERVER_NAME'];
-    
+
+    // Add port if non-standard (not 80/443)
+    $port = $_SERVER['SERVER_PORT'] ?? 80;
+    if ($port != 80 && $port != 443) {
+        $tracking_domain .= ':' . $port;
+    }
+
     // Only query database if user is logged in
     if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
         return $tracking_domain;

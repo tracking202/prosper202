@@ -2,7 +2,6 @@
 202-config.php
 phpstan.neon
 docker-compose.yaml
-composer.json
 
 # Dependencies
 /node_modules/
@@ -12,7 +11,12 @@ composer.json
 *.cache
 *.patch
 composer.lock
-build/
+build/debug/
+build/logs/
+
+# Config backups
+202-config*.php
+!202-config-sample.php
 
 # Development and documentation
 /docs/
