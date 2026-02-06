@@ -133,10 +133,28 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
             if ($result['status'] === 200 && $db && $userId !== null) {
                 $startHour = isset($params['start_hour']) ? (int) $params['start_hour'] : (time() - (24 * 3600));
                 $endHour = isset($params['end_hour']) ? (int) $params['end_hour'] : time();
+                $scope = isset($params['scope']) ? (string) $params['scope'] : 'global';
+                $scopeId = isset($params['scope_id']) && is_numeric($params['scope_id']) ? (int) $params['scope_id'] : null;
+
                 $clickSql = "SELECT COUNT(*) AS total FROM 202_clicks WHERE user_id = ? AND click_time BETWEEN ? AND ?";
+                $bindTypes = 'iii';
+                $bindValues = [$userId, $startHour, $endHour];
+
+                // Apply scope filter to match attribution query filtering
+                $scopeColumns = [
+                    'campaign' => 'aff_campaign_id',
+                    'account' => 'ppc_account_id',
+                    'landing_page' => 'landing_page_id',
+                ];
+                if ($scope !== 'global' && $scopeId !== null && isset($scopeColumns[$scope])) {
+                    $clickSql .= " AND {$scopeColumns[$scope]} = ?";
+                    $bindTypes .= 'i';
+                    $bindValues[] = $scopeId;
+                }
+
                 $stmt = $db->prepare($clickSql);
                 if ($stmt) {
-                    $stmt->bind_param('iii', $userId, $startHour, $endHour);
+                    $stmt->bind_param($bindTypes, ...$bindValues);
                     $stmt->execute();
                     $clickResult = $stmt->get_result();
                     $row = $clickResult ? $clickResult->fetch_assoc() : null;
