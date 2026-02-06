@@ -6,11 +6,10 @@ header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
 header('Expires: Sun, 03 Feb 2008 05:00:00 GMT'); // Date in the past
 header("Pragma: no-cache");
 header('P3P: CP="Prosper202 does not have a P3P policy"');
-echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
 
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php'); 
 
-$t202id = $_GET['t202id'];
+$t202id = $_GET['t202id'] ?? '';
 if (!is_numeric($t202id)) die();
 
 $mysql['tracker_id_public'] = $db->real_escape_string($t202id);
@@ -21,7 +20,10 @@ $tracker_sql = "SELECT aff_campaign_id,
 					   landing_page_id
 				FROM 202_trackers 
                 WHERE tracker_id_public = '".$mysql['tracker_id_public']."'";
-$tracker_row = memcache_mysql_fetch_assoc($db);
+$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+if (!$tracker_row) {
+	die();
+}
 
 $sql = "INSERT INTO 202_clicks_impressions 
  		SET aff_campaign_id = '".$tracker_row['aff_campaign_id']."',
@@ -33,5 +35,6 @@ $db->query($sql);
 $ipx_id = $db->insert_id;	
 
 setcookie("p202_ipx", (string) $ipx_id, ['expires' => $time + (10 * 365 * 24 * 60 * 60), 'path' => '/', 'domain' => (string) $_SERVER['SERVER_NAME']]);
+echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
 
 ?>
