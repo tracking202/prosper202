@@ -217,10 +217,11 @@ prompt_with_default() {
     local default="$2"
     local var_name="$3"
     local is_password="${4:-false}"
+    local value=""
+    local char=""
 
     if [ "$is_password" = "true" ]; then
         echo -ne "  ${prompt}: "
-        value=""
         while IFS= read -r -s -n1 char; do
             # Check for enter key (empty char)
             if [[ -z "$char" ]]; then
@@ -239,12 +240,12 @@ prompt_with_default() {
         done
     else
         echo -ne "  ${prompt} [${DIM}${default}${RESET}]: "
-        read value
+        read -r value
     fi
 
     # Use default if empty
     value="${value:-$default}"
-    eval "$var_name='$value'"
+    printf -v "$var_name" '%s' "$value"
 }
 
 prompt_choice() {
@@ -252,6 +253,7 @@ prompt_choice() {
     local default="$2"
     shift 2
     local options=("$@")
+    local choice=""
 
     echo ""
     echo -e "  ${BOLD}${prompt}${RESET}"
@@ -269,7 +271,7 @@ prompt_choice() {
 
     echo ""
     echo -ne "  Choice [${default}]: "
-    read choice
+    read -r choice
     choice="${choice:-$default}"
     echo "$choice"
 }
@@ -277,6 +279,7 @@ prompt_choice() {
 confirm() {
     local prompt="$1"
     local default="${2:-y}"
+    local answer=""
 
     if [ "$default" = "y" ]; then
         echo -ne "  ${prompt} [${GREEN}Y${RESET}/n]: "
@@ -284,10 +287,36 @@ confirm() {
         echo -ne "  ${prompt} [y/${GREEN}N${RESET}]: "
     fi
 
-    read answer
+    read -r answer
     answer="${answer:-$default}"
 
     [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+escape_php_single_quote() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\'/\\\'}"
+    printf '%s' "$value"
+}
+
+escape_sed_replacement() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//&/\\&}"
+    value="${value//|/\\|}"
+    printf '%s' "$value"
+}
+
+sed_in_place() {
+    local expr="$1"
+    local file="$2"
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' -e "$expr" "$file"
+    else
+        sed -i -e "$expr" "$file"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -372,7 +401,9 @@ detect_docker() {
         fi
     fi
 
-    if command -v docker-compose &>/dev/null || docker compose version &>/dev/null 2>&1; then
+    if command -v docker-compose &>/dev/null; then
+        HAS_DOCKER_COMPOSE=true
+    elif command -v docker &>/dev/null && docker compose version &>/dev/null 2>&1; then
         HAS_DOCKER_COMPOSE=true
     fi
 }
@@ -476,7 +507,7 @@ install_php_extensions() {
             # On macOS with Homebrew, try reinstalling PHP
             if command -v brew &>/dev/null; then
                 print_info "Attempting to reinstall PHP via Homebrew..."
-                brew reinstall php > ${TMP_DIR}/php_install.log 2>&1 &
+                brew reinstall php > "$TMP_DIR/php_install.log" 2>&1 &
                 spinner $! "Reinstalling PHP..."
                 wait $!
                 if [ $? -ne 0 ]; then
@@ -500,11 +531,11 @@ install_php_extensions() {
 
             # Check if we can use sudo
             if command -v sudo &>/dev/null; then
-                sudo apt-get update -qq > ${TMP_DIR}/apt_update.log 2>&1 &
+                sudo apt-get update -qq > "$TMP_DIR/apt_update.log" 2>&1 &
                 spinner $! "Updating package lists..."
                 wait $!
 
-                sudo apt-get install -y $packages > ${TMP_DIR}/php_install.log 2>&1 &
+                sudo apt-get install -y $packages > "$TMP_DIR/php_install.log" 2>&1 &
                 spinner $! "Installing PHP extensions..."
                 wait $!
                 if [ $? -ne 0 ]; then
@@ -525,7 +556,7 @@ install_php_extensions() {
             print_info "Installing:$packages"
 
             if command -v sudo &>/dev/null; then
-                sudo dnf install -y $packages > ${TMP_DIR}/php_install.log 2>&1 &
+                sudo dnf install -y $packages > "$TMP_DIR/php_install.log" 2>&1 &
                 spinner $! "Installing PHP extensions..."
                 wait $!
                 if [ $? -ne 0 ]; then
@@ -632,8 +663,13 @@ install_dependencies() {
     # Run composer in background and show spinner
     if [ "$VERBOSE" = true ]; then
         $composer_cmd install $composer_args
+        local result=$?
+        if [ $result -ne 0 ]; then
+            print_error "Composer install failed."
+            return 1
+        fi
     else
-        $composer_cmd install $composer_args > ${TMP_DIR}/composer_output.log 2>&1 &
+        $composer_cmd install $composer_args > "$TMP_DIR/composer_output.log" 2>&1 &
         local pid=$!
         spinner $pid "Running composer install..."
         wait $pid
@@ -641,7 +677,7 @@ install_dependencies() {
 
         if [ $result -ne 0 ]; then
             print_error "Composer install failed. See details:"
-            cat ${TMP_DIR}/composer_output.log
+            cat "$TMP_DIR/composer_output.log"
             return 1
         fi
     fi
@@ -740,6 +776,7 @@ try {
 create_config_file() {
     local config_file="$SCRIPT_DIR/202-config.php"
     local sample_file="$SCRIPT_DIR/202-config-sample.php"
+    local db_host_ro_value=""
 
     if [ ! -f "$sample_file" ]; then
         print_error "Sample config file not found: 202-config-sample.php"
@@ -749,35 +786,51 @@ create_config_file() {
     # Create config from sample with our values
     cp "$sample_file" "$config_file"
 
-    # Replace database values using sed
-    # Handle different sed syntax for macOS vs Linux
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s/\$dbname = 'putyourdbnamehere'/\$dbname = '$DB_NAME'/" "$config_file"
-        sed -i '' "s/\$dbuser = 'usernamehere'/\$dbuser = '$DB_USER'/" "$config_file"
-        sed -i '' "s/\$dbpass = 'yourpasswordhere'/\$dbpass = '$DB_PASS'/" "$config_file"
-        sed -i '' "s/\$dbhost = 'localhosthere'/\$dbhost = '$DB_HOST'/" "$config_file"
+    # Escape values for PHP single-quoted strings and sed replacement
+    local db_name_php db_user_php db_pass_php db_host_php db_host_ro_php mc_host_php
+    local db_name_sed db_user_sed db_pass_sed db_host_sed db_host_ro_sed mc_host_sed
+    local dbname_pattern dbuser_pattern dbpass_pattern dbhost_pattern dbhostro_pattern mchost_pattern
+    local dbname_replacement dbuser_replacement dbpass_replacement dbhost_replacement dbhostro_replacement mchost_replacement
 
-        if [ -n "$DB_HOST_RO" ]; then
-            sed -i '' "s/\$dbhostro = 'localhostreplica'/\$dbhostro = '$DB_HOST_RO'/" "$config_file"
-        else
-            sed -i '' "s/\$dbhostro = 'localhostreplica'/\$dbhostro = '$DB_HOST'/" "$config_file"
-        fi
+    db_name_php=$(escape_php_single_quote "$DB_NAME")
+    db_user_php=$(escape_php_single_quote "$DB_USER")
+    db_pass_php=$(escape_php_single_quote "$DB_PASS")
+    db_host_php=$(escape_php_single_quote "$DB_HOST")
 
-        sed -i '' "s/\$mchost = 'localhostmemcache'/\$mchost = '$MC_HOST'/" "$config_file"
-    else
-        sed -i "s/\$dbname = 'putyourdbnamehere'/\$dbname = '$DB_NAME'/" "$config_file"
-        sed -i "s/\$dbuser = 'usernamehere'/\$dbuser = '$DB_USER'/" "$config_file"
-        sed -i "s/\$dbpass = 'yourpasswordhere'/\$dbpass = '$DB_PASS'/" "$config_file"
-        sed -i "s/\$dbhost = 'localhosthere'/\$dbhost = '$DB_HOST'/" "$config_file"
-
-        if [ -n "$DB_HOST_RO" ]; then
-            sed -i "s/\$dbhostro = 'localhostreplica'/\$dbhostro = '$DB_HOST_RO'/" "$config_file"
-        else
-            sed -i "s/\$dbhostro = 'localhostreplica'/\$dbhostro = '$DB_HOST'/" "$config_file"
-        fi
-
-        sed -i "s/\$mchost = 'localhostmemcache'/\$mchost = '$MC_HOST'/" "$config_file"
+    db_host_ro_value="$DB_HOST_RO"
+    if [ -z "$db_host_ro_value" ]; then
+        db_host_ro_value="$DB_HOST"
     fi
+    db_host_ro_php=$(escape_php_single_quote "$db_host_ro_value")
+    mc_host_php=$(escape_php_single_quote "$MC_HOST")
+
+    db_name_sed=$(escape_sed_replacement "$db_name_php")
+    db_user_sed=$(escape_sed_replacement "$db_user_php")
+    db_pass_sed=$(escape_sed_replacement "$db_pass_php")
+    db_host_sed=$(escape_sed_replacement "$db_host_php")
+    db_host_ro_sed=$(escape_sed_replacement "$db_host_ro_php")
+    mc_host_sed=$(escape_sed_replacement "$mc_host_php")
+
+    dbname_pattern="\\\$dbname = 'putyourdbnamehere'"
+    dbuser_pattern="\\\$dbuser = 'usernamehere'"
+    dbpass_pattern="\\\$dbpass = 'yourpasswordhere'"
+    dbhost_pattern="\\\$dbhost = 'localhosthere'"
+    dbhostro_pattern="\\\$dbhostro = 'localhostreplica'"
+    mchost_pattern="\\\$mchost = 'localhostmemcache'"
+
+    dbname_replacement="\$dbname = '$db_name_sed'"
+    dbuser_replacement="\$dbuser = '$db_user_sed'"
+    dbpass_replacement="\$dbpass = '$db_pass_sed'"
+    dbhost_replacement="\$dbhost = '$db_host_sed'"
+    dbhostro_replacement="\$dbhostro = '$db_host_ro_sed'"
+    mchost_replacement="\$mchost = '$mc_host_sed'"
+
+    sed_in_place "s|$dbname_pattern|$dbname_replacement|" "$config_file"
+    sed_in_place "s|$dbuser_pattern|$dbuser_replacement|" "$config_file"
+    sed_in_place "s|$dbpass_pattern|$dbpass_replacement|" "$config_file"
+    sed_in_place "s|$dbhost_pattern|$dbhost_replacement|" "$config_file"
+    sed_in_place "s|$dbhostro_pattern|$dbhostro_replacement|" "$config_file"
+    sed_in_place "s|$mchost_pattern|$mchost_replacement|" "$config_file"
 
     print_success "Config file created: 202-config.php"
     return 0
@@ -848,14 +901,15 @@ start_docker_containers() {
 
     # Build and start containers (build handles pulling base images)
     print_info "Building and starting containers..."
-    $compose_cmd up -d --build > ${TMP_DIR}/docker_output.log 2>&1 &
-    spinner $! "Building and starting containers..."
-
+    $compose_cmd up -d --build > "$TMP_DIR/docker_output.log" 2>&1 &
+    local pid=$!
+    spinner $pid "Building and starting containers..."
+    wait $pid
     local build_result=$?
     if [ $build_result -ne 0 ]; then
         print_error "Failed to start containers. Check docker-compose.yaml"
         if [ "$VERBOSE" = true ]; then
-            cat ${TMP_DIR}/docker_output.log
+            cat "$TMP_DIR/docker_output.log"
         fi
         return 1
     fi
@@ -897,16 +951,16 @@ start_docker_containers() {
 
     # Install dependencies inside container
     print_info "Installing dependencies in container..."
-    $compose_cmd exec -T web composer install --no-dev --no-interaction --optimize-autoloader > ${TMP_DIR}/docker_output.log 2>&1 &
-    spinner $! "Installing dependencies..."
-
-    wait $!
+    $compose_cmd exec -T web composer install --no-dev --no-interaction --optimize-autoloader > "$TMP_DIR/docker_output.log" 2>&1 &
+    local pid=$!
+    spinner $pid "Installing dependencies..."
+    wait $pid
     local composer_result=$?
 
     if [ $composer_result -ne 0 ]; then
         print_warning "Dependency installation had issues. Check container logs."
         if [ "$VERBOSE" = true ]; then
-            cat ${TMP_DIR}/docker_output.log
+            cat "$TMP_DIR/docker_output.log"
         fi
     else
         print_success "Dependencies installed"
