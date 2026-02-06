@@ -301,55 +301,59 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and (!isset($add_success) || $add_suc
 
 template_top('Affiliate Campaigns Setup');
 ?>
+<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
-<?php include_once __DIR__ . '/_config/setup_nav.php'; ?>
-
-<div class="row" style="margin-bottom: 15px;">
+<!-- Page Header - Design System -->
+<div class="row" style="margin-bottom: 28px;">
 	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6>Campaign Setup</h6>
+		<div class="setup-page-header">
+			<div class="setup-page-header__icon">
+				<span class="glyphicon glyphicon-link"></span>
 			</div>
-			<div class="col-xs-8">
-				<div class="<?php if (isset($error) && !empty($error)) echo "error";
-							else echo "success"; ?> pull-right" style="margin-top: 20px;"> <small>
-						<?php if (isset($error) && !empty($error)) { ?>
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-						<?php } ?>
-						<?php if (isset($add_success) && $add_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
-						<?php } ?>
-						<?php if (isset($delete_success) && $delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> You deletion was successful. You have successfully removed a campaign.
-						<?php } ?>
-
-					</small>
-				</div>
+			<div class="setup-page-header__text">
+				<h1 class="setup-page-header__title">Campaigns</h1>
+				<p class="setup-page-header__subtitle">Add and manage your affiliate campaigns with tracking URLs, payouts, and attribution settings</p>
 			</div>
 		</div>
 	</div>
+</div>
+
+<?php if (isset($error) && !empty($error)) { ?>
+<div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
-		<small>Add the campaigns you want to run. <span class="fui-info-circle" style="cursor:pointer;" id="help-text-trigger"></span></small>
-		<span style="display:none" id="help-text"><br />
-			<span class="infotext">
-				<em>If you do not understand how subids work at your network, stop, and contact your affiliate manager.<br />
-					Prosper202 supports the ability to cloak your traffic; cloaking will
-					prevent your advertisers and the affiliate networks who you work with
-					from seeing your keywords. Please note if you are doing direct linking
-					with Google Adwords, a cloaked direct linking setup can kill your
-					qualitly score. Don't understand cloaking? Leave it off for now and
-					learn more about it in our help section later.
-				</em>
-			</span></span>
+		<div class="alert alert-danger">
+			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
+		</div>
 	</div>
 </div>
+<?php } ?>
+
+<?php if (isset($add_success) && $add_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
+		</div>
+	</div>
+</div>
+<?php } ?>
+
+<?php if (isset($delete_success) && $delete_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed a campaign.
+		</div>
+	</div>
+</div>
+<?php } ?>
 
 <div class="row form_seperator" style="margin-bottom:15px;">
 	<div class="col-xs-12"></div>
 </div>
 
 <div class="row">
-	<div class="col-xs-7">
+	<div class="col-md-6">
 		<small><strong>Add A Campaign</strong></small><br />
 		<span class="infotext">Here you add each of the campaigns you are running.</span>
 
@@ -522,7 +526,7 @@ template_top('Affiliate Campaigns Setup');
 
 		</form>
 	</div>
-	<div class="col-xs-4 col-xs-offset-1">
+	<div class="col-md-6">
 		<div class="panel panel-default">
 			<div class="panel-heading">My Campaigns</div>
 			<div class="panel-body">
@@ -535,7 +539,7 @@ template_top('Affiliate Campaigns Setup');
 
 						$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
 						if ($aff_network_result->num_rows == 0) {
-						?><li>You have not added any networks.</li><?php
+						?><li class="empty-state">No categories added yet. Add a category first to organize your campaigns.</li><?php
 																}
 
 																while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
@@ -569,19 +573,20 @@ template_top('Affiliate Campaigns Setup');
 																		$html['aff_campaign_url'] = htmlentities((string)($aff_campaign_row['aff_campaign_url'] ?? ''), ENT_QUOTES, 'UTF-8');
 																		$html['aff_campaign_id'] = htmlentities((string)($aff_campaign_row['aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 																		$html['aff_campaign_rotate'] = htmlentities((string)($aff_campaign_row['aff_campaign_rotate'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		if ($html['aff_campaign_rotate']) {
-																			if ($userObj->hasPermission("remove_campaign")) {
-																				printf('<li> <span class="glyphicon glyphicon-repeat" style="font-size: 12px;"></span> <span class="filter_campaign_name">%s</span> &middot; &#36;%s - <a href="%s" target="_new">link</a> - <a href="?edit_aff_campaign_id=%s">edit</a> - <a href="?copy_aff_campaign_id=%s">copy</a> - <a href="?delete_aff_campaign_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Campaign?\');">remove</a></li>', $html['aff_campaign_name'], $html['aff_campaign_payout'], $html['aff_campaign_url'], $html['aff_campaign_id'], $html['aff_campaign_id'], $html['aff_campaign_id']);
-																			} else {
-																				printf('<li> <span class="glyphicon glyphicon-repeat" style="font-size: 12px;"></span> <span class="filter_campaign_name">%s</span> &middot; &#36;%s - <a href="%s" target="_new">link</a> - <a href="?edit_aff_campaign_id=%s">edit</a> - <a href="?copy_aff_campaign_id=%s">copy</a></li>', $html['aff_campaign_name'], $html['aff_campaign_payout'], $html['aff_campaign_url'], $html['aff_campaign_id'], $html['aff_campaign_id']);
-																			}
-																		} else {
-																			if ($userObj->hasPermission("remove_campaign")) {
-																				printf('<li><span class="filter_campaign_name">%s</span> &middot; &#36;%s - <a href="%s" target="_new">link</a> - <a href="?edit_aff_campaign_id=%s">edit</a> - <a href="?copy_aff_campaign_id=%s">copy</a> - <a href="?delete_aff_campaign_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Campaign?\');">remove</a></li>', $html['aff_campaign_name'], $html['aff_campaign_payout'], $html['aff_campaign_url'], $html['aff_campaign_id'], $html['aff_campaign_id'], $html['aff_campaign_id']);
-																			} else {
-																				printf('<li><span class="filter_campaign_name">%s</span> &middot; &#36;%s - <a href="%s" target="_new">link</a> - <a href="?edit_aff_campaign_id=%s">edit</a> - <a href="?copy_aff_campaign_id=%s">copy</a></li>', $html['aff_campaign_name'], $html['aff_campaign_payout'], $html['aff_campaign_url'], $html['aff_campaign_id'], $html['aff_campaign_id']);
-																			}
-																		}
+																		$rotateIcon = $html['aff_campaign_rotate'] ? '<span class="glyphicon glyphicon-repeat" style="font-size: 11px; margin-right: 4px; color: #6b7280;"></span>' : '';
+																		$removeLink = $userObj->hasPermission("remove_campaign")
+																			? ' <a href="?delete_aff_campaign_id=' . $html['aff_campaign_id'] . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Campaign?\');">remove</a>'
+																			: '';
+
+																		printf('<li>%s<span class="filter_campaign_name">%s</span> <span class="list-meta">$%s</span> <a href="%s" target="_new" class="list-action">link</a> <a href="?edit_aff_campaign_id=%s" class="list-action">edit</a> <a href="?copy_aff_campaign_id=%s" class="list-action">copy</a>%s</li>',
+																			$rotateIcon,
+																			$html['aff_campaign_name'],
+																			$html['aff_campaign_payout'],
+																			$html['aff_campaign_url'],
+																			$html['aff_campaign_id'],
+																			$html['aff_campaign_id'],
+																			$removeLink
+																		);
 																	}
 
 														?></ul><?php
@@ -676,5 +681,405 @@ template_top('Affiliate Campaigns Setup');
 	});
 </script>
 <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/jquery.caret.js"></script>
+
+<style>
+/* ===========================================
+   CAMPAIGNS - Modern Setup Design System
+   =========================================== */
+
+/* Page Header - Blue Gradient */
+.setup-page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    margin-bottom: 28px;
+}
+
+.setup-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+}
+
+.setup-page-header__icon .glyphicon {
+    font-size: 24px;
+    color: #fff;
+}
+
+.setup-page-header__text {
+    flex: 1;
+}
+
+.setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.setup-page-header__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 400;
+}
+
+/* Setup Panel Styling */
+.setup-panel {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    background: #fff;
+}
+
+.setup-panel__heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 20px;
+    font-weight: 600;
+    font-size: 14px;
+    color: #1e293b;
+}
+
+.setup-panel__body {
+    padding: 20px;
+}
+
+/* Panel Default Override */
+.panel-default {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    background: #fff;
+}
+
+.panel-heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 20px;
+    font-weight: 600;
+    font-size: 14px;
+    color: #1e293b;
+}
+
+.panel-body {
+    padding: 20px;
+    background: #fff;
+}
+
+/* Setup Form Styling */
+.setup-form {
+    margin: 15px 0;
+}
+
+.setup-form .form-group {
+    margin-bottom: 16px;
+}
+
+.setup-form .form-group:last-child {
+    margin-bottom: 0;
+}
+
+.setup-form .form-control {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.setup-form .form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.setup-form .has-error .form-control {
+    border-color: #dc2626;
+}
+
+/* Setup List Item Styling */
+.setup-list-name {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.setup-list-meta {
+    font-size: 12px;
+    color: #64748b;
+    white-space: nowrap;
+}
+
+/* List Action Links */
+.list-action {
+    color: #007bff;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    margin-left: 4px;
+}
+
+.list-action:hover {
+    background-color: #eff6ff;
+    color: #0056b3;
+    text-decoration: none;
+}
+
+.list-action-danger {
+    color: #dc2626;
+}
+
+.list-action-danger:hover {
+    background-color: #fef2f2;
+    color: #991b1b;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 24px 16px;
+    color: #9ca3af;
+    border: 1px dashed #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.list-meta {
+    color: #6b7280;
+    font-size: 13px;
+    margin-left: 4px;
+}
+
+#campaignList ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+#campaignList > ul > li {
+    padding: 12px 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: #374151;
+    background: #fff;
+    font-weight: 600;
+}
+
+#campaignList > ul > li:hover {
+    border-color: #c7d2fe;
+    background: #f8fafc;
+}
+
+/* Nested campaign items */
+#campaignList ul ul {
+    margin-top: 8px;
+    padding-left: 0;
+}
+
+#campaignList ul ul li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 12px;
+    border-left: 3px solid #e5e7eb;
+    margin-left: 8px;
+    margin-bottom: 4px;
+    font-weight: 400;
+    background: #fafafa;
+    border-radius: 0 6px 6px 0;
+}
+
+#campaignList ul ul li:hover {
+    border-left-color: #007bff;
+    background: #f0f9ff;
+}
+
+/* Setup Button Styling */
+.setup-btn {
+    padding: 10px 20px;
+    font-weight: 500;
+    font-size: 14px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.setup-btn--primary {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: #fff;
+}
+
+.setup-btn--primary:hover {
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+    transform: translateY(-1px);
+}
+
+.setup-btn--danger {
+    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    color: #fff;
+}
+
+.setup-btn--danger:hover {
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+    transform: translateY(-1px);
+}
+
+.setup-btn--secondary {
+    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    color: #fff;
+}
+
+.setup-btn--secondary:hover {
+    box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
+    transform: translateY(-1px);
+}
+
+/* Setup Alert Styling */
+.setup-alert {
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 15px;
+    border: 1px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.setup-alert--success,
+.alert-success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border-color: #86efac;
+    color: #166534;
+}
+
+.setup-alert--danger,
+.alert-danger {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border-color: #fca5a5;
+    color: #991b1b;
+}
+
+.setup-alert--info {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border-color: #7dd3fc;
+    color: #0c4a6e;
+}
+
+.setup-alert i,
+.alert i {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+/* Form Labels */
+.setup-form label {
+    font-weight: 500;
+    font-size: 13px;
+    color: #334155;
+    margin-bottom: 6px;
+}
+
+/* Help Text */
+.help-block {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 4px;
+}
+
+/* Placeholders and Info Text */
+.infotext {
+    font-size: 13px;
+    color: #64748b;
+    display: block;
+    margin-bottom: 8px;
+}
+
+/* Radio and Checkbox Styling */
+.radio label,
+.checkbox label {
+    font-weight: 400;
+    padding-left: 24px;
+    cursor: pointer;
+}
+
+.radio input,
+.checkbox input {
+    margin-left: -24px;
+    margin-top: 2px;
+}
+
+/* Form Separator */
+.form_seperator {
+    border-bottom: 2px solid #e2e8f0;
+}
+
+/* Button Groups in Forms */
+.setup-form .button-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.setup-form .button-group .btn {
+    flex: 1;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .setup-page-header {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px 16px;
+    }
+
+    .setup-page-header__icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    .setup-page-header__icon .glyphicon {
+        font-size: 20px;
+    }
+
+    .setup-page-header__title {
+        font-size: 20px;
+    }
+
+    .setup-page-header__subtitle {
+        font-size: 13px;
+    }
+
+    .setup-form .col-xs-4,
+    .setup-form .col-xs-6 {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+
+    .setup-form .col-xs-offset-4 {
+        margin-left: 0;
+    }
+}
+</style>
 
 <?php template_bottom(); ?>
