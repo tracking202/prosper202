@@ -36,7 +36,7 @@ COPY composer.json composer.lock* ./
 COPY . .
 
 # Install dependencies at build time (for production without volume mount)
-RUN composer install --no-dev --no-interaction --optimize-autoloader || true
+RUN composer install --no-dev --no-interaction --optimize-autoloader
 
 # Use entrypoint to auto-install deps when volume is mounted (development)
 ENTRYPOINT ["docker-entrypoint.sh"]
