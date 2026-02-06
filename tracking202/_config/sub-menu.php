@@ -1,27 +1,233 @@
+<?php if ($navigation[2] == 'setup') { ?>
+<!-- Setup Navigation - Button Style -->
+<style>
+.setup-nav-container {
+    margin-bottom: 20px;
+}
+
+.setup-nav-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.setup-nav-item {
+    margin: 0;
+}
+
+.setup-nav-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 14px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    color: #475569;
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.setup-nav-link:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #1e293b;
+    text-decoration: none;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.setup-nav-link:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+}
+
+.setup-nav-link.active {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0,123,255,0.25);
+}
+
+.setup-nav-link.active:hover {
+    background: linear-gradient(135deg, #0069d9 0%, #004494 100%);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,123,255,0.35);
+}
+
+.setup-nav-link .glyphicon {
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.setup-nav-link.active .glyphicon {
+    opacity: 1;
+}
+
+.setup-nav-text {
+    line-height: 1.2;
+}
+
+/* Responsive - Tablet */
+@media (max-width: 992px) {
+    .setup-nav-link {
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+
+    .setup-nav-link .glyphicon {
+        font-size: 12px;
+    }
+}
+
+/* Responsive - Mobile */
+@media (max-width: 767px) {
+    .setup-nav-container {
+        margin-bottom: 16px;
+    }
+
+    .setup-nav-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+
+    .setup-nav-link {
+        padding: 10px 8px;
+        font-size: 11px;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .setup-nav-link .glyphicon {
+        font-size: 14px;
+    }
+}
+
+/* Responsive - Small Mobile */
+@media (max-width: 480px) {
+    .setup-nav-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+
+    .setup-nav-link {
+        padding: 10px 6px;
+        font-size: 10px;
+        border-radius: 6px;
+    }
+
+    .setup-nav-link .glyphicon {
+        font-size: 13px;
+    }
+
+    .setup-nav-text {
+        font-size: 10px;
+    }
+}
+</style>
+
+<div class="setup-nav-container">
+    <div class="row">
+        <div class="col-xs-12">
+            <ul class="setup-nav-grid">
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/ppc_accounts.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'ppc_accounts.php' || !$navigation[3]) ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-globe"></span>
+                        <span class="setup-nav-text">Traffic Sources</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/aff_networks.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'aff_networks.php') ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-th-large"></span>
+                        <span class="setup-nav-text">Categories</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/aff_campaigns.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'aff_campaigns.php') ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-link"></span>
+                        <span class="setup-nav-text">Campaigns</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/landing_pages.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'landing_pages.php') ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-file"></span>
+                        <span class="setup-nav-text">Landing Pages</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/text_ads.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'text_ads.php') ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-font"></span>
+                        <span class="setup-nav-text">Text Ads</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/rotator.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'rotator.php') ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-refresh"></span>
+                        <span class="setup-nav-text">Redirector</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/attribution_models.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'attribution_models.php') ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-stats"></span>
+                        <span class="setup-nav-text">Attribution</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_landing_code.php"
+                       class="setup-nav-link <?php echo (in_array($navigation[3], ['get_landing_code.php', 'get_simple_landing_code.php', 'get_adv_landing_code.php'])) ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-console"></span>
+                        <span class="setup-nav-text">Get LP Code</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_trackers.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'get_trackers.php') ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-link"></span>
+                        <span class="setup-nav-text">Get Links</span>
+                    </a>
+                </li>
+                <li class="setup-nav-item">
+                    <a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_postback.php"
+                       class="setup-nav-link <?php echo ($navigation[3] == 'get_postback.php') ? 'active' : ''; ?>">
+                        <span class="glyphicon glyphicon-transfer"></span>
+                        <span class="setup-nav-text">Postback/Pixel</span>
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+<?php } else { ?>
+<!-- Other Sections - Original Breadcrumb Style -->
 <div class="row">
   <div class="col-xs-12" id="sub-menu">
     <ul class="breadcrumb">
-            <?php if ($navigation[2] == 'setup') { ?>
-              <li <?php if ($navigation[3] == 'ppc_accounts.php' or !$navigation[3]) { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/ppc_accounts.php">#1 Traffic Sources</a></li>
-              <li <?php if ($navigation[3] == 'aff_networks.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/aff_networks.php">#2 Categories</a></li>
-              <li <?php if ($navigation[3] == 'aff_campaigns.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/aff_campaigns.php">#3 Campaigns</a></li>
-              <li <?php if ($navigation[3] == 'landing_pages.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/landing_pages.php">#4 Landing Pages</a></li>
-              <li <?php if ($navigation[3] == 'text_ads.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/text_ads.php">#5 Text Ads</a></li>
-              <li <?php if ($navigation[3] == 'rotator.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/rotator.php">#6 Redirector</a></li> 
-              <li <?php switch($navigation[3]) { case "get_landing_code.php":  case "get_simple_landing_code.php":  case "get_adv_landing_code.php": echo 'class="active"'; break; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/get_landing_code.php">#7 Get LP Code</a></li> 
-              <li <?php if ($navigation[3] == 'get_trackers.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/get_trackers.php">#8 Get Links</a></li> 
-              <li <?php if ($navigation[3] == 'get_postback.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/setup/get_postback.php">#9 Get Postback/Pixel</a></li> 
-              
-            <?php } ?>
-
             <?php if (($navigation[1] == 'account' and !$navigation[2]) or ($navigation[2] == 'overview')) { ?>
               <li <?php if ($navigation[3] == 'campaign.php' or !$navigation[3]) { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/overview">Campaign Overview</a></li>
               <li <?php if ($navigation[3] == 'breakdown.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/overview/breakdown.php">Breakdown Analysis</a></li>
               <li <?php if ($navigation[3] == 'day-parting.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/overview/day-parting.php">Day Parting</a></li>
-              <li <?php if ($navigation[3] == 'week-parting.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/overview/week-parting.php">Week Parting</a></li> 
+              <li <?php if ($navigation[3] == 'week-parting.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/overview/week-parting.php">Week Parting</a></li>
               <li <?php if ($navigation[3] == 'group-overview.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/overview/group-overview.php">Group Overview</a></li>
           <?php } ?>
-          
+
           <?php if ($navigation[2] == 'analyze') { ?>
               <li <?php if ($navigation[3] == 'keywords.php' or !$navigation[3]) { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/analyze/keywords.php">Keywords</a></li>
               <li <?php if ($navigation[3] == 'text_ads.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/analyze/text_ads.php">Text Ads</a></li>
@@ -37,8 +243,8 @@
               <li <?php if ($navigation[3] == 'platforms.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/analyze/platforms.php">Platforms</a></li>
               <li <?php if ($navigation[3] == 'variables.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/analyze/variables.php">Custom Variables</a></li>
           <?php } ?>
-          
-          
+
+
           <?php if ($navigation[2] == 'update') { ?>
               <li <?php if ($navigation[3] == 'subids.php' or !$navigation[3]) { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/update/subids.php">Update Subids</a></li>
               <li <?php if ($navigation[3] == 'cpc.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/update/cpc.php">Update CPC</a></li>
@@ -48,4 +254,5 @@
           <?php } ?>
     </ul>
   </div>
-</div>  
+</div>
+<?php } ?>
