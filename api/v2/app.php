@@ -119,6 +119,7 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
         })->add(attribution_authorization_middleware('manage_attribution_models'));
 
         $app->get('/metrics', function (Request $request, Response $response) use ($controller): Response {
+            global $db;
             $params = $request->getQueryParams();
             $userId = attribution_authorized_user_id($request);
             if ($userId !== null) {
@@ -126,6 +127,26 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
             }
 
             $result = $controller->getMetrics($params);
+
+            // Supplement with total click count from 202_clicks (attribution only
+            // counts clicks tied to conversions; the dashboard should show ALL clicks)
+            if ($result['status'] === 200 && $db && $userId !== null) {
+                $startHour = isset($params['start_hour']) ? (int) $params['start_hour'] : (time() - (24 * 3600));
+                $endHour = isset($params['end_hour']) ? (int) $params['end_hour'] : time();
+                $clickSql = "SELECT COUNT(*) AS total FROM 202_clicks WHERE user_id = ? AND click_time BETWEEN ? AND ?";
+                $stmt = $db->prepare($clickSql);
+                if ($stmt) {
+                    $stmt->bind_param('iii', $userId, $startHour, $endHour);
+                    $stmt->execute();
+                    $clickResult = $stmt->get_result();
+                    $row = $clickResult ? $clickResult->fetch_assoc() : null;
+                    $stmt->close();
+                    if ($row && isset($result['payload']['data']['totals'])) {
+                        $result['payload']['data']['totals']['clicks'] = (int) $row['total'];
+                    }
+                }
+            }
+
             return respond_json($response, $result['payload'], $result['status']);
         })->add(attribution_authorization_middleware('view_attribution_reports'));
 
