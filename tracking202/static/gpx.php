@@ -117,8 +117,8 @@ if (is_numeric($mysql['click_id'])) {
                 $mysql['click_time'] = $db->real_escape_string((string) ($cpa_row['click_time'] ?? '0'));
 
 		$conv_time = time();
-		$click_time_to_date = new DateTime(date('Y-m-d h:i:s', (int) $mysql['click_time']));
-		$conv_time_to_date = new DateTime(date('Y-m-d h:i:s', (int) $conv_time));
+		$click_time_to_date = new DateTime(date('Y-m-d H:i:s', (int) $mysql['click_time']));
+		$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', (int) $conv_time));
 		$diff = $click_time_to_date->diff($conv_time_to_date);
 		$mysql['time_difference'] =  $db->real_escape_string($diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec');
 		$mysql['conv_time'] = $db->real_escape_string((string) $conv_time);

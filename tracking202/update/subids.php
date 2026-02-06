@@ -84,8 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if ($check_result && $check_result->num_rows === 0) {
 				$conv_time = time();
 				$click_time = (int) $click_row['click_time'];
-				$click_time_to_date = new DateTime(date('Y-m-d h:i:s', $click_time));
-				$conv_time_to_date = new DateTime(date('Y-m-d h:i:s', $conv_time));
+				$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time));
+				$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
 				$diff = $click_time_to_date->diff($conv_time_to_date);
 				$time_difference = $db->real_escape_string($diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec');
 				$campaign_id = $db->real_escape_string((string) $click_row['aff_campaign_id']);
