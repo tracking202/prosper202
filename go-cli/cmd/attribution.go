@@ -39,7 +39,7 @@ var attrModelListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -57,7 +57,7 @@ var attrModelGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -99,7 +99,7 @@ var attrModelCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -133,7 +133,7 @@ var attrModelUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -191,7 +191,7 @@ var attrSnapshotListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -216,7 +216,7 @@ var attrExportListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -240,7 +240,7 @@ var attrExportScheduleCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"p202/internal/api"
-	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -50,7 +49,7 @@ var reportSummaryCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -73,7 +72,7 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -94,7 +93,7 @@ var reportTimeseriesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -117,7 +116,7 @@ var reportWeekpartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -140,7 +139,7 @@ var reportDaypartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }

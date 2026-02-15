@@ -32,7 +32,7 @@ var userListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -50,7 +50,7 @@ var userGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -100,7 +100,7 @@ var userCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -143,7 +143,7 @@ var userUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -194,7 +194,7 @@ var userRoleListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -222,7 +222,7 @@ var userRoleAssignCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -274,7 +274,7 @@ var userAPIKeyListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -292,7 +292,7 @@ var userAPIKeyCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -344,7 +344,7 @@ var userPrefsGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -374,7 +374,7 @@ var userPrefsUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }

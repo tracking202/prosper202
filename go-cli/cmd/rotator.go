@@ -35,7 +35,7 @@ var rotatorListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -53,7 +53,7 @@ var rotatorGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -80,7 +80,7 @@ var rotatorCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -107,7 +107,7 @@ var rotatorUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -176,7 +176,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }

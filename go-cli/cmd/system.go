@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"p202/internal/api"
-	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -24,7 +23,7 @@ var systemHealthCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -41,7 +40,7 @@ var systemVersionCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -58,7 +57,7 @@ var systemDBStatsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -75,7 +74,7 @@ var systemCronCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -96,7 +95,7 @@ var systemErrorsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -113,7 +112,7 @@ var systemDataengineCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }

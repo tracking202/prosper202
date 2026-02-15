@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"p202/internal/api"
-	"p202/internal/output"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -52,7 +51,7 @@ var clickListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
@@ -70,7 +69,7 @@ var clickGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }

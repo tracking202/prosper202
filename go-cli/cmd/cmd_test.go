@@ -46,6 +46,12 @@ func executeCommand(args ...string) (string, string, error) {
 	stdoutBuf := new(bytes.Buffer)
 	stderrBuf := new(bytes.Buffer)
 
+	// Reset persistent global flag state between test invocations.
+	jsonOutput = false
+	csvOutput = false
+	_ = rootCmd.PersistentFlags().Set("json", "false")
+	_ = rootCmd.PersistentFlags().Set("csv", "false")
+
 	rootCmd.SetOut(stdoutBuf)
 	rootCmd.SetErr(stderrBuf)
 	rootCmd.SetArgs(args)
@@ -628,6 +634,44 @@ func TestJSONFlagOutputsRawJSON(t *testing.T) {
 	// Should contain indentation (pretty-printed)
 	if !strings.Contains(stdout, "  ") {
 		t.Errorf("--json output should be pretty-printed, got:\n%s", stdout)
+	}
+}
+
+func TestCSVFlagOutputsCSV(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`[{"id":1,"aff_campaign_name":"Test Campaign"}]`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("--csv", "campaign", "list")
+	if err != nil {
+		t.Fatalf("--csv campaign list error: %v", err)
+	}
+
+	trimmed := strings.TrimSpace(stdout)
+	if !strings.Contains(trimmed, "id,aff_campaign_name") {
+		t.Errorf("CSV output missing header, got:\n%s", stdout)
+	}
+	if !strings.Contains(trimmed, "1,Test Campaign") {
+		t.Errorf("CSV output missing row, got:\n%s", stdout)
+	}
+}
+
+func TestJSONAndCSVMutuallyExclusive(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	_, _, err := executeCommand("--json", "--csv", "campaign", "list")
+	if err == nil {
+		t.Fatal("expected error when both --json and --csv are set")
+	}
+	if !strings.Contains(err.Error(), "cannot be used together") {
+		t.Errorf("error = %q, expected mutual exclusion message", err.Error())
 	}
 }
 

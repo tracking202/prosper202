@@ -65,7 +65,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			output.Render(data, jsonOutput)
+			render(data)
 			return nil
 		},
 	}
@@ -90,7 +90,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			output.Render(data, jsonOutput)
+			render(data)
 			return nil
 		},
 	}
@@ -119,7 +119,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			output.Render(data, jsonOutput)
+			render(data)
 			return nil
 		},
 	}
@@ -150,7 +150,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			output.Render(data, jsonOutput)
+			render(data)
 			return nil
 		},
 	}
@@ -313,7 +313,7 @@ func init() {
 				if err != nil {
 					return err
 				}
-				output.Render(data, jsonOutput)
+				render(data)
 				return nil
 			},
 		}

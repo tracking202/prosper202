@@ -8,6 +8,7 @@ import (
 )
 
 var jsonOutput bool
+var csvOutput bool
 
 var rootCmd = &cobra.Command{
 	Use:           "p202",
@@ -15,6 +16,12 @@ var rootCmd = &cobra.Command{
 	Long:          "p202 is a command-line tool for managing a Prosper202 tracking instance.\nDesigned for both human operators and AI agents.",
 	SilenceErrors: true,
 	SilenceUsage:  true,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if jsonOutput && csvOutput {
+			return fmt.Errorf("--json and --csv cannot be used together")
+		}
+		return nil
+	},
 }
 
 func Execute() {
@@ -30,4 +37,5 @@ func SetVersion(version string) {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output raw JSON instead of tables")
+	rootCmd.PersistentFlags().BoolVar(&csvOutput, "csv", false, "Output as CSV instead of tables")
 }

@@ -1,6 +1,7 @@
 package output
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -51,6 +52,36 @@ func Render(data []byte, jsonMode bool) {
 		}
 	default:
 		fmt.Println(string(data))
+	}
+}
+
+// RenderCSV outputs API response data as CSV.
+func RenderCSV(data []byte) {
+	var parsed interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		os.Stdout.Write(data)
+		if len(data) == 0 || data[len(data)-1] != '\n' {
+			fmt.Println()
+		}
+		return
+	}
+
+	switch v := parsed.(type) {
+	case []interface{}:
+		renderTableCSV(v)
+	case map[string]interface{}:
+		if items, ok := v["data"].([]interface{}); ok {
+			renderTableCSV(items)
+		} else if inner, ok := v["data"].(map[string]interface{}); ok {
+			renderObjectCSV(inner)
+		} else {
+			renderObjectCSV(v)
+		}
+	default:
+		os.Stdout.Write(data)
+		if len(data) == 0 || data[len(data)-1] != '\n' {
+			fmt.Println()
+		}
 	}
 }
 
@@ -140,6 +171,87 @@ func renderPagination(pg map[string]interface{}) {
 	}
 	if len(parts) > 0 {
 		fmt.Printf("\n%s\n", strings.Join(parts, " | "))
+	}
+}
+
+func renderTableCSV(items []interface{}) {
+	if len(items) == 0 {
+		return
+	}
+
+	keySet := map[string]bool{}
+	for _, item := range items {
+		if obj, ok := item.(map[string]interface{}); ok {
+			for k := range obj {
+				keySet[k] = true
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Move "id" to front if present.
+	for i, k := range keys {
+		if k == "id" {
+			keys = append([]string{"id"}, append(keys[:i], keys[i+1:]...)...)
+			break
+		}
+	}
+
+	writer := csv.NewWriter(os.Stdout)
+	if err := writer.Write(keys); err != nil {
+		fmt.Fprintln(os.Stderr, "Error writing CSV header:", err)
+		return
+	}
+
+	for _, item := range items {
+		obj, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		record := make([]string, len(keys))
+		for i, k := range keys {
+			record[i] = formatValue(obj[k])
+		}
+		if err := writer.Write(record); err != nil {
+			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
+			return
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error finalizing CSV output:", err)
+	}
+}
+
+func renderObjectCSV(obj map[string]interface{}) {
+	keys := make([]string, 0, len(obj))
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	writer := csv.NewWriter(os.Stdout)
+	if err := writer.Write([]string{"field", "value"}); err != nil {
+		fmt.Fprintln(os.Stderr, "Error writing CSV header:", err)
+		return
+	}
+
+	for _, k := range keys {
+		if err := writer.Write([]string{k, formatValue(obj[k])}); err != nil {
+			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
+			return
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error finalizing CSV output:", err)
 	}
 }
 

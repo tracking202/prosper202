@@ -102,7 +102,7 @@ var configTestCmd = &cobra.Command{
 		if !jsonOutput {
 			fmt.Println("Connection successful!")
 		}
-		output.Render(data, jsonOutput)
+		render(data)
 		return nil
 	},
 }
