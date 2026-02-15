@@ -12,6 +12,7 @@ import (
 var jsonOutput bool
 var csvOutput bool
 var profileName string
+var groupName string
 
 var rootCmd = &cobra.Command{
 	Use:           "p202",
@@ -43,4 +44,5 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output raw JSON instead of tables")
 	rootCmd.PersistentFlags().BoolVar(&csvOutput, "csv", false, "Output as CSV instead of tables")
 	rootCmd.PersistentFlags().StringVar(&profileName, "profile", "", "Use a named configuration profile")
+	rootCmd.PersistentFlags().StringVar(&groupName, "group", "", "Use a tag group of profiles for multi-profile commands")
 }

@@ -231,5 +231,4 @@ func buildMultiProfilePayload(profileData map[string]map[string]interface{}, agg
 func addMultiProfileFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("all-profiles", false, "Run against all configured profiles")
 	cmd.Flags().String("profiles", "", "Comma-separated profile names")
-	cmd.Flags().String("group", "", "Run against all profiles in a tag group")
 }

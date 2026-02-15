@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -363,6 +364,26 @@ func readProfileField(raw map[string]interface{}, profileName, field string) str
 	return value
 }
 
+func readProfileTags(raw map[string]interface{}, profileName string) []string {
+	profiles, _ := raw["profiles"].(map[string]interface{})
+	if profiles == nil {
+		return nil
+	}
+	profileObj, _ := profiles[profileName].(map[string]interface{})
+	if profileObj == nil {
+		return nil
+	}
+	rawTags, _ := profileObj["tags"].([]interface{})
+	out := make([]string, 0, len(rawTags))
+	for _, item := range rawTags {
+		if tag, ok := item.(string); ok {
+			out = append(out, tag)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // executeCommand runs rootCmd with the given args and captures stdout/stderr.
 // It resets the rootCmd output after execution.
 func executeCommand(args ...string) (string, string, error) {
@@ -375,9 +396,11 @@ func executeCommand(args ...string) (string, string, error) {
 	jsonOutput = false
 	csvOutput = false
 	profileName = ""
+	groupName = ""
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	_ = rootCmd.PersistentFlags().Set("csv", "false")
 	_ = rootCmd.PersistentFlags().Set("profile", "")
+	_ = rootCmd.PersistentFlags().Set("group", "")
 
 	rootCmd.SetOut(stdoutBuf)
 	rootCmd.SetErr(stderrBuf)
@@ -648,6 +671,71 @@ func TestConfigListProfiles(t *testing.T) {
 	dataRows, ok := parsed["data"].([]interface{})
 	if !ok || len(dataRows) != 2 {
 		t.Fatalf("expected two profile rows, got %#v", parsed["data"])
+	}
+}
+
+func TestTagProfile(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod": {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+	})
+
+	_, _, err := executeCommand("config", "tag-profile", "prod", "ENV:Prod", "region:US")
+	if err != nil {
+		t.Fatalf("config tag-profile error: %v", err)
+	}
+
+	raw := readSavedConfigRaw(t, tmp)
+	tags := readProfileTags(raw, "prod")
+	if len(tags) != 2 || tags[0] != "env:prod" || tags[1] != "region:us" {
+		t.Fatalf("unexpected normalized tags: %#v", tags)
+	}
+}
+
+func TestUntagProfile(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod": {"url": "https://prod.example.com", "api_key": "prod-key-123456", "tags": []string{"env:prod", "region:us"}},
+	})
+
+	_, _, err := executeCommand("config", "untag-profile", "prod", "region:us")
+	if err != nil {
+		t.Fatalf("config untag-profile error: %v", err)
+	}
+
+	raw := readSavedConfigRaw(t, tmp)
+	tags := readProfileTags(raw, "prod")
+	if len(tags) != 1 || tags[0] != "env:prod" {
+		t.Fatalf("unexpected tags after untag: %#v", tags)
+	}
+}
+
+func TestListProfilesFilterByTag(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": "https://prod.example.com", "api_key": "prod-key-123456", "tags": []string{"env:prod", "region:us"}},
+		"staging": {"url": "https://staging.example.com", "api_key": "staging-key-123456", "tags": []string{"env:staging", "region:us"}},
+	})
+
+	stdout, _, err := executeCommand("config", "list-profiles", "--tag", "env:prod", "--json")
+	if err != nil {
+		t.Fatalf("config list-profiles --tag error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	rows, _ := parsed["data"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row from tag filter, got %d", len(rows))
+	}
+	row, _ := rows[0].(map[string]interface{})
+	if row["name"] != "prod" {
+		t.Fatalf("filtered profile should be prod, got %#v", row["name"])
 	}
 }
 
@@ -2328,6 +2416,41 @@ func TestDashboardAllProfilesAggregates(t *testing.T) {
 	aggregated, _ := parsed["aggregated"].(map[string]interface{})
 	if got := int(aggregated["total_clicks"].(float64)); got != 10 {
 		t.Fatalf("aggregated total_clicks=%d, want 10", got)
+	}
+}
+
+func TestResolveGroupViaReportSummary(t *testing.T) {
+	prodSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"total_clicks":8}}`))
+	}))
+	defer prodSrv.Close()
+
+	stageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"total_clicks":2}}`))
+	}))
+	defer stageSrv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": prodSrv.URL, "api_key": "prod-key-123456", "tags": []string{"env:prod"}},
+		"staging": {"url": stageSrv.URL, "api_key": "staging-key-123456", "tags": []string{"env:staging"}},
+	})
+
+	stdout, _, err := executeCommand("report", "summary", "--group", "env:prod", "--json")
+	if err != nil {
+		t.Fatalf("report summary --group error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	aggregated, _ := parsed["aggregated"].(map[string]interface{})
+	if got := int(aggregated["total_clicks"].(float64)); got != 8 {
+		t.Fatalf("group-resolved aggregated total_clicks=%d, want 8", got)
 	}
 }
 
