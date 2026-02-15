@@ -65,7 +65,10 @@ class ReportsController
 
         $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Summary query failed');
+        }
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -129,7 +132,10 @@ class ReportsController
 
         $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Breakdown query failed');
+        }
         $result = $stmt->get_result();
 
         $rows = [];
@@ -184,7 +190,10 @@ class ReportsController
 
         $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Timeseries query failed');
+        }
         $result = $stmt->get_result();
 
         $rows = [];

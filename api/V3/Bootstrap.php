@@ -63,7 +63,12 @@ final class Bootstrap
         header('Content-Type: application/json; charset=utf-8');
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: no-store');
-        echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            $json = json_encode(['error' => true, 'message' => 'Response encoding failed', 'status' => 500]);
+            http_response_code(500);
+        }
+        echo $json;
     }
 
     public static function errorResponse(string $message, int $status = 400, array $extra = []): void

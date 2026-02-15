@@ -49,7 +49,10 @@ class ConversionsController
         $countSql = "SELECT COUNT(*) as total FROM 202_conversion_logs cl $whereClause";
         $stmt = $this->prepare($countSql);
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Count query failed');
+        }
         $total = (int)$stmt->get_result()->fetch_assoc()['total'];
         $stmt->close();
 
@@ -68,7 +71,10 @@ class ConversionsController
 
         $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('List query failed');
+        }
         $result = $stmt->get_result();
 
         $rows = [];
@@ -94,7 +100,10 @@ class ConversionsController
 
         $stmt = $this->prepare($sql);
         $stmt->bind_param('ii', $id, $this->userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -113,7 +122,10 @@ class ConversionsController
 
         $stmt = $this->prepare('SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
         $stmt->bind_param('ii', $clickId, $this->userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         $click = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -143,7 +155,10 @@ class ConversionsController
 
             $stmt = $this->prepare('UPDATE 202_clicks SET click_lead = 1, click_payout = ? WHERE click_id = ? AND user_id = ?');
             $stmt->bind_param('dii', $payout, $clickId, $this->userId);
-            $stmt->execute();
+            if (!$stmt->execute()) {
+                $stmt->close();
+                throw new DatabaseException('Failed to update click');
+            }
             $stmt->close();
 
             $this->db->commit();
@@ -160,7 +175,10 @@ class ConversionsController
         $this->get($id);
         $stmt = $this->prepare('UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ?');
         $stmt->bind_param('ii', $id, $this->userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Delete failed');
+        }
         $stmt->close();
     }
 

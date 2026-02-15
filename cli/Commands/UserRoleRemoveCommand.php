@@ -41,7 +41,8 @@ class UserRoleRemoveCommand extends BaseCommand
             }
         }
 
-        $this->render($output, $this->client()->delete('users/' . $userId . '/roles/' . $roleId), $input);
+        $this->client()->delete('users/' . $userId . '/roles/' . $roleId);
+        $output->writeln(sprintf('<info>Removed role #%s from user #%s.</info>', $roleId, $userId));
         return Command::SUCCESS;
     }
 }

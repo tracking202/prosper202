@@ -39,8 +39,8 @@ class AttributionModelDeleteCommand extends BaseCommand
             }
         }
 
-        $result = $this->client()->delete('attribution/models/' . $id);
-        $this->render($output, $result, $input);
+        $this->client()->delete('attribution/models/' . $id);
+        $output->writeln(sprintf('<info>Deleted attribution model #%s.</info>', $id));
         return Command::SUCCESS;
     }
 }

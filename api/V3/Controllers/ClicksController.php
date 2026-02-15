@@ -62,7 +62,10 @@ class ClicksController
         $countSql = "SELECT COUNT(*) as total FROM 202_clicks c $whereClause";
         $stmt = $this->prepare($countSql);
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Count query failed');
+        }
         $total = (int)$stmt->get_result()->fetch_assoc()['total'];
         $stmt->close();
 
@@ -91,7 +94,10 @@ class ClicksController
 
         $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('List query failed');
+        }
         $result = $stmt->get_result();
 
         $rows = [];
@@ -134,7 +140,10 @@ class ClicksController
 
         $stmt = $this->prepare($sql);
         $stmt->bind_param('ii', $id, $this->userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 

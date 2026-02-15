@@ -26,7 +26,10 @@ class UsersController
             'SELECT user_id, user_fname, user_lname, user_name, user_email, user_timezone, user_active, user_deleted, user_time_register
             FROM 202_users WHERE user_deleted = 0 ORDER BY user_id ASC'
         );
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('List query failed');
+        }
         $result = $stmt->get_result();
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -43,7 +46,10 @@ class UsersController
             FROM 202_users WHERE user_id = ? AND user_deleted = 0 LIMIT 1'
         );
         $stmt->bind_param('i', $id);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -53,7 +59,10 @@ class UsersController
 
         $stmt = $this->prepare('SELECT r.role_id, r.role_name FROM 202_user_role ur INNER JOIN 202_roles r ON ur.role_id = r.role_id WHERE ur.user_id = ?');
         $stmt->bind_param('i', $id);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Roles query failed');
+        }
         $roles = [];
         $result = $stmt->get_result();
         while ($r = $result->fetch_assoc()) {
@@ -83,7 +92,10 @@ class UsersController
 
         $stmt = $this->prepare('SELECT user_id FROM 202_users WHERE user_name = ? LIMIT 1');
         $stmt->bind_param('s', $username);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         if ($stmt->get_result()->num_rows > 0) {
             $stmt->close();
             throw new ConflictException('Username already exists');
@@ -113,7 +125,7 @@ class UsersController
 
             $stmt = $this->prepare('INSERT INTO 202_users_pref (user_id) VALUES (?)');
             $stmt->bind_param('i', $newId);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Failed to create user preferences'); }
             $stmt->close();
 
             $this->db->commit();
@@ -163,7 +175,10 @@ class UsersController
 
         $stmt = $this->prepare('UPDATE 202_users SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Update failed');
+        }
         $stmt->close();
 
         return $this->get($id);
@@ -174,7 +189,10 @@ class UsersController
         $this->get($id);
         $stmt = $this->prepare('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?');
         $stmt->bind_param('i', $id);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Delete failed');
+        }
         $stmt->close();
     }
 
@@ -183,6 +201,9 @@ class UsersController
     public function listRoles(): array
     {
         $result = $this->db->query('SELECT role_id, role_name FROM 202_roles ORDER BY role_id');
+        if (!$result) {
+            throw new DatabaseException('Roles query failed');
+        }
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             $rows[] = $row;
@@ -199,7 +220,10 @@ class UsersController
 
         $stmt = $this->prepare('INSERT IGNORE INTO 202_user_role (user_id, role_id) VALUES (?, ?)');
         $stmt->bind_param('ii', $userId, $roleId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Failed to assign role');
+        }
         $stmt->close();
 
         return $this->get($userId);
@@ -209,7 +233,10 @@ class UsersController
     {
         $stmt = $this->prepare('DELETE FROM 202_user_role WHERE user_id = ? AND role_id = ?');
         $stmt->bind_param('ii', $userId, $roleId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Failed to remove role');
+        }
         $stmt->close();
     }
 
@@ -219,7 +246,10 @@ class UsersController
     {
         $stmt = $this->prepare('SELECT user_id, api_key, created_at FROM 202_api_keys WHERE user_id = ?');
         $stmt->bind_param('i', $userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         $result = $stmt->get_result();
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -236,19 +266,10 @@ class UsersController
     public function createApiKey(int $userId): array
     {
         $key = bin2hex(random_bytes(32));
-        $hash = hash('sha256', $key);
         $now = time();
 
-        // Store both the hash (for future lookups) and the plaintext (for legacy compat).
-        // The plaintext column can be dropped after migration.
-        $stmt = $this->prepare('INSERT INTO 202_api_keys (user_id, api_key, api_key_hash, created_at) VALUES (?, ?, ?, ?)');
-        if (!$stmt) {
-            // Fallback if api_key_hash column doesn't exist yet
-            $stmt = $this->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
-            $stmt->bind_param('isi', $userId, $key, $now);
-        } else {
-            $stmt->bind_param('issi', $userId, $key, $hash, $now);
-        }
+        $stmt = $this->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
+        $stmt->bind_param('isi', $userId, $key, $now);
 
         if (!$stmt->execute()) {
             $stmt->close();
@@ -256,7 +277,7 @@ class UsersController
         }
         $stmt->close();
 
-        // Return the full key only on creation — it's never shown again.
+        // Return the full key only on creation — it cannot be retrieved later.
         return ['data' => ['user_id' => $userId, 'api_key' => $key, 'created_at' => $now]];
     }
 
@@ -264,7 +285,10 @@ class UsersController
     {
         $stmt = $this->prepare('DELETE FROM 202_api_keys WHERE user_id = ? AND api_key = ?');
         $stmt->bind_param('is', $userId, $apiKey);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Failed to delete API key');
+        }
         $stmt->close();
     }
 
@@ -274,7 +298,10 @@ class UsersController
     {
         $stmt = $this->prepare('SELECT * FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $stmt->bind_param('i', $userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -317,7 +344,10 @@ class UsersController
 
         $stmt = $this->prepare('UPDATE 202_users_pref SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Preferences update failed');
+        }
         $stmt->close();
 
         return $this->getPreferences($userId);

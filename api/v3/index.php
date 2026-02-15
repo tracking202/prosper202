@@ -16,7 +16,16 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Cache-Control: no-store');
 
-// ─── CORS ────────────────────────────────────────────────────────────
+// ─── Bootstrap ───────────────────────────────────────────────────────
+try {
+    Bootstrap::init();
+    $db = Bootstrap::db();
+} catch (\Throwable $e) {
+    Bootstrap::errorResponse('Service unavailable', 503);
+    exit;
+}
+
+// ─── CORS (after init so config constants are available) ─────────────
 $allowedOrigin = defined('API_CORS_ORIGIN') ? API_CORS_ORIGIN : '';
 if ($allowedOrigin !== '') {
     header('Access-Control-Allow-Origin: ' . $allowedOrigin);
@@ -26,15 +35,6 @@ if ($allowedOrigin !== '') {
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
-    exit;
-}
-
-// ─── Bootstrap ───────────────────────────────────────────────────────
-try {
-    Bootstrap::init();
-    $db = Bootstrap::db();
-} catch (\Throwable $e) {
-    Bootstrap::errorResponse('Service unavailable', 503);
     exit;
 }
 
@@ -58,8 +58,13 @@ $headers     = getallheaders() ?: [];
 $payload = [];
 if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
     $raw = file_get_contents('php://input', false, null, 0, 1_048_576); // 1 MB limit
-    if ($raw) {
-        $payload = json_decode($raw, true) ?? [];
+    if ($raw !== '' && $raw !== false) {
+        $payload = json_decode($raw, true);
+        if ($payload === null && json_last_error() !== JSON_ERROR_NONE) {
+            Bootstrap::errorResponse('Invalid JSON body', 400);
+            exit;
+        }
+        $payload = $payload ?? [];
     }
 }
 
@@ -224,11 +229,10 @@ try {
         });
     });
 
-    // ── System (admin only) ──────────────────────────────────────────
+    // ── System (admin only; /health is handled above without auth) ─────
     $router->group('/system', function (Router $r) use ($db, $auth, &$queryParams) {
         $make = fn() => new \Api\V3\Controllers\SystemController($db);
 
-        $r->get('/health',     fn() => $make()->health());
         $r->get('/version',    fn() => $make()->version());
         $r->get('/db-stats',   fn() => $make()->dbStats());
         $r->get('/cron',       fn() => $make()->cronStatus());
