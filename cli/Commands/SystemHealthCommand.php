@@ -4,26 +4,23 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
-use P202Cli\ApiClient;
-use P202Cli\Config;
-use P202Cli\Formatter;
 use Symfony\Component\Console\Command\Command;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
-class SystemHealthCommand extends Command
+class SystemHealthCommand extends BaseCommand
 {
     protected static $defaultName = 'system:health';
+
     protected function configure(): void
     {
-        $this->setDescription('Check system health')
-            ->addOption('json', null, InputOption::VALUE_NONE, 'Output as JSON');
+        parent::configure();
+        $this->setDescription('Check system health');
     }
-    protected function execute(InputInterface $input, OutputInterface $output): int
+
+    protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $client = ApiClient::fromConfig(new Config());
-        Formatter::output($output, $client->get('system/health'), (bool)$input->getOption('json'));
+        $this->render($output, $this->client()->get('system/health'), $input);
         return Command::SUCCESS;
     }
 }

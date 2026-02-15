@@ -15,9 +15,9 @@ class PpcAccountsController extends Controller
     protected function fields(): array
     {
         return [
-            'ppc_account_name'    => ['type' => 's', 'required' => true],
+            'ppc_account_name'    => ['type' => 's', 'required' => true, 'max_length' => 255],
             'ppc_network_id'      => ['type' => 'i', 'required' => true],
-            'ppc_account_default' => ['type' => 'i', 'required' => false],
+            'ppc_account_default' => ['type' => 'i'],
         ];
     }
 }

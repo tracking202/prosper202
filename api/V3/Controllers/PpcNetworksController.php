@@ -15,7 +15,7 @@ class PpcNetworksController extends Controller
     protected function fields(): array
     {
         return [
-            'ppc_network_name' => ['type' => 's', 'required' => true],
+            'ppc_network_name' => ['type' => 's', 'required' => true, 'max_length' => 255],
         ];
     }
 }
