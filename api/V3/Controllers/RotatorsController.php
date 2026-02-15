@@ -26,13 +26,19 @@ class RotatorsController
 
         $stmt = $this->prepare('SELECT COUNT(*) as total FROM 202_rotators WHERE user_id = ?');
         $stmt->bind_param('i', $this->userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Count query failed');
+        }
         $total = (int)$stmt->get_result()->fetch_assoc()['total'];
         $stmt->close();
 
         $stmt = $this->prepare('SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp FROM 202_rotators WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?');
         $stmt->bind_param('iii', $this->userId, $limit, $offset);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('List query failed');
+        }
         $result = $stmt->get_result();
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -47,7 +53,10 @@ class RotatorsController
     {
         $stmt = $this->prepare('SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp FROM 202_rotators WHERE id = ? AND user_id = ? LIMIT 1');
         $stmt->bind_param('ii', $id, $this->userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -58,7 +67,10 @@ class RotatorsController
         // Batch-fetch rules, criteria, and redirects
         $stmt = $this->prepare('SELECT id, rotator_id, rule_name, splittest, status FROM 202_rotator_rules WHERE rotator_id = ? ORDER BY id ASC');
         $stmt->bind_param('i', $id);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
         $rules = [];
         $ruleIds = [];
         $result = $stmt->get_result();
@@ -76,7 +88,10 @@ class RotatorsController
 
             $cStmt = $this->prepare("SELECT id, rotator_id, rule_id, type, statement, value FROM 202_rotator_rules_criteria WHERE rule_id IN ($placeholders)");
             $cStmt->bind_param($types, ...$ruleIds);
-            $cStmt->execute();
+            if (!$cStmt->execute()) {
+                $cStmt->close();
+                throw new DatabaseException('Query failed');
+            }
             $cr = $cStmt->get_result();
             while ($c = $cr->fetch_assoc()) {
                 $rules[$c['rule_id']]['criteria'][] = $c;
@@ -85,7 +100,10 @@ class RotatorsController
 
             $rStmt = $this->prepare("SELECT id, rule_id, redirect_url, redirect_campaign, redirect_lp, weight, name FROM 202_rotator_rules_redirects WHERE rule_id IN ($placeholders)");
             $rStmt->bind_param($types, ...$ruleIds);
-            $rStmt->execute();
+            if (!$rStmt->execute()) {
+                $rStmt->close();
+                throw new DatabaseException('Query failed');
+            }
             $rr = $rStmt->get_result();
             while ($rd = $rr->fetch_assoc()) {
                 $rules[$rd['rule_id']]['redirects'][] = $rd;
@@ -148,7 +166,10 @@ class RotatorsController
 
         $stmt = $this->prepare('UPDATE 202_rotators SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?');
         $stmt->bind_param($types, ...$binds);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Update failed');
+        }
         $stmt->close();
 
         return $this->get($id);
@@ -162,22 +183,22 @@ class RotatorsController
         try {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?');
             $stmt->bind_param('i', $id);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete criteria failed'); }
             $stmt->close();
 
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_redirects WHERE rule_id IN (SELECT id FROM 202_rotator_rules WHERE rotator_id = ?)');
             $stmt->bind_param('i', $id);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete redirects failed'); }
             $stmt->close();
 
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules WHERE rotator_id = ?');
             $stmt->bind_param('i', $id);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete rules failed'); }
             $stmt->close();
 
             $stmt = $this->prepare('DELETE FROM 202_rotators WHERE id = ? AND user_id = ?');
             $stmt->bind_param('ii', $id, $this->userId);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete rotator failed'); }
             $stmt->close();
 
             $this->db->commit();
@@ -209,7 +230,7 @@ class RotatorsController
         try {
             $stmt = $this->prepare('INSERT INTO 202_rotator_rules (rotator_id, rule_name, splittest, status) VALUES (?, ?, ?, ?)');
             $stmt->bind_param('isii', $rotatorId, $ruleName, $splittest, $status);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Failed to create rule'); }
             $ruleId = $stmt->insert_id;
             $stmt->close();
 
@@ -220,7 +241,7 @@ class RotatorsController
                     $cStatement = (string)($c['statement'] ?? '');
                     $cValue = (string)($c['value'] ?? '');
                     $insertCriteria->bind_param('iisss', $rotatorId, $ruleId, $cType, $cStatement, $cValue);
-                    $insertCriteria->execute();
+                    if (!$insertCriteria->execute()) { $insertCriteria->close(); throw new DatabaseException('Failed to insert criterion'); }
                 }
                 $insertCriteria->close();
             }
@@ -234,7 +255,7 @@ class RotatorsController
                     $rWeight = (int)($r['weight'] ?? 100);
                     $rName = (string)($r['name'] ?? '');
                     $insertRedirect->bind_param('isiiis', $ruleId, $rUrl, $rCampaign, $rLp, $rWeight, $rName);
-                    $insertRedirect->execute();
+                    if (!$insertRedirect->execute()) { $insertRedirect->close(); throw new DatabaseException('Failed to insert redirect'); }
                 }
                 $insertRedirect->close();
             }
@@ -256,17 +277,17 @@ class RotatorsController
         try {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
             $stmt->bind_param('i', $ruleId);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete criteria failed'); }
             $stmt->close();
 
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_redirects WHERE rule_id = ?');
             $stmt->bind_param('i', $ruleId);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete redirects failed'); }
             $stmt->close();
 
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules WHERE id = ? AND rotator_id = ?');
             $stmt->bind_param('ii', $ruleId, $rotatorId);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete rule failed'); }
             $stmt->close();
 
             $this->db->commit();

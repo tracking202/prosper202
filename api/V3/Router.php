@@ -96,16 +96,18 @@ final class Router
     }
 
     /**
-     * Attempt to dispatch a request. Returns null if no route matches.
+     * Attempt to match a request. Returns null if no route matches.
      *
-     * @param array<string, mixed> $context  Shared context passed to the handler (params, payload, etc.)
+     * PUT and PATCH are treated as interchangeable: a route registered via put()
+     * will also match PATCH requests, and vice-versa. If you need distinct behaviour,
+     * register the more specific handler first.
+     *
      * @return array{handler: callable, middleware: callable[], pathParams: array<string, string>}|null
      */
     public function match(string $method, string $path): ?array
     {
         $method = strtoupper($method);
 
-        // Support PUT/PATCH on same handler by matching both when registered via put().
         foreach ($this->routes as $route) {
             $methodMatch = $route['method'] === $method
                 || ($route['method'] === 'PUT' && $method === 'PATCH')

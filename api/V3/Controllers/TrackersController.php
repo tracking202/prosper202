@@ -56,7 +56,10 @@ class TrackersController extends Controller
     {
         $stmt = $this->prepare('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $stmt->bind_param('i', $this->userId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new \Api\V3\Exception\DatabaseException('Failed to query tracking domain');
+        }
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 

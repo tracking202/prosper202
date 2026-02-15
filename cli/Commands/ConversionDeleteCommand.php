@@ -39,8 +39,8 @@ class ConversionDeleteCommand extends BaseCommand
             }
         }
 
-        $result = $this->client()->delete('conversions/' . $id);
-        $this->render($output, $result, $input);
+        $this->client()->delete('conversions/' . $id);
+        $output->writeln(sprintf('<info>Deleted conversion #%s.</info>', $id));
         return Command::SUCCESS;
     }
 }

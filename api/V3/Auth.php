@@ -42,32 +42,6 @@ final class Auth
             throw new AuthException('API key required. Pass via Authorization: Bearer <key> header.', 401);
         }
 
-        // Look up by hash — keys are stored hashed (SHA-256).
-        $hash = hash('sha256', $apiKey);
-        $stmt = $db->prepare('SELECT user_id FROM 202_api_keys WHERE api_key_hash = ? AND revoked = 0 LIMIT 1');
-        if (!$stmt) {
-            // Fall back to legacy plaintext lookup for migration period.
-            return self::legacyLookup($apiKey, $db);
-        }
-        $stmt->bind_param('s', $hash);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $row = $result ? $result->fetch_assoc() : null;
-        $stmt->close();
-
-        if (!$row) {
-            // Fall back to legacy plaintext lookup for migration period.
-            return self::legacyLookup($apiKey, $db);
-        }
-
-        return self::loadRoles((int)$row['user_id'], $db);
-    }
-
-    /**
-     * Legacy lookup for installations that haven't migrated API keys to hashed storage.
-     */
-    private static function legacyLookup(string $apiKey, \mysqli $db): self
-    {
         $stmt = $db->prepare('SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1');
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);

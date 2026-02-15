@@ -41,7 +41,8 @@ class UserApiKeyDeleteCommand extends BaseCommand
             }
         }
 
-        $this->render($output, $this->client()->delete('users/' . $userId . '/api-keys/' . $apiKey), $input);
+        $this->client()->delete('users/' . $userId . '/api-keys/' . $apiKey);
+        $output->writeln('<info>API key deleted.</info>');
         return Command::SUCCESS;
     }
 }

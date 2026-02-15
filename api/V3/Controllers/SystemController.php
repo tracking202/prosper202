@@ -68,7 +68,7 @@ class SystemController
                 "SELECT TABLE_ROWS as cnt FROM information_schema.TABLES WHERE table_schema = ? AND table_name = ?"
             );
             $stmt->bind_param('ss', $dbName, $table);
-            $stmt->execute();
+            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Stats query failed'); }
             $row = $stmt->get_result()->fetch_assoc();
             $stmt->close();
             $stats[] = ['table' => $table, 'label' => $label, 'rows_estimate' => (int)($row['cnt'] ?? 0)];
@@ -118,7 +118,10 @@ class SystemController
         $limit = max(1, min(100, (int)($params['limit'] ?? 20)));
         $stmt = $this->prepare('SELECT mysql_error_id, mysql_error_time, mysql_error_message FROM 202_mysql_errors ORDER BY mysql_error_id DESC LIMIT ?');
         $stmt->bind_param('i', $limit);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Errors query failed');
+        }
         $result = $stmt->get_result();
         $rows = [];
         while ($row = $result->fetch_assoc()) {

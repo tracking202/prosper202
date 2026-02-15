@@ -41,8 +41,8 @@ class RotatorRuleDeleteCommand extends BaseCommand
             }
         }
 
-        $result = $this->client()->delete('rotators/' . $rotatorId . '/rules/' . $ruleId);
-        $this->render($output, $result, $input);
+        $this->client()->delete('rotators/' . $rotatorId . '/rules/' . $ruleId);
+        $output->writeln(sprintf('<info>Deleted rule #%s from rotator #%s.</info>', $ruleId, $rotatorId));
         return Command::SUCCESS;
     }
 }

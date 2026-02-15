@@ -39,7 +39,8 @@ class UserDeleteCommand extends BaseCommand
             }
         }
 
-        $this->render($output, $this->client()->delete('users/' . $id), $input);
+        $this->client()->delete('users/' . $id);
+        $output->writeln(sprintf('<info>Deleted user #%s.</info>', $id));
         return Command::SUCCESS;
     }
 }

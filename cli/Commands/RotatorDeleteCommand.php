@@ -39,8 +39,8 @@ class RotatorDeleteCommand extends BaseCommand
             }
         }
 
-        $result = $this->client()->delete('rotators/' . $id);
-        $this->render($output, $result, $input);
+        $this->client()->delete('rotators/' . $id);
+        $output->writeln(sprintf('<info>Deleted rotator #%s.</info>', $id));
         return Command::SUCCESS;
     }
 }
