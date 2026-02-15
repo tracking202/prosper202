@@ -135,12 +135,19 @@ class SystemController
 
     public function dataengineStatus(): array
     {
-        $result = $this->db->query('SELECT job_id, time_from, time_to, status, rows_processed FROM 202_dataengine_job ORDER BY time_from DESC LIMIT 20');
+        $result = $this->db->query('SELECT time_from, time_to, processing, processed FROM 202_dataengine_job ORDER BY time_from DESC LIMIT 20');
         $jobs = [];
         if ($result) {
             while ($row = $result->fetch_assoc()) {
                 $row['time_from_human'] = date('Y-m-d H:i:s', (int)$row['time_from']);
                 $row['time_to_human'] = date('Y-m-d H:i:s', (int)$row['time_to']);
+                if ((int)$row['processed'] === 1) {
+                    $row['status'] = 'completed';
+                } elseif ((int)$row['processing'] === 1) {
+                    $row['status'] = 'processing';
+                } else {
+                    $row['status'] = 'pending';
+                }
                 $jobs[] = $row;
             }
         }
