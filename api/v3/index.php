@@ -139,6 +139,7 @@ try {
         $r->get('/breakdown',  fn() => $crud($cls)->breakdown($queryParams));
         $r->get('/timeseries', fn() => $crud($cls)->timeseries($queryParams));
         $r->get('/daypart',    fn() => $crud($cls)->daypart($queryParams));
+        $r->get('/weekpart',   fn() => $crud($cls)->weekpart($queryParams));
     });
 
     // ── Rotators ─────────────────────────────────────────────────────
@@ -259,7 +260,7 @@ try {
             'text_ads'      => '/text-ads',
             'clicks'        => '/clicks',
             'conversions'   => '/conversions',
-            'reports'       => '/reports/{summary|breakdown|timeseries|daypart}',
+            'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
             'rotators'      => '/rotators',
             'attribution'   => '/attribution/models',
             'users'         => '/users',

@@ -44,6 +44,21 @@ class ReportsController
         'roi',
         'cpa',
     ];
+    private const WEEKPART_ALLOWED_SORTS = [
+        'day_of_week',
+        'total_clicks',
+        'total_click_throughs',
+        'total_leads',
+        'total_income',
+        'total_cost',
+        'total_net',
+        'epc',
+        'avg_cpc',
+        'conv_rate',
+        'roi',
+        'cpa',
+    ];
+    private const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     private const METRIC_FIELDS = [
         'total_clicks',
         'total_click_throughs',
@@ -308,7 +323,7 @@ class ReportsController
 
         $rowsByHour = [];
         for ($hour = 0; $hour <= 23; $hour++) {
-            $rowsByHour[$hour] = $this->zeroMetricRow($hour);
+            $rowsByHour[$hour] = $this->zeroPartRow('hour_of_day', $hour);
         }
 
         while ($row = $result->fetch_assoc()) {
@@ -316,12 +331,98 @@ class ReportsController
             if ($hour < 0 || $hour > 23) {
                 continue;
             }
-            $rowsByHour[$hour] = $this->hydrateMetricRow($hour, $row);
+            $rowsByHour[$hour] = $this->hydratePartRow('hour_of_day', $hour, $row);
         }
         $stmt->close();
 
         $rows = array_values($rowsByHour);
-        $this->sortDaypartRows($rows, $sortBy, $sortDir);
+        $this->sortPartRows($rows, 'hour_of_day', $sortBy, $sortDir);
+
+        return [
+            'data' => $rows,
+            'timezone' => $timezone,
+        ];
+    }
+
+    public function weekpart(array $params): array
+    {
+        $sortBy = (string)($params['sort'] ?? 'day_of_week');
+        if (!in_array($sortBy, self::WEEKPART_ALLOWED_SORTS, true)) {
+            throw new ValidationException(
+                'Invalid sort field',
+                ['sort' => 'Valid values: ' . implode(', ', self::WEEKPART_ALLOWED_SORTS)]
+            );
+        }
+
+        $sortDir = strtoupper((string)($params['sort_dir'] ?? 'ASC'));
+        if (!in_array($sortDir, ['ASC', 'DESC'], true)) {
+            $sortDir = 'ASC';
+        }
+
+        $timezone = $this->resolveUserTimezone();
+
+        $where = ['de.user_id = ?'];
+        $binds = [$this->userId];
+        $types = 'i';
+
+        $this->applyTimeFilters($params, $where, $binds, $types);
+        $this->applyEntityFilters($params, $where, $binds, $types);
+
+        $whereClause = 'WHERE ' . implode(' AND ', $where);
+
+        // WEEKDAY() returns 0=Monday .. 6=Sunday
+        $sql = "SELECT
+                COALESCE(
+                    WEEKDAY(CONVERT_TZ(FROM_UNIXTIME(de.click_time), '+00:00', ?)),
+                    MOD(FLOOR(de.click_time / 86400) + 3, 7)
+                ) as day_of_week,
+                SUM(de.clicks) as total_clicks,
+                SUM(de.click_out) as total_click_throughs,
+                SUM(de.leads) as total_leads,
+                SUM(de.income) as total_income,
+                SUM(de.cost) as total_cost,
+                SUM(de.income) - SUM(de.cost) as total_net,
+                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
+                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
+                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
+                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
+                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa
+            FROM 202_dataengine de
+            $whereClause
+            GROUP BY day_of_week";
+
+        $stmt = $this->prepare($sql);
+        $weekpartBinds = array_merge([$timezone], $binds);
+        $weekpartTypes = 's' . $types;
+        $stmt->bind_param($weekpartTypes, ...$weekpartBinds);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Weekpart query failed');
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Weekpart query failed');
+        }
+
+        $rowsByDay = [];
+        for ($day = 0; $day <= 6; $day++) {
+            $rowsByDay[$day] = $this->zeroPartRow('day_of_week', $day);
+            $rowsByDay[$day]['day_name'] = self::DAY_NAMES[$day];
+        }
+
+        while ($row = $result->fetch_assoc()) {
+            $day = (int)($row['day_of_week'] ?? -1);
+            if ($day < 0 || $day > 6) {
+                continue;
+            }
+            $rowsByDay[$day] = $this->hydratePartRow('day_of_week', $day, $row);
+            $rowsByDay[$day]['day_name'] = self::DAY_NAMES[$day];
+        }
+        $stmt->close();
+
+        $rows = array_values($rowsByDay);
+        $this->sortPartRows($rows, 'day_of_week', $sortBy, $sortDir);
 
         return [
             'data' => $rows,
@@ -410,49 +511,42 @@ class ReportsController
         }
     }
 
-    private function zeroMetricRow(int $hourOfDay): array
+    private function zeroPartRow(string $keyName, int $keyValue): array
     {
-        $row = ['hour_of_day' => $hourOfDay];
+        $row = [$keyName => $keyValue];
         foreach (self::METRIC_FIELDS as $field) {
             $row[$field] = 0;
         }
         return $row;
     }
 
-    private function hydrateMetricRow(int $hourOfDay, array $row): array
+    private function hydratePartRow(string $keyName, int $keyValue, array $row): array
     {
-        $out = $this->zeroMetricRow($hourOfDay);
+        $out = $this->zeroPartRow($keyName, $keyValue);
         foreach (self::METRIC_FIELDS as $field) {
             if (array_key_exists($field, $row)) {
-                $out[$field] = $this->castMetricValue($field, $row[$field]);
+                $out[$field] = in_array($field, self::INTEGER_METRIC_FIELDS, true)
+                    ? (int)$row[$field]
+                    : (float)$row[$field];
             }
         }
         return $out;
     }
 
-    private function castMetricValue(string $field, mixed $value): int|float
+    private function sortPartRows(array &$rows, string $keyName, string $sortBy, string $sortDir): void
     {
-        if (in_array($field, self::INTEGER_METRIC_FIELDS, true)) {
-            return (int)$value;
-        }
-        return (float)$value;
-    }
-
-    private function sortDaypartRows(array &$rows, string $sortBy, string $sortDir): void
-    {
-        usort($rows, function (array $a, array $b) use ($sortBy, $sortDir): int {
-            if ($sortBy === 'hour_of_day') {
-                $hourCmp = ((int)$a['hour_of_day']) <=> ((int)$b['hour_of_day']);
-                return $sortDir === 'DESC' ? -$hourCmp : $hourCmp;
+        usort($rows, function (array $a, array $b) use ($keyName, $sortBy, $sortDir): int {
+            if ($sortBy === $keyName) {
+                $cmp = ((int)$a[$keyName]) <=> ((int)$b[$keyName]);
+                return $sortDir === 'DESC' ? -$cmp : $cmp;
             }
 
-            $metricCmp = ((float)$a[$sortBy]) <=> ((float)$b[$sortBy]);
-            if ($metricCmp !== 0) {
-                return $sortDir === 'DESC' ? -$metricCmp : $metricCmp;
+            $cmp = ((float)$a[$sortBy]) <=> ((float)$b[$sortBy]);
+            if ($cmp !== 0) {
+                return $sortDir === 'DESC' ? -$cmp : $cmp;
             }
 
-            // Keep deterministic ordering for equal metric values.
-            return ((int)$a['hour_of_day']) <=> ((int)$b['hour_of_day']);
+            return ((int)$a[$keyName]) <=> ((int)$b[$keyName]);
         });
     }
 }
