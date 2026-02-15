@@ -14,12 +14,18 @@ import (
 )
 
 type entityLookups struct {
-	affNetworks  map[string]string
-	ppcNetworks  map[string]string
-	ppcAccounts  map[string]string
-	campaigns    map[string]string
-	landingPages map[string]string
-	textAds      map[string]string
+	affNetworks    map[string]string
+	affNetworkIDs  map[string]string
+	ppcNetworks    map[string]string
+	ppcNetworkIDs  map[string]string
+	ppcAccounts    map[string]string
+	ppcAccountIDs  map[string]string
+	campaigns      map[string]string
+	campaignIDs    map[string]string
+	landingPages   map[string]string
+	landingPageIDs map[string]string
+	textAds        map[string]string
+	textAdIDs      map[string]string
 }
 
 var diffCmd = &cobra.Command{
@@ -127,24 +133,38 @@ func sortedPortableEntities() []string {
 }
 
 func buildEntityLookups(data map[string][]map[string]interface{}) entityLookups {
+	affByID, affByNatural := buildIDLookup(data["aff-networks"], "aff_network_id", "id", "aff_network_name")
+	ppcNetByID, ppcNetByNatural := buildIDLookup(data["ppc-networks"], "ppc_network_id", "id", "ppc_network_name")
+	ppcAccountByID, ppcAccountByNatural := buildIDLookup(data["ppc-accounts"], "ppc_account_id", "id", "ppc_account_name")
+	campaignByID, campaignByNatural := buildIDLookup(data["campaigns"], "aff_campaign_id", "id", "aff_campaign_name")
+	landingByID, landingByNatural := buildIDLookup(data["landing-pages"], "landing_page_id", "id", "landing_page_url")
+	textAdByID, textAdByNatural := buildIDLookup(data["text-ads"], "text_ad_id", "id", "text_ad_name")
+
 	return entityLookups{
-		affNetworks:  buildIDLookup(data["aff-networks"], "aff_network_id", "id", "aff_network_name"),
-		ppcNetworks:  buildIDLookup(data["ppc-networks"], "ppc_network_id", "id", "ppc_network_name"),
-		ppcAccounts:  buildIDLookup(data["ppc-accounts"], "ppc_account_id", "id", "ppc_account_name"),
-		campaigns:    buildIDLookup(data["campaigns"], "aff_campaign_id", "id", "aff_campaign_name"),
-		landingPages: buildIDLookup(data["landing-pages"], "landing_page_id", "id", "landing_page_url"),
-		textAds:      buildIDLookup(data["text-ads"], "text_ad_id", "id", "text_ad_name"),
+		affNetworks:    affByID,
+		affNetworkIDs:  affByNatural,
+		ppcNetworks:    ppcNetByID,
+		ppcNetworkIDs:  ppcNetByNatural,
+		ppcAccounts:    ppcAccountByID,
+		ppcAccountIDs:  ppcAccountByNatural,
+		campaigns:      campaignByID,
+		campaignIDs:    campaignByNatural,
+		landingPages:   landingByID,
+		landingPageIDs: landingByNatural,
+		textAds:        textAdByID,
+		textAdIDs:      textAdByNatural,
 	}
 }
 
-func buildIDLookup(rows []map[string]interface{}, idFields ...string) map[string]string {
+func buildIDLookup(rows []map[string]interface{}, idFields ...string) (map[string]string, map[string]string) {
 	if len(idFields) < 2 {
-		return map[string]string{}
+		return map[string]string{}, map[string]string{}
 	}
 	nameField := idFields[len(idFields)-1]
 	keys := idFields[:len(idFields)-1]
 
-	out := map[string]string{}
+	byID := map[string]string{}
+	byNatural := map[string]string{}
 	for _, row := range rows {
 		id := firstStringFromRow(row, keys...)
 		if id == "" {
@@ -154,9 +174,12 @@ func buildIDLookup(rows []map[string]interface{}, idFields ...string) map[string
 		if name == "" {
 			name = "id:" + id
 		}
-		out[id] = name
+		byID[id] = name
+		if _, exists := byNatural[name]; !exists {
+			byNatural[name] = id
+		}
 	}
-	return out
+	return byID, byNatural
 }
 
 func diffEntity(entity string, sourceRows, targetRows []map[string]interface{}, sourceLookups, targetLookups entityLookups) map[string]interface{} {

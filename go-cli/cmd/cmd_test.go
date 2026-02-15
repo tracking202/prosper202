@@ -138,6 +138,159 @@ func newEntityDataServer(t *testing.T, rowsByEndpoint map[string][]map[string]in
 	}))
 }
 
+type syncWrite struct {
+	Method string
+	Path   string
+	Body   map[string]interface{}
+}
+
+type syncServerCapture struct {
+	PostCalls int
+	PutCalls  int
+	Writes    []syncWrite
+}
+
+func newSyncServer(t *testing.T, initialRows map[string][]map[string]interface{}) (*httptest.Server, *syncServerCapture) {
+	t.Helper()
+
+	state := map[string][]map[string]interface{}{}
+	for endpoint, rows := range initialRows {
+		copied := make([]map[string]interface{}, 0, len(rows))
+		for _, row := range rows {
+			copied = append(copied, cloneInterfaceMap(row))
+		}
+		state[endpoint] = copied
+	}
+
+	capture := &syncServerCapture{}
+	idCounters := map[string]int{
+		"aff-networks":  1000,
+		"ppc-networks":  1000,
+		"ppc-accounts":  1000,
+		"campaigns":     1000,
+		"landing-pages": 1000,
+		"text-ads":      1000,
+		"trackers":      1000,
+	}
+
+	idFieldByEndpoint := map[string]string{
+		"aff-networks":  "aff_network_id",
+		"ppc-networks":  "ppc_network_id",
+		"ppc-accounts":  "ppc_account_id",
+		"campaigns":     "aff_campaign_id",
+		"landing-pages": "landing_page_id",
+		"text-ads":      "text_ad_id",
+		"trackers":      "tracker_id",
+	}
+
+	parseBody := func(r *http.Request) map[string]interface{} {
+		if r.Body == nil {
+			return map[string]interface{}{}
+		}
+		raw, _ := io.ReadAll(r.Body)
+		if len(raw) == 0 {
+			return map[string]interface{}{}
+		}
+		body := map[string]interface{}{}
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return map[string]interface{}{}
+		}
+		return body
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v3/") {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+
+		trimmed := strings.TrimPrefix(r.URL.Path, "/api/v3/")
+		parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		endpoint := parts[0]
+		if _, exists := state[endpoint]; !exists {
+			state[endpoint] = []map[string]interface{}{}
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			rows := state[endpoint]
+			offset := 0
+			limit := len(rows)
+			if raw := r.URL.Query().Get("offset"); raw != "" {
+				if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+					offset = parsed
+				}
+			}
+			if raw := r.URL.Query().Get("limit"); raw != "" {
+				if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+					limit = parsed
+				}
+			}
+			start := offset
+			if start > len(rows) {
+				start = len(rows)
+			}
+			end := start + limit
+			if end > len(rows) {
+				end = len(rows)
+			}
+			page := rows[start:end]
+			payload, _ := json.Marshal(map[string]interface{}{
+				"data": page,
+				"pagination": map[string]interface{}{
+					"total":  len(rows),
+					"limit":  limit,
+					"offset": offset,
+				},
+			})
+			w.WriteHeader(200)
+			_, _ = w.Write(payload)
+		case http.MethodPost:
+			body := parseBody(r)
+			capture.PostCalls++
+			capture.Writes = append(capture.Writes, syncWrite{Method: r.Method, Path: r.URL.Path, Body: cloneInterfaceMap(body)})
+
+			idCounters[endpoint]++
+			idField := idFieldByEndpoint[endpoint]
+			if idField != "" {
+				if _, exists := body[idField]; !exists {
+					body[idField] = idCounters[endpoint]
+				}
+			}
+			state[endpoint] = append(state[endpoint], cloneInterfaceMap(body))
+			payload, _ := json.Marshal(map[string]interface{}{"data": body})
+			w.WriteHeader(200)
+			_, _ = w.Write(payload)
+		case http.MethodPut:
+			body := parseBody(r)
+			capture.PutCalls++
+			capture.Writes = append(capture.Writes, syncWrite{Method: r.Method, Path: r.URL.Path, Body: cloneInterfaceMap(body)})
+			payload, _ := json.Marshal(map[string]interface{}{"data": body})
+			w.WriteHeader(200)
+			_, _ = w.Write(payload)
+		default:
+			w.WriteHeader(405)
+			_, _ = w.Write([]byte(`{"message":"method not allowed"}`))
+		}
+	}))
+
+	return server, capture
+}
+
+func cloneInterfaceMap(in map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func readSavedConfigURLAndKey(t *testing.T, dir string) (string, string) {
 	t.Helper()
 
@@ -789,6 +942,188 @@ func TestDiffAllEntities(t *testing.T) {
 	}
 	if _, ok := dataObj["campaigns"]; !ok {
 		t.Fatalf("diff all response missing campaigns entry")
+	}
+}
+
+func TestSyncDryRunMakesNoPosts(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+	})
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("sync", "aff-networks", "--from", "source", "--to", "target", "--dry-run", "--json")
+	if err != nil {
+		t.Fatalf("sync dry-run error: %v", err)
+	}
+	if capture.PostCalls != 0 || capture.PutCalls != 0 {
+		t.Fatalf("dry-run should not write, post=%d put=%d", capture.PostCalls, capture.PutCalls)
+	}
+	if !strings.Contains(stdout, `"dry_run": true`) {
+		t.Fatalf("dry-run output should include dry_run=true:\n%s", stdout)
+	}
+}
+
+func TestSyncCreatesWithRemappedFKs(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 20, "aff_campaign_name": "Camp A", "aff_network_id": 10},
+		},
+	})
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 101, "aff_network_name": "Net A"},
+		},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("sync campaigns error: %v", err)
+	}
+
+	if capture.PostCalls != 1 {
+		t.Fatalf("expected 1 post call, got %d", capture.PostCalls)
+	}
+	if len(capture.Writes) == 0 {
+		t.Fatal("expected captured writes")
+	}
+	lastWrite := capture.Writes[len(capture.Writes)-1]
+	if lastWrite.Path != "/api/v3/campaigns" {
+		t.Fatalf("expected campaign post path, got %s", lastWrite.Path)
+	}
+	if got := scalarString(lastWrite.Body["aff_network_id"]); got != "101" {
+		t.Fatalf("expected remapped aff_network_id=101, got %q", got)
+	}
+}
+
+func TestSyncSkipsExistingByName(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 20, "aff_campaign_name": "Camp A", "aff_network_id": 10, "aff_campaign_payout": "10.00"},
+		},
+	})
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 101, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 201, "aff_campaign_name": "Camp A", "aff_network_id": 101, "aff_campaign_payout": "10.00"},
+		},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("sync campaigns error: %v", err)
+	}
+
+	if capture.PostCalls != 0 || capture.PutCalls != 0 {
+		t.Fatalf("expected skip with zero writes, post=%d put=%d", capture.PostCalls, capture.PutCalls)
+	}
+	if !strings.Contains(stdout, `"skipped": 1`) {
+		t.Fatalf("expected skipped count in output:\n%s", stdout)
+	}
+}
+
+func TestSyncDependencyOrder(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 20, "aff_campaign_name": "Camp A", "aff_network_id": 10},
+		},
+	})
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "all", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("sync all error: %v", err)
+	}
+
+	if len(capture.Writes) < 2 {
+		t.Fatalf("expected at least 2 writes, got %d", len(capture.Writes))
+	}
+	firstPath := capture.Writes[0].Path
+	secondPath := capture.Writes[1].Path
+	if firstPath != "/api/v3/aff-networks" || secondPath != "/api/v3/campaigns" {
+		t.Fatalf("unexpected dependency order: first=%s second=%s", firstPath, secondPath)
+	}
+}
+
+func TestSyncUnresolvableFK(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"campaigns": {
+			{"aff_campaign_id": 20, "aff_campaign_name": "Camp A", "aff_network_id": 999},
+		},
+	})
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--skip-errors", "--json")
+	if err != nil {
+		t.Fatalf("sync campaigns with --skip-errors should not fail hard: %v", err)
+	}
+	if capture.PostCalls != 0 {
+		t.Fatalf("expected no posts for unresolvable FK, got %d", capture.PostCalls)
+	}
+	if !strings.Contains(stdout, `"failed": 1`) {
+		t.Fatalf("expected failed count in output:\n%s", stdout)
 	}
 }
 
