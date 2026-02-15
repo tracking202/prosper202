@@ -1,3 +1,5 @@
 p202
 p202.exe
 dist/
+.ax-session/
+.DS_Store
