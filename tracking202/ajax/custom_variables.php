@@ -6,7 +6,7 @@ AUTH::require_user();
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
 
-    if ($_POST['add_more_variables'] == true) { ?>
+    if (isset($_POST['add_more_variables']) && $_POST['add_more_variables'] == true) { ?>
 
         <div class="row var-field-group" style="margin-bottom: 10px;" data-var-id="">
             <div class="col-xs-4">
@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 <?php } 
 
-    if ($_POST['post_vars'] == true && isset($_POST['vars']) && isset($_POST['ppc_network_id'])) {
+    if (isset($_POST['post_vars']) && $_POST['post_vars'] == true && isset($_POST['vars']) && isset($_POST['ppc_network_id'])) {
         $vars = [];
 
         $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
@@ -78,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         echo 'DONE!';
     }
 
-    if ($_POST['get_vars'] == true && isset($_POST['ppc_network_id'])) {
+    if (isset($_POST['get_vars']) && $_POST['get_vars'] == true && isset($_POST['ppc_network_id'])) {
 
         $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
         $sql = "SELECT * FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = '0'";
@@ -136,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         <?php } 
     }
 
-    if ($_POST['delete_vars'] == true && isset($_POST['ppc_network_id'])) {
+    if (isset($_POST['delete_vars']) && $_POST['delete_vars'] == true && isset($_POST['ppc_network_id'])) {
         $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
         $sql = "DELETE FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = '0'";
         $result = $db->query($sql); 
