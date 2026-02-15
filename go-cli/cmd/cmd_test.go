@@ -237,6 +237,193 @@ func TestCampaignGet(t *testing.T) {
 	}
 }
 
+func TestCampaignCreatePassesExtendedFields(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		bodyBytes, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(bodyBytes, &gotBody)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand(
+		"campaign", "create",
+		"--aff_campaign_name=Campaign A",
+		"--aff_campaign_url=https://offer.example.com",
+		"--aff_campaign_url_2=https://offer2.example.com",
+		"--aff_campaign_currency=USD",
+		"--aff_campaign_foreign_payout=12.34",
+		"--aff_campaign_cloaking=1",
+		"--aff_campaign_rotate=1",
+	)
+	if err != nil {
+		t.Fatalf("campaign create error: %v", err)
+	}
+
+	if gotMethod != "POST" {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v3/campaigns" {
+		t.Errorf("path = %q, want /api/v3/campaigns", gotPath)
+	}
+	for _, key := range []string{
+		"aff_campaign_url_2",
+		"aff_campaign_currency",
+		"aff_campaign_foreign_payout",
+		"aff_campaign_cloaking",
+		"aff_campaign_rotate",
+	} {
+		if _, ok := gotBody[key]; !ok {
+			t.Errorf("request body missing %q", key)
+		}
+	}
+}
+
+func TestLandingPageCreateRequiresAffCampaignID(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "https://tracker.example.com", "test-key")
+
+	_, _, err := executeCommand("landing-page", "create", "--landing_page_url=https://lp.example.com")
+	if err == nil {
+		t.Fatal("expected required flag error")
+	}
+	if !strings.Contains(err.Error(), "required flag --aff_campaign_id is missing") {
+		t.Errorf("error = %q, expected missing aff_campaign_id", err.Error())
+	}
+}
+
+func TestTrackerCreateUsesClickFields(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		bodyBytes, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(bodyBytes, &gotBody)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand(
+		"tracker", "create",
+		"--aff_campaign_id=44",
+		"--ppc_account_id=55",
+		"--text_ad_id=11",
+		"--rotator_id=22",
+		"--click_cpc=0.65",
+		"--click_cpa=4.5",
+		"--click_cloaking=1",
+	)
+	if err != nil {
+		t.Fatalf("tracker create error: %v", err)
+	}
+
+	if gotMethod != "POST" {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v3/trackers" {
+		t.Errorf("path = %q, want /api/v3/trackers", gotPath)
+	}
+	for _, key := range []string{"click_cpc", "click_cpa", "click_cloaking", "text_ad_id", "rotator_id"} {
+		if _, ok := gotBody[key]; !ok {
+			t.Errorf("request body missing %q", key)
+		}
+	}
+	if _, ok := gotBody["tracker_cpc"]; ok {
+		t.Errorf("request body should not include legacy field tracker_cpc")
+	}
+	if _, ok := gotBody["tracker_name"]; ok {
+		t.Errorf("request body should not include unsupported field tracker_name")
+	}
+}
+
+func TestTextAdCreateUsesDescriptionField(t *testing.T) {
+	var gotBody map[string]string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(bodyBytes, &gotBody)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand(
+		"text-ad", "create",
+		"--text_ad_name=Ad Name",
+		"--text_ad_description=Ad description",
+		"--aff_campaign_id=9",
+		"--landing_page_id=10",
+		"--text_ad_type=1",
+	)
+	if err != nil {
+		t.Fatalf("text-ad create error: %v", err)
+	}
+
+	if gotBody["text_ad_description"] != "Ad description" {
+		t.Errorf("text_ad_description = %q, want %q", gotBody["text_ad_description"], "Ad description")
+	}
+	if _, ok := gotBody["text_ad_body"]; ok {
+		t.Errorf("request body should not include legacy field text_ad_body")
+	}
+	for _, key := range []string{"aff_campaign_id", "landing_page_id", "text_ad_type"} {
+		if _, ok := gotBody[key]; !ok {
+			t.Errorf("request body missing %q", key)
+		}
+	}
+}
+
+func TestTrackerGetURL(t *testing.T) {
+	var gotPath, gotMethod string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"tracker_id":56,"direct_url":"https://trk.example.com/tracking202/redirect/go.php?t202id=123"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("tracker", "get-url", "56")
+	if err != nil {
+		t.Fatalf("tracker get-url error: %v", err)
+	}
+
+	if gotMethod != "GET" {
+		t.Errorf("method = %q, want GET", gotMethod)
+	}
+	if gotPath != "/api/v3/trackers/56/url" {
+		t.Errorf("path = %q, want /api/v3/trackers/56/url", gotPath)
+	}
+	if !strings.Contains(stdout, "direct_url") {
+		t.Errorf("output should contain direct_url, got:\n%s", stdout)
+	}
+}
+
 func TestSystemHealth(t *testing.T) {
 	var gotPath string
 

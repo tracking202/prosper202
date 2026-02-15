@@ -31,7 +31,7 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-func registerCRUD(entity crudEntity) {
+func registerCRUD(entity crudEntity) *cobra.Command {
 	parentCmd := &cobra.Command{
 		Use:   entity.Name,
 		Short: fmt.Sprintf("Manage %s", entity.Plural),
@@ -189,6 +189,7 @@ func registerCRUD(entity crudEntity) {
 
 	parentCmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 	rootCmd.AddCommand(parentCmd)
+	return parentCmd
 }
 
 func init() {
@@ -200,9 +201,17 @@ func init() {
 			Fields: []crudField{
 				{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
 				{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
+				{Name: "aff_campaign_url_2", Desc: "Offer URL 2"},
+				{Name: "aff_campaign_url_3", Desc: "Offer URL 3"},
+				{Name: "aff_campaign_url_4", Desc: "Offer URL 4"},
+				{Name: "aff_campaign_url_5", Desc: "Offer URL 5"},
 				{Name: "aff_campaign_cpc", Desc: "Cost per click"},
 				{Name: "aff_campaign_payout", Desc: "Default payout"},
+				{Name: "aff_campaign_currency", Desc: "Currency code (e.g. USD)"},
+				{Name: "aff_campaign_foreign_payout", Desc: "Foreign currency payout"},
 				{Name: "aff_network_id", Desc: "Affiliate network ID"},
+				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (0 or 1)"},
+				{Name: "aff_campaign_rotate", Desc: "Enable rotation (0 or 1)"},
 				{Name: "aff_campaign_postback_url", Desc: "Postback URL"},
 				{Name: "aff_campaign_postback_append", Desc: "Postback append string"},
 			},
@@ -216,6 +225,7 @@ func init() {
 			Endpoint: "aff-networks",
 			Fields: []crudField{
 				{Name: "aff_network_name", Desc: "Network name", Required: true},
+				{Name: "dni_network_id", Desc: "DNI network ID"},
 				{Name: "aff_network_postback_url", Desc: "Postback URL"},
 				{Name: "aff_network_postback_append", Desc: "Postback append string"},
 			},
@@ -235,6 +245,7 @@ func init() {
 			Fields: []crudField{
 				{Name: "ppc_account_name", Desc: "Account name", Required: true},
 				{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
+				{Name: "ppc_account_default", Desc: "Set as default account (0 or 1)"},
 			},
 		},
 		{
@@ -242,11 +253,14 @@ func init() {
 			Plural:   "trackers",
 			Endpoint: "trackers",
 			Fields: []crudField{
-				{Name: "tracker_name", Desc: "Tracker name", Required: true},
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
 				{Name: "ppc_account_id", Desc: "PPC account ID"},
+				{Name: "text_ad_id", Desc: "Text ad ID"},
 				{Name: "landing_page_id", Desc: "Landing page ID"},
-				{Name: "tracker_cpc", Desc: "Cost per click override"},
+				{Name: "rotator_id", Desc: "Rotator ID"},
+				{Name: "click_cpc", Desc: "Cost per click"},
+				{Name: "click_cpa", Desc: "Cost per action"},
+				{Name: "click_cloaking", Desc: "Enable cloaking (0 or 1)"},
 			},
 		},
 		{
@@ -254,8 +268,11 @@ func init() {
 			Plural:   "landing pages",
 			Endpoint: "landing-pages",
 			Fields: []crudField{
-				{Name: "landing_page_name", Desc: "Landing page name", Required: true},
 				{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
+				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
+				{Name: "landing_page_nickname", Desc: "Landing page nickname"},
+				{Name: "leave_behind_page_url", Desc: "Leave-behind page URL"},
+				{Name: "landing_page_type", Desc: "Landing page type (integer)"},
 			},
 		},
 		{
@@ -265,13 +282,41 @@ func init() {
 			Fields: []crudField{
 				{Name: "text_ad_name", Desc: "Text ad name", Required: true},
 				{Name: "text_ad_headline", Desc: "Headline"},
-				{Name: "text_ad_body", Desc: "Body text"},
+				{Name: "text_ad_description", Desc: "Description text"},
 				{Name: "text_ad_display_url", Desc: "Display URL"},
+				{Name: "aff_campaign_id", Desc: "Campaign ID"},
+				{Name: "landing_page_id", Desc: "Landing page ID"},
+				{Name: "text_ad_type", Desc: "Text ad type (integer)"},
 			},
 		},
 	}
 
+	var trackerCmd *cobra.Command
 	for _, e := range entities {
-		registerCRUD(e)
+		cmd := registerCRUD(e)
+		if e.Name == "tracker" {
+			trackerCmd = cmd
+		}
+	}
+
+	if trackerCmd != nil {
+		getURLCmd := &cobra.Command{
+			Use:   "get-url <id>",
+			Short: "Get tracking URL for a tracker",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				c, err := api.NewFromConfig()
+				if err != nil {
+					return err
+				}
+				data, err := c.Get("trackers/"+args[0]+"/url", nil)
+				if err != nil {
+					return err
+				}
+				output.Render(data, jsonOutput)
+				return nil
+			},
+		}
+		trackerCmd.AddCommand(getURLCmd)
 	}
 }
