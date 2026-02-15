@@ -31,11 +31,15 @@ var configSetURLCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		cfg.URL = u
+		p, resolvedName, err := cfg.EnsureProfile(profileName)
+		if err != nil {
+			return err
+		}
+		p.URL = u
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		fmt.Printf("URL set to: %s\n", cfg.URL)
+		fmt.Printf("URL set for profile %s: %s\n", resolvedName, p.URL)
 		return nil
 	},
 }
@@ -53,11 +57,15 @@ var configSetKeyCmd = &cobra.Command{
 		if err := validateAPIKey(apiKey); err != nil {
 			return err
 		}
-		cfg.APIKey = apiKey
+		p, resolvedName, err := cfg.EnsureProfile(profileName)
+		if err != nil {
+			return err
+		}
+		p.APIKey = apiKey
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		fmt.Printf("API key set (%s)\n", cfg.MaskedKey())
+		fmt.Printf("API key set for profile %s (%s)\n", resolvedName, p.MaskedKey())
 		return nil
 	},
 }
@@ -70,18 +78,35 @@ var configShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		p, resolvedName, err := cfg.ResolveProfileWithName(profileName)
+		if err != nil {
+			return err
+		}
+
+		profiles := cfg.ProfileNames()
+		profilesStr := "(none)"
+		if len(profiles) > 0 {
+			profilesStr = strings.Join(profiles, ", ")
+		}
+
 		if jsonOutput {
-			obj := map[string]string{
-				"url":         cfg.URL,
-				"api_key":     cfg.MaskedKey(),
-				"config_path": config.Path(),
+			obj := map[string]interface{}{
+				"profile":         resolvedName,
+				"active_profile":  cfg.ActiveProfile,
+				"url":             p.URL,
+				"api_key":         p.MaskedKey(),
+				"config_path":     config.Path(),
+				"available_names": profiles,
 			}
 			data, _ := json.Marshal(obj)
 			output.Render(data, true)
 		} else {
 			fmt.Printf("Config file: %s\n", config.Path())
-			fmt.Printf("URL:         %s\n", cfg.URL)
-			fmt.Printf("API key:     %s\n", cfg.MaskedKey())
+			fmt.Printf("Active:      %s\n", cfg.ActiveProfile)
+			fmt.Printf("Profile:     %s\n", resolvedName)
+			fmt.Printf("URL:         %s\n", p.URL)
+			fmt.Printf("API key:     %s\n", p.MaskedKey())
+			fmt.Printf("Profiles:    %s\n", profilesStr)
 		}
 		return nil
 	},
@@ -125,7 +150,11 @@ var configSetDefaultCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		cfg.SetDefault(key, value)
+		p, _, err := cfg.EnsureProfile(profileName)
+		if err != nil {
+			return err
+		}
+		p.SetDefault(key, value)
 		if err := cfg.Save(); err != nil {
 			return err
 		}
@@ -143,13 +172,17 @@ var configGetDefaultCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		p, _, err := cfg.ResolveProfileWithName(profileName)
+		if err != nil {
+			return err
+		}
 
 		if len(args) == 1 {
 			key := strings.TrimSpace(args[0])
 			if !isSupportedDefaultKey(key) {
 				return fmt.Errorf("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
 			}
-			value := cfg.GetDefault(key)
+			value := p.GetDefault(key)
 			if value == "" {
 				return fmt.Errorf("default %q is not set", key)
 			}
@@ -163,9 +196,9 @@ var configGetDefaultCmd = &cobra.Command{
 			return nil
 		}
 
-		rows := make([]map[string]string, 0, len(cfg.Defaults))
+		rows := make([]map[string]string, 0, len(p.Defaults))
 		for _, key := range supportedDefaultKeys() {
-			if val := cfg.GetDefault(key); val != "" {
+			if val := p.GetDefault(key); val != "" {
 				rows = append(rows, map[string]string{"key": key, "value": val})
 			}
 		}
@@ -189,7 +222,11 @@ var configUnsetDefaultCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if !cfg.DeleteDefault(key) {
+		p, _, err := cfg.ResolveProfileWithName(profileName)
+		if err != nil {
+			return err
+		}
+		if !p.DeleteDefault(key) {
 			return fmt.Errorf("default %q is not set", key)
 		}
 		if err := cfg.Save(); err != nil {

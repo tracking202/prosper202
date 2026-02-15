@@ -171,6 +171,43 @@ func (c *Config) ResolveProfile(name string) (*Profile, error) {
 	return p, err
 }
 
+func (c *Config) ResolveProfileWithName(name string) (*Profile, string, error) {
+	return c.resolveProfile(name)
+}
+
+func (c *Config) ProfileNames() []string {
+	return profileNames(c.Profiles)
+}
+
+func (c *Config) EnsureProfile(name string) (*Profile, string, error) {
+	c.migrateLegacy()
+
+	target := strings.TrimSpace(name)
+	if target == "" {
+		target = strings.TrimSpace(c.ActiveProfile)
+	}
+	if target == "" {
+		target = defaultProfileName
+	}
+
+	if len(c.Profiles) == 0 {
+		c.Profiles = map[string]*Profile{
+			target: {},
+		}
+		c.ActiveProfile = target
+		return c.Profiles[target], target, nil
+	}
+
+	if p, ok := c.Profiles[target]; ok && p != nil {
+		if strings.TrimSpace(c.ActiveProfile) == "" {
+			c.ActiveProfile = target
+		}
+		return p, target, nil
+	}
+
+	return nil, "", fmt.Errorf("profile %q not found. available profiles: %s", target, strings.Join(profileNames(c.Profiles), ", "))
+}
+
 func (c *Config) ResolveGroup(tag string) []string {
 	normalized := strings.ToLower(strings.TrimSpace(tag))
 	if normalized == "" || len(c.Profiles) == 0 {

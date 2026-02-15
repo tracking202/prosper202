@@ -88,15 +88,7 @@ func writeTestConfigWithProfiles(t *testing.T, dir string, active string, profil
 func readSavedConfigURLAndKey(t *testing.T, dir string) (string, string) {
 	t.Helper()
 
-	data, err := os.ReadFile(filepath.Join(dir, ".p202", "config.json"))
-	if err != nil {
-		t.Fatalf("reading config: %v", err)
-	}
-
-	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("parsing config JSON: %v", err)
-	}
+	raw := readSavedConfigRaw(t, dir)
 
 	urlVal, _ := raw["url"].(string)
 	keyVal, _ := raw["api_key"].(string)
@@ -137,6 +129,32 @@ func readSavedConfigURLAndKey(t *testing.T, dir string) (string, string) {
 	urlVal, _ = profile["url"].(string)
 	keyVal, _ = profile["api_key"].(string)
 	return urlVal, keyVal
+}
+
+func readSavedConfigRaw(t *testing.T, dir string) map[string]interface{} {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".p202", "config.json"))
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parsing config JSON: %v", err)
+	}
+	return raw
+}
+
+func readProfileField(raw map[string]interface{}, profileName, field string) string {
+	profiles, _ := raw["profiles"].(map[string]interface{})
+	if profiles == nil {
+		return ""
+	}
+	profileObj, _ := profiles[profileName].(map[string]interface{})
+	if profileObj == nil {
+		return ""
+	}
+	value, _ := profileObj[field].(string)
+	return value
 }
 
 // executeCommand runs rootCmd with the given args and captures stdout/stderr.
@@ -335,6 +353,216 @@ func TestConfigDefaultCommands(t *testing.T) {
 	_, _, err = executeCommand("config", "get-default", "report.period")
 	if err == nil {
 		t.Fatal("expected error when getting an unset default")
+	}
+}
+
+func TestConfigAddProfile(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	_, _, err := executeCommand("config", "add-profile", "prod", "--url", "https://prod.example.com", "--key", "prod-key-123456")
+	if err != nil {
+		t.Fatalf("config add-profile error: %v", err)
+	}
+
+	raw := readSavedConfigRaw(t, tmp)
+	if got, _ := raw["active_profile"].(string); got != "prod" {
+		t.Fatalf("active_profile = %q, want prod", got)
+	}
+	if got := readProfileField(raw, "prod", "url"); got != "https://prod.example.com" {
+		t.Fatalf("prod profile url = %q", got)
+	}
+	if got := readProfileField(raw, "prod", "api_key"); got != "prod-key-123456" {
+		t.Fatalf("prod profile api_key = %q", got)
+	}
+}
+
+func TestConfigAddProfileDuplicate(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod": {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+	})
+
+	_, _, err := executeCommand("config", "add-profile", "prod", "--url", "https://prod2.example.com", "--key", "prod2-key-123456")
+	if err == nil {
+		t.Fatal("expected duplicate profile add to fail")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected duplicate error, got: %v", err)
+	}
+}
+
+func TestConfigUseProfile(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+		"staging": {"url": "https://staging.example.com", "api_key": "staging-key-123456"},
+	})
+
+	_, _, err := executeCommand("config", "use", "staging")
+	if err != nil {
+		t.Fatalf("config use staging error: %v", err)
+	}
+
+	raw := readSavedConfigRaw(t, tmp)
+	if got, _ := raw["active_profile"].(string); got != "staging" {
+		t.Fatalf("active_profile = %q, want staging", got)
+	}
+}
+
+func TestConfigListProfiles(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod": {
+			"url":     "https://prod.example.com",
+			"api_key": "prod-key-123456",
+			"tags":    []string{"env:prod", "region:us"},
+		},
+		"staging": {
+			"url":     "https://staging.example.com",
+			"api_key": "staging-key-123456",
+			"tags":    []string{"env:staging", "region:us"},
+		},
+	})
+
+	stdout, _, err := executeCommand("config", "list-profiles", "--json")
+	if err != nil {
+		t.Fatalf("config list-profiles --json error: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	dataRows, ok := parsed["data"].([]interface{})
+	if !ok || len(dataRows) != 2 {
+		t.Fatalf("expected two profile rows, got %#v", parsed["data"])
+	}
+}
+
+func TestConfigRenameProfile(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod": {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+	})
+
+	_, _, err := executeCommand("config", "rename-profile", "prod", "primary")
+	if err != nil {
+		t.Fatalf("config rename-profile error: %v", err)
+	}
+
+	raw := readSavedConfigRaw(t, tmp)
+	if got, _ := raw["active_profile"].(string); got != "primary" {
+		t.Fatalf("active_profile = %q, want primary", got)
+	}
+	if got := readProfileField(raw, "primary", "url"); got != "https://prod.example.com" {
+		t.Fatalf("primary profile url = %q", got)
+	}
+}
+
+func TestConfigRemoveProfileBlocksActive(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod": {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+	})
+
+	_, _, err := executeCommand("config", "remove-profile", "prod", "--force")
+	if err == nil {
+		t.Fatal("expected active profile removal to fail")
+	}
+	if !strings.Contains(err.Error(), "cannot remove active profile") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestProfileFlagSelectsCorrectServer(t *testing.T) {
+	hits := map[string]int{"prod": 0, "staging": 0}
+
+	prodSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["prod"]++
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer prodSrv.Close()
+
+	stageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits["staging"]++
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer stageSrv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": prodSrv.URL, "api_key": "prod-key-123456"},
+		"staging": {"url": stageSrv.URL, "api_key": "staging-key-123456"},
+	})
+
+	_, _, err := executeCommand("campaign", "list")
+	if err != nil {
+		t.Fatalf("campaign list on active profile failed: %v", err)
+	}
+	_, _, err = executeCommand("--profile", "staging", "campaign", "list")
+	if err != nil {
+		t.Fatalf("campaign list with --profile staging failed: %v", err)
+	}
+
+	if hits["prod"] != 1 || hits["staging"] != 1 {
+		t.Fatalf("server routing mismatch, hits=%v", hits)
+	}
+}
+
+func TestSetUrlUpdatesResolvedProfile(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+		"staging": {"url": "https://staging.example.com", "api_key": "staging-key-123456"},
+	})
+
+	_, _, err := executeCommand("--profile", "staging", "config", "set-url", "https://staging2.example.com")
+	if err != nil {
+		t.Fatalf("config set-url with profile override failed: %v", err)
+	}
+
+	raw := readSavedConfigRaw(t, tmp)
+	if got := readProfileField(raw, "staging", "url"); got != "https://staging2.example.com" {
+		t.Fatalf("staging url = %q", got)
+	}
+	if got := readProfileField(raw, "prod", "url"); got != "https://prod.example.com" {
+		t.Fatalf("prod url unexpectedly changed to %q", got)
+	}
+}
+
+func TestSetKeyUpdatesResolvedProfile(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+		"staging": {"url": "https://staging.example.com", "api_key": "staging-key-123456"},
+	})
+
+	_, _, err := executeCommand("--profile", "staging", "config", "set-key", "staging-key-999999")
+	if err != nil {
+		t.Fatalf("config set-key with profile override failed: %v", err)
+	}
+
+	raw := readSavedConfigRaw(t, tmp)
+	if got := readProfileField(raw, "staging", "api_key"); got != "staging-key-999999" {
+		t.Fatalf("staging api_key = %q", got)
+	}
+	if got := readProfileField(raw, "prod", "api_key"); got != "prod-key-123456" {
+		t.Fatalf("prod api_key unexpectedly changed to %q", got)
 	}
 }
 
