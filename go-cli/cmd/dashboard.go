@@ -15,6 +15,9 @@ var dashboardCmd = &cobra.Command{
 			return err
 		}
 		params := collectReportParams(cmd)
+		if _, exists := params["period"]; !exists {
+			params["period"] = "today"
+		}
 		data, err := c.Get("reports/summary", params)
 		if err != nil {
 			return err
@@ -25,7 +28,7 @@ var dashboardCmd = &cobra.Command{
 }
 
 func init() {
-	dashboardCmd.Flags().StringP("period", "p", "today", "Period: today, yesterday, last7, last30, last90")
+	dashboardCmd.Flags().StringP("period", "p", "", "Period: today, yesterday, last7, last30, last90")
 	dashboardCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	dashboardCmd.Flags().String("time_to", "", "End timestamp (unix)")
 	dashboardCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")

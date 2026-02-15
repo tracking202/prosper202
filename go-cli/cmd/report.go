@@ -18,7 +18,7 @@ func collectReportParams(cmd *cobra.Command) map[string]string {
 		"aff_campaign_id", "ppc_account_id", "aff_network_id",
 		"ppc_network_id", "landing_page_id", "country_id"}
 	for _, f := range flags {
-		if v, _ := cmd.Flags().GetString(f); v != "" {
+		if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 			params[f] = v
 		}
 	}
@@ -64,7 +64,7 @@ var reportBreakdownCmd = &cobra.Command{
 		}
 		params := collectReportParams(cmd)
 		for _, f := range []string{"breakdown", "sort", "sort_dir", "limit", "offset"} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
+			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 				params[f] = v
 			}
 		}
@@ -86,7 +86,7 @@ var reportTimeseriesCmd = &cobra.Command{
 			return err
 		}
 		params := collectReportParams(cmd)
-		if v, _ := cmd.Flags().GetString("interval"); v != "" {
+		if v := getStringFlagOrDefault(cmd, "report", "interval"); v != "" {
 			params["interval"] = v
 		}
 		data, err := c.Get("reports/timeseries", params)
@@ -108,7 +108,7 @@ var reportWeekpartCmd = &cobra.Command{
 		}
 		params := collectReportParams(cmd)
 		for _, f := range []string{"sort", "sort_dir"} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
+			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 				params[f] = v
 			}
 		}
@@ -131,7 +131,7 @@ var reportDaypartCmd = &cobra.Command{
 		}
 		params := collectReportParams(cmd)
 		for _, f := range []string{"sort", "sort_dir"} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
+			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 				params[f] = v
 			}
 		}

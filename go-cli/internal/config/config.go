@@ -9,8 +9,9 @@ import (
 )
 
 type Config struct {
-	URL    string `json:"url"`
-	APIKey string `json:"api_key"`
+	URL      string            `json:"url"`
+	APIKey   string            `json:"api_key"`
+	Defaults map[string]string `json:"defaults,omitempty"`
 }
 
 func Dir() string {
@@ -75,4 +76,32 @@ func (c *Config) MaskedKey() string {
 		return strings.Repeat("*", len(k))
 	}
 	return k[:4] + "..." + k[len(k)-4:]
+}
+
+func (c *Config) GetDefault(key string) string {
+	if c.Defaults == nil {
+		return ""
+	}
+	return c.Defaults[key]
+}
+
+func (c *Config) SetDefault(key, value string) {
+	if c.Defaults == nil {
+		c.Defaults = map[string]string{}
+	}
+	c.Defaults[key] = value
+}
+
+func (c *Config) DeleteDefault(key string) bool {
+	if c.Defaults == nil {
+		return false
+	}
+	if _, exists := c.Defaults[key]; !exists {
+		return false
+	}
+	delete(c.Defaults, key)
+	if len(c.Defaults) == 0 {
+		c.Defaults = nil
+	}
+	return true
 }

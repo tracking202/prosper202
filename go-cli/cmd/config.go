@@ -107,8 +107,102 @@ var configTestCmd = &cobra.Command{
 	},
 }
 
+var configSetDefaultCmd = &cobra.Command{
+	Use:   "set-default <key> <value>",
+	Short: "Set a default value for supported command flags",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		key := strings.TrimSpace(args[0])
+		value := strings.TrimSpace(args[1])
+		if value == "" {
+			return fmt.Errorf("default value cannot be empty")
+		}
+		if !isSupportedDefaultKey(key) {
+			return fmt.Errorf("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		cfg.SetDefault(key, value)
+		if err := cfg.Save(); err != nil {
+			return err
+		}
+		output.Success("Default set: %s=%s", key, value)
+		return nil
+	},
+}
+
+var configGetDefaultCmd = &cobra.Command{
+	Use:   "get-default [key]",
+	Short: "Get one default value or list all defaults",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+
+		if len(args) == 1 {
+			key := strings.TrimSpace(args[0])
+			if !isSupportedDefaultKey(key) {
+				return fmt.Errorf("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
+			}
+			value := cfg.GetDefault(key)
+			if value == "" {
+				return fmt.Errorf("default %q is not set", key)
+			}
+			payload, _ := json.Marshal(map[string]interface{}{
+				"data": map[string]string{
+					"key":   key,
+					"value": value,
+				},
+			})
+			render(payload)
+			return nil
+		}
+
+		rows := make([]map[string]string, 0, len(cfg.Defaults))
+		for _, key := range supportedDefaultKeys() {
+			if val := cfg.GetDefault(key); val != "" {
+				rows = append(rows, map[string]string{"key": key, "value": val})
+			}
+		}
+		payload, _ := json.Marshal(map[string]interface{}{"data": rows})
+		render(payload)
+		return nil
+	},
+}
+
+var configUnsetDefaultCmd = &cobra.Command{
+	Use:   "unset-default <key>",
+	Short: "Remove a configured default value",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		key := strings.TrimSpace(args[0])
+		if !isSupportedDefaultKey(key) {
+			return fmt.Errorf("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if !cfg.DeleteDefault(key) {
+			return fmt.Errorf("default %q is not set", key)
+		}
+		if err := cfg.Save(); err != nil {
+			return err
+		}
+		output.Success("Default removed: %s", key)
+		return nil
+	},
+}
+
 func init() {
 	configCmd.AddCommand(configSetURLCmd, configSetKeyCmd, configShowCmd, configTestCmd)
+	configCmd.AddCommand(configSetDefaultCmd, configGetDefaultCmd, configUnsetDefaultCmd)
 	rootCmd.AddCommand(configCmd)
 }
 

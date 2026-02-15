@@ -43,6 +43,26 @@ func writeTestConfig(t *testing.T, dir, url, apiKey string) {
 	}
 }
 
+func writeTestConfigWithDefaults(t *testing.T, dir, url, apiKey string, defaults map[string]string) {
+	t.Helper()
+	configDir := filepath.Join(dir, ".p202")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+	payload := map[string]interface{}{
+		"url":      url,
+		"api_key":  apiKey,
+		"defaults": defaults,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("encoding config payload: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), data, 0600); err != nil {
+		t.Fatalf("writing config with defaults: %v", err)
+	}
+}
+
 // executeCommand runs rootCmd with the given args and captures stdout/stderr.
 // It resets the rootCmd output after execution.
 func executeCommand(args ...string) (string, string, error) {
@@ -230,6 +250,34 @@ func TestConfigShowJSON(t *testing.T) {
 	}
 }
 
+func TestConfigDefaultCommands(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	_, _, err := executeCommand("config", "set-default", "report.period", "last30")
+	if err != nil {
+		t.Fatalf("config set-default error: %v", err)
+	}
+
+	stdout, _, err := executeCommand("config", "get-default", "report.period")
+	if err != nil {
+		t.Fatalf("config get-default error: %v", err)
+	}
+	if !strings.Contains(stdout, "last30") {
+		t.Errorf("get-default output should contain value, got:\n%s", stdout)
+	}
+
+	_, _, err = executeCommand("config", "unset-default", "report.period")
+	if err != nil {
+		t.Fatalf("config unset-default error: %v", err)
+	}
+
+	_, _, err = executeCommand("config", "get-default", "report.period")
+	if err == nil {
+		t.Fatal("expected error when getting an unset default")
+	}
+}
+
 func TestCampaignList(t *testing.T) {
 	var gotPath, gotMethod string
 
@@ -258,6 +306,32 @@ func TestCampaignList(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Test Campaign") {
 		t.Errorf("output should contain campaign name, got:\n%s", stdout)
+	}
+}
+
+func TestReportSummaryUsesConfigDefaultPeriod(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"total_clicks":10}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithDefaults(t, tmp, srv.URL, "test-key", map[string]string{
+		"report.period": "last30",
+	})
+
+	_, _, err := executeCommand("report", "summary")
+	if err != nil {
+		t.Fatalf("report summary with default period error: %v", err)
+	}
+
+	if got := gotParams.Get("period"); got != "last30" {
+		t.Errorf("period = %q, want %q", got, "last30")
 	}
 }
 
@@ -452,6 +526,33 @@ func TestTrackerCreateUsesClickFields(t *testing.T) {
 	}
 }
 
+func TestTrackerCreateUsesCrudDefaultAffCampaignID(t *testing.T) {
+	var gotBody map[string]string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(bodyBytes, &gotBody)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithDefaults(t, tmp, srv.URL, "test-key", map[string]string{
+		"crud.aff_campaign_id": "77",
+	})
+
+	_, _, err := executeCommand("tracker", "create")
+	if err != nil {
+		t.Fatalf("tracker create with defaults error: %v", err)
+	}
+
+	if gotBody["aff_campaign_id"] != "77" {
+		t.Errorf("aff_campaign_id = %q, want %q", gotBody["aff_campaign_id"], "77")
+	}
+}
+
 func TestTextAdCreateUsesDescriptionField(t *testing.T) {
 	var gotBody map[string]string
 
@@ -556,6 +657,32 @@ func TestTrackerListFriendlyFiltersMapToAPIFilters(t *testing.T) {
 		if got := gotParams.Get(key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
+	}
+}
+
+func TestTrackerListUsesCrudDefaultFilter(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithDefaults(t, tmp, srv.URL, "test-key", map[string]string{
+		"crud.aff_campaign_id": "99",
+	})
+
+	_, _, err := executeCommand("tracker", "list")
+	if err != nil {
+		t.Fatalf("tracker list with defaults error: %v", err)
+	}
+
+	if got := gotParams.Get("filter[aff_campaign_id]"); got != "99" {
+		t.Errorf("filter[aff_campaign_id] = %q, want %q", got, "99")
 	}
 }
 

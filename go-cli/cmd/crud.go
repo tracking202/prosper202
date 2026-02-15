@@ -121,11 +121,18 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					queryKey = p.Name
 				}
 				flagNames := append([]string{p.Name}, p.Aliases...)
+				val := ""
 				for _, flagName := range flagNames {
 					if v, _ := cmd.Flags().GetString(flagName); v != "" {
-						params[queryKey] = v
+						val = v
 						break
 					}
+				}
+				if val == "" {
+					val = getConfigDefault("crud", p.Name)
+				}
+				if val != "" {
+					params[queryKey] = val
 				}
 			}
 			if v, _ := cmd.Flags().GetString("page"); v != "" {
@@ -186,7 +193,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			}
 			body := map[string]string{}
 			for _, f := range entity.Fields {
-				if v, _ := cmd.Flags().GetString(f.Name); v != "" {
+				if v := getStringFlagOrDefault(cmd, "crud", f.Name); v != "" {
 					body[f.Name] = v
 				}
 			}
