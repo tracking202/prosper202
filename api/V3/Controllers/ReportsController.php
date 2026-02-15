@@ -170,7 +170,8 @@ class ReportsController
             FROM 202_dataengine de
             $whereClause
             GROUP BY period
-            ORDER BY period ASC";
+            ORDER BY period ASC
+            LIMIT 2000";
 
         $stmt = $this->db->prepare($sql);
         $stmt->bind_param($types, ...$binds);

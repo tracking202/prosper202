@@ -40,9 +40,11 @@ class ReportSummaryCommand extends Command
     {
         $params = [];
         foreach (['period', 'time_from', 'time_to', 'aff_campaign_id', 'ppc_account_id', 'aff_network_id', 'ppc_network_id', 'landing_page_id', 'country_id'] as $p) {
-            $val = $input->getOption($p);
-            if ($val !== null) {
-                $params[$p] = $val;
+            if ($input->hasOption($p)) {
+                $val = $input->getOption($p);
+                if ($val !== null) {
+                    $params[$p] = $val;
+                }
             }
         }
         return $params;

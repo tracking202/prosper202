@@ -82,9 +82,8 @@ class UsersController
         }
         $stmt->close();
 
-        // Hash password: salt_user_pass equivalent
-        $salt = '202';
-        $hashedPass = md5($salt . md5($password . $salt));
+        // Hash password with bcrypt
+        $hashedPass = password_hash($password, PASSWORD_BCRYPT);
 
         $fname = $payload['user_fname'] ?? '';
         $lname = $payload['user_lname'] ?? '';
@@ -98,7 +97,7 @@ class UsersController
         );
         $stmt->bind_param('ssssssii', $fname, $lname, $username, $hashedPass, $email, $tz, $now, $active);
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Create failed: ' . $stmt->error, 500);
+            throw new \RuntimeException('Create failed', 500);
         }
         $newId = $stmt->insert_id;
         $stmt->close();
@@ -129,9 +128,8 @@ class UsersController
         }
 
         if (array_key_exists('user_pass', $payload) && $payload['user_pass'] !== '') {
-            $salt = '202';
             $sets[] = 'user_pass = ?';
-            $binds[] = md5($salt . md5($payload['user_pass'] . $salt));
+            $binds[] = password_hash($payload['user_pass'], PASSWORD_BCRYPT);
             $types .= 's';
         }
 
@@ -217,7 +215,7 @@ class UsersController
         $stmt = $this->db->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
         $stmt->bind_param('isi', $userId, $key, $now);
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Failed to create API key: ' . $stmt->error, 500);
+            throw new \RuntimeException('Failed to create API key', 500);
         }
         $stmt->close();
 

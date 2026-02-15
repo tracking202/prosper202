@@ -31,11 +31,13 @@ class Config
         if (!is_dir($this->configDir)) {
             mkdir($this->configDir, 0700, true);
         }
+        $oldUmask = umask(0077);
         file_put_contents(
             $this->configFile,
             json_encode($this->data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
         );
         chmod($this->configFile, 0600);
+        umask($oldUmask);
     }
 
     public function get(string $key, mixed $default = null): mixed

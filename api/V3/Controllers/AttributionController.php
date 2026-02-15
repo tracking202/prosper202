@@ -84,7 +84,7 @@ class AttributionController
         $stmt = $this->db->prepare('INSERT INTO 202_attribution_models (user_id, model_name, model_slug, model_type, weighting_config, is_active, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         $stmt->bind_param('issssiiis', $this->userId, $name, $slug, $type, $config, $isActive, $isDefault, $now, $now);
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Create failed: ' . $stmt->error, 500);
+            throw new \RuntimeException('Create failed', 500);
         }
         $id = $stmt->insert_id;
         $stmt->close();
@@ -95,6 +95,13 @@ class AttributionController
     public function updateModel(int $id, array $payload): array
     {
         $this->getModel($id);
+
+        if (array_key_exists('model_type', $payload)) {
+            $validTypes = ['first_touch', 'last_touch', 'linear', 'time_decay', 'position_based', 'algorithmic'];
+            if (!in_array($payload['model_type'], $validTypes, true)) {
+                throw new \RuntimeException('Invalid model_type. Valid: ' . implode(', ', $validTypes), 422);
+            }
+        }
 
         $sets = [];
         $binds = [];
@@ -139,26 +146,34 @@ class AttributionController
     {
         $this->getModel($id);
 
-        // Clean up related data
-        $stmt = $this->db->prepare('DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?)');
-        $stmt->bind_param('ii', $id, $this->userId);
-        $stmt->execute();
-        $stmt->close();
+        $this->db->begin_transaction();
+        try {
+            // Clean up related data
+            $stmt = $this->db->prepare('DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?)');
+            $stmt->bind_param('ii', $id, $this->userId);
+            $stmt->execute();
+            $stmt->close();
 
-        $stmt = $this->db->prepare('DELETE FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?');
-        $stmt->bind_param('ii', $id, $this->userId);
-        $stmt->execute();
-        $stmt->close();
+            $stmt = $this->db->prepare('DELETE FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?');
+            $stmt->bind_param('ii', $id, $this->userId);
+            $stmt->execute();
+            $stmt->close();
 
-        $stmt = $this->db->prepare('DELETE FROM 202_attribution_exports WHERE model_id = ? AND user_id = ?');
-        $stmt->bind_param('ii', $id, $this->userId);
-        $stmt->execute();
-        $stmt->close();
+            $stmt = $this->db->prepare('DELETE FROM 202_attribution_exports WHERE model_id = ? AND user_id = ?');
+            $stmt->bind_param('ii', $id, $this->userId);
+            $stmt->execute();
+            $stmt->close();
 
-        $stmt = $this->db->prepare('DELETE FROM 202_attribution_models WHERE model_id = ? AND user_id = ?');
-        $stmt->bind_param('ii', $id, $this->userId);
-        $stmt->execute();
-        $stmt->close();
+            $stmt = $this->db->prepare('DELETE FROM 202_attribution_models WHERE model_id = ? AND user_id = ?');
+            $stmt->bind_param('ii', $id, $this->userId);
+            $stmt->execute();
+            $stmt->close();
+
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
     }
 
     // --- Snapshots ---
@@ -232,11 +247,11 @@ class AttributionController
 
         $stmt = $this->db->prepare('INSERT INTO 202_attribution_exports (user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         $status = 'queued';
-        $stmt->bind_param('iisiisssiiss',
+        $stmt->bind_param('iisiisssiiis',
             $this->userId, $modelId, $scopeType, $scopeId, $startHour, $endHour, $format, $status, $now, $now, $now, $webhookUrl
         );
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Export schedule failed: ' . $stmt->error, 500);
+            throw new \RuntimeException('Export schedule failed', 500);
         }
         $exportId = $stmt->insert_id;
         $stmt->close();

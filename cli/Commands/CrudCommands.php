@@ -150,8 +150,7 @@ class CrudCommands
                     ->addOption('json', null, InputOption::VALUE_NONE, 'Output as JSON');
 
                 foreach ($this->fields as $field => $desc) {
-                    $req = in_array($field, $this->required) ? InputOption::VALUE_REQUIRED : InputOption::VALUE_REQUIRED;
-                    $this->addOption($field, null, $req, $desc . (in_array($field, $this->required) ? ' (required)' : ''));
+                    $this->addOption($field, null, InputOption::VALUE_REQUIRED, $desc . (in_array($field, $this->required) ? ' (required)' : ''));
                 }
             }
 
