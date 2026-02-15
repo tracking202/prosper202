@@ -4,15 +4,19 @@ declare(strict_types=1);
 
 require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
 
-use Api\V3\Bootstrap;
+use Api\V3\Auth;
 use Api\V3\AuthException;
+use Api\V3\Bootstrap;
+use Api\V3\HttpException;
+use Api\V3\Router;
+use Api\V3\Exception\ValidationException;
 
-// Security headers
+// ─── Security headers ────────────────────────────────────────────────
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Cache-Control: no-store');
 
-// CORS — restrict by default; set API_CORS_ORIGIN in 202-config.php to enable
+// ─── CORS ────────────────────────────────────────────────────────────
 $allowedOrigin = defined('API_CORS_ORIGIN') ? API_CORS_ORIGIN : '';
 if ($allowedOrigin !== '') {
     header('Access-Control-Allow-Origin: ' . $allowedOrigin);
@@ -25,56 +29,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
+// ─── Bootstrap ───────────────────────────────────────────────────────
 try {
     Bootstrap::init();
+    $db = Bootstrap::db();
+} catch (\Throwable $e) {
+    Bootstrap::errorResponse('Service unavailable', 503);
+    exit;
+}
 
-    $method = $_SERVER['REQUEST_METHOD'];
-    $path = $_SERVER['REQUEST_URI'];
+// ─── Parse request ───────────────────────────────────────────────────
+$method  = $_SERVER['REQUEST_METHOD'];
+$path    = $_SERVER['REQUEST_URI'];
+$basePath = '/api/v3';
+$pos = strpos($path, $basePath);
+if ($pos !== false) {
+    $path = substr($path, $pos + strlen($basePath));
+}
+$path = strtok($path, '?') ?: '/';
+$path = rtrim($path, '/');
+if ($path === '') {
+    $path = '/';
+}
 
-    // Strip base path
-    $basePath = '/api/v3';
-    $pos = strpos($path, $basePath);
-    if ($pos !== false) {
-        $path = substr($path, $pos + strlen($basePath));
+$queryParams = $_GET;
+$headers     = getallheaders() ?: [];
+
+$payload = [];
+if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
+    $raw = file_get_contents('php://input', false, null, 0, 1_048_576); // 1 MB limit
+    if ($raw) {
+        $payload = json_decode($raw, true) ?? [];
     }
+}
 
-    $path = strtok($path, '?') ?: '/';
-    $path = rtrim($path, '/');
-    if ($path === '') {
-        $path = '/';
-    }
+// ─── Route definitions ───────────────────────────────────────────────
+try {
 
-    $params = $_GET;
-    $headers = getallheaders() ?: [];
-
-    // Unauthenticated health probe for monitoring
+    // Unauthenticated health probe
     if ($path === '/system/health' && $method === 'GET') {
-        $db = Bootstrap::db();
         Bootstrap::jsonResponse([
             'data' => ['status' => 'healthy', 'timestamp' => time(), 'api_version' => 'v3'],
         ]);
         exit;
     }
 
-    Bootstrap::authenticate($params, $headers);
+    // Authenticate
+    $auth = Auth::fromRequest($headers, $db);
+    $userId = $auth->userId();
 
-    $payload = [];
-    if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
-        $raw = file_get_contents('php://input');
-        if ($raw) {
-            $payload = json_decode($raw, true) ?? [];
-        }
-    }
+    // Controller factories — instantiated lazily by the router handlers.
+    $crud = fn(string $class) => new $class($db, $userId);
 
-    $segments = $path === '/' ? [] : explode('/', ltrim($path, '/'));
-    $resource = $segments[0] ?? '';
-    $id = $segments[1] ?? null;
-    $sub = $segments[2] ?? null;
-    $subId = $segments[3] ?? null;
+    $router = new Router();
 
-    $response = null;
-
-    // --- CRUD resources ---
+    // ── CRUD resources ───────────────────────────────────────────────
     $crudMap = [
         'campaigns'     => \Api\V3\Controllers\CampaignsController::class,
         'aff-networks'  => \Api\V3\Controllers\AffNetworksController::class,
@@ -85,211 +94,214 @@ try {
         'text-ads'      => \Api\V3\Controllers\TextAdsController::class,
     ];
 
-    if (isset($crudMap[$resource])) {
-        $ctrl = new $crudMap[$resource]();
-
-        if ($resource === 'trackers' && $id !== null && $sub === 'url' && $method === 'GET') {
-            $response = $ctrl->getTrackingUrl((int)$id);
-        } else {
-            $response = match (true) {
-                $method === 'GET' && $id === null    => $ctrl->list($params),
-                $method === 'GET' && $id !== null     => $ctrl->get((int)$id),
-                $method === 'POST' && $id === null    => array_merge($ctrl->create($payload), ['_status' => 201]),
-                $method === 'PUT' && $id !== null      => $ctrl->update((int)$id, $payload),
-                $method === 'PATCH' && $id !== null    => $ctrl->update((int)$id, $payload),
-                $method === 'DELETE' && $id !== null   => (function () use ($ctrl, $id) { $ctrl->delete((int)$id); return ['_status' => 204]; })(),
-                default => null,
-            };
-        }
+    foreach ($crudMap as $resource => $class) {
+        $router->group("/$resource", function (Router $r) use ($class, $crud, &$queryParams, &$payload) {
+            $r->get('',       fn() => $crud($class)->list($queryParams));
+            $r->get('/{id}',  fn($ctx) => $crud($class)->get((int)$ctx['id']));
+            $r->post('',      fn() => ['_status' => 201] + $crud($class)->create($payload));
+            $r->put('/{id}',  fn($ctx) => $crud($class)->update((int)$ctx['id'], $payload));
+            $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete((int)$ctx['id'])));
+        });
     }
 
-    // --- Clicks ---
-    elseif ($resource === 'clicks') {
-        $ctrl = new \Api\V3\Controllers\ClicksController();
-        $response = match (true) {
-            $method === 'GET' && $id === null  => $ctrl->list($params),
-            $method === 'GET' && $id !== null   => $ctrl->get((int)$id),
-            default => null,
-        };
-    }
+    // Tracker sub-resource
+    $router->get('/trackers/{id}/url', function ($ctx) use ($crud) {
+        return $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id']);
+    });
 
-    // --- Conversions ---
-    elseif ($resource === 'conversions') {
-        $ctrl = new \Api\V3\Controllers\ConversionsController();
-        $response = match (true) {
-            $method === 'GET' && $id === null     => $ctrl->list($params),
-            $method === 'GET' && $id !== null      => $ctrl->get((int)$id),
-            $method === 'POST' && $id === null     => array_merge($ctrl->create($payload), ['_status' => 201]),
-            $method === 'DELETE' && $id !== null    => (function () use ($ctrl, $id) { $ctrl->delete((int)$id); return ['_status' => 204]; })(),
-            default => null,
-        };
-    }
+    // ── Clicks (read-only) ───────────────────────────────────────────
+    $router->get('/clicks', fn() => $crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams));
+    $router->get('/clicks/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']));
 
-    // --- Reports ---
-    elseif ($resource === 'reports') {
-        $ctrl = new \Api\V3\Controllers\ReportsController();
-        $response = match ($id) {
-            'summary'    => $method === 'GET' ? $ctrl->summary($params) : null,
-            'breakdown'  => $method === 'GET' ? $ctrl->breakdown($params) : null,
-            'timeseries' => $method === 'GET' ? $ctrl->timeseries($params) : null,
-            default      => null,
-        };
-    }
+    // ── Conversions ──────────────────────────────────────────────────
+    $router->group('/conversions', function (Router $r) use ($crud, &$queryParams, &$payload) {
+        $cls = \Api\V3\Controllers\ConversionsController::class;
+        $r->get('',        fn() => $crud($cls)->list($queryParams));
+        $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
+        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->create($payload));
+        $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
+    });
 
-    // --- Rotators ---
-    elseif ($resource === 'rotators') {
-        $ctrl = new \Api\V3\Controllers\RotatorsController();
+    // ── Reports ──────────────────────────────────────────────────────
+    $router->group('/reports', function (Router $r) use ($crud, &$queryParams) {
+        $cls = \Api\V3\Controllers\ReportsController::class;
+        $r->get('/summary',    fn() => $crud($cls)->summary($queryParams));
+        $r->get('/breakdown',  fn() => $crud($cls)->breakdown($queryParams));
+        $r->get('/timeseries', fn() => $crud($cls)->timeseries($queryParams));
+    });
 
-        if ($id !== null && $sub === 'rules') {
-            $response = match (true) {
-                $method === 'GET' && $subId === null     => $ctrl->listRules((int)$id),
-                $method === 'POST' && $subId === null    => $ctrl->createRule((int)$id, $payload),
-                $method === 'DELETE' && $subId !== null   => (function () use ($ctrl, $id, $subId) { $ctrl->deleteRule((int)$id, (int)$subId); return ['_status' => 204]; })(),
-                default => null,
-            };
-        } else {
-            $response = match (true) {
-                $method === 'GET' && $id === null     => $ctrl->list($params),
-                $method === 'GET' && $id !== null      => $ctrl->get((int)$id),
-                $method === 'POST' && $id === null     => array_merge($ctrl->create($payload), ['_status' => 201]),
-                $method === 'PUT' && $id !== null       => $ctrl->update((int)$id, $payload),
-                $method === 'PATCH' && $id !== null     => $ctrl->update((int)$id, $payload),
-                $method === 'DELETE' && $id !== null    => (function () use ($ctrl, $id) { $ctrl->delete((int)$id); return ['_status' => 204]; })(),
-                default => null,
-            };
-        }
-    }
+    // ── Rotators ─────────────────────────────────────────────────────
+    $router->group('/rotators', function (Router $r) use ($crud, &$queryParams, &$payload) {
+        $cls = \Api\V3\Controllers\RotatorsController::class;
+        $r->get('',        fn() => $crud($cls)->list($queryParams));
+        $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
+        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->create($payload));
+        $r->put('/{id}',   fn($ctx) => $crud($cls)->update((int)$ctx['id'], $payload));
+        $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
 
-    // --- Attribution ---
-    elseif ($resource === 'attribution' && ($id === 'models' || $id === null)) {
-        $ctrl = new \Api\V3\Controllers\AttributionController();
-        $modelId = $sub;
-        $modelSub = $segments[3] ?? null;
+        // Sub-resource: rules
+        $r->get('/{id}/rules',             fn($ctx) => $crud($cls)->listRules((int)$ctx['id']));
+        $r->post('/{id}/rules',            fn($ctx) => $crud($cls)->createRule((int)$ctx['id'], $payload));
+        $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
+    });
 
-        if ($modelId === null) {
-            $response = match ($method) {
-                'GET'  => $ctrl->listModels($params),
-                'POST' => array_merge($ctrl->createModel($payload), ['_status' => 201]),
-                default => null,
-            };
-        } elseif ($modelSub === null) {
-            $response = match ($method) {
-                'GET'    => $ctrl->getModel((int)$modelId),
-                'PUT', 'PATCH' => $ctrl->updateModel((int)$modelId, $payload),
-                'DELETE' => (function () use ($ctrl, $modelId) { $ctrl->deleteModel((int)$modelId); return ['_status' => 204]; })(),
-                default  => null,
-            };
-        } elseif ($modelSub === 'snapshots' && $method === 'GET') {
-            $response = $ctrl->listSnapshots((int)$modelId, $params);
-        } elseif ($modelSub === 'exports') {
-            $response = match ($method) {
-                'GET'  => $ctrl->listExports((int)$modelId),
-                'POST' => array_merge($ctrl->scheduleExport((int)$modelId, $payload), ['_status' => 201]),
-                default => null,
-            };
-        }
-    }
+    // ── Attribution ──────────────────────────────────────────────────
+    $router->group('/attribution/models', function (Router $r) use ($crud, &$queryParams, &$payload) {
+        $cls = \Api\V3\Controllers\AttributionController::class;
+        $r->get('',        fn() => $crud($cls)->listModels($queryParams));
+        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->createModel($payload));
+        $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel((int)$ctx['id']));
+        $r->put('/{id}',   fn($ctx) => $crud($cls)->updateModel((int)$ctx['id'], $payload));
+        $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteModel((int)$ctx['id'])));
 
-    // --- Users (admin-gated writes, self-or-admin for reads) ---
-    elseif ($resource === 'users') {
-        $ctrl = new \Api\V3\Controllers\UsersController();
+        $r->get('/{id}/snapshots', fn($ctx) => $crud($cls)->listSnapshots((int)$ctx['id'], $queryParams));
+        $r->get('/{id}/exports',   fn($ctx) => $crud($cls)->listExports((int)$ctx['id']));
+        $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $crud($cls)->scheduleExport((int)$ctx['id'], $payload));
+    });
 
-        if ($id === 'roles' && $method === 'GET') {
-            $response = $ctrl->listRoles();
-        } elseif ($id !== null && $sub === 'roles') {
-            Bootstrap::requireAdmin();
-            $response = match (true) {
-                $method === 'POST' && $subId === null     => $ctrl->assignRole((int)$id, $payload),
-                $method === 'DELETE' && $subId !== null    => (function () use ($ctrl, $id, $subId) { $ctrl->removeRole((int)$id, (int)$subId); return ['_status' => 204]; })(),
-                default => null,
-            };
-        } elseif ($id !== null && $sub === 'api-keys') {
-            Bootstrap::requireSelfOrAdmin((int)$id);
-            $response = match (true) {
-                $method === 'GET'                          => $ctrl->listApiKeys((int)$id),
-                $method === 'POST'                         => array_merge($ctrl->createApiKey((int)$id), ['_status' => 201]),
-                $method === 'DELETE' && $subId !== null     => (function () use ($ctrl, $id, $subId) { $ctrl->deleteApiKey((int)$id, $subId); return ['_status' => 204]; })(),
-                default => null,
-            };
-        } elseif ($id !== null && $sub === 'preferences') {
-            Bootstrap::requireSelfOrAdmin((int)$id);
-            $response = match ($method) {
-                'GET' => $ctrl->getPreferences((int)$id),
-                'PUT', 'PATCH' => $ctrl->updatePreferences((int)$id, $payload),
-                default => null,
-            };
-        } else {
-            if ($method === 'GET' && $id === null) {
-                Bootstrap::requireAdmin();
-                $response = $ctrl->list();
-            } elseif ($method === 'GET' && $id !== null) {
-                Bootstrap::requireSelfOrAdmin((int)$id);
-                $response = $ctrl->get((int)$id);
-            } elseif ($method === 'POST' && $id === null) {
-                Bootstrap::requireAdmin();
-                $response = array_merge($ctrl->create($payload), ['_status' => 201]);
-            } elseif (($method === 'PUT' || $method === 'PATCH') && $id !== null) {
-                Bootstrap::requireSelfOrAdmin((int)$id);
-                $response = $ctrl->update((int)$id, $payload);
-            } elseif ($method === 'DELETE' && $id !== null) {
-                Bootstrap::requireAdmin();
-                $ctrl->delete((int)$id);
-                $response = ['_status' => 204];
-            }
-        }
-    }
+    // ── Users (admin-gated writes, self-or-admin for reads) ──────────
+    $router->group('/users', function (Router $r) use ($db, $userId, $auth, &$payload) {
+        $make = fn() => new \Api\V3\Controllers\UsersController($db, $userId);
 
-    // --- System (admin only, except health which is pre-auth above) ---
-    elseif ($resource === 'system') {
-        Bootstrap::requireAdmin();
-        $ctrl = new \Api\V3\Controllers\SystemController();
-        $response = match ($id) {
-            'health'     => $method === 'GET' ? $ctrl->health() : null,
-            'version'    => $method === 'GET' ? $ctrl->version() : null,
-            'db-stats'   => $method === 'GET' ? $ctrl->dbStats() : null,
-            'cron'       => $method === 'GET' ? $ctrl->cronStatus() : null,
-            'errors'     => $method === 'GET' ? $ctrl->errors($params) : null,
-            'dataengine' => $method === 'GET' ? $ctrl->dataengineStatus() : null,
-            default      => null,
-        };
-    }
+        $r->get('/roles', fn() => $make()->listRoles());
 
-    // --- Root ---
-    elseif ($resource === '') {
-        $response = [
-            'api' => 'Prosper202 API v3',
-            'endpoints' => [
-                'campaigns' => '/campaigns', 'aff_networks' => '/aff-networks',
-                'ppc_networks' => '/ppc-networks', 'ppc_accounts' => '/ppc-accounts',
-                'trackers' => '/trackers', 'landing_pages' => '/landing-pages',
-                'text_ads' => '/text-ads', 'clicks' => '/clicks',
-                'conversions' => '/conversions', 'reports' => '/reports/{summary|breakdown|timeseries}',
-                'rotators' => '/rotators', 'attribution' => '/attribution/models',
-                'users' => '/users', 'system' => '/system/{health|version|db-stats|cron|errors|dataengine}',
-            ],
-            'auth' => 'Authorization: Bearer <api_key>',
-        ];
-    }
+        $r->get('', function () use ($auth, $make) {
+            $auth->requireAdmin();
+            return $make()->list();
+        });
+        $r->post('', function () use ($auth, $make, &$payload) {
+            $auth->requireAdmin();
+            return ['_status' => 201] + $make()->create($payload);
+        });
+        $r->get('/{id}', function ($ctx) use ($auth, $make) {
+            $auth->requireSelfOrAdmin((int)$ctx['id']);
+            return $make()->get((int)$ctx['id']);
+        });
+        $r->put('/{id}', function ($ctx) use ($auth, $make, &$payload) {
+            $auth->requireSelfOrAdmin((int)$ctx['id']);
+            return $make()->update((int)$ctx['id'], $payload);
+        });
+        $r->delete('/{id}', function ($ctx) use ($auth, $make) {
+            $auth->requireAdmin();
+            $make()->delete((int)$ctx['id']);
+            return null; // 204
+        });
 
-    if ($response === null) {
+        // Roles sub-resource (admin only)
+        $r->post('/{id}/roles', function ($ctx) use ($auth, $make, &$payload) {
+            $auth->requireAdmin();
+            return $make()->assignRole((int)$ctx['id'], $payload);
+        });
+        $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make) {
+            $auth->requireAdmin();
+            $make()->removeRole((int)$ctx['id'], (int)$ctx['roleId']);
+            return null;
+        });
+
+        // API keys (self-or-admin)
+        $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make) {
+            $auth->requireSelfOrAdmin((int)$ctx['id']);
+            return $make()->listApiKeys((int)$ctx['id']);
+        });
+        $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make) {
+            $auth->requireSelfOrAdmin((int)$ctx['id']);
+            return ['_status' => 201] + $make()->createApiKey((int)$ctx['id']);
+        });
+        $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make) {
+            $auth->requireSelfOrAdmin((int)$ctx['id']);
+            $make()->deleteApiKey((int)$ctx['id'], $ctx['keyId']);
+            return null;
+        });
+
+        // Preferences (self-or-admin)
+        $r->get('/{id}/preferences', function ($ctx) use ($auth, $make) {
+            $auth->requireSelfOrAdmin((int)$ctx['id']);
+            return $make()->getPreferences((int)$ctx['id']);
+        });
+        $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, &$payload) {
+            $auth->requireSelfOrAdmin((int)$ctx['id']);
+            return $make()->updatePreferences((int)$ctx['id'], $payload);
+        });
+    });
+
+    // ── System (admin only) ──────────────────────────────────────────
+    $router->group('/system', function (Router $r) use ($db, $auth, &$queryParams) {
+        $make = fn() => new \Api\V3\Controllers\SystemController($db);
+
+        $r->get('/health',     fn() => $make()->health());
+        $r->get('/version',    fn() => $make()->version());
+        $r->get('/db-stats',   fn() => $make()->dbStats());
+        $r->get('/cron',       fn() => $make()->cronStatus());
+        $r->get('/errors',     fn() => $make()->errors($queryParams));
+        $r->get('/dataengine', fn() => $make()->dataengineStatus());
+    }, [$auth->requireAdmin(...)]);
+
+    // ── API root ─────────────────────────────────────────────────────
+    $router->get('/', fn() => [
+        'api' => 'Prosper202 API v3',
+        'endpoints' => [
+            'campaigns'     => '/campaigns',
+            'aff_networks'  => '/aff-networks',
+            'ppc_networks'  => '/ppc-networks',
+            'ppc_accounts'  => '/ppc-accounts',
+            'trackers'      => '/trackers',
+            'landing_pages' => '/landing-pages',
+            'text_ads'      => '/text-ads',
+            'clicks'        => '/clicks',
+            'conversions'   => '/conversions',
+            'reports'       => '/reports/{summary|breakdown|timeseries}',
+            'rotators'      => '/rotators',
+            'attribution'   => '/attribution/models',
+            'users'         => '/users',
+            'system'        => '/system/{health|version|db-stats|cron|errors|dataengine}',
+        ],
+        'auth' => 'Authorization: Bearer <api_key>',
+    ]);
+
+    // ─── Dispatch ────────────────────────────────────────────────────
+    $match = $router->match($method, $path);
+
+    if ($match === null) {
         Bootstrap::errorResponse('Not found', 404);
+        exit;
+    }
+
+    // Run middleware stack
+    foreach ($match['middleware'] as $mw) {
+        $mw();
+    }
+
+    // Execute handler
+    $response = ($match['handler'])($match['pathParams']);
+
+    // ─── Send response ───────────────────────────────────────────────
+    if ($response === null) {
+        // DELETE — 204 No Content
+        http_response_code(204);
     } else {
         $status = $response['_status'] ?? 200;
         unset($response['_status']);
-        if ($status === 204) {
-            http_response_code(204);
-        } else {
-            Bootstrap::jsonResponse($response, $status);
-        }
+        Bootstrap::jsonResponse($response, $status);
     }
 
 } catch (AuthException $e) {
     Bootstrap::errorResponse($e->getMessage(), $e->getCode() ?: 401);
-} catch (\RuntimeException $e) {
-    $code = $e->getCode();
-    $code = ($code >= 400 && $code < 600) ? $code : 500;
-    $message = $code === 500 ? 'Internal server error' : $e->getMessage();
+} catch (ValidationException $e) {
+    Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
+} catch (HttpException $e) {
+    $code = $e->getHttpStatus();
+    $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
     Bootstrap::errorResponse($message, $code);
 } catch (\Throwable $e) {
     Bootstrap::errorResponse('Internal server error', 500);
+}
+
+// ─── Helper ──────────────────────────────────────────────────────────
+/**
+ * Execute a side-effect on an object and return null (for DELETE handlers).
+ */
+function tap(object $obj, callable $fn): null
+{
+    $fn($obj);
+    return null;
 }

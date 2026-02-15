@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Api\V3;
 
-class Bootstrap
+/**
+ * Application bootstrap — initializes config, provides DB connection.
+ *
+ * This is now a focused class: it handles initialization and DB access only.
+ * Authentication lives in Auth. HTTP responses live in the router entry point.
+ */
+final class Bootstrap
 {
     private static ?\mysqli $db = null;
-    private static ?int $authenticatedUserId = null;
-    private static ?array $authenticatedUserRoles = null;
 
     public static function init(): void
     {
@@ -53,85 +57,6 @@ class Bootstrap
         }
     }
 
-    public static function authenticate(array $params, array $headers): int
-    {
-        $apiKey = '';
-
-        // Bearer token auth only — query param removed to prevent credential leakage in logs/referers
-        $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
-        if (is_array($authHeader)) {
-            $authHeader = $authHeader[0] ?? '';
-        }
-        if (str_starts_with($authHeader, 'Bearer ')) {
-            $apiKey = trim(substr($authHeader, 7));
-        }
-
-        if ($apiKey === '') {
-            throw new AuthException('API key required. Pass via Authorization: Bearer <key> header.', 401);
-        }
-
-        $db = self::db();
-        $stmt = $db->prepare('SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1');
-        if (!$stmt) {
-            throw new \RuntimeException('Authentication unavailable');
-        }
-        $stmt->bind_param('s', $apiKey);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $row = $result ? $result->fetch_assoc() : null;
-        $stmt->close();
-
-        if (!$row || !isset($row['user_id'])) {
-            throw new AuthException('Invalid API key.', 401);
-        }
-
-        self::$authenticatedUserId = (int)$row['user_id'];
-
-        // Load user roles for authorization checks
-        self::$authenticatedUserRoles = [];
-        $stmt = $db->prepare('SELECT r.role_name FROM 202_user_role ur INNER JOIN 202_roles r ON ur.role_id = r.role_id WHERE ur.user_id = ?');
-        if ($stmt) {
-            $stmt->bind_param('i', self::$authenticatedUserId);
-            $stmt->execute();
-            $roleResult = $stmt->get_result();
-            while ($r = $roleResult->fetch_assoc()) {
-                self::$authenticatedUserRoles[] = strtolower($r['role_name']);
-            }
-            $stmt->close();
-        }
-
-        return self::$authenticatedUserId;
-    }
-
-    public static function userId(): int
-    {
-        if (self::$authenticatedUserId === null) {
-            throw new AuthException('Not authenticated.', 401);
-        }
-        return self::$authenticatedUserId;
-    }
-
-    public static function isAdmin(): bool
-    {
-        return self::$authenticatedUserRoles !== null
-            && (in_array('admin', self::$authenticatedUserRoles, true)
-                || in_array('administrator', self::$authenticatedUserRoles, true));
-    }
-
-    public static function requireAdmin(): void
-    {
-        if (!self::isAdmin()) {
-            throw new AuthException('Admin access required.', 403);
-        }
-    }
-
-    public static function requireSelfOrAdmin(int $targetUserId): void
-    {
-        if (self::userId() !== $targetUserId && !self::isAdmin()) {
-            throw new AuthException('You can only access your own resources.', 403);
-        }
-    }
-
     public static function jsonResponse(array $data, int $status = 200): void
     {
         http_response_code($status);
@@ -141,8 +66,15 @@ class Bootstrap
         echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
-    public static function errorResponse(string $message, int $status = 400): void
+    public static function errorResponse(string $message, int $status = 400, array $extra = []): void
     {
-        self::jsonResponse(['error' => true, 'message' => $message, 'status' => $status], $status);
+        $body = array_merge(['error' => true, 'message' => $message, 'status' => $status], $extra);
+        self::jsonResponse($body, $status);
+    }
+
+    /** @internal */
+    public static function resetDb(): void
+    {
+        self::$db = null;
     }
 }

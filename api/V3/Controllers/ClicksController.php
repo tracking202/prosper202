@@ -4,17 +4,18 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
-use Api\V3\Bootstrap;
+use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\NotFoundException;
 
 class ClicksController
 {
     private \mysqli $db;
     private int $userId;
 
-    public function __construct()
+    public function __construct(\mysqli $db, int $userId)
     {
-        $this->db = Bootstrap::db();
-        $this->userId = Bootstrap::userId();
+        $this->db = $db;
+        $this->userId = $userId;
     }
 
     public function list(array $params): array
@@ -26,7 +27,6 @@ class ClicksController
         $binds = [$this->userId];
         $types = 'i';
 
-        // Date range filters (unix timestamps)
         if (!empty($params['time_from'])) {
             $where[] = 'c.click_time >= ?';
             $binds[] = (int)$params['time_from'];
@@ -38,7 +38,6 @@ class ClicksController
             $types .= 'i';
         }
 
-        // Entity filters
         foreach (['aff_campaign_id', 'ppc_account_id', 'landing_page_id'] as $filter) {
             if (!empty($params[$filter])) {
                 $where[] = "c.$filter = ?";
@@ -47,14 +46,11 @@ class ClicksController
             }
         }
 
-        // Lead/conversion filter
         if (isset($params['click_lead'])) {
             $where[] = 'c.click_lead = ?';
             $binds[] = (int)$params['click_lead'];
             $types .= 'i';
         }
-
-        // Bot filter
         if (isset($params['click_bot'])) {
             $where[] = 'c.click_bot = ?';
             $binds[] = (int)$params['click_bot'];
@@ -63,15 +59,13 @@ class ClicksController
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
-        // Count
         $countSql = "SELECT COUNT(*) as total FROM 202_clicks c $whereClause";
-        $stmt = $this->db->prepare($countSql);
+        $stmt = $this->prepare($countSql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $total = (int)$stmt->get_result()->fetch_assoc()['total'];
         $stmt->close();
 
-        // Fetch with joins for enriched data
         $sql = "SELECT
                 c.click_id, c.aff_campaign_id, c.ppc_account_id, c.landing_page_id,
                 c.click_cpc, c.click_payout, c.click_lead, c.click_filtered,
@@ -95,7 +89,7 @@ class ClicksController
         $binds[] = $offset;
         $types .= 'i';
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -115,7 +109,10 @@ class ClicksController
     public function get(int $id): array
     {
         $sql = "SELECT
-                c.*, cr.click_id_public, cr.click_cloaking, cr.click_in, cr.click_out, cr.click_reviewed,
+                c.click_id, c.aff_campaign_id, c.ppc_account_id, c.landing_page_id,
+                c.click_cpc, c.click_payout, c.click_lead, c.click_filtered,
+                c.click_bot, c.click_alp, c.click_time, c.rotator_id, c.rule_id, c.user_id,
+                cr.click_id_public, cr.click_cloaking, cr.click_in, cr.click_out, cr.click_reviewed,
                 ca.text_ad_id, ca.keyword_id, ca.ip_id, ca.country_id, ca.region_id,
                 ca.city_id, ca.platform_id, ca.browser_id, ca.device_id, ca.isp_id,
                 ct.c1_id, ct.c2_id, ct.c3_id, ct.c4_id,
@@ -135,16 +132,25 @@ class ClicksController
             WHERE c.click_id = ? AND c.user_id = ?
             LIMIT 1";
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param('ii', $id, $this->userId);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
-            throw new \RuntimeException('Click not found', 404);
+            throw new NotFoundException('Click not found');
         }
 
         return ['data' => $row];
+    }
+
+    private function prepare(string $sql): \mysqli_stmt
+    {
+        $stmt = $this->db->prepare($sql);
+        if (!$stmt) {
+            throw new DatabaseException('Prepare failed');
+        }
+        return $stmt;
     }
 }

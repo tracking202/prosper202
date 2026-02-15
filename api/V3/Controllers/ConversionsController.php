@@ -4,17 +4,19 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
-use Api\V3\Bootstrap;
+use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\ValidationException;
 
 class ConversionsController
 {
     private \mysqli $db;
     private int $userId;
 
-    public function __construct()
+    public function __construct(\mysqli $db, int $userId)
     {
-        $this->db = Bootstrap::db();
-        $this->userId = Bootstrap::userId();
+        $this->db = $db;
+        $this->userId = $userId;
     }
 
     public function list(array $params): array
@@ -45,13 +47,15 @@ class ConversionsController
         $whereClause = 'WHERE ' . implode(' AND ', $where) . ' AND cl.deleted = 0';
 
         $countSql = "SELECT COUNT(*) as total FROM 202_conversion_logs cl $whereClause";
-        $stmt = $this->db->prepare($countSql);
+        $stmt = $this->prepare($countSql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $total = (int)$stmt->get_result()->fetch_assoc()['total'];
         $stmt->close();
 
-        $sql = "SELECT cl.*, ac.aff_campaign_name
+        $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
+                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
+                ac.aff_campaign_name
             FROM 202_conversion_logs cl
             LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
             $whereClause
@@ -62,7 +66,7 @@ class ConversionsController
         $binds[] = $offset;
         $types .= 'i';
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -81,19 +85,21 @@ class ConversionsController
 
     public function get(int $id): array
     {
-        $sql = "SELECT cl.*, ac.aff_campaign_name
+        $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
+                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
+                ac.aff_campaign_name
             FROM 202_conversion_logs cl
             LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
             WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0 LIMIT 1";
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param('ii', $id, $this->userId);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
-            throw new \RuntimeException('Conversion not found', 404);
+            throw new NotFoundException('Conversion not found');
         }
         return ['data' => $row];
     }
@@ -102,46 +108,43 @@ class ConversionsController
     {
         $clickId = (int)($payload['click_id'] ?? 0);
         if ($clickId <= 0) {
-            throw new \RuntimeException('click_id is required', 422);
+            throw new ValidationException('click_id is required', ['click_id' => 'Must be a positive integer']);
         }
 
-        // Verify click belongs to user
-        $stmt = $this->db->prepare('SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
+        $stmt = $this->prepare('SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
         $stmt->bind_param('ii', $clickId, $this->userId);
         $stmt->execute();
         $click = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
         if (!$click) {
-            throw new \RuntimeException('Click not found or not owned by user', 404);
+            throw new NotFoundException('Click not found or not owned by user');
         }
 
         $payout = (float)($payload['payout'] ?? $click['click_payout'] ?? 0);
-        $transactionId = $payload['transaction_id'] ?? '';
+        $transactionId = (string)($payload['transaction_id'] ?? '');
         $convTime = (int)($payload['conv_time'] ?? time());
         $campaignId = (int)$click['aff_campaign_id'];
         $clickTime = (int)($click['click_time'] ?? 0);
 
         $this->db->begin_transaction();
         try {
+            $sql = "INSERT INTO 202_conversion_logs
+                (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0)";
+            $stmt = $this->prepare($sql);
+            $stmt->bind_param('isidiii', $clickId, $transactionId, $campaignId, $payout, $this->userId, $clickTime, $convTime);
 
-        $sql = "INSERT INTO 202_conversion_logs
-            (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0)";
-        $stmt = $this->db->prepare($sql);
-        $stmt->bind_param('isidiii', $clickId, $transactionId, $campaignId, $payout, $this->userId, $clickTime, $convTime);
+            if (!$stmt->execute()) {
+                throw new DatabaseException('Failed to create conversion');
+            }
+            $convId = $stmt->insert_id;
+            $stmt->close();
 
-        if (!$stmt->execute()) {
-            throw new \RuntimeException('Failed to create conversion', 500);
-        }
-        $convId = $stmt->insert_id;
-        $stmt->close();
-
-        // Mark click as lead
-        $stmt = $this->db->prepare('UPDATE 202_clicks SET click_lead = 1, click_payout = ? WHERE click_id = ? AND user_id = ?');
-        $stmt->bind_param('dii', $payout, $clickId, $this->userId);
-        $stmt->execute();
-        $stmt->close();
+            $stmt = $this->prepare('UPDATE 202_clicks SET click_lead = 1, click_payout = ? WHERE click_id = ? AND user_id = ?');
+            $stmt->bind_param('dii', $payout, $clickId, $this->userId);
+            $stmt->execute();
+            $stmt->close();
 
             $this->db->commit();
         } catch (\Throwable $e) {
@@ -154,10 +157,19 @@ class ConversionsController
 
     public function delete(int $id): void
     {
-        $this->get($id); // verify ownership
-        $stmt = $this->db->prepare('UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ?');
+        $this->get($id);
+        $stmt = $this->prepare('UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ?');
         $stmt->bind_param('ii', $id, $this->userId);
         $stmt->execute();
         $stmt->close();
+    }
+
+    private function prepare(string $sql): \mysqli_stmt
+    {
+        $stmt = $this->db->prepare($sql);
+        if (!$stmt) {
+            throw new DatabaseException('Prepare failed');
+        }
+        return $stmt;
     }
 }

@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
-use Api\V3\Bootstrap;
+use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\ValidationException;
 
 class ReportsController
 {
@@ -28,10 +29,12 @@ class ReportsController
         'text_ad'      => ['table' => '202_text_ads',            'id' => 'text_ad_id',       'name' => 'text_ad_name',       'de_id' => 'text_ad_id'],
     ];
 
-    public function __construct()
+    private const ALLOWED_SORTS = ['total_clicks', 'total_leads', 'total_income', 'total_cost', 'total_net', 'roi', 'epc', 'conv_rate'];
+
+    public function __construct(\mysqli $db, int $userId)
     {
-        $this->db = Bootstrap::db();
-        $this->userId = Bootstrap::userId();
+        $this->db = $db;
+        $this->userId = $userId;
     }
 
     public function summary(array $params): array
@@ -60,7 +63,7 @@ class ReportsController
             FROM 202_dataengine de
             $whereClause";
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
@@ -73,7 +76,10 @@ class ReportsController
     {
         $breakdownType = $params['breakdown'] ?? 'campaign';
         if (!isset(self::BREAKDOWNS[$breakdownType])) {
-            throw new \RuntimeException('Invalid breakdown. Valid: ' . implode(', ', array_keys(self::BREAKDOWNS)), 422);
+            throw new ValidationException(
+                'Invalid breakdown type',
+                ['breakdown' => 'Valid values: ' . implode(', ', array_keys(self::BREAKDOWNS))]
+            );
         }
 
         $bd = self::BREAKDOWNS[$breakdownType];
@@ -82,8 +88,7 @@ class ReportsController
         $sortBy = $params['sort'] ?? 'total_clicks';
         $sortDir = strtoupper($params['sort_dir'] ?? 'DESC') === 'ASC' ? 'ASC' : 'DESC';
 
-        $allowedSorts = ['total_clicks', 'total_leads', 'total_income', 'total_cost', 'total_net', 'roi', 'epc', 'conv_rate'];
-        if (!in_array($sortBy, $allowedSorts, true)) {
+        if (!in_array($sortBy, self::ALLOWED_SORTS, true)) {
             $sortBy = 'total_clicks';
         }
 
@@ -122,7 +127,7 @@ class ReportsController
         $binds[] = $offset;
         $types .= 'i';
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -142,7 +147,12 @@ class ReportsController
 
     public function timeseries(array $params): array
     {
-        $interval = $params['interval'] ?? 'day'; // hour, day, week, month
+        $validIntervals = ['hour', 'day', 'week', 'month'];
+        $interval = $params['interval'] ?? 'day';
+        if (!in_array($interval, $validIntervals, true)) {
+            $interval = 'day';
+        }
+
         $where = ['de.user_id = ?'];
         $binds = [$this->userId];
         $types = 'i';
@@ -157,7 +167,6 @@ class ReportsController
             'day'   => "FROM_UNIXTIME(de.click_time, '%Y-%m-%d')",
             'week'  => "FROM_UNIXTIME(de.click_time, '%x-W%v')",
             'month' => "FROM_UNIXTIME(de.click_time, '%Y-%m')",
-            default => "FROM_UNIXTIME(de.click_time, '%Y-%m-%d')",
         };
 
         $sql = "SELECT
@@ -173,7 +182,7 @@ class ReportsController
             ORDER BY period ASC
             LIMIT 2000";
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -199,7 +208,6 @@ class ReportsController
             $binds[] = (int)$params['time_to'];
             $types .= 'i';
         }
-        // Convenience: "today", "yesterday", "last7", "last30"
         if (!empty($params['period'])) {
             $now = time();
             $todayStart = strtotime('today midnight');
@@ -229,5 +237,14 @@ class ReportsController
                 $types .= 'i';
             }
         }
+    }
+
+    private function prepare(string $sql): \mysqli_stmt
+    {
+        $stmt = $this->db->prepare($sql);
+        if (!$stmt) {
+            throw new DatabaseException('Prepare failed');
+        }
+        return $stmt;
     }
 }

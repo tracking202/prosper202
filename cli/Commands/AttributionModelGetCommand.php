@@ -4,31 +4,26 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
-use P202Cli\ApiClient;
-use P202Cli\Config;
-use P202Cli\Formatter;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
-class AttributionModelGetCommand extends Command
+class AttributionModelGetCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:model:get';
 
     protected function configure(): void
     {
+        parent::configure();
         $this->setDescription('Get an attribution model')
-            ->addArgument('id', InputArgument::REQUIRED, 'Model ID')
-            ->addOption('json', null, InputOption::VALUE_NONE, 'Output as JSON');
+            ->addArgument('id', InputArgument::REQUIRED, 'Model ID');
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output): int
+    protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $client = ApiClient::fromConfig(new Config());
-        $result = $client->get('attribution/models/' . $input->getArgument('id'));
-        Formatter::output($output, $result, (bool)$input->getOption('json'));
+        $result = $this->client()->get('attribution/models/' . $input->getArgument('id'));
+        $this->render($output, $result, $input);
         return Command::SUCCESS;
     }
 }

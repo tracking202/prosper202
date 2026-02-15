@@ -4,20 +4,19 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
-use P202Cli\ApiClient;
-use P202Cli\Config;
-use P202Cli\Formatter;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
-class UserUpdateCommand extends Command
+class UserUpdateCommand extends BaseCommand
 {
     protected static $defaultName = 'user:update';
+
     protected function configure(): void
     {
+        parent::configure();
         $this->setDescription('Update a user')
             ->addArgument('id', InputArgument::REQUIRED, 'User ID')
             ->addOption('user_fname', null, InputOption::VALUE_REQUIRED, 'First name')
@@ -25,10 +24,10 @@ class UserUpdateCommand extends Command
             ->addOption('user_email', null, InputOption::VALUE_REQUIRED, 'Email')
             ->addOption('user_pass', null, InputOption::VALUE_REQUIRED, 'New password')
             ->addOption('user_timezone', null, InputOption::VALUE_REQUIRED, 'Timezone')
-            ->addOption('user_active', null, InputOption::VALUE_REQUIRED, '1=active, 0=inactive')
-            ->addOption('json', null, InputOption::VALUE_NONE, 'Output as JSON');
+            ->addOption('user_active', null, InputOption::VALUE_REQUIRED, '1=active, 0=inactive');
     }
-    protected function execute(InputInterface $input, OutputInterface $output): int
+
+    protected function handle(InputInterface $input, OutputInterface $output): int
     {
         $body = [];
         foreach (['user_fname', 'user_lname', 'user_email', 'user_pass', 'user_timezone', 'user_active'] as $f) {
@@ -41,8 +40,7 @@ class UserUpdateCommand extends Command
             $output->writeln('<error>Provide at least one field</error>');
             return Command::FAILURE;
         }
-        $client = ApiClient::fromConfig(new Config());
-        Formatter::output($output, $client->put('users/' . $input->getArgument('id'), $body), (bool)$input->getOption('json'));
+        $this->render($output, $this->client()->put('users/' . $input->getArgument('id'), $body), $input);
         return Command::SUCCESS;
     }
 }

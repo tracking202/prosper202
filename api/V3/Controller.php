@@ -4,6 +4,17 @@ declare(strict_types=1);
 
 namespace Api\V3;
 
+use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\ValidationException;
+
+/**
+ * Base CRUD controller with lifecycle hooks, input validation, and DI.
+ *
+ * Subclasses declare their schema via tableName(), primaryKey(), fields().
+ * Override lifecycle hooks (beforeCreate, afterCreate, etc.) to inject
+ * custom behaviour without copy-pasting the entire CRUD method.
+ */
 abstract class Controller
 {
     protected \mysqli $db;
@@ -13,17 +24,17 @@ abstract class Controller
     abstract protected function primaryKey(): string;
     abstract protected function fields(): array;
 
-    protected function selectColumns(): array
+    /** @var string[]|null  Computed once per instance. */
+    private ?array $cachedSelectColumns = null;
+    private ?array $cachedFields = null;
+
+    public function __construct(\mysqli $db, int $userId)
     {
-        $columns = [$this->primaryKey()];
-        foreach ($this->fields() as $col => $def) {
-            $columns[] = $col;
-        }
-        if ($this->userIdColumn()) {
-            $columns[] = $this->userIdColumn();
-        }
-        return array_unique($columns);
+        $this->db = $db;
+        $this->userId = $userId;
     }
+
+    // ─── Schema helpers ──────────────────────────────────────────────
 
     protected function userIdColumn(): ?string
     {
@@ -40,17 +51,120 @@ abstract class Controller
         return $this->primaryKey() . ' DESC';
     }
 
-    public function __construct()
+    protected function selectColumns(): array
     {
-        $this->db = Bootstrap::db();
-        $this->userId = Bootstrap::userId();
+        if ($this->cachedSelectColumns !== null) {
+            return $this->cachedSelectColumns;
+        }
+        $columns = [$this->primaryKey()];
+        foreach ($this->resolveFields() as $col => $def) {
+            $columns[] = $col;
+        }
+        if ($this->userIdColumn()) {
+            $columns[] = $this->userIdColumn();
+        }
+        $this->cachedSelectColumns = array_values(array_unique($columns));
+        return $this->cachedSelectColumns;
     }
+
+    protected function resolveFields(): array
+    {
+        if ($this->cachedFields === null) {
+            $this->cachedFields = $this->fields();
+        }
+        return $this->cachedFields;
+    }
+
+    // ─── Input Validation ────────────────────────────────────────────
+
+    /**
+     * Validate and coerce payload values against field definitions.
+     *
+     * @return array  Cleaned payload with only known, writable fields.
+     * @throws ValidationException
+     */
+    protected function validatePayload(array $payload, bool $requireRequired = false): array
+    {
+        $fields = $this->resolveFields();
+        $errors = [];
+        $clean = [];
+
+        if ($requireRequired) {
+            foreach ($fields as $col => $def) {
+                if (($def['required'] ?? false) && !array_key_exists($col, $payload)) {
+                    $errors[$col] = "Field '$col' is required";
+                }
+            }
+        }
+
+        foreach ($payload as $col => $value) {
+            $def = $fields[$col] ?? null;
+            if ($def === null || ($def['readonly'] ?? false)) {
+                continue;
+            }
+
+            switch ($def['type']) {
+                case 'i':
+                    if (!is_numeric($value)) {
+                        $errors[$col] = "Field '$col' must be an integer";
+                    } else {
+                        $clean[$col] = (int)$value;
+                    }
+                    break;
+                case 'd':
+                    if (!is_numeric($value)) {
+                        $errors[$col] = "Field '$col' must be a number";
+                    } else {
+                        $clean[$col] = (float)$value;
+                    }
+                    break;
+                case 's':
+                    $clean[$col] = (string)$value;
+                    if (isset($def['max_length']) && mb_strlen($clean[$col]) > $def['max_length']) {
+                        $errors[$col] = "Field '$col' exceeds max length of {$def['max_length']}";
+                    }
+                    break;
+                default:
+                    $clean[$col] = $value;
+            }
+        }
+
+        if ($errors) {
+            throw new ValidationException('Validation failed', $errors);
+        }
+
+        return $clean;
+    }
+
+    // ─── Lifecycle Hooks ─────────────────────────────────────────────
+
+    /**
+     * Called before INSERT.  Return extra columns to include in the INSERT.
+     * @return array<string, array{type: string, value: mixed}>
+     */
+    protected function beforeCreate(array $payload): array
+    {
+        return [];
+    }
+
+    protected function afterCreate(int $insertId, array $payload): void
+    {
+    }
+
+    protected function beforeUpdate(int|string $id, array $payload): void
+    {
+    }
+
+    protected function beforeDelete(int|string $id): void
+    {
+    }
+
+    // ─── CRUD Operations ─────────────────────────────────────────────
 
     public function list(array $params): array
     {
         $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
         $offset = max(0, (int)($params['offset'] ?? 0));
-        $fields = $this->fields();
         $selectExpr = implode(', ', $this->selectColumns());
 
         $where = [];
@@ -67,6 +181,7 @@ abstract class Controller
             $where[] = $this->deletedColumn() . ' = 0';
         }
 
+        $fields = $this->resolveFields();
         $filters = $params['filter'] ?? [];
         if (is_array($filters)) {
             foreach ($filters as $field => $value) {
@@ -85,7 +200,7 @@ abstract class Controller
         $countSql = "SELECT COUNT(*) as total FROM {$this->tableName()} $whereClause";
         $total = 0;
         if ($types) {
-            $stmt = $this->db->prepare($countSql);
+            $stmt = $this->prepare($countSql);
             $stmt->bind_param($types, ...$binds);
             $stmt->execute();
             $total = (int)$stmt->get_result()->fetch_assoc()['total'];
@@ -101,7 +216,7 @@ abstract class Controller
         $binds[] = $offset;
         $types .= 'i';
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -137,14 +252,14 @@ abstract class Controller
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
         $sql = "SELECT $selectExpr FROM {$this->tableName()} $whereClause LIMIT 1";
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
-            throw new \RuntimeException('Not found', 404);
+            throw new NotFoundException();
         }
 
         return ['data' => $row];
@@ -152,28 +267,32 @@ abstract class Controller
 
     public function create(array $payload): array
     {
-        $fields = $this->fields();
+        $clean = $this->validatePayload($payload, requireRequired: true);
+        $extras = $this->beforeCreate($clean);
+
         $columns = [];
         $placeholders = [];
         $binds = [];
         $types = '';
-
-        foreach ($fields as $col => $def) {
-            if (($def['required'] ?? false) && !isset($payload[$col])) {
-                throw new \RuntimeException("Missing required field: $col", 422);
-            }
-        }
+        $fields = $this->resolveFields();
 
         foreach ($fields as $col => $def) {
             if ($def['readonly'] ?? false) {
                 continue;
             }
-            if (isset($payload[$col])) {
+            if (array_key_exists($col, $clean)) {
                 $columns[] = $col;
                 $placeholders[] = '?';
-                $binds[] = $payload[$col];
+                $binds[] = $clean[$col];
                 $types .= $def['type'];
             }
+        }
+
+        foreach ($extras as $col => $info) {
+            $columns[] = $col;
+            $placeholders[] = '?';
+            $binds[] = $info['value'];
+            $types .= $info['type'];
         }
 
         if ($this->userIdColumn()) {
@@ -184,7 +303,7 @@ abstract class Controller
         }
 
         if (empty($columns)) {
-            throw new \RuntimeException('No valid fields provided', 422);
+            throw new ValidationException('No valid fields provided');
         }
 
         $sql = sprintf(
@@ -194,18 +313,18 @@ abstract class Controller
             implode(', ', $placeholders)
         );
 
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new \RuntimeException('Failed to create record', 500);
-        }
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
 
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Failed to create record', 500);
+            $stmt->close();
+            throw new DatabaseException('Insert failed');
         }
 
         $insertId = $stmt->insert_id;
         $stmt->close();
+
+        $this->afterCreate($insertId, $clean);
 
         return $this->get($insertId);
     }
@@ -213,25 +332,27 @@ abstract class Controller
     public function update(int|string $id, array $payload): array
     {
         $this->get($id);
+        $clean = $this->validatePayload($payload);
+        $this->beforeUpdate($id, $clean);
 
-        $fields = $this->fields();
         $sets = [];
         $binds = [];
         $types = '';
+        $fields = $this->resolveFields();
 
         foreach ($fields as $col => $def) {
             if ($def['readonly'] ?? false) {
                 continue;
             }
-            if (array_key_exists($col, $payload)) {
+            if (array_key_exists($col, $clean)) {
                 $sets[] = "$col = ?";
-                $binds[] = $payload[$col];
+                $binds[] = $clean[$col];
                 $types .= $def['type'];
             }
         }
 
         if (empty($sets)) {
-            throw new \RuntimeException('No valid fields to update', 422);
+            throw new ValidationException('No valid fields to update');
         }
 
         $binds[] = $id;
@@ -251,11 +372,12 @@ abstract class Controller
             implode(' AND ', $where)
         );
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
 
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Failed to update record', 500);
+            $stmt->close();
+            throw new DatabaseException('Update failed');
         }
         $stmt->close();
 
@@ -265,6 +387,7 @@ abstract class Controller
     public function delete(int|string $id): void
     {
         $this->get($id);
+        $this->beforeDelete($id);
 
         $binds = [$id];
         $types = is_int($id) ? 'i' : 's';
@@ -291,9 +414,33 @@ abstract class Controller
             );
         }
 
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
         $stmt->close();
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────
+
+    protected function transaction(callable $fn): mixed
+    {
+        $this->db->begin_transaction();
+        try {
+            $result = $fn();
+            $this->db->commit();
+            return $result;
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+    }
+
+    protected function prepare(string $sql): \mysqli_stmt
+    {
+        $stmt = $this->db->prepare($sql);
+        if (!$stmt) {
+            throw new DatabaseException("Prepare failed");
+        }
+        return $stmt;
     }
 }
