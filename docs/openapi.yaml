@@ -1,0 +1,3281 @@
+openapi: 3.0.3
+info:
+  title: Prosper202 API
+  version: "3.0"
+  description: |
+    REST API for the Prosper202 affiliate tracking platform.
+
+    ## Authentication
+    All endpoints except `GET /system/health` require a Bearer token:
+    ```
+    Authorization: Bearer <api_key>
+    ```
+    API keys are managed via the `/users/{id}/api-keys` endpoints.
+
+    ## Pagination
+    List endpoints return paginated results:
+    ```json
+    {
+      "data": [...],
+      "pagination": { "total": 100, "limit": 50, "offset": 0 }
+    }
+    ```
+
+    ## Errors
+    Error responses use a consistent format:
+    ```json
+    {
+      "error": "Error message",
+      "status": 422,
+      "field_errors": { "field_name": "Reason" }
+    }
+    ```
+    `field_errors` is only present on validation errors (422).
+  contact:
+    name: Prosper202
+  license:
+    name: Proprietary
+
+servers:
+  - url: /api/v3
+    description: API v3 base path
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: System
+    description: Health checks and diagnostics
+  - name: Campaigns
+    description: Affiliate campaign management
+  - name: Affiliate Networks
+    description: Affiliate network management
+  - name: PPC Networks
+    description: PPC network management
+  - name: PPC Accounts
+    description: PPC account management
+  - name: Trackers
+    description: Tracker management
+  - name: Landing Pages
+    description: Landing page management
+  - name: Text Ads
+    description: Text ad management
+  - name: Clicks
+    description: Click data (read-only)
+  - name: Conversions
+    description: Conversion tracking
+  - name: Reports
+    description: Performance reports
+  - name: Rotators
+    description: Traffic rotator and rule management
+  - name: Attribution
+    description: Attribution models, snapshots, and exports
+  - name: Users
+    description: User, role, API key, and preference management
+
+paths:
+  # ─── System ──────────────────────────────────────────────────────────
+
+  /system/health:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Liveness probe. Does not require authentication.
+      security: []
+      operationId: systemHealth
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: healthy
+                      timestamp:
+                        type: integer
+                        example: 1700000000
+                      api_version:
+                        type: string
+                        example: v3
+
+  /system/version:
+    get:
+      tags: [System]
+      summary: System version info
+      description: Returns Prosper202, PHP, and MySQL versions. Admin only.
+      operationId: systemVersion
+      responses:
+        "200":
+          description: Version information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      prosper202_version:
+                        type: string
+                      php_version:
+                        type: string
+                      mysql_version:
+                        type: string
+                      api_version:
+                        type: string
+                        example: v3
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /system/db-stats:
+    get:
+      tags: [System]
+      summary: Database statistics
+      description: Table row counts and total database size. Admin only.
+      operationId: systemDbStats
+      responses:
+        "200":
+          description: Database statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tables:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            table:
+                              type: string
+                            label:
+                              type: string
+                            rows_estimate:
+                              type: integer
+                      database_size_bytes:
+                        type: integer
+                      database_size_mb:
+                        type: number
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /system/cron:
+    get:
+      tags: [System]
+      summary: Cron job status
+      description: Current cron jobs and recent execution logs. Admin only.
+      operationId: systemCron
+      responses:
+        "200":
+          description: Cron status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      jobs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            cronjob_type:
+                              type: string
+                            cronjob_time:
+                              type: integer
+                            last_run_human:
+                              type: string
+                      recent_logs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            cronjob_type:
+                              type: string
+                            last_execution_time:
+                              type: integer
+                            duration:
+                              type: integer
+                            time_human:
+                              type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /system/errors:
+    get:
+      tags: [System]
+      summary: Recent system errors
+      description: Recent MySQL error log entries. Admin only.
+      operationId: systemErrors
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: Error list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mysql_error_id:
+                          type: integer
+                        mysql_error_time:
+                          type: integer
+                        mysql_error_message:
+                          type: string
+                        time_human:
+                          type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /system/dataengine:
+    get:
+      tags: [System]
+      summary: Data engine status
+      description: Recent data engine jobs and pending dirty hours. Admin only.
+      operationId: systemDataengine
+      responses:
+        "200":
+          description: Data engine status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      recent_jobs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            job_id:
+                              type: integer
+                            time_from:
+                              type: integer
+                            time_to:
+                              type: integer
+                            status:
+                              type: string
+                            rows_processed:
+                              type: integer
+                            time_from_human:
+                              type: string
+                            time_to_human:
+                              type: string
+                      pending_dirty_hours:
+                        type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ─── Campaigns ───────────────────────────────────────────────────────
+
+  /campaigns:
+    get:
+      tags: [Campaigns]
+      summary: List campaigns
+      operationId: listCampaigns
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: filter[aff_network_id]
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paginated campaign list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Campaigns]
+      summary: Create a campaign
+      operationId: createCampaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignCreate"
+      responses:
+        "201":
+          description: Campaign created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /campaigns/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Campaigns]
+      summary: Get a campaign
+      operationId: getCampaign
+      responses:
+        "200":
+          description: Campaign details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Campaigns]
+      summary: Update a campaign
+      operationId: updateCampaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignUpdate"
+      responses:
+        "200":
+          description: Campaign updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Campaigns]
+      summary: Delete a campaign
+      description: Soft delete (sets aff_campaign_deleted = 1).
+      operationId: deleteCampaign
+      responses:
+        "204":
+          description: Campaign deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Affiliate Networks ──────────────────────────────────────────────
+
+  /aff-networks:
+    get:
+      tags: [Affiliate Networks]
+      summary: List affiliate networks
+      operationId: listAffNetworks
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated affiliate network list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AffNetworkListResponse"
+    post:
+      tags: [Affiliate Networks]
+      summary: Create an affiliate network
+      operationId: createAffNetwork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AffNetworkCreate"
+      responses:
+        "201":
+          description: Network created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AffNetworkResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /aff-networks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Affiliate Networks]
+      summary: Get an affiliate network
+      operationId: getAffNetwork
+      responses:
+        "200":
+          description: Network details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AffNetworkResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Affiliate Networks]
+      summary: Update an affiliate network
+      operationId: updateAffNetwork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AffNetworkUpdate"
+      responses:
+        "200":
+          description: Network updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AffNetworkResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Affiliate Networks]
+      summary: Delete an affiliate network
+      description: Soft delete.
+      operationId: deleteAffNetwork
+      responses:
+        "204":
+          description: Network deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── PPC Networks ───────────────────────────────────────────────────
+
+  /ppc-networks:
+    get:
+      tags: [PPC Networks]
+      summary: List PPC networks
+      operationId: listPpcNetworks
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated PPC network list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PpcNetworkListResponse"
+    post:
+      tags: [PPC Networks]
+      summary: Create a PPC network
+      operationId: createPpcNetwork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PpcNetworkCreate"
+      responses:
+        "201":
+          description: Network created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PpcNetworkResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /ppc-networks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [PPC Networks]
+      summary: Get a PPC network
+      operationId: getPpcNetwork
+      responses:
+        "200":
+          description: Network details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PpcNetworkResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [PPC Networks]
+      summary: Update a PPC network
+      operationId: updatePpcNetwork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PpcNetworkUpdate"
+      responses:
+        "200":
+          description: Network updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PpcNetworkResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [PPC Networks]
+      summary: Delete a PPC network
+      description: Soft delete.
+      operationId: deletePpcNetwork
+      responses:
+        "204":
+          description: Network deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── PPC Accounts ───────────────────────────────────────────────────
+
+  /ppc-accounts:
+    get:
+      tags: [PPC Accounts]
+      summary: List PPC accounts
+      operationId: listPpcAccounts
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated PPC account list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PpcAccountListResponse"
+    post:
+      tags: [PPC Accounts]
+      summary: Create a PPC account
+      operationId: createPpcAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PpcAccountCreate"
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PpcAccountResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /ppc-accounts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [PPC Accounts]
+      summary: Get a PPC account
+      operationId: getPpcAccount
+      responses:
+        "200":
+          description: Account details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PpcAccountResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [PPC Accounts]
+      summary: Update a PPC account
+      operationId: updatePpcAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PpcAccountUpdate"
+      responses:
+        "200":
+          description: Account updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PpcAccountResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [PPC Accounts]
+      summary: Delete a PPC account
+      description: Soft delete.
+      operationId: deletePpcAccount
+      responses:
+        "204":
+          description: Account deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Trackers ────────────────────────────────────────────────────────
+
+  /trackers:
+    get:
+      tags: [Trackers]
+      summary: List trackers
+      operationId: listTrackers
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated tracker list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackerListResponse"
+    post:
+      tags: [Trackers]
+      summary: Create a tracker
+      operationId: createTracker
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackerCreate"
+      responses:
+        "201":
+          description: Tracker created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackerResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /trackers/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Trackers]
+      summary: Get a tracker
+      operationId: getTracker
+      responses:
+        "200":
+          description: Tracker details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackerResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Trackers]
+      summary: Update a tracker
+      operationId: updateTracker
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackerUpdate"
+      responses:
+        "200":
+          description: Tracker updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackerResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Trackers]
+      summary: Delete a tracker
+      description: Hard delete (trackers do not use soft delete).
+      operationId: deleteTracker
+      responses:
+        "204":
+          description: Tracker deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /trackers/{id}/url:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Trackers]
+      summary: Get tracking URL
+      description: Returns the tracking URL and parameter template for this tracker.
+      operationId: getTrackerUrl
+      responses:
+        "200":
+          description: Tracking URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tracker_id:
+                        type: integer
+                      tracker_id_public:
+                        type: integer
+                      direct_url:
+                        type: string
+                        description: Full tracking URL with t202id parameter
+                      tracking_params:
+                        type: string
+                        description: Query parameter template
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Landing Pages ──────────────────────────────────────────────────
+
+  /landing-pages:
+    get:
+      tags: [Landing Pages]
+      summary: List landing pages
+      operationId: listLandingPages
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated landing page list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandingPageListResponse"
+    post:
+      tags: [Landing Pages]
+      summary: Create a landing page
+      operationId: createLandingPage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LandingPageCreate"
+      responses:
+        "201":
+          description: Landing page created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandingPageResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /landing-pages/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Landing Pages]
+      summary: Get a landing page
+      operationId: getLandingPage
+      responses:
+        "200":
+          description: Landing page details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandingPageResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Landing Pages]
+      summary: Update a landing page
+      operationId: updateLandingPage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LandingPageUpdate"
+      responses:
+        "200":
+          description: Landing page updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandingPageResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Landing Pages]
+      summary: Delete a landing page
+      description: Soft delete.
+      operationId: deleteLandingPage
+      responses:
+        "204":
+          description: Landing page deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Text Ads ────────────────────────────────────────────────────────
+
+  /text-ads:
+    get:
+      tags: [Text Ads]
+      summary: List text ads
+      operationId: listTextAds
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated text ad list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextAdListResponse"
+    post:
+      tags: [Text Ads]
+      summary: Create a text ad
+      operationId: createTextAd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TextAdCreate"
+      responses:
+        "201":
+          description: Text ad created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextAdResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /text-ads/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Text Ads]
+      summary: Get a text ad
+      operationId: getTextAd
+      responses:
+        "200":
+          description: Text ad details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextAdResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Text Ads]
+      summary: Update a text ad
+      operationId: updateTextAd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TextAdUpdate"
+      responses:
+        "200":
+          description: Text ad updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextAdResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Text Ads]
+      summary: Delete a text ad
+      description: Soft delete.
+      operationId: deleteTextAd
+      responses:
+        "204":
+          description: Text ad deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Clicks ──────────────────────────────────────────────────────────
+
+  /clicks:
+    get:
+      tags: [Clicks]
+      summary: List clicks
+      description: Read-only access to click data with filtering.
+      operationId: listClicks
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: time_from
+          in: query
+          description: Start timestamp (unix)
+          schema:
+            type: integer
+        - name: time_to
+          in: query
+          description: End timestamp (unix)
+          schema:
+            type: integer
+        - name: aff_campaign_id
+          in: query
+          schema:
+            type: integer
+        - name: ppc_account_id
+          in: query
+          schema:
+            type: integer
+        - name: landing_page_id
+          in: query
+          schema:
+            type: integer
+        - name: click_lead
+          in: query
+          description: "0 = clicks only, 1 = conversions only"
+          schema:
+            type: integer
+            enum: [0, 1]
+        - name: click_bot
+          in: query
+          description: "0 = human, 1 = bot"
+          schema:
+            type: integer
+            enum: [0, 1]
+      responses:
+        "200":
+          description: Paginated click list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClickListResponse"
+
+  /clicks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Clicks]
+      summary: Get a click
+      description: Full click details including geo, device, and custom variable lookups.
+      operationId: getClick
+      responses:
+        "200":
+          description: Click details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClickResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Conversions ─────────────────────────────────────────────────────
+
+  /conversions:
+    get:
+      tags: [Conversions]
+      summary: List conversions
+      operationId: listConversions
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: campaign_id
+          in: query
+          schema:
+            type: integer
+        - name: time_from
+          in: query
+          schema:
+            type: integer
+        - name: time_to
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paginated conversion list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionListResponse"
+    post:
+      tags: [Conversions]
+      summary: Create a conversion
+      description: |
+        Records a conversion for an existing click. The click must exist and
+        belong to the authenticated user. Updates the click record with
+        `click_lead = 1` and the new payout amount.
+      operationId: createConversion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversionCreate"
+      responses:
+        "201":
+          description: Conversion created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Conversions]
+      summary: Get a conversion
+      operationId: getConversion
+      responses:
+        "200":
+          description: Conversion details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Conversions]
+      summary: Delete a conversion
+      description: Soft delete (sets deleted = 1).
+      operationId: deleteConversion
+      responses:
+        "204":
+          description: Conversion deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Reports ─────────────────────────────────────────────────────────
+
+  /reports/summary:
+    get:
+      tags: [Reports]
+      summary: Performance summary
+      description: Aggregate metrics for the selected time period and filters.
+      operationId: reportSummary
+      parameters:
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/filterCampaign"
+        - $ref: "#/components/parameters/filterAffNetwork"
+        - $ref: "#/components/parameters/filterPpcAccount"
+        - $ref: "#/components/parameters/filterPpcNetwork"
+        - $ref: "#/components/parameters/filterLandingPage"
+        - $ref: "#/components/parameters/filterCountry"
+      responses:
+        "200":
+          description: Summary metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ReportMetrics"
+
+  /reports/breakdown:
+    get:
+      tags: [Reports]
+      summary: Performance breakdown
+      description: Performance metrics grouped by a dimension.
+      operationId: reportBreakdown
+      parameters:
+        - name: breakdown
+          in: query
+          required: true
+          description: Dimension to group by
+          schema:
+            type: string
+            enum:
+              - campaign
+              - aff_network
+              - ppc_account
+              - ppc_network
+              - landing_page
+              - keyword
+              - country
+              - city
+              - region
+              - browser
+              - platform
+              - device
+              - isp
+              - text_ad
+        - name: sort
+          in: query
+          schema:
+            type: string
+            default: total_clicks
+            enum:
+              - total_clicks
+              - total_leads
+              - total_income
+              - total_cost
+              - total_net
+              - roi
+              - epc
+              - conv_rate
+        - name: sort_dir
+          in: query
+          schema:
+            type: string
+            default: DESC
+            enum: [ASC, DESC]
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/filterCampaign"
+        - $ref: "#/components/parameters/filterAffNetwork"
+        - $ref: "#/components/parameters/filterPpcAccount"
+        - $ref: "#/components/parameters/filterPpcNetwork"
+        - $ref: "#/components/parameters/filterLandingPage"
+        - $ref: "#/components/parameters/filterCountry"
+      responses:
+        "200":
+          description: Breakdown results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - type: object
+                          properties:
+                            id:
+                              type: integer
+                            name:
+                              type: string
+                        - $ref: "#/components/schemas/ReportMetrics"
+                  breakdown:
+                    type: string
+                  available_breakdowns:
+                    type: array
+                    items:
+                      type: string
+
+  /reports/timeseries:
+    get:
+      tags: [Reports]
+      summary: Performance timeseries
+      description: Performance metrics aggregated by time interval.
+      operationId: reportTimeseries
+      parameters:
+        - name: interval
+          in: query
+          schema:
+            type: string
+            default: day
+            enum: [hour, day, week, month]
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/filterCampaign"
+        - $ref: "#/components/parameters/filterAffNetwork"
+        - $ref: "#/components/parameters/filterPpcAccount"
+        - $ref: "#/components/parameters/filterPpcNetwork"
+        - $ref: "#/components/parameters/filterLandingPage"
+        - $ref: "#/components/parameters/filterCountry"
+      responses:
+        "200":
+          description: Timeseries data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        period:
+                          type: string
+                          description: Time bucket label (YYYY-MM-DD, YYYY-MM-DD HH:00, etc.)
+                        total_clicks:
+                          type: integer
+                        total_leads:
+                          type: integer
+                        total_income:
+                          type: number
+                        total_cost:
+                          type: number
+                        total_net:
+                          type: number
+                  interval:
+                    type: string
+
+  # ─── Rotators ────────────────────────────────────────────────────────
+
+  /rotators:
+    get:
+      tags: [Rotators]
+      summary: List rotators
+      operationId: listRotators
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated rotator list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotatorListResponse"
+    post:
+      tags: [Rotators]
+      summary: Create a rotator
+      operationId: createRotator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotatorCreate"
+      responses:
+        "201":
+          description: Rotator created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotatorResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /rotators/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Rotators]
+      summary: Get a rotator
+      description: Returns the rotator with all rules, criteria, and redirects.
+      operationId: getRotator
+      responses:
+        "200":
+          description: Rotator with rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotatorDetailResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Rotators]
+      summary: Update a rotator
+      operationId: updateRotator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotatorUpdate"
+      responses:
+        "200":
+          description: Rotator updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotatorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Rotators]
+      summary: Delete a rotator
+      description: Hard delete. Cascades to all rules, criteria, and redirects.
+      operationId: deleteRotator
+      responses:
+        "204":
+          description: Rotator deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /rotators/{id}/rules:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Rotators]
+      summary: List rules for a rotator
+      operationId: listRotatorRules
+      responses:
+        "200":
+          description: Rules with criteria and redirects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RotatorRule"
+    post:
+      tags: [Rotators]
+      summary: Create a rule
+      description: Creates a rule with optional criteria and redirects. Wrapped in a transaction.
+      operationId: createRotatorRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotatorRuleCreate"
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/RotatorRule"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /rotators/{id}/rules/{ruleId}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - name: ruleId
+        in: path
+        required: true
+        schema:
+          type: integer
+    delete:
+      tags: [Rotators]
+      summary: Delete a rule
+      description: Hard delete. Cascades to criteria and redirects.
+      operationId: deleteRotatorRule
+      responses:
+        "204":
+          description: Rule deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Attribution ─────────────────────────────────────────────────────
+
+  /attribution/models:
+    get:
+      tags: [Attribution]
+      summary: List attribution models
+      operationId: listAttributionModels
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - name: type
+          in: query
+          description: Filter by model type
+          schema:
+            type: string
+            enum:
+              - first_touch
+              - last_touch
+              - linear
+              - time_decay
+              - position_based
+              - algorithmic
+      responses:
+        "200":
+          description: Paginated model list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionModelListResponse"
+    post:
+      tags: [Attribution]
+      summary: Create an attribution model
+      operationId: createAttributionModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionModelCreate"
+      responses:
+        "201":
+          description: Model created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionModelResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/models/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: Get an attribution model
+      operationId: getAttributionModel
+      responses:
+        "200":
+          description: Model details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionModelResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Attribution]
+      summary: Update an attribution model
+      operationId: updateAttributionModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionModelUpdate"
+      responses:
+        "200":
+          description: Model updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionModelResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Attribution]
+      summary: Delete an attribution model
+      description: Cascading hard delete. Removes all touchpoints, snapshots, and exports for this model.
+      operationId: deleteAttributionModel
+      responses:
+        "204":
+          description: Model deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /attribution/models/{id}/snapshots:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: List snapshots for a model
+      operationId: listAttributionSnapshots
+      parameters:
+        - name: scope_type
+          in: query
+          description: Filter by scope
+          schema:
+            type: string
+            enum: [global, campaign, landing_page]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 500
+            maximum: 1000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Paginated snapshot list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AttributionSnapshot"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+
+  /attribution/models/{id}/exports:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: List exports for a model
+      operationId: listAttributionExports
+      responses:
+        "200":
+          description: Export list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AttributionExport"
+    post:
+      tags: [Attribution]
+      summary: Schedule an export
+      operationId: scheduleAttributionExport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionExportCreate"
+      responses:
+        "201":
+          description: Export scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionExport"
+
+  # ─── Users ───────────────────────────────────────────────────────────
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List users
+      description: Admin only.
+      operationId: listUsers
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserListResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Users]
+      summary: Create a user
+      description: Admin only. Password is hashed with bcrypt.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreate"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Username already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /users/roles:
+    get:
+      tags: [Users]
+      summary: List available roles
+      operationId: listRoles
+      responses:
+        "200":
+          description: Role list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Role"
+
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Users]
+      summary: Get a user
+      description: Returns user details with roles. Accessible by self or admin.
+      operationId: getUser
+      responses:
+        "200":
+          description: User details with roles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDetailResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Users]
+      summary: Update a user
+      description: Accessible by self or admin. Password re-hashed if provided.
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Users]
+      summary: Delete a user
+      description: Admin only. Soft delete (sets user_deleted = 1).
+      operationId: deleteUser
+      responses:
+        "204":
+          description: User deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{id}/roles:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Users]
+      summary: Assign a role to a user
+      description: Admin only. Idempotent (INSERT IGNORE).
+      operationId: assignRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id]
+              properties:
+                role_id:
+                  type: integer
+                  description: Role ID to assign
+      responses:
+        "201":
+          description: Role assigned
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /users/{id}/roles/{roleId}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - name: roleId
+        in: path
+        required: true
+        schema:
+          type: integer
+    delete:
+      tags: [Users]
+      summary: Remove a role from a user
+      description: Admin only.
+      operationId: removeRole
+      responses:
+        "204":
+          description: Role removed
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /users/{id}/api-keys:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Users]
+      summary: List API keys for a user
+      description: Self or admin. Keys are masked (first 8 chars visible).
+      operationId: listApiKeys
+      responses:
+        "200":
+          description: API key list (masked)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id:
+                          type: integer
+                        api_key:
+                          type: string
+                          description: Masked key (first 8 chars + asterisks)
+                        created_at:
+                          type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Users]
+      summary: Create an API key
+      description: |
+        Self or admin. Returns the full 64-character hex key. This is the only
+        time the full key is visible -- store it securely.
+      operationId: createApiKey
+      responses:
+        "201":
+          description: API key created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id:
+                        type: integer
+                      api_key:
+                        type: string
+                        description: Full 64-character hex API key (shown once)
+                      created_at:
+                        type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /users/{id}/api-keys/{keyId}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - name: keyId
+        in: path
+        required: true
+        description: The full API key string
+        schema:
+          type: string
+    delete:
+      tags: [Users]
+      summary: Delete an API key
+      description: Self or admin.
+      operationId: deleteApiKey
+      responses:
+        "204":
+          description: API key deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /users/{id}/preferences:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Users]
+      summary: Get user preferences
+      description: Self or admin.
+      operationId: getPreferences
+      responses:
+        "200":
+          description: User preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/UserPreferences"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Users]
+      summary: Update user preferences
+      description: Self or admin. Any subset of fields may be sent.
+      operationId: updatePreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPreferencesUpdate"
+      responses:
+        "200":
+          description: Preferences updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/UserPreferences"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+# ═══════════════════════════════════════════════════════════════════════
+# Components
+# ═══════════════════════════════════════════════════════════════════════
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: API key from /users/{id}/api-keys
+
+  # ─── Shared parameters ──────────────────────────────────────────────
+
+  parameters:
+    resourceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    limit:
+      name: limit
+      in: query
+      description: Maximum results (default 50, max 500)
+      schema:
+        type: integer
+        default: 50
+        maximum: 500
+    offset:
+      name: offset
+      in: query
+      description: Pagination offset
+      schema:
+        type: integer
+        default: 0
+    period:
+      name: period
+      in: query
+      description: Predefined time period
+      schema:
+        type: string
+        enum: [today, yesterday, last7, last30, last90]
+    timeFrom:
+      name: time_from
+      in: query
+      description: Start timestamp (unix)
+      schema:
+        type: integer
+    timeTo:
+      name: time_to
+      in: query
+      description: End timestamp (unix)
+      schema:
+        type: integer
+    filterCampaign:
+      name: aff_campaign_id
+      in: query
+      schema:
+        type: integer
+    filterAffNetwork:
+      name: aff_network_id
+      in: query
+      schema:
+        type: integer
+    filterPpcAccount:
+      name: ppc_account_id
+      in: query
+      schema:
+        type: integer
+    filterPpcNetwork:
+      name: ppc_network_id
+      in: query
+      schema:
+        type: integer
+    filterLandingPage:
+      name: landing_page_id
+      in: query
+      schema:
+        type: integer
+    filterCountry:
+      name: country_id
+      in: query
+      schema:
+        type: integer
+
+  # ─── Shared responses ───────────────────────────────────────────────
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationError"
+
+  # ─── Schemas ─────────────────────────────────────────────────────────
+
+  schemas:
+    # ── Common ─────────────────────────────────────────────────────────
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        status:
+          type: integer
+
+    ValidationError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Validation failed
+        status:
+          type: integer
+          example: 422
+        field_errors:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            aff_campaign_name: required
+
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    # ── Campaigns ──────────────────────────────────────────────────────
+
+    Campaign:
+      type: object
+      properties:
+        aff_campaign_id:
+          type: integer
+          readOnly: true
+        aff_campaign_name:
+          type: string
+          maxLength: 255
+        aff_campaign_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_2:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_3:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_4:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_5:
+          type: string
+          maxLength: 2048
+        aff_campaign_payout:
+          type: number
+        aff_campaign_currency:
+          type: string
+          maxLength: 5
+        aff_campaign_foreign_payout:
+          type: number
+        aff_network_id:
+          type: integer
+        aff_campaign_cloaking:
+          type: integer
+        aff_campaign_rotate:
+          type: integer
+        aff_campaign_time:
+          type: integer
+          readOnly: true
+          description: Unix timestamp, auto-set on create
+        aff_campaign_id_public:
+          type: integer
+          readOnly: true
+          description: Random public ID, auto-generated on create
+        aff_campaign_deleted:
+          type: integer
+          readOnly: true
+        user_id:
+          type: integer
+          readOnly: true
+
+    CampaignCreate:
+      type: object
+      required: [aff_campaign_name, aff_campaign_url]
+      properties:
+        aff_campaign_name:
+          type: string
+          maxLength: 255
+        aff_campaign_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_2:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_3:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_4:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_5:
+          type: string
+          maxLength: 2048
+        aff_campaign_payout:
+          type: number
+        aff_campaign_currency:
+          type: string
+          maxLength: 5
+        aff_campaign_foreign_payout:
+          type: number
+        aff_network_id:
+          type: integer
+        aff_campaign_cloaking:
+          type: integer
+        aff_campaign_rotate:
+          type: integer
+
+    CampaignUpdate:
+      type: object
+      properties:
+        aff_campaign_name:
+          type: string
+          maxLength: 255
+        aff_campaign_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_2:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_3:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_4:
+          type: string
+          maxLength: 2048
+        aff_campaign_url_5:
+          type: string
+          maxLength: 2048
+        aff_campaign_payout:
+          type: number
+        aff_campaign_currency:
+          type: string
+          maxLength: 5
+        aff_campaign_foreign_payout:
+          type: number
+        aff_network_id:
+          type: integer
+        aff_campaign_cloaking:
+          type: integer
+        aff_campaign_rotate:
+          type: integer
+
+    CampaignResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Campaign"
+
+    CampaignListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Campaign"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── Affiliate Networks ─────────────────────────────────────────────
+
+    AffNetwork:
+      type: object
+      properties:
+        aff_network_id:
+          type: integer
+          readOnly: true
+        aff_network_name:
+          type: string
+          maxLength: 255
+        dni_network_id:
+          type: integer
+        aff_network_deleted:
+          type: integer
+          readOnly: true
+        user_id:
+          type: integer
+          readOnly: true
+
+    AffNetworkCreate:
+      type: object
+      required: [aff_network_name]
+      properties:
+        aff_network_name:
+          type: string
+          maxLength: 255
+        dni_network_id:
+          type: integer
+
+    AffNetworkUpdate:
+      type: object
+      properties:
+        aff_network_name:
+          type: string
+          maxLength: 255
+        dni_network_id:
+          type: integer
+
+    AffNetworkResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/AffNetwork"
+
+    AffNetworkListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AffNetwork"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── PPC Networks ───────────────────────────────────────────────────
+
+    PpcNetwork:
+      type: object
+      properties:
+        ppc_network_id:
+          type: integer
+          readOnly: true
+        ppc_network_name:
+          type: string
+          maxLength: 255
+        ppc_network_deleted:
+          type: integer
+          readOnly: true
+        user_id:
+          type: integer
+          readOnly: true
+
+    PpcNetworkCreate:
+      type: object
+      required: [ppc_network_name]
+      properties:
+        ppc_network_name:
+          type: string
+          maxLength: 255
+
+    PpcNetworkUpdate:
+      type: object
+      properties:
+        ppc_network_name:
+          type: string
+          maxLength: 255
+
+    PpcNetworkResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/PpcNetwork"
+
+    PpcNetworkListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PpcNetwork"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── PPC Accounts ───────────────────────────────────────────────────
+
+    PpcAccount:
+      type: object
+      properties:
+        ppc_account_id:
+          type: integer
+          readOnly: true
+        ppc_account_name:
+          type: string
+          maxLength: 255
+        ppc_network_id:
+          type: integer
+        ppc_account_default:
+          type: integer
+        ppc_account_deleted:
+          type: integer
+          readOnly: true
+        user_id:
+          type: integer
+          readOnly: true
+
+    PpcAccountCreate:
+      type: object
+      required: [ppc_account_name, ppc_network_id]
+      properties:
+        ppc_account_name:
+          type: string
+          maxLength: 255
+        ppc_network_id:
+          type: integer
+        ppc_account_default:
+          type: integer
+
+    PpcAccountUpdate:
+      type: object
+      properties:
+        ppc_account_name:
+          type: string
+          maxLength: 255
+        ppc_network_id:
+          type: integer
+        ppc_account_default:
+          type: integer
+
+    PpcAccountResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/PpcAccount"
+
+    PpcAccountListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PpcAccount"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── Trackers ───────────────────────────────────────────────────────
+
+    Tracker:
+      type: object
+      properties:
+        tracker_id:
+          type: integer
+          readOnly: true
+        aff_campaign_id:
+          type: integer
+        ppc_account_id:
+          type: integer
+        text_ad_id:
+          type: integer
+        landing_page_id:
+          type: integer
+        rotator_id:
+          type: integer
+        click_cpc:
+          type: number
+        click_cpa:
+          type: number
+        click_cloaking:
+          type: integer
+        tracker_id_public:
+          type: integer
+          readOnly: true
+          description: Random public ID, auto-generated on create
+        tracker_time:
+          type: integer
+          readOnly: true
+        user_id:
+          type: integer
+          readOnly: true
+
+    TrackerCreate:
+      type: object
+      required: [aff_campaign_id]
+      properties:
+        aff_campaign_id:
+          type: integer
+        ppc_account_id:
+          type: integer
+        text_ad_id:
+          type: integer
+        landing_page_id:
+          type: integer
+        rotator_id:
+          type: integer
+        click_cpc:
+          type: number
+        click_cpa:
+          type: number
+        click_cloaking:
+          type: integer
+
+    TrackerUpdate:
+      type: object
+      properties:
+        aff_campaign_id:
+          type: integer
+        ppc_account_id:
+          type: integer
+        text_ad_id:
+          type: integer
+        landing_page_id:
+          type: integer
+        rotator_id:
+          type: integer
+        click_cpc:
+          type: number
+        click_cpa:
+          type: number
+        click_cloaking:
+          type: integer
+
+    TrackerResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Tracker"
+
+    TrackerListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tracker"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── Landing Pages ──────────────────────────────────────────────────
+
+    LandingPage:
+      type: object
+      properties:
+        landing_page_id:
+          type: integer
+          readOnly: true
+        landing_page_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_id:
+          type: integer
+        landing_page_nickname:
+          type: string
+          maxLength: 255
+        leave_behind_page_url:
+          type: string
+          maxLength: 2048
+        landing_page_type:
+          type: integer
+        landing_page_deleted:
+          type: integer
+          readOnly: true
+        user_id:
+          type: integer
+          readOnly: true
+
+    LandingPageCreate:
+      type: object
+      required: [landing_page_url, aff_campaign_id]
+      properties:
+        landing_page_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_id:
+          type: integer
+        landing_page_nickname:
+          type: string
+          maxLength: 255
+        leave_behind_page_url:
+          type: string
+          maxLength: 2048
+        landing_page_type:
+          type: integer
+
+    LandingPageUpdate:
+      type: object
+      properties:
+        landing_page_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_id:
+          type: integer
+        landing_page_nickname:
+          type: string
+          maxLength: 255
+        leave_behind_page_url:
+          type: string
+          maxLength: 2048
+        landing_page_type:
+          type: integer
+
+    LandingPageResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/LandingPage"
+
+    LandingPageListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LandingPage"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── Text Ads ───────────────────────────────────────────────────────
+
+    TextAd:
+      type: object
+      properties:
+        text_ad_id:
+          type: integer
+          readOnly: true
+        text_ad_name:
+          type: string
+          maxLength: 255
+        text_ad_headline:
+          type: string
+          maxLength: 500
+        text_ad_description:
+          type: string
+          maxLength: 2000
+        text_ad_display_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_id:
+          type: integer
+        landing_page_id:
+          type: integer
+        text_ad_type:
+          type: integer
+        text_ad_deleted:
+          type: integer
+          readOnly: true
+        user_id:
+          type: integer
+          readOnly: true
+
+    TextAdCreate:
+      type: object
+      required: [text_ad_name]
+      properties:
+        text_ad_name:
+          type: string
+          maxLength: 255
+        text_ad_headline:
+          type: string
+          maxLength: 500
+        text_ad_description:
+          type: string
+          maxLength: 2000
+        text_ad_display_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_id:
+          type: integer
+        landing_page_id:
+          type: integer
+        text_ad_type:
+          type: integer
+
+    TextAdUpdate:
+      type: object
+      properties:
+        text_ad_name:
+          type: string
+          maxLength: 255
+        text_ad_headline:
+          type: string
+          maxLength: 500
+        text_ad_description:
+          type: string
+          maxLength: 2000
+        text_ad_display_url:
+          type: string
+          maxLength: 2048
+        aff_campaign_id:
+          type: integer
+        landing_page_id:
+          type: integer
+        text_ad_type:
+          type: integer
+
+    TextAdResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/TextAd"
+
+    TextAdListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TextAd"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── Clicks ─────────────────────────────────────────────────────────
+
+    Click:
+      type: object
+      properties:
+        click_id:
+          type: integer
+        aff_campaign_id:
+          type: integer
+        ppc_account_id:
+          type: integer
+        landing_page_id:
+          type: integer
+        click_cpc:
+          type: number
+        click_payout:
+          type: number
+        click_lead:
+          type: integer
+        click_filtered:
+          type: integer
+        click_bot:
+          type: integer
+        click_alp:
+          type: integer
+        click_time:
+          type: integer
+        rotator_id:
+          type: integer
+        rule_id:
+          type: integer
+        click_id_public:
+          type: string
+        click_cloaking:
+          type: integer
+        click_in:
+          type: string
+        click_out:
+          type: string
+        keyword_id:
+          type: integer
+        country_id:
+          type: integer
+        platform_id:
+          type: integer
+        browser_id:
+          type: integer
+        device_id:
+          type: integer
+        country_name:
+          type: string
+        country_code:
+          type: string
+        platform_name:
+          type: string
+        browser_name:
+          type: string
+
+    ClickDetail:
+      allOf:
+        - $ref: "#/components/schemas/Click"
+        - type: object
+          properties:
+            user_id:
+              type: integer
+            click_reviewed:
+              type: integer
+            text_ad_id:
+              type: integer
+            ip_id:
+              type: integer
+            region_id:
+              type: integer
+            city_id:
+              type: integer
+            isp_id:
+              type: integer
+            c1_id:
+              type: integer
+            c2_id:
+              type: integer
+            c3_id:
+              type: integer
+            c4_id:
+              type: integer
+            region_name:
+              type: string
+            city_name:
+              type: string
+            isp_name:
+              type: string
+
+    ClickResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/ClickDetail"
+
+    ClickListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Click"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── Conversions ────────────────────────────────────────────────────
+
+    Conversion:
+      type: object
+      properties:
+        conv_id:
+          type: integer
+        click_id:
+          type: integer
+        transaction_id:
+          type: string
+        campaign_id:
+          type: integer
+        click_payout:
+          type: number
+        user_id:
+          type: integer
+        click_time:
+          type: integer
+        conv_time:
+          type: integer
+        deleted:
+          type: integer
+        aff_campaign_name:
+          type: string
+
+    ConversionCreate:
+      type: object
+      required: [click_id]
+      properties:
+        click_id:
+          type: integer
+          description: Click ID to attribute the conversion to
+        payout:
+          type: number
+          description: Payout amount (defaults to click's existing payout)
+        transaction_id:
+          type: string
+          description: External transaction ID for deduplication
+        conv_time:
+          type: integer
+          description: Conversion timestamp (defaults to current time)
+
+    ConversionResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Conversion"
+
+    ConversionListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Conversion"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── Reports ────────────────────────────────────────────────────────
+
+    ReportMetrics:
+      type: object
+      properties:
+        total_clicks:
+          type: integer
+        total_click_throughs:
+          type: integer
+        total_leads:
+          type: integer
+        total_income:
+          type: number
+        total_cost:
+          type: number
+        total_net:
+          type: number
+        epc:
+          type: number
+          description: Earnings per click
+        avg_cpc:
+          type: number
+          description: Average cost per click
+        conv_rate:
+          type: number
+          description: Conversion rate (percentage)
+        roi:
+          type: number
+          description: Return on investment (percentage)
+        cpa:
+          type: number
+          description: Cost per acquisition
+
+    # ── Rotators ───────────────────────────────────────────────────────
+
+    Rotator:
+      type: object
+      properties:
+        id:
+          type: integer
+        public_id:
+          type: integer
+        user_id:
+          type: integer
+        name:
+          type: string
+        default_url:
+          type: string
+        default_campaign:
+          type: integer
+        default_lp:
+          type: integer
+
+    RotatorCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        default_url:
+          type: string
+        default_campaign:
+          type: integer
+        default_lp:
+          type: integer
+
+    RotatorUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        default_url:
+          type: string
+        default_campaign:
+          type: integer
+        default_lp:
+          type: integer
+
+    RotatorRule:
+      type: object
+      properties:
+        id:
+          type: integer
+        rotator_id:
+          type: integer
+        rule_name:
+          type: string
+        splittest:
+          type: integer
+        status:
+          type: integer
+        criteria:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              rotator_id:
+                type: integer
+              rule_id:
+                type: integer
+              type:
+                type: string
+                description: Criteria type (e.g. country, device, browser)
+              statement:
+                type: string
+                description: Comparison operator (e.g. is, is_not, contains)
+              value:
+                type: string
+        redirects:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              rule_id:
+                type: integer
+              redirect_url:
+                type: string
+              redirect_campaign:
+                type: integer
+              redirect_lp:
+                type: integer
+              weight:
+                type: integer
+              name:
+                type: string
+
+    RotatorRuleCreate:
+      type: object
+      required: [rule_name]
+      properties:
+        rule_name:
+          type: string
+        splittest:
+          type: integer
+          default: 0
+        status:
+          type: integer
+          default: 1
+        criteria:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              statement:
+                type: string
+              value:
+                type: string
+        redirects:
+          type: array
+          items:
+            type: object
+            properties:
+              redirect_url:
+                type: string
+              redirect_campaign:
+                type: integer
+              redirect_lp:
+                type: integer
+              weight:
+                type: integer
+              name:
+                type: string
+
+    RotatorResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Rotator"
+
+    RotatorDetailResponse:
+      type: object
+      properties:
+        data:
+          allOf:
+            - $ref: "#/components/schemas/Rotator"
+            - type: object
+              properties:
+                rules:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/RotatorRule"
+
+    RotatorListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Rotator"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ── Attribution ────────────────────────────────────────────────────
+
+    AttributionModel:
+      type: object
+      properties:
+        model_id:
+          type: integer
+        user_id:
+          type: integer
+        model_name:
+          type: string
+        model_slug:
+          type: string
+        model_type:
+          type: string
+          enum:
+            - first_touch
+            - last_touch
+            - linear
+            - time_decay
+            - position_based
+            - algorithmic
+        weighting_config:
+          type: string
+          description: JSON string containing model-specific configuration
+        is_active:
+          type: integer
+        is_default:
+          type: integer
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+
+    AttributionModelCreate:
+      type: object
+      required: [model_name, model_type]
+      properties:
+        model_name:
+          type: string
+        model_type:
+          type: string
+          enum:
+            - first_touch
+            - last_touch
+            - linear
+            - time_decay
+            - position_based
+            - algorithmic
+        weighting_config:
+          oneOf:
+            - type: string
+            - type: object
+          description: JSON config or object (auto-encoded)
+        is_active:
+          type: integer
+          default: 1
+        is_default:
+          type: integer
+          default: 0
+
+    AttributionModelUpdate:
+      type: object
+      properties:
+        model_name:
+          type: string
+        model_slug:
+          type: string
+        model_type:
+          type: string
+          enum:
+            - first_touch
+            - last_touch
+            - linear
+            - time_decay
+            - position_based
+            - algorithmic
+        weighting_config:
+          oneOf:
+            - type: string
+            - type: object
+        is_active:
+          type: integer
+        is_default:
+          type: integer
+
+    AttributionModelResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/AttributionModel"
+
+    AttributionModelListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionModel"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    AttributionSnapshot:
+      type: object
+      properties:
+        snapshot_id:
+          type: integer
+        model_id:
+          type: integer
+        user_id:
+          type: integer
+        scope_type:
+          type: string
+        scope_id:
+          type: integer
+        date_hour:
+          type: integer
+        attributed_revenue:
+          type: number
+        attributed_cost:
+          type: number
+
+    AttributionExport:
+      type: object
+      properties:
+        export_id:
+          type: integer
+        user_id:
+          type: integer
+        model_id:
+          type: integer
+        scope_type:
+          type: string
+        scope_id:
+          type: integer
+        start_hour:
+          type: integer
+        end_hour:
+          type: integer
+        requested_format:
+          type: string
+          enum: [csv, json]
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+        queued_at:
+          type: integer
+        started_at:
+          type: integer
+          nullable: true
+        completed_at:
+          type: integer
+          nullable: true
+        file_path:
+          type: string
+          nullable: true
+        webhook_url:
+          type: string
+          nullable: true
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+
+    AttributionExportCreate:
+      type: object
+      properties:
+        scope_type:
+          type: string
+          default: global
+          enum: [global, campaign, landing_page]
+        scope_id:
+          type: integer
+          default: 0
+        start_hour:
+          type: integer
+          description: Start timestamp (defaults to 0)
+        end_hour:
+          type: integer
+          description: End timestamp (defaults to current time)
+        format:
+          type: string
+          default: csv
+          enum: [csv, json]
+        webhook_url:
+          type: string
+          description: URL to POST export delivery notification
+
+    # ── Users ──────────────────────────────────────────────────────────
+
+    User:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        user_fname:
+          type: string
+        user_lname:
+          type: string
+        user_name:
+          type: string
+        user_email:
+          type: string
+        user_timezone:
+          type: string
+        user_active:
+          type: integer
+        user_deleted:
+          type: integer
+        user_time_register:
+          type: integer
+
+    UserCreate:
+      type: object
+      required: [user_name, user_email, user_pass]
+      properties:
+        user_name:
+          type: string
+        user_email:
+          type: string
+          format: email
+        user_pass:
+          type: string
+          minLength: 8
+        user_fname:
+          type: string
+        user_lname:
+          type: string
+        user_timezone:
+          type: string
+          default: UTC
+        user_active:
+          type: integer
+          default: 1
+
+    UserUpdate:
+      type: object
+      properties:
+        user_fname:
+          type: string
+        user_lname:
+          type: string
+        user_email:
+          type: string
+          format: email
+        user_pass:
+          type: string
+          minLength: 8
+        user_timezone:
+          type: string
+        user_active:
+          type: integer
+
+    Role:
+      type: object
+      properties:
+        role_id:
+          type: integer
+        role_name:
+          type: string
+
+    UserPreferences:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        user_pref_limit:
+          type: integer
+        user_pref_time_predefined:
+          type: string
+        user_tracking_domain:
+          type: string
+        user_cpc_or_cpv:
+          type: string
+        user_account_currency:
+          type: string
+        user_slack_incoming_webhook:
+          type: string
+        user_pref_cloak_referer:
+          type: string
+        user_daily_email:
+          type: string
+        ipqs_api_key:
+          type: string
+        chart_time_range:
+          type: string
+
+    UserPreferencesUpdate:
+      type: object
+      properties:
+        user_pref_limit:
+          type: integer
+        user_pref_time_predefined:
+          type: string
+        user_tracking_domain:
+          type: string
+        user_cpc_or_cpv:
+          type: string
+        user_account_currency:
+          type: string
+        user_slack_incoming_webhook:
+          type: string
+        user_pref_cloak_referer:
+          type: string
+        user_daily_email:
+          type: string
+        ipqs_api_key:
+          type: string
+        chart_time_range:
+          type: string
+
+    UserResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/User"
+
+    UserDetailResponse:
+      type: object
+      properties:
+        data:
+          allOf:
+            - $ref: "#/components/schemas/User"
+            - type: object
+              properties:
+                roles:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Role"
+
+    UserListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
