@@ -1349,6 +1349,164 @@ func TestDashboardPassesExplicitFilters(t *testing.T) {
 	}
 }
 
+func TestExportCampaignsPaginated(t *testing.T) {
+	offsets := make([]string, 0)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/api/v3/campaigns" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+
+		offset := r.URL.Query().Get("offset")
+		offsets = append(offsets, offset)
+
+		resp := map[string]interface{}{"data": []map[string]interface{}{}}
+		if offset == "0" {
+			rows := make([]map[string]interface{}, 0, 100)
+			for i := 1; i <= 100; i++ {
+				rows = append(rows, map[string]interface{}{"id": i})
+			}
+			resp["data"] = rows
+		} else if offset == "100" {
+			resp["data"] = []map[string]interface{}{{"id": 101}}
+		}
+
+		data, _ := json.Marshal(resp)
+		w.WriteHeader(200)
+		w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("--json", "export", "campaigns")
+	if err != nil {
+		t.Fatalf("export campaigns error: %v", err)
+	}
+
+	if len(offsets) != 2 || offsets[0] != "0" || offsets[1] != "100" {
+		t.Errorf("offsets = %#v, want [\"0\", \"100\"]", offsets)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("export output not valid JSON: %v\n%s", err, stdout)
+	}
+	dataArr, _ := parsed["data"].([]interface{})
+	if len(dataArr) != 101 {
+		t.Errorf("exported row count = %d, want 101", len(dataArr))
+	}
+}
+
+func TestExportWritesOutputFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/api/v3/campaigns" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"id":1,"aff_campaign_name":"A"}]}`))
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"not found"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	outFile := filepath.Join(tmp, "campaigns-export.json")
+	_, _, err := executeCommand("export", "campaigns", "--output", outFile)
+	if err != nil {
+		t.Fatalf("export campaigns --output error: %v", err)
+	}
+
+	raw, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("reading export file: %v", err)
+	}
+	if !strings.Contains(string(raw), "\"entity\": \"campaigns\"") {
+		t.Errorf("export file missing entity marker:\n%s", string(raw))
+	}
+}
+
+func TestImportCampaignsDryRunSkipsPosts(t *testing.T) {
+	postCalls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+			postCalls++
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"not found"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	inFile := filepath.Join(tmp, "campaigns-import.json")
+	if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A","aff_campaign_url":"https://offer.example"}]`), 0600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+
+	stdout, _, err := executeCommand("--json", "import", "campaigns", inFile, "--dry-run")
+	if err != nil {
+		t.Fatalf("import campaigns --dry-run error: %v", err)
+	}
+	if postCalls != 0 {
+		t.Errorf("postCalls = %d, want 0 for dry-run", postCalls)
+	}
+	if !strings.Contains(stdout, "\"dry_run\": true") {
+		t.Errorf("dry-run output missing flag:\n%s", stdout)
+	}
+}
+
+func TestImportCampaignsStripsImmutableFields(t *testing.T) {
+	var postedBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+			bodyBytes, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(bodyBytes, &postedBody)
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_id":10}}`))
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"not found"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	inFile := filepath.Join(tmp, "campaigns-import.json")
+	if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_id":9,"aff_campaign_name":"A","aff_campaign_url":"https://offer.example"}]`), 0600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+
+	_, _, err := executeCommand("import", "campaigns", inFile)
+	if err != nil {
+		t.Fatalf("import campaigns error: %v", err)
+	}
+
+	if _, exists := postedBody["aff_campaign_id"]; exists {
+		t.Errorf("posted body should not include immutable aff_campaign_id")
+	}
+	if postedBody["aff_campaign_name"] != "A" {
+		t.Errorf("aff_campaign_name = %#v, want %q", postedBody["aff_campaign_name"], "A")
+	}
+}
+
 func TestUserAPIKeyRotateDeletesOldKeyByDefault(t *testing.T) {
 	var createPath, deletePath string
 
