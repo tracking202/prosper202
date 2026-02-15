@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	configpkg "p202/internal/config"
@@ -2451,6 +2452,119 @@ func TestResolveGroupViaReportSummary(t *testing.T) {
 	aggregated, _ := parsed["aggregated"].(map[string]interface{})
 	if got := int(aggregated["total_clicks"].(float64)); got != 8 {
 		t.Fatalf("group-resolved aggregated total_clicks=%d, want 8", got)
+	}
+}
+
+func TestExecRunsAgainstAllProfiles(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+		"staging": {"url": "https://staging.example.com", "api_key": "staging-key-123456"},
+	})
+
+	originalRunner := execProfileRunner
+	t.Cleanup(func() { execProfileRunner = originalRunner })
+
+	var mu sync.Mutex
+	calls := make([]execCall, 0)
+	execProfileRunner = func(call execCall) execResult {
+		mu.Lock()
+		calls = append(calls, call)
+		mu.Unlock()
+		return execResult{Profile: call.Profile, ExitCode: 0, Stdout: fmt.Sprintf("ok-%s\n", call.Profile)}
+	}
+
+	stdout, _, err := executeCommand("exec", "--all-profiles", "--", "campaign", "list")
+	if err != nil {
+		t.Fatalf("exec --all-profiles error: %v", err)
+	}
+
+	if !strings.Contains(stdout, "=== prod ===") || !strings.Contains(stdout, "=== staging ===") {
+		t.Fatalf("expected profile sections in output:\n%s", stdout)
+	}
+	mu.Lock()
+	callCount := len(calls)
+	mu.Unlock()
+	if callCount != 2 {
+		t.Fatalf("expected 2 exec calls, got %d", callCount)
+	}
+}
+
+func TestExecRunsAgainstGroup(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": "https://prod.example.com", "api_key": "prod-key-123456", "tags": []string{"env:prod"}},
+		"staging": {"url": "https://staging.example.com", "api_key": "staging-key-123456", "tags": []string{"env:staging"}},
+	})
+
+	originalRunner := execProfileRunner
+	t.Cleanup(func() { execProfileRunner = originalRunner })
+
+	var gotProfiles []string
+	var mu sync.Mutex
+	execProfileRunner = func(call execCall) execResult {
+		mu.Lock()
+		gotProfiles = append(gotProfiles, call.Profile)
+		mu.Unlock()
+		return execResult{Profile: call.Profile, ExitCode: 0, Stdout: "ok\n"}
+	}
+
+	_, _, err := executeCommand("exec", "--group", "env:prod", "--", "report", "summary")
+	if err != nil {
+		t.Fatalf("exec --group error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(gotProfiles) != 1 || gotProfiles[0] != "prod" {
+		t.Fatalf("expected exec to target only prod group, got %#v", gotProfiles)
+	}
+}
+
+func TestExecCapturesErrors(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": "https://prod.example.com", "api_key": "prod-key-123456"},
+		"staging": {"url": "https://staging.example.com", "api_key": "staging-key-123456"},
+	})
+
+	originalRunner := execProfileRunner
+	t.Cleanup(func() { execProfileRunner = originalRunner })
+
+	execProfileRunner = func(call execCall) execResult {
+		if call.Profile == "staging" {
+			return execResult{
+				Profile:  call.Profile,
+				ExitCode: 2,
+				Stdout:   `{"message":"failed"}`,
+				Err:      fmt.Errorf("staging failed"),
+			}
+		}
+		return execResult{
+			Profile:  call.Profile,
+			ExitCode: 0,
+			Stdout:   `{"data":{"ok":true}}`,
+		}
+	}
+
+	stdout, _, err := executeCommand("--json", "exec", "--profiles", "prod,staging", "--", "campaign", "list")
+	if err == nil {
+		t.Fatal("expected exec to return error when one profile fails")
+	}
+
+	var parsed map[string]interface{}
+	if parseErr := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); parseErr != nil {
+		t.Fatalf("exec output should be valid JSON: %v\n%s", parseErr, stdout)
+	}
+	errorsObj, ok := parsed["errors"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("exec JSON should include errors object: %#v", parsed)
+	}
+	if _, exists := errorsObj["staging"]; !exists {
+		t.Fatalf("expected staging error in output: %#v", errorsObj)
 	}
 }
 
