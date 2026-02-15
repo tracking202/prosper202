@@ -52,8 +52,9 @@ p202 report summary --period today
 | Flag     | Description                              |
 |----------|------------------------------------------|
 | `--json` | Output raw JSON instead of formatted tables |
+| `--csv`  | Output CSV instead of formatted tables   |
 
-The `--json` flag works with every command and outputs the exact JSON response from the API.
+`--json` and `--csv` are mutually exclusive.
 
 ## Configuration
 
@@ -91,6 +92,23 @@ API Key      abc1...xyz9
 
 Test the connection by calling the system health endpoint.
 
+### Config defaults
+
+Set reusable defaults for high-frequency flags:
+
+```bash
+p202 config set-default report.period last30
+p202 config get-default report.period
+p202 config get-default
+p202 config unset-default report.period
+```
+
+Supported default keys include:
+- `report.period`, `report.time_from`, `report.time_to`
+- `report.aff_campaign_id`, `report.ppc_account_id`, `report.aff_network_id`, `report.ppc_network_id`, `report.landing_page_id`, `report.country_id`
+- `report.breakdown`, `report.sort`, `report.sort_dir`, `report.limit`, `report.offset`, `report.interval`
+- `crud.aff_campaign_id`, `crud.ppc_account_id`, `crud.aff_network_id`, `crud.ppc_network_id`, `crud.landing_page_id`, `crud.text_ad_id`, `crud.rotator_id`, `crud.country_id`
+
 ## Resource management (CRUD)
 
 Seven resource types share identical CRUD commands:
@@ -111,15 +129,17 @@ Seven resource types share identical CRUD commands:
 p202 campaign list
 p202 campaign list --limit 10 --offset 20
 p202 campaign list --page 3
-p202 campaign list --filter[aff_network_id] 5
+p202 campaign list --aff_network_id 5
 ```
 
-| Flag                        | Description           |
-|-----------------------------|-----------------------|
-| `-l, --limit <n>`          | Maximum results       |
-| `-o, --offset <n>`         | Pagination offset     |
-| `--page <n>`               | Page number           |
-| `--filter[<field>] <value>` | Filter by field value |
+| Flag | Description |
+|------|-------------|
+| `-l, --limit <n>` | Maximum results |
+| `-o, --offset <n>` | Pagination offset |
+| `--page <n>` | Page number |
+| Entity-specific filter flags (for example `--aff_network_id`) | Filter by related entity |
+
+Legacy raw filter syntax (`--filter[aff_network_id]`) is still accepted where previously supported.
 
 ### Get a resource
 
@@ -160,23 +180,39 @@ p202 campaign delete 42 --force # Skips confirmation
 
 ### Campaign (`p202 campaign`)
 
-| Flag                             | Required | Description               |
-|----------------------------------|----------|---------------------------|
-| `--aff_campaign_name`            | Yes      | Campaign name             |
-| `--aff_campaign_url`             | Yes      | Primary offer URL         |
-| `--aff_campaign_cpc`             | No       | Cost per click            |
-| `--aff_campaign_payout`          | No       | Default payout            |
-| `--aff_network_id`               | No       | Affiliate network ID      |
-| `--aff_campaign_postback_url`    | No       | Postback URL              |
-| `--aff_campaign_postback_append` | No       | Postback append string    |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--aff_campaign_name` | Yes | Campaign name |
+| `--aff_campaign_url` | Yes | Primary offer URL |
+| `--aff_campaign_url_2` | No | Offer URL 2 |
+| `--aff_campaign_url_3` | No | Offer URL 3 |
+| `--aff_campaign_url_4` | No | Offer URL 4 |
+| `--aff_campaign_url_5` | No | Offer URL 5 |
+| `--aff_campaign_cpc` | No | Cost per click |
+| `--aff_campaign_payout` | No | Default payout |
+| `--aff_campaign_currency` | No | Currency code |
+| `--aff_campaign_foreign_payout` | No | Foreign currency payout |
+| `--aff_network_id` | No | Affiliate network ID |
+| `--aff_campaign_cloaking` | No | Enable cloaking (0/1) |
+| `--aff_campaign_rotate` | No | Enable rotation (0/1) |
+| `--aff_campaign_postback_url` | No | Postback URL |
+| `--aff_campaign_postback_append` | No | Postback append string |
+
+Campaign utility subcommand:
+
+```bash
+p202 campaign clone 42
+p202 campaign clone 42 --name "Q1 Offer (Copy)"
+```
 
 ### Affiliate network (`p202 aff-network`)
 
-| Flag                             | Required | Description            |
-|----------------------------------|----------|------------------------|
-| `--aff_network_name`             | Yes      | Network name           |
-| `--aff_network_postback_url`     | No       | Postback URL           |
-| `--aff_network_postback_append`  | No       | Postback append string |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--aff_network_name` | Yes | Network name |
+| `--dni_network_id` | No | DNI network ID |
+| `--aff_network_postback_url` | No | Postback URL |
+| `--aff_network_postback_append` | No | Postback append string |
 
 ### PPC network (`p202 ppc-network`)
 
@@ -186,36 +222,54 @@ p202 campaign delete 42 --force # Skips confirmation
 
 ### PPC account (`p202 ppc-account`)
 
-| Flag                 | Required | Description    |
-|----------------------|----------|----------------|
-| `--ppc_account_name` | Yes      | Account name   |
-| `--ppc_network_id`   | Yes      | PPC network ID |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--ppc_account_name` | Yes | Account name |
+| `--ppc_network_id` | Yes | PPC network ID |
+| `--ppc_account_default` | No | Set as default account (0/1) |
 
 ### Tracker (`p202 tracker`)
 
-| Flag                | Required | Description            |
-|---------------------|----------|------------------------|
-| `--tracker_name`    | Yes      | Tracker name           |
-| `--aff_campaign_id` | Yes      | Campaign ID            |
-| `--ppc_account_id`  | No       | PPC account ID         |
-| `--landing_page_id` | No       | Landing page ID        |
-| `--tracker_cpc`     | No       | Cost per click override |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--aff_campaign_id` | Yes | Campaign ID |
+| `--ppc_account_id` | No | PPC account ID |
+| `--text_ad_id` | No | Text ad ID |
+| `--landing_page_id` | No | Landing page ID |
+| `--rotator_id` | No | Rotator ID |
+| `--click_cpc` | No | Cost per click |
+| `--click_cpa` | No | Cost per action |
+| `--click_cloaking` | No | Enable cloaking (0/1) |
+
+Tracker utility subcommands:
+
+```bash
+p202 tracker get-url 56
+p202 tracker create-with-url --aff_campaign_id 42
+p202 tracker bulk-urls --aff_campaign_id 42 --concurrency 5
+```
 
 ### Landing page (`p202 landing-page`)
 
-| Flag                  | Required | Description      |
-|-----------------------|----------|------------------|
-| `--landing_page_name` | Yes      | Landing page name |
-| `--landing_page_url`  | Yes      | Landing page URL |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--landing_page_url` | Yes | Landing page URL |
+| `--aff_campaign_id` | Yes | Campaign ID |
+| `--landing_page_nickname` | No | Landing page nickname |
+| `--leave_behind_page_url` | No | Leave-behind page URL |
+| `--landing_page_type` | No | Landing page type |
 
 ### Text ad (`p202 text-ad`)
 
-| Flag                    | Required | Description  |
-|-------------------------|----------|--------------|
-| `--text_ad_name`        | Yes      | Text ad name |
-| `--text_ad_headline`    | No       | Headline     |
-| `--text_ad_body`        | No       | Body text    |
-| `--text_ad_display_url` | No       | Display URL  |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--text_ad_name` | Yes | Text ad name |
+| `--text_ad_headline` | No | Headline |
+| `--text_ad_description` | No | Description text |
+| `--text_ad_display_url` | No | Display URL |
+| `--aff_campaign_id` | No | Campaign ID |
+| `--landing_page_id` | No | Landing page ID |
+| `--text_ad_type` | No | Text ad type |
 
 ## Clicks
 
@@ -233,6 +287,7 @@ p202 click list --aff_campaign_id 5 --click_lead 1
 |---------------------|---------|--------------------------------------|
 | `-l, --limit`       | 50      | Maximum results                      |
 | `-o, --offset`      | 0       | Pagination offset                    |
+| `--page`            |         | Page number (maps to offset)         |
 | `--time_from`       |         | Start timestamp (unix)               |
 | `--time_to`         |         | End timestamp (unix)                 |
 | `--aff_campaign_id` |         | Filter by campaign                   |
@@ -316,6 +371,17 @@ All report commands share common time and entity filters.
 | `--ppc_network_id`  | Filter by PPC network    |
 | `--landing_page_id` | Filter by landing page   |
 | `--country_id`      | Filter by country        |
+
+### Dashboard
+
+Dashboard summary is a shortcut to `reports/summary`.
+
+```bash
+p202 dashboard
+p202 dashboard --period last7 --aff_campaign_id 42
+```
+
+If `--period` is omitted, dashboard defaults to `today`.
 
 ### Summary
 
@@ -528,9 +594,13 @@ p202 user role remove 2 3             # Remove role 3 from user 2
 p202 user apikey list 1               # List keys for user 1
 p202 user apikey create 1             # Generate new key (shown once)
 p202 user apikey delete 1 <key>       # Delete a specific key
+p202 user apikey rotate 1 <old-key> --force
+p202 user apikey rotate 1 <old-key> --keep-old --update-config
 ```
 
 The full API key is displayed only once at creation time. Store it securely.
+
+`rotate` creates a replacement key and can optionally delete the old key and update local CLI config.
 
 ### Preferences
 
@@ -548,6 +618,20 @@ p202 user prefs update 1 \
 | `--user_slack_incoming_webhook`  | Slack webhook URL           |
 | `--user_daily_email`             | Daily email: on or off      |
 | `--ipqs_api_key`                 | IPQS fraud detection key    |
+
+## Export and import
+
+```bash
+p202 export campaigns --output /tmp/campaigns.json
+p202 export all --output /tmp/full-export.json
+
+p202 import campaigns /tmp/campaigns.json --dry-run
+p202 import campaigns /tmp/campaigns.json --skip-errors
+```
+
+`export` supports: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `trackers`, `landing-pages`, `text-ads`, `all`.
+
+`import` currently supports one entity at a time and strips immutable fields before create requests.
 
 ## System
 
@@ -589,6 +673,15 @@ Raw API response, pretty-printed with 2-space indentation. Suitable for piping i
 ```bash
 p202 campaign list --json | jq '.data[].aff_campaign_name'
 p202 report summary --period today --json > report.json
+```
+
+### CSV mode (`--csv`)
+
+CSV output is available for list/object responses:
+
+```bash
+p202 campaign list --csv
+p202 report daypart --period last30 --csv
 ```
 
 ## Exit codes

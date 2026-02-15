@@ -207,6 +207,9 @@ p202 config set-url <url>
 p202 config set-key <api-key>
 p202 config show [--json]
 p202 config test [--json]
+p202 config set-default <key> <value>
+p202 config get-default [key]
+p202 config unset-default <key>
 ```
 
 ### CRUD resources
@@ -227,9 +230,14 @@ p202 <resource> delete  <id> [--force] [--json]
 |------|--------|------|
 | `--aff_campaign_name` | (R) | string |
 | `--aff_campaign_url` | (R) | string |
+| `--aff_campaign_url_2..5` | optional | string |
 | `--aff_campaign_cpc` | optional | string |
 | `--aff_campaign_payout` | optional | string |
+| `--aff_campaign_currency` | optional | string |
+| `--aff_campaign_foreign_payout` | optional | string |
 | `--aff_network_id` | optional | string |
+| `--aff_campaign_cloaking` | optional | 0/1 |
+| `--aff_campaign_rotate` | optional | 0/1 |
 | `--aff_campaign_postback_url` | optional | string |
 | `--aff_campaign_postback_append` | optional | string |
 
@@ -238,6 +246,7 @@ p202 <resource> delete  <id> [--force] [--json]
 | Flag | Create | Type |
 |------|--------|------|
 | `--aff_network_name` | (R) | string |
+| `--dni_network_id` | optional | integer |
 | `--aff_network_postback_url` | optional | string |
 | `--aff_network_postback_append` | optional | string |
 
@@ -253,23 +262,39 @@ p202 <resource> delete  <id> [--force] [--json]
 |------|--------|------|
 | `--ppc_account_name` | (R) | string |
 | `--ppc_network_id` | (R) | string |
+| `--ppc_account_default` | optional | 0/1 |
 
 #### Tracker fields
 
 | Flag | Create | Type |
 |------|--------|------|
-| `--tracker_name` | (R) | string |
 | `--aff_campaign_id` | (R) | string |
 | `--ppc_account_id` | optional | string |
+| `--text_ad_id` | optional | string |
 | `--landing_page_id` | optional | string |
-| `--tracker_cpc` | optional | string |
+| `--rotator_id` | optional | string |
+| `--click_cpc` | optional | string |
+| `--click_cpa` | optional | string |
+| `--click_cloaking` | optional | 0/1 |
+
+Tracker utility commands:
+
+```
+p202 tracker get-url <id> [--json]
+p202 tracker create-with-url --aff_campaign_id N [tracker flags...] [--json]
+p202 tracker bulk-urls [--aff_campaign_id N] [--ppc_account_id N]
+                       [--landing_page_id N] [--concurrency N] [--json]
+```
 
 #### Landing page fields
 
 | Flag | Create | Type |
 |------|--------|------|
-| `--landing_page_name` | (R) | string |
 | `--landing_page_url` | (R) | string |
+| `--aff_campaign_id` | (R) | string |
+| `--landing_page_nickname` | optional | string |
+| `--leave_behind_page_url` | optional | string |
+| `--landing_page_type` | optional | integer |
 
 #### Text ad fields
 
@@ -277,8 +302,11 @@ p202 <resource> delete  <id> [--force] [--json]
 |------|--------|------|
 | `--text_ad_name` | (R) | string |
 | `--text_ad_headline` | optional | string |
-| `--text_ad_body` | optional | string |
+| `--text_ad_description` | optional | string |
 | `--text_ad_display_url` | optional | string |
+| `--aff_campaign_id` | optional | string |
+| `--landing_page_id` | optional | string |
+| `--text_ad_type` | optional | integer |
 
 ### Clicks (read-only)
 
@@ -302,6 +330,7 @@ p202 conversion delete <id> [--force] [--json]
 ### Reports
 
 ```
+p202 dashboard         [-p period] [filters...] [--json]
 p202 report summary    [-p period] [--time_from T] [--time_to T] [filters...] [--json]
 p202 report breakdown  [-b dimension] [-s sort_col] [--sort_dir ASC|DESC]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
@@ -311,6 +340,8 @@ p202 report weekpart   [-s sort_col] [--sort_dir ASC|DESC] [-p period] [filters.
 ```
 
 Report filter flags (all optional): `--aff_campaign_id`, `--ppc_account_id`, `--aff_network_id`, `--ppc_network_id`, `--landing_page_id`, `--country_id`.
+
+`dashboard` defaults `period=today` if omitted.
 
 ### Rotators
 
@@ -363,12 +394,23 @@ p202 user role remove <user_id> <role_id> [--force] [--json]
 p202 user apikey list   <user_id> [--json]
 p202 user apikey create <user_id> [--json]
 p202 user apikey delete <user_id> <api_key> [--force] [--json]
+p202 user apikey rotate <user_id> <old_api_key> [--keep-old] [--force]
+                       [--update-config] [--force-config-update] [--json]
 
 p202 user prefs get    <user_id> [--json]
 p202 user prefs update <user_id> [--user_tracking_domain S]
                        [--user_account_currency S] [--user_slack_incoming_webhook S]
                        [--user_daily_email S] [--ipqs_api_key S] [--json]
 ```
+
+### Data portability
+
+```
+p202 export <entity|all> [--output PATH] [--json]
+p202 import <entity> <file> [--dry-run] [--skip-errors] [--json]
+```
+
+Supported export entities: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `trackers`, `landing-pages`, `text-ads`, `all`.
 
 ### System
 
