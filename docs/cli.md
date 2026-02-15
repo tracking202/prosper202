@@ -6,16 +6,18 @@ A command-line tool for managing a Prosper202 tracking instance. Distributed as 
 
 ### Download a prebuilt binary
 
-Download the appropriate binary for your platform from the releases page and place it in your `PATH`.
+Download the appropriate archive for your platform from the releases page. Each archive contains a single `p202` binary (or `p202.exe` on Windows). Extract it and place it in your `PATH`.
 
-| Platform        | Binary                   |
-|-----------------|--------------------------|
-| Linux (x86_64)  | `p202-linux-amd64`       |
-| Linux (ARM64)   | `p202-linux-arm64`       |
-| macOS (Intel)   | `p202-darwin-amd64`      |
-| macOS (Apple Si) | `p202-darwin-arm64`     |
-| Windows (x86_64) | `p202-windows-amd64.exe` |
-| Windows (ARM64) | `p202-windows-arm64.exe` |
+| Platform         | Archive directory  | Binary      |
+|------------------|--------------------|-------------|
+| Linux (x86_64)   | `linux-amd64/`     | `p202`      |
+| Linux (ARM64)    | `linux-arm64/`     | `p202`      |
+| macOS (Intel)    | `darwin-amd64/`    | `p202`      |
+| macOS (Apple Si) | `darwin-arm64/`    | `p202`      |
+| Windows (x86_64) | `windows-amd64/`   | `p202.exe`  |
+| Windows (ARM64)  | `windows-arm64/`   | `p202.exe`  |
+
+The binary is always named `p202` on every platform.
 
 ### Build from source
 
