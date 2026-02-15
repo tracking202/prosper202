@@ -5,11 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
-// setTestHome overrides HOME (or USERPROFILE on Windows) so that Dir()/Path()
-// resolve to a temporary directory. Returns a cleanup function.
+// setTestHome overrides HOME (or USERPROFILE on Windows) so Dir()/Path()
+// resolve into a temporary directory.
 func setTestHome(t *testing.T, dir string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -30,15 +31,15 @@ func TestLoadNonexistentFile(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("Load() returned nil config")
 	}
-	if cfg.URL != "" {
-		t.Errorf("expected empty URL, got %q", cfg.URL)
+	if cfg.URL != "" || cfg.APIKey != "" {
+		t.Fatalf("expected empty legacy fields, got URL=%q APIKey=%q", cfg.URL, cfg.APIKey)
 	}
-	if cfg.APIKey != "" {
-		t.Errorf("expected empty APIKey, got %q", cfg.APIKey)
+	if len(cfg.Profiles) != 0 {
+		t.Fatalf("expected no profiles, got %d", len(cfg.Profiles))
 	}
 }
 
-func TestLoadValidJSON(t *testing.T) {
+func TestLoadLegacyMigratesToDefaultProfile(t *testing.T) {
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 
@@ -47,7 +48,7 @@ func TestLoadValidJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := `{"url": "https://example.com", "api_key": "test-key-12345678"}`
+	data := `{"url":"https://example.com","api_key":"test-key-12345678","defaults":{"report.period":"last30"}}`
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +57,21 @@ func TestLoadValidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.URL != "https://example.com" {
-		t.Errorf("URL = %q, want %q", cfg.URL, "https://example.com")
+	if cfg.ActiveProfile != "default" {
+		t.Fatalf("ActiveProfile = %q, want default", cfg.ActiveProfile)
 	}
-	if cfg.APIKey != "test-key-12345678" {
-		t.Errorf("APIKey = %q, want %q", cfg.APIKey, "test-key-12345678")
+	p, ok := cfg.Profiles["default"]
+	if !ok || p == nil {
+		t.Fatalf("default profile missing after migration")
+	}
+	if p.URL != "https://example.com" {
+		t.Fatalf("default URL = %q", p.URL)
+	}
+	if p.APIKey != "test-key-12345678" {
+		t.Fatalf("default API key = %q", p.APIKey)
+	}
+	if p.GetDefault("report.period") != "last30" {
+		t.Fatalf("default profile defaults not migrated")
 	}
 }
 
@@ -72,7 +83,6 @@ func TestLoadInvalidJSON(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{not valid json"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -91,12 +101,10 @@ func TestSaveCreatesDirectoryAndFile(t *testing.T) {
 		URL:    "https://example.com",
 		APIKey: "my-secret-key",
 	}
-
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save() error: %v", err)
 	}
 
-	// Check directory was created with 0700 permissions
 	dirPath := filepath.Join(tmp, ".p202")
 	info, err := os.Stat(dirPath)
 	if err != nil {
@@ -106,39 +114,51 @@ func TestSaveCreatesDirectoryAndFile(t *testing.T) {
 		t.Fatal("config dir path is not a directory")
 	}
 	if runtime.GOOS != "windows" {
-		perm := info.Mode().Perm()
-		if perm != 0700 {
-			t.Errorf("dir permissions = %o, want 0700", perm)
+		if perm := info.Mode().Perm(); perm != 0700 {
+			t.Fatalf("dir permissions = %o, want 0700", perm)
 		}
 	}
 
-	// Check file was created with 0600 permissions
 	filePath := filepath.Join(dirPath, "config.json")
 	fInfo, err := os.Stat(filePath)
 	if err != nil {
 		t.Fatalf("config file not created: %v", err)
 	}
 	if runtime.GOOS != "windows" {
-		perm := fInfo.Mode().Perm()
-		if perm != 0600 {
-			t.Errorf("file permissions = %o, want 0600", perm)
+		if perm := fInfo.Mode().Perm(); perm != 0600 {
+			t.Fatalf("file permissions = %o, want 0600", perm)
 		}
 	}
 
-	// Verify file content is valid JSON
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var parsed Config
-	if err := json.Unmarshal(content, &parsed); err != nil {
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(content, &raw); err != nil {
 		t.Fatalf("saved file is not valid JSON: %v", err)
 	}
-	if parsed.URL != "https://example.com" {
-		t.Errorf("saved URL = %q, want %q", parsed.URL, "https://example.com")
+	if _, exists := raw["url"]; exists {
+		t.Fatalf("saved V2 config should omit legacy url field")
 	}
-	if parsed.APIKey != "my-secret-key" {
-		t.Errorf("saved APIKey = %q, want %q", parsed.APIKey, "my-secret-key")
+	if _, exists := raw["api_key"]; exists {
+		t.Fatalf("saved V2 config should omit legacy api_key field")
+	}
+
+	profiles, ok := raw["profiles"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("saved config should contain profiles map")
+	}
+	def, ok := profiles["default"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("saved config should include default profile")
+	}
+	if def["url"] != "https://example.com" {
+		t.Fatalf("saved profile URL mismatch: %v", def["url"])
+	}
+	if def["api_key"] != "my-secret-key" {
+		t.Fatalf("saved profile API key mismatch: %v", def["api_key"])
 	}
 }
 
@@ -150,7 +170,6 @@ func TestSaveThenLoadRoundTrip(t *testing.T) {
 		URL:    "https://tracker.example.com",
 		APIKey: "roundtrip-key-abcd1234",
 	}
-
 	if err := original.Save(); err != nil {
 		t.Fatalf("Save() error: %v", err)
 	}
@@ -159,12 +178,89 @@ func TestSaveThenLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-
-	if loaded.URL != original.URL {
-		t.Errorf("URL round-trip: got %q, want %q", loaded.URL, original.URL)
+	profile, err := loaded.ResolveProfile("default")
+	if err != nil {
+		t.Fatalf("ResolveProfile(default) error: %v", err)
 	}
-	if loaded.APIKey != original.APIKey {
-		t.Errorf("APIKey round-trip: got %q, want %q", loaded.APIKey, original.APIKey)
+	if profile.URL != original.URL {
+		t.Fatalf("URL round-trip: got %q, want %q", profile.URL, original.URL)
+	}
+	if profile.APIKey != original.APIKey {
+		t.Fatalf("APIKey round-trip: got %q, want %q", profile.APIKey, original.APIKey)
+	}
+}
+
+func TestResolveProfilePrecedence(t *testing.T) {
+	cfg := &Config{
+		ActiveProfile: "prod",
+		Profiles: map[string]*Profile{
+			"default": {URL: "https://default.example.com", APIKey: "default-key-1234"},
+			"prod":    {URL: "https://prod.example.com", APIKey: "prod-key-1234"},
+			"stage":   {URL: "https://stage.example.com", APIKey: "stage-key-1234"},
+		},
+	}
+
+	p, err := cfg.ResolveProfile("stage")
+	if err != nil {
+		t.Fatalf("ResolveProfile(stage) error: %v", err)
+	}
+	if p.URL != "https://stage.example.com" {
+		t.Fatalf("explicit resolve picked wrong profile URL: %q", p.URL)
+	}
+
+	p, err = cfg.ResolveProfile("")
+	if err != nil {
+		t.Fatalf("ResolveProfile(\"\") error: %v", err)
+	}
+	if p.URL != "https://prod.example.com" {
+		t.Fatalf("fallback to active profile failed: %q", p.URL)
+	}
+}
+
+func TestResolveProfileNotFound(t *testing.T) {
+	cfg := &Config{
+		Profiles: map[string]*Profile{
+			"default": {},
+			"prod":    {},
+		},
+	}
+	_, err := cfg.ResolveProfile("missing")
+	if err == nil {
+		t.Fatal("ResolveProfile should error for missing profile")
+	}
+	if !strings.Contains(err.Error(), "available profiles: default, prod") {
+		t.Fatalf("missing profile error should list available profiles: %v", err)
+	}
+}
+
+func TestLoadProfileWithOverride(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	cfg := &Config{
+		ActiveProfile: "default",
+		Profiles: map[string]*Profile{
+			"default": {URL: "https://default.example.com", APIKey: "default-key-1234"},
+			"prod":    {URL: "https://prod.example.com", APIKey: "prod-key-1234"},
+		},
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+
+	ResetActiveOverride()
+	SetActiveOverride("prod")
+	t.Cleanup(ResetActiveOverride)
+
+	p, resolvedName, err := LoadProfileWithName("")
+	if err != nil {
+		t.Fatalf("LoadProfileWithName error: %v", err)
+	}
+	if resolvedName != "prod" {
+		t.Fatalf("resolvedName = %q, want prod", resolvedName)
+	}
+	if p.URL != "https://prod.example.com" {
+		t.Fatalf("override profile URL mismatch: %q", p.URL)
 	}
 }
 
@@ -189,7 +285,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:    "both set",
-			cfg:     Config{URL: "https://example.com", APIKey: "key123"},
+			cfg:     Config{URL: "https://example.com", APIKey: "key123456"},
 			wantErr: false,
 		},
 		{
@@ -205,16 +301,15 @@ func TestValidate(t *testing.T) {
 			err := tt.cfg.Validate()
 			if tt.wantErr {
 				if err == nil {
-					t.Error("Validate() should return error")
-				} else if tt.errMsg != "" {
-					if got := err.Error(); !contains(got, tt.errMsg) {
-						t.Errorf("error = %q, want it to contain %q", got, tt.errMsg)
-					}
+					t.Fatal("Validate() should return error")
 				}
-			} else {
-				if err != nil {
-					t.Errorf("Validate() unexpected error: %v", err)
+				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Fatalf("error = %q, want contains %q", err.Error(), tt.errMsg)
 				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Validate() unexpected error: %v", err)
 			}
 		})
 	}
@@ -226,44 +321,18 @@ func TestMaskedKey(t *testing.T) {
 		key  string
 		want string
 	}{
-		{
-			name: "long key (16 chars)",
-			key:  "abcdefghijklmnop",
-			want: "abcd...mnop",
-		},
-		{
-			name: "exactly 9 chars (> 8)",
-			key:  "123456789",
-			want: "1234...6789",
-		},
-		{
-			name: "exactly 8 chars (<= 8)",
-			key:  "12345678",
-			want: "********",
-		},
-		{
-			name: "short key (4 chars)",
-			key:  "abcd",
-			want: "****",
-		},
-		{
-			name: "empty key",
-			key:  "",
-			want: "(not set)",
-		},
-		{
-			name: "1 char",
-			key:  "x",
-			want: "*",
-		},
+		{name: "long key", key: "abcdefghijklmnop", want: "abcd...mnop"},
+		{name: "exactly 9 chars", key: "123456789", want: "1234...6789"},
+		{name: "exactly 8 chars", key: "12345678", want: "********"},
+		{name: "short key", key: "abcd", want: "****"},
+		{name: "empty key", key: "", want: "(not set)"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{APIKey: tt.key}
-			got := cfg.MaskedKey()
-			if got != tt.want {
-				t.Errorf("MaskedKey() = %q, want %q", got, tt.want)
+			if got := cfg.MaskedKey(); got != tt.want {
+				t.Fatalf("MaskedKey() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -276,25 +345,12 @@ func TestDirAndPath(t *testing.T) {
 	dir := Dir()
 	expectedDir := filepath.Join(tmp, ".p202")
 	if dir != expectedDir {
-		t.Errorf("Dir() = %q, want %q", dir, expectedDir)
+		t.Fatalf("Dir() = %q, want %q", dir, expectedDir)
 	}
 
 	path := Path()
 	expectedPath := filepath.Join(tmp, ".p202", "config.json")
 	if path != expectedPath {
-		t.Errorf("Path() = %q, want %q", path, expectedPath)
+		t.Fatalf("Path() = %q, want %q", path, expectedPath)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
-}
-
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

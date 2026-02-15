@@ -39,35 +39,46 @@ func (e *APIError) Error() string {
 }
 
 func NewFromConfig() (*Client, error) {
-	cfg, err := config.Load()
+	profile, _, err := config.LoadProfileWithName("")
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := profile.Validate(); err != nil {
 		return nil, err
 	}
-	return &Client{
-		baseURL: strings.TrimRight(cfg.URL, "/") + "/api/v3",
-		apiKey:  cfg.APIKey,
-		http:    &http.Client{Timeout: 30 * time.Second},
-	}, nil
+	return newClient(profile.URL, profile.APIKey), nil
+}
+
+func NewFromProfile(name string) (*Client, error) {
+	profile, _, err := config.LoadProfileWithName(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := profile.Validate(); err != nil {
+		return nil, err
+	}
+	return newClient(profile.URL, profile.APIKey), nil
 }
 
 // NewURLOnly creates a client that only requires a configured URL (no API key).
 // Use this for unauthenticated endpoints like system/health.
 func NewURLOnly() (*Client, error) {
-	cfg, err := config.Load()
+	profile, _, err := config.LoadProfileWithName("")
 	if err != nil {
 		return nil, err
 	}
-	if cfg.URL == "" {
+	if profile.URL == "" {
 		return nil, fmt.Errorf("no URL configured. Run: p202 config set-url <url>")
 	}
+	return newClient(profile.URL, profile.APIKey), nil // API key may be empty for URL-only endpoints.
+}
+
+func newClient(baseURL, apiKey string) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(cfg.URL, "/") + "/api/v3",
-		apiKey:  cfg.APIKey, // may be empty; header will be set but endpoint doesn't check it
+		baseURL: strings.TrimRight(baseURL, "/") + "/api/v3",
+		apiKey:  apiKey,
 		http:    &http.Client{Timeout: 30 * time.Second},
-	}, nil
+	}
 }
 
 func (c *Client) Get(path string, params map[string]string) ([]byte, error) {

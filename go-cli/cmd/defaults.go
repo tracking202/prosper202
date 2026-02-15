@@ -48,11 +48,11 @@ func isSupportedDefaultKey(key string) bool {
 }
 
 func getConfigDefault(scope, key string) string {
-	cfg, err := configpkg.Load()
+	profile, err := configpkg.LoadProfile()
 	if err != nil {
 		return ""
 	}
-	return cfg.GetDefault(scope + "." + key)
+	return profile.GetDefault(scope + "." + key)
 }
 
 func getStringFlagOrDefault(cmd *cobra.Command, scope, key string) string {

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	configpkg "p202/internal/config"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -63,6 +65,80 @@ func writeTestConfigWithDefaults(t *testing.T, dir, url, apiKey string, defaults
 	}
 }
 
+func writeTestConfigWithProfiles(t *testing.T, dir string, active string, profiles map[string]map[string]interface{}) {
+	t.Helper()
+	configDir := filepath.Join(dir, ".p202")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+
+	payload := map[string]interface{}{
+		"active_profile": active,
+		"profiles":       profiles,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("encoding profile config payload: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), data, 0600); err != nil {
+		t.Fatalf("writing profile config: %v", err)
+	}
+}
+
+func readSavedConfigURLAndKey(t *testing.T, dir string) (string, string) {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join(dir, ".p202", "config.json"))
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parsing config JSON: %v", err)
+	}
+
+	urlVal, _ := raw["url"].(string)
+	keyVal, _ := raw["api_key"].(string)
+	if urlVal != "" || keyVal != "" {
+		return urlVal, keyVal
+	}
+
+	active := "default"
+	if v, ok := raw["active_profile"].(string); ok && strings.TrimSpace(v) != "" {
+		active = strings.TrimSpace(v)
+	}
+
+	profiles, _ := raw["profiles"].(map[string]interface{})
+	if len(profiles) == 0 {
+		return "", ""
+	}
+
+	selectProfile := func(name string) map[string]interface{} {
+		if p, ok := profiles[name].(map[string]interface{}); ok {
+			return p
+		}
+		if p, ok := profiles["default"].(map[string]interface{}); ok {
+			return p
+		}
+		for _, rawProfile := range profiles {
+			if p, ok := rawProfile.(map[string]interface{}); ok {
+				return p
+			}
+		}
+		return nil
+	}
+
+	profile := selectProfile(active)
+	if profile == nil {
+		return "", ""
+	}
+
+	urlVal, _ = profile["url"].(string)
+	keyVal, _ = profile["api_key"].(string)
+	return urlVal, keyVal
+}
+
 // executeCommand runs rootCmd with the given args and captures stdout/stderr.
 // It resets the rootCmd output after execution.
 func executeCommand(args ...string) (string, string, error) {
@@ -71,10 +147,13 @@ func executeCommand(args ...string) (string, string, error) {
 
 	// Reset global and command flag state between test invocations.
 	resetAllFlags(rootCmd)
+	configpkg.ResetActiveOverride()
 	jsonOutput = false
 	csvOutput = false
+	profileName = ""
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	_ = rootCmd.PersistentFlags().Set("csv", "false")
+	_ = rootCmd.PersistentFlags().Set("profile", "")
 
 	rootCmd.SetOut(stdoutBuf)
 	rootCmd.SetErr(stderrBuf)
@@ -128,17 +207,9 @@ func TestConfigSetURL(t *testing.T) {
 		t.Errorf("output should contain URL, got:\n%s", stdout)
 	}
 
-	// Verify config file was written
-	data, err := os.ReadFile(filepath.Join(tmp, ".p202", "config.json"))
-	if err != nil {
-		t.Fatalf("config file not created: %v", err)
-	}
-	var cfg map[string]string
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("config file is not valid JSON: %v", err)
-	}
-	if cfg["url"] != "https://tracker.example.com" {
-		t.Errorf("saved URL = %q, want %q", cfg["url"], "https://tracker.example.com")
+	savedURL, _ := readSavedConfigURLAndKey(t, tmp)
+	if savedURL != "https://tracker.example.com" {
+		t.Errorf("saved URL = %q, want %q", savedURL, "https://tracker.example.com")
 	}
 }
 
@@ -151,14 +222,9 @@ func TestConfigSetURLTrimsTrailingSlash(t *testing.T) {
 		t.Fatalf("config set-url error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmp, ".p202", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg map[string]string
-	json.Unmarshal(data, &cfg)
-	if cfg["url"] != "https://tracker.example.com" {
-		t.Errorf("saved URL = %q, should have trailing slash trimmed", cfg["url"])
+	savedURL, _ := readSavedConfigURLAndKey(t, tmp)
+	if savedURL != "https://tracker.example.com" {
+		t.Errorf("saved URL = %q, should have trailing slash trimmed", savedURL)
 	}
 }
 
@@ -189,15 +255,9 @@ func TestConfigSetKey(t *testing.T) {
 		t.Errorf("output should contain masked key, got:\n%s", stdout)
 	}
 
-	// Verify full key was saved
-	data, err := os.ReadFile(filepath.Join(tmp, ".p202", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg map[string]string
-	json.Unmarshal(data, &cfg)
-	if cfg["api_key"] != "abcdefghijklmnop" {
-		t.Errorf("saved API key = %q, want %q", cfg["api_key"], "abcdefghijklmnop")
+	_, savedKey := readSavedConfigURLAndKey(t, tmp)
+	if savedKey != "abcdefghijklmnop" {
+		t.Errorf("saved API key = %q, want %q", savedKey, "abcdefghijklmnop")
 	}
 }
 
@@ -1602,16 +1662,9 @@ func TestUserAPIKeyRotateUpdateConfig(t *testing.T) {
 		t.Fatalf("user apikey rotate --update-config error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmp, ".p202", "config.json"))
-	if err != nil {
-		t.Fatalf("reading config after rotate: %v", err)
-	}
-	var cfg map[string]string
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("parsing config after rotate: %v", err)
-	}
-	if cfg["api_key"] != "new-key-abcdef1234" {
-		t.Errorf("saved API key = %q, want %q", cfg["api_key"], "new-key-abcdef1234")
+	_, savedKey := readSavedConfigURLAndKey(t, tmp)
+	if savedKey != "new-key-abcdef1234" {
+		t.Errorf("saved API key = %q, want %q", savedKey, "new-key-abcdef1234")
 	}
 }
 
