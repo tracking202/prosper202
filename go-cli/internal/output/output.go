@@ -41,9 +41,11 @@ func Render(data []byte, jsonMode bool) {
 	case map[string]interface{}:
 		if items, ok := v["data"].([]interface{}); ok {
 			renderTable(items)
-			if meta, ok := v["meta"].(map[string]interface{}); ok {
-				renderMeta(meta)
+			if pg, ok := v["pagination"].(map[string]interface{}); ok {
+				renderPagination(pg)
 			}
+		} else if inner, ok := v["data"].(map[string]interface{}); ok {
+			renderObject(inner)
 		} else {
 			renderObject(v)
 		}
@@ -125,16 +127,16 @@ func renderObject(obj map[string]interface{}) {
 	w.Flush()
 }
 
-func renderMeta(meta map[string]interface{}) {
+func renderPagination(pg map[string]interface{}) {
 	parts := []string{}
-	if page, ok := meta["current_page"]; ok {
-		parts = append(parts, fmt.Sprintf("Page %v", page))
-	}
-	if total, ok := meta["total"]; ok {
+	if total, ok := pg["total"]; ok {
 		parts = append(parts, fmt.Sprintf("Total: %v", total))
 	}
-	if lastPage, ok := meta["last_page"]; ok {
-		parts = append(parts, fmt.Sprintf("Last page: %v", lastPage))
+	if limit, ok := pg["limit"]; ok {
+		parts = append(parts, fmt.Sprintf("Limit: %v", limit))
+	}
+	if offset, ok := pg["offset"]; ok {
+		parts = append(parts, fmt.Sprintf("Offset: %v", offset))
 	}
 	if len(parts) > 0 {
 		fmt.Printf("\n%s\n", strings.Join(parts, " | "))

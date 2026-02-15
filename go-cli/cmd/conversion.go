@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"p202/internal/api"
@@ -65,9 +66,13 @@ var conversionCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		clickID, _ := cmd.Flags().GetString("click_id")
-		if clickID == "" {
+		clickIDStr, _ := cmd.Flags().GetString("click_id")
+		if clickIDStr == "" {
 			return fmt.Errorf("required flag --click_id is missing")
+		}
+		clickID, err := strconv.Atoi(clickIDStr)
+		if err != nil {
+			return fmt.Errorf("--click_id must be an integer: %s", clickIDStr)
 		}
 		body := map[string]interface{}{
 			"click_id": clickID,
@@ -115,8 +120,8 @@ var conversionDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	conversionListCmd.Flags().StringP("limit", "l", "50", "Max results")
-	conversionListCmd.Flags().StringP("offset", "o", "0", "Pagination offset")
+	conversionListCmd.Flags().StringP("limit", "l", "", "Max results")
+	conversionListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	conversionListCmd.Flags().String("campaign_id", "", "Filter by campaign ID")
 	conversionListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	conversionListCmd.Flags().String("time_to", "", "End timestamp (unix)")

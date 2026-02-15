@@ -239,22 +239,22 @@ func TestMaskedKey(t *testing.T) {
 		{
 			name: "exactly 8 chars (<= 8)",
 			key:  "12345678",
-			want: "12345678",
+			want: "********",
 		},
 		{
 			name: "short key (4 chars)",
 			key:  "abcd",
-			want: "abcd",
+			want: "****",
 		},
 		{
 			name: "empty key",
 			key:  "",
-			want: "",
+			want: "(not set)",
 		},
 		{
 			name: "1 char",
 			key:  "x",
-			want: "x",
+			want: "*",
 		},
 	}
 

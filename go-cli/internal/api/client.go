@@ -13,6 +13,8 @@ import (
 	"p202/internal/config"
 )
 
+const maxResponseSize = 10 << 20 // 10 MB
+
 type Client struct {
 	baseURL string
 	apiKey  string
@@ -27,7 +29,13 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("API error (%d): %s", e.Status, e.Message)
+	msg := fmt.Sprintf("API error (%d): %s", e.Status, e.Message)
+	if len(e.FieldErrors) > 0 {
+		for k, v := range e.FieldErrors {
+			msg += fmt.Sprintf("\n  %s: %s", k, v)
+		}
+	}
+	return msg
 }
 
 func NewFromConfig() (*Client, error) {
@@ -41,6 +49,23 @@ func NewFromConfig() (*Client, error) {
 	return &Client{
 		baseURL: strings.TrimRight(cfg.URL, "/") + "/api/v3",
 		apiKey:  cfg.APIKey,
+		http:    &http.Client{Timeout: 30 * time.Second},
+	}, nil
+}
+
+// NewURLOnly creates a client that only requires a configured URL (no API key).
+// Use this for unauthenticated endpoints like system/health.
+func NewURLOnly() (*Client, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.URL == "" {
+		return nil, fmt.Errorf("no URL configured. Run: p202 config set-url <url>")
+	}
+	return &Client{
+		baseURL: strings.TrimRight(cfg.URL, "/") + "/api/v3",
+		apiKey:  cfg.APIKey, // may be empty; header will be set but endpoint doesn't check it
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
@@ -98,7 +123,7 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}

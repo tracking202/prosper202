@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -67,8 +68,11 @@ func (c *Config) Validate() error {
 
 func (c *Config) MaskedKey() string {
 	k := c.APIKey
-	if len(k) > 8 {
-		return k[:4] + "..." + k[len(k)-4:]
+	if k == "" {
+		return "(not set)"
 	}
-	return k
+	if len(k) <= 8 {
+		return strings.Repeat("*", len(k))
+	}
+	return k[:4] + "..." + k[len(k)-4:]
 }

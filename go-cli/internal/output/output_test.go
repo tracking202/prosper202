@@ -127,16 +127,16 @@ func TestRenderTableWithArrayOfObjects(t *testing.T) {
 	}
 }
 
-func TestRenderTableWithDataAndMeta(t *testing.T) {
+func TestRenderTableWithDataAndPagination(t *testing.T) {
 	input := `{
 		"data": [
 			{"id":1,"name":"Item 1"},
 			{"id":2,"name":"Item 2"}
 		],
-		"meta": {
-			"current_page": 1,
+		"pagination": {
 			"total": 50,
-			"last_page": 5
+			"limit": 10,
+			"offset": 0
 		}
 	}`
 	out := captureStdout(t, func() {
@@ -152,14 +152,14 @@ func TestRenderTableWithDataAndMeta(t *testing.T) {
 	}
 
 	// Should render pagination info
-	if !strings.Contains(out, "Page 1") {
-		t.Errorf("should contain 'Page 1', got:\n%s", out)
-	}
 	if !strings.Contains(out, "Total: 50") {
 		t.Errorf("should contain 'Total: 50', got:\n%s", out)
 	}
-	if !strings.Contains(out, "Last page: 5") {
-		t.Errorf("should contain 'Last page: 5', got:\n%s", out)
+	if !strings.Contains(out, "Limit: 10") {
+		t.Errorf("should contain 'Limit: 10', got:\n%s", out)
+	}
+	if !strings.Contains(out, "Offset: 0") {
+		t.Errorf("should contain 'Offset: 0', got:\n%s", out)
 	}
 }
 
@@ -190,6 +190,29 @@ func TestRenderSingleObject(t *testing.T) {
 	}
 }
 
+func TestRenderSingleObjectWrappedInData(t *testing.T) {
+	// API responses like GET /campaigns/1 return {"data": {...}}
+	input := `{"data":{"id":42,"name":"My Campaign","status":"active"}}`
+	out := captureStdout(t, func() {
+		Render([]byte(input), false)
+	})
+
+	// Should unwrap the "data" envelope and render the inner object
+	if !strings.Contains(out, "id:") {
+		t.Errorf("should contain 'id:', got:\n%s", out)
+	}
+	if !strings.Contains(out, "42") {
+		t.Errorf("should contain '42', got:\n%s", out)
+	}
+	if !strings.Contains(out, "name:") {
+		t.Errorf("should contain 'name:', got:\n%s", out)
+	}
+	// Should NOT contain "data:" as a key — it should be unwrapped
+	if strings.Contains(out, "data:") {
+		t.Errorf("should NOT contain 'data:' key (should unwrap), got:\n%s", out)
+	}
+}
+
 func TestRenderEmptyArray(t *testing.T) {
 	input := `[]`
 	out := captureStdout(t, func() {
@@ -202,7 +225,7 @@ func TestRenderEmptyArray(t *testing.T) {
 }
 
 func TestRenderEmptyDataArray(t *testing.T) {
-	input := `{"data":[],"meta":{"current_page":1,"total":0}}`
+	input := `{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`
 	out := captureStdout(t, func() {
 		Render([]byte(input), false)
 	})
@@ -371,9 +394,9 @@ func TestRenderTableMissingFieldsInSomeRows(t *testing.T) {
 	}
 }
 
-func TestRenderMetaPartialFields(t *testing.T) {
-	// meta with only some fields present
-	input := `{"data":[{"id":1}],"meta":{"total":10}}`
+func TestRenderPaginationPartialFields(t *testing.T) {
+	// pagination with only some fields present
+	input := `{"data":[{"id":1}],"pagination":{"total":10}}`
 	out := captureStdout(t, func() {
 		Render([]byte(input), false)
 	})
@@ -381,18 +404,18 @@ func TestRenderMetaPartialFields(t *testing.T) {
 	if !strings.Contains(out, "Total: 10") {
 		t.Errorf("should contain 'Total: 10', got:\n%s", out)
 	}
-	// Should NOT contain "Page" since current_page is not present
+	// Should NOT contain "Limit" since limit is not present
 	lines := strings.Split(out, "\n")
-	metaFound := false
+	paginationFound := false
 	for _, line := range lines {
 		if strings.Contains(line, "Total:") {
-			metaFound = true
-			if strings.Contains(line, "Page") {
-				t.Errorf("should not contain 'Page' when current_page is absent, got: %q", line)
+			paginationFound = true
+			if strings.Contains(line, "Limit") {
+				t.Errorf("should not contain 'Limit' when limit is absent, got: %q", line)
 			}
 		}
 	}
-	if !metaFound {
-		t.Error("meta line with 'Total:' not found")
+	if !paginationFound {
+		t.Error("pagination line with 'Total:' not found")
 	}
 }

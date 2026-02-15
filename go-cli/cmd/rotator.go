@@ -209,8 +209,8 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	rotatorListCmd.Flags().StringP("limit", "l", "50", "Max results")
-	rotatorListCmd.Flags().StringP("offset", "o", "0", "Pagination offset")
+	rotatorListCmd.Flags().StringP("limit", "l", "", "Max results")
+	rotatorListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 
 	rotatorCreateCmd.Flags().String("name", "", "Rotator name (required)")
 	rotatorCreateCmd.Flags().String("default_url", "", "Default redirect URL")
@@ -225,7 +225,7 @@ func init() {
 	rotatorDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 
 	rotatorRuleCreateCmd.Flags().String("rule_name", "", "Rule name (required)")
-	rotatorRuleCreateCmd.Flags().String("splittest", "0", "Enable split test (0|1)")
+	rotatorRuleCreateCmd.Flags().String("splittest", "", "Enable split test (0|1)")
 	rotatorRuleCreateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"US"}]`)
 	rotatorRuleCreateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_url":"...","weight":"50","name":"A"}]`)
 

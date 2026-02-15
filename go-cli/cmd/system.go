@@ -14,9 +14,9 @@ var systemCmd = &cobra.Command{
 
 var systemHealthCmd = &cobra.Command{
 	Use:   "health",
-	Short: "Check system health",
+	Short: "Check system health (no auth required)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
+		c, err := api.NewURLOnly()
 		if err != nil {
 			return err
 		}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"p202/internal/api"
@@ -207,9 +208,13 @@ var userRoleAssignCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		roleID, _ := cmd.Flags().GetString("role_id")
-		if roleID == "" {
+		roleIDStr, _ := cmd.Flags().GetString("role_id")
+		if roleIDStr == "" {
 			return fmt.Errorf("required flag --role_id is missing")
+		}
+		roleID, err := strconv.Atoi(roleIDStr)
+		if err != nil {
+			return fmt.Errorf("--role_id must be an integer: %s", roleIDStr)
 		}
 		data, err := c.Post("users/"+args[0]+"/roles", map[string]interface{}{
 			"role_id": roleID,
