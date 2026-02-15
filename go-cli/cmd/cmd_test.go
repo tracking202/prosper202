@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -83,6 +84,58 @@ func writeTestConfigWithProfiles(t *testing.T, dir string, active string, profil
 	if err := os.WriteFile(filepath.Join(configDir, "config.json"), data, 0600); err != nil {
 		t.Fatalf("writing profile config: %v", err)
 	}
+}
+
+func newEntityDataServer(t *testing.T, rowsByEndpoint map[string][]map[string]interface{}) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v3/") {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+
+		endpoint := strings.TrimPrefix(r.URL.Path, "/api/v3/")
+		rows := rowsByEndpoint[endpoint]
+		if rows == nil {
+			rows = []map[string]interface{}{}
+		}
+
+		offset := 0
+		limit := len(rows)
+		if raw := r.URL.Query().Get("offset"); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+				offset = parsed
+			}
+		}
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+
+		start := offset
+		if start > len(rows) {
+			start = len(rows)
+		}
+		end := start + limit
+		if end > len(rows) {
+			end = len(rows)
+		}
+		page := rows[start:end]
+
+		resp := map[string]interface{}{
+			"data": page,
+			"pagination": map[string]interface{}{
+				"total":  len(rows),
+				"limit":  limit,
+				"offset": offset,
+			},
+		}
+		payload, _ := json.Marshal(resp)
+		w.WriteHeader(200)
+		_, _ = w.Write(payload)
+	}))
 }
 
 func readSavedConfigURLAndKey(t *testing.T, dir string) (string, string) {
@@ -563,6 +616,179 @@ func TestSetKeyUpdatesResolvedProfile(t *testing.T) {
 	}
 	if got := readProfileField(raw, "prod", "api_key"); got != "prod-key-123456" {
 		t.Fatalf("prod api_key unexpectedly changed to %q", got)
+	}
+}
+
+func TestDiffShowsOnlyInSource(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 1, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 1, "aff_campaign_name": "Alpha", "aff_network_id": 1},
+		},
+	})
+	defer source.Close()
+
+	target := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 99, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 2, "aff_campaign_name": "Beta", "aff_network_id": 99},
+		},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("diff", "campaigns", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("diff campaigns error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	data, _ := parsed["data"].(map[string]interface{})
+	if got := int(data["only_in_source_count"].(float64)); got != 1 {
+		t.Fatalf("only_in_source_count=%d, want 1", got)
+	}
+	if got := int(data["only_in_target_count"].(float64)); got != 1 {
+		t.Fatalf("only_in_target_count=%d, want 1", got)
+	}
+	if got := int(data["changed_count"].(float64)); got != 0 {
+		t.Fatalf("changed_count=%d, want 0", got)
+	}
+}
+
+func TestDiffShowsChanged(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 1, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{
+				"aff_campaign_id":         1,
+				"aff_campaign_name":       "Alpha",
+				"aff_network_id":          1,
+				"aff_campaign_payout":     "10.00",
+				"aff_campaign_deleted":    0,
+				"aff_campaign_id_public":  "abc",
+				"aff_campaign_time":       1700000000,
+				"aff_campaign_postback":   "",
+				"aff_campaign_postback_2": "",
+			},
+		},
+	})
+	defer source.Close()
+
+	target := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 99, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{
+				"aff_campaign_id":      2,
+				"aff_campaign_name":    "Alpha",
+				"aff_network_id":       99,
+				"aff_campaign_payout":  "12.00",
+				"aff_campaign_deleted": 0,
+			},
+		},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("diff", "campaigns", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("diff campaigns error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	data, _ := parsed["data"].(map[string]interface{})
+	if got := int(data["changed_count"].(float64)); got != 1 {
+		t.Fatalf("changed_count=%d, want 1", got)
+	}
+	changedRows, _ := data["changed"].([]interface{})
+	if len(changedRows) != 1 {
+		t.Fatalf("expected 1 changed row, got %d", len(changedRows))
+	}
+	changed, _ := changedRows[0].(map[string]interface{})
+	fields, _ := changed["changed_fields"].([]interface{})
+	found := false
+	for _, field := range fields {
+		if field.(string) == "aff_campaign_payout" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("changed_fields should include aff_campaign_payout, got %#v", fields)
+	}
+}
+
+func TestDiffAllEntities(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 1, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 1, "aff_campaign_name": "Alpha", "aff_network_id": 1},
+		},
+	})
+	defer source.Close()
+
+	target := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 9, "aff_network_name": "Net A"},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 8, "aff_campaign_name": "Alpha", "aff_network_id": 9},
+		},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("diff", "all", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("diff all error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	if parsed["from"] != "source" || parsed["to"] != "target" {
+		t.Fatalf("unexpected from/to fields: %#v", parsed)
+	}
+	dataObj, ok := parsed["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("diff all data should be object, got %#v", parsed["data"])
+	}
+	if _, ok := dataObj["campaigns"]; !ok {
+		t.Fatalf("diff all response missing campaigns entry")
 	}
 }
 
