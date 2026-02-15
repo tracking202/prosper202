@@ -16,6 +16,11 @@ Configure the CLI before use. These commands are idempotent.
 ```bash
 p202 config set-url https://your-prosper202-instance.example.com
 p202 config set-key YOUR_API_KEY
+
+# Optional: create explicit named profiles
+p202 config add-profile prod --url https://prod.example.com --key PROD_KEY
+p202 config add-profile staging --url https://staging.example.com --key STAGING_KEY
+p202 config use prod
 ```
 
 Verify with:
@@ -210,7 +215,18 @@ p202 config test [--json]
 p202 config set-default <key> <value>
 p202 config get-default [key]
 p202 config unset-default <key>
+p202 config add-profile <name> --url <url> --key <key>
+p202 config remove-profile <name> [--force]
+p202 config use <name>
+p202 config list-profiles [--tag <tag>]
+p202 config rename-profile <old> <new>
+p202 config tag-profile <name> <tag> [<tag>...]
+p202 config untag-profile <name> <tag> [<tag>...]
 ```
+
+Global profile selectors:
+- `--profile <name>`: one-command profile override
+- `--group <tag>`: profile-tag group selector for multi-profile commands
 
 ### CRUD resources
 
@@ -330,8 +346,9 @@ p202 conversion delete <id> [--force] [--json]
 ### Reports
 
 ```
-p202 dashboard         [-p period] [filters...] [--json]
-p202 report summary    [-p period] [--time_from T] [--time_to T] [filters...] [--json]
+p202 dashboard         [-p period] [filters...] [--all-profiles | --profiles P1,P2 | --group TAG] [--json]
+p202 report summary    [-p period] [--time_from T] [--time_to T] [filters...]
+                       [--all-profiles | --profiles P1,P2 | --group TAG] [--json]
 p202 report breakdown  [-b dimension] [-s sort_col] [--sort_dir ASC|DESC]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
 p202 report timeseries [-i interval] [-p period] [filters...] [--json]
@@ -342,6 +359,11 @@ p202 report weekpart   [-s sort_col] [--sort_dir ASC|DESC] [-p period] [filters.
 Report filter flags (all optional): `--aff_campaign_id`, `--ppc_account_id`, `--aff_network_id`, `--ppc_network_id`, `--landing_page_id`, `--country_id`.
 
 `dashboard` defaults `period=today` if omitted.
+
+Multi-profile report output includes:
+- per-profile result objects
+- aggregated numeric totals
+- partial error list (`errors`) if one or more profiles fail
 
 ### Rotators
 
@@ -411,6 +433,24 @@ p202 import <entity> <file> [--dry-run] [--skip-errors] [--json]
 ```
 
 Supported export entities: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `trackers`, `landing-pages`, `text-ads`, `all`.
+
+### Multi-server workflows
+
+```
+p202 diff <entity|all> --from <profile> --to <profile> [--json]
+p202 sync <entity|all> --from <profile> --to <profile> [--dry-run] [--skip-errors] [--force-update] [--json]
+p202 sync status --from <profile> --to <profile> [--json]
+p202 sync history --from <profile> --to <profile> [--json]
+p202 re-sync --from <profile> --to <profile> [--dry-run] [--skip-errors] [--force-update] [--json]
+p202 exec --all-profiles -- <subcommand...>
+p202 exec --profiles <p1,p2,...> -- <subcommand...>
+p202 exec --group <tag> -- <subcommand...>
+```
+
+Notes for agents:
+- Use `sync --dry-run` before real sync.
+- `sync` and `re-sync` store state in `~/.p202/sync/<source>-<target>.json`.
+- `exec` returns non-zero if any profile execution fails.
 
 ### System
 

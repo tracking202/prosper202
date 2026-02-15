@@ -49,10 +49,12 @@ p202 report summary --period today
 
 ## Global flags
 
-| Flag     | Description                              |
-|----------|------------------------------------------|
-| `--json` | Output raw JSON instead of formatted tables |
-| `--csv`  | Output CSV instead of formatted tables   |
+| Flag       | Description                              |
+|------------|------------------------------------------|
+| `--json`   | Output raw JSON instead of formatted tables |
+| `--csv`    | Output CSV instead of formatted tables   |
+| `--profile` | Override active profile for this command |
+| `--group`  | Select a profile tag group for multi-profile commands (`report summary`, `dashboard`, `exec`) |
 
 `--json` and `--csv` are mutually exclusive.
 
@@ -62,12 +64,23 @@ The CLI stores its configuration in `~/.p202/config.json` with `0600` permission
 
 ```json
 {
-  "url": "https://your-prosper202.example.com",
-  "api_key": "your_api_key_here"
+  "active_profile": "default",
+  "profiles": {
+    "default": {
+      "url": "https://your-prosper202.example.com",
+      "api_key": "your_api_key_here",
+      "defaults": {
+        "report.period": "last30"
+      },
+      "tags": ["env:prod"]
+    }
+  }
 }
 ```
 
 On Windows, the config directory is `%TEMP%/.p202/`.
+
+Legacy single-profile files (`url`, `api_key`) are auto-migrated in memory to `profiles.default` and written back in profile format on the next config write.
 
 ### `p202 config set-url <url>`
 
@@ -91,6 +104,30 @@ API Key      abc1...xyz9
 ### `p202 config test`
 
 Test the connection by calling the system health endpoint.
+
+### Multi-profile config commands
+
+```bash
+p202 config add-profile prod --url https://prod.example.com --key PROD_KEY
+p202 config add-profile staging --url https://staging.example.com --key STAGING_KEY
+p202 config list-profiles
+p202 config use prod
+p202 --profile staging config show
+p202 config rename-profile staging stage
+p202 config remove-profile stage --force
+```
+
+| Command | Description |
+|---------|-------------|
+| `config add-profile <name> --url <url> --key <key>` | Create a named profile |
+| `config remove-profile <name> [--force]` | Remove a profile (active profile removal is blocked) |
+| `config use <name>` | Set active profile |
+| `config list-profiles [--tag <tag>]` | List profiles and active marker |
+| `config rename-profile <old> <new>` | Rename a profile |
+| `config tag-profile <name> <tag> [<tag>...]` | Add profile tags (stored lowercase) |
+| `config untag-profile <name> <tag> [<tag>...]` | Remove profile tags |
+
+`config set-url`, `config set-key`, `config show`, and all `config *-default` commands operate on the resolved profile (`--profile` override or active profile).
 
 ### Config defaults
 
@@ -379,6 +416,9 @@ Dashboard summary is a shortcut to `reports/summary`.
 ```bash
 p202 dashboard
 p202 dashboard --period last7 --aff_campaign_id 42
+p202 dashboard --all-profiles
+p202 dashboard --profiles prod,staging
+p202 dashboard --group env:prod
 ```
 
 If `--period` is omitted, dashboard defaults to `today`.
@@ -390,7 +430,20 @@ Aggregate totals for the selected time period and filters.
 ```bash
 p202 report summary --period today
 p202 report summary --time_from 1700000000 --time_to 1700100000
+p202 report summary --all-profiles --period today
+p202 report summary --profiles prod,staging --period today
+p202 report summary --group env:prod --period today
 ```
+
+Summary/dashboard multi-profile selectors:
+
+| Flag | Description |
+|------|-------------|
+| `--all-profiles` | Query all configured profiles |
+| `--profiles <p1,p2,...>` | Query explicit profile list |
+| `--group <tag>` | Query all profiles tagged with `tag` |
+
+Multi-profile output includes per-profile rows, aggregated totals, and an `errors` list for partial failures.
 
 ### Breakdown
 
@@ -632,6 +685,49 @@ p202 import campaigns /tmp/campaigns.json --skip-errors
 `export` supports: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `trackers`, `landing-pages`, `text-ads`, `all`.
 
 `import` currently supports one entity at a time and strips immutable fields before create requests.
+
+## Multi-server workflows
+
+### Diff
+
+```bash
+p202 diff campaigns --from prod --to staging --json
+p202 diff all --from prod --to staging --json
+```
+
+`diff` reports per-entity `only_in_source`, `only_in_target`, `changed`, and `identical_count`.
+
+### Sync and re-sync
+
+```bash
+p202 sync all --from prod --to staging --dry-run --json
+p202 sync campaigns --from prod --to staging --json
+p202 sync campaigns --from prod --to staging --force-update --json
+
+p202 sync status --from prod --to staging --json
+p202 sync history --from prod --to staging --json
+p202 re-sync --from prod --to staging --json
+p202 re-sync --from prod --to staging --force-update --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Compute actions without writes |
+| `--skip-errors` | Continue on record-level errors |
+| `--force-update` | Update mismatched target records instead of skipping |
+
+Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
+
+### Exec across profiles
+
+```bash
+p202 exec --all-profiles -- campaign list --limit 5
+p202 exec --profiles prod,staging -- report summary --period today
+p202 exec --group env:prod -- dashboard --period last7
+p202 --json exec --profiles prod,staging -- campaign list
+```
+
+`exec` table mode prints `=== profile ===` sections. JSON mode returns per-profile exit codes/output. The command exits non-zero if any profile run fails.
 
 ## System
 
