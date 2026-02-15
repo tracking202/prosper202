@@ -14,6 +14,8 @@ type crudField struct {
 	Name     string
 	Desc     string
 	Required bool
+	QueryKey string
+	Aliases  []string
 }
 
 type crudEntity struct {
@@ -48,8 +50,16 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			}
 			params := map[string]string{}
 			for _, p := range entity.ListParams {
-				if v, _ := cmd.Flags().GetString(p.Name); v != "" {
-					params[p.Name] = v
+				queryKey := p.QueryKey
+				if queryKey == "" {
+					queryKey = p.Name
+				}
+				flagNames := append([]string{p.Name}, p.Aliases...)
+				for _, flagName := range flagNames {
+					if v, _ := cmd.Flags().GetString(flagName); v != "" {
+						params[queryKey] = v
+						break
+					}
 				}
 			}
 			if v, _ := cmd.Flags().GetString("page"); v != "" {
@@ -74,6 +84,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	for _, p := range entity.ListParams {
 		listCmd.Flags().String(p.Name, "", p.Desc)
+		for _, alias := range p.Aliases {
+			listCmd.Flags().String(alias, "", p.Desc+" (legacy alias)")
+			_ = listCmd.Flags().MarkHidden(alias)
+		}
 	}
 
 	// get
@@ -216,7 +230,12 @@ func init() {
 				{Name: "aff_campaign_postback_append", Desc: "Postback append string"},
 			},
 			ListParams: []crudField{
-				{Name: "filter[aff_network_id]", Desc: "Filter by affiliate network ID"},
+				{
+					Name:     "aff_network_id",
+					QueryKey: "filter[aff_network_id]",
+					Desc:     "Filter by affiliate network ID",
+					Aliases:  []string{"filter[aff_network_id]"},
+				},
 			},
 		},
 		{
@@ -247,6 +266,9 @@ func init() {
 				{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
 				{Name: "ppc_account_default", Desc: "Set as default account (0 or 1)"},
 			},
+			ListParams: []crudField{
+				{Name: "ppc_network_id", QueryKey: "filter[ppc_network_id]", Desc: "Filter by PPC network ID"},
+			},
 		},
 		{
 			Name:     "tracker",
@@ -262,6 +284,11 @@ func init() {
 				{Name: "click_cpa", Desc: "Cost per action"},
 				{Name: "click_cloaking", Desc: "Enable cloaking (0 or 1)"},
 			},
+			ListParams: []crudField{
+				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
+				{Name: "ppc_account_id", QueryKey: "filter[ppc_account_id]", Desc: "Filter by PPC account ID"},
+				{Name: "landing_page_id", QueryKey: "filter[landing_page_id]", Desc: "Filter by landing page ID"},
+			},
 		},
 		{
 			Name:     "landing-page",
@@ -273,6 +300,9 @@ func init() {
 				{Name: "landing_page_nickname", Desc: "Landing page nickname"},
 				{Name: "leave_behind_page_url", Desc: "Leave-behind page URL"},
 				{Name: "landing_page_type", Desc: "Landing page type (integer)"},
+			},
+			ListParams: []crudField{
+				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
 			},
 		},
 		{
@@ -287,6 +317,9 @@ func init() {
 				{Name: "aff_campaign_id", Desc: "Campaign ID"},
 				{Name: "landing_page_id", Desc: "Landing page ID"},
 				{Name: "text_ad_type", Desc: "Text ad type (integer)"},
+			},
+			ListParams: []crudField{
+				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
 			},
 		},
 	}

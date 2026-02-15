@@ -13,6 +13,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // setTestHome sets HOME (or USERPROFILE on Windows) via t.Setenv so it
@@ -46,7 +49,8 @@ func executeCommand(args ...string) (string, string, error) {
 	stdoutBuf := new(bytes.Buffer)
 	stderrBuf := new(bytes.Buffer)
 
-	// Reset persistent global flag state between test invocations.
+	// Reset global and command flag state between test invocations.
+	resetAllFlags(rootCmd)
 	jsonOutput = false
 	csvOutput = false
 	_ = rootCmd.PersistentFlags().Set("json", "false")
@@ -74,6 +78,21 @@ func executeCommand(args ...string) (string, string, error) {
 	combined := stdoutBuf.String() + pipeBuf.String()
 
 	return combined, stderrBuf.String(), err
+}
+
+func resetAllFlags(cmd *cobra.Command) {
+	resetFlagSet := func(fs *pflag.FlagSet) {
+		fs.VisitAll(func(f *pflag.Flag) {
+			_ = fs.Set(f.Name, f.DefValue)
+			f.Changed = false
+		})
+	}
+
+	resetFlagSet(cmd.PersistentFlags())
+	resetFlagSet(cmd.Flags())
+	for _, c := range cmd.Commands() {
+		resetAllFlags(c)
+	}
 }
 
 func TestConfigSetURL(t *testing.T) {
@@ -239,6 +258,54 @@ func TestCampaignList(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Test Campaign") {
 		t.Errorf("output should contain campaign name, got:\n%s", stdout)
+	}
+}
+
+func TestCampaignListFriendlyFilterMapsToAPIFilter(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"total":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("campaign", "list", "--aff_network_id=5")
+	if err != nil {
+		t.Fatalf("campaign list with filter error: %v", err)
+	}
+
+	if got := gotParams.Get("filter[aff_network_id]"); got != "5" {
+		t.Errorf("filter[aff_network_id] = %q, want %q", got, "5")
+	}
+}
+
+func TestCampaignListLegacyFilterAliasStillWorks(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"total":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("campaign", "list", "--filter[aff_network_id]=6")
+	if err != nil {
+		t.Fatalf("campaign list with legacy alias error: %v", err)
+	}
+
+	if got := gotParams.Get("filter[aff_network_id]"); got != "6" {
+		t.Errorf("filter[aff_network_id] = %q, want %q", got, "6")
 	}
 }
 
@@ -453,6 +520,114 @@ func TestTrackerGetURL(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "direct_url") {
 		t.Errorf("output should contain direct_url, got:\n%s", stdout)
+	}
+}
+
+func TestTrackerListFriendlyFiltersMapToAPIFilters(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"total":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand(
+		"tracker", "list",
+		"--aff_campaign_id=10",
+		"--ppc_account_id=20",
+		"--landing_page_id=30",
+	)
+	if err != nil {
+		t.Fatalf("tracker list with filters error: %v", err)
+	}
+
+	expectations := map[string]string{
+		"filter[aff_campaign_id]": "10",
+		"filter[ppc_account_id]":  "20",
+		"filter[landing_page_id]": "30",
+	}
+	for key, want := range expectations {
+		if got := gotParams.Get(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestLandingPageListFriendlyFilterMapsToAPIFilter(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"total":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("landing-page", "list", "--aff_campaign_id=15")
+	if err != nil {
+		t.Fatalf("landing-page list with filter error: %v", err)
+	}
+
+	if got := gotParams.Get("filter[aff_campaign_id]"); got != "15" {
+		t.Errorf("filter[aff_campaign_id] = %q, want %q", got, "15")
+	}
+}
+
+func TestTextAdListFriendlyFilterMapsToAPIFilter(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"total":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("text-ad", "list", "--aff_campaign_id=25")
+	if err != nil {
+		t.Fatalf("text-ad list with filter error: %v", err)
+	}
+
+	if got := gotParams.Get("filter[aff_campaign_id]"); got != "25" {
+		t.Errorf("filter[aff_campaign_id] = %q, want %q", got, "25")
+	}
+}
+
+func TestPpcAccountListFriendlyFilterMapsToAPIFilter(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"total":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("ppc-account", "list", "--ppc_network_id=35")
+	if err != nil {
+		t.Fatalf("ppc-account list with filter error: %v", err)
+	}
+
+	if got := gotParams.Get("filter[ppc_network_id]"); got != "35" {
+		t.Errorf("filter[ppc_network_id] = %q, want %q", got, "35")
 	}
 }
 
