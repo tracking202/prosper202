@@ -631,6 +631,167 @@ func TestPpcAccountListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	}
 }
 
+func TestCampaignClone(t *testing.T) {
+	var postedBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/campaigns/9":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_id":9,"aff_campaign_name":"Base Campaign","aff_campaign_url":"https://offer.example","aff_network_id":4}}`))
+		case r.Method == "POST" && r.URL.Path == "/api/v3/campaigns":
+			bodyBytes, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(bodyBytes, &postedBody)
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_id":10,"aff_campaign_name":"Base Campaign (Clone)"}}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("campaign", "clone", "9")
+	if err != nil {
+		t.Fatalf("campaign clone error: %v", err)
+	}
+
+	if postedBody["aff_campaign_name"] != "Base Campaign (Clone)" {
+		t.Errorf("aff_campaign_name = %#v, want %q", postedBody["aff_campaign_name"], "Base Campaign (Clone)")
+	}
+	if postedBody["aff_campaign_url"] != "https://offer.example" {
+		t.Errorf("aff_campaign_url = %#v, want %q", postedBody["aff_campaign_url"], "https://offer.example")
+	}
+	if _, exists := postedBody["aff_campaign_id"]; exists {
+		t.Errorf("clone payload should not include aff_campaign_id")
+	}
+}
+
+func TestCampaignCloneNameOverride(t *testing.T) {
+	var postedBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/campaigns/9":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_id":9,"aff_campaign_name":"Base Campaign","aff_campaign_url":"https://offer.example"}}`))
+		case r.Method == "POST" && r.URL.Path == "/api/v3/campaigns":
+			bodyBytes, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(bodyBytes, &postedBody)
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_id":10,"aff_campaign_name":"Custom Clone"}}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("campaign", "clone", "9", "--name=Custom Clone")
+	if err != nil {
+		t.Fatalf("campaign clone with name override error: %v", err)
+	}
+
+	if postedBody["aff_campaign_name"] != "Custom Clone" {
+		t.Errorf("aff_campaign_name = %#v, want %q", postedBody["aff_campaign_name"], "Custom Clone")
+	}
+}
+
+func TestTrackerCreateWithURL(t *testing.T) {
+	var gotCreateBody map[string]interface{}
+	var gotURLPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/v3/trackers":
+			bodyBytes, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(bodyBytes, &gotCreateBody)
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"tracker_id":56,"aff_campaign_id":1}}`))
+		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers/56/url":
+			gotURLPath = r.URL.Path
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"tracker_id":56,"direct_url":"https://trk.example/56"}}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("tracker", "create-with-url", "--aff_campaign_id=1")
+	if err != nil {
+		t.Fatalf("tracker create-with-url error: %v", err)
+	}
+
+	if gotCreateBody["aff_campaign_id"] != "1" {
+		t.Errorf("aff_campaign_id = %#v, want %q", gotCreateBody["aff_campaign_id"], "1")
+	}
+	if gotURLPath != "/api/v3/trackers/56/url" {
+		t.Errorf("tracker URL path = %q, want %q", gotURLPath, "/api/v3/trackers/56/url")
+	}
+	if !strings.Contains(stdout, "direct_url") {
+		t.Errorf("output should contain direct_url, got:\n%s", stdout)
+	}
+}
+
+func TestTrackerBulkURLs(t *testing.T) {
+	var listQuery url.Values
+	urlCalls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers":
+			listQuery = r.URL.Query()
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"tracker_id":1,"aff_campaign_id":10},{"tracker_id":2,"aff_campaign_id":10}]}`))
+		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers/1/url":
+			urlCalls++
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"tracker_id":1,"direct_url":"https://trk.example/1"}}`))
+		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers/2/url":
+			urlCalls++
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"tracker_id":2,"direct_url":"https://trk.example/2"}}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("tracker", "bulk-urls", "--aff_campaign_id=10", "--concurrency=2")
+	if err != nil {
+		t.Fatalf("tracker bulk-urls error: %v", err)
+	}
+
+	if got := listQuery.Get("filter[aff_campaign_id]"); got != "10" {
+		t.Errorf("filter[aff_campaign_id] = %q, want %q", got, "10")
+	}
+	if urlCalls != 2 {
+		t.Errorf("urlCalls = %d, want 2", urlCalls)
+	}
+	if !strings.Contains(stdout, "https://trk.example/1") || !strings.Contains(stdout, "https://trk.example/2") {
+		t.Errorf("output should contain both tracker URLs, got:\n%s", stdout)
+	}
+}
+
 func TestSystemHealth(t *testing.T) {
 	var gotPath string
 
