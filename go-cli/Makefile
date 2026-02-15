@@ -18,9 +18,10 @@ all: clean
 		arch=$$(echo $$platform | cut -d/ -f2); \
 		ext=""; \
 		if [ "$$os" = "windows" ]; then ext=".exe"; fi; \
-		outfile="$(BUILD_DIR)/$(BINARY)-$$os-$$arch$$ext"; \
-		echo "Building $$outfile..."; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o $$outfile . || exit 1; \
+		dir="$(BUILD_DIR)/$$os-$$arch"; \
+		mkdir -p $$dir; \
+		echo "Building $$dir/$(BINARY)$$ext..."; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o $$dir/$(BINARY)$$ext . || exit 1; \
 	done
 	@echo "All builds complete in $(BUILD_DIR)/"
 
