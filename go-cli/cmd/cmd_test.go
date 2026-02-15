@@ -303,6 +303,92 @@ func TestReportBreakdownPassesQueryParams(t *testing.T) {
 	}
 }
 
+func TestReportDaypart(t *testing.T) {
+	var gotPath string
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"hour_of_day":12,"total_clicks":10,"total_click_throughs":8,"total_leads":2,"total_income":15.5,"total_cost":6.2,"total_net":9.3,"epc":1.55,"avg_cpc":0.62,"conv_rate":25,"roi":150,"cpa":3.1}],"timezone":"UTC"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("report", "daypart", "--period=last30")
+	if err != nil {
+		t.Fatalf("report daypart error: %v", err)
+	}
+
+	if gotPath != "/api/v3/reports/daypart" {
+		t.Errorf("path = %q, want /api/v3/reports/daypart", gotPath)
+	}
+	if gotParams.Get("period") != "last30" {
+		t.Errorf("period = %q, want %q", gotParams.Get("period"), "last30")
+	}
+	if !strings.Contains(stdout, "12") {
+		t.Errorf("output should contain hour_of_day value, got:\n%s", stdout)
+	}
+}
+
+func TestReportDaypartPassesSortParams(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"timezone":"UTC"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("report", "daypart", "--sort=roi", "--sort_dir=DESC")
+	if err != nil {
+		t.Fatalf("report daypart sort error: %v", err)
+	}
+
+	if gotParams.Get("sort") != "roi" {
+		t.Errorf("sort = %q, want %q", gotParams.Get("sort"), "roi")
+	}
+	if gotParams.Get("sort_dir") != "DESC" {
+		t.Errorf("sort_dir = %q, want %q", gotParams.Get("sort_dir"), "DESC")
+	}
+}
+
+func TestReportDaypartPassesFilterParams(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"timezone":"UTC"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("report", "daypart", "--period=last7", "--country_id=223")
+	if err != nil {
+		t.Fatalf("report daypart filter error: %v", err)
+	}
+
+	if gotParams.Get("period") != "last7" {
+		t.Errorf("period = %q, want %q", gotParams.Get("period"), "last7")
+	}
+	if gotParams.Get("country_id") != "223" {
+		t.Errorf("country_id = %q, want %q", gotParams.Get("country_id"), "223")
+	}
+}
+
 func TestJSONFlagOutputsRawJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)

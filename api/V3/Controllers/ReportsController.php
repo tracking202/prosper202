@@ -30,6 +30,38 @@ class ReportsController
     ];
 
     private const ALLOWED_SORTS = ['total_clicks', 'total_leads', 'total_income', 'total_cost', 'total_net', 'roi', 'epc', 'conv_rate'];
+    private const DAYPART_ALLOWED_SORTS = [
+        'hour_of_day',
+        'total_clicks',
+        'total_click_throughs',
+        'total_leads',
+        'total_income',
+        'total_cost',
+        'total_net',
+        'epc',
+        'avg_cpc',
+        'conv_rate',
+        'roi',
+        'cpa',
+    ];
+    private const METRIC_FIELDS = [
+        'total_clicks',
+        'total_click_throughs',
+        'total_leads',
+        'total_income',
+        'total_cost',
+        'total_net',
+        'epc',
+        'avg_cpc',
+        'conv_rate',
+        'roi',
+        'cpa',
+    ];
+    private const INTEGER_METRIC_FIELDS = [
+        'total_clicks',
+        'total_click_throughs',
+        'total_leads',
+    ];
 
     public function __construct(\mysqli $db, int $userId)
     {
@@ -156,7 +188,10 @@ class ReportsController
         $validIntervals = ['hour', 'day', 'week', 'month'];
         $interval = $params['interval'] ?? 'day';
         if (!in_array($interval, $validIntervals, true)) {
-            $interval = 'day';
+            throw new ValidationException(
+                'Invalid interval',
+                ['interval' => 'Valid values: ' . implode(', ', $validIntervals)]
+            );
         }
 
         $where = ['de.user_id = ?'];
@@ -178,10 +213,16 @@ class ReportsController
         $sql = "SELECT
                 $groupExpr as period,
                 SUM(de.clicks) as total_clicks,
+                SUM(de.click_out) as total_click_throughs,
                 SUM(de.leads) as total_leads,
                 SUM(de.income) as total_income,
                 SUM(de.cost) as total_cost,
-                SUM(de.income) - SUM(de.cost) as total_net
+                SUM(de.income) - SUM(de.cost) as total_net,
+                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
+                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
+                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
+                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
+                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa
             FROM 202_dataengine de
             $whereClause
             GROUP BY period
@@ -203,6 +244,89 @@ class ReportsController
         $stmt->close();
 
         return ['data' => $rows, 'interval' => $interval];
+    }
+
+    public function daypart(array $params): array
+    {
+        $sortBy = (string)($params['sort'] ?? 'hour_of_day');
+        if (!in_array($sortBy, self::DAYPART_ALLOWED_SORTS, true)) {
+            throw new ValidationException(
+                'Invalid sort field',
+                ['sort' => 'Valid values: ' . implode(', ', self::DAYPART_ALLOWED_SORTS)]
+            );
+        }
+
+        $sortDir = strtoupper((string)($params['sort_dir'] ?? 'ASC'));
+        if (!in_array($sortDir, ['ASC', 'DESC'], true)) {
+            $sortDir = 'ASC';
+        }
+
+        $timezone = $this->resolveUserTimezone();
+
+        $where = ['de.user_id = ?'];
+        $binds = [$this->userId];
+        $types = 'i';
+
+        $this->applyTimeFilters($params, $where, $binds, $types);
+        $this->applyEntityFilters($params, $where, $binds, $types);
+
+        $whereClause = 'WHERE ' . implode(' AND ', $where);
+
+        $sql = "SELECT
+                COALESCE(
+                    HOUR(CONVERT_TZ(FROM_UNIXTIME(de.click_time), '+00:00', ?)),
+                    MOD(FLOOR(de.click_time / 3600), 24)
+                ) as hour_of_day,
+                SUM(de.clicks) as total_clicks,
+                SUM(de.click_out) as total_click_throughs,
+                SUM(de.leads) as total_leads,
+                SUM(de.income) as total_income,
+                SUM(de.cost) as total_cost,
+                SUM(de.income) - SUM(de.cost) as total_net,
+                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
+                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
+                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
+                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
+                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa
+            FROM 202_dataengine de
+            $whereClause
+            GROUP BY hour_of_day";
+
+        $stmt = $this->prepare($sql);
+        $daypartBinds = array_merge([$timezone], $binds);
+        $daypartTypes = 's' . $types;
+        $stmt->bind_param($daypartTypes, ...$daypartBinds);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Daypart query failed');
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Daypart query failed');
+        }
+
+        $rowsByHour = [];
+        for ($hour = 0; $hour <= 23; $hour++) {
+            $rowsByHour[$hour] = $this->zeroMetricRow($hour);
+        }
+
+        while ($row = $result->fetch_assoc()) {
+            $hour = (int)($row['hour_of_day'] ?? -1);
+            if ($hour < 0 || $hour > 23) {
+                continue;
+            }
+            $rowsByHour[$hour] = $this->hydrateMetricRow($hour, $row);
+        }
+        $stmt->close();
+
+        $rows = array_values($rowsByHour);
+        $this->sortDaypartRows($rows, $sortBy, $sortDir);
+
+        return [
+            'data' => $rows,
+            'timezone' => $timezone,
+        ];
     }
 
     private function applyTimeFilters(array $params, array &$where, array &$binds, string &$types): void
@@ -255,5 +379,80 @@ class ReportsController
             throw new DatabaseException('Prepare failed');
         }
         return $stmt;
+    }
+
+    private function resolveUserTimezone(): string
+    {
+        $stmt = $this->prepare('SELECT user_timezone FROM 202_users WHERE user_id = ? LIMIT 1');
+        $stmt->bind_param('i', $this->userId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Failed to resolve timezone');
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Failed to resolve timezone');
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        $timezone = trim((string)($row['user_timezone'] ?? ''));
+        if ($timezone === '') {
+            return 'UTC';
+        }
+
+        try {
+            new \DateTimeZone($timezone);
+            return $timezone;
+        } catch (\Throwable) {
+            return 'UTC';
+        }
+    }
+
+    private function zeroMetricRow(int $hourOfDay): array
+    {
+        $row = ['hour_of_day' => $hourOfDay];
+        foreach (self::METRIC_FIELDS as $field) {
+            $row[$field] = 0;
+        }
+        return $row;
+    }
+
+    private function hydrateMetricRow(int $hourOfDay, array $row): array
+    {
+        $out = $this->zeroMetricRow($hourOfDay);
+        foreach (self::METRIC_FIELDS as $field) {
+            if (array_key_exists($field, $row)) {
+                $out[$field] = $this->castMetricValue($field, $row[$field]);
+            }
+        }
+        return $out;
+    }
+
+    private function castMetricValue(string $field, mixed $value): int|float
+    {
+        if (in_array($field, self::INTEGER_METRIC_FIELDS, true)) {
+            return (int)$value;
+        }
+        return (float)$value;
+    }
+
+    private function sortDaypartRows(array &$rows, string $sortBy, string $sortDir): void
+    {
+        usort($rows, function (array $a, array $b) use ($sortBy, $sortDir): int {
+            if ($sortBy === 'hour_of_day') {
+                $hourCmp = ((int)$a['hour_of_day']) <=> ((int)$b['hour_of_day']);
+                return $sortDir === 'DESC' ? -$hourCmp : $hourCmp;
+            }
+
+            $metricCmp = ((float)$a[$sortBy]) <=> ((float)$b[$sortBy]);
+            if ($metricCmp !== 0) {
+                return $sortDir === 'DESC' ? -$metricCmp : $metricCmp;
+            }
+
+            // Keep deterministic ordering for equal metric values.
+            return ((int)$a['hour_of_day']) <=> ((int)$b['hour_of_day']);
+        });
     }
 }

@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
 
+// Load config at file scope so DB globals ($dbhost, $dbuser, etc.) are
+// available via the 'global' keyword in the DB class constructor.
+// Including inside Bootstrap::init() scopes them locally and breaks DB.
+require_once dirname(__DIR__, 2) . '/202-config.php';
+
 use Api\V3\Auth;
 use Api\V3\AuthException;
 use Api\V3\Bootstrap;
@@ -133,6 +138,7 @@ try {
         $r->get('/summary',    fn() => $crud($cls)->summary($queryParams));
         $r->get('/breakdown',  fn() => $crud($cls)->breakdown($queryParams));
         $r->get('/timeseries', fn() => $crud($cls)->timeseries($queryParams));
+        $r->get('/daypart',    fn() => $crud($cls)->daypart($queryParams));
     });
 
     // ── Rotators ─────────────────────────────────────────────────────
@@ -253,7 +259,7 @@ try {
             'text_ads'      => '/text-ads',
             'clicks'        => '/clicks',
             'conversions'   => '/conversions',
-            'reports'       => '/reports/{summary|breakdown|timeseries}',
+            'reports'       => '/reports/{summary|breakdown|timeseries|daypart}',
             'rotators'      => '/rotators',
             'attribution'   => '/attribution/models',
             'users'         => '/users',

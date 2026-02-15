@@ -99,6 +99,29 @@ var reportTimeseriesCmd = &cobra.Command{
 	},
 }
 
+var reportDaypartCmd = &cobra.Command{
+	Use:   "daypart",
+	Short: "Get day-parting report by hour of day",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		params := collectReportParams(cmd)
+		for _, f := range []string{"sort", "sort_dir"} {
+			if v, _ := cmd.Flags().GetString(f); v != "" {
+				params[f] = v
+			}
+		}
+		data, err := c.Get("reports/daypart", params)
+		if err != nil {
+			return err
+		}
+		output.Render(data, jsonOutput)
+		return nil
+	},
+}
+
 func init() {
 	addReportFilters(reportSummaryCmd)
 
@@ -112,6 +135,10 @@ func init() {
 	addReportFilters(reportTimeseriesCmd)
 	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")
 
-	reportCmd.AddCommand(reportSummaryCmd, reportBreakdownCmd, reportTimeseriesCmd)
+	addReportFilters(reportDaypartCmd)
+	reportDaypartCmd.Flags().StringP("sort", "s", "", "Sort by: hour_of_day, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa")
+	reportDaypartCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+
+	reportCmd.AddCommand(reportSummaryCmd, reportBreakdownCmd, reportTimeseriesCmd, reportDaypartCmd)
 	rootCmd.AddCommand(reportCmd)
 }

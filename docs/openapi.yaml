@@ -1234,6 +1234,8 @@ paths:
                           description: Time bucket label (YYYY-MM-DD, YYYY-MM-DD HH:00, etc.)
                         total_clicks:
                           type: integer
+                        total_click_throughs:
+                          type: integer
                         total_leads:
                           type: integer
                         total_income:
@@ -1242,8 +1244,102 @@ paths:
                           type: number
                         total_net:
                           type: number
+                        epc:
+                          type: number
+                        avg_cpc:
+                          type: number
+                        conv_rate:
+                          type: number
+                        roi:
+                          type: number
+                        cpa:
+                          type: number
                   interval:
                     type: string
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /reports/daypart:
+    get:
+      tags: [Reports]
+      summary: Performance day-parting
+      description: Performance metrics aggregated by hour-of-day (0-23).
+      operationId: reportDaypart
+      parameters:
+        - name: sort
+          in: query
+          schema:
+            type: string
+            default: hour_of_day
+            enum:
+              - hour_of_day
+              - total_clicks
+              - total_click_throughs
+              - total_leads
+              - total_income
+              - total_cost
+              - total_net
+              - epc
+              - avg_cpc
+              - conv_rate
+              - roi
+              - cpa
+        - name: sort_dir
+          in: query
+          schema:
+            type: string
+            default: ASC
+            enum: [ASC, DESC]
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/filterCampaign"
+        - $ref: "#/components/parameters/filterAffNetwork"
+        - $ref: "#/components/parameters/filterPpcAccount"
+        - $ref: "#/components/parameters/filterPpcNetwork"
+        - $ref: "#/components/parameters/filterLandingPage"
+        - $ref: "#/components/parameters/filterCountry"
+      responses:
+        "200":
+          description: Day-parting rows
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        hour_of_day:
+                          type: integer
+                        total_clicks:
+                          type: integer
+                        total_click_throughs:
+                          type: integer
+                        total_leads:
+                          type: integer
+                        total_income:
+                          type: number
+                        total_cost:
+                          type: number
+                        total_net:
+                          type: number
+                        epc:
+                          type: number
+                        avg_cpc:
+                          type: number
+                        conv_rate:
+                          type: number
+                        roi:
+                          type: number
+                        cpa:
+                          type: number
+                  timezone:
+                    type: string
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ─── Rotators ────────────────────────────────────────────────────────
 

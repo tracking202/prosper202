@@ -306,6 +306,7 @@ p202 report summary    [-p period] [--time_from T] [--time_to T] [filters...] [-
 p202 report breakdown  [-b dimension] [-s sort_col] [--sort_dir ASC|DESC]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
 p202 report timeseries [-i interval] [-p period] [filters...] [--json]
+p202 report daypart    [-s sort_col] [--sort_dir ASC|DESC] [-p period] [filters...] [--json]
 ```
 
 Report filter flags (all optional): `--aff_campaign_id`, `--ppc_account_id`, `--aff_network_id`, `--ppc_network_id`, `--landing_page_id`, `--country_id`.

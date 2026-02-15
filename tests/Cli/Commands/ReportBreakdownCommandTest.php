@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Cli\Commands;
 
 use P202Cli\Commands\ReportBreakdownCommand;
+use P202Cli\Commands\ReportDaypartCommand;
 use Symfony\Component\Console\Application;
 use Tests\TestCase;
 
@@ -198,5 +199,66 @@ class ReportBreakdownCommandTest extends TestCase
             $opt = $def->getOption($optName);
             $this->assertNull($opt->getDefault(), "Filter option '$optName' should have null default");
         }
+    }
+}
+
+class ReportDaypartCommandTest extends TestCase
+{
+    private ReportDaypartCommand $command;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->command = new ReportDaypartCommand();
+        $app = new Application('test', '1.0');
+        $app->add($this->command);
+    }
+
+    public function testCommandNameIsReportDaypart(): void
+    {
+        $this->assertSame('report:daypart', $this->command->getName());
+    }
+
+    public function testHasSortOptionWithDefaultHourOfDay(): void
+    {
+        $def = $this->command->getDefinition();
+        $opt = $def->getOption('sort');
+
+        $this->assertSame('hour_of_day', $opt->getDefault());
+        $this->assertSame('s', $opt->getShortcut());
+        $this->assertTrue($opt->isValueRequired());
+    }
+
+    public function testHasSortDirOptionWithDefaultAsc(): void
+    {
+        $def = $this->command->getDefinition();
+        $opt = $def->getOption('sort_dir');
+
+        $this->assertSame('ASC', $opt->getDefault());
+        $this->assertTrue($opt->isValueRequired());
+    }
+
+    public function testHasSharedReportFilters(): void
+    {
+        $def = $this->command->getDefinition();
+        foreach (['period', 'time_from', 'time_to', 'aff_campaign_id', 'ppc_account_id', 'aff_network_id', 'ppc_network_id', 'landing_page_id', 'country_id'] as $opt) {
+            $this->assertTrue($def->hasOption($opt), "Missing expected option: $opt");
+            $this->assertTrue($def->getOption($opt)->isValueRequired(), "Option $opt should require a value");
+        }
+    }
+
+    public function testHasJsonOption(): void
+    {
+        $def = $this->command->getDefinition();
+        $this->assertTrue($def->hasOption('json'));
+        $this->assertFalse($def->getOption('json')->acceptValue());
+    }
+
+    public function testSortDescriptionMentionsHourOfDay(): void
+    {
+        $desc = $this->command->getDefinition()->getOption('sort')->getDescription();
+        $this->assertStringContainsString('hour_of_day', $desc);
+        $this->assertStringContainsString('roi', $desc);
     }
 }

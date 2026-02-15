@@ -351,6 +351,22 @@ p202 report timeseries --interval hour --time_from 1700000000
 |-----------------|---------|-------------------------------|
 | `-i, --interval` | day    | Interval: hour, day, week, month |
 
+Invalid `--interval` values now return a validation error from the API (`422`) instead of silently defaulting.
+
+### Daypart
+
+Performance aggregated by hour-of-day (`0`-`23`) across the selected date range.
+
+```bash
+p202 report daypart --period last30
+p202 report daypart --sort roi --sort_dir DESC --country_id 223
+```
+
+| Flag            | Default      | Description |
+|-----------------|--------------|-------------|
+| `-s, --sort`    | hour_of_day  | Sort by: hour_of_day, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa |
+| `--sort_dir`    | ASC          | Sort direction: ASC or DESC |
+
 ## Rotators
 
 ### List/get/create/update/delete rotators
