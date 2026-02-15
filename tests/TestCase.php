@@ -244,4 +244,106 @@ abstract class TestCase extends BaseTestCase
             $this->assertStringContainsString($needle, $haystack, $message ?: "Failed asserting that string contains '$needle'");
         }
     }
+
+    /**
+     * Create a PHPUnit mock of \mysqli that satisfies type hints.
+     *
+     * Uses PHPUnit mocks for \mysqli, \mysqli_stmt, and \mysqli_result
+     * so return types are compatible with production type hints.
+     *
+     * @param array $queryResults  Pattern => result map (same format as createMockDb)
+     */
+    protected function createMysqliMock(array $queryResults = []): \mysqli
+    {
+        $testCase = $this;
+
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+
+        $db->method('prepare')->willReturnCallback(
+            function (string $sql) use ($testCase, $queryResults) {
+                return $testCase->buildStmtMock($sql, $queryResults);
+            }
+        );
+
+        $db->method('query')->willReturnCallback(
+            function (string $sql) use ($testCase, $queryResults) {
+                return $testCase->buildResultMock($sql, $queryResults);
+            }
+        );
+
+        $db->method('begin_transaction')->willReturn(true);
+        $db->method('commit')->willReturn(true);
+        $db->method('rollback')->willReturn(true);
+        $db->method('real_escape_string')->willReturnCallback(
+            function (string $str) {
+                return addslashes($str);
+            }
+        );
+
+        return $db;
+    }
+
+    /**
+     * Build a mock \mysqli_stmt for a given SQL and result set.
+     */
+    public function buildStmtMock(string $sql, array $queryResults): \mysqli_stmt
+    {
+        $testCase = $this;
+
+        /** @var \mysqli_stmt&\PHPUnit\Framework\MockObject\MockObject $stmt */
+        $stmt = $this->getMockBuilder(\mysqli_stmt::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+
+        $stmt->method('bind_param')->willReturn(true);
+        $stmt->method('execute')->willReturn(true);
+        $stmt->method('close')->willReturn(true);
+
+        $stmt->method('get_result')->willReturnCallback(
+            function () use ($testCase, $sql, $queryResults) {
+                return $testCase->buildResultMock($sql, $queryResults);
+            }
+        );
+
+        return $stmt;
+    }
+
+    /**
+     * Build a mock \mysqli_result matching SQL against query result patterns.
+     */
+    public function buildResultMock(string $sql, array $queryResults): \mysqli_result
+    {
+        $matchedRows = [];
+        foreach ($queryResults as $pattern => $result) {
+            if (str_contains($sql, (string)$pattern)) {
+                if (!empty($result) && !isset($result[0])) {
+                    $matchedRows = [$result];
+                } else {
+                    $matchedRows = $result;
+                }
+                break;
+            }
+        }
+
+        /** @var \mysqli_result&\PHPUnit\Framework\MockObject\MockObject $result */
+        $result = $this->getMockBuilder(\mysqli_result::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+
+        $index = 0;
+        $rows = $matchedRows;
+        $result->method('fetch_assoc')->willReturnCallback(
+            function () use (&$index, $rows) {
+                return $rows[$index++] ?? null;
+            }
+        );
+
+        // mysqli_result::close() has tentative return type void in PHP 8.4+;
+        // PHPUnit rejects willReturn(true) for void methods, so leave unconfigured.
+
+        return $result;
+    }
 }
