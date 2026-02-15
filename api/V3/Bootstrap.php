@@ -8,6 +8,7 @@ class Bootstrap
 {
     private static ?\mysqli $db = null;
     private static ?int $authenticatedUserId = null;
+    private static ?array $authenticatedUserRoles = null;
 
     public static function init(): void
     {
@@ -22,7 +23,7 @@ class Bootstrap
 
         $configFile = $root . '/202-config.php';
         if (!file_exists($configFile)) {
-            throw new \RuntimeException('202-config.php not found');
+            throw new \RuntimeException('Configuration not found');
         }
 
         require_once $configFile;
@@ -46,10 +47,9 @@ class Bootstrap
                 throw new \RuntimeException('Database connection failed');
             }
             self::$db = $conn;
-            self::$db->query("SET session sql_mode=''");
             return self::$db;
         } catch (\Exception $e) {
-            throw new \RuntimeException('Database connection failed: ' . $e->getMessage());
+            throw new \RuntimeException('Database connection failed');
         }
     }
 
@@ -57,7 +57,7 @@ class Bootstrap
     {
         $apiKey = '';
 
-        // Check Authorization: Bearer header first
+        // Bearer token auth only — query param removed to prevent credential leakage in logs/referers
         $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
         if (is_array($authHeader)) {
             $authHeader = $authHeader[0] ?? '';
@@ -66,19 +66,14 @@ class Bootstrap
             $apiKey = trim(substr($authHeader, 7));
         }
 
-        // Fall back to query parameter
         if ($apiKey === '') {
-            $apiKey = trim((string)($params['apikey'] ?? ''));
-        }
-
-        if ($apiKey === '') {
-            throw new AuthException('API key required. Pass via Authorization: Bearer <key> header or ?apikey=<key> parameter.', 401);
+            throw new AuthException('API key required. Pass via Authorization: Bearer <key> header.', 401);
         }
 
         $db = self::db();
         $stmt = $db->prepare('SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1');
         if (!$stmt) {
-            throw new \RuntimeException('Database error');
+            throw new \RuntimeException('Authentication unavailable');
         }
         $stmt->bind_param('s', $apiKey);
         $stmt->execute();
@@ -91,6 +86,20 @@ class Bootstrap
         }
 
         self::$authenticatedUserId = (int)$row['user_id'];
+
+        // Load user roles for authorization checks
+        self::$authenticatedUserRoles = [];
+        $stmt = $db->prepare('SELECT r.role_name FROM 202_user_role ur INNER JOIN 202_roles r ON ur.role_id = r.role_id WHERE ur.user_id = ?');
+        if ($stmt) {
+            $stmt->bind_param('i', self::$authenticatedUserId);
+            $stmt->execute();
+            $roleResult = $stmt->get_result();
+            while ($r = $roleResult->fetch_assoc()) {
+                self::$authenticatedUserRoles[] = strtolower($r['role_name']);
+            }
+            $stmt->close();
+        }
+
         return self::$authenticatedUserId;
     }
 
@@ -102,19 +111,38 @@ class Bootstrap
         return self::$authenticatedUserId;
     }
 
+    public static function isAdmin(): bool
+    {
+        return self::$authenticatedUserRoles !== null
+            && (in_array('admin', self::$authenticatedUserRoles, true)
+                || in_array('administrator', self::$authenticatedUserRoles, true));
+    }
+
+    public static function requireAdmin(): void
+    {
+        if (!self::isAdmin()) {
+            throw new AuthException('Admin access required.', 403);
+        }
+    }
+
+    public static function requireSelfOrAdmin(int $targetUserId): void
+    {
+        if (self::userId() !== $targetUserId && !self::isAdmin()) {
+            throw new AuthException('You can only access your own resources.', 403);
+        }
+    }
+
     public static function jsonResponse(array $data, int $status = 200): void
     {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: no-store');
         echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     public static function errorResponse(string $message, int $status = 400): void
     {
-        self::jsonResponse(['error' => true, 'message' => $message], $status);
+        self::jsonResponse(['error' => true, 'message' => $message, 'status' => $status], $status);
     }
-}
-
-class AuthException extends \RuntimeException
-{
 }

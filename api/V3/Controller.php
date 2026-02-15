@@ -11,7 +11,19 @@ abstract class Controller
 
     abstract protected function tableName(): string;
     abstract protected function primaryKey(): string;
-    abstract protected function fields(): array; // ['column' => ['type' => 's|i|d', 'required' => bool, 'readonly' => bool]]
+    abstract protected function fields(): array;
+
+    protected function selectColumns(): array
+    {
+        $columns = [$this->primaryKey()];
+        foreach ($this->fields() as $col => $def) {
+            $columns[] = $col;
+        }
+        if ($this->userIdColumn()) {
+            $columns[] = $this->userIdColumn();
+        }
+        return array_unique($columns);
+    }
 
     protected function userIdColumn(): ?string
     {
@@ -20,7 +32,7 @@ abstract class Controller
 
     protected function deletedColumn(): ?string
     {
-        return null; // Override to enable soft delete, e.g. 'aff_campaign_deleted'
+        return null;
     }
 
     protected function listOrderBy(): string
@@ -38,6 +50,8 @@ abstract class Controller
     {
         $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
         $offset = max(0, (int)($params['offset'] ?? 0));
+        $fields = $this->fields();
+        $selectExpr = implode(', ', $this->selectColumns());
 
         $where = [];
         $binds = [];
@@ -53,11 +67,10 @@ abstract class Controller
             $where[] = $this->deletedColumn() . ' = 0';
         }
 
-        // Filter support: ?filter[field]=value
         $filters = $params['filter'] ?? [];
         if (is_array($filters)) {
             foreach ($filters as $field => $value) {
-                $fieldDef = $this->fields()[$field] ?? null;
+                $fieldDef = $fields[$field] ?? null;
                 if ($fieldDef && !($fieldDef['readonly'] ?? false)) {
                     $where[] = "$field = ?";
                     $binds[] = $value;
@@ -82,7 +95,7 @@ abstract class Controller
             $total = (int)$result->fetch_assoc()['total'];
         }
 
-        $sql = "SELECT * FROM {$this->tableName()} $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?";
+        $sql = "SELECT $selectExpr FROM {$this->tableName()} $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?";
         $binds[] = $limit;
         $types .= 'i';
         $binds[] = $offset;
@@ -101,16 +114,13 @@ abstract class Controller
 
         return [
             'data' => $rows,
-            'pagination' => [
-                'total' => $total,
-                'limit' => $limit,
-                'offset' => $offset,
-            ],
+            'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
     }
 
     public function get(int|string $id): array
     {
+        $selectExpr = implode(', ', $this->selectColumns());
         $where = [$this->primaryKey() . ' = ?'];
         $binds = [$id];
         $types = is_int($id) ? 'i' : 's';
@@ -126,12 +136,11 @@ abstract class Controller
         }
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
-        $sql = "SELECT * FROM {$this->tableName()} $whereClause LIMIT 1";
+        $sql = "SELECT $selectExpr FROM {$this->tableName()} $whereClause LIMIT 1";
         $stmt = $this->db->prepare($sql);
         $stmt->bind_param($types, ...$binds);
         $stmt->execute();
-        $result = $stmt->get_result();
-        $row = $result->fetch_assoc();
+        $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -149,7 +158,6 @@ abstract class Controller
         $binds = [];
         $types = '';
 
-        // Validate required fields
         foreach ($fields as $col => $def) {
             if (($def['required'] ?? false) && !isset($payload[$col])) {
                 throw new \RuntimeException("Missing required field: $col", 422);
@@ -168,7 +176,6 @@ abstract class Controller
             }
         }
 
-        // Add user_id
         if ($this->userIdColumn()) {
             $columns[] = $this->userIdColumn();
             $placeholders[] = '?';
@@ -189,12 +196,12 @@ abstract class Controller
 
         $stmt = $this->db->prepare($sql);
         if (!$stmt) {
-            throw new \RuntimeException('Database error: ' . $this->db->error, 500);
+            throw new \RuntimeException('Failed to create record', 500);
         }
         $stmt->bind_param($types, ...$binds);
 
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Insert failed: ' . $stmt->error, 500);
+            throw new \RuntimeException('Failed to create record', 500);
         }
 
         $insertId = $stmt->insert_id;
@@ -205,7 +212,6 @@ abstract class Controller
 
     public function update(int|string $id, array $payload): array
     {
-        // Verify ownership
         $this->get($id);
 
         $fields = $this->fields();
@@ -249,7 +255,7 @@ abstract class Controller
         $stmt->bind_param($types, ...$binds);
 
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Update failed: ' . $stmt->error, 500);
+            throw new \RuntimeException('Failed to update record', 500);
         }
         $stmt->close();
 
@@ -258,21 +264,19 @@ abstract class Controller
 
     public function delete(int|string $id): void
     {
-        // Verify ownership
         $this->get($id);
 
+        $binds = [$id];
+        $types = is_int($id) ? 'i' : 's';
+        $where = [$this->primaryKey() . ' = ?'];
+
+        if ($this->userIdColumn()) {
+            $where[] = $this->userIdColumn() . ' = ?';
+            $binds[] = $this->userId;
+            $types .= 'i';
+        }
+
         if ($this->deletedColumn()) {
-            // Soft delete
-            $binds = [$id];
-            $types = is_int($id) ? 'i' : 's';
-            $where = [$this->primaryKey() . ' = ?'];
-
-            if ($this->userIdColumn()) {
-                $where[] = $this->userIdColumn() . ' = ?';
-                $binds[] = $this->userId;
-                $types .= 'i';
-            }
-
             $sql = sprintf(
                 'UPDATE %s SET %s = 1 WHERE %s',
                 $this->tableName(),
@@ -280,16 +284,6 @@ abstract class Controller
                 implode(' AND ', $where)
             );
         } else {
-            $binds = [$id];
-            $types = is_int($id) ? 'i' : 's';
-            $where = [$this->primaryKey() . ' = ?'];
-
-            if ($this->userIdColumn()) {
-                $where[] = $this->userIdColumn() . ' = ?';
-                $binds[] = $this->userId;
-                $types .= 'i';
-            }
-
             $sql = sprintf(
                 'DELETE FROM %s WHERE %s',
                 $this->tableName(),

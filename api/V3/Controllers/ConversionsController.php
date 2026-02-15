@@ -106,7 +106,7 @@ class ConversionsController
         }
 
         // Verify click belongs to user
-        $stmt = $this->db->prepare('SELECT click_id, aff_campaign_id, click_payout FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
+        $stmt = $this->db->prepare('SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
         $stmt->bind_param('ii', $clickId, $this->userId);
         $stmt->execute();
         $click = $stmt->get_result()->fetch_assoc();
@@ -120,15 +120,10 @@ class ConversionsController
         $transactionId = $payload['transaction_id'] ?? '';
         $convTime = (int)($payload['conv_time'] ?? time());
         $campaignId = (int)$click['aff_campaign_id'];
-        $clickTime = 0;
+        $clickTime = (int)($click['click_time'] ?? 0);
 
-        // Get click_time
-        $stmt = $this->db->prepare('SELECT click_time FROM 202_clicks WHERE click_id = ? LIMIT 1');
-        $stmt->bind_param('i', $clickId);
-        $stmt->execute();
-        $ct = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        $clickTime = (int)($ct['click_time'] ?? 0);
+        $this->db->begin_transaction();
+        try {
 
         $sql = "INSERT INTO 202_conversion_logs
             (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted)
@@ -137,7 +132,7 @@ class ConversionsController
         $stmt->bind_param('isidiii', $clickId, $transactionId, $campaignId, $payout, $this->userId, $clickTime, $convTime);
 
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Failed to create conversion: ' . $stmt->error, 500);
+            throw new \RuntimeException('Failed to create conversion', 500);
         }
         $convId = $stmt->insert_id;
         $stmt->close();
@@ -147,6 +142,12 @@ class ConversionsController
         $stmt->bind_param('dii', $payout, $clickId, $this->userId);
         $stmt->execute();
         $stmt->close();
+
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
 
         return $this->get($convId);
     }

@@ -29,7 +29,7 @@ class TrackersController extends Controller
     public function create(array $payload): array
     {
         // Generate public ID and timestamp
-        $publicId = random_int(100000, 9999999);
+        $publicId = random_int(10000000, 999999999);
         $now = time();
 
         $fields = $this->fields();
@@ -72,7 +72,7 @@ class TrackersController extends Controller
         $stmt->bind_param($types, ...$binds);
 
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Insert failed: ' . $stmt->error, 500);
+            throw new \RuntimeException('Insert failed', 500);
         }
 
         $id = $stmt->insert_id;

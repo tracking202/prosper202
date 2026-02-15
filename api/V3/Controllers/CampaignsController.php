@@ -33,10 +33,9 @@ class CampaignsController extends Controller
     public function create(array $payload): array
     {
         // Auto-set timestamp and public ID
-        $payload['aff_campaign_time'] = $payload['aff_campaign_time'] ?? time();
         $this->extraCreateFields = [
             'aff_campaign_time' => ['type' => 'i', 'value' => time()],
-            'aff_campaign_id_public' => ['type' => 'i', 'value' => random_int(100000, 999999)],
+            'aff_campaign_id_public' => ['type' => 'i', 'value' => random_int(1000000, 99999999)],
         ];
         return $this->createWithExtras($payload);
     }
@@ -92,12 +91,12 @@ class CampaignsController extends Controller
 
         $stmt = $this->db->prepare($sql);
         if (!$stmt) {
-            throw new \RuntimeException('Database error: ' . $this->db->error, 500);
+            throw new \RuntimeException('Database error', 500);
         }
         $stmt->bind_param($types, ...$binds);
 
         if (!$stmt->execute()) {
-            throw new \RuntimeException('Insert failed: ' . $stmt->error, 500);
+            throw new \RuntimeException('Insert failed', 500);
         }
 
         $insertId = $stmt->insert_id;
