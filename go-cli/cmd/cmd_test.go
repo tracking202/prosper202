@@ -998,6 +998,69 @@ func TestReportSummary(t *testing.T) {
 	}
 }
 
+func TestDashboardDefaultsToTodayPeriod(t *testing.T) {
+	var gotPath string
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"total_clicks":42,"total_leads":3}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("dashboard")
+	if err != nil {
+		t.Fatalf("dashboard error: %v", err)
+	}
+
+	if gotPath != "/api/v3/reports/summary" {
+		t.Errorf("path = %q, want /api/v3/reports/summary", gotPath)
+	}
+	if gotParams.Get("period") != "today" {
+		t.Errorf("period = %q, want %q", gotParams.Get("period"), "today")
+	}
+	if !strings.Contains(stdout, "42") {
+		t.Errorf("output should contain summary values, got:\n%s", stdout)
+	}
+}
+
+func TestDashboardPassesExplicitFilters(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"total_clicks":1}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("dashboard", "--period=last7", "--aff_campaign_id=7", "--country_id=223")
+	if err != nil {
+		t.Fatalf("dashboard with filters error: %v", err)
+	}
+
+	expectations := map[string]string{
+		"period":          "last7",
+		"aff_campaign_id": "7",
+		"country_id":      "223",
+	}
+	for key, want := range expectations {
+		if got := gotParams.Get(key); got != want {
+			t.Errorf("query param %q = %q, want %q", key, got, want)
+		}
+	}
+}
+
 func TestClickList(t *testing.T) {
 	var gotPath string
 
