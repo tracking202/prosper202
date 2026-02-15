@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"p202/internal/api"
@@ -26,7 +27,11 @@ var configSetURLCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		cfg.URL = strings.TrimRight(args[0], "/")
+		u, err := normalizeBaseURL(args[0])
+		if err != nil {
+			return err
+		}
+		cfg.URL = u
 		if err := cfg.Save(); err != nil {
 			return err
 		}
@@ -44,7 +49,11 @@ var configSetKeyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		cfg.APIKey = args[0]
+		apiKey := strings.TrimSpace(args[0])
+		if err := validateAPIKey(apiKey); err != nil {
+			return err
+		}
+		cfg.APIKey = apiKey
 		if err := cfg.Save(); err != nil {
 			return err
 		}
@@ -101,4 +110,32 @@ var configTestCmd = &cobra.Command{
 func init() {
 	configCmd.AddCommand(configSetURLCmd, configSetKeyCmd, configShowCmd, configTestCmd)
 	rootCmd.AddCommand(configCmd)
+}
+
+func normalizeBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("URL is required")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed == nil {
+		return "", fmt.Errorf("URL must be a valid http(s) URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("URL must use http or https")
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("URL must include a host")
+	}
+	return strings.TrimRight(trimmed, "/"), nil
+}
+
+func validateAPIKey(key string) error {
+	if len(key) < 8 {
+		return fmt.Errorf("API key must be at least 8 characters")
+	}
+	if strings.ContainsAny(key, " \t\r\n") {
+		return fmt.Errorf("API key must not contain whitespace")
+	}
+	return nil
 }

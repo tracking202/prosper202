@@ -117,6 +117,19 @@ func TestConfigSetURLTrimsTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestConfigSetURLRejectsInvalidURL(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	_, _, err := executeCommand("config", "set-url", "not-a-url")
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+	if !strings.Contains(err.Error(), "http") {
+		t.Errorf("error = %q, expected URL validation message", err.Error())
+	}
+}
+
 func TestConfigSetKey(t *testing.T) {
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
@@ -140,6 +153,19 @@ func TestConfigSetKey(t *testing.T) {
 	json.Unmarshal(data, &cfg)
 	if cfg["api_key"] != "abcdefghijklmnop" {
 		t.Errorf("saved API key = %q, want %q", cfg["api_key"], "abcdefghijklmnop")
+	}
+}
+
+func TestConfigSetKeyRejectsShortValue(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	_, _, err := executeCommand("config", "set-key", "short")
+	if err == nil {
+		t.Fatal("expected error for short API key")
+	}
+	if !strings.Contains(err.Error(), "at least 8 characters") {
+		t.Errorf("error = %q, expected API key length validation message", err.Error())
 	}
 }
 
@@ -777,6 +803,76 @@ func TestClickList(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "abc123") {
 		t.Errorf("output should contain click ID, got:\n%s", stdout)
+	}
+}
+
+func TestClickListPageCalculatesOffset(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"click_id":"abc123"}],"meta":{"total":1}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("click", "list", "--page=2", "--limit=25")
+	if err != nil {
+		t.Fatalf("click list with page error: %v", err)
+	}
+
+	if gotParams.Get("limit") != "25" {
+		t.Errorf("limit = %q, want %q", gotParams.Get("limit"), "25")
+	}
+	if gotParams.Get("offset") != "25" {
+		t.Errorf("offset = %q, want %q", gotParams.Get("offset"), "25")
+	}
+}
+
+func TestConversionCreateSupportsLegacyAliases(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		bodyBytes, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(bodyBytes, &gotBody)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"conv_id":1,"click_id":12345}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("conversion", "create", "--click_id_public=12345", "--conversion_payout=1.25")
+	if err != nil {
+		t.Fatalf("conversion create alias flags error: %v", err)
+	}
+
+	if gotMethod != "POST" {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v3/conversions" {
+		t.Errorf("path = %q, want /api/v3/conversions", gotPath)
+	}
+	if gotBody["click_id"] != float64(12345) {
+		t.Errorf("click_id = %#v, want %v", gotBody["click_id"], float64(12345))
+	}
+	if gotBody["payout"] != "1.25" {
+		t.Errorf("payout = %#v, want %q", gotBody["payout"], "1.25")
+	}
+	if _, ok := gotBody["click_id_public"]; ok {
+		t.Errorf("request body should not include click_id_public alias")
+	}
+	if _, ok := gotBody["conversion_payout"]; ok {
+		t.Errorf("request body should not include conversion_payout alias")
 	}
 }
 

@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"fmt"
 	"p202/internal/api"
 	"p202/internal/output"
+	"strconv"
 
 	"github.com/spf13/cobra"
 )
@@ -27,6 +29,23 @@ var clickListCmd = &cobra.Command{
 		for _, f := range flags {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				params[f] = v
+			}
+		}
+		if pageStr, _ := cmd.Flags().GetString("page"); pageStr != "" {
+			page, err := strconv.Atoi(pageStr)
+			if err != nil || page <= 0 {
+				return fmt.Errorf("--page must be a positive integer")
+			}
+			if _, hasOffset := params["offset"]; !hasOffset {
+				limit := 50
+				if limitStr, hasLimit := params["limit"]; hasLimit {
+					parsedLimit, err := strconv.Atoi(limitStr)
+					if err != nil || parsedLimit <= 0 {
+						return fmt.Errorf("--limit must be a positive integer when --page is used")
+					}
+					limit = parsedLimit
+				}
+				params["offset"] = strconv.Itoa((page - 1) * limit)
 			}
 		}
 		data, err := c.Get("clicks", params)
@@ -59,6 +78,7 @@ var clickGetCmd = &cobra.Command{
 func init() {
 	clickListCmd.Flags().StringP("limit", "l", "", "Max results")
 	clickListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	clickListCmd.Flags().String("page", "", "Page number (maps to offset)")
 	clickListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	clickListCmd.Flags().String("time_to", "", "End timestamp (unix)")
 	clickListCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")

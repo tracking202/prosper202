@@ -68,7 +68,10 @@ var conversionCreateCmd = &cobra.Command{
 		}
 		clickIDStr, _ := cmd.Flags().GetString("click_id")
 		if clickIDStr == "" {
-			return fmt.Errorf("required flag --click_id is missing")
+			clickIDStr, _ = cmd.Flags().GetString("click_id_public")
+		}
+		if clickIDStr == "" {
+			return fmt.Errorf("required flag --click_id (or --click_id_public) is missing")
 		}
 		clickID, err := strconv.Atoi(clickIDStr)
 		if err != nil {
@@ -78,6 +81,8 @@ var conversionCreateCmd = &cobra.Command{
 			"click_id": clickID,
 		}
 		if v, _ := cmd.Flags().GetString("payout"); v != "" {
+			body["payout"] = v
+		} else if v, _ := cmd.Flags().GetString("conversion_payout"); v != "" {
 			body["payout"] = v
 		}
 		if v, _ := cmd.Flags().GetString("transaction_id"); v != "" {
@@ -127,7 +132,9 @@ func init() {
 	conversionListCmd.Flags().String("time_to", "", "End timestamp (unix)")
 
 	conversionCreateCmd.Flags().String("click_id", "", "Click ID (required)")
+	conversionCreateCmd.Flags().String("click_id_public", "", "Legacy alias for --click_id")
 	conversionCreateCmd.Flags().String("payout", "", "Payout amount")
+	conversionCreateCmd.Flags().String("conversion_payout", "", "Legacy alias for --payout")
 	conversionCreateCmd.Flags().String("transaction_id", "", "Transaction ID for deduplication")
 
 	conversionDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
