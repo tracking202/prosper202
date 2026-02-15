@@ -103,14 +103,14 @@ func init() {
 	addReportFilters(reportSummaryCmd)
 
 	addReportFilters(reportBreakdownCmd)
-	reportBreakdownCmd.Flags().StringP("breakdown", "b", "campaign", "Dimension: campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, browser, platform, device, isp, text_ad")
-	reportBreakdownCmd.Flags().StringP("sort", "s", "total_clicks", "Sort by: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
-	reportBreakdownCmd.Flags().String("sort_dir", "DESC", "Sort direction: ASC or DESC")
-	reportBreakdownCmd.Flags().StringP("limit", "l", "50", "Max results")
-	reportBreakdownCmd.Flags().StringP("offset", "o", "0", "Pagination offset")
+	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension: campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, browser, platform, device, isp, text_ad")
+	reportBreakdownCmd.Flags().StringP("sort", "s", "", "Sort by: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
+	reportBreakdownCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	reportBreakdownCmd.Flags().StringP("limit", "l", "", "Max results")
+	reportBreakdownCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 
 	addReportFilters(reportTimeseriesCmd)
-	reportTimeseriesCmd.Flags().StringP("interval", "i", "day", "Interval: hour, day, week, month")
+	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")
 
 	reportCmd.AddCommand(reportSummaryCmd, reportBreakdownCmd, reportTimeseriesCmd)
 	rootCmd.AddCommand(reportCmd)

@@ -85,11 +85,9 @@ var attrModelCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("weighting_config"); v != "" {
 			var parsed interface{}
 			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
-				// Fall back to string if not valid JSON
-				body["weighting_config"] = v
-			} else {
-				body["weighting_config"] = parsed
+				return fmt.Errorf("invalid --weighting_config JSON: %w", err)
 			}
+			body["weighting_config"] = parsed
 		}
 		if v, _ := cmd.Flags().GetString("is_active"); v != "" {
 			body["is_active"] = v
@@ -124,10 +122,9 @@ var attrModelUpdateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("weighting_config"); v != "" {
 			var parsed interface{}
 			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
-				body["weighting_config"] = v
-			} else {
-				body["weighting_config"] = parsed
+				return fmt.Errorf("invalid --weighting_config JSON: %w", err)
 			}
+			body["weighting_config"] = parsed
 		}
 		if len(body) == 0 {
 			return fmt.Errorf("no fields specified; pass at least one flag to update")
@@ -255,8 +252,8 @@ func init() {
 	attrModelCreateCmd.Flags().String("model_name", "", "Model name (required)")
 	attrModelCreateCmd.Flags().String("model_type", "", "Type: first_touch, last_touch, linear, time_decay, position_based, algorithmic (required)")
 	attrModelCreateCmd.Flags().String("weighting_config", "", "Weighting config as JSON")
-	attrModelCreateCmd.Flags().String("is_active", "1", "1=active, 0=inactive")
-	attrModelCreateCmd.Flags().String("is_default", "0", "1=default, 0=not default")
+	attrModelCreateCmd.Flags().String("is_active", "", "1=active, 0=inactive")
+	attrModelCreateCmd.Flags().String("is_default", "", "1=default, 0=not default")
 
 	attrModelUpdateCmd.Flags().String("model_name", "", "Model name")
 	attrModelUpdateCmd.Flags().String("model_type", "", "Model type")
@@ -270,17 +267,17 @@ func init() {
 
 	// Snapshot flags
 	attrSnapshotListCmd.Flags().String("scope_type", "", "Filter: global, campaign, landing_page")
-	attrSnapshotListCmd.Flags().StringP("limit", "l", "100", "Max results")
-	attrSnapshotListCmd.Flags().StringP("offset", "o", "0", "Pagination offset")
+	attrSnapshotListCmd.Flags().StringP("limit", "l", "", "Max results")
+	attrSnapshotListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 
 	attrSnapshotCmd.AddCommand(attrSnapshotListCmd)
 
 	// Export flags
-	attrExportScheduleCmd.Flags().String("scope_type", "global", "Scope: global, campaign, landing_page")
-	attrExportScheduleCmd.Flags().String("scope_id", "0", "Scope ID")
+	attrExportScheduleCmd.Flags().String("scope_type", "", "Scope: global, campaign, landing_page")
+	attrExportScheduleCmd.Flags().String("scope_id", "", "Scope ID")
 	attrExportScheduleCmd.Flags().String("start_hour", "", "Start timestamp")
 	attrExportScheduleCmd.Flags().String("end_hour", "", "End timestamp")
-	attrExportScheduleCmd.Flags().String("format", "csv", "Export format: csv, json")
+	attrExportScheduleCmd.Flags().String("format", "", "Export format: csv, json")
 	attrExportScheduleCmd.Flags().String("webhook_url", "", "Webhook URL for delivery")
 
 	attrExportCmd.AddCommand(attrExportListCmd, attrExportScheduleCmd)

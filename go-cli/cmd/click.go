@@ -57,8 +57,8 @@ var clickGetCmd = &cobra.Command{
 }
 
 func init() {
-	clickListCmd.Flags().StringP("limit", "l", "50", "Max results")
-	clickListCmd.Flags().StringP("offset", "o", "0", "Pagination offset")
+	clickListCmd.Flags().StringP("limit", "l", "", "Max results")
+	clickListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	clickListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	clickListCmd.Flags().String("time_to", "", "End timestamp (unix)")
 	clickListCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")

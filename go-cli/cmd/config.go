@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -61,9 +62,13 @@ var configShowCmd = &cobra.Command{
 			return err
 		}
 		if jsonOutput {
-			data := fmt.Sprintf(`{"url": %q, "api_key": %q, "config_path": %q}`,
-				cfg.URL, cfg.MaskedKey(), config.Path())
-			output.Render([]byte(data), true)
+			obj := map[string]string{
+				"url":         cfg.URL,
+				"api_key":     cfg.MaskedKey(),
+				"config_path": config.Path(),
+			}
+			data, _ := json.Marshal(obj)
+			output.Render(data, true)
 		} else {
 			fmt.Printf("Config file: %s\n", config.Path())
 			fmt.Printf("URL:         %s\n", cfg.URL)
@@ -85,7 +90,9 @@ var configTestCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("connection failed: %w", err)
 		}
-		fmt.Println("Connection successful!")
+		if !jsonOutput {
+			fmt.Println("Connection successful!")
+		}
 		output.Render(data, jsonOutput)
 		return nil
 	},
