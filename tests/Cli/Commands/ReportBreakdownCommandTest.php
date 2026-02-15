@@ -6,6 +6,7 @@ namespace Tests\Cli\Commands;
 
 use P202Cli\Commands\ReportBreakdownCommand;
 use P202Cli\Commands\ReportDaypartCommand;
+use P202Cli\Commands\ReportWeekpartCommand;
 use Symfony\Component\Console\Application;
 use Tests\TestCase;
 
@@ -259,6 +260,67 @@ class ReportDaypartCommandTest extends TestCase
     {
         $desc = $this->command->getDefinition()->getOption('sort')->getDescription();
         $this->assertStringContainsString('hour_of_day', $desc);
+        $this->assertStringContainsString('roi', $desc);
+    }
+}
+
+class ReportWeekpartCommandTest extends TestCase
+{
+    private ReportWeekpartCommand $command;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->command = new ReportWeekpartCommand();
+        $app = new Application('test', '1.0');
+        $app->add($this->command);
+    }
+
+    public function testCommandNameIsReportWeekpart(): void
+    {
+        $this->assertSame('report:weekpart', $this->command->getName());
+    }
+
+    public function testHasSortOptionWithDefaultDayOfWeek(): void
+    {
+        $def = $this->command->getDefinition();
+        $opt = $def->getOption('sort');
+
+        $this->assertSame('day_of_week', $opt->getDefault());
+        $this->assertSame('s', $opt->getShortcut());
+        $this->assertTrue($opt->isValueRequired());
+    }
+
+    public function testHasSortDirOptionWithDefaultAsc(): void
+    {
+        $def = $this->command->getDefinition();
+        $opt = $def->getOption('sort_dir');
+
+        $this->assertSame('ASC', $opt->getDefault());
+        $this->assertTrue($opt->isValueRequired());
+    }
+
+    public function testHasSharedReportFilters(): void
+    {
+        $def = $this->command->getDefinition();
+        foreach (['period', 'time_from', 'time_to', 'aff_campaign_id', 'ppc_account_id', 'aff_network_id', 'ppc_network_id', 'landing_page_id', 'country_id'] as $opt) {
+            $this->assertTrue($def->hasOption($opt), "Missing expected option: $opt");
+            $this->assertTrue($def->getOption($opt)->isValueRequired(), "Option $opt should require a value");
+        }
+    }
+
+    public function testHasJsonOption(): void
+    {
+        $def = $this->command->getDefinition();
+        $this->assertTrue($def->hasOption('json'));
+        $this->assertFalse($def->getOption('json')->acceptValue());
+    }
+
+    public function testSortDescriptionMentionsDayOfWeek(): void
+    {
+        $desc = $this->command->getDefinition()->getOption('sort')->getDescription();
+        $this->assertStringContainsString('day_of_week', $desc);
         $this->assertStringContainsString('roi', $desc);
     }
 }

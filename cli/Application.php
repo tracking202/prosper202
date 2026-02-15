@@ -40,6 +40,7 @@ class Application extends ConsoleApplication
         $this->add(new Commands\ReportBreakdownCommand());
         $this->add(new Commands\ReportTimeseriesCommand());
         $this->add(new Commands\ReportDaypartCommand());
+        $this->add(new Commands\ReportWeekpartCommand());
 
         // --- Rotators ---
         $this->add(new Commands\RotatorListCommand());
