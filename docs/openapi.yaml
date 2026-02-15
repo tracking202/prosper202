@@ -273,16 +273,20 @@ paths:
                         items:
                           type: object
                           properties:
-                            job_id:
-                              type: integer
                             time_from:
                               type: integer
                             time_to:
                               type: integer
+                            processing:
+                              type: integer
+                              description: "1 if currently processing, 0 otherwise"
+                            processed:
+                              type: integer
+                              description: "1 if completed, 0 otherwise"
                             status:
                               type: string
-                            rows_processed:
-                              type: integer
+                              enum: [pending, processing, completed]
+                              description: Computed from processing/processed flags
                             time_from_human:
                               type: string
                             time_to_human:
