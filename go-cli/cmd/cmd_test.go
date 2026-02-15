@@ -2198,6 +2198,139 @@ func TestDashboardPassesExplicitFilters(t *testing.T) {
 	}
 }
 
+func TestUnifiedReportAggregatesAcrossProfiles(t *testing.T) {
+	prodSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/reports/summary" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"total_clicks":10,"total_leads":2,"total_net":50}}`))
+	}))
+	defer prodSrv.Close()
+
+	stageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/reports/summary" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"total_clicks":5,"total_leads":1,"total_net":5}}`))
+	}))
+	defer stageSrv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": prodSrv.URL, "api_key": "prod-key-123456"},
+		"staging": {"url": stageSrv.URL, "api_key": "staging-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("report", "summary", "--profiles", "prod,staging", "--json")
+	if err != nil {
+		t.Fatalf("multi-profile report summary error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	aggregated, ok := parsed["aggregated"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("aggregated section missing: %#v", parsed)
+	}
+	if got := int(aggregated["total_clicks"].(float64)); got != 15 {
+		t.Fatalf("aggregated total_clicks=%d, want 15", got)
+	}
+	if got := int(aggregated["total_leads"].(float64)); got != 3 {
+		t.Fatalf("aggregated total_leads=%d, want 3", got)
+	}
+}
+
+func TestUnifiedReportPartialError(t *testing.T) {
+	prodSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"total_clicks":7,"total_leads":2}}`))
+	}))
+	defer prodSrv.Close()
+
+	stageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		w.Write([]byte(`{"message":"staging unavailable"}`))
+	}))
+	defer stageSrv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": prodSrv.URL, "api_key": "prod-key-123456"},
+		"staging": {"url": stageSrv.URL, "api_key": "staging-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("report", "summary", "--profiles", "prod,staging", "--json")
+	if err != nil {
+		t.Fatalf("multi-profile partial error should still succeed: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	errorsOut, ok := parsed["errors"].([]interface{})
+	if !ok || len(errorsOut) != 1 {
+		t.Fatalf("expected one profile error entry, got %#v", parsed["errors"])
+	}
+	aggregated, _ := parsed["aggregated"].(map[string]interface{})
+	if got := int(aggregated["total_clicks"].(float64)); got != 7 {
+		t.Fatalf("aggregated total_clicks=%d, want 7", got)
+	}
+}
+
+func TestDashboardAllProfilesAggregates(t *testing.T) {
+	prodHits := 0
+	stageHits := 0
+
+	prodSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prodHits++
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"total_clicks":4,"total_leads":1}}`))
+	}))
+	defer prodSrv.Close()
+
+	stageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stageHits++
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"total_clicks":6,"total_leads":2}}`))
+	}))
+	defer stageSrv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": prodSrv.URL, "api_key": "prod-key-123456"},
+		"staging": {"url": stageSrv.URL, "api_key": "staging-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("dashboard", "--all-profiles", "--json")
+	if err != nil {
+		t.Fatalf("dashboard --all-profiles error: %v", err)
+	}
+	if prodHits == 0 || stageHits == 0 {
+		t.Fatalf("expected both profile endpoints to be called, prodHits=%d stageHits=%d", prodHits, stageHits)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	aggregated, _ := parsed["aggregated"].(map[string]interface{})
+	if got := int(aggregated["total_clicks"].(float64)); got != 10 {
+		t.Fatalf("aggregated total_clicks=%d, want 10", got)
+	}
+}
+
 func TestExportCampaignsPaginated(t *testing.T) {
 	offsets := make([]string, 0)
 

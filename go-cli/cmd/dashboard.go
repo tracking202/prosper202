@@ -10,13 +10,27 @@ var dashboardCmd = &cobra.Command{
 	Use:   "dashboard",
 	Short: "Get dashboard summary metrics",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
+		profiles, err := resolveMultiProfiles(cmd)
 		if err != nil {
 			return err
 		}
 		params := collectReportParams(cmd)
 		if _, exists := params["period"]; !exists {
 			params["period"] = "today"
+		}
+		if len(profiles) > 0 {
+			profileData, errorsOut, err := fetchMultiProfileObjects("reports/summary", params, profiles)
+			if err != nil {
+				return err
+			}
+			payload := buildMultiProfilePayload(profileData, aggregateNumericFields(profileData), errorsOut)
+			render(payload)
+			return nil
+		}
+
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
 		}
 		data, err := c.Get("reports/summary", params)
 		if err != nil {
@@ -37,6 +51,7 @@ func init() {
 	dashboardCmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
 	dashboardCmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
 	dashboardCmd.Flags().String("country_id", "", "Filter by country ID")
+	addMultiProfileFlags(dashboardCmd)
 
 	rootCmd.AddCommand(dashboardCmd)
 }

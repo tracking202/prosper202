@@ -41,11 +41,26 @@ var reportSummaryCmd = &cobra.Command{
 	Use:   "summary",
 	Short: "Get summary report",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		profiles, err := resolveMultiProfiles(cmd)
+		if err != nil {
+			return err
+		}
+		params := collectReportParams(cmd)
+		if len(profiles) > 0 {
+			profileData, errorsOut, err := fetchMultiProfileObjects("reports/summary", params, profiles)
+			if err != nil {
+				return err
+			}
+			payload := buildMultiProfilePayload(profileData, aggregateNumericFields(profileData), errorsOut)
+			render(payload)
+			return nil
+		}
+
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
 		}
-		data, err := c.Get("reports/summary", collectReportParams(cmd))
+		data, err := c.Get("reports/summary", params)
 		if err != nil {
 			return err
 		}
@@ -146,6 +161,7 @@ var reportDaypartCmd = &cobra.Command{
 
 func init() {
 	addReportFilters(reportSummaryCmd)
+	addMultiProfileFlags(reportSummaryCmd)
 
 	addReportFilters(reportBreakdownCmd)
 	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension: campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, browser, platform, device, isp, text_ad")
