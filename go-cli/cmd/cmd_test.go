@@ -1222,6 +1222,114 @@ func TestDashboardPassesExplicitFilters(t *testing.T) {
 	}
 }
 
+func TestUserAPIKeyRotateDeletesOldKeyByDefault(t *testing.T) {
+	var createPath, deletePath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
+			createPath = r.URL.Path
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
+		case r.Method == "DELETE" && r.URL.Path == "/api/v3/users/7/api-keys/old-key-12345678":
+			deletePath = r.URL.Path
+			w.WriteHeader(200)
+			w.Write([]byte(`{"ok":true}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "old-key-12345678")
+
+	stdout, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--force")
+	if err != nil {
+		t.Fatalf("user apikey rotate error: %v", err)
+	}
+
+	if createPath != "/api/v3/users/7/api-keys" {
+		t.Errorf("createPath = %q, want /api/v3/users/7/api-keys", createPath)
+	}
+	if deletePath != "/api/v3/users/7/api-keys/old-key-12345678" {
+		t.Errorf("deletePath = %q, want /api/v3/users/7/api-keys/old-key-12345678", deletePath)
+	}
+	if !strings.Contains(stdout, "new-key-abcdef1234") {
+		t.Errorf("output should contain new key, got:\n%s", stdout)
+	}
+}
+
+func TestUserAPIKeyRotateKeepOldSkipsDelete(t *testing.T) {
+	deleted := false
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
+		case r.Method == "DELETE":
+			deleted = true
+			w.WriteHeader(200)
+			w.Write([]byte(`{"ok":true}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "old-key-12345678")
+
+	_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--keep-old")
+	if err != nil {
+		t.Fatalf("user apikey rotate --keep-old error: %v", err)
+	}
+
+	if deleted {
+		t.Errorf("old key should not be deleted when --keep-old is set")
+	}
+}
+
+func TestUserAPIKeyRotateUpdateConfig(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "old-key-12345678")
+
+	_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--keep-old", "--update-config")
+	if err != nil {
+		t.Fatalf("user apikey rotate --update-config error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmp, ".p202", "config.json"))
+	if err != nil {
+		t.Fatalf("reading config after rotate: %v", err)
+	}
+	var cfg map[string]string
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parsing config after rotate: %v", err)
+	}
+	if cfg["api_key"] != "new-key-abcdef1234" {
+		t.Errorf("saved API key = %q, want %q", cfg["api_key"], "new-key-abcdef1234")
+	}
+}
+
 func TestClickList(t *testing.T) {
 	var gotPath string
 

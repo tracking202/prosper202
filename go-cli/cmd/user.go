@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"p202/internal/api"
+	configpkg "p202/internal/config"
 	"p202/internal/output"
 
 	"github.com/spf13/cobra"
@@ -324,6 +326,101 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 	},
 }
 
+var userAPIKeyRotateCmd = &cobra.Command{
+	Use:   "rotate <user_id> <old_api_key>",
+	Short: "Rotate an API key by creating a new one and optionally deleting the old one",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+
+		userID := args[0]
+		oldAPIKey := args[1]
+		keepOld, _ := cmd.Flags().GetBool("keep-old")
+		force, _ := cmd.Flags().GetBool("force")
+		updateConfig, _ := cmd.Flags().GetBool("update-config")
+		forceConfigUpdate, _ := cmd.Flags().GetBool("force-config-update")
+
+		createdData, err := c.Post("users/"+userID+"/api-keys", nil)
+		if err != nil {
+			return err
+		}
+		createdObj, err := parseDataObject(createdData)
+		if err != nil {
+			return fmt.Errorf("failed to parse create api-key response: %w", err)
+		}
+		newAPIKey, err := extractAPIKey(createdObj)
+		if err != nil {
+			return err
+		}
+
+		deletedOld := false
+		if !keepOld {
+			if !force {
+				fmt.Printf("Delete old API key for user %s? [y/N] ", userID)
+				var answer string
+				fmt.Scanln(&answer)
+				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
+					fmt.Println("Skipping old key deletion.")
+				} else {
+					if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
+						return err
+					}
+					deletedOld = true
+				}
+			} else {
+				if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
+					return err
+				}
+				deletedOld = true
+			}
+		}
+
+		configUpdated := false
+		configUpdateSkipped := false
+		if updateConfig {
+			cfg, err := configpkg.Load()
+			if err != nil {
+				return err
+			}
+			if cfg.APIKey == oldAPIKey || forceConfigUpdate {
+				cfg.APIKey = newAPIKey
+				if err := cfg.Save(); err != nil {
+					return err
+				}
+				configUpdated = true
+			} else {
+				configUpdateSkipped = true
+			}
+		}
+
+		out := map[string]interface{}{
+			"user_id":               userID,
+			"new_api_key":           newAPIKey,
+			"old_key_deleted":       deletedOld,
+			"old_key_kept":          keepOld || !deletedOld,
+			"config_updated":        configUpdated,
+			"config_update_skipped": configUpdateSkipped,
+		}
+		encoded, _ := json.Marshal(out)
+		render(encoded)
+		return nil
+	},
+}
+
+func extractAPIKey(obj map[string]interface{}) (string, error) {
+	for _, key := range []string{"api_key", "key", "token"} {
+		if value, ok := obj[key]; ok && value != nil {
+			if str, ok := value.(string); ok && str != "" {
+				return str, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("create api-key response did not include api_key")
+}
+
 // --- Preferences subcommands ---
 
 var userPrefsCmd = &cobra.Command{
@@ -403,6 +500,10 @@ func init() {
 
 	// API key flags
 	userAPIKeyDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	userAPIKeyRotateCmd.Flags().Bool("keep-old", false, "Do not delete the old API key")
+	userAPIKeyRotateCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt when deleting old key")
+	userAPIKeyRotateCmd.Flags().Bool("update-config", false, "Update local ~/.p202/config.json with the new API key")
+	userAPIKeyRotateCmd.Flags().Bool("force-config-update", false, "Update local config even if current key does not match old key")
 
 	// Preferences flags
 	userPrefsUpdateCmd.Flags().String("user_tracking_domain", "", "Tracking domain")
@@ -413,7 +514,7 @@ func init() {
 
 	// Wire up subcommands
 	userRoleCmd.AddCommand(userRoleListCmd, userRoleAssignCmd, userRoleRemoveCmd)
-	userAPIKeyCmd.AddCommand(userAPIKeyListCmd, userAPIKeyCreateCmd, userAPIKeyDeleteCmd)
+	userAPIKeyCmd.AddCommand(userAPIKeyListCmd, userAPIKeyCreateCmd, userAPIKeyDeleteCmd, userAPIKeyRotateCmd)
 	userPrefsCmd.AddCommand(userPrefsGetCmd, userPrefsUpdateCmd)
 
 	userCmd.AddCommand(userListCmd, userGetCmd, userCreateCmd, userUpdateCmd, userDeleteCmd)
