@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	configpkg "p202/internal/config"
+	"p202/internal/syncstate"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -1213,6 +1214,241 @@ func TestSyncUnresolvableFK(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"failed": 1`) {
 		t.Fatalf("expected failed count in output:\n%s", stdout)
+	}
+}
+
+func TestSyncWritesManifest(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+	})
+	defer source.Close()
+
+	target, _ := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "aff-networks", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("sync aff-networks error: %v", err)
+	}
+
+	manifestPath := syncstate.ManifestPath("source", "target")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("expected manifest file at %s: %v", manifestPath, err)
+	}
+	var manifest map[string]interface{}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("manifest JSON parse error: %v", err)
+	}
+	if manifest["last_sync"] == "" {
+		t.Fatalf("manifest should include last_sync")
+	}
+	mappings, ok := manifest["mappings"].(map[string]interface{})
+	if !ok || len(mappings) == 0 {
+		t.Fatalf("manifest should include mappings: %#v", manifest["mappings"])
+	}
+}
+
+func TestReSyncSkipsUnchanged(t *testing.T) {
+	sourceRows := map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+	}
+	source := newEntityDataServer(t, sourceRows)
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "aff-networks", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("initial sync error: %v", err)
+	}
+
+	postBefore := capture.PostCalls
+	putBefore := capture.PutCalls
+	stdout, _, err := executeCommand("re-sync", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("re-sync error: %v", err)
+	}
+	if capture.PostCalls != postBefore || capture.PutCalls != putBefore {
+		t.Fatalf("expected unchanged re-sync to do no writes, post %d->%d put %d->%d", postBefore, capture.PostCalls, putBefore, capture.PutCalls)
+	}
+	if !strings.Contains(stdout, `"skipped": 1`) {
+		t.Fatalf("expected skipped count for unchanged re-sync:\n%s", stdout)
+	}
+}
+
+func TestReSyncUpdatesChanged(t *testing.T) {
+	sourceRows := map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+	}
+	source := newEntityDataServer(t, sourceRows)
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "aff-networks", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("initial sync error: %v", err)
+	}
+
+	// Mutate source record while keeping the same source ID.
+	sourceRows["aff-networks"][0]["aff_network_name"] = "Net A Updated"
+
+	putBefore := capture.PutCalls
+	_, _, err = executeCommand("re-sync", "--from", "source", "--to", "target", "--force-update", "--json")
+	if err != nil {
+		t.Fatalf("re-sync --force-update error: %v", err)
+	}
+	if capture.PutCalls <= putBefore {
+		t.Fatalf("expected re-sync change to trigger PUT, put calls before=%d after=%d", putBefore, capture.PutCalls)
+	}
+}
+
+func TestReSyncCreatesNew(t *testing.T) {
+	sourceRows := map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+	}
+	source := newEntityDataServer(t, sourceRows)
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "aff-networks", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("initial sync error: %v", err)
+	}
+
+	sourceRows["aff-networks"] = append(sourceRows["aff-networks"], map[string]interface{}{
+		"aff_network_id":   11,
+		"aff_network_name": "Net B",
+	})
+
+	postBefore := capture.PostCalls
+	_, _, err = executeCommand("re-sync", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("re-sync create new error: %v", err)
+	}
+	if capture.PostCalls <= postBefore {
+		t.Fatalf("expected re-sync to POST new rows, post calls before=%d after=%d", postBefore, capture.PostCalls)
+	}
+}
+
+func TestSyncStatus(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+	})
+	defer source.Close()
+
+	target, _ := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "aff-networks", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("initial sync error: %v", err)
+	}
+
+	stdout, _, err := executeCommand("sync", "status", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("sync status error: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid status JSON: %v\n%s", err, stdout)
+	}
+	if parsed["last_sync"] == "" {
+		t.Fatalf("sync status should include last_sync: %#v", parsed)
+	}
+	dataObj, ok := parsed["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("sync status should include data object: %#v", parsed["data"])
+	}
+	if _, ok := dataObj["aff-networks"]; !ok {
+		t.Fatalf("sync status should include aff-networks summary")
+	}
+}
+
+func TestSyncHistory(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+	})
+	defer source.Close()
+
+	target, _ := newSyncServer(t, map[string][]map[string]interface{}{})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "aff-networks", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("initial sync error: %v", err)
+	}
+
+	stdout, _, err := executeCommand("sync", "history", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("sync history error: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid history JSON: %v\n%s", err, stdout)
+	}
+	rows, _ := parsed["data"].([]interface{})
+	if len(rows) == 0 {
+		t.Fatalf("sync history should contain at least one entry")
 	}
 }
 

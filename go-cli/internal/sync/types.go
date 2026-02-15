@@ -35,3 +35,15 @@ func (m *IDMapping) Get(entity, sourceID string) (string, bool) {
 	targetID, ok := perEntity[sourceID]
 	return targetID, ok
 }
+
+func (m *IDMapping) All() map[string]map[string]string {
+	out := map[string]map[string]string{}
+	for entity, mappings := range m.values {
+		perEntity := map[string]string{}
+		for sourceID, targetID := range mappings {
+			perEntity[sourceID] = targetID
+		}
+		out[entity] = perEntity
+	}
+	return out
+}
