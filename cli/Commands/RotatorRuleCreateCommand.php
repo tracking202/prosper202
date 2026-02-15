@@ -39,10 +39,18 @@ class RotatorRuleCreateCommand extends BaseCommand
         ];
 
         if ($input->getOption('criteria_json')) {
-            $body['criteria'] = json_decode($input->getOption('criteria_json'), true) ?? [];
+            $body['criteria'] = json_decode($input->getOption('criteria_json'), true);
+            if ($body['criteria'] === null) {
+                $output->writeln('<error>Invalid JSON in --criteria_json</error>');
+                return Command::FAILURE;
+            }
         }
         if ($input->getOption('redirects_json')) {
-            $body['redirects'] = json_decode($input->getOption('redirects_json'), true) ?? [];
+            $body['redirects'] = json_decode($input->getOption('redirects_json'), true);
+            if ($body['redirects'] === null) {
+                $output->writeln('<error>Invalid JSON in --redirects_json</error>');
+                return Command::FAILURE;
+            }
         }
 
         $result = $this->client()->post('rotators/' . $input->getArgument('rotator_id') . '/rules', $body);
