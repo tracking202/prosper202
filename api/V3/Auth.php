@@ -47,8 +47,15 @@ final class Auth
             throw new AuthException('Authentication unavailable', 500);
         }
         $stmt->bind_param('s', $apiKey);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new AuthException('Authentication unavailable', 500);
+        }
         $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new AuthException('Authentication unavailable', 500);
+        }
         $row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
 
@@ -67,15 +74,26 @@ final class Auth
             . 'INNER JOIN 202_roles r ON ur.role_id = r.role_id '
             . 'WHERE ur.user_id = ?'
         );
-        if ($stmt) {
-            $stmt->bind_param('i', $userId);
-            $stmt->execute();
-            $roleResult = $stmt->get_result();
-            while ($r = $roleResult->fetch_assoc()) {
-                $roles[] = strtolower($r['role_name']);
-            }
-            $stmt->close();
+        if (!$stmt) {
+            throw new AuthException('Authorization unavailable', 500);
         }
+
+        $stmt->bind_param('i', $userId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+
+        $roleResult = $stmt->get_result();
+        if ($roleResult === false) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+
+        while ($r = $roleResult->fetch_assoc()) {
+            $roles[] = strtolower($r['role_name']);
+        }
+        $stmt->close();
 
         return new self($userId, $roles);
     }

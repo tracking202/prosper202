@@ -149,7 +149,11 @@ class CrudCommands
                 }
 
                 foreach ($this->required as $r) {
-                    if (!isset($body[$r])) {
+                    if (!array_key_exists($r, $body)) {
+                        $output->writeln("<error>Missing required option: --$r</error>");
+                        return Command::FAILURE;
+                    }
+                    if (is_string($body[$r]) && trim($body[$r]) === '') {
                         $output->writeln("<error>Missing required option: --$r</error>");
                         return Command::FAILURE;
                     }

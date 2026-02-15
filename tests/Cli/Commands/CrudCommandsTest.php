@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Cli\Commands;
 
+use P202Cli\Commands\AttributionModelCreateCommand;
+use P202Cli\Commands\AttributionModelUpdateCommand;
 use P202Cli\Commands\CrudCommands;
 use Symfony\Component\Console\Application;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Tester\CommandTester;
 use Tests\TestCase;
 
 class CrudCommandsTest extends TestCase
@@ -145,6 +148,22 @@ class CrudCommandsTest extends TestCase
         $this->assertTrue($cmd->getDefinition()->hasOption('json'));
     }
 
+    public function testCreateCommandRejectsWhitespaceForRequiredOption(): void
+    {
+        $cmd = $this->app->find('widget:create');
+        $tester = new CommandTester($cmd);
+
+        $status = $tester->execute([
+            '--widget_name' => '   ',
+        ]);
+
+        $this->assertSame(Command::FAILURE, $status);
+        $this->assertStringContainsString(
+            'Missing required option: --widget_name',
+            $tester->getDisplay()
+        );
+    }
+
     // --- Update command tests ---
 
     public function testUpdateCommandRequiresIdArgument(): void
@@ -243,5 +262,38 @@ class CrudCommandsTest extends TestCase
         $this->assertContains('limit', $optionNames);
         $this->assertContains('offset', $optionNames);
         $this->assertContains('json', $optionNames);
+    }
+
+    public function testAttributionCreateRejectsInvalidWeightingConfigJson(): void
+    {
+        $command = new AttributionModelCreateCommand();
+        $app = new Application('test', '1.0');
+        $app->add($command);
+
+        $tester = new CommandTester($app->find('attribution:model:create'));
+        $status = $tester->execute([
+            '--model_name' => 'Linear',
+            '--model_type' => 'linear',
+            '--weighting_config' => '{"touches":',
+        ]);
+
+        $this->assertSame(Command::FAILURE, $status);
+        $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
+    }
+
+    public function testAttributionUpdateRejectsInvalidWeightingConfigJson(): void
+    {
+        $command = new AttributionModelUpdateCommand();
+        $app = new Application('test', '1.0');
+        $app->add($command);
+
+        $tester = new CommandTester($app->find('attribution:model:update'));
+        $status = $tester->execute([
+            'id' => '12',
+            '--weighting_config' => '{invalid}',
+        ]);
+
+        $this->assertSame(Command::FAILURE, $status);
+        $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
     }
 }

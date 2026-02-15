@@ -65,15 +65,24 @@ class ApiClient
             $url .= '?' . http_build_query($params);
         }
 
+        $encodedBody = null;
+        if ($body && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
+            $encodedBody = json_encode($body);
+            if ($encodedBody === false) {
+                throw new \RuntimeException(
+                    sprintf('Failed to encode request body as JSON: %s', json_last_error_msg())
+                );
+            }
+        }
+
         $ch = curl_init();
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => $this->timeout,
             CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
-            CURLOPT_MAXREDIRS => 3,
             CURLOPT_HTTPHEADER => [
                 'Authorization: Bearer ' . $this->apiKey,
                 'Content-Type: application/json',
@@ -83,8 +92,8 @@ class ApiClient
             CURLOPT_CUSTOMREQUEST => $method,
         ]);
 
-        if ($body && in_array($method, ['POST', 'PUT', 'PATCH'])) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+        if ($encodedBody !== null) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $encodedBody);
         }
 
         $response = curl_exec($ch);
@@ -96,17 +105,24 @@ class ApiClient
         if ($errno) {
             throw new \RuntimeException("HTTP request failed: $error (errno: $errno)");
         }
-
-        $data = json_decode($response, true);
-        if ($data === null && $response !== '') {
-            throw new \RuntimeException("Invalid JSON response from server: " . substr($response, 0, 200));
+        if ($response === false) {
+            throw new \RuntimeException('HTTP request failed without cURL error details.');
         }
+
+        $decoded = null;
+        if ($response !== '') {
+            $decoded = json_decode($response, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new \RuntimeException("Invalid JSON response from server: " . substr($response, 0, 200));
+            }
+        }
+        $data = is_array($decoded) ? $decoded : [];
 
         if ($httpCode >= 400) {
             $msg = $data['message'] ?? $data['error'] ?? "HTTP $httpCode";
             throw new ApiException($msg, $httpCode, $data);
         }
 
-        return $data ?? [];
+        return $data;
     }
 }

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Api\V3;
 
 use Api\V3\Controller;
+use Api\V3\Controllers\SystemController;
+use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Tests\TestCase;
@@ -80,6 +82,126 @@ class StubController extends Controller
     public function testTransaction(callable $fn): mixed
     {
         return $this->transaction($fn);
+    }
+}
+
+final class SystemControllerBehaviorTest extends TestCase
+{
+    private function createResultMock(array $rows): \mysqli_result
+    {
+        /** @var \mysqli_result&\PHPUnit\Framework\MockObject\MockObject $result */
+        $result = $this->getMockBuilder(\mysqli_result::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+
+        $index = 0;
+        $result->method('fetch_assoc')->willReturnCallback(
+            function () use (&$index, $rows) {
+                return $rows[$index++] ?? null;
+            }
+        );
+
+        return $result;
+    }
+
+    public function testCronStatusReadsExistingCronjobLogColumns(): void
+    {
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+
+        $queries = [];
+        $db->method('query')->willReturnCallback(
+            function (string $sql) use (&$queries) {
+                $queries[] = $sql;
+                if (str_contains($sql, 'FROM 202_cronjobs')) {
+                    return $this->createResultMock([
+                        ['cronjob_type' => 'main', 'cronjob_time' => '1700000000'],
+                    ]);
+                }
+                if (str_contains($sql, 'FROM 202_cronjob_logs')) {
+                    return $this->createResultMock([
+                        ['id' => 1, 'last_execution_time' => '1700001234'],
+                    ]);
+                }
+                return false;
+            }
+        );
+
+        $controller = new SystemController($db);
+        $result = $controller->cronStatus();
+
+        $this->assertArrayHasKey('data', $result);
+        $this->assertSame(1, $result['data']['recent_logs'][0]['id']);
+        $this->assertStringContainsString(
+            'SELECT id, last_execution_time FROM 202_cronjob_logs',
+            implode("\n", $queries)
+        );
+    }
+
+    public function testErrorsQueryUsesMysqlErrorTextAlias(): void
+    {
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+
+        $preparedSql = '';
+
+        /** @var \mysqli_stmt&\PHPUnit\Framework\MockObject\MockObject $stmt */
+        $stmt = $this->getMockBuilder(\mysqli_stmt::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $stmt->method('bind_param')->willReturn(true);
+        $stmt->method('execute')->willReturn(true);
+        $stmt->method('get_result')->willReturn(
+            $this->createResultMock([
+                [
+                    'mysql_error_id' => 10,
+                    'mysql_error_time' => 1700002222,
+                    'mysql_error_message' => 'bad query',
+                    'mysql_error_sql' => 'SELECT * FROM nope',
+                ],
+            ])
+        );
+        $stmt->method('close')->willReturn(true);
+
+        $db->method('prepare')->willReturnCallback(
+            function (string $sql) use (&$preparedSql, $stmt) {
+                $preparedSql = $sql;
+                return $stmt;
+            }
+        );
+
+        $controller = new SystemController($db);
+        $result = $controller->errors(['limit' => 1]);
+
+        $this->assertArrayHasKey('data', $result);
+        $this->assertSame('bad query', $result['data'][0]['mysql_error_message']);
+        $this->assertStringContainsString('mysql_error_text AS mysql_error_message', $preparedSql);
+    }
+
+    public function testDbStatsThrowsWhenDatabaseLookupFails(): void
+    {
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+
+        $db->method('query')->willReturnCallback(
+            function (string $sql) {
+                if (str_contains($sql, 'SELECT DATABASE() as db')) {
+                    return false;
+                }
+                return $this->createResultMock([]);
+            }
+        );
+
+        $controller = new SystemController($db);
+
+        $this->expectException(DatabaseException::class);
+        $controller->dbStats();
     }
 }
 

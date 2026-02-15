@@ -24,6 +24,10 @@ func Execute() {
 	}
 }
 
+func SetVersion(version string) {
+	rootCmd.Version = version
+}
+
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output raw JSON instead of tables")
 }

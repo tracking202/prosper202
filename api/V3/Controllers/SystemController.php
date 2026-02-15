@@ -62,14 +62,31 @@ class SystemController
 
         // Use information_schema for row estimates — avoids expensive COUNT(*) on large tables.
         $stats = [];
-        $dbName = $this->db->query("SELECT DATABASE() as db")->fetch_assoc()['db'];
+        $dbResult = $this->db->query("SELECT DATABASE() as db");
+        if ($dbResult === false) {
+            throw new DatabaseException('Failed to determine current database');
+        }
+        $dbRow = $dbResult->fetch_assoc();
+        if (!is_array($dbRow) || !array_key_exists('db', $dbRow)) {
+            throw new DatabaseException('Failed to determine current database');
+        }
+        $dbName = (string)$dbRow['db'];
+
         foreach ($tables as $table => $label) {
             $stmt = $this->prepare(
                 "SELECT TABLE_ROWS as cnt FROM information_schema.TABLES WHERE table_schema = ? AND table_name = ?"
             );
             $stmt->bind_param('ss', $dbName, $table);
-            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Stats query failed'); }
-            $row = $stmt->get_result()->fetch_assoc();
+            if (!$stmt->execute()) {
+                $stmt->close();
+                throw new DatabaseException('Stats query failed');
+            }
+            $result = $stmt->get_result();
+            if ($result === false) {
+                $stmt->close();
+                throw new DatabaseException('Stats query failed');
+            }
+            $row = $result->fetch_assoc();
             $stmt->close();
             $stats[] = ['table' => $table, 'label' => $label, 'rows_estimate' => (int)($row['cnt'] ?? 0)];
         }
@@ -101,7 +118,7 @@ class SystemController
             }
         }
 
-        $result = $this->db->query('SELECT id, cronjob_type, last_execution_time, duration FROM 202_cronjob_logs ORDER BY id DESC LIMIT 20');
+        $result = $this->db->query('SELECT id, last_execution_time FROM 202_cronjob_logs ORDER BY id DESC LIMIT 20');
         $logs = [];
         if ($result) {
             while ($row = $result->fetch_assoc()) {
@@ -116,13 +133,20 @@ class SystemController
     public function errors(array $params): array
     {
         $limit = max(1, min(100, (int)($params['limit'] ?? 20)));
-        $stmt = $this->prepare('SELECT mysql_error_id, mysql_error_time, mysql_error_message FROM 202_mysql_errors ORDER BY mysql_error_id DESC LIMIT ?');
+        $stmt = $this->prepare(
+            'SELECT mysql_error_id, mysql_error_time, mysql_error_text AS mysql_error_message, mysql_error_sql '
+            . 'FROM 202_mysql_errors ORDER BY mysql_error_id DESC LIMIT ?'
+        );
         $stmt->bind_param('i', $limit);
         if (!$stmt->execute()) {
             $stmt->close();
             throw new DatabaseException('Errors query failed');
         }
         $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Errors query failed');
+        }
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             $row['time_human'] = date('Y-m-d H:i:s', (int)$row['mysql_error_time']);

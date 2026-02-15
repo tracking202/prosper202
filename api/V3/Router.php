@@ -14,7 +14,7 @@ namespace Api\V3;
  * Usage:
  *   $router->add('GET', '/campaigns', fn($ctx) => $ctrl->list($ctx['params']));
  *   $router->add('GET', '/campaigns/{id}', fn($ctx) => $ctrl->get((int)$ctx['id']));
- *   $router->group('/system', [Auth::class, 'requireAdmin'], function (Router $r) { ... });
+ *   $router->group('/system', function (Router $r) { ... }, [Auth::class, 'requireAdmin']);
  */
 final class Router
 {
