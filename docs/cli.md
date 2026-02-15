@@ -283,6 +283,15 @@ p202 conversion create --click_id 12345 --payout 4.50 --transaction_id "TXN-001"
 | `--payout`         | No       | Payout amount            |
 | `--transaction_id` | No       | Transaction ID (dedup)   |
 
+### Compatibility aliases
+
+The CLI accepts the following legacy flags for backward compatibility:
+
+| Legacy flag            | Preferred flag |
+|------------------------|----------------|
+| `--click_id_public`    | `--click_id`   |
+| `--conversion_payout`  | `--payout`     |
+
 ### Delete a conversion
 
 ```bash
