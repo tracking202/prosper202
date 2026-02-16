@@ -52,3 +52,6 @@ task-plan-*
 # Go CLI build artifacts
 go-cli/prosper202-cli
 go-cli/*.exe
+task-plan-multi-touch.md
+multi-touch-qa-runbook.md
+task-plan-multi-touch.md
