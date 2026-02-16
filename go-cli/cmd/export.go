@@ -17,6 +17,7 @@ var portableEntities = map[string]string{
 	"aff-networks":  "aff-networks",
 	"ppc-networks":  "ppc-networks",
 	"ppc-accounts":  "ppc-accounts",
+	"rotators":      "rotators",
 	"trackers":      "trackers",
 	"landing-pages": "landing-pages",
 	"text-ads":      "text-ads",
@@ -85,6 +86,10 @@ var exportCmd = &cobra.Command{
 }
 
 func fetchAllRows(c *api.Client, endpoint string) ([]map[string]interface{}, error) {
+	return fetchAllRowsWithParams(c, endpoint, nil)
+}
+
+func fetchAllRowsWithParams(c *api.Client, endpoint string, baseParams map[string]string) ([]map[string]interface{}, error) {
 	const pageSize = 100
 	offset := 0
 	all := make([]map[string]interface{}, 0)
@@ -93,6 +98,12 @@ func fetchAllRows(c *api.Client, endpoint string) ([]map[string]interface{}, err
 		params := map[string]string{
 			"limit":  strconv.Itoa(pageSize),
 			"offset": strconv.Itoa(offset),
+		}
+		for key, value := range baseParams {
+			if value == "" {
+				continue
+			}
+			params[key] = value
 		}
 		data, err := c.Get(endpoint, params)
 		if err != nil {

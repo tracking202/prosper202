@@ -23,6 +23,7 @@ var syncDependencyOrder = []string{
 	"campaigns",
 	"landing-pages",
 	"text-ads",
+	"rotators",
 	"trackers",
 }
 
@@ -33,6 +34,7 @@ var syncEntityIDFields = map[string][]string{
 	"campaigns":     {"aff_campaign_id", "id"},
 	"landing-pages": {"landing_page_id", "id"},
 	"text-ads":      {"text_ad_id", "id"},
+	"rotators":      {"id"},
 	"trackers":      {"tracker_id", "id"},
 }
 
@@ -50,11 +52,16 @@ var syncFKDependencies = map[string]map[string]string{
 		"aff_campaign_id": "campaigns",
 		"landing_page_id": "landing-pages",
 	},
+	"rotators": {
+		"default_campaign": "campaigns",
+		"default_lp":       "landing-pages",
+	},
 	"trackers": {
 		"aff_campaign_id": "campaigns",
 		"ppc_account_id":  "ppc-accounts",
 		"landing_page_id": "landing-pages",
 		"text_ad_id":      "text-ads",
+		"rotator_id":      "rotators",
 	},
 }
 
@@ -95,6 +102,11 @@ var syncStatusCmd = &cobra.Command{
 		toProfile = strings.TrimSpace(toProfile)
 		if fromProfile == "" || toProfile == "" {
 			return fmt.Errorf("--from and --to are required")
+		}
+		if handled, err := tryServerSyncRead("sync/status", fromProfile, toProfile); err != nil {
+			return err
+		} else if handled {
+			return nil
 		}
 
 		manifest, err := syncstate.LoadManifest(fromProfile, toProfile)
@@ -175,6 +187,11 @@ var syncHistoryCmd = &cobra.Command{
 		if fromProfile == "" || toProfile == "" {
 			return fmt.Errorf("--from and --to are required")
 		}
+		if handled, err := tryServerSyncRead("sync/history", fromProfile, toProfile); err != nil {
+			return err
+		} else if handled {
+			return nil
+		}
 
 		manifest, err := syncstate.LoadManifest(fromProfile, toProfile)
 		if err != nil {
@@ -206,6 +223,12 @@ var reSyncCmd = &cobra.Command{
 }
 
 func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) error {
+	if handled, err := tryServerSideSync(entityArg, fromProfile, toProfile, opts); err != nil {
+		return err
+	} else if handled {
+		return nil
+	}
+
 	entities, err := selectedSyncEntities(entityArg)
 	if err != nil {
 		return err
@@ -490,7 +513,7 @@ func buildSyncPayload(entity string, sourceRow map[string]interface{}, sourceLoo
 	deps := syncFKDependencies[entity]
 	for fkField, refEntity := range deps {
 		rawSourceID := scalarString(sourceRow[fkField])
-		if rawSourceID == "" {
+		if rawSourceID == "" || rawSourceID == "0" {
 			continue
 		}
 
@@ -524,6 +547,8 @@ func referenceNaturalByEntity(entity, sourceID string, lookups entityLookups) st
 		return lookups.landingPages[sourceID]
 	case "text-ads":
 		return lookups.textAds[sourceID]
+	case "rotators":
+		return lookups.rotators[sourceID]
 	default:
 		return ""
 	}
@@ -543,6 +568,8 @@ func referenceIDByNatural(entity, natural string, lookups entityLookups) string 
 		return lookups.landingPageIDs[natural]
 	case "text-ads":
 		return lookups.textAdIDs[natural]
+	case "rotators":
+		return lookups.rotatorIDs[natural]
 	default:
 		return ""
 	}
@@ -626,6 +653,103 @@ func addSyncFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("force-update", false, "Update mismatched target records")
 	_ = cmd.MarkFlagRequired("from")
 	_ = cmd.MarkFlagRequired("to")
+}
+
+func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOptions) (bool, error) {
+	orchestrator, err := api.NewFromProfile(fromProfile)
+	if err != nil {
+		return false, nil
+	}
+	if !orchestrator.SupportsCapability("sync_features", "async_jobs") {
+		return false, nil
+	}
+
+	sourceConn, err := loadProfileConnection(fromProfile)
+	if err != nil {
+		return false, nil
+	}
+	targetConn, err := loadProfileConnection(toProfile)
+	if err != nil {
+		return false, nil
+	}
+
+	payload := map[string]interface{}{
+		"entity":       entityArg,
+		"source":       sourceConn,
+		"target":       targetConn,
+		"dry_run":      opts.DryRun,
+		"skip_errors":  opts.SkipErrors,
+		"force_update": opts.ForceUpdate,
+		"incremental":  opts.Incremental,
+	}
+
+	endpoint := "sync/jobs"
+	if opts.Incremental {
+		endpoint = "sync/re-sync"
+	}
+	resp, err := orchestrator.Post(endpoint, payload)
+	if err != nil {
+		return false, nil
+	}
+
+	obj, parseErr := parseDataObject(resp)
+	if parseErr == nil {
+		jobID := scalarString(obj["job_id"])
+		if jobID != "" {
+			for attempt := 0; attempt < 20; attempt++ {
+				_, _ = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
+				jobResp, getErr := orchestrator.Get("sync/jobs/"+jobID, nil)
+				if getErr != nil {
+					break
+				}
+				jobObj, objErr := parseDataObject(jobResp)
+				if objErr != nil {
+					break
+				}
+				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
+				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
+					render(jobResp)
+					return true, nil
+				}
+				time.Sleep(250 * time.Millisecond)
+			}
+		}
+	}
+
+	render(resp)
+	return true, nil
+}
+
+func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
+	orchestrator, err := api.NewFromProfile(fromProfile)
+	if err != nil {
+		return false, nil
+	}
+	if !orchestrator.SupportsCapability("sync_features", "async_jobs") {
+		return false, nil
+	}
+
+	sourceConn, err := loadProfileConnection(fromProfile)
+	if err != nil {
+		return false, nil
+	}
+	targetConn, err := loadProfileConnection(toProfile)
+	if err != nil {
+		return false, nil
+	}
+
+	params := map[string]string{
+		"source[name]": sourceConn["name"].(string),
+		"source[url]":  sourceConn["url"].(string),
+		"target[name]": targetConn["name"].(string),
+		"target[url]":  targetConn["url"].(string),
+	}
+	resp, err := orchestrator.Get(path, params)
+	if err != nil {
+		return false, nil
+	}
+	render(resp)
+	return true, nil
 }
 
 func init() {

@@ -15,6 +15,7 @@ var immutableFieldsByEntity = map[string][]string{
 	"aff-networks":  {"id", "user_id", "aff_network_id", "aff_network_deleted"},
 	"ppc-networks":  {"id", "user_id", "ppc_network_id", "ppc_network_deleted"},
 	"ppc-accounts":  {"id", "user_id", "ppc_account_id", "ppc_account_deleted"},
+	"rotators":      {"id", "user_id"},
 	"trackers":      {"id", "user_id", "tracker_id", "tracker_id_public", "tracker_time"},
 	"landing-pages": {"id", "user_id", "landing_page_id", "landing_page_deleted"},
 	"text-ads":      {"id", "user_id", "text_ad_id", "text_ad_deleted"},
