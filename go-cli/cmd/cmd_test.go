@@ -99,45 +99,82 @@ func newEntityDataServer(t *testing.T, rowsByEndpoint map[string][]map[string]in
 		}
 
 		endpoint := strings.TrimPrefix(r.URL.Path, "/api/v3/")
-		rows := rowsByEndpoint[endpoint]
-		if rows == nil {
-			rows = []map[string]interface{}{}
+		writeList := func(rows []map[string]interface{}) {
+			offset := 0
+			limit := len(rows)
+			if raw := r.URL.Query().Get("offset"); raw != "" {
+				if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+					offset = parsed
+				}
+			}
+			if raw := r.URL.Query().Get("limit"); raw != "" {
+				if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+					limit = parsed
+				}
+			}
+
+			start := offset
+			if start > len(rows) {
+				start = len(rows)
+			}
+			end := start + limit
+			if end > len(rows) {
+				end = len(rows)
+			}
+
+			page := rows[start:end]
+			resp := map[string]interface{}{
+				"data": page,
+				"pagination": map[string]interface{}{
+					"total":  len(rows),
+					"limit":  limit,
+					"offset": offset,
+				},
+			}
+			payload, _ := json.Marshal(resp)
+			w.WriteHeader(200)
+			_, _ = w.Write(payload)
 		}
 
-		offset := 0
-		limit := len(rows)
-		if raw := r.URL.Query().Get("offset"); raw != "" {
-			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-				offset = parsed
+		if rows, ok := rowsByEndpoint[endpoint]; ok {
+			writeList(rows)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			parts := strings.SplitN(endpoint, "/", 3)
+			if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+				baseEndpoint := parts[0]
+				targetID := parts[1]
+				if rows, ok := rowsByEndpoint[baseEndpoint]; ok {
+					for _, row := range rows {
+						candidateFields := []string{"id", "public_id"}
+						if entityFields, exists := syncEntityIDFields[baseEndpoint]; exists {
+							candidateFields = append(candidateFields, entityFields...)
+						}
+						for _, field := range candidateFields {
+							if scalarString(row[field]) == targetID {
+								payload, _ := json.Marshal(map[string]interface{}{"data": row})
+								w.WriteHeader(200)
+								_, _ = w.Write(payload)
+								return
+							}
+						}
+					}
+					w.WriteHeader(404)
+					_, _ = w.Write([]byte(`{"message":"not found"}`))
+					return
+				}
 			}
 		}
-		if raw := r.URL.Query().Get("limit"); raw != "" {
-			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-				limit = parsed
-			}
+
+		if strings.Contains(endpoint, "/") {
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+			return
 		}
 
-		start := offset
-		if start > len(rows) {
-			start = len(rows)
-		}
-		end := start + limit
-		if end > len(rows) {
-			end = len(rows)
-		}
-		page := rows[start:end]
-
-		resp := map[string]interface{}{
-			"data": page,
-			"pagination": map[string]interface{}{
-				"total":  len(rows),
-				"limit":  limit,
-				"offset": offset,
-			},
-		}
-		payload, _ := json.Marshal(resp)
-		w.WriteHeader(200)
-		_, _ = w.Write(payload)
+		writeList([]map[string]interface{}{})
 	}))
 }
 
@@ -413,19 +450,32 @@ func executeCommand(args ...string) (string, string, error) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
+	// Capture os.Stderr since output.renderPagination writes directly to os.Stderr
+	oldStderr := os.Stderr
+	rErr, wErr, _ := os.Pipe()
+	os.Stderr = wErr
+
 	err := rootCmd.Execute()
 
 	w.Close()
 	os.Stdout = oldStdout
+	wErr.Close()
+	os.Stderr = oldStderr
 
 	var pipeBuf bytes.Buffer
 	io.Copy(&pipeBuf, r)
 	r.Close()
 
+	var pipeErrBuf bytes.Buffer
+	io.Copy(&pipeErrBuf, rErr)
+	rErr.Close()
+
 	// Combine cobra's SetOut buffer with pipe-captured stdout
 	combined := stdoutBuf.String() + pipeBuf.String()
+	// Combine cobra's SetErr buffer with pipe-captured stderr
+	combinedErr := stderrBuf.String() + pipeErrBuf.String()
 
-	return combined, stderrBuf.String(), err
+	return combined, combinedErr, err
 }
 
 func resetAllFlags(cmd *cobra.Command) {
@@ -983,6 +1033,179 @@ func TestDiffShowsChanged(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("changed_fields should include aff_campaign_payout, got %#v", fields)
+	}
+}
+
+func TestDiffDetectsRotatorRuleChanges(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"rotators": {
+			{
+				"id":               1,
+				"public_id":        100,
+				"name":             "R1",
+				"default_campaign": 0,
+				"default_lp":       0,
+				"rules": []interface{}{
+					map[string]interface{}{
+						"id":        11,
+						"rule_name": "US",
+						"splittest": 1,
+						"status":    1,
+						"criteria": []interface{}{
+							map[string]interface{}{"id": 1001, "type": "country", "statement": "is", "value": "US"},
+						},
+						"redirects": []interface{}{
+							map[string]interface{}{"id": 2001, "redirect_url": "", "redirect_campaign": 0, "redirect_lp": 0, "weight": 100, "name": "A"},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer source.Close()
+
+	target := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"rotators": {
+			{
+				"id":               99,
+				"public_id":        100,
+				"name":             "R1",
+				"default_campaign": 0,
+				"default_lp":       0,
+				"rules": []interface{}{
+					map[string]interface{}{
+						"id":        55,
+						"rule_name": "US",
+						"splittest": 0,
+						"status":    1,
+						"criteria": []interface{}{
+							map[string]interface{}{"id": 3001, "type": "country", "statement": "is", "value": "US"},
+						},
+						"redirects": []interface{}{
+							map[string]interface{}{"id": 4001, "redirect_url": "", "redirect_campaign": 0, "redirect_lp": 0, "weight": 100, "name": "A"},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("diff", "rotators", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("diff rotators error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	data, _ := parsed["data"].(map[string]interface{})
+	if got := int(data["changed_count"].(float64)); got != 1 {
+		t.Fatalf("changed_count=%d, want 1", got)
+	}
+	changedRows, _ := data["changed"].([]interface{})
+	if len(changedRows) != 1 {
+		t.Fatalf("expected 1 changed row, got %d", len(changedRows))
+	}
+	changed, _ := changedRows[0].(map[string]interface{})
+	fields, _ := changed["changed_fields"].([]interface{})
+	foundRules := false
+	for _, field := range fields {
+		if scalarString(field) == "rules" {
+			foundRules = true
+			break
+		}
+	}
+	if !foundRules {
+		t.Fatalf("changed_fields should include rules, got %#v", fields)
+	}
+}
+
+func TestDiffRotatorIdenticalWithSameRules(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"rotators": {
+			{
+				"id":               10,
+				"public_id":        200,
+				"name":             "R2",
+				"default_campaign": 0,
+				"default_lp":       0,
+				"rules": []interface{}{
+					map[string]interface{}{
+						"id":        501,
+						"rule_name": "CA",
+						"splittest": 1,
+						"status":    1,
+						"criteria": []interface{}{
+							map[string]interface{}{"id": 7001, "type": "country", "statement": "is", "value": "CA"},
+						},
+						"redirects": []interface{}{
+							map[string]interface{}{"id": 8001, "redirect_url": "https://example.com", "redirect_campaign": 0, "redirect_lp": 0, "weight": 100, "name": "Primary"},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer source.Close()
+
+	target := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"rotators": {
+			{
+				"id":               11,
+				"public_id":        200,
+				"name":             "R2",
+				"default_campaign": 0,
+				"default_lp":       0,
+				"rules": []interface{}{
+					map[string]interface{}{
+						"id":        900,
+						"rule_name": "CA",
+						"splittest": 1,
+						"status":    1,
+						"criteria": []interface{}{
+							map[string]interface{}{"id": 9001, "type": "country", "statement": "is", "value": "CA"},
+						},
+						"redirects": []interface{}{
+							map[string]interface{}{"id": 9101, "redirect_url": "https://example.com", "redirect_campaign": 0, "redirect_lp": 0, "weight": 100, "name": "Primary"},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("diff", "rotators", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("diff rotators error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	data, _ := parsed["data"].(map[string]interface{})
+	if got := int(data["changed_count"].(float64)); got != 0 {
+		t.Fatalf("changed_count=%d, want 0", got)
+	}
+	if got := int(data["identical_count"].(float64)); got != 1 {
+		t.Fatalf("identical_count=%d, want 1", got)
 	}
 }
 
@@ -3465,6 +3688,476 @@ func TestConversionCreateSupportsLegacyAliases(t *testing.T) {
 	}
 }
 
+func TestRotatorRuleUpdateCommand(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		bodyBytes, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(bodyBytes, &gotBody)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"id":3,"rules":[{"id":11,"rule_name":"US Premium v2"}]}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand(
+		"rotator", "rule-update", "3", "11",
+		"--rule_name=US Premium v2",
+		"--status=1",
+		"--criteria_json=[{\"type\":\"country\",\"statement\":\"is\",\"value\":\"US\"}]",
+	)
+	if err != nil {
+		t.Fatalf("rotator rule-update error: %v", err)
+	}
+
+	if gotMethod != "PUT" {
+		t.Fatalf("method = %q, want PUT", gotMethod)
+	}
+	if gotPath != "/api/v3/rotators/3/rules/11" {
+		t.Fatalf("path = %q, want /api/v3/rotators/3/rules/11", gotPath)
+	}
+	if gotBody["rule_name"] != "US Premium v2" {
+		t.Fatalf("rule_name = %#v, want %q", gotBody["rule_name"], "US Premium v2")
+	}
+	if gotBody["status"] != "1" {
+		t.Fatalf("status = %#v, want %q", gotBody["status"], "1")
+	}
+	if _, ok := gotBody["criteria"]; !ok {
+		t.Fatalf("criteria payload missing in body: %#v", gotBody)
+	}
+	if !strings.Contains(stdout, "US Premium v2") {
+		t.Fatalf("expected response output, got:\n%s", stdout)
+	}
+}
+
+func TestRotatorRuleUpdateRequiresAtLeastOneField(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "https://tracker.example.com", "test-key")
+
+	_, _, err := executeCommand("rotator", "rule-update", "3", "11")
+	if err == nil {
+		t.Fatal("expected error for empty rule-update payload")
+	}
+	if !strings.Contains(err.Error(), "no fields specified") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyticsCommandAliasMapping(t *testing.T) {
+	var gotParams url.Values
+	var gotPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":10,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand(
+		"analytics",
+		"--group-by=lp",
+		"--period=last7",
+		"--days=30",
+		"--sort=conversions",
+		"--limit=10",
+	)
+	if err != nil {
+		t.Fatalf("analytics command error: %v", err)
+	}
+
+	if gotPath != "/api/v3/reports/breakdown" {
+		t.Fatalf("path = %q, want /api/v3/reports/breakdown", gotPath)
+	}
+	if got := gotParams.Get("breakdown"); got != "landing_page" {
+		t.Fatalf("breakdown = %q, want landing_page", got)
+	}
+	if got := gotParams.Get("sort"); got != "total_leads" {
+		t.Fatalf("sort = %q, want total_leads", got)
+	}
+	if got := gotParams.Get("sort_dir"); got != "DESC" {
+		t.Fatalf("sort_dir = %q, want DESC", got)
+	}
+	if got := gotParams.Get("period"); got != "last7" {
+		t.Fatalf("period = %q, want last7", got)
+	}
+	if gotParams.Get("time_from") != "" || gotParams.Get("time_to") != "" {
+		t.Fatalf("time_from/time_to should be empty when --period is provided, got: %#v", gotParams)
+	}
+}
+
+func TestAnalyticsCommandCanBeDisabledByFeatureFlag(t *testing.T) {
+	t.Setenv("CLI_ENABLE_ANALYTICS_SHORTHAND", "0")
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "https://tracker.example.com", "test-key")
+
+	_, _, err := executeCommand("analytics", "--group-by=campaign")
+	if err == nil {
+		t.Fatal("expected analytics command to be disabled")
+	}
+	if !strings.Contains(err.Error(), "analytics shorthand is disabled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestTrackerListResolveNamesAddsResolvedFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/trackers":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"tracker_id":10,"aff_campaign_id":4,"ppc_account_id":0,"landing_page_id":0,"text_ad_id":0,"rotator_id":0}],"pagination":{"total":1,"limit":50,"offset":0}}`))
+		case "/api/v3/campaigns":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"aff_campaign_id":4,"aff_campaign_name":"Paz"}],"pagination":{"total":1,"limit":100,"offset":0}}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("--json", "tracker", "list", "--resolve-names")
+	if err != nil {
+		t.Fatalf("tracker list --resolve-names error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+
+	data, _ := parsed["data"].([]interface{})
+	if len(data) != 1 {
+		t.Fatalf("expected one tracker row, got %d", len(data))
+	}
+	row, _ := data[0].(map[string]interface{})
+	if got := scalarString(row["campaign_name"]); got != "Paz" {
+		t.Fatalf("campaign_name = %q, want Paz", got)
+	}
+	if got := scalarString(row["aff_campaign_id"]); got != "4" {
+		t.Fatalf("aff_campaign_id should remain present, got %q", got)
+	}
+}
+
+func TestTrackerListResolveNamesCanBeDisabledByFeatureFlag(t *testing.T) {
+	t.Setenv("CLI_ENABLE_RESOLVE_NAMES", "0")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("tracker", "list", "--resolve-names")
+	if err == nil {
+		t.Fatal("expected --resolve-names feature gate error")
+	}
+	if !strings.Contains(err.Error(), "--resolve-names is disabled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestTrackerListAllFetchesAllPages(t *testing.T) {
+	var offsets []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/trackers" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+
+		offset := r.URL.Query().Get("offset")
+		limit := r.URL.Query().Get("limit")
+		offsets = append(offsets, offset+"|"+limit)
+
+		off, _ := strconv.Atoi(offset)
+		lim, _ := strconv.Atoi(limit)
+		total := 205
+		if lim <= 0 {
+			lim = 100
+		}
+		end := off + lim
+		if end > total {
+			end = total
+		}
+
+		capHint := end - off
+		if capHint < 0 {
+			capHint = 0
+		}
+		rows := make([]map[string]interface{}, 0, capHint)
+		for i := off; i < end; i++ {
+			rows = append(rows, map[string]interface{}{"tracker_id": i + 1})
+		}
+		payload, _ := json.Marshal(map[string]interface{}{
+			"data": rows,
+			"pagination": map[string]interface{}{
+				"total":  total,
+				"limit":  lim,
+				"offset": off,
+			},
+		})
+		w.WriteHeader(200)
+		w.Write(payload)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("--json", "tracker", "list", "--all")
+	if err != nil {
+		t.Fatalf("tracker list --all error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	rows, _ := parsed["data"].([]interface{})
+	if len(rows) != 205 {
+		t.Fatalf("rows length = %d, want 205", len(rows))
+	}
+	if len(offsets) != 3 {
+		t.Fatalf("expected 3 paged calls, got %d (%#v)", len(offsets), offsets)
+	}
+}
+
+func TestTrackerListAllDetectsPaginationStall(t *testing.T) {
+	requests := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/trackers" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		requests++
+
+		rows := make([]map[string]interface{}, 0, 100)
+		for i := 0; i < 100; i++ {
+			rows = append(rows, map[string]interface{}{"tracker_id": i + 1})
+		}
+		payload, _ := json.Marshal(map[string]interface{}{
+			"data": rows,
+			"pagination": map[string]interface{}{
+				"total":  250,
+				"limit":  100,
+				"offset": 0,
+			},
+		})
+		w.WriteHeader(200)
+		w.Write(payload)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("--json", "tracker", "list", "--all")
+	if err == nil {
+		t.Fatal("expected pagination stall error")
+	}
+	if !strings.Contains(err.Error(), "pagination stalled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests < 2 {
+		t.Fatalf("expected at least 2 requests before stall detection, got %d", requests)
+	}
+}
+
+func TestTrackerListAllRejectsDuplicatePageSequence(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/trackers" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+
+		offset := r.URL.Query().Get("offset")
+		limit := 100
+		total := 250
+
+		start := 0
+		if offset == "200" {
+			start = 200
+		}
+		end := start + limit
+		if end > total {
+			end = total
+		}
+
+		rows := make([]map[string]interface{}, 0, end-start)
+		for i := start; i < end; i++ {
+			rows = append(rows, map[string]interface{}{"tracker_id": i + 1})
+		}
+
+		reportedOffset := start
+		if offset == "100" {
+			reportedOffset = 0
+		}
+
+		payload, _ := json.Marshal(map[string]interface{}{
+			"data": rows,
+			"pagination": map[string]interface{}{
+				"total":  total,
+				"limit":  limit,
+				"offset": reportedOffset,
+			},
+		})
+		w.WriteHeader(200)
+		w.Write(payload)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("--json", "tracker", "list", "--all")
+	if err == nil {
+		t.Fatal("expected duplicate-page protection error")
+	}
+	if !strings.Contains(err.Error(), "pagination stalled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestTrackerListResolveNamesFallsBackWhenLookupFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/trackers":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"tracker_id":10,"aff_campaign_id":4,"ppc_account_id":0,"landing_page_id":0,"text_ad_id":0,"rotator_id":0}],"pagination":{"total":1,"limit":50,"offset":0}}`))
+		case "/api/v3/campaigns":
+			w.WriteHeader(500)
+			w.Write([]byte(`{"message":"lookup failed"}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, stderr, err := executeCommand("--json", "tracker", "list", "--resolve-names")
+	if err != nil {
+		t.Fatalf("tracker list --resolve-names should gracefully fallback, got error: %v", err)
+	}
+	if !strings.Contains(stderr, "resolve names lookup failed for campaigns") {
+		t.Fatalf("expected fallback warning in stderr, got: %q", stderr)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	data, _ := parsed["data"].([]interface{})
+	if len(data) != 1 {
+		t.Fatalf("expected one tracker row, got %d", len(data))
+	}
+	row, _ := data[0].(map[string]interface{})
+	if got := scalarString(row["campaign_name"]); got != "id:4" {
+		t.Fatalf("campaign_name = %q, want id:4 fallback", got)
+	}
+	if got := scalarString(row["aff_campaign_id"]); got != "4" {
+		t.Fatalf("aff_campaign_id should remain present, got %q", got)
+	}
+}
+
+func TestConversionDeleteBulkIdsReturnsErrorOnPartialFailure(t *testing.T) {
+	var deletePaths []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" || !strings.HasPrefix(r.URL.Path, "/api/v3/conversions/") {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		deletePaths = append(deletePaths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/2") {
+			w.WriteHeader(500)
+			w.Write([]byte(`{"message":"boom"}`))
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("conversion", "delete", "--ids=1,2", "--force")
+	if err == nil {
+		t.Fatal("expected partial failure error for bulk delete")
+	}
+	if !strings.Contains(stdout, "Deleted 1 of 2 conversions.") {
+		t.Fatalf("unexpected summary output:\n%s", stdout)
+	}
+	if len(deletePaths) != 2 {
+		t.Fatalf("expected 2 delete calls, got %d", len(deletePaths))
+	}
+}
+
+func TestRotatorRuleDeleteBulkIds(t *testing.T) {
+	var deletePaths []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		deletePaths = append(deletePaths, r.URL.Path)
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("rotator", "rule-delete", "5", "--ids=10,11", "--force")
+	if err != nil {
+		t.Fatalf("rotator rule-delete --ids error: %v", err)
+	}
+	if len(deletePaths) != 2 {
+		t.Fatalf("expected 2 delete calls, got %d", len(deletePaths))
+	}
+	if deletePaths[0] != "/api/v3/rotators/5/rules/10" || deletePaths[1] != "/api/v3/rotators/5/rules/11" {
+		t.Fatalf("unexpected delete paths: %#v", deletePaths)
+	}
+}
+
 func TestAPI422ErrorShowsFieldErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(422)
@@ -3506,5 +4199,540 @@ func TestAPI500Error(t *testing.T) {
 	errMsg := err.Error()
 	if !strings.Contains(errMsg, "500") {
 		t.Errorf("error should contain status code, got: %q", errMsg)
+	}
+}
+
+// --- Regression/Snapshot Tests ---
+
+func TestCampaignListJSONOutputShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"aff_campaign_id":1,"aff_campaign_name":"Camp A"}],"pagination":{"total":1,"limit":25,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("--json", "campaign", "list")
+	if err != nil {
+		t.Fatalf("campaign list error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+
+	// Verify required top-level keys exist
+	if _, ok := parsed["data"]; !ok {
+		t.Error("JSON output missing 'data' key")
+	}
+	if _, ok := parsed["pagination"]; !ok {
+		t.Error("JSON output missing 'pagination' key")
+	}
+
+	// Verify pagination shape
+	pg, _ := parsed["pagination"].(map[string]interface{})
+	for _, key := range []string{"total", "limit", "offset"} {
+		if _, ok := pg[key]; !ok {
+			t.Errorf("pagination missing '%s' key", key)
+		}
+	}
+
+	// Verify data is an array
+	data, ok := parsed["data"].([]interface{})
+	if !ok {
+		t.Fatal("data should be an array")
+	}
+	if len(data) != 1 {
+		t.Fatalf("data length = %d, want 1", len(data))
+	}
+}
+
+func TestRotatorListJSONOutputShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"id":5,"name":"US Rotator"}],"pagination":{"total":1,"limit":25,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("--json", "rotator", "list")
+	if err != nil {
+		t.Fatalf("rotator list error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	if _, ok := parsed["data"]; !ok {
+		t.Error("JSON output missing 'data' key")
+	}
+	if _, ok := parsed["pagination"]; !ok {
+		t.Error("JSON output missing 'pagination' key")
+	}
+}
+
+func TestExitCodeClassification(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			wantCode: ExitOK,
+		},
+		{
+			name:     "validation error",
+			err:      validationError("bad input"),
+			wantCode: ExitValidation,
+		},
+		{
+			name:     "partial failure error",
+			err:      partialFailureError("2 of 3 failed"),
+			wantCode: ExitPartialFailure,
+		},
+		{
+			name:     "generic fmt.Errorf",
+			err:      fmt.Errorf("something went wrong"),
+			wantCode: ExitValidation, // fallback
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := exitCodeForError(tt.err)
+			if got != tt.wantCode {
+				t.Errorf("exitCodeForError() = %d, want %d", got, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestCLIErrorCategoryName(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     *CLIError
+		wantCat string
+	}{
+		{
+			name:    "validation",
+			err:     validationError("bad input"),
+			wantCat: "validation",
+		},
+		{
+			name:    "partial_failure",
+			err:     partialFailureError("some failed"),
+			wantCat: "partial_failure",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.CategoryName(); got != tt.wantCat {
+				t.Errorf("CategoryName() = %q, want %q", got, tt.wantCat)
+			}
+		})
+	}
+}
+
+func TestPaginationWarningAppearsInTableMode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"id":1},{"id":2}],"pagination":{"total":50,"limit":2,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, stderr, err := executeCommand("campaign", "list")
+	if err != nil {
+		t.Fatalf("campaign list error: %v", err)
+	}
+
+	if !strings.Contains(stderr, "Warning: Showing 2 of 50 results") {
+		t.Errorf("expected truncation warning in stderr, got: %q", stderr)
+	}
+}
+
+func TestPaginationWarningAbsentInJSONMode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"id":1},{"id":2}],"pagination":{"total":50,"limit":2,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, stderr, err := executeCommand("--json", "campaign", "list")
+	if err != nil {
+		t.Fatalf("campaign list --json error: %v", err)
+	}
+
+	if strings.Contains(stderr, "Warning") {
+		t.Errorf("expected no warning in JSON mode, got: %q", stderr)
+	}
+}
+
+func TestPaginationNoWarningWhenAllShown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"id":1}],"pagination":{"total":1,"limit":25,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, stderr, err := executeCommand("campaign", "list")
+	if err != nil {
+		t.Fatalf("campaign list error: %v", err)
+	}
+
+	if strings.Contains(stderr, "Warning") {
+		t.Errorf("should not warn when all results shown, got: %q", stderr)
+	}
+}
+
+func TestAnalyticsGroupByRequired(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("analytics")
+	if err == nil {
+		t.Fatal("expected error when --group-by is missing")
+	}
+	if !strings.Contains(err.Error(), "--group-by is required") {
+		t.Errorf("unexpected error: %q", err.Error())
+	}
+}
+
+func TestAnalyticsInvalidGroupByRejects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("analytics", "--group-by=nonexistent")
+	if err == nil {
+		t.Fatal("expected error for invalid group-by")
+	}
+	if !strings.Contains(err.Error(), "unsupported --group-by") {
+		t.Errorf("unexpected error: %q", err.Error())
+	}
+}
+
+func TestAnalyticsInvalidSortRejects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("analytics", "--group-by=campaign", "--sort=bogus")
+	if err == nil {
+		t.Fatal("expected error for invalid sort")
+	}
+	if !strings.Contains(err.Error(), "unsupported --sort") {
+		t.Errorf("unexpected error: %q", err.Error())
+	}
+}
+
+func TestBulkDeletePartialFailureExitCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" && strings.HasSuffix(r.URL.Path, "/2") {
+			w.WriteHeader(500)
+			w.Write([]byte(`{"message":"server error"}`))
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("campaign", "delete", "--ids=1,2,3", "--force")
+	if err == nil {
+		t.Fatal("expected error for partial failure")
+	}
+
+	cliErr, ok := err.(*CLIError)
+	if !ok {
+		t.Fatalf("error type = %T, want *CLIError", err)
+	}
+	if cliErr.ExitCode != ExitPartialFailure {
+		t.Errorf("exit code = %d, want %d (partial failure)", cliErr.ExitCode, ExitPartialFailure)
+	}
+	if cliErr.Category != "partial_failure" {
+		t.Errorf("category = %q, want %q", cliErr.Category, "partial_failure")
+	}
+}
+
+func TestConversionListJSONOutputShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"id":10,"click_id":5,"payout":"1.50"}],"pagination":{"total":1,"limit":25,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("--json", "conversion", "list")
+	if err != nil {
+		t.Fatalf("conversion list error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	if _, ok := parsed["data"]; !ok {
+		t.Error("JSON output missing 'data' key")
+	}
+	if _, ok := parsed["pagination"]; !ok {
+		t.Error("JSON output missing 'pagination' key")
+	}
+}
+
+func TestClickListJSONOutputShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[{"click_id":1,"click_ip":"1.2.3.4"}],"pagination":{"total":1,"limit":25,"offset":0}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("--json", "click", "list")
+	if err != nil {
+		t.Fatalf("click list error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout)
+	}
+	if _, ok := parsed["data"]; !ok {
+		t.Error("JSON output missing 'data' key")
+	}
+}
+
+func TestFeatureFlagParsing(t *testing.T) {
+	tests := []struct {
+		envVal       string
+		defaultValue bool
+		want         bool
+	}{
+		{"", true, true},       // absent -> default
+		{"1", false, true},     // "1" -> true
+		{"true", false, true},  // "true" -> true
+		{"0", true, false},     // "0" -> false
+		{"false", true, false}, // "false" -> false
+		{"off", true, false},   // "off" -> false
+		{"on", false, true},    // "on" -> true
+		{"junk", true, true},   // unrecognized -> default
+		{"junk", false, false}, // unrecognized -> default
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("val=%q_default=%v", tt.envVal, tt.defaultValue), func(t *testing.T) {
+			t.Setenv("TEST_FEATURE_FLAG_XYZ", tt.envVal)
+			got := envFlagEnabled("TEST_FEATURE_FLAG_XYZ", tt.defaultValue)
+			if got != tt.want {
+				t.Errorf("envFlagEnabled(%q, %v) = %v, want %v", tt.envVal, tt.defaultValue, got, tt.want)
+			}
+		})
+	}
+
+	// absent env var case
+	t.Run("absent_default_true", func(t *testing.T) {
+		got := envFlagEnabled("TOTALLY_ABSENT_FLAG_FOR_TEST_12345", true)
+		if !got {
+			t.Error("absent flag should return default value true")
+		}
+	})
+	t.Run("absent_default_false", func(t *testing.T) {
+		got := envFlagEnabled("TOTALLY_ABSENT_FLAG_FOR_TEST_12345", false)
+		if got {
+			t.Error("absent flag should return default value false")
+		}
+	})
+}
+
+func TestParseIDListDeduplication(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    []string
+		wantErr bool
+	}{
+		{"1,2,3", []string{"1", "2", "3"}, false},
+		{"1, 2, 3", []string{"1", "2", "3"}, false},
+		{"1,1,2,2,3", []string{"1", "2", "3"}, false},
+		{" , , ", nil, false},
+		{"5", []string{"5"}, false},
+		{"1,,2,,3", []string{"1", "2", "3"}, false},
+		{"abc,def", nil, true},
+		{"1,abc,3", nil, true},
+		{"1.5,2", nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := parseIDList(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseIDList(%q) expected error, got nil", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseIDList(%q) unexpected error: %v", tt.input, err)
+			}
+			if tt.want == nil {
+				if len(got) != 0 {
+					t.Errorf("parseIDList(%q) = %v, want empty", tt.input, got)
+				}
+				return
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("parseIDList(%q) = %v (len %d), want %v (len %d)", tt.input, got, len(got), tt.want, len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("parseIDList(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestRotatorDeleteBulkPartialFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" && strings.HasSuffix(r.URL.Path, "/2") {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("rotator", "delete", "--ids=1,2,3", "--force")
+	if err == nil {
+		t.Fatal("expected error for partial failure")
+	}
+
+	cliErr, ok := err.(*CLIError)
+	if !ok {
+		t.Fatalf("error type = %T, want *CLIError", err)
+	}
+	if cliErr.ExitCode != ExitPartialFailure {
+		t.Errorf("exit code = %d, want %d", cliErr.ExitCode, ExitPartialFailure)
+	}
+}
+
+func TestAnalyticsPeriodPrecedenceOverDays(t *testing.T) {
+	var gotParams url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("analytics", "--group-by=campaign", "--period=last30", "--days=7")
+	if err != nil {
+		t.Fatalf("analytics error: %v", err)
+	}
+
+	if got := gotParams.Get("period"); got != "last30" {
+		t.Errorf("period = %q, want last30", got)
+	}
+	// When --period is provided, --days should be ignored (no time_from/time_to)
+	if got := gotParams.Get("time_from"); got != "" {
+		t.Errorf("time_from should be empty when --period is set, got %q", got)
+	}
+}
+
+func TestListAllWinsOverLimit(t *testing.T) {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		// Return a small dataset to end pagination
+		rows := []map[string]interface{}{{"id": callCount}}
+		payload, _ := json.Marshal(map[string]interface{}{
+			"data": rows,
+			"pagination": map[string]interface{}{
+				"total":  1,
+				"limit":  100,
+				"offset": 0,
+			},
+		})
+		w.WriteHeader(200)
+		w.Write(payload)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	// --all should override --limit
+	stdout, _, err := executeCommand("--json", "campaign", "list", "--all", "--limit=1")
+	if err != nil {
+		t.Fatalf("list --all --limit error: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	data, _ := parsed["data"].([]interface{})
+	if len(data) != 1 {
+		t.Fatalf("data length = %d, want 1", len(data))
 	}
 }

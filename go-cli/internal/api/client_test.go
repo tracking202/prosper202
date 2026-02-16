@@ -425,3 +425,41 @@ func TestURLPathConcatenation(t *testing.T) {
 		t.Errorf("path = %q, want /api/v3/campaigns", gotPath)
 	}
 }
+
+func TestAPIErrorCategoryByStatus(t *testing.T) {
+	tests := []struct {
+		status  int
+		wantCat string
+	}{
+		{status: 400, wantCat: "validation"},
+		{status: 401, wantCat: "auth"},
+		{status: 403, wantCat: "auth"},
+		{status: 500, wantCat: "server"},
+	}
+
+	for _, tt := range tests {
+		t.Run(strings.TrimSpace(http.StatusText(tt.status)), func(t *testing.T) {
+			err := parseAPIError(tt.status, []byte(`{"message":"boom"}`))
+			if got := err.CategoryName(); got != tt.wantCat {
+				t.Fatalf("CategoryName() = %q, want %q", got, tt.wantCat)
+			}
+			if got := ErrorCategory(err); got != tt.wantCat {
+				t.Fatalf("ErrorCategory() = %q, want %q", got, tt.wantCat)
+			}
+		})
+	}
+}
+
+func TestRequestErrorCarriesCategory(t *testing.T) {
+	reqErr := &RequestError{
+		Kind: "network",
+		Op:   "send_request",
+		Err:  io.EOF,
+	}
+	if got := ErrorCategory(reqErr); got != "network" {
+		t.Fatalf("ErrorCategory() = %q, want network", got)
+	}
+	if !strings.Contains(reqErr.Error(), "network error") {
+		t.Fatalf("unexpected error format: %q", reqErr.Error())
+	}
+}
