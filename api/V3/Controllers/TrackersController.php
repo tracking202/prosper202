@@ -23,14 +23,18 @@ class TrackersController extends Controller
             'click_cpc'         => ['type' => 'd'],
             'click_cpa'         => ['type' => 'd'],
             'click_cloaking'    => ['type' => 'i'],
-            'tracker_id_public' => ['type' => 'i', 'readonly' => true],
+            'tracker_id_public' => ['type' => 'i'],
         ];
     }
 
     protected function beforeCreate(array $payload): array
     {
+        $publicId = isset($payload['tracker_id_public']) && (int)$payload['tracker_id_public'] > 0
+            ? (int)$payload['tracker_id_public']
+            : random_int(10_000_000, 999_999_999);
+
         return [
-            'tracker_id_public' => ['type' => 'i', 'value' => random_int(10_000_000, 999_999_999)],
+            'tracker_id_public' => ['type' => 'i', 'value' => $publicId],
             'tracker_time'      => ['type' => 'i', 'value' => time()],
         ];
     }

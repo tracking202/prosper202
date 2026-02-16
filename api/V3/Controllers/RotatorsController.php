@@ -125,7 +125,9 @@ class RotatorsController
         $defaultUrl = (string)($payload['default_url'] ?? '');
         $defaultCampaign = (int)($payload['default_campaign'] ?? 0);
         $defaultLp = (int)($payload['default_lp'] ?? 0);
-        $publicId = random_int(100_000, 9_999_999);
+        $publicId = isset($payload['public_id']) && (int)$payload['public_id'] > 0
+            ? (int)$payload['public_id']
+            : random_int(100_000, 9_999_999);
 
         $stmt = $this->prepare('INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)');
         $stmt->bind_param('iissii', $publicId, $this->userId, $name, $defaultUrl, $defaultCampaign, $defaultLp);
@@ -258,6 +260,149 @@ class RotatorsController
                     if (!$insertRedirect->execute()) { $insertRedirect->close(); throw new DatabaseException('Failed to insert redirect'); }
                 }
                 $insertRedirect->close();
+            }
+
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+
+        return $this->get($rotatorId);
+    }
+
+    public function updateRule(int $rotatorId, int $ruleId, array $payload): array
+    {
+        $this->get($rotatorId);
+
+        $allowed = ['rule_name' => true, 'splittest' => true, 'status' => true, 'criteria' => true, 'redirects' => true];
+        foreach (array_keys($payload) as $field) {
+            if (!isset($allowed[$field])) {
+                throw new ValidationException('Unsupported field in rule update payload', [$field => 'Unsupported field']);
+            }
+        }
+
+        $stmt = $this->prepare('SELECT id FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1');
+        $stmt->bind_param('ii', $ruleId, $rotatorId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new DatabaseException('Rule lookup failed');
+        }
+        $rule = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$rule) {
+            throw new NotFoundException('Rule not found for rotator');
+        }
+
+        $setParts = [];
+        $binds = [];
+        $types = '';
+
+        if (array_key_exists('rule_name', $payload)) {
+            $ruleName = trim((string)$payload['rule_name']);
+            if ($ruleName === '') {
+                throw new ValidationException('rule_name cannot be empty', ['rule_name' => 'Cannot be empty']);
+            }
+            $setParts[] = 'rule_name = ?';
+            $binds[] = $ruleName;
+            $types .= 's';
+        }
+        if (array_key_exists('splittest', $payload)) {
+            $setParts[] = 'splittest = ?';
+            $binds[] = (int)$payload['splittest'];
+            $types .= 'i';
+        }
+        if (array_key_exists('status', $payload)) {
+            $setParts[] = 'status = ?';
+            $binds[] = (int)$payload['status'];
+            $types .= 'i';
+        }
+
+        $hasCriteria = array_key_exists('criteria', $payload);
+        $hasRedirects = array_key_exists('redirects', $payload);
+
+        if ($hasCriteria && !is_array($payload['criteria'])) {
+            throw new ValidationException('criteria must be an array', ['criteria' => 'Expected array']);
+        }
+        if ($hasRedirects && !is_array($payload['redirects'])) {
+            throw new ValidationException('redirects must be an array', ['redirects' => 'Expected array']);
+        }
+        if (empty($setParts) && !$hasCriteria && !$hasRedirects) {
+            throw new ValidationException('No fields to update');
+        }
+
+        $this->db->begin_transaction();
+        try {
+            if (!empty($setParts)) {
+                $binds[] = $ruleId;
+                $types .= 'i';
+                $update = $this->prepare('UPDATE 202_rotator_rules SET ' . implode(', ', $setParts) . ' WHERE id = ?');
+                $update->bind_param($types, ...$binds);
+                if (!$update->execute()) {
+                    $update->close();
+                    throw new DatabaseException('Failed to update rule');
+                }
+                $update->close();
+            }
+
+            if ($hasCriteria) {
+                $deleteCriteria = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
+                $deleteCriteria->bind_param('i', $ruleId);
+                if (!$deleteCriteria->execute()) {
+                    $deleteCriteria->close();
+                    throw new DatabaseException('Failed to clear criteria');
+                }
+                $deleteCriteria->close();
+
+                $criteria = $payload['criteria'];
+                if (!empty($criteria)) {
+                    $insertCriteria = $this->prepare('INSERT INTO 202_rotator_rules_criteria (rotator_id, rule_id, type, statement, value) VALUES (?, ?, ?, ?, ?)');
+                    foreach ($criteria as $criterion) {
+                        if (!is_array($criterion)) {
+                            continue;
+                        }
+                        $cType = (string)($criterion['type'] ?? '');
+                        $cStatement = (string)($criterion['statement'] ?? '');
+                        $cValue = (string)($criterion['value'] ?? '');
+                        $insertCriteria->bind_param('iisss', $rotatorId, $ruleId, $cType, $cStatement, $cValue);
+                        if (!$insertCriteria->execute()) {
+                            $insertCriteria->close();
+                            throw new DatabaseException('Failed to insert criterion');
+                        }
+                    }
+                    $insertCriteria->close();
+                }
+            }
+
+            if ($hasRedirects) {
+                $deleteRedirects = $this->prepare('DELETE FROM 202_rotator_rules_redirects WHERE rule_id = ?');
+                $deleteRedirects->bind_param('i', $ruleId);
+                if (!$deleteRedirects->execute()) {
+                    $deleteRedirects->close();
+                    throw new DatabaseException('Failed to clear redirects');
+                }
+                $deleteRedirects->close();
+
+                $redirects = $payload['redirects'];
+                if (!empty($redirects)) {
+                    $insertRedirect = $this->prepare('INSERT INTO 202_rotator_rules_redirects (rule_id, redirect_url, redirect_campaign, redirect_lp, weight, name) VALUES (?, ?, ?, ?, ?, ?)');
+                    foreach ($redirects as $redirect) {
+                        if (!is_array($redirect)) {
+                            continue;
+                        }
+                        $rUrl = (string)($redirect['redirect_url'] ?? '');
+                        $rCampaign = (int)($redirect['redirect_campaign'] ?? 0);
+                        $rLp = (int)($redirect['redirect_lp'] ?? 0);
+                        $rWeight = (int)($redirect['weight'] ?? 100);
+                        $rName = (string)($redirect['name'] ?? '');
+                        $insertRedirect->bind_param('isiiis', $ruleId, $rUrl, $rCampaign, $rLp, $rWeight, $rName);
+                        if (!$insertRedirect->execute()) {
+                            $insertRedirect->close();
+                            throw new DatabaseException('Failed to insert redirect');
+                        }
+                    }
+                    $insertRedirect->close();
+                }
             }
 
             $this->db->commit();
