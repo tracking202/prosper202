@@ -146,6 +146,14 @@ Supported default keys include:
 - `report.breakdown`, `report.sort`, `report.sort_dir`, `report.limit`, `report.offset`, `report.interval`
 - `crud.aff_campaign_id`, `crud.ppc_account_id`, `crud.aff_network_id`, `crud.ppc_network_id`, `crud.landing_page_id`, `crud.text_ad_id`, `crud.rotator_id`, `crud.country_id`
 
+### Feature flags
+
+Optional environment flags for staged rollout:
+- `CLI_ENABLE_RESOLVE_NAMES=0|1` controls `--resolve-names` list behavior.
+- `CLI_ENABLE_ANALYTICS_SHORTHAND=0|1` controls `p202 analytics`.
+
+If unset, both features are enabled by default.
+
 ## Resource management (CRUD)
 
 Seven resource types share identical CRUD commands:
@@ -174,7 +182,13 @@ p202 campaign list --aff_network_id 5
 | `-l, --limit <n>` | Maximum results |
 | `-o, --offset <n>` | Pagination offset |
 | `--page <n>` | Page number |
+| `--all` | Fetch all rows across pages (overrides `--limit`) |
+| `--resolve-names` | Resolve foreign key IDs to human-readable names |
 | Entity-specific filter flags (for example `--aff_network_id`) | Filter by related entity |
+
+When the response contains more rows than shown, a truncation warning appears on stderr: `Warning: Showing N of M results. Use --all to fetch all.` This warning is suppressed in `--json` mode.
+
+`--resolve-names` adds companion fields (for example `campaign_name`) without removing original ID fields. If a lookup fails, the fallback value is `id:<n>`.
 
 Legacy raw filter syntax (`--filter[aff_network_id]`) is still accepted where previously supported.
 
@@ -205,13 +219,17 @@ At least one field flag must be provided.
 ### Delete a resource
 
 ```bash
-p202 campaign delete 42         # Prompts for confirmation
-p202 campaign delete 42 --force # Skips confirmation
+p202 campaign delete 42                    # Prompts for confirmation
+p202 campaign delete 42 --force            # Skips confirmation
+p202 campaign delete --ids 42,43,44 --force # Bulk delete
 ```
 
 | Flag          | Description              |
 |---------------|--------------------------|
 | `-f, --force` | Skip confirmation prompt |
+| `--ids <list>` | Comma-separated IDs for bulk delete |
+
+Bulk delete (`--ids`) processes each ID individually and reports a summary. If any ID fails, the command exits with code 5 (partial failure) and the summary shows the count of succeeded/failed operations.
 
 ## Resource field reference
 
@@ -284,7 +302,12 @@ Tracker utility subcommands:
 p202 tracker get-url 56
 p202 tracker create-with-url --aff_campaign_id 42
 p202 tracker bulk-urls --aff_campaign_id 42 --concurrency 5
+p202 tracker list --all --resolve-names
 ```
+
+`tracker list` supports:
+- `--all` fetches all pages.
+- `--resolve-names` adds resolved FK labels (for example `campaign_name`) while preserving original ID fields.
 
 ### Landing page (`p202 landing-page`)
 
@@ -318,6 +341,7 @@ Clicks are read-only.
 p202 click list
 p202 click list --limit 100 --time_from 1700000000 --time_to 1700100000
 p202 click list --aff_campaign_id 5 --click_lead 1
+p202 click list --all
 ```
 
 | Flag                | Default | Description                          |
@@ -332,6 +356,7 @@ p202 click list --aff_campaign_id 5 --click_lead 1
 | `--landing_page_id` |         | Filter by landing page               |
 | `--click_lead`      |         | 0 = clicks only, 1 = conversions only |
 | `--click_bot`       |         | 0 = human, 1 = bot                   |
+| `--all`             | false   | Fetch all rows across pages          |
 
 ### Get a click
 
@@ -346,6 +371,7 @@ p202 click get 12345
 ```bash
 p202 conversion list
 p202 conversion list --campaign_id 3 --time_from 1700000000
+p202 conversion list --all
 ```
 
 | Flag            | Default | Description            |
@@ -355,6 +381,7 @@ p202 conversion list --campaign_id 3 --time_from 1700000000
 | `--campaign_id` |         | Filter by campaign     |
 | `--time_from`   |         | Start timestamp (unix) |
 | `--time_to`     |         | End timestamp (unix)   |
+| `--all`         | false   | Fetch all rows across pages |
 
 ### Get a conversion
 
@@ -389,7 +416,10 @@ The CLI accepts the following legacy flags for backward compatibility:
 ```bash
 p202 conversion delete 789
 p202 conversion delete 789 --force
+p202 conversion delete --ids 789,790,791 --force
 ```
+
+`--ids` performs bulk delete in one CLI command and returns non-zero when any ID fails.
 
 ## Reports
 
@@ -466,6 +496,18 @@ p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limi
 
 **Sort columns:** total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate
 
+### Analytics shorthand
+
+```bash
+p202 analytics --group-by country --period last30 --sort conversions
+p202 analytics --group-by campaign --days 14 --sort roi --limit 10
+```
+
+`analytics` wraps `report breakdown` with friendly aliases:
+- `--group-by lp` maps to `landing_page`
+- `--sort conversions` maps to `total_leads`
+- `--period` takes precedence over `--days`
+
 ### Timeseries
 
 Performance data over time intervals.
@@ -515,10 +557,12 @@ p202 report weekpart --sort roi --sort_dir DESC --country_id 223
 
 ```bash
 p202 rotator list
+p202 rotator list --all
 p202 rotator get 5
 p202 rotator create --name "Geo Split"
 p202 rotator update 5 --name "Geo Split v2" --default_url "https://fallback.example.com"
 p202 rotator delete 5
+p202 rotator delete --ids 5,6 --force
 ```
 
 | Flag                 | Required (create) | Description             |
@@ -551,6 +595,16 @@ Both JSON fields are validated before sending.
 ```bash
 p202 rotator rule-delete 5 12        # rotator_id rule_id
 p202 rotator rule-delete 5 12 --force
+p202 rotator rule-delete 5 --ids 12,13 --force
+```
+
+### Update a rule
+
+```bash
+p202 rotator rule-update 5 12 --rule_name "US Traffic v2"
+p202 rotator rule-update 5 12 \
+  --criteria_json '[{"type":"country","statement":"is","value":"US"}]' \
+  --redirects_json '[{"redirect_campaign":"4","weight":"100","name":"US Offer"}]'
 ```
 
 ## Attribution
@@ -720,6 +774,7 @@ p202 re-sync --from prod --to staging --force-update --json
 Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
 When server capabilities expose `async_jobs`, the CLI routes sync execution through server endpoints (`/sync/jobs`, `/sync/re-sync`, `/sync/status`, `/sync/history`) and falls back to local client-side sync when unavailable.
 Server-side jobs are queue-driven; run the worker endpoint or cron worker (`202-cronjobs/sync-worker.php`) in environments where asynchronous processing is enabled.
+Server-side rotator rule re-sync after updates can be controlled with `SYNC_ROTATOR_RULE_RESYNC_ENABLED=0|1` (enabled by default).
 
 ### Exec across profiles
 
@@ -787,7 +842,23 @@ p202 report daypart --period last30 --csv
 
 ## Exit codes
 
-| Code | Meaning               |
-|------|-----------------------|
-| 0    | Success               |
-| 1    | Error (printed to stderr) |
+| Code | Category | Meaning |
+|------|----------|---------|
+| 0    |          | Success |
+| 1    | validation | Bad input, missing flags, invalid arguments |
+| 2    | auth     | Authentication or authorization failure |
+| 3    | network  | Connection timeout, DNS failure, unreachable server |
+| 4    | server   | API returned a 5xx error |
+| 5    | partial_failure | Bulk operation completed with some failures |
+
+Error messages are printed to stderr in the format `Error [category]: message` when a category is available. Scripts can use the exit code to differentiate failure types without parsing error text.
+
+## Telemetry
+
+Set `P202_METRICS=1` to enable structured JSON telemetry on stderr. Each operation emits a single-line JSON event:
+
+```
+[metrics] {"op":"diff","entity":"rotators","duration_ms":1234,"success":true,"fields":{"ts":"2026-02-16T12:00:00Z"}}
+```
+
+Telemetry is off by default and adds no overhead when disabled.

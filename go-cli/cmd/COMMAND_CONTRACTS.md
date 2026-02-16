@@ -14,6 +14,10 @@ This file captures the API paths and payload/query expectations used by upcoming
   - Response: newly created API key
 - `DELETE /api/v3/users/{id}/api-keys/{api_key}`
   - Deletes a specific key by key string
+- `PUT /api/v3/rotators/{id}/rules/{ruleId}`
+  - Partial rule update (`rule_name`, `splittest`, `status`, `criteria`, `redirects`)
+- `GET /api/v3/reports/breakdown`
+  - Also used by `analytics` shorthand command
 
 ## Planned feature contracts
 
@@ -32,6 +36,14 @@ This file captures the API paths and payload/query expectations used by upcoming
   - paginated `GET /api/v3/{entity}` requests
 - `import <entity> <file>`
   - repeated `POST /api/v3/{entity}` requests
+- `analytics`
+  - `GET /api/v3/reports/breakdown` with alias-mapped query params
+- list `--all`
+  - paginated `GET /api/v3/{entity}` loop until exhausted
+- delete `--ids`
+  - repeated `DELETE /api/v3/{entity}/{id}` from a single CLI invocation
+- `rotator rule-update`
+  - `PUT /api/v3/rotators/{id}/rules/{ruleId}`
 - `diff` (capability-enabled path)
   - `POST /api/v3/sync/plan` (preferred when `sync_plan=true`)
   - falls back to paginated `GET /api/v3/{entity}` compare

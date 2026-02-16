@@ -87,30 +87,38 @@ Errors are printed to stderr and the process exits with code 1. The error messag
 
 ## Error handling
 
-| Exit code | Meaning |
-|-----------|---------|
-| 0 | Success |
-| 1 | Any error (network, auth, validation, not found) |
+| Exit code | Category | Meaning |
+|-----------|----------|---------|
+| 0 | | Success |
+| 1 | validation | Bad input, missing flags, invalid arguments |
+| 2 | auth | Authentication or authorization failure (401/403) |
+| 3 | network | Connection timeout, DNS failure, unreachable server |
+| 4 | server | API returned a 5xx error |
+| 5 | partial_failure | Bulk operation completed with some failures |
 
-When parsing errors programmatically, check the exit code first. If non-zero, the stderr output contains the error description.
+When parsing errors programmatically, check the exit code first. If non-zero, the stderr output contains the error description in the format `Error [category]: message`.
 
 The API may return structured errors with field-level detail:
 
 ```
-Error: Validation failed
+Error [validation]: Validation failed
   aff_campaign_name: required
   aff_campaign_url: required
 ```
+
+For bulk operations (`--ids`), exit code 5 indicates partial failure. The stdout summary shows `Deleted N of M <entity>.` and stderr lists individual failures.
 
 ## Common workflows
 
 ### List all campaigns with full data
 
+The simplest approach is `--all`, which auto-paginates and returns all rows:
+
 ```bash
-p202 campaign list --limit 500 --json
+p202 campaign list --all --json
 ```
 
-To paginate through all results:
+For manual pagination:
 
 ```bash
 # Page 1
@@ -119,6 +127,8 @@ p202 campaign list --limit 100 --offset 0 --json
 p202 campaign list --limit 100 --offset 100 --json
 # Continue until data array is empty or offset >= pagination.total
 ```
+
+`--all` overrides `--limit` when both are provided.
 
 ### Create a resource and capture its ID
 
@@ -233,12 +243,17 @@ Global profile selectors:
 All seven resources (`campaign`, `aff-network`, `ppc-network`, `ppc-account`, `tracker`, `landing-page`, `text-ad`) support:
 
 ```
-p202 <resource> list    [--limit N] [--offset N] [--page N] [--json]
+p202 <resource> list    [--limit N] [--offset N] [--page N] [--all] [--resolve-names] [--json]
 p202 <resource> get     <id> [--json]
 p202 <resource> create  --field value ... [--json]
 p202 <resource> update  <id> --field value ... [--json]
 p202 <resource> delete  <id> [--force] [--json]
+p202 <resource> delete  --ids N1,N2,... [--force] [--json]
 ```
+
+- `--all` auto-paginates and returns all rows (overrides `--limit`).
+- `--resolve-names` enriches foreign key ID fields with companion name fields (e.g. `campaign_name`). Original IDs are preserved.
+- `--ids` enables bulk delete in a single command. Reports partial failures with exit code 5.
 
 #### Campaign fields
 
@@ -296,6 +311,7 @@ p202 <resource> delete  <id> [--force] [--json]
 Tracker utility commands:
 
 ```
+p202 tracker list [--all] [--resolve-names] [filters...] [--json]
 p202 tracker get-url <id> [--json]
 p202 tracker create-with-url --aff_campaign_id N [tracker flags...] [--json]
 p202 tracker bulk-urls [--aff_campaign_id N] [--ppc_account_id N]
@@ -328,7 +344,7 @@ p202 tracker bulk-urls [--aff_campaign_id N] [--ppc_account_id N]
 
 ```
 p202 click list [--limit 50] [--offset 0] [--time_from T] [--time_to T]
-                [--aff_campaign_id N] [--ppc_account_id N] [--landing_page_id N]
+                [--aff_campaign_id N] [--ppc_account_id N] [--landing_page_id N] [--all]
                 [--click_lead 0|1] [--click_bot 0|1] [--json]
 p202 click get <id> [--json]
 ```
@@ -336,11 +352,12 @@ p202 click get <id> [--json]
 ### Conversions
 
 ```
-p202 conversion list   [--limit 50] [--offset 0] [--campaign_id N]
+p202 conversion list   [--limit 50] [--offset 0] [--campaign_id N] [--all]
                        [--time_from T] [--time_to T] [--json]
 p202 conversion get    <id> [--json]
 p202 conversion create --click_id N [--payout F] [--transaction_id S] [--json]
 p202 conversion delete <id> [--force] [--json]
+p202 conversion delete --ids N1,N2,... [--force] [--json]
 ```
 
 ### Reports
@@ -351,6 +368,8 @@ p202 report summary    [-p period] [--time_from T] [--time_to T] [filters...]
                        [--all-profiles | --profiles P1,P2 | --group TAG] [--json]
 p202 report breakdown  [-b dimension] [-s sort_col] [--sort_dir ASC|DESC]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
+p202 analytics         --group-by DIM [--period P | --days N]
+                       [--sort METRIC] [--sort-dir ASC|DESC] [filters...] [--json]
 p202 report timeseries [-i interval] [-p period] [filters...] [--json]
 p202 report daypart    [-s sort_col] [--sort_dir ASC|DESC] [-p period] [filters...] [--json]
 p202 report weekpart   [-s sort_col] [--sort_dir ASC|DESC] [-p period] [filters...] [--json]
@@ -368,15 +387,19 @@ Multi-profile report output includes:
 ### Rotators
 
 ```
-p202 rotator list   [--limit N] [--offset N] [--json]
+p202 rotator list   [--limit N] [--offset N] [--all] [--json]
 p202 rotator get    <id> [--json]
 p202 rotator create --name S [--default_url S] [--default_campaign N] [--default_lp N] [--json]
 p202 rotator update <id> [--name S] [--default_url S] [--default_campaign N] [--default_lp N] [--json]
 p202 rotator delete <id> [--force] [--json]
+p202 rotator delete --ids N1,N2,... [--force] [--json]
 
 p202 rotator rule-create <rotator_id> --rule_name S [--splittest 0|1]
                          [--criteria_json JSON] [--redirects_json JSON] [--json]
 p202 rotator rule-delete <rotator_id> <rule_id> [--force] [--json]
+p202 rotator rule-delete <rotator_id> --ids N1,N2,... [--force] [--json]
+p202 rotator rule-update <rotator_id> <rule_id> [--rule_name S] [--splittest 0|1]
+                         [--status 0|1] [--criteria_json JSON] [--redirects_json JSON] [--json]
 ```
 
 ### Attribution
@@ -455,6 +478,7 @@ Notes for agents:
 - If the API reports `sync_plan` and `async_jobs` capabilities, CLI auto-routes to server-side `/sync/*` endpoints.
 - If server capabilities are unavailable, CLI falls back to local diff/sync behavior.
 - When async jobs are enabled server-side, ensure the sync worker is running (`POST /sync/worker/run` or cron script `202-cronjobs/sync-worker.php`).
+- `tracker list --resolve-names` enriches FK IDs with companion name fields; IDs remain unchanged in output.
 
 ### System
 
