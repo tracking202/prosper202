@@ -17,8 +17,14 @@ class PROSPER202
         // select the mysql version
         $version_sql = "SELECT version FROM 202_version";
         $version_result = $db->query($version_sql);
+
+        // if the query fails (table doesn't exist), this is an older 1.0.0-1.0.2 release
+        if ($version_result === false) {
+            return '1.0.2';
+        }
+
         $version_row = $version_result->fetch_assoc();
-        $prosper202_version = $version_row['version'];
+        $prosper202_version = $version_row['version'] ?? null;
 
         // if there is no mysql version, this is an older 1.0.0-1.0.2 release, just return version 1.0.0 for simplicitly sake
         if (! $prosper202_version) {
