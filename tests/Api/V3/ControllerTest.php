@@ -7,9 +7,12 @@ namespace Tests\Api\V3;
 use Api\V3\Controller;
 use Api\V3\Controllers\ReportsController;
 use Api\V3\Controllers\SystemController;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\RequestContext;
+use Api\V3\Support\ServerStateStore;
 use Tests\TestCase;
 
 /**
@@ -203,6 +206,70 @@ final class SystemControllerBehaviorTest extends TestCase
 
         $this->expectException(DatabaseException::class);
         $controller->dbStats();
+    }
+
+    public function testMetricsIncludesAlertsAndTracing(): void
+    {
+        $stateDir = sys_get_temp_dir() . '/p202-system-metrics-' . bin2hex(random_bytes(4));
+        mkdir($stateDir, 0700, true);
+        putenv('P202_SERVER_STATE_DIR=' . $stateDir);
+        putenv('P202_ALERT_FAILURE_SPIKE=1');
+        putenv('P202_ALERT_QUEUE_LAG_SECONDS=1');
+
+        try {
+            $store = new ServerStateStore($stateDir);
+            $store->incrementMetric('jobs_failed', 2);
+            $span = $store->startSpan('sync.execute', ['entity' => 'campaigns']);
+            $store->endSpan($span, 'ok', ['done' => true]);
+
+            $job = $store->createJob([
+                'entity' => 'campaigns',
+                'source' => ['url' => 'https://prod.example.com'],
+                'target' => ['url' => 'https://stage.example.com'],
+                'options' => [],
+            ], 1);
+            $job['status'] = 'queued';
+            $job['next_run_at'] = time() - 10;
+            $store->saveJob($job);
+
+            $db = $this->createMysqliMock();
+            $controller = new SystemController($db);
+            $result = $controller->metrics();
+
+            $this->assertArrayHasKey('data', $result);
+            $this->assertArrayHasKey('alerts', $result['data']);
+            $this->assertArrayHasKey('tracing', $result['data']);
+            $this->assertNotEmpty($result['data']['alerts']['active']);
+            $this->assertNotEmpty($result['data']['tracing']['recent_spans']);
+        } finally {
+            putenv('P202_SERVER_STATE_DIR');
+            putenv('P202_ALERT_FAILURE_SPIKE');
+            putenv('P202_ALERT_QUEUE_LAG_SECONDS');
+            $this->removeDir($stateDir);
+        }
+    }
+
+    private function removeDir(string $path): void
+    {
+        if (!is_dir($path)) {
+            return;
+        }
+        $items = scandir($path);
+        if ($items === false) {
+            return;
+        }
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $full = $path . '/' . $item;
+            if (is_dir($full)) {
+                $this->removeDir($full);
+                continue;
+            }
+            @unlink($full);
+        }
+        @rmdir($path);
     }
 }
 
@@ -444,11 +511,139 @@ final class ControllerTest extends TestCase
         $this->assertSame('Test Item', $result['data']['name']);
     }
 
+    public function testGetAddsVersionAndEtagMetadata(): void
+    {
+        [$ctrl] = $this->createControllerWithDb([
+            'SELECT' => ['item_id' => 7, 'name' => 'Versioned', 'user_id' => 1],
+        ]);
+
+        $result = $ctrl->get(7);
+
+        $this->assertArrayHasKey('version', $result['data']);
+        $this->assertArrayHasKey('etag', $result['data']);
+        $this->assertStringStartsWith('"', (string)$result['data']['etag']);
+    }
+
     public function testGetThrowsNotFoundExceptionForMissingId(): void
     {
         [$ctrl] = $this->createControllerWithDb();
         $this->expectException(NotFoundException::class);
         $ctrl->get(999);
+    }
+
+    public function testUpdateWithMismatchedIfMatchThrowsConflict(): void
+    {
+        RequestContext::setHeaders(['If-Match' => '"stale-version"']);
+        [$ctrl] = $this->createControllerWithDb([
+            'SELECT' => ['item_id' => 5, 'name' => 'Current', 'user_id' => 1],
+        ]);
+
+        $this->expectException(ConflictException::class);
+        try {
+            $ctrl->update(5, ['name' => 'Updated']);
+        } finally {
+            RequestContext::reset();
+        }
+    }
+
+    public function testUpdateConflictIncludesExpectedAndCurrentVersions(): void
+    {
+        RequestContext::setHeaders(['If-Match' => '"stale-version"']);
+        [$ctrl] = $this->createControllerWithDb([
+            'SELECT' => ['item_id' => 5, 'name' => 'Current', 'user_id' => 1],
+        ]);
+
+        try {
+            $ctrl->update(5, ['name' => 'Updated']);
+            $this->fail('Expected conflict exception was not thrown');
+        } catch (ConflictException $e) {
+            $details = $e->getDetails();
+            $this->assertArrayHasKey('expected_version', $details);
+            $this->assertArrayHasKey('current_version', $details);
+            $this->assertArrayHasKey('diff_hint', $details);
+            $this->assertNotSame((string)$details['expected_version'], (string)$details['current_version']);
+        } finally {
+            RequestContext::reset();
+        }
+    }
+
+    public function testBulkUpsertRequiresIdempotencyHeader(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        RequestContext::setHeaders([]);
+
+        $this->expectException(ValidationException::class);
+        try {
+            $ctrl->bulkUpsert(['rows' => []]);
+        } finally {
+            RequestContext::reset();
+        }
+    }
+
+    public function testBulkUpsertReplaysOnlyForMatchingRequestPayload(): void
+    {
+        $stateDir = sys_get_temp_dir() . '/p202-bulk-upsert-state-' . bin2hex(random_bytes(4));
+        mkdir($stateDir, 0700, true);
+        putenv('P202_SERVER_STATE_DIR=' . $stateDir);
+
+        [$ctrl] = $this->createControllerWithDb();
+        RequestContext::setHeaders(['Idempotency-Key' => 'bulk-request-hash-1']);
+
+        try {
+            $first = $ctrl->bulkUpsert(['rows' => [[]]]);
+            $this->assertFalse((bool)$first['idempotent_replay']);
+            $this->assertSame(1, $first['summary']['skipped']);
+
+            $second = $ctrl->bulkUpsert(['rows' => [[]]]);
+            $this->assertTrue((bool)$second['idempotent_replay']);
+
+            $third = $ctrl->bulkUpsert(['rows' => [[], []]]);
+            $this->assertFalse((bool)$third['idempotent_replay']);
+            $this->assertSame(2, $third['summary']['skipped']);
+        } finally {
+            RequestContext::reset();
+            putenv('P202_SERVER_STATE_DIR');
+        }
+    }
+
+    public function testBulkUpsertReturnsPerRowErrorsAndSkipsWithoutSilentDrops(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        RequestContext::setHeaders(['Idempotency-Key' => 'bulk-rows-' . bin2hex(random_bytes(6))]);
+
+        try {
+            $result = $ctrl->bulkUpsert([
+                'rows' => [
+                    [],
+                    'bad-row',
+                    ['name' => str_repeat('a', 101)],
+                ],
+            ]);
+        } finally {
+            RequestContext::reset();
+        }
+
+        $this->assertSame(1, $result['summary']['skipped']);
+        $this->assertSame(2, $result['summary']['error']);
+        $this->assertCount(3, $result['data']);
+        $this->assertSame('skipped', $result['data'][0]['status']);
+        $this->assertSame('error', $result['data'][1]['status']);
+        $this->assertSame('error', $result['data'][2]['status']);
+    }
+
+    public function testBulkUpsertHonorsConfigurableMaxRowsEnvLimit(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        putenv('P202_MAX_BULK_ROWS=1');
+        RequestContext::setHeaders(['Idempotency-Key' => 'bulk-limit-' . bin2hex(random_bytes(4))]);
+
+        $this->expectException(ValidationException::class);
+        try {
+            $ctrl->bulkUpsert(['rows' => [[], []]]);
+        } finally {
+            RequestContext::reset();
+            putenv('P202_MAX_BULK_ROWS');
+        }
     }
 
     // ─── create() ───────────────────────────────────────────────────

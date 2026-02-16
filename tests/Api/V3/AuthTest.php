@@ -152,11 +152,12 @@ final class AuthTest extends TestCase
             ->disableOriginalConstructor()
             ->getMock();
 
+        $showScopeStmt = $this->createStmtMock(true, $this->createResultMock([]));
         $apiKeyResult = $this->createResultMock([['user_id' => 7]]);
         $apiStmt = $this->createStmtMock(true, $apiKeyResult);
         $roleStmt = $this->createStmtMock(false, $this->createResultMock([]));
 
-        $db->method('prepare')->willReturnOnConsecutiveCalls($apiStmt, $roleStmt);
+        $db->method('prepare')->willReturnOnConsecutiveCalls($showScopeStmt, $apiStmt, $roleStmt);
 
         $this->expectException(AuthException::class);
         $this->expectExceptionCode(500);
@@ -170,11 +171,12 @@ final class AuthTest extends TestCase
             ->disableOriginalConstructor()
             ->getMock();
 
+        $showScopeStmt = $this->createStmtMock(true, $this->createResultMock([]));
         $apiKeyResult = $this->createResultMock([['user_id' => 7]]);
         $apiStmt = $this->createStmtMock(true, $apiKeyResult);
         $roleStmt = $this->createStmtMock(true, false);
 
-        $db->method('prepare')->willReturnOnConsecutiveCalls($apiStmt, $roleStmt);
+        $db->method('prepare')->willReturnOnConsecutiveCalls($showScopeStmt, $apiStmt, $roleStmt);
 
         $this->expectException(AuthException::class);
         $this->expectExceptionCode(500);
@@ -313,5 +315,32 @@ final class AuthTest extends TestCase
         $this->expectException(AuthException::class);
         $this->expectExceptionCode(403);
         $auth->requireSelfOrAdmin(99);
+    }
+
+    public function testRequireScopePassesWhenScopePresent(): void
+    {
+        $db = $this->createMysqliMock([
+            "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
+            '202_api_keys' => ['user_id' => 5, 'scope' => 'sync:read,sync:write'],
+            '202_user_role' => [['role_name' => 'user']],
+        ]);
+
+        $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+        $auth->requireScope('sync:read');
+        $this->assertTrue(true);
+    }
+
+    public function testRequireScopeThrowsWhenScopeMissing(): void
+    {
+        $db = $this->createMysqliMock([
+            "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
+            '202_api_keys' => ['user_id' => 5, 'scope' => 'sync:read'],
+            '202_user_role' => [['role_name' => 'user']],
+        ]);
+
+        $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+        $this->expectException(AuthException::class);
+        $this->expectExceptionCode(403);
+        $auth->requireScope('sync:write');
     }
 }

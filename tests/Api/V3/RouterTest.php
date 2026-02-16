@@ -317,6 +317,19 @@ final class RouterTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function testLegacyCoreApiV3PathsStillMatch(): void
+    {
+        $this->router->get('/campaigns', fn() => 'campaign-list');
+        $this->router->get('/campaigns/{id}', fn() => 'campaign-get');
+        $this->router->get('/reports/summary', fn() => 'report-summary');
+        $this->router->get('/trackers/{id}/url', fn() => 'tracker-url');
+
+        $this->assertNotNull($this->router->match('GET', '/campaigns'));
+        $this->assertNotNull($this->router->match('GET', '/campaigns/42'));
+        $this->assertNotNull($this->router->match('GET', '/reports/summary'));
+        $this->assertNotNull($this->router->match('GET', '/trackers/5/url'));
+    }
+
     // ─── Method case insensitivity ──────────────────────────────────
 
     public function testMethodMatchingIsCaseInsensitive(): void
