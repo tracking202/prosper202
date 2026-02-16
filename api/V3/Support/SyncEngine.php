@@ -977,6 +977,103 @@ class SyncEngine
         return 'id:' . $rawId;
     }
 
+    private function normalizeRulesForComparison(mixed $rawRules, array $lookups): array
+    {
+        if (!is_array($rawRules) || count($rawRules) === 0) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($rawRules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $normalized[] = [
+                'rule_name' => $this->scalarString($rule['rule_name'] ?? null),
+                'splittest' => $this->scalarString($rule['splittest'] ?? null),
+                'status' => $this->scalarString($rule['status'] ?? null),
+                'criteria' => $this->normalizeRuleCriteria($rule['criteria'] ?? []),
+                'redirects' => $this->normalizeRuleRedirects($rule['redirects'] ?? [], $lookups),
+            ];
+        }
+
+        usort($normalized, function (array $left, array $right): int {
+            $a = $this->scalarString($left['rule_name'] ?? null)
+                . '|' . $this->scalarString($left['status'] ?? null)
+                . '|' . $this->scalarString($left['splittest'] ?? null);
+            $b = $this->scalarString($right['rule_name'] ?? null)
+                . '|' . $this->scalarString($right['status'] ?? null)
+                . '|' . $this->scalarString($right['splittest'] ?? null);
+            return $a <=> $b;
+        });
+
+        return $normalized;
+    }
+
+    private function normalizeRuleCriteria(mixed $rawCriteria): array
+    {
+        if (!is_array($rawCriteria) || count($rawCriteria) === 0) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($rawCriteria as $criterion) {
+            if (!is_array($criterion)) {
+                continue;
+            }
+            $normalized[] = [
+                'type' => $this->scalarString($criterion['type'] ?? null),
+                'statement' => $this->scalarString($criterion['statement'] ?? null),
+                'value' => $this->scalarString($criterion['value'] ?? null),
+            ];
+        }
+
+        usort($normalized, function (array $left, array $right): int {
+            $a = $this->scalarString($left['type'] ?? null)
+                . '|' . $this->scalarString($left['statement'] ?? null)
+                . '|' . $this->scalarString($left['value'] ?? null);
+            $b = $this->scalarString($right['type'] ?? null)
+                . '|' . $this->scalarString($right['statement'] ?? null)
+                . '|' . $this->scalarString($right['value'] ?? null);
+            return $a <=> $b;
+        });
+
+        return $normalized;
+    }
+
+    private function normalizeRuleRedirects(mixed $rawRedirects, array $lookups): array
+    {
+        if (!is_array($rawRedirects) || count($rawRedirects) === 0) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($rawRedirects as $redirect) {
+            if (!is_array($redirect)) {
+                continue;
+            }
+            $normalized[] = [
+                'redirect_url' => $this->scalarString($redirect['redirect_url'] ?? null),
+                'redirect_campaign' => $this->remapForeignKey($redirect, 'redirect_campaign', $lookups['campaigns']['by_id'] ?? []),
+                'redirect_lp' => $this->remapForeignKey($redirect, 'redirect_lp', $lookups['landing_pages']['by_id'] ?? []),
+                'weight' => $this->scalarString($redirect['weight'] ?? null),
+                'name' => $this->scalarString($redirect['name'] ?? null),
+            ];
+        }
+
+        usort($normalized, function (array $left, array $right): int {
+            $a = $this->scalarString($left['name'] ?? null)
+                . '|' . $this->scalarString($left['weight'] ?? null)
+                . '|' . $this->scalarString($left['redirect_url'] ?? null);
+            $b = $this->scalarString($right['name'] ?? null)
+                . '|' . $this->scalarString($right['weight'] ?? null)
+                . '|' . $this->scalarString($right['redirect_url'] ?? null);
+            return $a <=> $b;
+        });
+
+        return $normalized;
+    }
+
     /** @param array<string, array<string, array<string, string>>> $lookups */
     private function referenceNaturalByEntity(string $entity, string $sourceId, array $lookups): string
     {
@@ -1093,7 +1190,15 @@ class SyncEngine
 
         $out = [];
         foreach ($sorted as $key) {
-            if ($this->scalarString($a[$key] ?? null) !== $this->scalarString($b[$key] ?? null)) {
+            $left = $a[$key] ?? null;
+            $right = $b[$key] ?? null;
+            if (is_array($left) || is_array($right)) {
+                if (!$this->comparableEqual(['value' => $left], ['value' => $right])) {
+                    $out[] = $key;
+                }
+                continue;
+            }
+            if ($this->scalarString($left) !== $this->scalarString($right)) {
                 $out[] = $key;
             }
         }
