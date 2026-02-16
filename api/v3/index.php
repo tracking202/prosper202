@@ -13,8 +13,11 @@ use Api\V3\Auth;
 use Api\V3\AuthException;
 use Api\V3\Bootstrap;
 use Api\V3\HttpException;
+use Api\V3\RequestContext;
 use Api\V3\Router;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\ServerStateStore;
 
 // ─── Security headers ────────────────────────────────────────────────
 header('X-Content-Type-Options: nosniff');
@@ -35,7 +38,7 @@ $allowedOrigin = defined('API_CORS_ORIGIN') ? API_CORS_ORIGIN : '';
 if ($allowedOrigin !== '') {
     header('Access-Control-Allow-Origin: ' . $allowedOrigin);
     header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Authorization, Content-Type');
+    header('Access-Control-Allow-Headers: Authorization, Content-Type, X-P202-API-Version, Idempotency-Key, If-Match');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -45,13 +48,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 // ─── Parse request ───────────────────────────────────────────────────
 $method  = $_SERVER['REQUEST_METHOD'];
-$path    = $_SERVER['REQUEST_URI'];
-$basePath = '/api/v3';
-$pos = strpos($path, $basePath);
-if ($pos !== false) {
-    $path = substr($path, $pos + strlen($basePath));
+$path = parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/';
+if (str_starts_with($path, '/api/v3')) {
+    $path = substr($path, strlen('/api/v3'));
+} elseif (str_starts_with($path, '/api/')) {
+    $path = substr($path, strlen('/api'));
 }
-$path = strtok($path, '?') ?: '/';
 $path = rtrim($path, '/');
 if ($path === '') {
     $path = '/';
@@ -59,6 +61,7 @@ if ($path === '') {
 
 $queryParams = $_GET;
 $headers     = getallheaders() ?: [];
+RequestContext::setHeaders($headers);
 
 $payload = [];
 if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
@@ -73,8 +76,36 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
     }
 }
 
+$requestedVersion = strtolower(trim((string)($headers['X-P202-API-Version'] ?? $headers['x-p202-api-version'] ?? '')));
+if ($requestedVersion !== '' && !in_array($requestedVersion, ['v3', '3'], true)) {
+    Bootstrap::errorResponse(
+        'Unsupported API version',
+        400,
+        ['supported_versions' => ['v3'], 'requested_version' => $requestedVersion]
+    );
+    exit;
+}
+RequestContext::setResolvedApiVersion('v3');
+header('X-P202-API-Version-Resolved: v3');
+
+$adoptionPct = (int)(getenv('P202_CAPABILITY_ADOPTION_PCT') ?: 0);
+$deprecationThresholdPct = (int)(getenv('P202_DEPRECATION_THRESHOLD_PCT') ?: 95);
+if ($adoptionPct >= $deprecationThresholdPct && shouldEmitDeprecationNotice($path, $requestedVersion)) {
+    $sunset = (string)(getenv('P202_DEPRECATION_SUNSET') ?: gmdate('D, d M Y H:i:s \\G\\M\\T', strtotime('+180 days')));
+    header('Deprecation: true');
+    header('Sunset: ' . $sunset);
+    header('Warning: 299 - "Legacy unversioned API requests are deprecated; use X-P202-API-Version: v3."');
+}
+
 // ─── Route definitions ───────────────────────────────────────────────
 try {
+
+    // Unauthenticated API version discovery
+    if ($path === '/versions' && $method === 'GET') {
+        $versions = new \Api\V3\Controllers\CapabilitiesController($db);
+        Bootstrap::jsonResponse($versions->versions());
+        exit;
+    }
 
     // Unauthenticated health probe
     if ($path === '/system/health' && $method === 'GET') {
@@ -87,6 +118,36 @@ try {
     // Authenticate
     $auth = Auth::fromRequest($headers, $db);
     $userId = $auth->userId();
+    RequestContext::setActorUserId($userId);
+
+    // Lightweight fixed-window rate limits for high-impact operations.
+    $stateStore = new ServerStateStore();
+    $bucketKey = 'user:' . $userId;
+    $limit = null;
+    $windowSeconds = 60;
+    if (str_starts_with($path, '/sync')) {
+        $limit = 30;
+        $bucketKey .= ':sync';
+    } elseif (str_contains($path, '/bulk-upsert')) {
+        $limit = 60;
+        $bucketKey .= ':bulk-upsert';
+    }
+    if ($limit !== null) {
+        $rate = $stateStore->consumeRateLimit($bucketKey, $limit, $windowSeconds);
+        if (!$rate['allowed']) {
+            $retryAfter = max(1, (int)$rate['reset_at'] - time());
+            header('Retry-After: ' . $retryAfter);
+            Bootstrap::errorResponse(
+                'Rate limit exceeded',
+                429,
+                [
+                    'rate_limit' => ['limit' => $limit, 'window_seconds' => $windowSeconds],
+                    'retry_after_seconds' => $retryAfter,
+                ]
+            );
+            exit;
+        }
+    }
 
     // Controller factories — instantiated lazily by the router handlers.
     $crud = fn(string $class) => new $class($db, $userId);
@@ -107,6 +168,7 @@ try {
     foreach ($crudMap as $resource => $class) {
         $router->group("/$resource", function (Router $r) use ($class, $crud, &$queryParams, &$payload) {
             $r->get('',       fn() => $crud($class)->list($queryParams));
+            $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
             $r->get('/{id}',  fn($ctx) => $crud($class)->get((int)$ctx['id']));
             $r->post('',      fn() => ['_status' => 201] + $crud($class)->create($payload));
             $r->put('/{id}',  fn($ctx) => $crud($class)->update((int)$ctx['id'], $payload));
@@ -142,6 +204,71 @@ try {
         $r->get('/weekpart',   fn() => $crud($cls)->weekpart($queryParams));
     });
 
+    // ── API capabilities ────────────────────────────────────────────
+    $router->get('/capabilities', fn() => (new \Api\V3\Controllers\CapabilitiesController($db))->capabilities());
+
+    // ── Server-side sync planning (admin + read scope) ─────────────
+    $router->group('/sync', function (Router $r) use ($crud, &$queryParams, &$payload) {
+        $cls = \Api\V3\Controllers\SyncController::class;
+        $r->post('/plan', fn() => $crud($cls)->plan($payload));
+        $r->get('/status', fn() => $crud($cls)->status($queryParams));
+        $r->get('/history', fn() => $crud($cls)->history($queryParams));
+    }, [
+        static function () use ($auth): void {
+            $auth->requireAdmin();
+            $auth->requireScope('sync:read');
+        },
+    ]);
+
+    // ── Server-side sync orchestration (admin + write scope) ───────
+    $router->group('/sync', function (Router $r) use ($crud, &$queryParams, &$payload) {
+        $cls = \Api\V3\Controllers\SyncController::class;
+        $r->post('/jobs', fn() => ['_status' => 202] + $crud($cls)->createJob($payload));
+        $r->post('/worker/run', fn() => $crud($cls)->runWorker($payload));
+        $r->post('/jobs/{id}/run', fn($ctx) => $crud($cls)->runJob((string)$ctx['id']));
+        $r->post('/jobs/{id}/cancel', fn($ctx) => $crud($cls)->cancelJob((string)$ctx['id']));
+        $r->post('/re-sync', fn() => ['_status' => 202] + $crud($cls)->reSync($payload));
+    }, [
+        static function () use ($auth): void {
+            $auth->requireAdmin();
+            $auth->requireScope('sync:write');
+        },
+    ]);
+
+    $router->group('/sync', function (Router $r) use ($crud, &$queryParams) {
+        $cls = \Api\V3\Controllers\SyncController::class;
+        $r->get('/jobs/{id}', fn($ctx) => $crud($cls)->getJob((string)$ctx['id']));
+        $r->get('/jobs/{id}/events', fn($ctx) => $crud($cls)->events((string)$ctx['id'], $queryParams));
+    }, [
+        static function () use ($auth): void {
+            $auth->requireAdmin();
+            $auth->requireScope('sync:read');
+        },
+    ]);
+
+    // ── Incremental changes feed (admin only) ──────────────────────
+    $router->group('/changes', function (Router $r) use ($crud, &$queryParams) {
+        $cls = \Api\V3\Controllers\SyncController::class;
+        $r->get('/{entity}', fn($ctx) => $crud($cls)->listChanges((string)$ctx['entity'], $queryParams));
+    }, [
+        static function () use ($auth): void {
+            $auth->requireAdmin();
+            $auth->requireScope('sync:read');
+        },
+    ]);
+
+    // ── Audit & provenance (admin only) ────────────────────────────
+    $router->group('/audit', function (Router $r) use ($crud, &$queryParams) {
+        $cls = \Api\V3\Controllers\SyncController::class;
+        $r->get('/sync-jobs', fn() => $crud($cls)->auditList($queryParams));
+        $r->get('/sync-jobs/{id}', fn($ctx) => $crud($cls)->auditGet((string)$ctx['id'], $queryParams));
+    }, [
+        static function () use ($auth): void {
+            $auth->requireAdmin();
+            $auth->requireScope('sync:read');
+        },
+    ]);
+
     // ── Rotators ─────────────────────────────────────────────────────
     $router->group('/rotators', function (Router $r) use ($crud, &$queryParams, &$payload) {
         $cls = \Api\V3\Controllers\RotatorsController::class;
@@ -154,6 +281,7 @@ try {
         // Sub-resource: rules
         $r->get('/{id}/rules',             fn($ctx) => $crud($cls)->listRules((int)$ctx['id']));
         $r->post('/{id}/rules',            fn($ctx) => $crud($cls)->createRule((int)$ctx['id'], $payload));
+        $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($cls)->updateRule((int)$ctx['id'], (int)$ctx['ruleId'], $payload));
         $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
     });
 
@@ -245,12 +373,15 @@ try {
         $r->get('/cron',       fn() => $make()->cronStatus());
         $r->get('/errors',     fn() => $make()->errors($queryParams));
         $r->get('/dataengine', fn() => $make()->dataengineStatus());
+        $r->get('/metrics',    fn() => $make()->metrics());
     }, [$auth->requireAdmin(...)]);
 
     // ── API root ─────────────────────────────────────────────────────
     $router->get('/', fn() => [
         'api' => 'Prosper202 API v3',
         'endpoints' => [
+            'versions'      => '/versions',
+            'capabilities'  => '/capabilities',
             'campaigns'     => '/campaigns',
             'aff_networks'  => '/aff-networks',
             'ppc_networks'  => '/ppc-networks',
@@ -264,7 +395,10 @@ try {
             'rotators'      => '/rotators',
             'attribution'   => '/attribution/models',
             'users'         => '/users',
-            'system'        => '/system/{health|version|db-stats|cron|errors|dataengine}',
+            'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
+            'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
+            'changes'       => '/changes/{entity}',
+            'audit'         => '/audit/sync-jobs',
         ],
         'auth' => 'Authorization: Bearer <api_key>',
     ]);
@@ -299,6 +433,8 @@ try {
     Bootstrap::errorResponse($e->getMessage(), $e->getCode() ?: 401);
 } catch (ValidationException $e) {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
+} catch (ConflictException $e) {
+    Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
     $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
@@ -315,4 +451,21 @@ function tap(object $obj, callable $fn): null
 {
     $fn($obj);
     return null;
+}
+
+function shouldEmitDeprecationNotice(string $path, string $requestedVersion): bool
+{
+    if ($requestedVersion !== '') {
+        return false;
+    }
+
+    // Only emit for legacy v3 workload paths, never for health/version discovery.
+    if ($path === '/versions' || $path === '/system/health') {
+        return false;
+    }
+
+    return str_starts_with($path, '/sync')
+        || str_starts_with($path, '/changes')
+        || str_starts_with($path, '/audit')
+        || str_contains($path, '/bulk-upsert');
 }

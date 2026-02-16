@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Support\ServerStateStore;
 
 class SystemController
 {
@@ -187,6 +188,73 @@ class SystemController
         ];
     }
 
+    public function metrics(): array
+    {
+        $store = new ServerStateStore();
+        $metrics = $store->metrics();
+        $counters = is_array($metrics['counters'] ?? null) ? $metrics['counters'] : [];
+
+        $queued = $store->listJobs(['queued'], 5000);
+        $running = $store->listJobs(['running'], 5000);
+        $oldestQueueEpoch = null;
+        foreach ($queued as $job) {
+            $candidate = (int)($job['next_run_at'] ?? $job['created_at_epoch'] ?? 0);
+            if ($candidate <= 0) {
+                continue;
+            }
+            if ($oldestQueueEpoch === null || $candidate < $oldestQueueEpoch) {
+                $oldestQueueEpoch = $candidate;
+            }
+        }
+        $queueLagSeconds = $oldestQueueEpoch === null ? 0 : max(0, time() - $oldestQueueEpoch);
+
+        $failureSpikeThreshold = $this->intEnv('P202_ALERT_FAILURE_SPIKE', 20);
+        $queueLagThreshold = $this->intEnv('P202_ALERT_QUEUE_LAG_SECONDS', 300);
+        $failureCount = (int)($counters['jobs_failed'] ?? 0) + (int)($counters['jobs_partial'] ?? 0);
+
+        $alerts = [];
+        if ($failureCount >= $failureSpikeThreshold) {
+            $alerts[] = [
+                'name' => 'failure_spike',
+                'status' => 'warn',
+                'message' => 'Sync failures exceeded threshold',
+                'value' => $failureCount,
+                'threshold' => $failureSpikeThreshold,
+            ];
+        }
+        if ($queueLagSeconds >= $queueLagThreshold && count($queued) > 0) {
+            $alerts[] = [
+                'name' => 'queue_lag',
+                'status' => 'warn',
+                'message' => 'Sync queue lag exceeded threshold',
+                'value' => $queueLagSeconds,
+                'threshold' => $queueLagThreshold,
+            ];
+        }
+
+        return [
+            'data' => [
+                'counters' => $counters,
+                'updated_at' => $metrics['updated_at'] ?? null,
+                'queue' => [
+                    'queued_jobs' => count($queued),
+                    'running_jobs' => count($running),
+                    'queue_lag_seconds' => $queueLagSeconds,
+                ],
+                'tracing' => [
+                    'recent_spans' => $store->listSpans(null, 50),
+                ],
+                'alerts' => [
+                    'thresholds' => [
+                        'failure_spike' => $failureSpikeThreshold,
+                        'queue_lag_seconds' => $queueLagThreshold,
+                    ],
+                    'active' => $alerts,
+                ],
+            ],
+        ];
+    }
+
     private function prepare(string $sql): \mysqli_stmt
     {
         $stmt = $this->db->prepare($sql);
@@ -194,5 +262,18 @@ class SystemController
             throw new DatabaseException('Prepare failed');
         }
         return $stmt;
+    }
+
+    private function intEnv(string $name, int $default): int
+    {
+        $raw = getenv($name);
+        if (!is_string($raw) || trim($raw) === '') {
+            return $default;
+        }
+        $value = (int)$raw;
+        if ($value <= 0) {
+            return $default;
+        }
+        return $value;
     }
 }
