@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"p202/internal/api"
 	configpkg "p202/internal/config"
 
 	"github.com/spf13/cobra"
@@ -31,8 +32,12 @@ var rootCmd = &cobra.Command{
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+		if category := api.ErrorCategory(err); category != "" {
+			fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", category, err)
+		} else {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
+		os.Exit(exitCodeForError(err))
 	}
 }
 
