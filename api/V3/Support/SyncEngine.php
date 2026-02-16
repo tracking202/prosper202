@@ -163,6 +163,10 @@ class SyncEngine
                 'entities' => count($entities),
                 'warnings' => $warnings,
             ];
+            $this->store->incrementMetric('diff_entities_scanned', count($entities));
+            $this->store->incrementMetric('diff_changed_records', (int)$summary['changed']);
+            $this->store->incrementMetric('diff_only_in_source_records', (int)$summary['only_in_source']);
+            $this->store->incrementMetric('diff_only_in_target_records', (int)$summary['only_in_target']);
             return [
                 'source' => $this->profileLabel($sourceProfile),
                 'target' => $this->profileLabel($targetProfile),
@@ -307,7 +311,11 @@ class SyncEngine
                                 $extraHeaders['If-Match'] = (string)$targetRow['etag'];
                             }
                             $targetClient->put(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId, $payload, $extraHeaders);
-                            if ($entity === 'rotators' && $sourceId !== '') {
+                            if (
+                                $entity === 'rotators'
+                                && $sourceId !== ''
+                                && $this->envFlagEnabled('SYNC_ROTATOR_RULE_RESYNC_ENABLED', true)
+                            ) {
                                 $this->resyncRotatorRules(
                                     $sourceClient,
                                     $targetClient,
@@ -316,8 +324,12 @@ class SyncEngine
                                     $sourceLookups,
                                     $targetLookups
                                 );
+                                $this->store->incrementMetric('rotator_rule_resync', 1);
                             }
                         } catch (\Throwable $e) {
+                            if ($entity === 'rotators') {
+                                $this->store->incrementMetric('rotator_rule_resync_failed', 1);
+                            }
                             if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
                                 throw $e;
                             }
@@ -444,6 +456,7 @@ class SyncEngine
             }
 
             $results[$entity] = $result;
+            $this->store->incrementMetric('sync_rows_seen', count($sourceRows));
             $this->store->incrementMetric('rows_created', (int)($result['created'] ?? 0));
             $this->store->incrementMetric('rows_updated', (int)($result['updated'] ?? 0));
             $this->store->incrementMetric('rows_deleted', (int)($result['pruned'] ?? 0));
@@ -649,6 +662,7 @@ class SyncEngine
                 $rows = $enriched;
             }
             $out[$entity] = $rows;
+            $this->store->incrementMetric('portable_rows_fetched', count($rows));
         }
         return $out;
     }
@@ -659,12 +673,12 @@ class SyncEngine
      */
     private function buildEntityLookups(array $data): array
     {
-        [$affById, $affByNatural] = $this->buildIdLookup($data['aff-networks'], ['aff_network_id', 'id'], 'aff_network_name');
-        [$ppcNetById, $ppcNetByNatural] = $this->buildIdLookup($data['ppc-networks'], ['ppc_network_id', 'id'], 'ppc_network_name');
-        [$ppcAccById, $ppcAccByNatural] = $this->buildIdLookup($data['ppc-accounts'], ['ppc_account_id', 'id'], 'ppc_account_name');
-        [$campaignById, $campaignByNatural] = $this->buildIdLookup($data['campaigns'], ['aff_campaign_id', 'id'], 'aff_campaign_name');
-        [$landingById, $landingByNatural] = $this->buildIdLookup($data['landing-pages'], ['landing_page_id', 'id'], 'landing_page_url');
-        [$textAdById, $textAdByNatural] = $this->buildIdLookup($data['text-ads'], ['text_ad_id', 'id'], 'text_ad_name');
+        [$affById, $affByNatural] = $this->buildIdLookup($data['aff-networks'] ?? [], ['aff_network_id', 'id'], 'aff_network_name');
+        [$ppcNetById, $ppcNetByNatural] = $this->buildIdLookup($data['ppc-networks'] ?? [], ['ppc_network_id', 'id'], 'ppc_network_name');
+        [$ppcAccById, $ppcAccByNatural] = $this->buildIdLookup($data['ppc-accounts'] ?? [], ['ppc_account_id', 'id'], 'ppc_account_name');
+        [$campaignById, $campaignByNatural] = $this->buildIdLookup($data['campaigns'] ?? [], ['aff_campaign_id', 'id'], 'aff_campaign_name');
+        [$landingById, $landingByNatural] = $this->buildIdLookup($data['landing-pages'] ?? [], ['landing_page_id', 'id'], 'landing_page_url');
+        [$textAdById, $textAdByNatural] = $this->buildIdLookup($data['text-ads'] ?? [], ['text_ad_id', 'id'], 'text_ad_name');
         [$rotatorById, $rotatorByNatural] = $this->buildIdLookup($data['rotators'] ?? [], ['id'], 'public_id');
 
         return [
@@ -1258,6 +1272,21 @@ class SyncEngine
             }
         }
         return $out;
+    }
+
+    private function envFlagEnabled(string $name, bool $default): bool
+    {
+        $raw = getenv($name);
+        if (!is_string($raw)) {
+            return $default;
+        }
+
+        $value = strtolower(trim($raw));
+        if ($value === '') {
+            return $default;
+        }
+
+        return !in_array($value, ['0', 'false', 'no', 'off', 'disabled'], true);
     }
 
     private function pairKey(array $sourceProfile, array $targetProfile): string
