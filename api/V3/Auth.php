@@ -15,11 +15,14 @@ final class Auth
     private int $userId;
     /** @var string[] lower-cased role names */
     private array $roles;
+    /** @var string[] lower-cased api key scopes */
+    private array $scopes;
 
-    private function __construct(int $userId, array $roles)
+    private function __construct(int $userId, array $roles, array $scopes = ['*'])
     {
         $this->userId = $userId;
         $this->roles = $roles;
+        $this->scopes = $scopes;
     }
 
     /**
@@ -42,7 +45,11 @@ final class Auth
             throw new AuthException('API key required. Pass via Authorization: Bearer <key> header.', 401);
         }
 
-        $stmt = $db->prepare('SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1');
+        $scopeColumnExists = self::apiKeyScopeColumnExists($db);
+        $sql = $scopeColumnExists
+            ? 'SELECT user_id, scope FROM 202_api_keys WHERE api_key = ? LIMIT 1'
+            : 'SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1';
+        $stmt = $db->prepare($sql);
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
         }
@@ -63,10 +70,12 @@ final class Auth
             throw new AuthException('Invalid API key.', 401);
         }
 
-        return self::loadRoles((int)$row['user_id'], $db);
+        $scopes = self::parseScopes((string)($row['scope'] ?? ''));
+
+        return self::loadRoles((int)$row['user_id'], $db, $scopes);
     }
 
-    private static function loadRoles(int $userId, \mysqli $db): self
+    private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*']): self
     {
         $roles = [];
         $stmt = $db->prepare(
@@ -95,7 +104,7 @@ final class Auth
         }
         $stmt->close();
 
-        return new self($userId, $roles);
+        return new self($userId, $roles, $scopes);
     }
 
     public function userId(): int
@@ -107,6 +116,32 @@ final class Auth
     public function roles(): array
     {
         return $this->roles;
+    }
+
+    /** @return string[] */
+    public function scopes(): array
+    {
+        return $this->scopes;
+    }
+
+    public function hasScope(string $scope): bool
+    {
+        $scope = strtolower(trim($scope));
+        if ($scope === '') {
+            return true;
+        }
+        if ($this->isAdmin()) {
+            return true;
+        }
+        return in_array('*', $this->scopes, true)
+            || in_array($scope, $this->scopes, true);
+    }
+
+    public function requireScope(string $scope): void
+    {
+        if (!$this->hasScope($scope)) {
+            throw new AuthException('Insufficient API key scope for this operation.', 403);
+        }
     }
 
     public function isAdmin(): bool
@@ -127,5 +162,59 @@ final class Auth
         if ($this->userId !== $targetUserId && !$this->isAdmin()) {
             throw new AuthException('You can only access your own resources.', 403);
         }
+    }
+
+    private static function apiKeyScopeColumnExists(\mysqli $db): bool
+    {
+        $stmt = $db->prepare("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
+        if (!$stmt) {
+            return false;
+        }
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return false;
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            return false;
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+        return is_array($row);
+    }
+
+    /** @return string[] */
+    private static function parseScopes(string $raw): array
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return ['*'];
+        }
+
+        $scopes = [];
+        if (str_starts_with($raw, '[')) {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                foreach ($decoded as $scope) {
+                    $value = strtolower(trim((string)$scope));
+                    if ($value !== '') {
+                        $scopes[] = $value;
+                    }
+                }
+            }
+        } else {
+            foreach (explode(',', $raw) as $part) {
+                $value = strtolower(trim($part));
+                if ($value !== '') {
+                    $scopes[] = $value;
+                }
+            }
+        }
+
+        if ($scopes === []) {
+            $scopes[] = '*';
+        }
+        return array_values(array_unique($scopes));
     }
 }

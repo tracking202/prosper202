@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Api\V3;
 
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\ServerStateStore;
 
 /**
  * Base CRUD controller with lifecycle hooks, input validation, and DI.
@@ -27,6 +29,7 @@ abstract class Controller
     /** @var string[]|null  Computed once per instance. */
     private ?array $cachedSelectColumns = null;
     private ?array $cachedFields = null;
+    private ?ServerStateStore $stateStore = null;
 
     public function __construct(\mysqli $db, int $userId)
     {
@@ -49,6 +52,18 @@ abstract class Controller
     protected function listOrderBy(): string
     {
         return $this->primaryKey() . ' DESC';
+    }
+
+    protected function maxBulkRows(): int
+    {
+        $raw = getenv('P202_MAX_BULK_ROWS');
+        if (is_string($raw) && trim($raw) !== '') {
+            $parsed = (int)$raw;
+            if ($parsed > 0) {
+                return min(5000, $parsed);
+            }
+        }
+        return 500;
     }
 
     protected function selectColumns(): array
@@ -100,6 +115,10 @@ abstract class Controller
         foreach ($payload as $col => $value) {
             $def = $fields[$col] ?? null;
             if ($def === null || ($def['readonly'] ?? false)) {
+                continue;
+            }
+
+            if ($value === null) {
                 continue;
             }
 
@@ -165,6 +184,10 @@ abstract class Controller
     {
         $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
         $offset = max(0, (int)($params['offset'] ?? 0));
+        if (!empty($params['cursor'])) {
+            $offset = $this->decodeOffsetCursor((string)$params['cursor']);
+        }
+        $cursorTtl = max(60, min(86400, (int)($params['cursor_ttl'] ?? 3600)));
         $selectExpr = implode(', ', $this->selectColumns());
 
         $where = [];
@@ -191,6 +214,24 @@ abstract class Controller
                     $binds[] = $value;
                     $types .= $fieldDef['type'];
                 }
+            }
+        }
+
+        if (isset($params['updated_since']) && $params['updated_since'] !== '') {
+            $updatedColumn = $this->detectTimestampColumn(['updated_at', 'updated_time', 'last_modified', 'modified_at']);
+            if ($updatedColumn !== null) {
+                $where[] = "$updatedColumn >= ?";
+                $binds[] = (int)$params['updated_since'];
+                $types .= 'i';
+            }
+        }
+
+        if (isset($params['deleted_since']) && $params['deleted_since'] !== '' && $this->deletedColumn() !== null) {
+            $deletedColumn = $this->detectTimestampColumn(['deleted_at', 'deleted_time', 'removed_at']);
+            if ($deletedColumn !== null) {
+                $where[] = "$deletedColumn >= ?";
+                $binds[] = (int)$params['deleted_since'];
+                $types .= 'i';
             }
         }
 
@@ -232,13 +273,26 @@ abstract class Controller
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
-            $rows[] = $row;
+            $rows[] = $this->withVersionMetadata($row);
         }
         $stmt->close();
 
+        $nextCursor = null;
+        $cursorExpiresAt = null;
+        if (($offset + $limit) < $total) {
+            $cursorExpiresAt = time() + $cursorTtl;
+            $nextCursor = $this->encodeOffsetCursor($offset + $limit, $cursorExpiresAt);
+        }
+
         return [
             'data' => $rows,
-            'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
+            'pagination' => [
+                'total' => $total,
+                'limit' => $limit,
+                'offset' => $offset,
+                'cursor' => $nextCursor,
+                'cursor_expires_at' => $cursorExpiresAt,
+            ],
         ];
     }
 
@@ -274,6 +328,11 @@ abstract class Controller
             throw new NotFoundException();
         }
 
+        $row = $this->withVersionMetadata($row);
+        if (!headers_sent()) {
+            header('ETag: ' . $row['etag']);
+        }
+
         return ['data' => $row];
     }
 
@@ -292,7 +351,7 @@ abstract class Controller
             if ($def['readonly'] ?? false) {
                 continue;
             }
-            if (array_key_exists($col, $clean)) {
+            if (array_key_exists($col, $clean) && !array_key_exists($col, $extras)) {
                 $columns[] = $col;
                 $placeholders[] = '?';
                 $binds[] = $clean[$col];
@@ -337,13 +396,17 @@ abstract class Controller
         $stmt->close();
 
         $this->afterCreate($insertId, $clean);
+        $created = $this->get($insertId);
+        $this->recordChange('create', (array)$created['data']);
 
-        return $this->get($insertId);
+        return $created;
     }
 
     public function update(int|string $id, array $payload): array
     {
-        $this->get($id);
+        $current = $this->get($id);
+        $currentData = (array)$current['data'];
+        $this->assertIfMatchSatisfied($currentData);
         $clean = $this->validatePayload($payload);
         $this->beforeUpdate($id, $clean);
 
@@ -393,12 +456,14 @@ abstract class Controller
         }
         $stmt->close();
 
-        return $this->get($id);
+        $updated = $this->get($id);
+        $this->recordChange('update', (array)$updated['data']);
+        return $updated;
     }
 
     public function delete(int|string $id): void
     {
-        $this->get($id);
+        $existing = $this->get($id);
         $this->beforeDelete($id);
 
         $binds = [$id];
@@ -434,9 +499,239 @@ abstract class Controller
             throw new DatabaseException('Delete failed');
         }
         $stmt->close();
+
+        $this->recordChange('delete', (array)$existing['data']);
+    }
+
+    public function bulkUpsert(array $payload): array
+    {
+        $idempotencyKey = trim((string)(\Api\V3\RequestContext::header('idempotency-key') ?? ''));
+        if ($idempotencyKey === '') {
+            throw new ValidationException('Idempotency-Key header is required', ['idempotency_key' => 'Missing Idempotency-Key header']);
+        }
+
+        $rows = $payload['rows'] ?? $payload;
+        if (!is_array($rows)) {
+            throw new ValidationException('rows must be an array', ['rows' => 'Expected array']);
+        }
+        $maxRows = $this->maxBulkRows();
+        if (count($rows) > $maxRows) {
+            throw new ValidationException('rows exceeds max size', ['rows' => "Maximum {$maxRows} rows per request"]);
+        }
+
+        $requestHash = ServerStateStore::canonicalHash(['rows' => $rows]);
+        $scope = 'bulk-upsert:' . $this->tableName() . ':user:' . $this->userId . ':request:' . $requestHash;
+        $existing = $this->stateStore()->getIdempotent($scope, $idempotencyKey);
+        if (is_array($existing)) {
+            $existing['idempotent_replay'] = true;
+            return $existing;
+        }
+
+        $results = [];
+        $summary = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'error' => 0];
+        $chunkSize = max(1, min(100, $maxRows));
+        foreach (array_chunk($rows, $chunkSize, true) as $chunk) {
+            $this->transaction(function () use (&$chunk, &$summary, &$results): void {
+                foreach ($chunk as $index => $row) {
+                    if (!is_array($row)) {
+                        $summary['error']++;
+                        $results[] = ['index' => $index, 'status' => 'error', 'message' => 'Row must be an object'];
+                        continue;
+                    }
+                    if ($row === []) {
+                        $summary['skipped']++;
+                        $results[] = ['index' => $index, 'status' => 'skipped', 'message' => 'Row is empty'];
+                        continue;
+                    }
+
+                    try {
+                        $primaryKey = $this->primaryKey();
+                        $id = $row[$primaryKey] ?? $row['id'] ?? null;
+                        if ($id !== null && $id !== '') {
+                            try {
+                                $this->get((string)$id);
+                                $clean = $this->validatePayload($row);
+                                if ($clean === []) {
+                                    $summary['skipped']++;
+                                    $results[] = ['index' => $index, 'status' => 'skipped', 'message' => 'No mutable fields provided'];
+                                    continue;
+                                }
+                                $updated = $this->update((string)$id, $row);
+                                $summary['updated']++;
+                                $results[] = ['index' => $index, 'status' => 'updated', 'data' => $updated['data']];
+                                continue;
+                            } catch (NotFoundException) {
+                                // Fall through to create when provided ID does not exist.
+                            }
+                        }
+
+                        $created = $this->create($row);
+                        $summary['created']++;
+                        $results[] = ['index' => $index, 'status' => 'created', 'data' => $created['data']];
+                    } catch (\Throwable $e) {
+                        $summary['error']++;
+                        $results[] = ['index' => $index, 'status' => 'error', 'message' => $e->getMessage()];
+                    }
+                }
+            });
+        }
+
+        $response = [
+            'data' => $results,
+            'summary' => $summary,
+            'idempotent_replay' => false,
+        ];
+        $this->stateStore()->incrementMetric('bulk_upsert_created', (int)$summary['created']);
+        $this->stateStore()->incrementMetric('bulk_upsert_updated', (int)$summary['updated']);
+        $this->stateStore()->incrementMetric('bulk_upsert_skipped', (int)$summary['skipped']);
+        $this->stateStore()->incrementMetric('bulk_upsert_errors', (int)$summary['error']);
+        $this->stateStore()->putIdempotent($scope, $idempotencyKey, $response);
+
+        return $response;
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
+
+    protected function stateStore(): ServerStateStore
+    {
+        if ($this->stateStore === null) {
+            $this->stateStore = new ServerStateStore();
+        }
+        return $this->stateStore;
+    }
+
+    protected function withVersionMetadata(array $row): array
+    {
+        $version = $this->computeVersionHash($row);
+        $row['version'] = $version;
+        $row['etag'] = '"' . $version . '"';
+        return $row;
+    }
+
+    protected function computeVersionHash(array $row): string
+    {
+        unset($row['version'], $row['etag']);
+        ksort($row);
+        $json = json_encode($row, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            return sha1((string)microtime(true));
+        }
+        return sha1($json);
+    }
+
+    protected function assertIfMatchSatisfied(array $currentRow): void
+    {
+        $ifMatch = trim((string)(\Api\V3\RequestContext::header('if-match') ?? ''));
+        if ($ifMatch === '' || $ifMatch === '*') {
+            return;
+        }
+
+        $expected = trim($ifMatch);
+        if (str_starts_with($expected, 'W/')) {
+            $expected = substr($expected, 2);
+        }
+        $expected = trim($expected, '" ');
+
+        $currentVersion = $this->computeVersionHash($currentRow);
+        if ($expected !== $currentVersion) {
+            $this->stateStore()->incrementMetric('conflicts', 1);
+            throw new ConflictException(
+                'Version mismatch',
+                [
+                    'expected_version' => $expected,
+                    'current_version' => $currentVersion,
+                    'diff_hint' => 'Re-fetch resource and retry update with latest ETag.',
+                ]
+            );
+        }
+    }
+
+    protected function encodeOffsetCursor(int $offset, int $expiresAt): string
+    {
+        $json = json_encode(['offset' => $offset, 'expires_at' => $expiresAt], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            throw new ValidationException('Failed to encode cursor');
+        }
+        return rtrim(strtr(base64_encode($json), '+/', '-_'), '=');
+    }
+
+    protected function decodeOffsetCursor(string $cursor): int
+    {
+        $payload = strtr($cursor, '-_', '+/');
+        $padLen = strlen($payload) % 4;
+        if ($padLen !== 0) {
+            $payload .= str_repeat('=', 4 - $padLen);
+        }
+
+        $raw = base64_decode($payload, true);
+        if ($raw === false) {
+            throw new ValidationException('Invalid cursor', ['cursor' => 'Malformed cursor']);
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            throw new ValidationException('Invalid cursor', ['cursor' => 'Malformed cursor']);
+        }
+        if (!empty($decoded['expires_at']) && (int)$decoded['expires_at'] < time()) {
+            throw new ValidationException('Cursor expired', ['cursor' => 'Cursor has expired']);
+        }
+
+        return max(0, (int)($decoded['offset'] ?? 0));
+    }
+
+    protected function detectTimestampColumn(array $candidates): ?string
+    {
+        foreach ($candidates as $column) {
+            if ($this->hasColumn($column)) {
+                return $column;
+            }
+        }
+        return null;
+    }
+
+    protected function hasColumn(string $column): bool
+    {
+        $sql = sprintf('SHOW COLUMNS FROM %s LIKE ?', $this->tableName());
+        $stmt = $this->db->prepare($sql);
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('s', $column);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return false;
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            return false;
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+        return (bool)$row;
+    }
+
+    protected function recordChange(string $operation, array $record): void
+    {
+        $entity = $this->changeEntityName();
+        if ($entity === null) {
+            return;
+        }
+        $this->stateStore()->recordChange($entity, $operation, $record, $this->userId);
+    }
+
+    protected function changeEntityName(): ?string
+    {
+        $map = [
+            '202_aff_networks' => 'aff-networks',
+            '202_ppc_networks' => 'ppc-networks',
+            '202_ppc_accounts' => 'ppc-accounts',
+            '202_aff_campaigns' => 'campaigns',
+            '202_landing_pages' => 'landing-pages',
+            '202_text_ads' => 'text-ads',
+            '202_trackers' => 'trackers',
+        ];
+        return $map[$this->tableName()] ?? null;
+    }
 
     protected function transaction(callable $fn): mixed
     {
