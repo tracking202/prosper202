@@ -69,7 +69,7 @@ class INDEXES
         $db = $database->getConnection();
 
         $mysql['city_name'] = $db->real_escape_string($city_name);
-        $mysql['country_id'] = $db->real_escape_string($country_id);
+        $mysql['country_id'] = $db->real_escape_string((string) $country_id);
 
         if ($memcacheWorking) {
             $time = 2592000; // 7 days in sec
@@ -323,7 +323,7 @@ class INDEXES
         if ($site_url_result->num_rows == 0) {
 
             $site_domain_id = INDEXES::get_site_domain_id($site_url);
-            $mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
+            $mysql['site_domain_id'] = $db->real_escape_string((string) $site_domain_id);
 
             $site_url_sql = "INSERT INTO 202_site_urls SET site_url='" . $mysql['site_url'] . "', site_domain_id='" . $mysql['site_domain_id'] . "'";
             delay_sql($site_url_sql);
