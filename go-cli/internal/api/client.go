@@ -16,9 +16,13 @@ import (
 const maxResponseSize = 10 << 20 // 10 MB
 
 type Client struct {
+	rootURL string
 	baseURL string
 	apiKey  string
 	http    *http.Client
+
+	capabilities       map[string]interface{}
+	capabilitiesLoaded bool
 }
 
 type APIError struct {
@@ -74,11 +78,134 @@ func NewURLOnly() (*Client, error) {
 }
 
 func newClient(baseURL, apiKey string) *Client {
+	rootURL := strings.TrimRight(baseURL, "/")
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/") + "/api/v3",
+		rootURL: rootURL,
+		baseURL: rootURL + "/api/v3",
 		apiKey:  apiKey,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+func (c *Client) SupportsCapability(path ...string) bool {
+	v, ok := c.Capability(path...)
+	if !ok {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		return strings.EqualFold(val, "true") || val == "1"
+	default:
+		return false
+	}
+}
+
+func (c *Client) Capability(path ...string) (interface{}, bool) {
+	c.ensureCapabilities()
+	if len(path) == 0 {
+		return c.capabilities, len(c.capabilities) > 0
+	}
+	var current interface{} = c.capabilities
+	for _, key := range path {
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		next, ok := obj[key]
+		if !ok {
+			return nil, false
+		}
+		current = next
+	}
+	return current, true
+}
+
+func (c *Client) ensureCapabilities() {
+	if c.capabilitiesLoaded {
+		return
+	}
+	c.capabilitiesLoaded = true
+
+	c.negotiateVersion()
+
+	req, err := http.NewRequest("GET", c.baseURL+"/capabilities", nil)
+	if err != nil {
+		return
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	if err != nil {
+		return
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return
+	}
+	if data, ok := decoded["data"].(map[string]interface{}); ok {
+		c.capabilities = data
+		return
+	}
+	c.capabilities = decoded
+}
+
+func (c *Client) negotiateVersion() {
+	req, err := http.NewRequest("GET", c.rootURL+"/api/versions", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	if err != nil {
+		return
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return
+	}
+
+	var preferred string
+	if data, ok := decoded["data"].(map[string]interface{}); ok {
+		preferred, _ = data["preferred"].(string)
+	} else {
+		preferred, _ = decoded["preferred"].(string)
+	}
+	preferred = strings.TrimSpace(preferred)
+	if preferred == "" {
+		return
+	}
+
+	preferred = strings.TrimPrefix(strings.ToLower(preferred), "v")
+	if preferred == "" {
+		return
+	}
+	c.baseURL = c.rootURL + "/api/v" + preferred
 }
 
 func (c *Client) Get(path string, params map[string]string) ([]byte, error) {
@@ -127,6 +254,9 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
+	if idx := strings.LastIndex(c.baseURL, "/api/v"); idx != -1 {
+		req.Header.Set("X-P202-API-Version", c.baseURL[idx+5:])
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

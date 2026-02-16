@@ -43,7 +43,7 @@ func Render(data []byte, jsonMode bool) {
 		if items, ok := v["data"].([]interface{}); ok {
 			renderTable(items)
 			if pg, ok := v["pagination"].(map[string]interface{}); ok {
-				renderPagination(pg)
+				renderPagination(pg, jsonMode)
 			}
 		} else if inner, ok := v["data"].(map[string]interface{}); ok {
 			renderObject(inner)
@@ -158,7 +158,7 @@ func renderObject(obj map[string]interface{}) {
 	w.Flush()
 }
 
-func renderPagination(pg map[string]interface{}) {
+func renderPagination(pg map[string]interface{}, jsonMode bool) {
 	parts := []string{}
 	if total, ok := pg["total"]; ok {
 		parts = append(parts, fmt.Sprintf("Total: %v", total))
@@ -171,6 +171,64 @@ func renderPagination(pg map[string]interface{}) {
 	}
 	if len(parts) > 0 {
 		fmt.Printf("\n%s\n", strings.Join(parts, " | "))
+	}
+
+	if jsonMode {
+		return
+	}
+
+	total, hasTotal := numericValue(pg["total"])
+	limit, hasLimit := numericValue(pg["limit"])
+	offset, hasOffset := numericValue(pg["offset"])
+	if !hasTotal || !hasLimit {
+		return
+	}
+	if !hasOffset {
+		offset = 0
+	}
+
+	shown := limit
+	if offset+limit > total {
+		shown = total - offset
+	}
+	if shown < 0 {
+		shown = 0
+	}
+	if shown > 0 && shown < total {
+		fmt.Fprintf(os.Stderr, "Warning: Showing %.0f of %.0f results. Use --all to fetch all.\n", shown, total)
+	}
+}
+
+func numericValue(raw interface{}) (float64, bool) {
+	switch v := raw.(type) {
+	case nil:
+		return 0, false
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return 0, false
+		}
+		var parsed float64
+		_, err := fmt.Sscanf(v, "%f", &parsed)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
 	}
 }
 
