@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -25,8 +27,31 @@ var conversionListCmd = &cobra.Command{
 			return err
 		}
 		params := map[string]string{}
-		flags := []string{"limit", "offset", "campaign_id", "time_from", "time_to"}
+		flags := []string{"campaign_id", "time_from", "time_to"}
 		for _, f := range flags {
+			if v, _ := cmd.Flags().GetString(f); v != "" {
+				params[f] = v
+			}
+		}
+		allRows, _ := cmd.Flags().GetBool("all")
+		if allRows {
+			rows, err := fetchAllRowsWithParams(c, "conversions", params)
+			if err != nil {
+				return err
+			}
+			encoded, _ := json.Marshal(map[string]interface{}{
+				"data": rows,
+				"pagination": map[string]interface{}{
+					"total":  len(rows),
+					"limit":  len(rows),
+					"offset": 0,
+				},
+			})
+			render(encoded)
+			return nil
+		}
+
+		for _, f := range []string{"limit", "offset"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				params[f] = v
 			}
@@ -100,12 +125,54 @@ var conversionCreateCmd = &cobra.Command{
 var conversionDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a conversion",
-	Args:  cobra.ExactArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		idsFlag, _ := cmd.Flags().GetString("ids")
+		if strings.TrimSpace(idsFlag) != "" {
+			return cobra.MaximumNArgs(0)(cmd, args)
+		}
+		return cobra.ExactArgs(1)(cmd, args)
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
 		}
+		idsFlag, _ := cmd.Flags().GetString("ids")
+		if strings.TrimSpace(idsFlag) != "" {
+			idList := parseIDList(idsFlag)
+			if len(idList) == 0 {
+				return fmt.Errorf("--ids requires at least one ID")
+			}
+
+			force, _ := cmd.Flags().GetBool("force")
+			if !force {
+				fmt.Printf("Delete %d conversions? [y/N] ", len(idList))
+				var answer string
+				fmt.Scanln(&answer)
+				answer = strings.ToLower(strings.TrimSpace(answer))
+				if answer != "y" && answer != "yes" {
+					fmt.Println("Cancelled.")
+					return nil
+				}
+			}
+
+			deleted := 0
+			failed := 0
+			for _, id := range idList {
+				if err := c.Delete("conversions/" + id); err != nil {
+					failed++
+					fmt.Fprintf(os.Stderr, "Failed to delete conversion %s: %v\n", id, err)
+					continue
+				}
+				deleted++
+			}
+			output.Success("Deleted %d of %d conversions.", deleted, len(idList))
+			if failed > 0 {
+				return fmt.Errorf("failed to delete %d conversions", failed)
+			}
+			return nil
+		}
+
 		force, _ := cmd.Flags().GetBool("force")
 		if !force {
 			fmt.Printf("Delete conversion %s? [y/N] ", args[0])
@@ -127,6 +194,7 @@ var conversionDeleteCmd = &cobra.Command{
 func init() {
 	conversionListCmd.Flags().StringP("limit", "l", "", "Max results")
 	conversionListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	conversionListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	conversionListCmd.Flags().String("campaign_id", "", "Filter by campaign ID")
 	conversionListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	conversionListCmd.Flags().String("time_to", "", "End timestamp (unix)")
@@ -138,6 +206,7 @@ func init() {
 	conversionCreateCmd.Flags().String("transaction_id", "", "Transaction ID for deduplication")
 
 	conversionDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	conversionDeleteCmd.Flags().String("ids", "", "Comma-separated conversion IDs to delete in bulk")
 
 	conversionCmd.AddCommand(conversionListCmd, conversionGetCmd, conversionCreateCmd, conversionDeleteCmd)
 	rootCmd.AddCommand(conversionCmd)

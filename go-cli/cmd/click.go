@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"p202/internal/api"
 	"strconv"
@@ -22,10 +23,33 @@ var clickListCmd = &cobra.Command{
 			return err
 		}
 		params := map[string]string{}
-		flags := []string{"limit", "offset", "time_from", "time_to",
+		flags := []string{"time_from", "time_to",
 			"aff_campaign_id", "ppc_account_id", "landing_page_id",
 			"click_lead", "click_bot"}
 		for _, f := range flags {
+			if v, _ := cmd.Flags().GetString(f); v != "" {
+				params[f] = v
+			}
+		}
+		allRows, _ := cmd.Flags().GetBool("all")
+		if allRows {
+			rows, err := fetchAllRowsWithParams(c, "clicks", params)
+			if err != nil {
+				return err
+			}
+			encoded, _ := json.Marshal(map[string]interface{}{
+				"data": rows,
+				"pagination": map[string]interface{}{
+					"total":  len(rows),
+					"limit":  len(rows),
+					"offset": 0,
+				},
+			})
+			render(encoded)
+			return nil
+		}
+
+		for _, f := range []string{"limit", "offset"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				params[f] = v
 			}
@@ -77,6 +101,7 @@ var clickGetCmd = &cobra.Command{
 func init() {
 	clickListCmd.Flags().StringP("limit", "l", "", "Max results")
 	clickListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	clickListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	clickListCmd.Flags().String("page", "", "Page number (maps to offset)")
 	clickListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	clickListCmd.Flags().String("time_to", "", "End timestamp (unix)")

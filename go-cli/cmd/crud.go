@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,58 @@ type crudEntity struct {
 	Endpoint   string
 	Fields     []crudField
 	ListParams []crudField
+}
+
+type fkResolutionSpec struct {
+	Endpoint    string
+	IDFields    []string
+	NameField   string
+	OutputField string
+}
+
+var fkResolutionMap = map[string]fkResolutionSpec{
+	"aff_campaign_id": {
+		Endpoint:    "campaigns",
+		IDFields:    []string{"aff_campaign_id", "id"},
+		NameField:   "aff_campaign_name",
+		OutputField: "campaign_name",
+	},
+	"aff_network_id": {
+		Endpoint:    "aff-networks",
+		IDFields:    []string{"aff_network_id", "id"},
+		NameField:   "aff_network_name",
+		OutputField: "aff_network_name",
+	},
+	"ppc_network_id": {
+		Endpoint:    "ppc-networks",
+		IDFields:    []string{"ppc_network_id", "id"},
+		NameField:   "ppc_network_name",
+		OutputField: "ppc_network_name",
+	},
+	"ppc_account_id": {
+		Endpoint:    "ppc-accounts",
+		IDFields:    []string{"ppc_account_id", "id"},
+		NameField:   "ppc_account_name",
+		OutputField: "ppc_account_name",
+	},
+	"landing_page_id": {
+		Endpoint:    "landing-pages",
+		IDFields:    []string{"landing_page_id", "id"},
+		NameField:   "landing_page_url",
+		OutputField: "landing_page_url",
+	},
+	"text_ad_id": {
+		Endpoint:    "text-ads",
+		IDFields:    []string{"text_ad_id", "id"},
+		NameField:   "text_ad_name",
+		OutputField: "text_ad_name",
+	},
+	"rotator_id": {
+		Endpoint:    "rotators",
+		IDFields:    []string{"id"},
+		NameField:   "name",
+		OutputField: "rotator_name",
+	},
 }
 
 func capitalize(s string) string {
@@ -99,6 +152,84 @@ func cloneMutableFields(source map[string]interface{}, fields []crudField) map[s
 	return out
 }
 
+func parseIDList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		id := strings.TrimSpace(part)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+func resolveForeignKeyNames(c *api.Client, rows []map[string]interface{}) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	activeFields := map[string]fkResolutionSpec{}
+	for field, spec := range fkResolutionMap {
+		for _, row := range rows {
+			rawID := scalarString(row[field])
+			if rawID != "" && rawID != "0" {
+				activeFields[field] = spec
+				break
+			}
+		}
+	}
+	if len(activeFields) == 0 {
+		return nil
+	}
+
+	lookupsByEndpoint := map[string]map[string]string{}
+	for _, spec := range activeFields {
+		if _, exists := lookupsByEndpoint[spec.Endpoint]; exists {
+			continue
+		}
+
+		referenceRows, err := fetchAllRows(c, spec.Endpoint)
+		if err != nil {
+			return fmt.Errorf("resolve names for %s: %w", spec.Endpoint, err)
+		}
+
+		lookup := map[string]string{}
+		for _, referenceRow := range referenceRows {
+			id := firstStringFromRow(referenceRow, spec.IDFields...)
+			if id == "" {
+				continue
+			}
+			name := scalarString(referenceRow[spec.NameField])
+			if name == "" {
+				name = "id:" + id
+			}
+			lookup[id] = name
+		}
+		lookupsByEndpoint[spec.Endpoint] = lookup
+	}
+
+	for _, row := range rows {
+		for field, spec := range activeFields {
+			rawID := scalarString(row[field])
+			if rawID == "" || rawID == "0" {
+				continue
+			}
+			lookup := lookupsByEndpoint[spec.Endpoint]
+			if resolved, ok := lookup[rawID]; ok && resolved != "" {
+				row[spec.OutputField] = resolved
+			} else {
+				row[spec.OutputField] = "id:" + rawID
+			}
+		}
+	}
+
+	return nil
+}
+
 func registerCRUD(entity crudEntity) *cobra.Command {
 	parentCmd := &cobra.Command{
 		Use:   entity.Name,
@@ -135,6 +266,31 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					params[queryKey] = val
 				}
 			}
+			allRows, _ := cmd.Flags().GetBool("all")
+			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
+
+			if allRows {
+				rows, err := fetchAllRowsWithParams(c, entity.Endpoint, params)
+				if err != nil {
+					return err
+				}
+				if resolveNames {
+					if err := resolveForeignKeyNames(c, rows); err != nil {
+						return err
+					}
+				}
+				encoded, _ := json.Marshal(map[string]interface{}{
+					"data": rows,
+					"pagination": map[string]interface{}{
+						"total":  len(rows),
+						"limit":  len(rows),
+						"offset": 0,
+					},
+				})
+				render(encoded)
+				return nil
+			}
+
 			if v, _ := cmd.Flags().GetString("page"); v != "" {
 				params["page"] = v
 			}
@@ -148,6 +304,23 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if resolveNames {
+				rows, err := parseDataArray(data)
+				if err != nil {
+					return err
+				}
+				if err := resolveForeignKeyNames(c, rows); err != nil {
+					return err
+				}
+				var parsed map[string]interface{}
+				resp := map[string]interface{}{"data": rows}
+				if err := json.Unmarshal(data, &parsed); err == nil {
+					if pg, ok := parsed["pagination"]; ok {
+						resp["pagination"] = pg
+					}
+				}
+				data, _ = json.Marshal(resp)
+			}
 			render(data)
 			return nil
 		},
@@ -155,6 +328,8 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd.Flags().String("page", "", "Page number")
 	listCmd.Flags().StringP("limit", "l", "", "Max results")
 	listCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	listCmd.Flags().Bool("all", false, "Fetch all rows across pages")
+	listCmd.Flags().Bool("resolve-names", false, "Resolve foreign key IDs to names")
 	for _, p := range entity.ListParams {
 		listCmd.Flags().String(p.Name, "", p.Desc)
 		for _, alias := range p.Aliases {
@@ -249,12 +424,54 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	deleteCmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: fmt.Sprintf("Delete a %s", entity.Name),
-		Args:  cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			idsFlag, _ := cmd.Flags().GetString("ids")
+			if strings.TrimSpace(idsFlag) != "" {
+				return cobra.MaximumNArgs(0)(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
 			}
+			idsFlag, _ := cmd.Flags().GetString("ids")
+			if strings.TrimSpace(idsFlag) != "" {
+				idList := parseIDList(idsFlag)
+				if len(idList) == 0 {
+					return fmt.Errorf("--ids requires at least one ID")
+				}
+
+				force, _ := cmd.Flags().GetBool("force")
+				if !force {
+					fmt.Printf("Delete %d %s? [y/N] ", len(idList), entity.Plural)
+					var answer string
+					fmt.Scanln(&answer)
+					answer = strings.ToLower(strings.TrimSpace(answer))
+					if answer != "y" && answer != "yes" {
+						fmt.Println("Cancelled.")
+						return nil
+					}
+				}
+
+				deleted := 0
+				failed := 0
+				for _, id := range idList {
+					if err := c.Delete(entity.Endpoint + "/" + id); err != nil {
+						failed++
+						fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", entity.Name, id, err)
+						continue
+					}
+					deleted++
+				}
+				output.Success("Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
+				if failed > 0 {
+					return fmt.Errorf("failed to delete %d %s", failed, entity.Plural)
+				}
+				return nil
+			}
+
 			force, _ := cmd.Flags().GetBool("force")
 			if !force {
 				fmt.Printf("Delete %s %s? [y/N] ", entity.Name, args[0])
@@ -273,6 +490,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		},
 	}
 	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	deleteCmd.Flags().String("ids", "", "Comma-separated IDs to delete in bulk")
 
 	parentCmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 	rootCmd.AddCommand(parentCmd)
@@ -356,6 +574,7 @@ func init() {
 				{Name: "click_cpc", Desc: "Cost per click"},
 				{Name: "click_cpa", Desc: "Cost per action"},
 				{Name: "click_cloaking", Desc: "Enable cloaking (0 or 1)"},
+				{Name: "tracker_id_public", Desc: "Public tracker ID"},
 			},
 			ListParams: []crudField{
 				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},

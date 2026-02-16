@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"p202/internal/api"
+	configpkg "p202/internal/config"
 
 	"github.com/spf13/cobra"
 )
@@ -26,6 +27,8 @@ type entityLookups struct {
 	landingPageIDs map[string]string
 	textAds        map[string]string
 	textAdIDs      map[string]string
+	rotators       map[string]string
+	rotatorIDs     map[string]string
 }
 
 var diffCmd = &cobra.Command{
@@ -58,6 +61,22 @@ var diffCmd = &cobra.Command{
 		toClient, err := api.NewFromProfile(toProfile)
 		if err != nil {
 			return err
+		}
+
+		if fromClient.SupportsCapability("sync_features", "sync_plan") {
+			sourceConn, srcErr := loadProfileConnection(fromProfile)
+			targetConn, tgtErr := loadProfileConnection(toProfile)
+			if srcErr == nil && tgtErr == nil {
+				serverPayload := map[string]interface{}{
+					"entity": target,
+					"source": sourceConn,
+					"target": targetConn,
+				}
+				if resp, srvErr := fromClient.Post("sync/plan", serverPayload); srvErr == nil {
+					render(resp)
+					return nil
+				}
+			}
 		}
 
 		fromData, err := fetchPortableEntityData(fromClient)
@@ -118,9 +137,51 @@ func fetchPortableEntityData(c *api.Client) (map[string][]map[string]interface{}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", entity, err)
 		}
+		if entity == "rotators" {
+			rows = enrichRotatorsWithRules(c, rows)
+		}
 		out[entity] = rows
 	}
 	return out, nil
+}
+
+func enrichRotatorsWithRules(c *api.Client, rows []map[string]interface{}) []map[string]interface{} {
+	if len(rows) == 0 {
+		return rows
+	}
+
+	enriched := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		copyRow := cloneMap(row)
+		rotatorID := firstStringFromRow(row, "id")
+		if rotatorID == "" {
+			copyRow["rules"] = []interface{}{}
+			enriched = append(enriched, copyRow)
+			continue
+		}
+
+		raw, err := c.Get("rotators/"+rotatorID, nil)
+		if err != nil {
+			copyRow["rules"] = []interface{}{}
+			enriched = append(enriched, copyRow)
+			continue
+		}
+
+		detail, err := parseDataObject(raw)
+		if err != nil {
+			copyRow["rules"] = []interface{}{}
+			enriched = append(enriched, copyRow)
+			continue
+		}
+
+		if rules, ok := detail["rules"]; ok {
+			copyRow["rules"] = rules
+		} else {
+			copyRow["rules"] = []interface{}{}
+		}
+		enriched = append(enriched, copyRow)
+	}
+	return enriched
 }
 
 func sortedPortableEntities() []string {
@@ -139,6 +200,7 @@ func buildEntityLookups(data map[string][]map[string]interface{}) entityLookups 
 	campaignByID, campaignByNatural := buildIDLookup(data["campaigns"], "aff_campaign_id", "id", "aff_campaign_name")
 	landingByID, landingByNatural := buildIDLookup(data["landing-pages"], "landing_page_id", "id", "landing_page_url")
 	textAdByID, textAdByNatural := buildIDLookup(data["text-ads"], "text_ad_id", "id", "text_ad_name")
+	rotatorByID, rotatorByNatural := buildIDLookup(data["rotators"], "id", "public_id")
 
 	return entityLookups{
 		affNetworks:    affByID,
@@ -153,6 +215,8 @@ func buildEntityLookups(data map[string][]map[string]interface{}) entityLookups 
 		landingPageIDs: landingByNatural,
 		textAds:        textAdByID,
 		textAdIDs:      textAdByNatural,
+		rotators:       rotatorByID,
+		rotatorIDs:     rotatorByNatural,
 	}
 }
 
@@ -282,17 +346,20 @@ func naturalKeyForEntity(entity string, row map[string]interface{}, lookups enti
 		return scalarString(row["landing_page_url"])
 	case "text-ads":
 		return scalarString(row["text_ad_name"])
+	case "rotators":
+		return "pub=" + scalarString(row["public_id"])
 	case "trackers":
 		campaign := remapForeignKey(row, "aff_campaign_id", lookups.campaigns)
 		account := remapForeignKey(row, "ppc_account_id", lookups.ppcAccounts)
 		landing := remapForeignKey(row, "landing_page_id", lookups.landingPages)
 		textAd := remapForeignKey(row, "text_ad_id", lookups.textAds)
+		rotator := remapForeignKey(row, "rotator_id", lookups.rotators)
 		return strings.Join([]string{
 			"campaign=" + campaign,
 			"ppc_account=" + account,
 			"landing_page=" + landing,
 			"text_ad=" + textAd,
-			"rotator=" + scalarString(row["rotator_id"]),
+			"rotator=" + rotator,
 			"click_cpc=" + scalarString(row["click_cpc"]),
 			"click_cpa=" + scalarString(row["click_cpa"]),
 			"click_cloaking=" + scalarString(row["click_cloaking"]),
@@ -319,6 +386,10 @@ func normalizeComparableRecord(entity string, row map[string]interface{}, lookup
 	case "text-ads":
 		out["aff_campaign_id"] = remapForeignKey(row, "aff_campaign_id", lookups.campaigns)
 		out["landing_page_id"] = remapForeignKey(row, "landing_page_id", lookups.landingPages)
+	case "rotators":
+		out["default_campaign"] = remapForeignKey(row, "default_campaign", lookups.campaigns)
+		out["default_lp"] = remapForeignKey(row, "default_lp", lookups.landingPages)
+		out["rules"] = normalizeRulesForComparison(row["rules"], lookups)
 	case "trackers":
 		out["aff_campaign_id"] = remapForeignKey(row, "aff_campaign_id", lookups.campaigns)
 		out["ppc_account_id"] = remapForeignKey(row, "ppc_account_id", lookups.ppcAccounts)
@@ -329,15 +400,141 @@ func normalizeComparableRecord(entity string, row map[string]interface{}, lookup
 	return out
 }
 
+func normalizeRulesForComparison(rawRules interface{}, lookups entityLookups) []interface{} {
+	rulesSlice := toInterfaceSlice(rawRules)
+	if len(rulesSlice) == 0 {
+		return []interface{}{}
+	}
+
+	normalized := make([]map[string]interface{}, 0, len(rulesSlice))
+	for _, item := range rulesSlice {
+		rule, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		normalized = append(normalized, map[string]interface{}{
+			"rule_name": scalarString(rule["rule_name"]),
+			"splittest": scalarString(rule["splittest"]),
+			"status":    scalarString(rule["status"]),
+			"criteria":  normalizeCriteria(rule["criteria"]),
+			"redirects": normalizeRedirects(rule["redirects"], lookups),
+		})
+	}
+
+	sort.SliceStable(normalized, func(i, j int) bool {
+		left := scalarString(normalized[i]["rule_name"]) + "|" + scalarString(normalized[i]["status"]) + "|" + scalarString(normalized[i]["splittest"])
+		right := scalarString(normalized[j]["rule_name"]) + "|" + scalarString(normalized[j]["status"]) + "|" + scalarString(normalized[j]["splittest"])
+		return left < right
+	})
+
+	out := make([]interface{}, len(normalized))
+	for i, rule := range normalized {
+		out[i] = rule
+	}
+	return out
+}
+
+func normalizeCriteria(raw interface{}) []interface{} {
+	slice := toInterfaceSlice(raw)
+	if len(slice) == 0 {
+		return []interface{}{}
+	}
+
+	result := make([]map[string]interface{}, 0, len(slice))
+	for _, item := range slice {
+		criterion, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		result = append(result, map[string]interface{}{
+			"type":      scalarString(criterion["type"]),
+			"statement": scalarString(criterion["statement"]),
+			"value":     scalarString(criterion["value"]),
+		})
+	}
+
+	sort.SliceStable(result, func(i, j int) bool {
+		left := scalarString(result[i]["type"]) + "|" + scalarString(result[i]["statement"]) + "|" + scalarString(result[i]["value"])
+		right := scalarString(result[j]["type"]) + "|" + scalarString(result[j]["statement"]) + "|" + scalarString(result[j]["value"])
+		return left < right
+	})
+
+	out := make([]interface{}, len(result))
+	for i, criterion := range result {
+		out[i] = criterion
+	}
+	return out
+}
+
+func normalizeRedirects(raw interface{}, lookups entityLookups) []interface{} {
+	slice := toInterfaceSlice(raw)
+	if len(slice) == 0 {
+		return []interface{}{}
+	}
+
+	result := make([]map[string]interface{}, 0, len(slice))
+	for _, item := range slice {
+		redirect, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		result = append(result, map[string]interface{}{
+			"redirect_url":      scalarString(redirect["redirect_url"]),
+			"redirect_campaign": remapForeignKeyValue(redirect["redirect_campaign"], lookups.campaigns),
+			"redirect_lp":       remapForeignKeyValue(redirect["redirect_lp"], lookups.landingPages),
+			"weight":            scalarString(redirect["weight"]),
+			"name":              scalarString(redirect["name"]),
+		})
+	}
+
+	sort.SliceStable(result, func(i, j int) bool {
+		left := scalarString(result[i]["name"]) + "|" + scalarString(result[i]["weight"]) + "|" + scalarString(result[i]["redirect_url"])
+		right := scalarString(result[j]["name"]) + "|" + scalarString(result[j]["weight"]) + "|" + scalarString(result[j]["redirect_url"])
+		return left < right
+	})
+
+	out := make([]interface{}, len(result))
+	for i, redirect := range result {
+		out[i] = redirect
+	}
+	return out
+}
+
 func remapForeignKey(row map[string]interface{}, field string, lookup map[string]string) string {
 	rawID := scalarString(row[field])
-	if rawID == "" {
+	if rawID == "" || rawID == "0" {
 		return ""
 	}
 	if val, ok := lookup[rawID]; ok && val != "" {
 		return val
 	}
 	return "id:" + rawID
+}
+
+func remapForeignKeyValue(raw interface{}, lookup map[string]string) string {
+	rawID := scalarString(raw)
+	if rawID == "" || rawID == "0" {
+		return ""
+	}
+	if val, ok := lookup[rawID]; ok && val != "" {
+		return val
+	}
+	return "id:" + rawID
+}
+
+func toInterfaceSlice(raw interface{}) []interface{} {
+	switch v := raw.(type) {
+	case []interface{}:
+		return v
+	case []map[string]interface{}:
+		out := make([]interface{}, len(v))
+		for i := range v {
+			out[i] = v[i]
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func firstStringFromRow(row map[string]interface{}, keys ...string) string {
@@ -397,7 +594,15 @@ func changedFields(a, b map[string]interface{}) []string {
 	sort.Strings(sortedKeys)
 
 	for _, key := range sortedKeys {
-		if scalarString(a[key]) != scalarString(b[key]) {
+		aRaw, aExists := a[key]
+		bRaw, bExists := b[key]
+		if !aExists || !bExists {
+			out = append(out, key)
+			continue
+		}
+		aBytes, _ := json.Marshal(aRaw)
+		bBytes, _ := json.Marshal(bRaw)
+		if !bytes.Equal(aBytes, bBytes) {
 			out = append(out, key)
 		}
 	}
@@ -413,6 +618,21 @@ func toInt(v interface{}) int {
 	default:
 		return 0
 	}
+}
+
+func loadProfileConnection(profileName string) (map[string]interface{}, error) {
+	profile, resolvedName, err := configpkg.LoadProfileWithName(profileName)
+	if err != nil {
+		return nil, err
+	}
+	if err := profile.Validate(); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"name":    resolvedName,
+		"url":     profile.URL,
+		"api_key": profile.APIKey,
+	}, nil
 }
 
 func init() {
