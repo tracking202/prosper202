@@ -307,6 +307,16 @@ class SyncEngine
                                 $extraHeaders['If-Match'] = (string)$targetRow['etag'];
                             }
                             $targetClient->put(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId, $payload, $extraHeaders);
+                            if ($entity === 'rotators' && $sourceId !== '') {
+                                $this->resyncRotatorRules(
+                                    $sourceClient,
+                                    $targetClient,
+                                    $sourceId,
+                                    $targetId,
+                                    $sourceLookups,
+                                    $targetLookups
+                                );
+                            }
                         } catch (\Throwable $e) {
                             if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
                                 throw $e;
@@ -558,6 +568,37 @@ class SyncEngine
         }
     }
 
+    private function resyncRotatorRules(
+        RemoteApiClient $sourceClient,
+        RemoteApiClient $targetClient,
+        string $sourceRotatorId,
+        string $targetRotatorId,
+        array $sourceLookups,
+        array $targetLookups
+    ): void {
+        $targetRotator = $targetClient->get('rotators/' . $targetRotatorId);
+        $targetRules = $targetRotator['data']['rules'] ?? [];
+        foreach ($targetRules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $ruleId = $this->scalarString($rule['id'] ?? null);
+            if ($ruleId === '') {
+                continue;
+            }
+            $targetClient->delete('rotators/' . $targetRotatorId . '/rules/' . $ruleId);
+        }
+
+        $this->syncRotatorRules(
+            $sourceClient,
+            $targetClient,
+            $sourceRotatorId,
+            $targetRotatorId,
+            $sourceLookups,
+            $targetLookups
+        );
+    }
+
     protected function buildClients(array $sourceProfile, array $targetProfile): array
     {
         $source = new RemoteApiClient((string)($sourceProfile['url'] ?? ''), (string)($sourceProfile['api_key'] ?? ''));
@@ -583,7 +624,31 @@ class SyncEngine
     {
         $out = [];
         foreach (self::DEPENDENCY_ORDER as $entity) {
-            $out[$entity] = $client->fetchAllRows(self::ENTITY_ENDPOINTS[$entity], $query);
+            $rows = $client->fetchAllRows(self::ENTITY_ENDPOINTS[$entity], $query);
+            if ($entity === 'rotators' && !empty($rows)) {
+                $enriched = [];
+                foreach ($rows as $row) {
+                    $row = is_array($row) ? $row : [];
+                    $rotatorId = $this->firstStringFromRow($row, ...self::ENTITY_ID_FIELDS['rotators']);
+                    if ($rotatorId === '') {
+                        $row['rules'] = [];
+                        $enriched[] = $row;
+                        continue;
+                    }
+
+                    try {
+                        $detail = $client->get('rotators/' . $rotatorId);
+                        $detailData = is_array($detail['data'] ?? null) ? $detail['data'] : [];
+                        $rules = $detailData['rules'] ?? [];
+                        $row['rules'] = is_array($rules) ? $rules : [];
+                    } catch (\Throwable) {
+                        $row['rules'] = [];
+                    }
+                    $enriched[] = $row;
+                }
+                $rows = $enriched;
+            }
+            $out[$entity] = $rows;
         }
         return $out;
     }
@@ -872,7 +937,7 @@ class SyncEngine
             case 'rotators':
                 $out['default_campaign'] = $this->remapForeignKey($row, 'default_campaign', $lookups['campaigns']['by_id'] ?? []);
                 $out['default_lp'] = $this->remapForeignKey($row, 'default_lp', $lookups['landing_pages']['by_id'] ?? []);
-                unset($out['rules']);
+                $out['rules'] = $this->normalizeRulesForComparison($row['rules'] ?? [], $lookups);
                 break;
             case 'trackers':
                 $out['aff_campaign_id'] = $this->remapForeignKey($row, 'aff_campaign_id', $lookups['campaigns']['by_id'] ?? []);
