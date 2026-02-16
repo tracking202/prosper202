@@ -541,6 +541,12 @@ class SyncController
         $copy = $job;
         if (isset($copy['request']) && is_array($copy['request'])) {
             $copy['request'] = $this->store->sanitize($copy['request']);
+            if (isset($copy['request']['source']) && is_array($copy['request']['source'])) {
+                unset($copy['request']['source']['api_key']);
+            }
+            if (isset($copy['request']['target']) && is_array($copy['request']['target'])) {
+                unset($copy['request']['target']['api_key']);
+            }
         }
         if (isset($copy['results']) && is_array($copy['results'])) {
             $copy['results'] = $this->store->sanitize($copy['results']);
