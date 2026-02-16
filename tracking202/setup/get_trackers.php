@@ -326,8 +326,8 @@ template_top('Get Trackers');  ?>
 		</form>
 	</div>
 
-	<div class="col-md-6">
-		<div class="panel panel-default">
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">My Tracking Links</div>
 			<div class="panel-body pre-scrollable" style="max-height: 915px;">
 				<div id="filterTrackers">

@@ -39,84 +39,21 @@ $result = $parser->parse($userAgent);
 function logged_in_redirect($safe_context = false)
 {
 	prosper_log('login', 'User already authenticated, preparing redirect.');
-	
-	// If we're not in a safe context (e.g., called from early AUTH check), use simple redirect
-	if (!$safe_context) {
-		//die('redirecting to account...');
-		prosper_log('login', 'Using simple redirect due to unsafe context.');
-		//print url
-		printf("Redirect URL: %s\n", get_absolute_url() . '202-account');
-		//die("redurect url printed...");
-		header('location: ' . get_absolute_url() . '202-account');
-		//exit;
+
+	// Honor the redirect parameter if present — only allow local paths to prevent open redirect
+	if (isset($_GET['redirect'])) {
+		$target = urldecode((string) $_GET['redirect']);
+		if ($target !== '' && $target[0] === '/') {
+			prosper_log('login', 'Redirecting authenticated user to ' . $target);
+			header('location: ' . $target);
+			exit;
+		}
 	}
-	//die('redirecting to account...2');
-	// Due to Mobile_Detect issues causing fatal errors, use simple redirect for now
-	// TODO: Fix Mobile_Detect integration for mobile/tablet detection
+
+	// Default: redirect to account dashboard
 	prosper_log('login', 'Redirecting to account dashboard.');
 	header('location: ' . get_absolute_url() . '202-account');
 	exit;
-	
-	if (false && $isMobile) { // Disable complex mobile logic for now
-		//redirect to mini stats
-		$dni_success = false;
-		if (isset($_GET['redirect'])) {
-			$urlQuery = parse_url(urldecode((string) $_GET['redirect']));
-			parse_str($urlQuery['query'], $vars);
-			if (isset($vars['dl_dni']) && isset($vars['dl_offer_id']) && isset($vars['ddlci'])) {
-				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-				$mysql['dni'] = $db->real_escape_string($vars['dl_dni']);
-				$dni_sql = "SELECT dni.id, dni.networkId, dni.apiKey, dni.affiliateId, 2u.install_hash, 2af.aff_network_id FROM 202_dni_networks AS dni LEFT JOIN 202_users AS 2u USING (user_id) LEFT JOIN 202_aff_networks AS 2af ON (2af.dni_network_id = dni.id) WHERE dni.user_id = '" . $mysql['user_id'] . "' AND dni.networkId = '" . $mysql['dni'] . "' LIMIT 1";
-				$dni_result = _mysqli_query($dni_sql);
-				if ($dni_result->num_rows > 0) {
-					$dni_row = $dni_result->fetch_assoc();
-					$offerData = setupDniOffer($dni_row['install_hash'], $dni_row['networkId'], $dni_row['apiKey'], $dni_row['affiliateId'], 'USD', $vars['dl_offer_id'], $vars['ddlci']);
-					$data = json_decode((string) $offerData, true);
-
-					if (!empty($data)) {
-						$mysql['aff_network_id'] = $db->real_escape_string((string)$dni_row['aff_network_id']);
-						$mysql['aff_campaign_name'] = $db->real_escape_string($data['name']);
-						$mysql['aff_campaign_url'] = $db->real_escape_string($data['trk_url']);
-						$mysql['aff_campaign_payout'] = $db->real_escape_string((string)$data['payout']);
-						$mysql['aff_campaign_time'] = time();
-						$affSql = "INSERT INTO 202_aff_campaigns 
-								   SET 
-								   user_id = '" . $mysql['user_id'] . "',
-								   aff_network_id = '" . $mysql['aff_network_id'] . "',
-								   aff_campaign_name = '" . $mysql['aff_campaign_name'] . "',
-								   aff_campaign_url = '" . $mysql['aff_campaign_url'] . "',
-								   aff_campaign_payout = '" . $mysql['aff_campaign_payout'] . "',
-								   aff_campaign_time = '" . $mysql['aff_campaign_time'] . "'";
-						$db->query($affSql);
-						$aff_campaign_id = $db->insert_id;
-						$aff_campaign_id_public = random_int(1, 9) . $aff_campaign_id . random_int(1, 9);
-						$aff_campaign_sql = "UPDATE 202_aff_campaigns SET aff_campaign_id_public = '" . $aff_campaign_id_public . "' WHERE aff_campaign_id = '" . $aff_campaign_id . "'";
-						$db->query($aff_campaign_sql);
-						setupDniOfferTrack($dni_row['install_hash'], $dni_row['networkId'], $dni_row['apiKey'], $dni_row['affiliateId'], $vars['dl_offer_id'], $vars['ddlci']);
-						$dni_success = true;
-					}
-				}
-			}
-		}
-		header('location: ' . get_absolute_url() . '202-Mobile/mini-stats/?dni=' . $dni_success);
-		prosper_log('login', 'Redirecting authenticated mobile user to mini-stats.');
-		exit;
-	} else {
-
-	if (isset($_GET['redirect'])) {
-		$target = urldecode((string) $_GET['redirect']);
-		prosper_log('login', 'Redirecting authenticated user to ' . $target);
-		header('location: ' . $target);
-		die();
-	}
-
-		//redirect to account screen
-		$redirect_url = get_absolute_url() . '202-account';
-		prosper_log('login', 'About to redirect to: ' . $redirect_url);
-		header('location: ' . $redirect_url);
-		prosper_log('login', 'Redirecting authenticated user to account dashboard.');
-		exit;
-	}
 }
 
 if (AUTH::logged_in() || AUTH::remember_me_on_logged_out()) {

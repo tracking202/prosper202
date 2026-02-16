@@ -519,60 +519,79 @@ template_top('Traffic Sources'); ?>
 			</div>
 		</div>
 	</div>
-	<div class="col-md-6">
-		<div class="panel panel-default">
-			<div class="panel-heading">My Traffic Sources</div>
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
+			<?php
+			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
+			$ppc_network_result = _mysqli_query($ppc_network_sql);
+			$traffic_source_total = (int)$ppc_network_result->num_rows;
+			?>
+			<div class="panel-heading traffic-sources-heading">
+				<span>My Traffic Sources</span>
+				<span class="traffic-sources-heading__meta"><?php echo $traffic_source_total; ?> source<?php echo ($traffic_source_total === 1) ? '' : 's'; ?></span>
+			</div>
 			<div class="panel-body">
-				<div id="trafficSourceList">
-					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
-					<ul class="list setup-list">
-						<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-						$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
-						$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
-						if ($ppc_network_result->num_rows == 0) {
-						?>
-							<li class="empty-state">No traffic sources added yet</li>
+				<div id="trafficSourceList" class="traffic-source-list">
+					<div class="traffic-source-toolbar">
+						<div class="traffic-source-search-wrap">
+							<span class="fa fa-search traffic-source-search-icon" aria-hidden="true"></span>
+							<input class="form-control input-sm search fuzzy-search traffic-source-search" placeholder="Filter sources or accounts">
+						</div>
+					</div>
+					<ul class="list source-list">
+						<?php if ($traffic_source_total === 0) { ?>
+							<li class="empty-state">No traffic sources added yet. Add your first source on the left.</li>
+						<?php } ?>
 						<?php
-						}
-
 						while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQLI_ASSOC)) {
-
-							//print out the PPC networks
 							$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-							$url['ppc_network_id'] = urlencode((string) $ppc_network_row['ppc_network_id']);
+							$url['ppc_network_id'] = urlencode((string)$ppc_network_row['ppc_network_id']);
+							$url['ppc_network_name'] = urlencode((string)($ppc_network_row['ppc_network_name'] ?? ''));
 
-							if ($userObj->hasPermission("remove_traffic_source")) {
-								printf('<li><span class="filter_source_name">%s</span> <a href="?edit_ppc_network_id=%s&edit_ppc_network_name=%s" class="list-action">edit</a> <a href="#" class="custom variables list-action" data-id="%s">variables</a> <a href="?delete_ppc_network_id=%s&delete_ppc_network_name=%s" class="list-action list-action-danger" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Traffic Source?\');">remove</a></li>', $html['ppc_network_name'], $url['ppc_network_id'], $html['ppc_network_name'], $url['ppc_network_id'], $url['ppc_network_id'], $html['ppc_network_name']);
-							} else {
-								printf('<li><span class="filter_source_name">%s</span> <a href="?edit_ppc_network_id=%s&edit_ppc_network_name=%s" class="list-action">edit</a></li>', $html['ppc_network_name'], $url['ppc_network_id'], $html['ppc_network_name']);
-							}
-
+							$mysql['ppc_network_id'] = $db->real_escape_string((string)$ppc_network_row['ppc_network_id']);
+							$ppc_account_sql = "SELECT * FROM `202_ppc_accounts` WHERE `ppc_network_id`='" . $mysql['ppc_network_id'] . "' AND `ppc_account_deleted`='0' ORDER BY `ppc_account_name` ASC";
+							$ppc_account_result = _mysqli_query($ppc_account_sql);
+							$account_count = (int)$ppc_account_result->num_rows;
+							$account_label = ($account_count === 1) ? 'account' : 'accounts';
 						?>
-							<ul style="margin-top: 0px;" class="setup-list">
-								<?php
+							<li class="source-item">
+								<div class="source-header">
+									<div class="source-meta">
+										<span class="filter_source_name source-name"><?php echo $html['ppc_network_name']; ?></span>
+										<span class="source-account-count"><?php echo $account_count . ' ' . $account_label; ?></span>
+									</div>
+									<div class="source-actions">
+										<a href="?edit_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&edit_ppc_network_name=<?php echo $url['ppc_network_name']; ?>" class="list-action">edit</a>
+										<?php if ($userObj->hasPermission("remove_traffic_source")) { ?>
+											<a href="#" class="custom variables list-action" data-id="<?php echo $url['ppc_network_id']; ?>">variables</a>
+											<a href="?delete_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&delete_ppc_network_name=<?php echo $url['ppc_network_name']; ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Traffic Source?');">remove</a>
+										<?php } ?>
+									</div>
+								</div>
 
-								//print out the individual accounts per each PPC network
-								$mysql['ppc_network_id'] = $db->real_escape_string($ppc_network_row['ppc_network_id']);
-								$ppc_account_sql = "SELECT * FROM `202_ppc_accounts` WHERE `ppc_network_id`='" . $mysql['ppc_network_id'] . "' AND `ppc_account_deleted`='0' ORDER BY `ppc_account_name` ASC";
-								$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
-
-								while ($ppc_account_row = $ppc_account_result->fetch_array(MYSQLI_ASSOC)) {
-
-									$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-									$url['ppc_account_id'] = urlencode((string) $ppc_account_row['ppc_account_id']);
-
-									if ($userObj->hasPermission("remove_traffic_source_account")) {
-										printf('<li><span class="filter_account_name">%s</span> <a href="?edit_ppc_account_id=%s" class="list-action">edit</a> <a href="?delete_ppc_account_id=%s&delete_ppc_account_name=%s" class="list-action list-action-danger" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Account?\');">remove</a></li>', $html['ppc_account_name'], $url['ppc_account_id'], $url['ppc_account_id'], $html['ppc_account_name']);
-									} else {
-										printf('<li><span class="filter_account_name">%s</span> <a href="?edit_ppc_account_id=%s" class="list-action">edit</a></li>', $html['ppc_account_name'], $url['ppc_account_id']);
-									}
-								}
-
-								?>
-							</ul>
-						<?php
-
-						} ?>
+								<ul class="account-list">
+									<?php if ($account_count === 0) { ?>
+										<li class="account-item-empty">No accounts added yet</li>
+									<?php } ?>
+									<?php while ($ppc_account_row = $ppc_account_result->fetch_array(MYSQLI_ASSOC)) {
+										$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+										$url['ppc_account_id'] = urlencode((string)$ppc_account_row['ppc_account_id']);
+										$url['ppc_account_name'] = urlencode((string)($ppc_account_row['ppc_account_name'] ?? ''));
+									?>
+										<li class="account-item">
+											<span class="filter_account_name account-name"><?php echo $html['ppc_account_name']; ?></span>
+											<div class="account-actions">
+												<a href="?edit_ppc_account_id=<?php echo $url['ppc_account_id']; ?>" class="list-action">edit</a>
+												<?php if ($userObj->hasPermission("remove_traffic_source_account")) { ?>
+													<a href="?delete_ppc_account_id=<?php echo $url['ppc_account_id']; ?>&delete_ppc_account_name=<?php echo $url['ppc_account_name']; ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Account?');">remove</a>
+												<?php } ?>
+											</div>
+										</li>
+									<?php } ?>
+								</ul>
+							</li>
+						<?php } ?>
 					</ul>
 				</div>
 			</div>
@@ -645,7 +664,7 @@ template_top('Traffic Sources'); ?>
 		});
 
 		var trafficSourceOptions = {
-			valueNames: ['filter_source_name'],
+			valueNames: ['filter_source_name', 'filter_account_name'],
 			plugins: [
 				ListFuzzySearch()
 			]
@@ -911,89 +930,179 @@ template_top('Traffic Sources'); ?>
 .setup-list {
     list-style: none;
     padding: 0;
-    margin: 12px 0 0 0;
+    margin: 0;
 }
 
-/* Traffic Source List Styling */
-#trafficSourceList .list {
-    list-style: none;
-    padding: 0;
-    margin: 12px 0 0 0;
-}
-
-#trafficSourceList .list > li {
-    padding: 12px 14px;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    margin-bottom: 8px;
-    font-size: 14px;
-    color: #374151;
-    background: #fff;
-    transition: all 0.2s ease;
+.traffic-sources-heading {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
+    justify-content: space-between;
+    gap: 10px;
 }
 
-#trafficSourceList .list > li:hover {
-    border-color: #c7d2fe;
-    background: #f8fafc;
-}
-
-#trafficSourceList .filter_source_name {
-    font-weight: 600;
-    flex: 1;
-    min-width: 100px;
-}
-
-/* Nested account items */
-#trafficSourceList .setup-list {
-    list-style: none;
-    padding: 0;
-    margin: 8px 0 0 0;
-    width: 100%;
-}
-
-#trafficSourceList .setup-list li {
-    padding: 10px 12px;
-    border-left: 3px solid #e5e7eb;
-    margin-left: 12px;
-    margin-bottom: 4px;
-    background: #fafafa;
-    border-radius: 0 6px 6px 0;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-#trafficSourceList .setup-list li:hover {
-    border-left-color: #007bff;
-    background: #f0f9ff;
-}
-
-#trafficSourceList .filter_account_name {
+.traffic-sources-heading__meta {
+    font-size: 12px;
     font-weight: 500;
-    flex: 1;
-    min-width: 80px;
+    color: #475569;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    padding: 2px 10px;
+}
+
+.traffic-source-toolbar {
+    margin-bottom: 14px;
+}
+
+.traffic-source-search-wrap {
+    position: relative;
+}
+
+.traffic-source-search-icon {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    color: #94a3b8;
+    pointer-events: none;
+}
+
+.traffic-source-search {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    padding-left: 34px !important;
+    min-height: 36px;
+}
+
+.traffic-source-search:focus {
+    background: #fff;
+}
+
+#trafficSourceList .source-list {
+    list-style: none;
+    padding: 0 4px 0 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 560px;
+    overflow-y: auto;
+}
+
+#trafficSourceList .source-item {
+    border: 1px solid #dbe3ec;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    padding: 12px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+#trafficSourceList .source-item:hover {
+    border-color: #9ec5fe;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    transform: translateY(-1px);
+}
+
+#trafficSourceList .source-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+#trafficSourceList .source-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+#trafficSourceList .source-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+#trafficSourceList .source-account-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: #1e40af;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+#trafficSourceList .source-actions,
+#trafficSourceList .account-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+#trafficSourceList .account-list {
+    list-style: none;
+    margin: 10px 0 0 0;
+    padding: 10px 0 0 12px;
+    border-top: 1px dashed #dbe3ec;
+}
+
+#trafficSourceList .account-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 10px;
+    margin-bottom: 6px;
+    border-left: 2px solid #dbe3ec;
+    border-radius: 0 8px 8px 0;
+    background: #f8fafc;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+#trafficSourceList .account-item:last-child {
+    margin-bottom: 0;
+}
+
+#trafficSourceList .account-item:hover {
+    background: #eff6ff;
+    border-left-color: #60a5fa;
+}
+
+#trafficSourceList .account-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #334155;
+}
+
+#trafficSourceList .account-item-empty {
+    font-size: 12px;
+    color: #64748b;
+    padding: 6px 0 2px;
+    font-style: italic;
 }
 
 /* List Action Links */
 .list-action {
-    color: #007bff;
+    color: #2563eb;
     text-decoration: none;
-    font-weight: 500;
-    font-size: 13px;
-    padding: 4px 10px;
-    border-radius: 4px;
+    font-weight: 600;
+    font-size: 12px;
+    padding: 4px 9px;
+    border-radius: 6px;
+    border: 1px solid transparent;
     transition: all 0.2s ease;
     white-space: nowrap;
 }
 
 .list-action:hover {
     background-color: #eff6ff;
-    color: #0056b3;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+    text-decoration: none;
 }
 
 .list-action-danger {
@@ -1008,46 +1117,11 @@ template_top('Traffic Sources'); ?>
 .setup-list-empty,
 #trafficSourceList .empty-state {
     text-align: center;
-    padding: 24px;
-    color: #9ca3af;
-    border-style: dashed;
-    text-decoration: underline;
-}
-
-/* Nested sub-accounts - simple indented */
-#trafficSourceList .setup-list {
-    list-style: none;
-    margin: 0;
-    padding: 6px 0 2px 16px;
-    border-left: 2px solid #e5e7eb;
-    margin-left: 8px;
-}
-
-#trafficSourceList .setup-list li {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 8px;
-    font-size: 13px;
-    color: #6b7280;
-}
-
-#trafficSourceList .setup-list li:hover {
-    color: #374151;
-}
-
-#trafficSourceList .setup-list .filter_account_name {
-    flex: 1;
-}
-
-#trafficSourceList .setup-list .list-action {
-    font-size: 12px;
-    padding: 0;
-    color: #9ca3af;
-}
-
-#trafficSourceList .setup-list .list-action:hover {
-    color: #007bff;
+    padding: 24px 16px;
+    color: #64748b;
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
 }
 
 /* Input and Select Improvements */
@@ -1195,6 +1269,26 @@ template_top('Traffic Sources'); ?>
         margin-bottom: 12px;
         padding-bottom: 12px;
     }
+
+    .traffic-sources-heading {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    #trafficSourceList .source-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    #trafficSourceList .source-actions,
+    #trafficSourceList .account-actions {
+        justify-content: flex-start;
+    }
+
+    #trafficSourceList .account-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
 }
 
 @media (max-width: 480px) {
@@ -1217,6 +1311,14 @@ template_top('Traffic Sources'); ?>
 
     .setup-page-header__subtitle {
         font-size: 12px;
+    }
+
+    #trafficSourceList .source-item {
+        padding: 10px;
+    }
+
+    #trafficSourceList .account-list {
+        padding-left: 8px;
     }
 }
 </style>

@@ -1252,7 +1252,7 @@ class INDEXES
         } else {
             $ip_result = _mysqli_query($db, $ip_sql);
             $ip_row = $ip_result->fetch_assoc();
-            if ($ip_row['ip_id']) {
+            if ($ip_row !== null && $ip_row['ip_id']) {
                 // if this ip already exists, return the ip_id for it.
                 $ip_id = $ip_row['ip_id'];
             } else {
@@ -3652,13 +3652,13 @@ function getDynamicEPVPixelId(&$mysql)
         $dynamic_epv_result = $db->query($dynamic_epv_sql);
         $dynamic_epv_row = $dynamic_epv_result->fetch_assoc();
 
-        if ($dynamic_epv_row['dynamic_epv_value']) {
+        if ($dynamic_epv_row !== null && $dynamic_epv_row['dynamic_epv_value']) {
             $mysql['dynamic_epv_value'] = number_format($dynamic_epv_row['dynamic_epv_value'], 2);
         } else {
             $mysql['dynamic_epv_value'] = 0;
         }
 
-        if ($dynamic_epv_row['pixel_id']) {
+        if ($dynamic_epv_row !== null && $dynamic_epv_row['pixel_id']) {
             $mysql['pixel_id'] = $dynamic_epv_row['pixel_id'];
         } else {
             $mysql['pixel_id'] = 0;
@@ -3680,7 +3680,7 @@ function getPayout(&$mysql)
     $sql_result = $db->query($sql);
     $sql_row = $sql_result->fetch_assoc();
 
-    $mysql['click_payout'] = $db->real_escape_string($sql_row['click_payout']);
+    $mysql['click_payout'] = $sql_row !== null ? $db->real_escape_string($sql_row['click_payout']) : '0';
 }
 
 function getUrlVars202()

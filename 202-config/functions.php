@@ -54,15 +54,21 @@ function _die($message): never
 
 
 //our own function for controling mysqls and monitoring then.
-function _mysqli_query($sql)
+function _mysqli_query($db_or_sql, $sql = null)
 {
-	global $db;
+	// Support both calling conventions:
+	//   _mysqli_query($sql)         — 1 arg, uses global $db
+	//   _mysqli_query($db, $sql)    — 2 args, uses provided $db
+	if ($sql === null) {
+		$sql = $db_or_sql;
+		global $db;
+	} else {
+		$db = $db_or_sql;
+	}
 
-	// Handle both DB instance and direct mysqli connection
 	if ($db instanceof \mysqli) {
 		$result = @$db->query($sql);
 	} else {
-		// Assume $db is a DB wrapper class with getConnection method
 		$connection = $db->getConnection();
 		$result = @$connection->query($sql);
 	}

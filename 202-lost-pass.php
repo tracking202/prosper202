@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	//i there isn't any error, give this user, a new password, and email it to them!
 	if (!$error) {
 
-		$mysql['user_id'] = $db->real_escape_string($user_row['user_id']);
+		$mysql['user_id'] = $db->real_escape_string((string) $user_row['user_id']);
 
 		//generate random key
 		$user_pass_key = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";

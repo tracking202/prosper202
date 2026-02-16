@@ -526,8 +526,8 @@ template_top('Affiliate Campaigns Setup');
 
 		</form>
 	</div>
-	<div class="col-md-6">
-		<div class="panel panel-default">
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">My Campaigns</div>
 			<div class="panel-body">
 				<div id="campaignList">

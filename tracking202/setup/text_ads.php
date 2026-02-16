@@ -444,8 +444,8 @@ template_top('Text Ads Setup');  ?>
 		</form>
 	</div>
 
-	<div class="col-md-6">
-		<div class="panel panel-default">
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">Advanced Landing Page Text Ads</div>
 			<div class="panel-body">
 				<ul>        
@@ -484,7 +484,7 @@ template_top('Text Ads Setup');  ?>
 			</div>
 		</div>
 
-		<div class="panel panel-default">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">Direct Link/Simple Landing Page Text Ads</div>
 			<div class="panel-body">
 				<ul>        

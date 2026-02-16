@@ -164,7 +164,7 @@ template_top('Get Landing Page Code');  ?>
 	</div>
 
 	<div class="col-xs-12 col-md-6">
-		<div class="lp-panel lp-panel-output">
+		<div class="lp-panel lp-panel-output setup-side-panel">
 			<div class="lp-panel-header">
 				<span class="glyphicon glyphicon-code"></span>
 				Your Tracking Code
