@@ -26,7 +26,7 @@ class User
         $this->userRoles = [];
 
         try {
-            $mysql['user_id'] = self::$db->real_escape_string($user_id);
+            $mysql['user_id'] = self::$db->real_escape_string((string) $user_id);
             $sql = "SELECT user_id FROM 202_users WHERE user_id = '" . $mysql['user_id'] . "'";
             $results = self::$db->query($sql);
             if ($results && $results->num_rows) {
@@ -46,7 +46,7 @@ class User
             return; // Skip if database connection failed or is not a mysqli object
         }
 
-        $mysql['user_id'] = self::$db->real_escape_string($user_id);
+        $mysql['user_id'] = self::$db->real_escape_string((string) $user_id);
         $sql = "SELECT 2ur.role_id, 2r.role_name FROM 202_user_role AS 2ur INNER JOIN 202_roles AS 2r ON 2ur.role_id = 2r.role_id WHERE 2ur.user_id = '" . $mysql['user_id'] . "'";
         $results = self::$db->query($sql);
 

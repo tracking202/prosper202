@@ -434,8 +434,8 @@ template_top('Landing Page Setup');  ?>
 		</form>
 	</div>
 
-	<div class="col-md-6">
-		<div class="panel panel-default">
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">My Advanced Landing Pages</div>
 			<div class="panel-body">
 				<div id="advLps">
@@ -465,7 +465,7 @@ template_top('Landing Page Setup');  ?>
 				</div>
 			</div>
 		</div>
-		<div class="panel panel-default">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">My Simple Landing Pages</div>
 			<div class="panel-body">
 				<ul class="setup-list">

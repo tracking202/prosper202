@@ -17,8 +17,14 @@ class PROSPER202
         // select the mysql version
         $version_sql = "SELECT version FROM 202_version";
         $version_result = $db->query($version_sql);
+
+        // if the query fails (table doesn't exist), this is an older 1.0.0-1.0.2 release
+        if ($version_result === false) {
+            return '1.0.2';
+        }
+
         $version_row = $version_result->fetch_assoc();
-        $prosper202_version = $version_row['version'];
+        $prosper202_version = $version_row['version'] ?? null;
 
         // if there is no mysql version, this is an older 1.0.0-1.0.2 release, just return version 1.0.0 for simplicitly sake
         if (! $prosper202_version) {
@@ -1795,7 +1801,7 @@ class UPGRADE
             if ($autocron) {
                 $cron = callAutoCron('register');
 
-                if ($cron['status'] == 'success') {
+                if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
                     $sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '1'";
                     $result = _mysqli_query($sql);
                 }
@@ -3052,10 +3058,135 @@ class UPGRADE
             $prosper202_version = '1.9.59';
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.59') {
+        if ($prosper202_version == '1.9.59') {
 
-            $prosper202_version = '1.9.59';
+            $sql = "CREATE TABLE IF NOT EXISTS `202_sync_jobs` (
+              `sync_job_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `job_uuid` char(32) NOT NULL,
+              `actor_user_id` mediumint(8) unsigned NOT NULL,
+              `source_label` varchar(255) NOT NULL,
+              `target_label` varchar(255) NOT NULL,
+              `source_url` varchar(500) NOT NULL,
+              `target_url` varchar(500) NOT NULL,
+              `entity` varchar(64) NOT NULL,
+              `status` varchar(32) NOT NULL DEFAULT 'queued',
+              `attempts` int(10) unsigned NOT NULL DEFAULT '0',
+              `max_attempts` int(10) unsigned NOT NULL DEFAULT '3',
+              `idempotency_key` varchar(128) DEFAULT NULL,
+              `request_hash` char(40) DEFAULT NULL,
+              `request_payload` mediumtext DEFAULT NULL,
+              `result_payload` mediumtext DEFAULT NULL,
+              `error_message` text DEFAULT NULL,
+              `created_at` int(10) unsigned NOT NULL,
+              `updated_at` int(10) unsigned NOT NULL,
+              `next_run_at` int(10) unsigned DEFAULT NULL,
+              `started_at` int(10) unsigned DEFAULT NULL,
+              `completed_at` int(10) unsigned DEFAULT NULL,
+              PRIMARY KEY (`sync_job_id`),
+              UNIQUE KEY `job_uuid` (`job_uuid`),
+              KEY `status_next_run` (`status`,`next_run_at`),
+              KEY `created_at` (`created_at`),
+              KEY `source_target` (`source_label`,`target_label`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "CREATE TABLE IF NOT EXISTS `202_sync_job_events` (
+              `event_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `sync_job_id` bigint(20) unsigned NOT NULL,
+              `event_uuid` char(16) NOT NULL,
+              `level` varchar(16) NOT NULL,
+              `message` text NOT NULL,
+              `event_data` mediumtext DEFAULT NULL,
+              `created_at` int(10) unsigned NOT NULL,
+              PRIMARY KEY (`event_id`),
+              KEY `job_created` (`sync_job_id`,`created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "CREATE TABLE IF NOT EXISTS `202_sync_job_items` (
+              `item_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `sync_job_id` bigint(20) unsigned NOT NULL,
+              `entity` varchar(64) NOT NULL,
+              `natural_key` varchar(1024) NOT NULL,
+              `action` varchar(32) NOT NULL,
+              `status` varchar(32) NOT NULL,
+              `source_id` varchar(64) DEFAULT NULL,
+              `target_id` varchar(64) DEFAULT NULL,
+              `source_checksum` char(40) DEFAULT NULL,
+              `target_checksum` char(40) DEFAULT NULL,
+              `error_message` text DEFAULT NULL,
+              `created_at` int(10) unsigned NOT NULL,
+              PRIMARY KEY (`item_id`),
+              KEY `job_entity_status` (`sync_job_id`,`entity`,`status`),
+              KEY `job_action` (`sync_job_id`,`action`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "CREATE TABLE IF NOT EXISTS `202_change_log` (
+              `change_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `entity` varchar(64) NOT NULL,
+              `entity_id` varchar(64) NOT NULL,
+              `operation` enum('create','update','delete') NOT NULL,
+              `natural_key_digest` char(40) NOT NULL,
+              `actor_user_id` mediumint(8) unsigned NOT NULL,
+              `changed_at` int(10) unsigned NOT NULL,
+              `payload` mediumtext DEFAULT NULL,
+              PRIMARY KEY (`change_id`),
+              KEY `entity_changed` (`entity`,`changed_at`),
+              KEY `digest_lookup` (`natural_key_digest`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "CREATE TABLE IF NOT EXISTS `202_deleted_log` (
+              `deleted_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `entity` varchar(64) NOT NULL,
+              `entity_id` varchar(64) NOT NULL,
+              `natural_key_digest` char(40) NOT NULL,
+              `actor_user_id` mediumint(8) unsigned NOT NULL,
+              `deleted_at` int(10) unsigned NOT NULL,
+              `payload` mediumtext DEFAULT NULL,
+              PRIMARY KEY (`deleted_id`),
+              KEY `entity_deleted` (`entity`,`deleted_at`),
+              KEY `digest_lookup` (`natural_key_digest`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "CREATE TABLE IF NOT EXISTS `202_sync_audit` (
+              `audit_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+              `job_uuid` char(32) NOT NULL,
+              `actor_user_id` mediumint(8) unsigned NOT NULL,
+              `source_label` varchar(255) NOT NULL,
+              `target_label` varchar(255) NOT NULL,
+              `entity` varchar(64) NOT NULL,
+              `status` varchar(32) NOT NULL,
+              `options_json` mediumtext DEFAULT NULL,
+              `result_summary_json` mediumtext DEFAULT NULL,
+              `created_at` int(10) unsigned NOT NULL,
+              `completed_at` int(10) unsigned DEFAULT NULL,
+              PRIMARY KEY (`audit_id`),
+              UNIQUE KEY `job_uuid` (`job_uuid`),
+              KEY `actor_created` (`actor_user_id`,`created_at`),
+              KEY `source_target_status` (`source_label`,`target_label`,`status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "SHOW COLUMNS FROM `202_api_keys` LIKE 'scope'";
+            $result = _mysqli_query($sql);
+            if (!($result && mysqli_num_rows($result) > 0)) {
+                $sql = "ALTER TABLE `202_api_keys` ADD COLUMN `scope` text DEFAULT NULL AFTER `api_key`";
+                $result = _mysqli_query($sql);
+            }
+
+            $sql = "UPDATE 202_version SET version='1.9.60'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.60';
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if ($prosper202_version > '1.9.60') {
+
+            $prosper202_version = '1.9.60';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }

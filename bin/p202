@@ -1,0 +1,42 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * p202 - Prosper202 CLI Client
+ *
+ * A local CLI tool for managing a remote Prosper202 installation.
+ * Designed for both human operators and AI agents.
+ *
+ * Quick start:
+ *   p202 config:set-url https://your-prosper202.com
+ *   p202 config:set-key your-api-key-here
+ *   p202 campaign:list
+ *
+ * All commands support --json for machine-readable output.
+ */
+
+// Find autoloader
+$autoloadPaths = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../vendor/autoload.php',
+    __DIR__ . '/../../../vendor/autoload.php',
+];
+
+$autoloaded = false;
+foreach ($autoloadPaths as $path) {
+    if (file_exists($path)) {
+        require_once $path;
+        $autoloaded = true;
+        break;
+    }
+}
+
+if (!$autoloaded) {
+    fwrite(STDERR, "Error: Could not find vendor/autoload.php. Run 'composer install' first.\n");
+    exit(1);
+}
+
+$app = new P202Cli\Application();
+$app->run();

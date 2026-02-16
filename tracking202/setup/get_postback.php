@@ -183,7 +183,7 @@ $unSecuredUniversalPixelJS = '
 
 		printf('
 			<div id="pixel_type_simple_id" class="tracking-output">
-				<div class="panel panel-default">
+				<div class="panel panel-default setup-side-panel">
 					<div class="panel-heading">
 						<h3 class="panel-title">
 							<i class="fa fa-image"></i> Simple Global Tracking Pixel
@@ -206,7 +206,7 @@ $unSecuredUniversalPixelJS = '
 						</div>
 					</div>
 				</div>
-				<div class="panel panel-default">
+				<div class="panel panel-default setup-side-panel">
 					<div class="panel-heading">
 						<h3 class="panel-title">
 							<i class="fa fa-link"></i> Simple Global Post Back URL
@@ -236,7 +236,7 @@ $unSecuredUniversalPixelJS = '
 
 		printf('
 <div id="pixel_type_advanced_id" style="display:none;">
-	<div class="panel panel-default">
+	<div class="panel panel-default setup-side-panel">
 		<div class="panel-heading">
 			<h3 class="panel-title">
 				<i class="fa fa-cogs"></i> Advanced Global Tracking Pixel
@@ -260,7 +260,7 @@ $unSecuredUniversalPixelJS = '
 		</div>
 	</div>
 
-	<div class="panel panel-default">
+	<div class="panel panel-default setup-side-panel">
 		<div class="panel-heading">
 			<h3 class="panel-title">
 				<i class="fa fa-exchange"></i> Advanced Global Post Back URL
@@ -290,7 +290,7 @@ $unSecuredUniversalPixelJS = '
 		
 		printf('
 <div id="pixel_type_universal_id" style="display:none;">
-	<div class="panel panel-default">
+	<div class="panel panel-default setup-side-panel">
 		<div class="panel-heading">
 			<h3 class="panel-title">
 				<i class="fa fa-magic"></i> Javascript Universal Smart Tracking Pixel
@@ -315,7 +315,7 @@ $unSecuredUniversalPixelJS = '
 		</div>
 	</div>
 
-	<div class="panel panel-default">
+	<div class="panel panel-default setup-side-panel">
 		<div class="panel-heading">
 			<h3 class="panel-title">
 				<i class="fa fa-code"></i> Iframe Universal Smart Tracking Pixel

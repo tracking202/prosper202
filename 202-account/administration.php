@@ -11,7 +11,7 @@ include_once(str_repeat("../", 1) . '202-config/functions-empty.php');
 AUTH::require_user();
 
 $slack = false;
-$mysql['user_own_id'] = $db->real_escape_string($_SESSION['user_own_id']);
+$mysql['user_own_id'] = $db->real_escape_string((string) $_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
 $user_row = $user_results->fetch_assoc();
@@ -81,9 +81,9 @@ if (isset($_POST['autocron'])) {
 	if ($autocron) {
 		$cron = callAutoCron($endpoint);
 
-		if ($cron['status'] == 'success') {
+		if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
 			$mysql['auto_cron'] = $db->real_escape_string($_POST['autocron']);
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
 			$sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
 			$result = _mysqli_query($sql);
 		}
@@ -96,7 +96,7 @@ if (isset($_POST['maxmind'])) {
 
 	if ($_POST['maxmind'] == "true") {
 		if (file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIPISP.dat')) {
-			$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+			$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
 			$sql = "UPDATE 202_users_pref SET maxmind_isp='1' WHERE user_id='" . $mysql['user_id'] . "'";
 			$result = _mysqli_query($sql);
 			if ($slack)
@@ -107,7 +107,7 @@ if (isset($_POST['maxmind'])) {
 	}
 
 	if ($_POST['maxmind'] == "false") {
-		$mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+		$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
 		$sql = "UPDATE 202_users_pref SET maxmind_isp='0' WHERE user_id='" . $mysql['user_id'] . "'";
 		$result = _mysqli_query($sql);
 
@@ -138,7 +138,7 @@ if (isset($_POST['database_management'])) {
 	// Make sure we have a valid click_id before continuing
 	if (isset($clickid_row['click_id'])) {
 		global $db;
-		$mysql['user_delete_data_clickid'] = $db->real_escape_string($clickid_row['click_id']);
+		$mysql['user_delete_data_clickid'] = $db->real_escape_string((string) $clickid_row['click_id']);
 
 		$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
 		$db->query($sql);
@@ -281,7 +281,7 @@ function CronJobLastExecution($datetime, $full = false)
 						<p>
 							Default Keyword Preference <span class="pull-right"
 								style="font-size: 10px; line-height: 2.5;">
-								<?php $mysql['user_id'] = $db->real_escape_string($_SESSION['user_id']);
+								<?php $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
 								$user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
 								$user_result = _mysqli_query($user_sql);
 								$user_row = $user_result->fetch_assoc();

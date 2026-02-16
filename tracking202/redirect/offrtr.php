@@ -101,7 +101,7 @@ $rotator_sql = "SELECT
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
 if (!$rotator_row) die();
 
-$mysql['rotator_id'] = $db->real_escape_string($rotator_row['id']);
+$mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['id']);
 $rule_sql = "SELECT ru.id as rule_id
 			 FROM 202_rotator_rules AS ru
 			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'"; 
@@ -154,7 +154,7 @@ foreach ($rule_row as $rule) {
 	$rotate = [];
 	$count = 0;
 
-	$mysql['rule_id'] = $db->real_escape_string($rule['rule_id']);
+	$mysql['rule_id'] = $db->real_escape_string((string)$rule['rule_id']);
 	$criteria_sql = "SELECT type, statement, value
 				 FROM 202_rotator_rules_criteria
 				 WHERE rule_id='".$mysql['rule_id']."'"; 
@@ -301,7 +301,7 @@ foreach ($rule_row as $rule) {
 
 $mysql['click_out'] = 1;
 
-$mysql['rule_redirect_id'] = $db->real_escape_string($rule_redirect_row['rule_redirect_id']);
+$mysql['rule_redirect_id'] = $db->real_escape_string((string)$rule_redirect_row['rule_redirect_id']);
 $click_sql = "
 	REPLACE INTO
 		202_clicks_rotator
@@ -349,8 +349,8 @@ if ($default == false) {
 		$rule_redirect_row = memcache_mysql_fetch_assoc($db, $rule_redirect_sql);
 
 			if ($rule_redirect_row['redirect_campaign'] != null) {
-				$mysql['aff_campaign_id'] = $db->real_escape_string($rule_redirect_row['aff_campaign_id']);
-				$mysql['click_payout'] = $db->real_escape_string($rule_redirect_row['aff_campaign_payout']);
+				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_id']);
+				$mysql['click_payout'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_payout']);
 
 				$update_sql = "
 					UPDATE
@@ -389,7 +389,7 @@ if ($default == false) {
 
 				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
 				$click_outbound_site_url_id = INDEXES::get_site_url_id($db);
-				$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_site_url_id);
+				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				if ($cloaking_on == true) {
 				    $cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
@@ -399,7 +399,7 @@ if ($default == false) {
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
 
 				$click_redirect_site_url_id = INDEXES::get_site_url_id($db);
-				$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
+				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 				$update_sql = "
 					UPDATE
@@ -474,8 +474,8 @@ if ($default == false) {
 				WHERE 2c.click_id='".$mysql['click_id']."'"; 
 			$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
 
-				$mysql['aff_campaign_id'] = $db->real_escape_string($rotator_row['aff_campaign_id']);
-				$mysql['click_payout'] = $db->real_escape_string($rotator_row['aff_campaign_payout']);
+				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rotator_row['aff_campaign_id']);
+				$mysql['click_payout'] = $db->real_escape_string((string)$rotator_row['aff_campaign_payout']);
 
 				$update_sql = "
 					UPDATE
@@ -514,7 +514,7 @@ if ($default == false) {
 
 				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
 				$click_outbound_site_url_id = INDEXES::get_site_url_id($db);
-				$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_site_url_id);
+				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				if ($cloaking_on == true) {
 				    $cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
@@ -524,7 +524,7 @@ if ($default == false) {
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
 
 				$click_redirect_site_url_id = INDEXES::get_site_url_id($db);
-				$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
+				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 				$update_sql = "
 					UPDATE

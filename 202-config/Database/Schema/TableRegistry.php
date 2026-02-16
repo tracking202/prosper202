@@ -19,6 +19,12 @@ final class TableRegistry
     public const ALERTS = '202_alerts';
     public const OFFERS = '202_offers';
     public const FILTERS = '202_filters';
+    public const SYNC_JOBS = '202_sync_jobs';
+    public const SYNC_JOB_EVENTS = '202_sync_job_events';
+    public const SYNC_JOB_ITEMS = '202_sync_job_items';
+    public const CHANGE_LOG = '202_change_log';
+    public const DELETED_LOG = '202_deleted_log';
+    public const SYNC_AUDIT = '202_sync_audit';
 
     // User tables
     public const USERS = '202_users';

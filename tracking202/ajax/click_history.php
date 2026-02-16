@@ -156,7 +156,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																													$new = true; // Initialize new clicks flag
 																																																																																													while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
 
-																																																																																														$mysql['click_id'] = $db->real_escape_string($click_row['click_id']);
+																																																																																														$mysql['click_id'] = $db->real_escape_string((string) $click_row['click_id']);
 
 
 

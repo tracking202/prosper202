@@ -167,8 +167,8 @@ template_top('Smart Redirector'); ?>
 		</form>
 	</div>
 
-	<div class="col-md-6">
-		<div class="panel panel-default">
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">My Smart Redirectors</div>
 
 			<div class="panel-body">

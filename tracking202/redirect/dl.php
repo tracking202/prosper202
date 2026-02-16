@@ -300,7 +300,7 @@ if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
 	$_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
 	if (is_numeric($_GET['t202b'])) {
 		$bid = number_format($_GET['t202b'], 5, '.', '');
-		$mysql['click_cpc'] = $db->real_escape_string($bid);
+		$mysql['click_cpc'] = $db->real_escape_string((string)$bid);
 	} else {
 		$mysql['click_cpc'] = $db->real_escape_string((string)($tracker_row['click_cpc'] ?? ''));
 	}
@@ -570,7 +570,7 @@ if ($total_vars > 0) {
 	$variables = implode(",", $custom_var_ids);
 	$variable_set_id = INDEXES::get_variable_set_id($db, $variables);
 
-	$mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);
+	$mysql['variable_set_id'] = $db->real_escape_string((string)$variable_set_id);
 
 	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
 	$var_result = $db->query($var_sql) or record_mysql_error($db);

@@ -192,8 +192,8 @@ template_top('Campaign Category Setup');
 </div>
 
 <div class="row">
-	<div class="col-md-6 col-sm-12">
-		<div class="panel panel-default">
+		<div class="col-md-6 col-sm-12">
+			<div class="panel panel-default">
 			<div class="panel-heading">Add Campaign Category</div>
 			<div class="panel-body">
 				<span class="infotext">What Campaign Categories do you want to use? Some examples include Commission Junction or Mobile etc.</span>
@@ -213,8 +213,8 @@ template_top('Campaign Category Setup');
 			</div>
 		</div>
 	</div>
-	<div class="col-md-6 col-sm-12">
-		<div class="panel panel-default">
+		<div class="col-md-6 col-sm-12">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">My Campaign Categories</div>
 			<div class="panel-body">
 				<div id="networkList">

@@ -44,9 +44,9 @@ else { //if not find the list clicks id of the ip within a 30 day range
 
     $click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
     $click_row1 = $click_result1->fetch_assoc();
-    $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
+    $mysql['click_id'] = $db->real_escape_string((string)$click_row1['click_id']);
     $click_id = $mysql['click_id'];
-    $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id']);
+    $mysql['ppc_account_id'] = $db->real_escape_string((string)$click_row1['ppc_account_id']);
     $mysql['click_id_public'] = $db->real_escape_string($click_row1['click_id_public']);
     $pci=$mysql['click_id_public'];
 
@@ -241,10 +241,10 @@ if ($memcacheWorking) {
 
 $click_id = $info_row['click_id'];
 
-$mysql['click_id'] = $db->real_escape_string($click_id);
+$mysql['click_id'] = $db->real_escape_string((string)$click_id);
 
-$mysql['aff_campaign_id'] = $db->real_escape_string($info_row['aff_campaign_id']);
-$mysql['click_payout'] = $db->real_escape_string($info_row['aff_campaign_payout']);
+$mysql['aff_campaign_id'] = $db->real_escape_string((string)$info_row['aff_campaign_id']);
+$mysql['click_payout'] = $db->real_escape_string((string)$info_row['aff_campaign_payout']);
 
 $update_sql = "
 	UPDATE
@@ -288,7 +288,7 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
 $click_outbound_site_url_id = INDEXES::get_site_url_id($db);
-$mysql['click_outbound_site_url_id'] = $db->real_escape_string($click_outbound_site_url_id);
+$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 if ($cloaking_on == true) {
     $cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
@@ -299,7 +299,7 @@ $redirect_site_url = rotateTrackerUrl($db, $info_row);
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
 
 $click_redirect_site_url_id = INDEXES::get_site_url_id($db);
-$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
+$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 $update_sql = "
 	UPDATE
@@ -323,8 +323,8 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 // update the click summary table if this is a 'real click'
 // if ($info_row['click_filtered'] == 0) {
 
-$mysql['landing_page_id'] = $db->real_escape_string($info_row['landing_page_id']);
-$mysql['user_id'] = $db->real_escape_string($info_row['user_id']);
+$mysql['landing_page_id'] = $db->real_escape_string((string)$info_row['landing_page_id']);
+$mysql['user_id'] = $db->real_escape_string((string)$info_row['user_id']);
 
 // set timezone correctly
 $user_sql = "SELECT user_timezone FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
@@ -339,7 +339,7 @@ $today_year = date('Y', time());
 
 // the click_time is recorded in the middle of the day
 $click_time = mktime(12, 0, 0, $today_month, $today_day, $today_year);
-$mysql['click_time'] = $db->real_escape_string($click_time);
+$mysql['click_time'] = $db->real_escape_string((string)$click_time);
 // check to make sure this click_summary doesn't already exist
 $check_sql = "SELECT  *
 				  FROM    202_summary_overview

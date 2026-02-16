@@ -7,6 +7,7 @@ if (isset($_SESSION['toolbar']) && $_SESSION['toolbar'] == 'true')
 else
 	$redir_url = get_absolute_url();
 session_destroy();
-setcookie('remember_me','', ['expires' => 1, 'path' => '/', 'domain' => (string) $_SERVER['HTTP_HOST'], 'secure' => false, 'httponly' => true]);
+$secure = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+setcookie('remember_me', '', ['expires' => 1, 'path' => '/', 'domain' => AUTH::cookie_domain(), 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
 unset($_COOKIE['remember_me']);
 header('location: '.$redir_url);

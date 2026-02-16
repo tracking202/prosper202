@@ -61,11 +61,11 @@ $rotator_sql = "SELECT  tr.user_id,
 				LEFT JOIN 202_users_pref AS up ON up.user_id = tr.user_id
 				WHERE   tracker_id_public='".$mysql['tracker_id_public']."'"; 
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
-$user_id = $db->real_escape_string($rotator_row['user_id']);
+$user_id = $db->real_escape_string((string)$rotator_row['user_id']);
 $user_keyword_searched_or_bidded = $db->real_escape_string($rotator_row['user_keyword_searched_or_bidded']);
 
 //grab rules data
-$mysql['rotator_id'] = $db->real_escape_string($rotator_row['rotator_id']);
+$mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['rotator_id']);
 $rule_sql = "SELECT ru.id as rule_id
 			 FROM 202_rotator_rules AS ru
 			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'"; 
@@ -132,7 +132,7 @@ foreach ($rule_row as $rule) {
 	$rotate = [];
 	$count = 0;
 
-	$mysql['rule_id'] = $db->real_escape_string($rule['rule_id']);
+	$mysql['rule_id'] = $db->real_escape_string((string)$rule['rule_id']);
 	$criteria_sql = "SELECT type, statement, value
 				 FROM 202_rotator_rules_criteria
 				 WHERE rule_id='".$mysql['rule_id']."'"; 
@@ -552,8 +552,8 @@ if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
 	$click_row1 = $click_result1->fetch_assoc();
 	$mysql['click_id'] = $db->real_escape_string((string)$click_row1['click_id']);
 	$keyword = $db->real_escape_string($keyword);
-	$keyword_id = $db->real_escape_string($click_row1['keyword_id']);
-	$mysql['keyword_id'] = $db->real_escape_string($keyword_id);
+	$keyword_id = $db->real_escape_string((string)$click_row1['keyword_id']);
+	$mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id);
 }
 else{
 //ok we have the main data, now insert this row
