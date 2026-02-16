@@ -4,6 +4,8 @@ This file captures the API paths and payload/query expectations used by upcoming
 
 ## Existing contracts
 
+- `GET /api/versions` (optional capability probe)
+- `GET /api/v3/capabilities` (optional capability probe)
 - `GET /api/v3/reports/summary`
   - Query: report filter params (`period`, `time_from`, `time_to`, etc.)
 - `GET /api/v3/trackers/{id}/url`
@@ -30,6 +32,14 @@ This file captures the API paths and payload/query expectations used by upcoming
   - paginated `GET /api/v3/{entity}` requests
 - `import <entity> <file>`
   - repeated `POST /api/v3/{entity}` requests
+- `diff` (capability-enabled path)
+  - `POST /api/v3/sync/plan` (preferred when `sync_plan=true`)
+  - falls back to paginated `GET /api/v3/{entity}` compare
+- `sync/re-sync` (capability-enabled path)
+  - `POST /api/v3/sync/jobs` or `POST /api/v3/sync/re-sync` (preferred when `async_jobs=true`)
+  - may trigger `POST /api/v3/sync/worker/run` and then `GET /api/v3/sync/jobs/{id}` polling
+  - `GET /api/v3/sync/status`, `GET /api/v3/sync/history` (preferred when `async_jobs=true`)
+  - falls back to local sync implementation with direct CRUD calls
 
 ## Filter mapping convention
 

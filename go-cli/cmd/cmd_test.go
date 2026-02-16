@@ -1035,6 +1035,118 @@ func TestDiffAllEntities(t *testing.T) {
 	}
 }
 
+func TestDiffUsesServerPlanWhenCapabilityIsAvailable(t *testing.T) {
+	var mu sync.Mutex
+	hits := []string{}
+
+	orchestrator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits = append(hits, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/versions":
+			_, _ = w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/capabilities":
+			_, _ = w.Write([]byte(`{"data":{"sync_features":{"sync_plan":true}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/sync/plan":
+			_, _ = w.Write([]byte(`{"data":{"entity":"campaigns","summary":{"changed":1},"data":{"campaigns":{"changed_count":1}}}}`))
+		default:
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer orchestrator.Close()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`))
+	}))
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": orchestrator.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("diff", "campaigns", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("diff command failed: %v", err)
+	}
+	if !strings.Contains(stdout, `"changed_count": 1`) {
+		t.Fatalf("expected server-side diff response, got:\n%s", stdout)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	foundPlan := false
+	for _, hit := range hits {
+		if hit == "POST /api/v3/sync/plan" {
+			foundPlan = true
+			break
+		}
+	}
+	if !foundPlan {
+		t.Fatalf("expected POST /api/v3/sync/plan call, got %#v", hits)
+	}
+}
+
+func TestSyncUsesServerJobsWhenCapabilityIsAvailable(t *testing.T) {
+	var workerRuns int
+	var jobGets int
+
+	orchestrator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/versions":
+			_, _ = w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/capabilities":
+			_, _ = w.Write([]byte(`{"data":{"sync_features":{"async_jobs":true}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/sync/jobs":
+			_, _ = w.Write([]byte(`{"data":{"job_id":"abc123","status":"queued"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/sync/worker/run":
+			workerRuns++
+			_, _ = w.Write([]byte(`{"data":{"processed":1}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/sync/jobs/abc123":
+			jobGets++
+			_, _ = w.Write([]byte(`{"data":{"job_id":"abc123","status":"succeeded","results":{"campaigns":{"synced":2}}}}`))
+		default:
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer orchestrator.Close()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`))
+	}))
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": orchestrator.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	stdout, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("sync command failed: %v", err)
+	}
+	if !strings.Contains(stdout, `"job_id": "abc123"`) {
+		t.Fatalf("expected server job response, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `"status": "succeeded"`) {
+		t.Fatalf("expected terminal polled job status, got:\n%s", stdout)
+	}
+	if workerRuns == 0 {
+		t.Fatalf("expected sync worker endpoint to be invoked")
+	}
+	if jobGets == 0 {
+		t.Fatalf("expected job poll endpoint to be invoked")
+	}
+}
+
 func TestSyncDryRunMakesNoPosts(t *testing.T) {
 	source := newEntityDataServer(t, map[string][]map[string]interface{}{
 		"aff-networks": {
@@ -1107,6 +1219,199 @@ func TestSyncCreatesWithRemappedFKs(t *testing.T) {
 	}
 	if got := scalarString(lastWrite.Body["aff_network_id"]); got != "101" {
 		t.Fatalf("expected remapped aff_network_id=101, got %q", got)
+	}
+}
+
+func TestSyncTrackersRemapAllForeignKeysIncludingRotator(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+		"ppc-networks": {
+			{"ppc_network_id": 20, "ppc_network_name": "PPC Net"},
+		},
+		"ppc-accounts": {
+			{"ppc_account_id": 30, "ppc_account_name": "Account A", "ppc_network_id": 20},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 40, "aff_campaign_name": "Camp A", "aff_network_id": 10},
+		},
+		"landing-pages": {
+			{"landing_page_id": 50, "landing_page_url": "https://lp.example/a", "aff_campaign_id": 40},
+		},
+		"text-ads": {
+			{"text_ad_id": 60, "text_ad_name": "Ad A", "aff_campaign_id": 40, "landing_page_id": 50},
+		},
+		"rotators": {
+			{"id": 70, "public_id": "rot-a", "default_campaign": 40, "default_lp": 50},
+		},
+		"trackers": {
+			{
+				"tracker_id":      80,
+				"aff_campaign_id": 40,
+				"ppc_account_id":  30,
+				"landing_page_id": 50,
+				"text_ad_id":      60,
+				"rotator_id":      70,
+				"click_cpc":       "1.20",
+				"click_cpa":       "0",
+				"click_cloaking":  "0",
+			},
+		},
+	})
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 101, "aff_network_name": "Net A"},
+		},
+		"ppc-networks": {
+			{"ppc_network_id": 201, "ppc_network_name": "PPC Net"},
+		},
+		"ppc-accounts": {
+			{"ppc_account_id": 301, "ppc_account_name": "Account A", "ppc_network_id": 201},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 401, "aff_campaign_name": "Camp A", "aff_network_id": 101},
+		},
+		"landing-pages": {
+			{"landing_page_id": 501, "landing_page_url": "https://lp.example/a", "aff_campaign_id": 401},
+		},
+		"text-ads": {
+			{"text_ad_id": 601, "text_ad_name": "Ad A", "aff_campaign_id": 401, "landing_page_id": 501},
+		},
+		"rotators": {
+			{"id": 701, "public_id": "rot-a", "default_campaign": 401, "default_lp": 501},
+		},
+		"trackers": {},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "trackers", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("sync trackers error: %v", err)
+	}
+
+	if capture.PostCalls != 1 {
+		t.Fatalf("expected one tracker create write, got post=%d", capture.PostCalls)
+	}
+
+	lastWrite := capture.Writes[len(capture.Writes)-1]
+	if lastWrite.Path != "/api/v3/trackers" {
+		t.Fatalf("expected tracker post path, got %s", lastWrite.Path)
+	}
+	if got := scalarString(lastWrite.Body["aff_campaign_id"]); got != "401" {
+		t.Fatalf("expected remapped aff_campaign_id=401, got %q", got)
+	}
+	if got := scalarString(lastWrite.Body["ppc_account_id"]); got != "301" {
+		t.Fatalf("expected remapped ppc_account_id=301, got %q", got)
+	}
+	if got := scalarString(lastWrite.Body["landing_page_id"]); got != "501" {
+		t.Fatalf("expected remapped landing_page_id=501, got %q", got)
+	}
+	if got := scalarString(lastWrite.Body["text_ad_id"]); got != "601" {
+		t.Fatalf("expected remapped text_ad_id=601, got %q", got)
+	}
+	if got := scalarString(lastWrite.Body["rotator_id"]); got != "701" {
+		t.Fatalf("expected remapped rotator_id=701, got %q", got)
+	}
+}
+
+func TestSyncTrackersIsIdempotentOnSecondRun(t *testing.T) {
+	source := newEntityDataServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 10, "aff_network_name": "Net A"},
+		},
+		"ppc-networks": {
+			{"ppc_network_id": 20, "ppc_network_name": "PPC Net"},
+		},
+		"ppc-accounts": {
+			{"ppc_account_id": 30, "ppc_account_name": "Account A", "ppc_network_id": 20},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 40, "aff_campaign_name": "Camp A", "aff_network_id": 10},
+		},
+		"landing-pages": {
+			{"landing_page_id": 50, "landing_page_url": "https://lp.example/a", "aff_campaign_id": 40},
+		},
+		"text-ads": {
+			{"text_ad_id": 60, "text_ad_name": "Ad A", "aff_campaign_id": 40, "landing_page_id": 50},
+		},
+		"rotators": {
+			{"id": 70, "public_id": "rot-a", "default_campaign": 40, "default_lp": 50},
+		},
+		"trackers": {
+			{
+				"tracker_id":      80,
+				"aff_campaign_id": 40,
+				"ppc_account_id":  30,
+				"landing_page_id": 50,
+				"text_ad_id":      60,
+				"rotator_id":      70,
+				"click_cpc":       "1.20",
+				"click_cpa":       "0",
+				"click_cloaking":  "0",
+			},
+		},
+	})
+	defer source.Close()
+
+	target, capture := newSyncServer(t, map[string][]map[string]interface{}{
+		"aff-networks": {
+			{"aff_network_id": 101, "aff_network_name": "Net A"},
+		},
+		"ppc-networks": {
+			{"ppc_network_id": 201, "ppc_network_name": "PPC Net"},
+		},
+		"ppc-accounts": {
+			{"ppc_account_id": 301, "ppc_account_name": "Account A", "ppc_network_id": 201},
+		},
+		"campaigns": {
+			{"aff_campaign_id": 401, "aff_campaign_name": "Camp A", "aff_network_id": 101},
+		},
+		"landing-pages": {
+			{"landing_page_id": 501, "landing_page_url": "https://lp.example/a", "aff_campaign_id": 401},
+		},
+		"text-ads": {
+			{"text_ad_id": 601, "text_ad_name": "Ad A", "aff_campaign_id": 401, "landing_page_id": 501},
+		},
+		"rotators": {
+			{"id": 701, "public_id": "rot-a", "default_campaign": 401, "default_lp": 501},
+		},
+		"trackers": {},
+	})
+	defer target.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+		"source": {"url": source.URL, "api_key": "source-key-123456"},
+		"target": {"url": target.URL, "api_key": "target-key-123456"},
+	})
+
+	_, _, err := executeCommand("sync", "trackers", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("initial sync trackers error: %v", err)
+	}
+	postBefore := capture.PostCalls
+	putBefore := capture.PutCalls
+
+	stdout, _, err := executeCommand("sync", "trackers", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("second sync trackers error: %v", err)
+	}
+	if capture.PostCalls != postBefore || capture.PutCalls != putBefore {
+		t.Fatalf("expected idempotent second sync with no writes, post %d->%d put %d->%d", postBefore, capture.PostCalls, putBefore, capture.PutCalls)
+	}
+	if !strings.Contains(stdout, `"skipped": 1`) {
+		t.Fatalf("expected skipped count on second tracker sync:\n%s", stdout)
 	}
 }
 
