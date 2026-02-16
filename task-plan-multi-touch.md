@@ -27,4 +27,4 @@
 ### 4. Validate with integration tests and analytics
 - [x] Add integration tests that simulate multi-touch conversions end-to-end through the repository layer.
 - [x] Instrument analytics dashboards to display multi-touch credit allocation and monitor anomalies.
-- [ ] Coordinate QA runbook covering new schema migrations, data hydration, and reporting.
+- [x] Coordinate QA runbook covering new schema migrations, data hydration, and reporting.
