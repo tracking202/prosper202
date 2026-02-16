@@ -278,7 +278,7 @@ if (isset($errors['general'])) {
     <div class="col-xs-12 col-md-4">
         <!-- Current Model Info (if editing) -->
         <?php if ($editing && $currentModel): ?>
-        <div class="well setup-card setup-card--editing">
+        <div class="well setup-card setup-card--editing setup-side-panel">
             <h6 style="color: #2c3e50; margin-bottom: 10px;">
                 <span class="glyphicon glyphicon-edit" style="color: #3498db;"></span> Currently Editing
             </h6>
@@ -309,7 +309,7 @@ if (isset($errors['general'])) {
         <?php endif; ?>
         
         <!-- Model List -->
-        <div class="well setup-card">
+        <div class="well setup-card setup-side-panel">
             <h6><span class="glyphicon glyphicon-list"></span> Your Attribution Models</h6>
             <?php if (empty($models)): ?>
                 <div class="text-center" style="padding: 20px;">
@@ -376,7 +376,7 @@ if (isset($errors['general'])) {
             <?php endif; ?>
         </div>
 
-        <div class="well setup-card">
+        <div class="well setup-card setup-side-panel">
             <h6>Quick Guide</h6>
             <ul class="setup-list">
                 <li>
