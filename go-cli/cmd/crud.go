@@ -25,6 +25,7 @@ type crudField struct {
 
 type crudEntity struct {
 	Name       string
+	Aliases    []string
 	Plural     string
 	Endpoint   string
 	Fields     []crudField
@@ -238,8 +239,9 @@ func resolveForeignKeyNames(c *api.Client, rows []map[string]interface{}) error 
 
 func registerCRUD(entity crudEntity) *cobra.Command {
 	parentCmd := &cobra.Command{
-		Use:   entity.Name,
-		Short: fmt.Sprintf("Manage %s", entity.Plural),
+		Use:     entity.Name,
+		Aliases: entity.Aliases,
+		Short:   fmt.Sprintf("Manage %s", entity.Plural),
 	}
 
 	// list
@@ -523,7 +525,7 @@ func init() {
 	entities := []crudEntity{
 		{
 			Name:     "campaign",
-			Plural:   "campaigns",
+			Plural:   "campaigns (affiliate offers with URLs, payouts, and postback settings)",
 			Endpoint: "campaigns",
 			Fields: []crudField{
 				{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
@@ -553,7 +555,8 @@ func init() {
 		},
 		{
 			Name:     "aff-network",
-			Plural:   "affiliate networks",
+			Aliases:  []string{"category"},
+			Plural:   "categories (affiliate networks)",
 			Endpoint: "aff-networks",
 			Fields: []crudField{
 				{Name: "aff_network_name", Desc: "Network name", Required: true},
@@ -564,7 +567,8 @@ func init() {
 		},
 		{
 			Name:     "ppc-network",
-			Plural:   "PPC networks",
+			Aliases:  []string{"traffic-network"},
+			Plural:   "traffic source networks (PPC networks)",
 			Endpoint: "ppc-networks",
 			Fields: []crudField{
 				{Name: "ppc_network_name", Desc: "Network name", Required: true},
@@ -572,7 +576,8 @@ func init() {
 		},
 		{
 			Name:     "ppc-account",
-			Plural:   "PPC accounts",
+			Aliases:  []string{"traffic-source"},
+			Plural:   "traffic sources (PPC accounts)",
 			Endpoint: "ppc-accounts",
 			Fields: []crudField{
 				{Name: "ppc_account_name", Desc: "Account name", Required: true},
@@ -585,7 +590,7 @@ func init() {
 		},
 		{
 			Name:     "tracker",
-			Plural:   "trackers",
+			Plural:   "trackers (tracking links that tie a traffic source to a campaign and landing page)",
 			Endpoint: "trackers",
 			Fields: []crudField{
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
@@ -606,7 +611,7 @@ func init() {
 		},
 		{
 			Name:     "landing-page",
-			Plural:   "landing pages",
+			Plural:   "landing pages (pre-sell pages visitors see before the offer)",
 			Endpoint: "landing-pages",
 			Fields: []crudField{
 				{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
@@ -621,7 +626,7 @@ func init() {
 		},
 		{
 			Name:     "text-ad",
-			Plural:   "text ads",
+			Plural:   "text ads (ad creatives with headline, description, and display URL)",
 			Endpoint: "text-ads",
 			Fields: []crudField{
 				{Name: "text_ad_name", Desc: "Text ad name", Required: true},

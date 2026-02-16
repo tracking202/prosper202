@@ -602,10 +602,19 @@ p202 rotator rule-delete 5 --ids 12,13 --force
 
 ```bash
 p202 rotator rule-update 5 12 --rule_name "US Traffic v2"
+p202 rotator rule-update 5 12 --status 0
 p202 rotator rule-update 5 12 \
   --criteria_json '[{"type":"country","statement":"is","value":"US"}]' \
   --redirects_json '[{"redirect_campaign":"4","weight":"100","name":"US Offer"}]'
 ```
+
+| Flag               | Description                |
+|--------------------|----------------------------|
+| `--rule_name`      | Rule name                  |
+| `--splittest`      | Enable split test (0 or 1) |
+| `--status`         | Rule status (0 or 1)       |
+| `--criteria_json`  | Criteria as JSON array     |
+| `--redirects_json` | Redirects as JSON array    |
 
 ## Attribution
 
@@ -774,7 +783,21 @@ p202 re-sync --from prod --to staging --force-update --json
 Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
 When server capabilities expose `async_jobs`, the CLI routes sync execution through server endpoints (`/sync/jobs`, `/sync/re-sync`, `/sync/status`, `/sync/history`) and falls back to local client-side sync when unavailable.
 Server-side jobs are queue-driven; run the worker endpoint or cron worker (`202-cronjobs/sync-worker.php`) in environments where asynchronous processing is enabled.
-Server-side rotator rule re-sync after updates can be controlled with `SYNC_ROTATOR_RULE_RESYNC_ENABLED=0|1` (enabled by default).
+Server-side rotator rule re-sync after updates can be controlled with the server environment variable `SYNC_ROTATOR_RULE_RESYNC_ENABLED=0|1` (enabled by default).
+
+### Server-side sync capabilities not yet exposed in CLI
+
+The backend API supports additional sync features that are not yet available as CLI flags:
+
+| Feature | API parameter | Description |
+|---------|---------------|-------------|
+| Prune | `prune=true` | Delete records in target that don't exist in source |
+| Prune preview | `prune_preview=true` | Preview what prune would delete without acting |
+| Collision mode | `collision_mode=warn\|manual` | Control behavior on natural-key collisions |
+| Max attempts | `max_attempts=1-10` | Max retry attempts per job (default: 3) |
+| Idempotency | `Idempotency-Key` header | Prevent duplicate job creation on retries |
+
+The backend also provides endpoints for direct job management (`/sync/jobs/{id}`, `/sync/jobs/{id}/cancel`, `/sync/jobs/{id}/events`) and audit logging (`/audit/sync-jobs`). These are accessible via direct API calls but have no CLI commands yet.
 
 ### Exec across profiles
 

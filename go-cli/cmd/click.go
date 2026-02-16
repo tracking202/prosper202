@@ -11,12 +11,12 @@ import (
 
 var clickCmd = &cobra.Command{
 	Use:   "click",
-	Short: "View clicks",
+	Short: "View tracked clicks (inbound visitor events from traffic sources)",
 }
 
 var clickListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List clicks",
+	Short: "List tracked clicks with optional filters by campaign, time range, or bot status",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
