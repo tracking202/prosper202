@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,8 +29,15 @@ type Client struct {
 type APIError struct {
 	Status      int
 	Message     string
+	Category    string
 	FieldErrors map[string]string
 	Raw         map[string]interface{}
+}
+
+type RequestError struct {
+	Kind string
+	Op   string
+	Err  error
 }
 
 func (e *APIError) Error() string {
@@ -40,6 +48,43 @@ func (e *APIError) Error() string {
 		}
 	}
 	return msg
+}
+
+func (e *APIError) CategoryName() string {
+	if e.Category != "" {
+		return e.Category
+	}
+	return categoryForHTTPStatus(e.Status)
+}
+
+func (e *RequestError) Error() string {
+	if e.Op == "" {
+		return fmt.Sprintf("%s error: %v", e.Kind, e.Err)
+	}
+	return fmt.Sprintf("%s error (%s): %v", e.Kind, e.Op, e.Err)
+}
+
+func (e *RequestError) Unwrap() error {
+	return e.Err
+}
+
+func (e *RequestError) CategoryName() string {
+	return e.Kind
+}
+
+type categorizedError interface {
+	CategoryName() string
+}
+
+func ErrorCategory(err error) string {
+	if err == nil {
+		return ""
+	}
+	var tagged categorizedError
+	if errors.As(err, &tagged) {
+		return strings.TrimSpace(strings.ToLower(tagged.CategoryName()))
+	}
+	return ""
 }
 
 func NewFromConfig() (*Client, error) {
@@ -240,14 +285,14 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("encoding request body: %w", err)
+			return nil, &RequestError{Kind: "validation", Op: "encode_request_body", Err: err}
 		}
 		bodyReader = bytes.NewReader(data)
 	}
 
 	req, err := http.NewRequest(method, u, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, &RequestError{Kind: "validation", Op: "create_request", Err: err}
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -260,13 +305,13 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, &RequestError{Kind: "network", Op: "send_request", Err: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
+		return nil, &RequestError{Kind: "network", Op: "read_response", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
@@ -277,7 +322,11 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 }
 
 func parseAPIError(status int, body []byte) *APIError {
-	ae := &APIError{Status: status, Message: fmt.Sprintf("HTTP %d", status)}
+	ae := &APIError{
+		Status:   status,
+		Message:  fmt.Sprintf("HTTP %d", status),
+		Category: categoryForHTTPStatus(status),
+	}
 
 	var data map[string]interface{}
 	if json.Unmarshal(body, &data) == nil {
@@ -294,4 +343,17 @@ func parseAPIError(status int, body []byte) *APIError {
 	}
 
 	return ae
+}
+
+func categoryForHTTPStatus(status int) string {
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return "auth"
+	case status >= 500:
+		return "server"
+	case status >= 400:
+		return "validation"
+	default:
+		return "network"
+	}
 }
