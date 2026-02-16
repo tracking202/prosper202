@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"p202/internal/api"
+	"p202/internal/metrics"
 	syncdata "p202/internal/sync"
 	"p202/internal/syncstate"
 
@@ -223,14 +224,18 @@ var reSyncCmd = &cobra.Command{
 }
 
 func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) error {
+	done := metrics.Timer("sync", entityArg)
 	if handled, err := tryServerSideSync(entityArg, fromProfile, toProfile, opts); err != nil {
+		done(false, err.Error())
 		return err
 	} else if handled {
+		done(true, "")
 		return nil
 	}
 
 	entities, err := selectedSyncEntities(entityArg)
 	if err != nil {
+		done(false, err.Error())
 		return err
 	}
 
@@ -238,6 +243,7 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 	if !opts.DryRun {
 		releaseLock, err = syncstate.AcquireLock(fromProfile, toProfile)
 		if err != nil {
+			done(false, err.Error())
 			return err
 		}
 		defer releaseLock()
@@ -247,12 +253,14 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 	if opts.Incremental || !opts.DryRun {
 		manifest, err = syncstate.LoadManifest(fromProfile, toProfile)
 		if err != nil {
+			done(false, err.Error())
 			return err
 		}
 	}
 
 	runOutput, err := runSyncProfiles(entities, fromProfile, toProfile, opts, manifest)
 	if err != nil {
+		done(false, err.Error())
 		return err
 	}
 
@@ -267,10 +275,12 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 		}
 		manifest.RecordHistory(runOutput.Results, opts.DryRun, now)
 		if err := syncstate.SaveManifestAtomic(manifest); err != nil {
+			done(false, err.Error())
 			return err
 		}
 	}
 
+	done(true, "")
 	payload, _ := json.Marshal(map[string]interface{}{
 		"source":       fromProfile,
 		"target":       toProfile,

@@ -139,7 +139,10 @@ var conversionDeleteCmd = &cobra.Command{
 		}
 		idsFlag, _ := cmd.Flags().GetString("ids")
 		if strings.TrimSpace(idsFlag) != "" {
-			idList := parseIDList(idsFlag)
+			idList, parseErr := parseIDList(idsFlag)
+			if parseErr != nil {
+				return parseErr
+			}
 			if len(idList) == 0 {
 				return fmt.Errorf("--ids requires at least one ID")
 			}
@@ -168,7 +171,7 @@ var conversionDeleteCmd = &cobra.Command{
 			}
 			output.Success("Deleted %d of %d conversions.", deleted, len(idList))
 			if failed > 0 {
-				return fmt.Errorf("failed to delete %d conversions", failed)
+				return partialFailureError("failed to delete %d conversions", failed)
 			}
 			return nil
 		}

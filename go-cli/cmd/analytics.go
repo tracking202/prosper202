@@ -57,6 +57,10 @@ var analyticsCmd = &cobra.Command{
 	Use:   "analytics",
 	Short: "Friendly shorthand for report breakdown analytics",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !envFlagEnabled("CLI_ENABLE_ANALYTICS_SHORTHAND", true) {
+			return fmt.Errorf("analytics shorthand is disabled (set CLI_ENABLE_ANALYTICS_SHORTHAND=1 to enable)")
+		}
+
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -65,13 +69,13 @@ var analyticsCmd = &cobra.Command{
 		groupBy, _ := cmd.Flags().GetString("group-by")
 		groupBy = strings.ToLower(strings.TrimSpace(groupBy))
 		if groupBy == "" {
-			return fmt.Errorf("--group-by is required")
+			return validationError("--group-by is required")
 		}
 		if mapped, ok := analyticsGroupByAliases[groupBy]; ok {
 			groupBy = mapped
 		}
 		if !analyticsAllowedGroupBy[groupBy] {
-			return fmt.Errorf("unsupported --group-by value %q", groupBy)
+			return validationError("unsupported --group-by value %q", groupBy)
 		}
 
 		params := map[string]string{
@@ -95,7 +99,7 @@ var analyticsCmd = &cobra.Command{
 		period = strings.TrimSpace(period)
 		days, _ := cmd.Flags().GetInt("days")
 		if days < 0 {
-			return fmt.Errorf("--days must be 0 or greater")
+			return validationError("--days must be 0 or greater")
 		}
 		timeFrom, _ := cmd.Flags().GetString("time_from")
 		timeTo, _ := cmd.Flags().GetString("time_to")
@@ -116,6 +120,12 @@ var analyticsCmd = &cobra.Command{
 			}
 		}
 
+		sortDir, _ := cmd.Flags().GetString("sort-dir")
+		sortDir = strings.ToUpper(strings.TrimSpace(sortDir))
+		if sortDir != "" && sortDir != "ASC" && sortDir != "DESC" {
+			return validationError("--sort-dir must be ASC or DESC")
+		}
+
 		sortBy, _ := cmd.Flags().GetString("sort")
 		sortBy = strings.ToLower(strings.TrimSpace(sortBy))
 		if sortBy != "" {
@@ -123,17 +133,11 @@ var analyticsCmd = &cobra.Command{
 				sortBy = mapped
 			}
 			if !analyticsAllowedSort[sortBy] {
-				return fmt.Errorf("unsupported --sort value %q", sortBy)
+				return validationError("unsupported --sort value %q", sortBy)
 			}
 			params["sort"] = sortBy
-
-			sortDir, _ := cmd.Flags().GetString("sort-dir")
-			sortDir = strings.ToUpper(strings.TrimSpace(sortDir))
 			if sortDir == "" {
 				sortDir = "DESC"
-			}
-			if sortDir != "ASC" && sortDir != "DESC" {
-				return fmt.Errorf("--sort-dir must be ASC or DESC")
 			}
 			params["sort_dir"] = sortDir
 		}

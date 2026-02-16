@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"p202/internal/api"
+	"p202/internal/metrics"
 	"p202/internal/output"
 
 	"github.com/spf13/cobra"
@@ -152,7 +153,7 @@ func cloneMutableFields(source map[string]interface{}, fields []crudField) map[s
 	return out
 }
 
-func parseIDList(raw string) []string {
+func parseIDList(raw string) ([]string, error) {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	seen := map[string]bool{}
@@ -161,10 +162,13 @@ func parseIDList(raw string) []string {
 		if id == "" || seen[id] {
 			continue
 		}
+		if _, err := strconv.Atoi(id); err != nil {
+			return nil, fmt.Errorf("invalid ID %q: must be a numeric value", id)
+		}
 		seen[id] = true
 		out = append(out, id)
 	}
-	return out
+	return out, nil
 }
 
 func resolveForeignKeyNames(c *api.Client, rows []map[string]interface{}) error {
@@ -194,7 +198,9 @@ func resolveForeignKeyNames(c *api.Client, rows []map[string]interface{}) error 
 
 		referenceRows, err := fetchAllRows(c, spec.Endpoint)
 		if err != nil {
-			return fmt.Errorf("resolve names for %s: %w", spec.Endpoint, err)
+			fmt.Fprintf(os.Stderr, "Warning: resolve names lookup failed for %s: %v. Falling back to raw IDs.\n", spec.Endpoint, err)
+			lookupsByEndpoint[spec.Endpoint] = map[string]string{}
+			continue
 		}
 
 		lookup := map[string]string{}
@@ -240,7 +246,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: fmt.Sprintf("List %s", entity.Plural),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			done := metrics.Timer("list", entity.Endpoint)
+			defer func() { done(retErr == nil, errString(retErr)) }()
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -268,6 +276,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			}
 			allRows, _ := cmd.Flags().GetBool("all")
 			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
+			if resolveNames && !envFlagEnabled("CLI_ENABLE_RESOLVE_NAMES", true) {
+				return fmt.Errorf("--resolve-names is disabled (set CLI_ENABLE_RESOLVE_NAMES=1 to enable)")
+			}
 
 			if allRows {
 				rows, err := fetchAllRowsWithParams(c, entity.Endpoint, params)
@@ -343,7 +354,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		Use:   "get <id>",
 		Short: fmt.Sprintf("Get a %s by ID", entity.Name),
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			done := metrics.Timer("get", entity.Endpoint)
+			defer func() { done(retErr == nil, errString(retErr)) }()
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -361,7 +374,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	createCmd := &cobra.Command{
 		Use:   "create",
 		Short: fmt.Sprintf("Create a new %s", entity.Name),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			done := metrics.Timer("create", entity.Endpoint)
+			defer func() { done(retErr == nil, errString(retErr)) }()
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -394,7 +409,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		Use:   "update <id>",
 		Short: fmt.Sprintf("Update a %s", entity.Name),
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			done := metrics.Timer("update", entity.Endpoint)
+			defer func() { done(retErr == nil, errString(retErr)) }()
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -431,14 +448,19 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			}
 			return cobra.ExactArgs(1)(cmd, args)
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			done := metrics.Timer("delete", entity.Endpoint)
+			defer func() { done(retErr == nil, errString(retErr)) }()
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
 			}
 			idsFlag, _ := cmd.Flags().GetString("ids")
 			if strings.TrimSpace(idsFlag) != "" {
-				idList := parseIDList(idsFlag)
+				idList, parseErr := parseIDList(idsFlag)
+				if parseErr != nil {
+					return parseErr
+				}
 				if len(idList) == 0 {
 					return fmt.Errorf("--ids requires at least one ID")
 				}
@@ -467,7 +489,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 				output.Success("Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
 				if failed > 0 {
-					return fmt.Errorf("failed to delete %d %s", failed, entity.Plural)
+					return partialFailureError("failed to delete %d %s", failed, entity.Plural)
 				}
 				return nil
 			}

@@ -10,6 +10,7 @@ import (
 
 	"p202/internal/api"
 	configpkg "p202/internal/config"
+	"p202/internal/metrics"
 
 	"github.com/spf13/cobra"
 )
@@ -79,12 +80,15 @@ var diffCmd = &cobra.Command{
 			}
 		}
 
+		done := metrics.Timer("diff", target)
 		fromData, err := fetchPortableEntityData(fromClient)
 		if err != nil {
+			done(false, err.Error())
 			return fmt.Errorf("fetch source profile data: %w", err)
 		}
 		toData, err := fetchPortableEntityData(toClient)
 		if err != nil {
+			done(false, err.Error())
 			return fmt.Errorf("fetch target profile data: %w", err)
 		}
 
@@ -109,6 +113,7 @@ var diffCmd = &cobra.Command{
 				overall["identical"] += toInt(result["identical_count"])
 			}
 
+			done(true, "")
 			payload, _ := json.Marshal(map[string]interface{}{
 				"from":    fromProfile,
 				"to":      toProfile,
@@ -120,6 +125,7 @@ var diffCmd = &cobra.Command{
 		}
 
 		result := diffEntity(target, fromData[target], toData[target], fromLookups, toLookups)
+		done(true, "")
 		payload, _ := json.Marshal(map[string]interface{}{
 			"from": fromProfile,
 			"to":   toProfile,
@@ -349,21 +355,7 @@ func naturalKeyForEntity(entity string, row map[string]interface{}, lookups enti
 	case "rotators":
 		return "pub=" + scalarString(row["public_id"])
 	case "trackers":
-		campaign := remapForeignKey(row, "aff_campaign_id", lookups.campaigns)
-		account := remapForeignKey(row, "ppc_account_id", lookups.ppcAccounts)
-		landing := remapForeignKey(row, "landing_page_id", lookups.landingPages)
-		textAd := remapForeignKey(row, "text_ad_id", lookups.textAds)
-		rotator := remapForeignKey(row, "rotator_id", lookups.rotators)
-		return strings.Join([]string{
-			"campaign=" + campaign,
-			"ppc_account=" + account,
-			"landing_page=" + landing,
-			"text_ad=" + textAd,
-			"rotator=" + rotator,
-			"click_cpc=" + scalarString(row["click_cpc"]),
-			"click_cpa=" + scalarString(row["click_cpa"]),
-			"click_cloaking=" + scalarString(row["click_cloaking"]),
-		}, "|")
+		return "pub=" + scalarString(row["tracker_id_public"])
 	default:
 		return scalarString(row["id"])
 	}
