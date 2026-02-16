@@ -1,22 +1,30 @@
 # Configuration files
 202-config.php
+202-config*.php
+!202-config-sample.php
+202-config copy.php
 phpstan.neon
+
+# Environment / secrets
+.env
+.env.*
+
+# Docker
 docker-compose.yaml
+docker-compose.staging.yml
+docker-compose.*.yml
 
 # Dependencies
 /node_modules/
 /vendor/
+composer.lock
 
 # Build and cache files
 *.cache
 *.patch
-composer.lock
 build/debug/
 build/logs/
-
-# Config backups
-202-config*.php
-!202-config-sample.php
+build/staging-config.php
 
 # Development and documentation
 /docs/
@@ -29,8 +37,18 @@ phpstan-errors.txt
 CLAUDE.local.md
 CLAUDE.md
 
+# OS files
+.DS_Store
+
 # Database
 /mysql_data/
-202-config copy.php
+/mysql_data_staging/
+
+# Session / task files
 /scripts/.ax-session
 /.ax-session
+task-plan-*
+
+# Go CLI build artifacts
+go-cli/prosper202-cli
+go-cli/*.exe
