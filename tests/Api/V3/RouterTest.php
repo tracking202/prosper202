@@ -63,6 +63,18 @@ final class RouterTest extends TestCase
         $this->assertSame('delete', ($result['handler'])());
     }
 
+    public function testRuleUpdateRouteMatchesPutRequestWithTwoPathParams(): void
+    {
+        $this->router->put('/rotators/{id}/rules/{ruleId}', fn() => 'rule-update');
+
+        $result = $this->router->match('PUT', '/rotators/12/rules/34');
+
+        $this->assertNotNull($result);
+        $this->assertSame('rule-update', ($result['handler'])());
+        $this->assertSame('12', $result['pathParams']['id']);
+        $this->assertSame('34', $result['pathParams']['ruleId']);
+    }
+
     public function testGetRouteDoesNotMatchPostRequest(): void
     {
         $this->router->get('/campaigns', fn() => 'list');
@@ -351,7 +363,8 @@ final class RouterTest extends TestCase
 
     public function testGroupReturnsSelfForChaining(): void
     {
-        $result = $this->router->group('/prefix', function (Router $r) {});
+        $result = $this->router->group('/prefix', function (Router $r) {
+        });
         $this->assertSame($this->router, $result);
     }
 
