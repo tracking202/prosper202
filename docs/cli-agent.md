@@ -7,7 +7,7 @@ This document describes how to use the `p202` CLI from an AI agent, automation s
 1. **Always use `--json`** -- Table output is for humans. JSON output gives you the exact API response with stable, parseable structure.
 2. **Always use `--force` on deletes** -- Interactive confirmation prompts will hang a non-interactive process.
 3. **Never rely on table column order** -- Use `--json` and parse the response fields by name.
-4. **Avoid `--user_pass` on command line** -- The secure password prompt reads from stdin. Pass the password via the flag value directly: `--user_pass "thepassword"`.
+4. **Do not rely on interactive password prompts** -- In non-interactive runs, pass the password explicitly: `--user_pass "thepassword"`.
 
 ## Setup
 
@@ -432,7 +432,7 @@ p202 export <entity|all> [--output PATH] [--json]
 p202 import <entity> <file> [--dry-run] [--skip-errors] [--json]
 ```
 
-Supported export entities: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `trackers`, `landing-pages`, `text-ads`, `all`.
+Supported export entities: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `rotators`, `trackers`, `landing-pages`, `text-ads`, `all`.
 
 ### Multi-server workflows
 
@@ -442,15 +442,19 @@ p202 sync <entity|all> --from <profile> --to <profile> [--dry-run] [--skip-error
 p202 sync status --from <profile> --to <profile> [--json]
 p202 sync history --from <profile> --to <profile> [--json]
 p202 re-sync --from <profile> --to <profile> [--dry-run] [--skip-errors] [--force-update] [--json]
-p202 exec --all-profiles -- <subcommand...>
-p202 exec --profiles <p1,p2,...> -- <subcommand...>
-p202 exec --group <tag> -- <subcommand...>
+p202 exec --all-profiles [--concurrency N] -- <subcommand...>
+p202 exec --profiles <p1,p2,...> [--concurrency N] -- <subcommand...>
+p202 exec --group <tag> [--concurrency N] -- <subcommand...>
 ```
 
 Notes for agents:
 - Use `sync --dry-run` before real sync.
 - `sync` and `re-sync` store state in `~/.p202/sync/<source>-<target>.json`.
 - `exec` returns non-zero if any profile execution fails.
+- `exec --concurrency` controls fan-out parallelism (default `5`, minimum `1`).
+- If the API reports `sync_plan` and `async_jobs` capabilities, CLI auto-routes to server-side `/sync/*` endpoints.
+- If server capabilities are unavailable, CLI falls back to local diff/sync behavior.
+- When async jobs are enabled server-side, ensure the sync worker is running (`POST /sync/worker/run` or cron script `202-cronjobs/sync-worker.php`).
 
 ### System
 

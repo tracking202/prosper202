@@ -78,7 +78,7 @@ The CLI stores its configuration in `~/.p202/config.json` with `0600` permission
 }
 ```
 
-On Windows, the config directory is `%TEMP%/.p202/`.
+On Windows, this path is typically `%USERPROFILE%\\.p202\\config.json` (that is, the current user's home directory under `.p202`).
 
 Legacy single-profile files (`url`, `api_key`) are auto-migrated in memory to `profiles.default` and written back in profile format on the next config write.
 
@@ -682,7 +682,7 @@ p202 import campaigns /tmp/campaigns.json --dry-run
 p202 import campaigns /tmp/campaigns.json --skip-errors
 ```
 
-`export` supports: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `trackers`, `landing-pages`, `text-ads`, `all`.
+`export` supports: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `rotators`, `trackers`, `landing-pages`, `text-ads`, `all`.
 
 `import` currently supports one entity at a time and strips immutable fields before create requests.
 
@@ -696,6 +696,7 @@ p202 diff all --from prod --to staging --json
 ```
 
 `diff` reports per-entity `only_in_source`, `only_in_target`, `changed`, and `identical_count`.
+When server capabilities expose `sync_plan`, the CLI uses `POST /api/v3/sync/plan` automatically and falls back to client-side diff when unavailable.
 
 ### Sync and re-sync
 
@@ -717,6 +718,8 @@ p202 re-sync --from prod --to staging --force-update --json
 | `--force-update` | Update mismatched target records instead of skipping |
 
 Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
+When server capabilities expose `async_jobs`, the CLI routes sync execution through server endpoints (`/sync/jobs`, `/sync/re-sync`, `/sync/status`, `/sync/history`) and falls back to local client-side sync when unavailable.
+Server-side jobs are queue-driven; run the worker endpoint or cron worker (`202-cronjobs/sync-worker.php`) in environments where asynchronous processing is enabled.
 
 ### Exec across profiles
 
@@ -724,10 +727,12 @@ Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
 p202 exec --all-profiles -- campaign list --limit 5
 p202 exec --profiles prod,staging -- report summary --period today
 p202 exec --group env:prod -- dashboard --period last7
+p202 exec --profiles prod,staging --concurrency 2 -- campaign list --limit 5
 p202 --json exec --profiles prod,staging -- campaign list
 ```
 
 `exec` table mode prints `=== profile ===` sections. JSON mode returns per-profile exit codes/output. The command exits non-zero if any profile run fails.
+Use `--concurrency <n>` to limit parallel profile executions (default: `5`, minimum: `1`).
 
 ## System
 
