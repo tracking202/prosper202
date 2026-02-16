@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"p202/internal/api"
 	"p202/internal/output"
@@ -90,11 +91,15 @@ func fetchAllRows(c *api.Client, endpoint string) ([]map[string]interface{}, err
 }
 
 func fetchAllRowsWithParams(c *api.Client, endpoint string, baseParams map[string]string) ([]map[string]interface{}, error) {
-	const pageSize = 100
-	offset := 0
-	all := make([]map[string]interface{}, 0)
+	const defaultPageSize = 100
+	const maxPages = 10000
 
-	for {
+	offset := 0
+	pageSize := defaultPageSize
+	all := make([]map[string]interface{}, 0)
+	seenKeys := map[string]struct{}{}
+
+	for page := 0; page < maxPages; page++ {
 		params := map[string]string{
 			"limit":  strconv.Itoa(pageSize),
 			"offset": strconv.Itoa(offset),
@@ -113,14 +118,144 @@ func fetchAllRowsWithParams(c *api.Client, endpoint string, baseParams map[strin
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, rows...)
-		if len(rows) < pageSize {
+		if len(rows) == 0 {
 			break
 		}
-		offset += pageSize
+
+		added := 0
+		for _, row := range rows {
+			key := rowDedupeKey(endpoint, row)
+			if _, exists := seenKeys[key]; exists {
+				continue
+			}
+			seenKeys[key] = struct{}{}
+			all = append(all, row)
+			added++
+		}
+
+		pg := extractPaginationInfo(data)
+
+		step := pageSize
+		if pg.hasLimit && pg.limit > 0 {
+			step = pg.limit
+		}
+		if step <= 0 {
+			return nil, fmt.Errorf("pagination stalled for %s: invalid page size at offset %d", endpoint, offset)
+		}
+
+		if pg.hasTotal && len(all) >= pg.total {
+			break
+		}
+
+		if !pg.hasTotal && len(rows) < step {
+			break
+		}
+
+		if added == 0 {
+			return nil, fmt.Errorf("pagination stalled for %s: page at offset %d contained no new rows", endpoint, offset)
+		}
+
+		reportedOffset := offset
+		if pg.hasOffset {
+			reportedOffset = pg.offset
+		}
+		nextOffset := reportedOffset + step
+		if nextOffset <= offset {
+			return nil, fmt.Errorf("pagination stalled for %s: next offset %d did not advance from %d", endpoint, nextOffset, offset)
+		}
+
+		offset = nextOffset
+		pageSize = step
 	}
 
 	return all, nil
+}
+
+type paginationInfo struct {
+	total     int
+	limit     int
+	offset    int
+	hasTotal  bool
+	hasLimit  bool
+	hasOffset bool
+}
+
+func extractPaginationInfo(data []byte) paginationInfo {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return paginationInfo{}
+	}
+	rawPagination, ok := payload["pagination"].(map[string]interface{})
+	if !ok {
+		return paginationInfo{}
+	}
+
+	info := paginationInfo{}
+	if v, ok := intValue(rawPagination["total"]); ok {
+		info.total = v
+		info.hasTotal = true
+	}
+	if v, ok := intValue(rawPagination["limit"]); ok {
+		info.limit = v
+		info.hasLimit = true
+	}
+	if v, ok := intValue(rawPagination["offset"]); ok {
+		info.offset = v
+		info.hasOffset = true
+	}
+
+	return info
+}
+
+func intValue(raw interface{}) (int, bool) {
+	switch v := raw.(type) {
+	case nil:
+		return 0, false
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case json.Number:
+		parsed, err := v.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return 0, false
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
+}
+
+func rowDedupeKey(endpoint string, row map[string]interface{}) string {
+	candidateFields := []string{"id", "public_id"}
+	if fields, exists := syncEntityIDFields[endpoint]; exists {
+		candidateFields = append(candidateFields, fields...)
+	}
+	for _, field := range candidateFields {
+		if val := scalarString(row[field]); val != "" {
+			return field + ":" + val
+		}
+	}
+
+	encoded, err := json.Marshal(row)
+	if err != nil {
+		return fmt.Sprintf("%v", row)
+	}
+	return "json:" + string(encoded)
 }
 
 func init() {
