@@ -98,69 +98,51 @@ class DataEngine
         return self::$found_rows;
     }
 
-    function getReportData($reportType, $clickFrom, $clickTo, $cpv)
+    function getReportData($reportType, $clickFrom, $clickTo, $cpv): mixed
     {
         switch ($reportType) {
             case 'LpOverview':
                 return $this->doLpOverviewReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'campaignOverview':
                 return $this->doCampaignOverviewReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'slp_direct_link_per_ppc':
                 return $this->doPerPpcReport('slp_direct_link', $clickFrom, $clickTo, $cpv);
-                break;
             case 'alp_per_ppc':
                 return $this->doPerPpcReport('alp', $clickFrom, $clickTo, $cpv);
-                break;
             case 'breakdown':
                 return $this->doBreakdownReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'hourly':
                 return $this->doHourlyReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'weekly':
                 return $this->doWeeklyReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'keyword':
                 return $this->doKeywordReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'textad':
                 return $this->doTextadReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'referer':
                 return $this->doRefererReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'ip':
                 return $this->doIPReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'country':
                 return $this->doCountryReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'region':
                 return $this->doRegionReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'city':
                 return $this->doCityReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'isp':
                 return $this->doISPReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'landingpage':
                 return $this->doLandingPageReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'device':
                 return $this->doDeviceReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'browser':
                 return $this->doBrowserReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'platform':
                 return $this->doPlatformReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'variable':
                 return $this->doVariableReport($clickFrom, $clickTo, $cpv);
-                break;
+            default:
+                return null;
         }
     }
 
@@ -311,7 +293,6 @@ class DataEngine
      *
      * foreach ($filters as $key => $value) {
      * if ($filterInClickLevel == true) {
-     * break;
      * }
      * if (!in_array($key, $filterInIpxLevel)) {
      * $filterInClickLevel = true;
