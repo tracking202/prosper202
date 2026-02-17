@@ -55,6 +55,9 @@ final class TableRegistry
     public const TRACKING_C2 = '202_tracking_c2';
     public const TRACKING_C3 = '202_tracking_c3';
     public const TRACKING_C4 = '202_tracking_c4';
+    public const TRACKING_CX = '202_tracking_cx';
+    public const CLICKS_TRACKING_CX = '202_clicks_tracking_cx';
+    public const MIGRATION_STATE = '202_migration_state';
     public const TRACKERS = '202_trackers';
     public const CPA_TRACKERS = '202_cpa_trackers';
     public const KEYWORDS = '202_keywords';

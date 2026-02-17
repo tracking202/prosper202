@@ -15,6 +15,7 @@ use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
 use Prosper202\Database\Tables\SyncTables;
+use Prosper202\Database\Tables\TrackingCxTables;
 use Prosper202\Database\Exceptions\SchemaInstallException;
 
 /**
@@ -50,6 +51,7 @@ final class SchemaInstaller
             $this->createUserTables();
             $this->createClickTables();
             $this->createTrackingTables();
+            $this->createTrackingCxTables();
             $this->createCampaignTables();
             $this->createAttributionTables();
             $this->createRotatorTables();
@@ -107,6 +109,14 @@ final class SchemaInstaller
     public function createTrackingTables(): void
     {
         $this->createTablesFromDefinitions(TrackingTables::getDefinitions());
+    }
+
+    /**
+     * Create EAV tracking tables (cx).
+     */
+    public function createTrackingCxTables(): void
+    {
+        $this->createTablesFromDefinitions(TrackingCxTables::getDefinitions());
     }
 
     /**
