@@ -3833,9 +3833,9 @@ class UserPrefs
         } catch (Exception) {
             self::$db = false;
         }
-        $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
+        self::$mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
 
-        $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $this->mysql['user_id'];
+        $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . self::$mysql['user_id'];
         $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
         $breakdown = $user_row['user_pref_breakdown'];

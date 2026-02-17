@@ -24,7 +24,7 @@ function getAuth($db, $variables): mixed {
 	}
 }
 
-function showCategories($db, $vars, $user): void {
+function showCategories($db, $vars, $user = null): void {
     foreach ($vars as $key=>$var)
         $vars[$key]=$db->real_escape_string($var);
     //$vars = $db->real_escape_string($vars);

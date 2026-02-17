@@ -356,7 +356,7 @@ function info_top(): void
 						if ($lastDecimal == '0') {
 							$calcVersion = $decimals[0] . '.' . ($decimals[1] - 1) . '.9';
 						} else {
-							$calcVersion = $decimals[0] . '.' . $decals[1] . '.' . ($lastDecimal - 1);
+							$calcVersion = $decimals[0] . '.' . $decimals[1] . '.' . ($lastDecimal - 1);
 						}
 
 						if ($calcVersion == $version) {
@@ -408,6 +408,7 @@ function info_top(): void
 								$log .= "Temporary directory doesn't exist or isn't writable. ";
 							}
 
+							$upgrade_done = false;
 							if ($FilesUpdated == true) {
 								// Clear all PHP caches
 								clear_php_caches();

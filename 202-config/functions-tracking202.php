@@ -3147,7 +3147,7 @@ function authDniNetworks($hash, $network, $key, $affId)
     }
 }
 
-function getDniOffers($hash, $network, $key, $affId, $currency, $offset, $limit, $sort_by, $filter_by)
+function getDniOffers($hash, $network, $key, $affId, $offset, $limit, $sort_by, $filter_by, $currency = '')
 {
     $fields = [
         'api_key' => $key,
@@ -3578,6 +3578,8 @@ function getDashEmail(): string|bool
             }
         }
     }
+
+    return false;
 }
 
 function getSetDashEmail($key)

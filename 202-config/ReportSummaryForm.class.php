@@ -1137,7 +1137,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 	/**
 	 * Returns the export csv for an entire row
-	 * @return String
+	 * @return void
 	 */
 	function getExportRowHeaderHtml()
 	{
@@ -1495,7 +1495,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 	/**
 	 * Returns the export csv for an entire row
-	 * @return String
+	 * @return void
 	 */
 	function getExportRowHtml($row)
 	{

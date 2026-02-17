@@ -61,4 +61,3 @@ if ($landing_page_result->num_rows == 0) { ?>
 
 		} ?>
 	</select> <?php } ?>
- 

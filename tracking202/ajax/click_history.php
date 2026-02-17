@@ -333,7 +333,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 			<div class="pagination" id="table-pages">
 				<ul>
 					<?php if ($query['offset'] > 0) {
-						printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'%tracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $query['offset'] - 1, $html['order']);
+						printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'%s/tracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $query['offset'] - 1, $html['order']);
 					}
 
 					if ($query['pages'] > 1) {

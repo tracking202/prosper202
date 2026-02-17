@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-function getUrl($url, $requestType = 'GET', $timeout = 30)
+function getUrl($url, $requestType = 'GET', $timeout = 30, $postArray = [])
 {
 
 	$curl = new curl();

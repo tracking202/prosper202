@@ -96,4 +96,3 @@ AUTH::require_user();
 	}
 
 ?>
-

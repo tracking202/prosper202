@@ -1602,4 +1602,3 @@ if (isset($_POST['generate_rules']) && $_POST['generate_rules'] == true && isset
 	
 
 } ?>
- 

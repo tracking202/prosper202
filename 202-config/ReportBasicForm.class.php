@@ -438,7 +438,7 @@ class ReportBasicForm
 
 	/**
 	 * Adds the lead offer_list
-	 * @return string
+	 * @return void
 	 */
 	function setOfferList($arg0)
 	{

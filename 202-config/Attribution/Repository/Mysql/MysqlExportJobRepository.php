@@ -210,8 +210,6 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         if (!$statement->bind_param($types, ...$values)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
-
-        unset($value);
     }
 
     private function addIntParam(string &$types, array &$values, ?int $value): void

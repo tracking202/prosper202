@@ -121,6 +121,8 @@ class ContentTypes extends \Slim\Middleware
                 return $result;
             }
         }
+
+        return $input;
     }
 
     /**
