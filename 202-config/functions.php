@@ -131,7 +131,7 @@ if (!function_exists('array_any')) {
 }
 
 
-function is_installed()
+function is_installed(): bool
 {
 	// Skip the check if we're accessing the installer or API key setup
 	if (
@@ -158,7 +158,7 @@ function is_installed()
 	return false;
 }
 
-function upgrade_needed()
+function upgrade_needed(): bool
 {
 
 	// Call static methods
@@ -171,7 +171,7 @@ function upgrade_needed()
 	}
 }
 
-function info_top()
+function info_top(): void
 {
 	$wp202 = getWallpaper();
 ?>
