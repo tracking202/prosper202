@@ -8,8 +8,6 @@ use Prosper202\Attribution\ExportStatus;
 use Prosper202\Attribution\Repository\Mysql\MysqlExportJobRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlSnapshotRepository;
 use Prosper202\Attribution\Snapshot;
-use RuntimeException;
-use Throwable;
 
 require_once __DIR__ . '/../202-config/connect.php';
 require_once __DIR__ . '/../vendor/autoload.php';

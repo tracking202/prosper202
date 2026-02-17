@@ -13,13 +13,14 @@ import (
 )
 
 var rotatorCmd = &cobra.Command{
-	Use:   "rotator",
-	Short: "Manage rotators and rules",
+	Use:     "rotator",
+	Aliases: []string{"redirector"},
+	Short:   "Manage redirectors (rotators and rules)",
 }
 
 var rotatorListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List rotators",
+	Short: "List all redirectors/rotators",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -60,7 +61,7 @@ var rotatorListCmd = &cobra.Command{
 
 var rotatorGetCmd = &cobra.Command{
 	Use:   "get <id>",
-	Short: "Get a rotator with rules",
+	Short: "Get a redirector/rotator and its routing rules by ID",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -78,7 +79,7 @@ var rotatorGetCmd = &cobra.Command{
 
 var rotatorCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a rotator",
+	Short: "Create a new redirector/rotator for rule-based traffic splitting",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -105,7 +106,7 @@ var rotatorCreateCmd = &cobra.Command{
 
 var rotatorUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
-	Short: "Update a rotator",
+	Short: "Update a redirector/rotator's name or defaults",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -132,7 +133,7 @@ var rotatorUpdateCmd = &cobra.Command{
 
 var rotatorDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
-	Short: "Delete a rotator and all its rules",
+	Short: "Delete a redirector/rotator and all its routing rules",
 	Args: func(cmd *cobra.Command, args []string) error {
 		idsFlag, _ := cmd.Flags().GetString("ids")
 		if strings.TrimSpace(idsFlag) != "" {
@@ -204,7 +205,7 @@ var rotatorDeleteCmd = &cobra.Command{
 
 var rotatorRuleCreateCmd = &cobra.Command{
 	Use:   "rule-create <rotator_id>",
-	Short: "Create a rule for a rotator",
+	Short: "Add a routing rule to a redirector/rotator (criteria + redirect targets)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -246,7 +247,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 
 var rotatorRuleDeleteCmd = &cobra.Command{
 	Use:   "rule-delete <rotator_id> <rule_id>",
-	Short: "Delete a rotator rule",
+	Short: "Delete a routing rule from a redirector/rotator",
 	Args: func(cmd *cobra.Command, args []string) error {
 		idsFlag, _ := cmd.Flags().GetString("ids")
 		if strings.TrimSpace(idsFlag) != "" {
@@ -318,7 +319,7 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 
 var rotatorRuleUpdateCmd = &cobra.Command{
 	Use:   "rule-update <rotator_id> <rule_id>",
-	Short: "Update a rotator rule",
+	Short: "Update a routing rule on a redirector/rotator",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()

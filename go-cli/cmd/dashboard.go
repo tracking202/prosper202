@@ -8,7 +8,7 @@ import (
 
 var dashboardCmd = &cobra.Command{
 	Use:   "dashboard",
-	Short: "Get dashboard summary metrics",
+	Short: "Get dashboard overview — total clicks, conversions, revenue, cost, profit, and ROI for a period",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profiles, err := resolveMultiProfiles(cmd)
 		if err != nil {
