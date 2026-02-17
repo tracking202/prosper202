@@ -55,7 +55,7 @@ var analyticsAllowedSort = map[string]bool{
 
 var analyticsCmd = &cobra.Command{
 	Use:   "analytics",
-	Short: "Friendly shorthand for report breakdown analytics",
+	Short: "Query performance stats grouped by campaign, traffic source, country, etc. (shorthand for report breakdown)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !envFlagEnabled("CLI_ENABLE_ANALYTICS_SHORTHAND", true) {
 			return fmt.Errorf("analytics shorthand is disabled (set CLI_ENABLE_ANALYTICS_SHORTHAND=1 to enable)")
