@@ -13,9 +13,9 @@ final class AnalyticsResponseTransformer
     {
         return [
             'totals' => self::normaliseTotals($summary->totals),
-            'snapshots' => array_map([self::class, 'snapshotToArray'], $summary->snapshots),
-            'touchpoint_mix' => array_map([self::class, 'mixToArray'], $summary->touchpointMix),
-            'anomalies' => array_map([self::class, 'anomalyToArray'], $summary->anomalies),
+            'snapshots' => array_map(self::snapshotToArray(...), $summary->snapshots),
+            'touchpoint_mix' => array_map(self::mixToArray(...), $summary->touchpointMix),
+            'anomalies' => array_map(self::anomalyToArray(...), $summary->anomalies),
         ];
     }
 
@@ -25,7 +25,7 @@ final class AnalyticsResponseTransformer
      */
     public static function snapshotsToArray(array $snapshots): array
     {
-        return array_map([self::class, 'snapshotToArray'], $snapshots);
+        return array_map(self::snapshotToArray(...), $snapshots);
     }
 
     /**
@@ -34,7 +34,7 @@ final class AnalyticsResponseTransformer
      */
     public static function mixToArrayList(array $mix): array
     {
-        return array_map([self::class, 'mixToArray'], $mix);
+        return array_map(self::mixToArray(...), $mix);
     }
 
     /**
@@ -43,7 +43,7 @@ final class AnalyticsResponseTransformer
      */
     public static function anomaliesToArray(array $anomalies): array
     {
-        return array_map([self::class, 'anomalyToArray'], $anomalies);
+        return array_map(self::anomalyToArray(...), $anomalies);
     }
 
     /**

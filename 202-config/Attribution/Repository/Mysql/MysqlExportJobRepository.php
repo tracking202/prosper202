@@ -10,11 +10,11 @@ use Prosper202\Attribution\ExportJob;
 use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
 use RuntimeException;
 
-final class MysqlExportJobRepository implements ExportJobRepositoryInterface
+final readonly class MysqlExportJobRepository implements ExportJobRepositoryInterface
 {
     public function __construct(
-        private readonly mysqli $writeConnection,
-        private readonly ?mysqli $readConnection = null
+        private mysqli $writeConnection,
+        private ?mysqli $readConnection = null
     ) {}
 
     public function create(ExportJob $job): ExportJob

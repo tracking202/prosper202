@@ -9,15 +9,15 @@ use InvalidArgumentException;
 /**
  * Describes a webhook callback that should be notified once an export completes.
  */
-final class ExportWebhook
+final readonly class ExportWebhook
 {
     /**
      * @param array<string, string> $headers
      */
     public function __construct(
-        public readonly string $url,
-        public readonly ?string $secret,
-        public readonly array $headers
+        public string $url,
+        public ?string $secret,
+        public array $headers
     ) {
         if ($this->url === '') {
             throw new InvalidArgumentException('Webhook URL cannot be empty.');

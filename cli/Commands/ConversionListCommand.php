@@ -13,6 +13,7 @@ class ConversionListCommand extends BaseCommand
 {
     protected static $defaultName = 'conversion:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

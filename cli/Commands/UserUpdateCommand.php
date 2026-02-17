@@ -15,6 +15,7 @@ class UserUpdateCommand extends BaseCommand
 {
     protected static $defaultName = 'user:update';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -14,6 +14,7 @@ class AttributionExportScheduleCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:export:schedule';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -13,6 +13,7 @@ class UserPreferencesGetCommand extends BaseCommand
 {
     protected static $defaultName = 'user:prefs:get';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

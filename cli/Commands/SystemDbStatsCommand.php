@@ -12,6 +12,7 @@ class SystemDbStatsCommand extends BaseCommand
 {
     protected static $defaultName = 'system:db-stats';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -33,7 +33,7 @@ function checkForApiErrors($array)
 	$errors = $array['errors']['error'];
 	if ($errors) {
 		for ($x = 0; $x < count($errors); $x++) {
-			$html = array_map('htmlentities', $errors[$x]);
+			$html = array_map(htmlentities(...), $errors[$x]);
 			echo "<p>ErrorCode: {$html['errorCode']}<br/>";
 			echo "ErrorMessage: {$html['errorMessage']}</p>";
 		}

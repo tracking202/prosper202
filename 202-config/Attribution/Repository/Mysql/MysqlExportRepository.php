@@ -11,15 +11,13 @@ use Prosper202\Attribution\Export\ExportStatus;
 use Prosper202\Attribution\Repository\ExportRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
 
-final class MysqlExportRepository implements ExportRepositoryInterface
+final readonly class MysqlExportRepository implements ExportRepositoryInterface
 {
-    private mysqli $write;
     private mysqli $read;
 
-    public function __construct(mysqli $write, ?mysqli $read = null)
+    public function __construct(private mysqli $write, ?mysqli $read = null)
     {
-        $this->write = $write;
-        $this->read = $read ?? $write;
+        $this->read = $read ?? $this->write;
     }
 
     public function create(ExportJob $job): ExportJob

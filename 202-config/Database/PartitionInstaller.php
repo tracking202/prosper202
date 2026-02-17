@@ -10,15 +10,13 @@ use Prosper202\Database\Exceptions\PartitionException;
 /**
  * Handles creation of database partitions for high-volume tables.
  */
-final class PartitionInstaller
+final readonly class PartitionInstaller
 {
-    private mysqli $connection;
     private bool $partitioningSupported;
 
-    public function __construct(mysqli $connection)
+    public function __construct(private mysqli $connection)
     {
-        $this->connection = $connection;
-        $this->partitioningSupported = PartitionStrategy::isSupported($connection);
+        $this->partitioningSupported = PartitionStrategy::isSupported($this->connection);
     }
 
     /**

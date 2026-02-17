@@ -10,19 +10,14 @@ use RuntimeException;
  */
 class SchemaInstallException extends RuntimeException
 {
-    private ?string $tableName;
-    private ?string $sql;
-
     public function __construct(
         string $message,
-        ?string $tableName = null,
-        ?string $sql = null,
+        private readonly ?string $tableName = null,
+        private readonly ?string $sql = null,
         int $code = 0,
         ?\Throwable $previous = null
     ) {
         parent::__construct($message, $code, $previous);
-        $this->tableName = $tableName;
-        $this->sql = $sql;
     }
 
     /**

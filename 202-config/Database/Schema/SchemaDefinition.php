@@ -6,7 +6,7 @@ namespace Prosper202\Database\Schema;
 /**
  * Value object representing a database table schema definition.
  */
-final class SchemaDefinition
+final readonly class SchemaDefinition
 {
     /**
      * @param string $tableName The name of the table
@@ -16,11 +16,11 @@ final class SchemaDefinition
      * @param string $collation The collation (default: utf8mb4_general_ci)
      */
     public function __construct(
-        public readonly string $tableName,
-        public readonly string $createStatement,
-        public readonly string $engine = 'InnoDB',
-        public readonly string $charset = 'utf8mb4',
-        public readonly string $collation = 'utf8mb4_general_ci'
+        public string $tableName,
+        public string $createStatement,
+        public string $engine = 'InnoDB',
+        public string $charset = 'utf8mb4',
+        public string $collation = 'utf8mb4_general_ci'
     ) {}
 
     /**

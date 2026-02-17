@@ -15,6 +15,7 @@ class UserRoleRemoveCommand extends BaseCommand
 {
     protected static $defaultName = 'user:role:remove';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

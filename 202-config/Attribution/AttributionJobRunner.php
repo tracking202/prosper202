@@ -22,16 +22,16 @@ use Prosper202\Attribution\Snapshot;
 use Prosper202\Attribution\Touchpoint;
 use RuntimeException;
 
-final class AttributionJobRunner
+final readonly class AttributionJobRunner
 {
-    private const BATCH_LIMIT = 5000;
+    private const int BATCH_LIMIT = 5000;
 
     public function __construct(
-        private readonly ModelRepositoryInterface $modelRepository,
-        private readonly SnapshotRepositoryInterface $snapshotRepository,
-        private readonly TouchpointRepositoryInterface $touchpointRepository,
-        private readonly ConversionRepositoryInterface $conversionRepository,
-        private readonly AuditRepositoryInterface $auditRepository
+        private ModelRepositoryInterface $modelRepository,
+        private SnapshotRepositoryInterface $snapshotRepository,
+        private TouchpointRepositoryInterface $touchpointRepository,
+        private ConversionRepositoryInterface $conversionRepository,
+        private AuditRepositoryInterface $auditRepository
     ) {
     }
 

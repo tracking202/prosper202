@@ -12,6 +12,7 @@ class SystemVersionCommand extends BaseCommand
 {
     protected static $defaultName = 'system:version';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

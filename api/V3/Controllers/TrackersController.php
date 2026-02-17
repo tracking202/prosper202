@@ -27,6 +27,7 @@ class TrackersController extends Controller
         ];
     }
 
+    #[\Override]
     protected function beforeCreate(array $payload): array
     {
         $publicId = isset($payload['tracker_id_public']) && (int)$payload['tracker_id_public'] > 0

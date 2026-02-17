@@ -10,19 +10,16 @@ namespace Api\V3;
  * Authenticates the bearer token, loads the user's roles once, and exposes
  * fine-grained authorization checks that controllers and the router can use.
  */
-final class Auth
+final readonly class Auth
 {
-    private int $userId;
-    /** @var string[] lower-cased role names */
-    private array $roles;
-    /** @var string[] lower-cased api key scopes */
-    private array $scopes;
-
-    private function __construct(int $userId, array $roles, array $scopes = ['*'])
+    private function __construct(
+        private int $userId,
+        /** @var string[] lower-cased role names */
+        private array $roles,
+        /** @var string[] lower-cased api key scopes */
+        private array $scopes = ['*']
+    )
     {
-        $this->userId = $userId;
-        $this->roles = $roles;
-        $this->scopes = $scopes;
     }
 
     /**

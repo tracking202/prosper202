@@ -19,9 +19,6 @@ use Api\V3\Support\ServerStateStore;
  */
 abstract class Controller
 {
-    protected \mysqli $db;
-    protected int $userId;
-
     abstract protected function tableName(): string;
     abstract protected function primaryKey(): string;
     abstract protected function fields(): array;
@@ -31,10 +28,8 @@ abstract class Controller
     private ?array $cachedFields = null;
     private ?ServerStateStore $stateStore = null;
 
-    public function __construct(\mysqli $db, int $userId)
+    public function __construct(protected \mysqli $db, protected int $userId)
     {
-        $this->db = $db;
-        $this->userId = $userId;
     }
 
     // ─── Schema helpers ──────────────────────────────────────────────

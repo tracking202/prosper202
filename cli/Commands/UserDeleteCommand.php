@@ -15,6 +15,7 @@ class UserDeleteCommand extends BaseCommand
 {
     protected static $defaultName = 'user:delete';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

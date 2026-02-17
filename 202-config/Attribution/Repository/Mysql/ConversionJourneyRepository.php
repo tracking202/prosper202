@@ -19,13 +19,10 @@ final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryI
     use MysqliStatementBinder;
 
     public const DEFAULT_LOOKBACK_WINDOW = 30 * 24 * 60 * 60; // 30 days
-    public const MAX_TOUCHES = 25;
+    public const int MAX_TOUCHES = 25;
 
-    private readonly mysqli $connection;
-
-    public function __construct(mysqli $connection)
+    public function __construct(private readonly mysqli $connection)
     {
-        $this->connection = $connection;
     }
 
     /**
@@ -153,7 +150,7 @@ final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryI
             return [];
         }
 
-        $sanitisedIds = array_values(array_unique(array_map('intval', $conversionIds)));
+        $sanitisedIds = array_values(array_unique(array_map(intval(...), $conversionIds)));
         if ($sanitisedIds === []) {
             return [];
         }
@@ -397,7 +394,7 @@ SQL;
             $refs[$index] = &$params[$index];
         }
 
-        if (!call_user_func_array([$stmt, 'bind_param'], array_merge([$types], $refs))) {
+        if (!call_user_func_array($stmt->bind_param(...), array_merge([$types], $refs))) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }

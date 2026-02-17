@@ -6,7 +6,7 @@ namespace Prosper202\Attribution\Export;
 
 use Prosper202\Attribution\Snapshot;
 
-final class SnapshotExporter
+final readonly class SnapshotExporter
 {
     private string $basePath;
 
@@ -77,7 +77,7 @@ final class SnapshotExporter
     private function writeXls(string $directory, string $fileBase, array $snapshots): string
     {
         $path = $directory . DIRECTORY_SEPARATOR . $fileBase . '.xls';
-        $rows = array_map([$this, 'normaliseSnapshot'], $snapshots);
+        $rows = array_map($this->normaliseSnapshot(...), $snapshots);
 
         $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 

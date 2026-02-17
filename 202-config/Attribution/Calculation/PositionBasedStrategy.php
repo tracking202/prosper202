@@ -11,8 +11,8 @@ use Prosper202\Attribution\Touchpoint;
 
 final class PositionBasedStrategy implements AttributionStrategyInterface
 {
-    private const DEFAULT_FIRST_TOUCH_WEIGHT = 0.4;
-    private const DEFAULT_LAST_TOUCH_WEIGHT = 0.4;
+    private const float DEFAULT_FIRST_TOUCH_WEIGHT = 0.4;
+    private const float DEFAULT_LAST_TOUCH_WEIGHT = 0.4;
 
     public function calculate(ModelDefinition $model, ConversionBatch $batch): CalculationResult
     {

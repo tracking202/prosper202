@@ -13,6 +13,7 @@ class AttributionModelGetCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:model:get';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -13,6 +13,7 @@ class RotatorGetCommand extends BaseCommand
 {
     protected static $defaultName = 'rotator:get';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

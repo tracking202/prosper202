@@ -9,20 +9,20 @@ namespace Prosper202\Attribution\Calculation;
  *
  * @psalm-type JourneyTouch = ConversionTouchpoint
  */
-final class ConversionRecord
+final readonly class ConversionRecord
 {
     public function __construct(
-        public readonly int $conversionId,
-        public readonly int $clickId,
-        public readonly int $userId,
-        public readonly int $campaignId,
-        public readonly int $ppcAccountId,
-        public readonly int $convTime,
-        public readonly int $clickTime,
-        public readonly float $clickPayout,
-        public readonly float $clickCost,
+        public int $conversionId,
+        public int $clickId,
+        public int $userId,
+        public int $campaignId,
+        public int $ppcAccountId,
+        public int $convTime,
+        public int $clickTime,
+        public float $clickPayout,
+        public float $clickCost,
         /** @var ConversionTouchpoint[] */
-        public readonly array $journey = []
+        public array $journey = []
     ) {
     }
 

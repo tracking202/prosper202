@@ -6,8 +6,8 @@ namespace P202Cli;
 
 class Config
 {
-    private string $configDir;
-    private string $configFile;
+    private readonly string $configDir;
+    private readonly string $configFile;
     private array $data = [];
 
     public function __construct()
@@ -52,7 +52,7 @@ class Config
 
     public function getUrl(): string
     {
-        return rtrim($this->get('url', ''), '/');
+        return rtrim((string) $this->get('url', ''), '/');
     }
 
     public function getApiKey(): string

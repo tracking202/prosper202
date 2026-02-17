@@ -15,6 +15,7 @@ class RotatorDeleteCommand extends BaseCommand
 {
     protected static $defaultName = 'rotator:delete';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

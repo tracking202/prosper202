@@ -13,6 +13,7 @@ class RotatorListCommand extends BaseCommand
 {
     protected static $defaultName = 'rotator:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

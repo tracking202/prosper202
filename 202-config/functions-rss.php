@@ -159,7 +159,7 @@ class MagpieRSS
 			$attrs_str = implode(
 				' ',
 				array_map(
-					'map_attrs',
+					map_attrs(...),
 					array_keys($attrs),
 					array_values($attrs)
 				)

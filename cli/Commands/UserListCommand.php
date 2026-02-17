@@ -12,6 +12,7 @@ class UserListCommand extends BaseCommand
 {
     protected static $defaultName = 'user:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

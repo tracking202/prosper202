@@ -438,7 +438,7 @@ class AUTH
     {
         $host = $_SERVER['HTTP_HOST'] ?? '';
         // Strip port number if present (e.g. "example.com:8080" → "example.com")
-        $domain = strtolower(preg_replace('/:\d+$/', '', (string) $host));
+        $domain = strtolower((string) preg_replace('/:\d+$/', '', (string) $host));
         // Don't set a cookie domain for localhost or IP addresses — browsers reject it
         if ($domain === 'localhost' || filter_var($domain, FILTER_VALIDATE_IP)) {
             return '';

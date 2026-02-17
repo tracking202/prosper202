@@ -12,6 +12,7 @@ class SystemHealthCommand extends BaseCommand
 {
     protected static $defaultName = 'system:health';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -106,7 +106,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 	if (isset($options['body_class'])) {
 		$bodyClassValue = $options['body_class'];
 		if (is_array($bodyClassValue)) {
-			$bodyClassValue = implode(' ', array_filter(array_map('strval', $bodyClassValue)));
+			$bodyClassValue = implode(' ', array_filter(array_map(strval(...), $bodyClassValue)));
 		}
 		$bodyClassValue = trim((string) $bodyClassValue);
 	}

@@ -13,6 +13,7 @@ class ReportWeekpartCommand extends BaseCommand
 {
     protected static $defaultName = 'report:weekpart';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

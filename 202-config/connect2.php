@@ -2075,7 +2075,7 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
 
 function replaceTokens($url, $tokens = [], $fillblanks = 0)
 {
-    $tokens = array_map('rawurlencode202', $tokens);
+    $tokens = array_map(rawurlencode202(...), $tokens);
 
     if (isset($tokens['c1']) || $fillblanks)
         $url = preg_replace('/\[\[c1\]\]/i', (string) $tokens['c1'], (string) $url);

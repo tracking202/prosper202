@@ -13,6 +13,7 @@ class AttributionModelListCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:model:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -11,11 +11,11 @@ use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Snapshot;
 use RuntimeException;
 
-final class MysqlSnapshotRepository implements SnapshotRepositoryInterface
+final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterface
 {
     public function __construct(
-        private readonly mysqli $writeConnection,
-        private readonly ?mysqli $readConnection = null
+        private mysqli $writeConnection,
+        private ?mysqli $readConnection = null
     ) {
     }
 
@@ -243,7 +243,7 @@ final class MysqlSnapshotRepository implements SnapshotRepositoryInterface
             $params[] = &$values[$index];
         }
 
-        if (!call_user_func_array([$statement, 'bind_param'], $params)) {
+        if (!call_user_func_array($statement->bind_param(...), $params)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }

@@ -9,20 +9,20 @@ use Prosper202\Attribution\ScopeType;
 /**
  * Value object describing attribution settings for a given scope.
  */
-final class Setting
+final readonly class Setting
 {
     public function __construct(
-        public readonly ?int $settingId,
-        public readonly int $userId,
-        public readonly ScopeType $scopeType,
-        public readonly ?int $scopeId,
-        public readonly int $modelId,
-        public readonly bool $multiTouchEnabled,
-        public readonly ?int $multiTouchEnabledAt,
-        public readonly ?int $multiTouchDisabledAt,
-        public readonly int $effectiveAt,
-        public readonly int $createdAt,
-        public readonly int $updatedAt
+        public ?int $settingId,
+        public int $userId,
+        public ScopeType $scopeType,
+        public ?int $scopeId,
+        public int $modelId,
+        public bool $multiTouchEnabled,
+        public ?int $multiTouchEnabledAt,
+        public ?int $multiTouchDisabledAt,
+        public int $effectiveAt,
+        public int $createdAt,
+        public int $updatedAt
     ) {
     }
 
