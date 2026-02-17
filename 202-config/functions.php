@@ -5,7 +5,7 @@ use GuzzleHttp\json_decode;
 include_once(__DIR__ . '/functions-upgrade.php');
 
 // Add ipAddress function
-function ipAddress($ip_address)
+function ipAddress($ip_address): stdClass
 {
     $ip = new stdClass;
     if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
@@ -28,12 +28,12 @@ function ipAddress($ip_address)
 //our own die, that will display the them around the error message
 
 // Add prosper_log function
-function prosper_log($category, $message) {
+function prosper_log($category, $message): void {
     // Simple logging function - you can expand this as needed
     error_log("[Prosper202][$category] $message");
 }
 
-function get_absolute_url()
+function get_absolute_url(): string
 {
 	$absolutepath = substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 	$absolutepath = str_replace('\\', '/', $absolutepath);
@@ -74,7 +74,7 @@ function _die($message): never
  * @param string $sql
  * @return \mysqli_result|bool
  */
-function _mysqli_query($db_or_sql, $sql = null)
+function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
 {
 	// Support both calling conventions:
 	//   _mysqli_query($sql)         — 1 arg, uses global $db
@@ -95,7 +95,7 @@ function _mysqli_query($db_or_sql, $sql = null)
 	return $result;
 }
 
-function salt_user_pass($user_pass)
+function salt_user_pass($user_pass): string
 {
 
 	$salt = '202';
