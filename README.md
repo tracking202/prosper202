@@ -90,9 +90,10 @@ Cross-platform Go CLI with `--json` output for scripting and agent consumption.
 cd go-cli
 make build
 
-./p202 config set --url https://your-server --key <api-key>
+./p202 config set-url https://your-server
+./p202 config set-key <api-key>
 ./p202 campaign list --json
-./p202 sync start
+./p202 sync all
 ```
 
 ## Development Setup
