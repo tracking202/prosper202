@@ -54,6 +54,26 @@ function _die($message): never
 
 
 //our own function for controling mysqls and monitoring then.
+/**
+ * Execute a MySQL query.
+ *
+ * Supports two calling conventions:
+ * - _mysqli_query($sql) - uses global $db
+ * - _mysqli_query($db, $sql) - uses provided $db
+ *
+ * @param \mysqli|string $db_or_sql Database connection or SQL query
+ * @param string|null $sql SQL query (if first param is db connection)
+ * @return \mysqli_result|bool
+ *
+ * @overload
+ * @param string $sql
+ * @return \mysqli_result|bool
+ *
+ * @overload
+ * @param \mysqli $db
+ * @param string $sql
+ * @return \mysqli_result|bool
+ */
 function _mysqli_query($db_or_sql, $sql = null)
 {
 	// Support both calling conventions:
