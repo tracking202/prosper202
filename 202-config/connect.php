@@ -164,6 +164,12 @@ include_once(CONFIG_PATH . '/functions-api.php');
 include_once(CONFIG_PATH . '/functions-utils.php');
 include_once(CONFIG_PATH . '/functions-empty.php');
 
+// Guard: if not installed, redirect to install flow (unless already on install pages)
+if (!is_installed() && $navigation[1] !== '202-config') {
+    header('Location: ' . get_absolute_url() . '202-config/requirements.php');
+    exit;
+}
+
 $whatCache = false;
 $memcacheInstalled = false;
 $memcacheWorking = false;

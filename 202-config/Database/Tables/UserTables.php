@@ -55,7 +55,7 @@ final class UserTables
                 `clickserver_api_key` varchar(255) DEFAULT NULL,
                 `install_hash` varchar(255) NOT NULL,
                 `user_hash` varchar(255) NOT NULL,
-                `modal_status` int(1) DEFAULT NULL,
+                `modal_status` int(1) NOT NULL DEFAULT '1',
                 `vip_perks_status` int(1) DEFAULT NULL,
                 `user_active` int(1) NOT NULL DEFAULT '1',
                 `user_deleted` int(1) NOT NULL DEFAULT '0',

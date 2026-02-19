@@ -15,6 +15,21 @@ if (is_installed() == true) {
 
 $html['user_api'] = isset($_GET['customers_api_key']) ? htmlentities((string) $_GET['customers_api_key'], ENT_QUOTES, 'UTF-8') : '';
 
+// Handle form submission server-side
+$api_error = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['user_api']) && $_POST['user_api'] !== '') {
+    $result = api_key_validate($_POST['user_api']);
+    $json = json_decode((string) $result, true);
+    if (is_array($json) && ($json['msg'] ?? '') === 'Key valid') {
+        setcookie('user_api', $_POST['user_api'], ['path' => '/']);
+        header('Location: install.php');
+        exit;
+    } else {
+        $api_error = 'Invalid API key. Please check your key and try again.';
+        $html['user_api'] = htmlentities($_POST['user_api'], ENT_QUOTES, 'UTF-8');
+    }
+}
+
 info_top(); ?>
 <div class="main col-xs-7 install">
 	<center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
@@ -31,46 +46,23 @@ info_top(); ?>
 		<small><strong>REMEMBER:</strong> Never share your private API key with anyone.</small>
 	<?php } ?>
 	<br><br>
-	<form method=post action="" id="getapikey" class="form-horizontal" role="form">
-		<div class="form-group <?php if ($error['user_email']) echo "has-error"; ?>">
-			<label for="user_api" class="col-xs-4 control-label"><strong>Prosper202 API Key:</strong><br> <small></label>
+	<?php if ($api_error !== '') { ?>
+		<div class="alert alert-danger"><?php echo htmlspecialchars($api_error); ?></div>
+	<?php } ?>
+	<form method="post" action="" class="form-horizontal" role="form">
+		<div class="form-group">
+			<label for="user_api" class="col-xs-4 control-label"><strong>Prosper202 API Key:</strong></label>
 			<div class="col-xs-8">
-				<input type="text" class="form-control input-sm" style="color:black;" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" placeholder="Click Button To Get Your API Key" readonly>
+				<input type="text" class="form-control input-sm" style="color:black;" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" placeholder="Enter Your API Key">
 			</div>
 		</div>
 
-		<?php if ($html['user_api'] == '') { ?>
-			<a class="btn btn-lg btn-p202 btn-block" href="https://my.tracking202.com/api/customers/login?redirect=get-api">Click Here For Your API Key<span class="fui-check-inverted pull-right"></a>
-		<?php } else { ?>
-			<button class="btn btn-lg btn-p202 btn-block" type="submit">Save API Key & Install Prosper202 ClickServer<span class="fui-check-inverted pull-right"></span></button>
-		<?php } ?>
+		<button class="btn btn-lg btn-p202 btn-block" type="submit">Save API Key & Install Prosper202 ClickServer<span class="fui-check-inverted pull-right"></span></button>
+		<br>
+		<a class="btn btn-sm btn-default btn-block" href="https://my.tracking202.com/api/customers/login?redirect=get-api" target="_blank">Don't have an API key? Get one here</a>
 
 	</form>
 </div>
-<script type="text/javascript">
-	$(document).ready(function() {
-
-		$("#getapikey").submit(function(event) {
-
-			var apikey = {
-				apikey: $("#user_api").val()
-			};
-
-			$.post("<?php echo get_absolute_url(); ?>202-account/ajax/validate-apikey.php", apikey).done(function(response) {
-				var json = $.parseJSON(response);
-				if (json.msg === 'Key valid') {
-					document.cookie = "user_api=" + $("#user_api").val();
-					document.location.href = "install.php"
-				} else {
-					if (confirm('Your Api Key Is Invalid. Would You Like Help Finding Your Key?')) {
-						document.location.href = "https://my.tracking202.com/api/customers/login?redirect=get-api"
-					}
-				}
-			});
-			event.preventDefault();
-		});
-	});
-</script>
 
 <?php
 if (isset($_SERVER["HTTPS"]) && strtolower((string) $_SERVER["HTTPS"]) == "on") {

@@ -84,7 +84,7 @@ if (!empty($version_error)) {
 			</thead>
 			<tbody>
 				<tr>
-					<td>PHP >= 8.3</td>
+					<td>PHP >= <?php echo PROSPER202_MIN_PHP_VERSION; ?></td>
 					<td><span class="label label-<?php if ($version_error['phpversion']) {
 														echo "important";
 													} else {
