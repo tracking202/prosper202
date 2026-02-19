@@ -1137,7 +1137,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 	/**
 	 * Returns the export csv for an entire row
-	 * @return String
+	 * @return void
 	 */
 	function getExportRowHeaderHtml()
 	{
@@ -1460,27 +1460,27 @@ class ReportSummaryForm extends ReportBasicForm
 					"</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_PAYOUT == $display_item_key) {
 				$html_val .= "<td>$"
-					. number_format($row->getPayout(), 2) .
+					. number_format((float)$row->getPayout(), 2) .
 					"</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_EPC == $display_item_key) {
 				$html_val .= "<td>$"
-					. number_format($row->getEpc(), 2) .
+					. number_format((float)$row->getEpc(), 2) .
 					"</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CPC == $display_item_key) {
 				$html_val .= "<td>$"
-					. number_format($row->getCpc() * 100, 2) .
+					. number_format((float)$row->getCpc() * 100, 2) .
 					"</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_INCOME == $display_item_key) {
 				$html_val .= "<td>$"
-					. number_format($row->getIncome(), 2) .
+					. number_format((float)$row->getIncome(), 2) .
 					"</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_COST == $display_item_key) {
 				$html_val .= "<td>$"
-					. number_format($row->getCost(), 2) .
+					. number_format((float)$row->getCost(), 2) .
 					"</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_NET == $display_item_key) {
 				$html_val .= "<td>$"
-					. number_format($row->getNet(), 2) .
+					. number_format((float)$row->getNet(), 2) .
 					"</td>";
 			} else if (ReportBasicForm::DISPLAY_LEVEL_ROI == $display_item_key) {
 				$html_val .= "<td>"
@@ -1495,7 +1495,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 	/**
 	 * Returns the export csv for an entire row
-	 * @return String
+	 * @return void
 	 */
 	function getExportRowHtml($row)
 	{
@@ -1660,28 +1660,28 @@ class ReportSummaryForm extends ReportBasicForm
 			} else if (ReportBasicForm::DISPLAY_LEVEL_SU == $display_item_key) {
 				ReportBasicForm::echoCell(round($row->getSu() * 100, 2) . '%');
 			} else if (ReportBasicForm::DISPLAY_LEVEL_PAYOUT == $display_item_key) {
-				ReportBasicForm::echoCell('$' . number_format($row->getPayout(), 2));
+				ReportBasicForm::echoCell('$' . number_format((float)$row->getPayout(), 2));
 			} else if (ReportBasicForm::DISPLAY_LEVEL_EPC == $display_item_key) {
-				ReportBasicForm::echoCell('$' . number_format($row->getEpc(), 2));
+				ReportBasicForm::echoCell('$' . number_format((float)$row->getEpc(), 2));
 			} else if (ReportBasicForm::DISPLAY_LEVEL_CPC == $display_item_key) {
-				ReportBasicForm::echoCell("$" . number_format($row->getCpc() * 100, 2));
+				ReportBasicForm::echoCell("$" . number_format((float)$row->getCpc() * 100, 2));
 			} else if (ReportBasicForm::DISPLAY_LEVEL_INCOME == $display_item_key) {
 				if ($hideDate) {
 					ReportBasicForm::echoCell('?');
 				} else {
-					ReportBasicForm::echoCell('$' . number_format($row->getIncome(), 2));
+					ReportBasicForm::echoCell('$' . number_format((float)$row->getIncome(), 2));
 				}
 			} else if (ReportBasicForm::DISPLAY_LEVEL_COST == $display_item_key) {
 				if ($hideDate) {
 					ReportBasicForm::echoCell('?');
 				} else {
-					ReportBasicForm::echoCell('$' . number_format($row->getCost(), 2));
+					ReportBasicForm::echoCell('$' . number_format((float)$row->getCost(), 2));
 				}
 			} else if (ReportBasicForm::DISPLAY_LEVEL_NET == $display_item_key) {
 				if ($hideDate) {
 					ReportBasicForm::echoCell('?');
 				} else {
-					ReportBasicForm::echoCell('$' . number_format($row->getNet(), 2));
+					ReportBasicForm::echoCell('$' . number_format((float)$row->getNet(), 2));
 				}
 			} else if (ReportBasicForm::DISPLAY_LEVEL_ROI == $display_item_key) {
 				ReportBasicForm::echoCell($row->getRoi());

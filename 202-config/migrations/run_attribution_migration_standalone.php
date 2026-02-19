@@ -10,23 +10,17 @@ declare(strict_types=1);
 echo "Prosper202 Attribution Models Migration\n";
 echo "=======================================\n\n";
 
+$rootDir = dirname(__DIR__, 2);
+
 // Check if this is being run in the correct directory
-if (!file_exists('202-config.php')) {
-    echo "❌ Error: This script must be run from the Prosper202 root directory\n";
-    echo "   Expected to find 202-config.php in current directory\n";
-    echo "   Current directory: " . getcwd() . "\n";
+if (!file_exists($rootDir . '/202-config.php')) {
+    echo "Error: This script must be run from the Prosper202 root directory\n";
+    echo "   Expected to find 202-config.php in: " . $rootDir . "\n";
     echo "   Usage: php 202-config/migrations/run_attribution_migration_standalone.php\n";
     exit(1);
 }
 
-// Load Prosper202 configuration
-if (!file_exists('202-config.php')) {
-    echo "❌ Error: 202-config.php not found\n";
-    echo "   Please copy 202-config-sample.php to 202-config.php and configure your database settings\n";
-    exit(1);
-}
-
-require_once '202-config.php';
+require_once $rootDir . '/202-config.php';
 
 // Create database connection manually
 $db = new mysqli(MYSQL_HOST, MYSQL_USER, MYSQL_PASS, MYSQL_DATABASE);
@@ -60,9 +54,9 @@ try {
     
     // Split SQL into individual statements
     $statements = array_filter(
-        array_map('trim', explode(';', $sql)),
+        array_map(trim(...), explode(';', $sql)),
         function($stmt) {
-            return !empty($stmt) && !preg_match('/^\s*--/', $stmt);
+            return !empty($stmt) && !preg_match('/^\s*--/', (string) $stmt);
         }
     );
     

@@ -39,23 +39,20 @@ if ($currentModel) {
 
 template_top('Attribution Models - Setup');
 ?>
+<link rel="stylesheet" href="/202-css/design-system.css">
 
-<?php include_once dirname(__DIR__) . '/_config/setup_nav.php'; ?>
 
 <div class="attribution-setup">
-<div class="row setup-header-row">
+<!-- Page Header - Design System (Blue Gradient) -->
+<div class="row" style="margin-bottom: 28px;">
     <div class="col-xs-12">
         <div class="setup-page-header">
             <div class="setup-page-header__icon">
-                <span class="glyphicon glyphicon-<?php echo $editing ? 'edit' : ($copying ? 'copy' : 'plus'); ?>"></span>
+                <span class="glyphicon glyphicon-stats"></span>
             </div>
             <div class="setup-page-header__text">
-                <h1 class="setup-page-header__title">
-                    <?php echo $editing ? 'Edit' : ($copying ? 'Copy' : 'Add'); ?> Attribution Model
-                </h1>
-                <p class="setup-page-header__subtitle">
-                    Configure how conversions are attributed to different touchpoints in the customer journey.
-                </p>
+                <h1 class="setup-page-header__title">Attribution Models</h1>
+                <p class="setup-page-header__subtitle">Configure how conversions are attributed to touchpoints</p>
             </div>
         </div>
     </div>
@@ -87,7 +84,7 @@ if (isset($errors['general'])) {
             <div class="form-group">
                 <label for="model_name">Model Name <span class="text-danger">*</span></label>
                 <input type="text" class="form-control" id="model_name" name="model_name" 
-                       value="<?php echo htmlspecialchars($selected['model_name']); ?>" 
+                       value="<?php echo htmlspecialchars((string) $selected['model_name']); ?>" 
                        placeholder="e.g., Time Decay - 7 Days" required
                        autocomplete="off" autocapitalize="words">
                 <?php if (isset($errors['model_name'])): ?>
@@ -107,7 +104,7 @@ if (isset($errors['general'])) {
                         <option value="<?php echo $type->value; ?>" 
                                 <?php echo $selected['model_type'] === $type->value ? 'selected' : ''; ?>
                                 data-requires-config="<?php echo $type->requiresWeighting() ? 'true' : 'false'; ?>">
-                            <?php echo htmlspecialchars($type->label()); ?>
+                            <?php echo htmlspecialchars((string) $type->label()); ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -216,7 +213,7 @@ if (isset($errors['general'])) {
                 <div class="form-group">
                     <label for="algorithmic_config">Configuration Parameters</label>
                     <textarea class="form-control" id="algorithmic_config" name="algorithmic_config" rows="3"
-                              placeholder="Advanced configuration options..."><?php echo htmlspecialchars($selected['algorithmic_config']); ?></textarea>
+                              placeholder="Advanced configuration options..."><?php echo htmlspecialchars((string) $selected['algorithmic_config']); ?></textarea>
                     <small class="form-text text-muted">Advanced configuration for algorithmic attribution (contact support for details)</small>
                 </div>
             </div>
@@ -281,16 +278,16 @@ if (isset($errors['general'])) {
     <div class="col-xs-12 col-md-4">
         <!-- Current Model Info (if editing) -->
         <?php if ($editing && $currentModel): ?>
-        <div class="well setup-card setup-card--editing">
+        <div class="well setup-card setup-card--editing setup-side-panel">
             <h6 style="color: #2c3e50; margin-bottom: 10px;">
                 <span class="glyphicon glyphicon-edit" style="color: #3498db;"></span> Currently Editing
             </h6>
             <div style="margin: 12px 0;">
                 <div style="font-weight: bold; font-size: 15px; color: #2c3e50; margin-bottom: 6px;">
-                    <?php echo htmlspecialchars($currentModel->name); ?>
+                    <?php echo htmlspecialchars((string) $currentModel->name); ?>
                 </div>
                 <div style="color: #34495e; font-size: 13px; margin-bottom: 8px;">
-                    <strong>Type:</strong> <?php echo htmlspecialchars($currentModel->type->label()); ?>
+                    <strong>Type:</strong> <?php echo htmlspecialchars((string) $currentModel->type->label()); ?>
                 </div>
                 <div style="margin-bottom: 4px;">
                     <?php if ($currentModel->isDefault): ?>
@@ -312,7 +309,7 @@ if (isset($errors['general'])) {
         <?php endif; ?>
         
         <!-- Model List -->
-        <div class="well setup-card">
+        <div class="well setup-card setup-side-panel">
             <h6><span class="glyphicon glyphicon-list"></span> Your Attribution Models</h6>
             <?php if (empty($models)): ?>
                 <div class="text-center" style="padding: 20px;">
@@ -321,109 +318,87 @@ if (isset($errors['general'])) {
                     <small class="text-muted">Create your first model to get started with multi-touch attribution.</small>
                 </div>
             <?php else: ?>
-                <div class="model-list">
+                <ul class="setup-list">
                     <?php foreach ($models as $model): ?>
                         <?php $isCurrentModel = ($editing && $currentModel && $model->modelId === $currentModel->modelId); ?>
-                        <div class="model-item<?php echo $isCurrentModel ? ' model-item--active' : ''; ?>">
-                            <div class="model-item__header">
-                                <div class="model-item__title">
-                                    <?php echo htmlspecialchars($model->name); ?>
+                        <li class="setup-list-item<?php echo $isCurrentModel ? ' setup-list-item--active' : ''; ?>">
+                            <span class="setup-list-name">
+                                <span class="filter_model_name">
+                                    <?php echo htmlspecialchars((string) $model->name); ?>
                                     <?php if ($model->isDefault): ?>
-                                        <span class="label label-success" style="font-size: 10px; vertical-align: middle; margin-left: 6px;">Default</span>
+                                        <span class="label label-success" style="font-size: 10px; margin-left: 6px;">Default</span>
                                     <?php endif; ?>
-                                </div>
-                                <div class="model-item__type">
-                                    <strong><?php echo htmlspecialchars($model->type->label()); ?></strong>
-                                </div>
-                                <div class="model-item__status">
-                                    Status: 
-                                    <?php if ($model->isActive): ?>
-                                        <span style="color: #27ae60; font-weight: bold;">Active</span>
-                                    <?php else: ?>
-                                        <span style="color: #e74c3c; font-weight: bold;">Inactive</span>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                            
-                            <div class="model-item__actions">
-                                <div class="btn-group btn-group-xs hidden-xs">
-                                    <a href="?edit_model_id=<?php echo $model->modelId; ?>" 
-                                       class="btn <?php echo ($editing && $currentModel && $model->modelId === $currentModel->modelId) ? 'btn-primary' : 'btn-default'; ?> btn-sm" 
-                                       title="Edit Model" style="margin-right: 4px;">
-                                        <span class="glyphicon glyphicon-edit"></span> Edit
-                                    </a>
-                                    
-                                    <?php if (!$model->isDefault): ?>
-                                        <form method="post" style="display: inline-block; margin-right: 4px;" 
-                                              onsubmit="return confirm('Are you sure you want to delete this model?');">
-                                            <?php echo '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($csrfToken) . '">'; ?>
-                                            <input type="hidden" name="action" value="delete">
-                                            <input type="hidden" name="model_id" value="<?php echo $model->modelId; ?>">
-                                            <button type="submit" class="btn btn-danger btn-sm" title="Delete Model">
-                                                <span class="glyphicon glyphicon-trash"></span>
-                                            </button>
-                                        </form>
-                                        
-                                        <form method="post" style="display: inline-block;">
-                                            <?php echo '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($csrfToken) . '">'; ?>
-                                            <input type="hidden" name="action" value="set_default">
-                                            <input type="hidden" name="model_id" value="<?php echo $model->modelId; ?>">
-                                            <button type="submit" class="btn btn-warning btn-sm" title="Set as Default">
-                                                <span class="glyphicon glyphicon-star"></span>
-                                            </button>
-                                        </form>
-                                    <?php endif; ?>
-                                </div>
-                                
-                                <!-- Mobile button layout -->
-                                <div class="visible-xs">
-                                    <div style="margin-bottom: 8px;">
-                                        <a href="?edit_model_id=<?php echo $model->modelId; ?>" 
-                                           class="btn <?php echo ($editing && $currentModel && $model->modelId === $currentModel->modelId) ? 'btn-primary' : 'btn-default'; ?> btn-block btn-sm">
-                                            <span class="glyphicon glyphicon-edit"></span> Edit Model
-                                        </a>
+                                    <div class="setup-list-meta">
+                                        <strong><?php echo htmlspecialchars((string) $model->type->label()); ?></strong>
+                                        <span class="setup-list-status">
+                                            <?php if ($model->isActive): ?>
+                                                <span style="color: #27ae60; font-weight: bold;">Active</span>
+                                            <?php else: ?>
+                                                <span style="color: #e74c3c; font-weight: bold;">Inactive</span>
+                                            <?php endif; ?>
+                                        </span>
                                     </div>
-                                    
-                                    <?php if (!$model->isDefault): ?>
-                                        <div class="row">
-                                            <div class="col-xs-6">
-                                                <form method="post" onsubmit="return confirm('Are you sure you want to delete this model?');">
-                                                    <?php echo '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($csrfToken) . '">'; ?>
-                                                    <input type="hidden" name="action" value="delete">
-                                                    <input type="hidden" name="model_id" value="<?php echo $model->modelId; ?>">
-                                                    <button type="submit" class="btn btn-danger btn-block btn-sm">
-                                                        <span class="glyphicon glyphicon-trash"></span> Delete
-                                                    </button>
-                                                </form>
-                                            </div>
-                                            <div class="col-xs-6">
-                                                <form method="post">
-                                                    <?php echo '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($csrfToken) . '">'; ?>
-                                                    <input type="hidden" name="action" value="set_default">
-                                                    <input type="hidden" name="model_id" value="<?php echo $model->modelId; ?>">
-                                                    <button type="submit" class="btn btn-warning btn-block btn-sm">
-                                                        <span class="glyphicon glyphicon-star"></span> Default
-                                                    </button>
-                                                </form>
-                                            </div>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                        </div>
+                                </span>
+                            </span>
+                            <span class="setup-list-actions">
+                                <a href="?edit_model_id=<?php echo $model->modelId; ?>"
+                                   class="action-edit"
+                                   title="Edit Model">
+                                    <span class="glyphicon glyphicon-edit"></span> edit
+                                </a>
+
+                                <?php if (!$model->isDefault): ?>
+                                    <form method="post" class="setup-list-inline-form"
+                                          onsubmit="return confirmSubmit('Are you sure you want to delete this model?');">
+                                        <?php echo '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($csrfToken) . '">'; ?>
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="model_id" value="<?php echo $model->modelId; ?>">
+                                        <button type="submit" class="action-remove"
+                                                onclick="return confirmSubmit('Are you sure you want to delete this model?');">
+                                            <span class="glyphicon glyphicon-trash"></span> remove
+                                        </button>
+                                    </form>
+
+                                    <form method="post" class="setup-list-inline-form">
+                                        <?php echo '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($csrfToken) . '">'; ?>
+                                        <input type="hidden" name="action" value="set_default">
+                                        <input type="hidden" name="model_id" value="<?php echo $model->modelId; ?>">
+                                        <button type="submit" class="action-default"
+                                                title="Set as Default">
+                                            <span class="glyphicon glyphicon-star"></span> default
+                                        </button>
+                                    </form>
+                                <?php endif; ?>
+                            </span>
+                        </li>
                     <?php endforeach; ?>
-                </div>
+                </ul>
             <?php endif; ?>
         </div>
 
-        <div class="well setup-card">
+        <div class="well setup-card setup-side-panel">
             <h6>Quick Guide</h6>
-            <ul>
-                <li><strong>Last Touch:</strong> Best for direct response campaigns</li>
-                <li><strong>Time Decay:</strong> Good for longer sales cycles</li>
-                <li><strong>Position Based:</strong> Balances awareness and conversion</li>
-                <li><strong>Assisted:</strong> Shows support touchpoints</li>
-                <li><strong>Algorithmic:</strong> Data-driven optimization</li>
+            <ul class="setup-list">
+                <li>
+                    <span class="setup-list-name"><span class="guide-item">Last Touch</span></span>
+                    <span class="setup-list-actions"><span class="guide-description">Best for direct response campaigns</span></span>
+                </li>
+                <li>
+                    <span class="setup-list-name"><span class="guide-item">Time Decay</span></span>
+                    <span class="setup-list-actions"><span class="guide-description">Good for longer sales cycles</span></span>
+                </li>
+                <li>
+                    <span class="setup-list-name"><span class="guide-item">Position Based</span></span>
+                    <span class="setup-list-actions"><span class="guide-description">Balances awareness and conversion</span></span>
+                </li>
+                <li>
+                    <span class="setup-list-name"><span class="guide-item">Assisted</span></span>
+                    <span class="setup-list-actions"><span class="guide-description">Shows support touchpoints</span></span>
+                </li>
+                <li>
+                    <span class="setup-list-name"><span class="guide-item">Algorithmic</span></span>
+                    <span class="setup-list-actions"><span class="guide-description">Data-driven optimization</span></span>
+                </li>
             </ul>
         </div>
 </div>
@@ -431,6 +406,10 @@ if (isset($errors['general'])) {
 </div>
 
 <script>
+function confirmSubmit(message) {
+    return confirm(message);
+}
+
 function toggleConfigFields() {
     const modelType = document.getElementById('model_type').value;
     
@@ -530,428 +509,281 @@ function validatePositionWeights() {
 </script>
 
 <style>
-/* Attribution Models - Mobile Responsive Styles */
-
-/* Base styles for all devices */
-.attribution-setup .setup-page-header {
+/* Setup Page Header */
+.setup-page-header {
     display: flex;
     align-items: center;
-    gap: 20px;
-    border-radius: 10px;
-    border: 1px solid #dfe6ee;
-    background: linear-gradient(135deg, #ffffff 0%, #f6fbff 100%);
-    padding: 22px 26px;
-    box-shadow: 0 6px 16px rgba(46, 134, 222, 0.08);
-    margin-bottom: 25px;
+    gap: 16px;
+    padding: 24px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
 }
-
-.attribution-setup .setup-page-header__icon {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, rgba(52, 152, 219, 0.18) 0%, rgba(41, 128, 185, 0.28) 100%);
+.setup-page-header__icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #2c82c9;
-    font-size: 26px;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+}
+.setup-page-header__icon .glyphicon {
+    font-size: 28px;
+}
+.setup-page-header__text {
+    flex: 1;
+}
+.setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+}
+.setup-page-header__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* Enhanced Panel Styling */
+.panel {
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border: 1px solid #e2e8f0;
+}
+.panel-heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
+    border-bottom: 1px solid #e2e8f0;
+    border-radius: 12px 12px 0 0 !important;
+    padding: 16px 20px;
+}
+.panel-title {
+    font-weight: 600;
+    font-size: 15px;
+    color: #1e293b;
+}
+.panel-body {
+    padding: 24px;
+}
+
+/* Form Enhancements */
+.form-control {
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 14px;
+    transition: all 0.2s ease;
+}
+.form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.15);
+}
+
+/* Button Enhancements */
+.btn-primary {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);
+    transition: all 0.2s ease;
+}
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.35);
+}
+.btn-success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+}
+.btn-danger {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    border: none;
+    border-radius: 8px;
+}
+
+/* Table Enhancements */
+.table {
+    border-radius: 8px;
+    overflow: hidden;
+}
+.table > thead > tr > th {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 2px solid #e2e8f0;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    padding: 14px 16px;
+}
+.table > tbody > tr > td {
+    padding: 14px 16px;
+    vertical-align: middle;
+    border-color: #f1f5f9;
+}
+.table > tbody > tr:hover {
+    background-color: #f8fafc;
+}
+
+/* Setup List Styling */
+.setup-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.setup-list-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid #f1f5f9;
+    transition: background-color 0.2s ease;
+}
+
+.setup-list-item:last-child {
+    border-bottom: none;
+}
+
+.setup-list-item:hover {
+    background-color: #f8fafc;
+}
+
+.setup-list-item--active {
+    background-color: #e7f3ff;
+    border-left: 4px solid #007bff;
+    padding-left: 12px;
+}
+
+.setup-list-name {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.filter_model_name,
+.guide-item {
+    display: block;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.setup-list-meta {
+    display: block;
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 4px;
+}
+
+.setup-list-status {
+    display: inline-block;
+    margin-left: 8px;
+    font-weight: bold;
+}
+
+.setup-list-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: 12px;
     flex-shrink: 0;
 }
 
-.attribution-setup .setup-page-header__text {
-    flex: 1 1 auto;
-}
-
-.attribution-setup .setup-page-header__title {
-    margin: 0;
-    font-size: 26px;
-    font-weight: 600;
-    color: #1f3b57;
-}
-
-.attribution-setup .setup-page-header__subtitle {
-    margin: 10px 0 0;
-    font-size: 15px;
-    color: #61738c;
-    line-height: 1.5;
-}
-
-.attribution-setup .setup-card {
-    border-radius: 6px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    border: 1px solid #e1e8ed;
-}
-
-.attribution-setup .model-item {
-    border: 1px solid #e1e8ed;
+.action-edit,
+.action-remove,
+.action-default {
+    display: inline-block;
+    padding: 6px 10px;
     border-radius: 4px;
-    padding: 15px;
-    margin-bottom: 12px;
-    background: #fff;
-    transition: all 0.2s ease;
-}
-
-.attribution-setup .model-item:hover {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    border-color: #3498db;
-}
-
-.attribution-setup .model-item--active {
-    border-color: #3498db;
-    background: #f8f9fa;
-}
-
-.attribution-setup .model-item__header {
-    margin-bottom: 12px;
-}
-
-.attribution-setup .model-item__title {
-    font-size: 16px;
-    font-weight: 600;
-    color: #2c3e50;
-    margin-bottom: 4px;
-}
-
-.attribution-setup .model-item__type {
-    font-size: 13px;
-    color: #7f8c8d;
-    margin-bottom: 6px;
-}
-
-.attribution-setup .model-item__status {
     font-size: 12px;
-    color: #95a5a6;
-}
-
-/* Navigation improvements */
-.nav-pills > li > a {
-    border-radius: 4px;
-    margin-right: 4px;
-    margin-bottom: 8px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid #d1d5db;
+    background-color: #f3f4f6;
+    color: #374151;
     transition: all 0.2s ease;
+    white-space: nowrap;
 }
 
-/* Form improvements */
-.form-control {
-    border-radius: 4px;
-    border: 1px solid #d1d9e0;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+.action-edit {
+    border-color: #93c5fd;
+    background-color: #eff6ff;
+    color: #1e40af;
 }
 
-.form-control:focus {
-    border-color: #3498db;
-    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.1);
+.action-edit:hover {
+    background-color: #dbeafe;
+    border-color: #60a5fa;
 }
 
-/* Alert improvements */
-.alert {
-    border-radius: 4px;
-    border: none;
+.action-remove {
+    border-color: #fca5a5;
+    background-color: #fef2f2;
+    color: #991b1b;
 }
 
-/* Mobile optimizations */
-@media (max-width: 767px) {
-    /* Override fixed container width for mobile */
-    body .container {
-        width: 100% !important;
-        min-width: auto !important;
-        max-width: 100% !important;
-        padding-left: 15px;
-        padding-right: 15px;
-    }
-    
-    /* Navigation responsive */
-    .nav-pills {
-        margin-bottom: 15px;
-    }
-    
-    .nav-pills > li {
-        float: none;
-        display: block;
-        width: 100%;
-        margin-bottom: 5px;
-    }
-    
-    .nav-pills > li > a {
-        display: block;
-        text-align: center;
-        margin-right: 0;
-        padding: 12px 15px;
-        font-size: 14px;
-    }
-    
-    /* Page header improvements */
-    .attribution-setup .setup-page-header {
+.action-remove:hover {
+    background-color: #fee2e2;
+    border-color: #f87171;
+}
+
+.action-default {
+    border-color: #fcd34d;
+    background-color: #fffbeb;
+    color: #92400e;
+}
+
+.action-default:hover {
+    background-color: #fef3c7;
+    border-color: #fbbf24;
+}
+
+.setup-list-inline-form {
+    display: inline;
+}
+
+.guide-description {
+    display: none;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .setup-page-header {
         flex-direction: column;
-        align-items: center;
         text-align: center;
-        padding: 20px 18px;
-        gap: 14px;
-        margin-bottom: 18px;
+        padding: 20px;
     }
-
-    .attribution-setup .setup-page-header__icon {
-        width: 56px;
-        height: 56px;
-        font-size: 22px;
-    }
-
-    .attribution-setup .setup-page-header__title {
-        font-size: 22px;
-        line-height: 1.35;
-    }
-
-    .attribution-setup .setup-page-header__subtitle {
-        font-size: 14px;
-        line-height: 1.45;
-        margin-top: 4px;
-    }
-    
-    /* Form improvements for mobile */
-    .attribution-setup .well {
-        margin-bottom: 20px;
-        padding: 20px 15px;
-    }
-    
-    .attribution-setup .form-control {
-        min-height: 44px; /* Touch-friendly */
-        font-size: 16px; /* Prevents iOS zoom */
-        padding: 12px 15px;
-    }
-    
-    .attribution-setup .form-group {
-        margin-bottom: 20px;
-    }
-    
-    .attribution-setup .form-group label {
-        font-size: 14px;
-        font-weight: 600;
-        margin-bottom: 8px;
-        display: block;
-    }
-    
-    .attribution-setup .form-text {
-        margin-top: 8px;
-        font-size: 13px;
-        line-height: 1.4;
-    }
-    
-    /* Button improvements */
-    .attribution-setup .btn {
-        min-height: 44px;
-        font-size: 14px;
-        font-weight: 500;
-        border-radius: 4px;
-    }
-    
-    .attribution-setup .btn-block + .btn-block {
-        margin-top: 10px;
-    }
-    
-    /* Model list optimizations */
-    .attribution-setup .model-item {
-        margin-bottom: 20px;
-        padding: 15px;
-    }
-    
-    .attribution-setup .model-item__title {
-        font-size: 15px;
-        margin-bottom: 6px;
-    }
-    
-    .attribution-setup .model-item__type {
-        font-size: 13px;
-        margin-bottom: 8px;
-    }
-    
-    .attribution-setup .model-item__status {
-        font-size: 12px;
-        margin-bottom: 12px;
-    }
-    
-    .attribution-setup .model-item__actions {
-        margin-top: 12px;
-    }
-    
-    /* Configuration sections */
-    .attribution-setup .config-section {
-        margin-top: 20px;
-        padding-top: 20px;
-        border-top: 1px solid #e1e8ed;
-    }
-    
-    .attribution-setup .config-section h6 {
-        font-size: 15px;
-        font-weight: 600;
-        color: #2c3e50;
-        margin-bottom: 15px;
-    }
-    
-    /* Alert adjustments */
-    .attribution-setup .alert {
-        padding: 12px 15px;
-        margin-bottom: 15px;
-        font-size: 13px;
-        line-height: 1.4;
-    }
-    
-    /* Checkbox and radio improvements */
-    .attribution-setup input[type="checkbox"],
-    .attribution-setup input[type="radio"] {
-        transform: scale(1.3);
-        margin-right: 10px;
-        margin-top: 2px;
-    }
-    
-    .attribution-setup .checkbox label {
-        display: flex;
-        align-items: flex-start;
-        min-height: 44px;
-        padding: 8px 0;
-        font-size: 14px;
-        font-weight: 500;
-    }
-    
-    .attribution-setup .checkbox-label {
-        margin-left: 8px;
-        line-height: 1.4;
-    }
-    
-    /* Improve touch targets for mobile */
-    .attribution-setup .checkbox {
-        margin-bottom: 8px;
-    }
-    
-    /* Better error display on mobile */
-    .attribution-setup .alert[role="alert"] {
-        border-left: 4px solid #e74c3c;
-    }
-}
-
-/* Small mobile devices (phones in portrait) */
-@media (max-width: 480px) {
-    .attribution-setup .well {
-        padding: 15px 12px;
-        margin-left: -5px;
-        margin-right: -5px;
-    }
-    
-    .attribution-setup .setup-page-header__title {
+    .setup-page-header__title {
         font-size: 20px;
     }
-    
-    .attribution-setup .setup-page-header__subtitle {
-        font-size: 13px;
+
+    .setup-list-item {
+        flex-direction: column;
+        align-items: flex-start;
     }
-    
-    .attribution-setup .model-item {
-        padding: 12px;
-        margin-left: -3px;
-        margin-right: -3px;
+
+    .setup-list-actions {
+        width: 100%;
+        justify-content: flex-start;
+        margin-top: 10px;
+        margin-left: 0;
     }
-    
-    .attribution-setup .btn-sm {
+
+    .guide-description {
+        display: inline;
         font-size: 12px;
-        padding: 6px 10px;
-        min-height: 36px;
-    }
-    
-    .attribution-setup .form-control {
-        font-size: 16px; /* Maintain to prevent zoom */
-        padding: 10px 12px;
-    }
-    
-    /* Tighter spacing for very small screens */
-    .attribution-setup .form-group {
-        margin-bottom: 18px;
-    }
-    
-    .attribution-setup .config-section {
-        margin-top: 18px;
-        padding-top: 18px;
-    }
-}
-
-/* Landscape mobile phones */
-@media (max-width: 767px) and (orientation: landscape) {
-    .attribution-setup .nav-pills > li {
-        display: inline-block;
-        width: auto;
-        float: left;
-    }
-    
-    .attribution-setup .nav-pills > li > a {
-        padding: 10px 12px;
-        font-size: 13px;
-        margin-right: 5px;
-    }
-}
-
-/* Tablet adjustments */
-@media (min-width: 768px) and (max-width: 991px) {
-    body .container {
-        width: 100% !important;
-        min-width: auto !important;
-        max-width: 100% !important;
-        padding-left: 20px;
-        padding-right: 20px;
-    }
-    
-    .attribution-setup .col-md-8 {
-        width: 66.66666667%;
-    }
-    
-    .attribution-setup .col-md-4 {
-        width: 33.33333333%;
-    }
-    
-    .attribution-setup .form-control {
-        font-size: 14px;
-    }
-    
-    .attribution-setup .btn {
-        font-size: 13px;
-    }
-}
-
-/* Large tablets and small desktops */
-@media (min-width: 992px) and (max-width: 1199px) {
-    body .container {
-        width: 100% !important;
-        min-width: auto !important;
-        max-width: 1170px !important;
-        margin: 0 auto;
-        padding-left: 15px;
-        padding-right: 15px;
-    }
-}
-
-/* Desktop improvements */
-@media (min-width: 1200px) {
-    body .container {
-        width: 100% !important;
-        min-width: auto !important;
-        max-width: 1400px !important;
-        margin: 0 auto;
-        padding-left: 15px;
-        padding-right: 15px;
-    }
-    
-    .attribution-setup .model-item:hover {
-        transform: translateY(-1px);
-    }
-}
-
-/* Print styles */
-@media print {
-    .attribution-setup .btn,
-    .attribution-setup .model-item__actions {
-        display: none;
-    }
-    
-    .attribution-setup .well {
-        box-shadow: none;
-        border: 1px solid #ccc;
+        color: #64748b;
+        margin-left: 6px;
     }
 }
 </style>

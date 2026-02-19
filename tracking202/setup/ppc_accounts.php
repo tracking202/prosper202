@@ -344,43 +344,59 @@ if (!empty($error)) {
 
 template_top('Traffic Sources'); ?>
 
-<?php include_once __DIR__ . '/_config/setup_nav.php'; ?>
 
-<div class="row" style="margin-bottom: 15px;">
+
+<!-- Page Header - Design System -->
+<div class="row" style="margin-bottom: 28px;">
 	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-5">
-				<h6>Traffic Source Account Setup</h6>
+		<div class="setup-page-header">
+			<div class="setup-page-header__icon">
+				<span class="glyphicon glyphicon-globe"></span>
 			</div>
-			<div class="col-xs-7">
-				<div class="<?php if (!empty($error)) echo "error";
-							else echo "success"; ?> pull-right" style="margin-top: 20px;">
-					<small>
-						<?php if (!empty($error)) { ?>
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-						<?php } ?>
-						<?php if ($add_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
-						<?php } ?>
-						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your deletion was successful. You have successfully removed an account.
-						<?php } ?>
-					</small>
-				</div>
+			<div class="setup-page-header__text">
+				<h1 class="setup-page-header__title">Traffic Sources</h1>
+				<p class="setup-page-header__subtitle">Add traffic sources (PPC, Display, Social, Email) and configure tracking accounts</p>
 			</div>
 		</div>
 	</div>
+</div>
+
+<?php if (!empty($error)) { ?>
+<div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
-		<small>Add the Traffic Source (PPC, Display, Social, Email etc) you use, and usernames for each account you have.</small>
+		<div class="alert alert-danger">
+			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
+		</div>
 	</div>
 </div>
+<?php } ?>
+
+<?php if ($add_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
+		</div>
+	</div>
+</div>
+<?php } ?>
+
+<?php if ($delete_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed an account.
+		</div>
+	</div>
+</div>
+<?php } ?>
 
 <div class="row form_seperator" style="margin-bottom:15px;">
 	<div class="col-xs-12"></div>
 </div>
 
 <div class="row">
-	<div class="col-xs-7">
+	<div class="col-md-6">
 		<div class="row">
 			<div class="col-xs-12">
 				<small><strong>Add Traffic Source</strong></small><br />
@@ -503,60 +519,79 @@ template_top('Traffic Sources'); ?>
 			</div>
 		</div>
 	</div>
-	<div class="col-xs-4 col-xs-offset-1">
-		<div class="panel panel-default">
-			<div class="panel-heading">My Traffic Sources</div>
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
+			<?php
+			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
+			$ppc_network_result = _mysqli_query($ppc_network_sql);
+			$traffic_source_total = (int)$ppc_network_result->num_rows;
+			?>
+			<div class="panel-heading traffic-sources-heading">
+				<span>My Traffic Sources</span>
+				<span class="traffic-sources-heading__meta"><?php echo $traffic_source_total; ?> source<?php echo ($traffic_source_total === 1) ? '' : 's'; ?></span>
+			</div>
 			<div class="panel-body">
-				<div id="trafficSourceList">
-					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
-					<ul class="list">
-						<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-						$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
-						$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
-						if ($ppc_network_result->num_rows == 0) {
-						?>
-							<li>You have not added any networks.</li>
+				<div id="trafficSourceList" class="traffic-source-list">
+					<div class="traffic-source-toolbar">
+						<div class="traffic-source-search-wrap">
+							<span class="fa fa-search traffic-source-search-icon" aria-hidden="true"></span>
+							<input class="form-control input-sm search fuzzy-search traffic-source-search" placeholder="Filter sources or accounts">
+						</div>
+					</div>
+					<ul class="list source-list">
+						<?php if ($traffic_source_total === 0) { ?>
+							<li class="empty-state">No traffic sources added yet. Add your first source on the left.</li>
+						<?php } ?>
 						<?php
-						}
-
 						while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQLI_ASSOC)) {
-
-							//print out the PPC networks
 							$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-							$url['ppc_network_id'] = urlencode((string) $ppc_network_row['ppc_network_id']);
+							$url['ppc_network_id'] = urlencode((string)$ppc_network_row['ppc_network_id']);
+							$url['ppc_network_name'] = urlencode((string)($ppc_network_row['ppc_network_name'] ?? ''));
 
-							if ($userObj->hasPermission("remove_traffic_source")) {
-								printf('<li><span class="filter_source_name">%s</span> - <a href="?edit_ppc_network_id=%s&edit_ppc_network_name=%s">edit</a> - <a href="#" class="custom variables" data-id="%s">variables</a> - <a href="?delete_ppc_network_id=%s&delete_ppc_network_name=%s" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Traffic Source?\');">remove</a></li>', $html['ppc_network_name'], $url['ppc_network_id'], $html['ppc_network_name'], $url['ppc_network_id'], $url['ppc_network_id'], $html['ppc_network_name']);
-							} else {
-								printf('<li><span class="filter_source_name">%s</span> - <a href="?edit_ppc_network_id=%s&edit_ppc_network_name=%s">edit</a></li>', $html['ppc_network_name'], $url['ppc_network_id'], $html['ppc_network_name']);
-							}
-
+							$mysql['ppc_network_id'] = $db->real_escape_string((string)$ppc_network_row['ppc_network_id']);
+							$ppc_account_sql = "SELECT * FROM `202_ppc_accounts` WHERE `ppc_network_id`='" . $mysql['ppc_network_id'] . "' AND `ppc_account_deleted`='0' ORDER BY `ppc_account_name` ASC";
+							$ppc_account_result = _mysqli_query($ppc_account_sql);
+							$account_count = (int)$ppc_account_result->num_rows;
+							$account_label = ($account_count === 1) ? 'account' : 'accounts';
 						?>
-							<ul style="margin-top: 0px;">
-								<?php
+							<li class="source-item">
+								<div class="source-header">
+									<div class="source-meta">
+										<span class="filter_source_name source-name"><?php echo $html['ppc_network_name']; ?></span>
+										<span class="source-account-count"><?php echo $account_count . ' ' . $account_label; ?></span>
+									</div>
+									<div class="source-actions">
+										<a href="?edit_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&edit_ppc_network_name=<?php echo $url['ppc_network_name']; ?>" class="list-action">edit</a>
+										<?php if ($userObj->hasPermission("remove_traffic_source")) { ?>
+											<a href="#" class="custom variables list-action" data-id="<?php echo $url['ppc_network_id']; ?>">variables</a>
+											<a href="?delete_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&delete_ppc_network_name=<?php echo $url['ppc_network_name']; ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Traffic Source?');">remove</a>
+										<?php } ?>
+									</div>
+								</div>
 
-								//print out the individual accounts per each PPC network
-								$mysql['ppc_network_id'] = $db->real_escape_string($ppc_network_row['ppc_network_id']);
-								$ppc_account_sql = "SELECT * FROM `202_ppc_accounts` WHERE `ppc_network_id`='" . $mysql['ppc_network_id'] . "' AND `ppc_account_deleted`='0' ORDER BY `ppc_account_name` ASC";
-								$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
-
-								while ($ppc_account_row = $ppc_account_result->fetch_array(MYSQLI_ASSOC)) {
-
-									$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-									$url['ppc_account_id'] = urlencode((string) $ppc_account_row['ppc_account_id']);
-
-									if ($userObj->hasPermission("remove_traffic_source_account")) {
-										printf('<li>%s - <a href="?edit_ppc_account_id=%s">edit</a> - <a href="?delete_ppc_account_id=%s&delete_ppc_account_name=%s" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Account?\');">remove</a></li>', $html['ppc_account_name'], $url['ppc_account_id'], $url['ppc_account_id'], $html['ppc_account_name']);
-									} else {
-										printf('<li>%s - <a href="?edit_ppc_account_id=%s">edit</a></li>', $html['ppc_account_name'], $url['ppc_account_id']);
-									}
-								}
-
-								?>
-							</ul>
-						<?php
-
-						} ?>
+								<ul class="account-list">
+									<?php if ($account_count === 0) { ?>
+										<li class="account-item-empty">No accounts added yet</li>
+									<?php } ?>
+									<?php while ($ppc_account_row = $ppc_account_result->fetch_array(MYSQLI_ASSOC)) {
+										$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+										$url['ppc_account_id'] = urlencode((string)$ppc_account_row['ppc_account_id']);
+										$url['ppc_account_name'] = urlencode((string)($ppc_account_row['ppc_account_name'] ?? ''));
+									?>
+										<li class="account-item">
+											<span class="filter_account_name account-name"><?php echo $html['ppc_account_name']; ?></span>
+											<div class="account-actions">
+												<a href="?edit_ppc_account_id=<?php echo $url['ppc_account_id']; ?>" class="list-action">edit</a>
+												<?php if ($userObj->hasPermission("remove_traffic_source_account")) { ?>
+													<a href="?delete_ppc_account_id=<?php echo $url['ppc_account_id']; ?>&delete_ppc_account_name=<?php echo $url['ppc_account_name']; ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Account?');">remove</a>
+												<?php } ?>
+											</div>
+										</li>
+									<?php } ?>
+								</ul>
+							</li>
+						<?php } ?>
 					</ul>
 				</div>
 			</div>
@@ -623,16 +658,13 @@ template_top('Traffic Sources'); ?>
 </div>
 <script type="text/javascript">
 	$(document).ready(function() {
-		autocomplete_names('ppc_network_name', 'traffic-sources');
-		<?php if (!empty($_GET['edit_ppc_network_id'])) { ?>
-			$("#ppc_network_name").tokenfield("setTokens", <?php print_r(json_encode(['value' => $autocomplete_ppc_network_name, 'label' => $autocomplete_ppc_network_name])) ?>);
-		<?php } ?>
+		// Simple input - no tokenfield needed for single value
 		$(".variables-info-pop").popover({
 			trigger: "hover"
 		});
 
 		var trafficSourceOptions = {
-			valueNames: ['filter_source_name'],
+			valueNames: ['filter_source_name', 'filter_account_name'],
 			plugins: [
 				ListFuzzySearch()
 			]
@@ -641,4 +673,654 @@ template_top('Traffic Sources'); ?>
 		var trafficSourceList = new List('trafficSourceList', trafficSourceOptions);
 	});
 </script>
+
+<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
+
+<style>
+/* ===========================================
+   TRAFFIC SOURCES - Enhanced Design System
+   =========================================== */
+
+/* Page Header Styles */
+.setup-page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+}
+
+.setup-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+}
+
+.setup-page-header__icon .glyphicon {
+    font-size: 24px;
+    color: #fff;
+}
+
+.setup-page-header__text {
+    flex: 1;
+}
+
+.setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.setup-page-header__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 400;
+}
+
+/* Panel Styles - Design System */
+.setup-panel,
+.panel-default {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+    background: #fff;
+}
+
+.panel-heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 20px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.panel-body {
+    padding: 20px;
+}
+
+/* Form Group Styles */
+.setup-form-group {
+    margin-bottom: 16px;
+}
+
+.setup-form-group:last-child {
+    margin-bottom: 0;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    color: #374151;
+    font-size: 14px;
+}
+
+.form-group input[type="text"],
+.form-group input[type="email"],
+.form-group input[type="number"],
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+/* Button Styles */
+.setup-btn,
+.btn {
+    display: inline-block;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+}
+
+.setup-btn-primary,
+.btn-p202 {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: #fff;
+    border: 1px solid #0056b3;
+}
+
+.setup-btn-primary:hover,
+.btn-p202:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+}
+
+.setup-btn-secondary {
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #d1d5db;
+}
+
+.setup-btn-secondary:hover {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+}
+
+.setup-btn-danger,
+.btn-danger {
+    background: #ef4444;
+    color: #fff;
+    border: 1px solid #dc2626;
+}
+
+.setup-btn-danger:hover,
+.btn-danger:hover {
+    background: #dc2626;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+/* Alert Styles */
+.setup-alert,
+.alert {
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.setup-alert-success,
+.alert-success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border-color: #86efac;
+    color: #166534;
+}
+
+.setup-alert-danger,
+.alert-danger {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border-color: #fca5a5;
+    color: #991b1b;
+}
+
+.setup-alert-warning {
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border-color: #fcd34d;
+    color: #92400e;
+}
+
+.setup-alert-info {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border-color: #7dd3fc;
+    color: #0c4a6e;
+}
+
+.setup-alert i,
+.alert i {
+    flex-shrink: 0;
+}
+
+/* Info Text */
+.infotext {
+    display: block;
+    font-size: 13px;
+    color: #6b7280;
+    margin: 8px 0 12px 0;
+    line-height: 1.4;
+}
+
+/* Pixel Container */
+.pixel-container {
+    margin: 16px 0;
+    padding: 16px;
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+}
+
+.pixel {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.pixel:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+#remove_pixel {
+    cursor: pointer;
+    color: #ef4444;
+    transition: color 0.2s ease;
+}
+
+#remove_pixel:hover {
+    color: #dc2626;
+}
+
+/* Form Separator */
+.form_seperator {
+    border-bottom: 1px solid #e5e7eb;
+}
+
+/* Setup List */
+.setup-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.traffic-sources-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.traffic-sources-heading__meta {
+    font-size: 12px;
+    font-weight: 500;
+    color: #475569;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    padding: 2px 10px;
+}
+
+.traffic-source-toolbar {
+    margin-bottom: 14px;
+}
+
+.traffic-source-search-wrap {
+    position: relative;
+}
+
+.traffic-source-search-icon {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    color: #94a3b8;
+    pointer-events: none;
+}
+
+.traffic-source-search {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    padding-left: 34px !important;
+    min-height: 36px;
+}
+
+.traffic-source-search:focus {
+    background: #fff;
+}
+
+#trafficSourceList .source-list {
+    list-style: none;
+    padding: 0 4px 0 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 560px;
+    overflow-y: auto;
+}
+
+#trafficSourceList .source-item {
+    border: 1px solid #dbe3ec;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    padding: 12px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+#trafficSourceList .source-item:hover {
+    border-color: #9ec5fe;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    transform: translateY(-1px);
+}
+
+#trafficSourceList .source-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+#trafficSourceList .source-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+#trafficSourceList .source-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+#trafficSourceList .source-account-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: #1e40af;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+#trafficSourceList .source-actions,
+#trafficSourceList .account-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+#trafficSourceList .account-list {
+    list-style: none;
+    margin: 10px 0 0 0;
+    padding: 10px 0 0 12px;
+    border-top: 1px dashed #dbe3ec;
+}
+
+#trafficSourceList .account-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 10px;
+    margin-bottom: 6px;
+    border-left: 2px solid #dbe3ec;
+    border-radius: 0 8px 8px 0;
+    background: #f8fafc;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+#trafficSourceList .account-item:last-child {
+    margin-bottom: 0;
+}
+
+#trafficSourceList .account-item:hover {
+    background: #eff6ff;
+    border-left-color: #60a5fa;
+}
+
+#trafficSourceList .account-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #334155;
+}
+
+#trafficSourceList .account-item-empty {
+    font-size: 12px;
+    color: #64748b;
+    padding: 6px 0 2px;
+    font-style: italic;
+}
+
+/* List Action Links */
+.list-action {
+    color: #2563eb;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 12px;
+    padding: 4px 9px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.list-action:hover {
+    background-color: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+    text-decoration: none;
+}
+
+.list-action-danger {
+    color: #dc2626;
+}
+
+.list-action-danger:hover {
+    background-color: #fef2f2;
+    color: #991b1b;
+}
+
+.setup-list-empty,
+#trafficSourceList .empty-state {
+    text-align: center;
+    padding: 24px 16px;
+    color: #64748b;
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+/* Input and Select Improvements */
+.form-control {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    box-shadow: none !important;
+    -webkit-box-shadow: none !important;
+    -webkit-appearance: none;
+    background-color: #fff;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
+}
+
+.form-control.input-sm {
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+/* Tokenfield override - clean minimal styling */
+.tokenfield,
+.tokenfield.form-control {
+    padding: 6px 12px !important;
+    height: auto !important;
+    min-height: 38px !important;
+    box-shadow: none !important;
+    -webkit-box-shadow: none !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 8px !important;
+    background-color: #fff !important;
+    display: flex !important;
+    align-items: center !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+}
+.tokenfield .token {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 4px 0 0 !important;
+    height: auto !important;
+    color: #374151 !important;
+    font-size: 14px !important;
+}
+.tokenfield .token .token-label {
+    padding: 0 !important;
+}
+.tokenfield .token .close {
+    display: none !important;
+}
+.tokenfield .token-input,
+.tokenfield.form-control .token-input {
+    box-shadow: none !important;
+    -webkit-box-shadow: none !important;
+    border: none !important;
+    outline: none !important;
+    background: transparent !important;
+    height: 24px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    flex: 1 !important;
+    min-width: 60px !important;
+}
+.tokenfield.focus,
+.tokenfield.form-control.focus {
+    border-color: #007bff !important;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
+    -webkit-box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
+}
+
+/* Search Input */
+.search {
+    border: 1px solid #d1d5db;
+    box-shadow: none !important;
+}
+
+.search:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
+}
+
+/* Modal Improvements */
+.modal-header {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-title {
+    color: #1e293b;
+    font-weight: 600;
+}
+
+.variables_validate_alert {
+    margin-top: 12px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .setup-page-header {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px 16px;
+    }
+
+    .setup-page-header__icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    .setup-page-header__icon .glyphicon {
+        font-size: 20px;
+    }
+
+    .setup-page-header__title {
+        font-size: 20px;
+    }
+
+    .setup-page-header__subtitle {
+        font-size: 13px;
+    }
+
+    .form-group label {
+        margin-bottom: 4px;
+    }
+
+    .setup-btn,
+    .btn {
+        width: 100%;
+        margin-bottom: 8px;
+    }
+
+    .pixel-container {
+        padding: 12px;
+    }
+
+    .pixel {
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+    }
+
+    .traffic-sources-heading {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    #trafficSourceList .source-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    #trafficSourceList .source-actions,
+    #trafficSourceList .account-actions {
+        justify-content: flex-start;
+    }
+
+    #trafficSourceList .account-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 480px) {
+    .setup-page-header {
+        padding: 16px 12px;
+    }
+
+    .setup-page-header__icon {
+        width: 40px;
+        height: 40px;
+    }
+
+    .setup-page-header__icon .glyphicon {
+        font-size: 18px;
+    }
+
+    .setup-page-header__title {
+        font-size: 18px;
+    }
+
+    .setup-page-header__subtitle {
+        font-size: 12px;
+    }
+
+    #trafficSourceList .source-item {
+        padding: 10px;
+    }
+
+    #trafficSourceList .account-list {
+        padding-left: 8px;
+    }
+}
+</style>
+
 <?php template_bottom(); ?>

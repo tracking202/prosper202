@@ -590,7 +590,7 @@ class Slim
             if (is_callable($this->notFound)) {
                 call_user_func($this->notFound);
             } else {
-                call_user_func([$this, 'defaultNotFound']);
+                call_user_func($this->defaultNotFound(...));
             }
             $this->halt(404, ob_get_clean());
         }
@@ -648,7 +648,7 @@ class Slim
         if (is_callable($this->error)) {
             call_user_func_array($this->error, [$argument]);
         } else {
-            call_user_func_array([$this, 'defaultError'], [$argument]);
+            call_user_func_array($this->defaultError(...), [$argument]);
         }
 
         return ob_get_clean();
@@ -984,7 +984,7 @@ class Slim
      */
     public function root()
     {
-        return rtrim((string) $_SERVER['DOCUMENT_ROOT'], '/') . rtrim($this->request->getRootUri(), '/') . '/';
+        return rtrim((string) $_SERVER['DOCUMENT_ROOT'], '/') . rtrim((string) $this->request->getRootUri(), '/') . '/';
     }
 
     /**

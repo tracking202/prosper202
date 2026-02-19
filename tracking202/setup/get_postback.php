@@ -10,6 +10,9 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 }
 
 template_top('Pixel And Postback URLs');
+?>
+<link rel="stylesheet" href="/202-css/design-system.css">
+<?php
 
 //the pixels
 $unSecuredPixel = '<img height="1" width="1" border="0" style="display: none;" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpx.php?amount=&subid=" />';
@@ -38,11 +41,19 @@ $unSecuredUniversalPixelJS = '
 
 ?>
 
-<!-- Modern gradient header -->
-<div class="page-header">
-	<div class="container-fluid">
-		<h2><i class="fa fa-code"></i> Pixel & Postback URLs</h2>
-		<p class="lead">Generate tracking pixels and postback URLs for your affiliate campaigns</p>
+<!-- Page Header - Design System -->
+<div class="postback-page">
+<div class="row" style="margin-bottom: 28px;">
+	<div class="col-xs-12">
+		<div class="setup-page-header">
+			<div class="setup-page-header__icon">
+				<span class="glyphicon glyphicon-transfer"></span>
+			</div>
+			<div class="setup-page-header__text">
+				<h1 class="setup-page-header__title">Postback / Pixel</h1>
+				<p class="setup-page-header__subtitle">Configure conversion tracking for your affiliate networks</p>
+			</div>
+		</div>
 	</div>
 </div>
 
@@ -67,9 +78,9 @@ $unSecuredUniversalPixelJS = '
 	<div class="col-xs-12">
 		<form method="post" id="tracking_form" class="form-horizontal" role="form" style="margin:0px 0px 15px 0px;">
 			<div class="form-group" style="margin-bottom: 0px;" id="pixel-type">
-				<label class="col-xs-2 control-label" style="text-align: left;"><i class="fa fa-crosshairs"></i> Pixel Type:</label>
+				<label class="col-md-3 control-label" style="text-align: left;"><i class="fa fa-crosshairs"></i> Pixel Type:</label>
 
-				<div class="col-xs-10 radio-group" style="margin-top: 15px;">
+				<div class="col-md-9 radio-group" style="margin-top: 15px;">
 					<div class="radio-option active">
 						<label class="radio">
 	            			<input type="radio" name="pixel_type" value="0" data-toggle="radio" checked="">
@@ -95,18 +106,18 @@ $unSecuredUniversalPixelJS = '
 	        </div>
 
 	        <div class="form-group" style="margin-bottom: 0px;" id="secure-pixels">
-				<label class="col-xs-2 control-label" style="text-align: left;"><i class="fa fa-shield"></i> Protocol:</label>
+				<label class="col-md-3 control-label" style="text-align: left;"><i class="fa fa-shield"></i> Protocol:</label>
 
-				<div class="col-xs-10" style="margin-top: 15px;">
+				<div class="col-md-9" style="margin-top: 15px;">
 					<div class="row">
-						<div class="col-xs-3">
+						<div class="col-md-6">
 							<label class="radio">
 		            			<input type="radio" name="secure_type" value="0" data-toggle="radio" checked="">
 		            				<i class="fa fa-unlock text-warning"></i> HTTP <span class="label label-default">http://</span>
 		          			</label>
 						</div>
 
-						<div class="col-xs-3">
+						<div class="col-md-6">
 							<label class="radio">
 			            		<input type="radio" name="secure_type" value="1" data-toggle="radio">
 			            			<i class="fa fa-lock text-success"></i> HTTPS <span class="label label-success">https://</span>
@@ -118,8 +129,8 @@ $unSecuredUniversalPixelJS = '
 	        </div>
 
 	        <div class="form-group" style="margin-bottom: 0px;">
-				<label class="col-xs-2 control-label" for="amount_value" style="text-align: left;">Amount:</label>
-				<div class="col-xs-4" style="margin-top: 10px;">
+				<label class="col-md-3 control-label" for="amount_value" style="text-align: left;">Amount:</label>
+				<div class="col-md-6" style="margin-top: 10px;">
 					<input class="form-control input-sm" type="text" name="amount_value" id="amount_value"/>
 					<span class="help-block" style="font-size: 10px;">Enter an amount to override the affiliate campaign default</span>
 				</div>
@@ -127,15 +138,15 @@ $unSecuredUniversalPixelJS = '
 
 			<div id="advanced_pixel_type" style="display:none;">
 				<div class="form-group" style="margin-bottom: 0px;">
-			        <label for="aff_network_id" class="col-xs-2 control-label" style="text-align: left;">Category:</label>
-			        <div class="col-xs-4" style="margin-top: 10px;">
+			        <label for="aff_network_id" class="col-md-3 control-label" style="text-align: left;">Category:</label>
+			        <div class="col-md-6" style="margin-top: 10px;">
 			        	<img id="aff_network_id_div_loading" src="/202-img/loader-small.gif" />
 						<div id="aff_network_id_div"></div>
 			        </div>
 			    </div>
 			    <div class="form-group" style="margin-bottom: 0px;">
-			        <label for="aff_campaign_id" class="col-xs-2 control-label" style="text-align: left;">Campaign:</label>
-			        <div class="col-xs-4" style="margin-top: 10px;">
+			        <label for="aff_campaign_id" class="col-md-3 control-label" style="text-align: left;">Campaign:</label>
+			        <div class="col-md-6" style="margin-top: 10px;">
 			        	<img id="aff_campaign_id_div_loading" src="/202-img/loader-small.gif" style="display: none;" />
 						<div id="aff_campaign_id_div">
 							<select class="form-control input-sm" id="aff_campaign_id" disabled="">
@@ -172,7 +183,7 @@ $unSecuredUniversalPixelJS = '
 
 		printf('
 			<div id="pixel_type_simple_id" class="tracking-output">
-				<div class="panel panel-default">
+				<div class="panel panel-default setup-side-panel">
 					<div class="panel-heading">
 						<h3 class="panel-title">
 							<i class="fa fa-image"></i> Simple Global Tracking Pixel
@@ -195,7 +206,7 @@ $unSecuredUniversalPixelJS = '
 						</div>
 					</div>
 				</div>
-				<div class="panel panel-default">
+				<div class="panel panel-default setup-side-panel">
 					<div class="panel-heading">
 						<h3 class="panel-title">
 							<i class="fa fa-link"></i> Simple Global Post Back URL
@@ -225,7 +236,7 @@ $unSecuredUniversalPixelJS = '
 
 		printf('
 <div id="pixel_type_advanced_id" style="display:none;">
-	<div class="panel panel-default">
+	<div class="panel panel-default setup-side-panel">
 		<div class="panel-heading">
 			<h3 class="panel-title">
 				<i class="fa fa-cogs"></i> Advanced Global Tracking Pixel
@@ -249,7 +260,7 @@ $unSecuredUniversalPixelJS = '
 		</div>
 	</div>
 
-	<div class="panel panel-default">
+	<div class="panel panel-default setup-side-panel">
 		<div class="panel-heading">
 			<h3 class="panel-title">
 				<i class="fa fa-exchange"></i> Advanced Global Post Back URL
@@ -279,7 +290,7 @@ $unSecuredUniversalPixelJS = '
 		
 		printf('
 <div id="pixel_type_universal_id" style="display:none;">
-	<div class="panel panel-default">
+	<div class="panel panel-default setup-side-panel">
 		<div class="panel-heading">
 			<h3 class="panel-title">
 				<i class="fa fa-magic"></i> Javascript Universal Smart Tracking Pixel
@@ -304,7 +315,7 @@ $unSecuredUniversalPixelJS = '
 		</div>
 	</div>
 
-	<div class="panel panel-default">
+	<div class="panel panel-default setup-side-panel">
 		<div class="panel-heading">
 			<h3 class="panel-title">
 				<i class="fa fa-code"></i> Iframe Universal Smart Tracking Pixel
@@ -558,25 +569,118 @@ $(document).on('change', '#tracking_form input, #tracking_form select', function
 </script>
 
 <style>
-/* Custom styles for modernized postback page */
-.page-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 2rem;
-    margin: -15px -15px 30px -15px;
-    border-radius: 0;
+/* Setup Page Header */
+.setup-page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
 }
 
-.page-header h2 {
+.setup-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+}
+
+.setup-page-header__icon .glyphicon {
+    font-size: 28px;
+}
+
+.setup-page-header__text {
+    flex: 1;
+}
+
+.setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.setup-page-header__subtitle {
     margin: 0;
-    font-weight: 300;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.85);
 }
 
-.page-header .lead {
-    margin-bottom: 0;
-    opacity: 0.9;
+/* Enhanced Panel Styling */
+.panel {
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border: 1px solid #e2e8f0;
 }
 
+.panel-heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
+    border-bottom: 1px solid #e2e8f0;
+    border-radius: 12px 12px 0 0 !important;
+    padding: 16px 20px;
+}
+
+.panel-title {
+    font-weight: 600;
+    font-size: 15px;
+    color: #1e293b;
+}
+
+.panel-body {
+    padding: 24px;
+}
+
+/* Form Enhancements */
+.form-control {
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 14px;
+    transition: all 0.2s ease;
+}
+
+.form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.15);
+}
+
+/* Button Enhancements */
+.btn-primary {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);
+    transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.35);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+}
+
+/* Code Block Styling */
+pre, code {
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+}
+
+/* Radio group enhancements */
 .radio-group {
     display: flex;
     flex-direction: column;
@@ -659,39 +763,44 @@ $(document).on('change', '#tracking_form input, #tracking_form select', function
     margin-top: 30px;
 }
 
-.panel-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin: 0;
+/* Alert Styles - Design System */
+.alert-info {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border: 1px solid #93c5fd;
+    color: #1e40af;
+    border-radius: 8px;
+    padding: 12px 16px;
 }
 
-.panel-title i {
-    margin-right: 8px;
+.alert-success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border: 1px solid #86efac;
+    color: #166534;
+    border-radius: 8px;
+    padding: 12px 16px;
 }
 
-@media (max-width: 768px) {
-    .page-header {
-        padding: 1rem;
-        text-align: center;
-    }
-    
-    .radio-group {
-        gap: 10px;
-    }
-    
-    .radio-option {
-        padding: 12px;
-    }
-    
-    .col-md-3,
-    .col-md-4,
-    .col-md-8,
-    .col-md-9,
-    .col-md-12 {
-        padding-left: 10px;
-        padding-right: 10px;
-    }
+.alert-warning {
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border: 1px solid #fcd34d;
+    color: #92400e;
+    border-radius: 8px;
+    padding: 12px 16px;
+}
+
+/* Better form styling */
+.form-group {
+    margin-bottom: 25px;
+}
+
+.control-label {
+    font-weight: 600;
+    color: #495057;
+}
+
+.input-group-addon {
+    background-color: #e9ecef;
+    border-color: #ced4da;
 }
 
 /* Loading animations */
@@ -725,24 +834,139 @@ $(document).on('change', '#tracking_form input, #tracking_form select', function
     animation: fadeInSuccess 0.5s ease-out;
 }
 
-/* Better form styling */
-.form-group {
-    margin-bottom: 25px;
+/* Setup List Item Styling */
+.setup-list-name {
+    display: inline-block;
+    flex: 1;
+    word-break: break-word;
 }
 
-.control-label {
-    font-weight: 600;
-    color: #495057;
+.filter_xxx_name {
+    font-weight: 500;
+    color: #333;
 }
 
-.form-control:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+.setup-list-actions {
+    display: inline-block;
+    white-space: nowrap;
+    margin-left: 15px;
 }
 
-.input-group-addon {
-    background-color: #e9ecef;
-    border-color: #ced4da;
+.setup-list-actions a {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 4px;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.setup-list-actions .action-edit {
+    background-color: #e7f3ff;
+    color: #0056b3;
+    border: 1px solid #93c5fd;
+}
+
+.setup-list-actions .action-edit:hover {
+    background-color: #cce5ff;
+    color: #004085;
+}
+
+.setup-list-actions .action-remove {
+    background-color: #ffe7e7;
+    color: #b30000;
+    border: 1px solid #ffb3b3;
+}
+
+.setup-list-actions .action-remove:hover {
+    background-color: #ffcccc;
+    color: #800000;
+}
+
+ul.setup-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+ul.setup-list li {
+    display: flex;
+    align-items: center;
+    padding: 12px 15px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    background: #ffffff;
+    transition: all 0.2s ease;
+}
+
+ul.setup-list li:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border-color: #cbd5e1;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .setup-page-header {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px;
+    }
+
+    .setup-page-header__title {
+        font-size: 20px;
+    }
+
+    .setup-page-header__icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    .setup-page-header__icon .glyphicon {
+        font-size: 20px;
+    }
+
+    .setup-page-header__subtitle {
+        font-size: 13px;
+    }
+
+    .radio-group {
+        gap: 10px;
+    }
+
+    .radio-option {
+        padding: 12px;
+    }
+
+    .col-md-3,
+    .col-md-4,
+    .col-md-6,
+    .col-md-8,
+    .col-md-9,
+    .col-md-12 {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    ul.setup-list li {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .setup-list-actions {
+        margin-left: 0;
+        margin-top: 10px;
+        display: flex;
+        width: 100%;
+    }
+
+    .setup-list-actions a {
+        margin-left: 0;
+        margin-right: 8px;
+        flex: 0 1 auto;
+    }
 }
 </style>
 

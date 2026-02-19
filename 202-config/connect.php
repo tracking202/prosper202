@@ -8,6 +8,11 @@ if (!file_exists(__DIR__ . '/version.php')) {
 }
 require_once(__DIR__ . '/version.php');
 
+// Ensure sessions survive for at least ~14 hours (matches the 50000s login check).
+// PHP's default gc_maxlifetime is 1440s (24 min), which silently destroys sessions.
+ini_set('session.gc_maxlifetime', '50000');
+ini_set('session.cookie_lifetime', '0'); // session cookie — expires when browser closes
+
 // Start the session at the beginning to avoid undefined $_SESSION variable
 session_start();
 
@@ -127,6 +132,11 @@ if (file_exists(ROOT_PATH  . '202-config.php')) {
     die();
 }
 include_once(ROOT_PATH  . '202-config.php');
+// Load Composer autoloader if available for PSR-4 classes.
+$autoloadPath = ROOT_PATH . 'vendor/autoload.php';
+if (file_exists($autoloadPath)) {
+    require_once $autoloadPath;
+}
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
@@ -279,12 +289,14 @@ if ($navigation[1] == 'tracking202') {
 //if the mysql tables are all installed now
 if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
-    //we can initalize the session managers 
+    //we can initalize the session managers
     if (!$stopSessions) {
 
         //disable mysql sessions because they are slow
-        //$sess = new SessionManager(); 
-        session_start();
+        //$sess = new SessionManager();
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_start();
+        }
     }
 
     //run the cronjob checker

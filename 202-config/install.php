@@ -84,14 +84,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['user_name'] = $db->real_escape_string($_POST['user_name'] ?? '');
 		$mysql['user_timezone'] = $db->real_escape_string($_POST['user_timezone'] ?? '');
 		$mysql['p202_customer_api_key'] = $db->real_escape_string($_POST['user_api'] ?? '');
-		$mysql['user_time_register'] = $db->real_escape_string(time());
+		$mysql['user_time_register'] = $db->real_escape_string((string) time());
 
 		//md5 the user pass with salt
 	 	$hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
 	 	$user_pass = $hasher($_POST['user_pass']);
 		$mysql['user_pass'] = $db->real_escape_string($user_pass);      
 
- 		$hash = md5(uniqid(random_int(0, mt_getrandmax()), TRUE));
+ 		$hash = md5(uniqid((string) random_int(0, mt_getrandmax()), TRUE));
 		// $user_hash = intercomHash($hash); // Removed intercomHash call
 		$user_hash = ''; // Default empty value
 
@@ -122,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		// Only proceed if we have a valid user_id
 		if ($user_id > 0) {
-			$mysql['user_id'] = $db->real_escape_string($user_id);
+			$mysql['user_id'] = $db->real_escape_string((string) $user_id);
 
 			// Update user preference table - use INSERT IGNORE to handle duplicates
 			$user_sql = "INSERT IGNORE INTO 202_users_pref SET user_id='" . $mysql['user_id'] . "'";
@@ -134,7 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			$cron = callAutoCron('register');
 
-			if ($cron['status'] == 'success') {
+			if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
 				$sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '" . $mysql['user_id'] . "'";
 				$result = _mysqli_query($sql);
 			}

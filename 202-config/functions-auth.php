@@ -56,7 +56,7 @@ class AUTH
     public static function logged_in()
     {
         $session_time_passed = isset($_SESSION['session_time']) ? time() - $_SESSION['session_time'] : PHP_INT_MAX;
-        if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and ($_SESSION['session_fingerprint'] == md5('session_fingerprint' . $_SERVER['HTTP_USER_AGENT'] . session_id())) and ($session_time_passed < 50000)) {
+        if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and ($_SESSION['session_fingerprint'] == md5('session_fingerprint' . session_id())) and ($session_time_passed < 50000)) {
             $_SESSION['session_time'] = time();
             return true;
         } else {
@@ -196,7 +196,7 @@ class AUTH
             session_regenerate_id(true);
         }
 
-        $_SESSION['session_fingerprint'] = md5('session_fingerprint' . ($_SERVER['HTTP_USER_AGENT'] ?? '') . session_id());
+        $_SESSION['session_fingerprint'] = md5('session_fingerprint' . session_id());
         $_SESSION['session_time'] = time();
         $_SESSION['user_name'] = $user_row['user_name'];
         $_SESSION['user_id'] = (int) $user_row['user_id'];
@@ -273,15 +273,22 @@ class AUTH
         curl_setopt($ch, CURLOPT_POST, 1);
 // Set post fields
         curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+// Prevent network issues from logging users out
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
 // Execute
         $result = curl_exec($ch);
-        if (curl_errno($ch)) {
-        // echo 'error:' . curl_error($c);
-        }
+        $curlFailed = curl_errno($ch) || $result === false;
         // close connection
         curl_close($ch);
-        $api_validate = json_decode($result, true);
-        if ($api_validate['msg'] == "Key valid") {
+
+        // On network failure, don't punish the user — assume valid until next check
+        if ($curlFailed) {
+            return true;
+        }
+
+        $api_validate = json_decode((string) $result, true);
+        if (is_array($api_validate) && ($api_validate['msg'] ?? '') === "Key valid") {
         //update the api key
             $user_sql = "	UPDATE 	202_users
 						SET		p202_customer_api_key='" . $user_api_key . "'
@@ -420,11 +427,23 @@ class AUTH
         setcookie('remember_me', $_SESSION['user_own_id'] . '-' . $auth_key . '-' . $hash, [
             'expires' => $expire,
             'path' => '/',
-            'domain' => (string) ($_SERVER['HTTP_HOST'] ?? ''),
+            'domain' => self::cookie_domain(),
             'secure' => $secure,
             'httponly' => true,
             'samesite' => 'Lax',
         ]);
+    }
+
+    public static function cookie_domain(): string
+    {
+        $host = $_SERVER['HTTP_HOST'] ?? '';
+        // Strip port number if present (e.g. "example.com:8080" → "example.com")
+        $domain = strtolower((string) preg_replace('/:\d+$/', '', (string) $host));
+        // Don't set a cookie domain for localhost or IP addresses — browsers reject it
+        if ($domain === 'localhost' || filter_var($domain, FILTER_VALIDATE_IP)) {
+            return '';
+        }
+        return $domain;
     }
 
     public static function delete_old_auth_hash()

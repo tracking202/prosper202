@@ -5,17 +5,22 @@
   "license": "GPL-2.0-or-later",
   "require": {
     "php": ">=8.3",
+    "slim/slim": "^3.12",
+    "slim/psr7": "^1.6",
     "ua-parser/uap-php": "^3.9",
-    "geoip2/geoip2": "^3.2"
+    "geoip2/geoip2": "^3.2",
+    "symfony/console": "^6.0"
   },
   "autoload": {
     "psr-4": {
       "Prosper202\\": "202-config/",
       "Tracking202\\": "tracking202/",
       "Prosper202Interfaces\\": "202-interfaces/",
-      "Api\\": "api/"
+      "Api\\": "api/",
+      "P202Cli\\": "cli/"
     }
   },
+  "bin": ["bin/p202"],
   "autoload-dev": {
     "psr-4": {
       "Tests\\": "tests/"

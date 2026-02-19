@@ -1156,12 +1156,16 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
     margin-bottom: 15px;
 }
 
-.attribution-dashboard .kpi-card .label {
+.attribution-dashboard .kpi-card .kpi-label {
     text-transform: uppercase;
     font-size: 0.8rem;
     letter-spacing: 0.08em;
     display: block;
     color: #7f8c8d;
+    background: transparent;
+    padding: 0;
+    font-weight: normal;
+    line-height: 1.4;
 }
 
 .attribution-dashboard .kpi-card .metric {
@@ -1467,12 +1471,22 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
   height: 100%;
 }
 
-.attribution-page .attribution-kpis .attribution-kpi-card .label {
+.attribution-page .attribution-kpis .attribution-kpi-card .kpi-label {
   display: block;
   text-transform: uppercase;
   font-size: 12px;
   color: #7f8c9a;
   letter-spacing: 0.05em;
+  background: transparent;
+  padding: 0;
+  font-weight: normal;
+  line-height: 1.4;
+}
+
+.attribution-page .attribution-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .attribution-page .attribution-kpis .attribution-kpi-card .metric {
@@ -1506,4 +1520,77 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
   margin: 0;
   font-size: 14px;
   font-weight: 600;
+}
+
+/* Attribution Help System */
+.help-icon {
+    color: #7f8c9a;
+    cursor: help;
+    margin-left: 5px;
+    font-size: 13px;
+}
+
+.help-icon:hover {
+    color: #267da8;
+}
+
+.attribution-intro {
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.attribution-intro .close {
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    opacity: 0.7;
+}
+
+.attribution-intro .close:hover {
+    opacity: 1;
+}
+
+.attribution-intro p {
+    margin: 8px 0 0;
+    font-size: 13px;
+    padding-right: 20px;
+}
+
+.attribution-page .popover {
+    max-width: 300px;
+}
+
+.attribution-page .popover-content {
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.attribution-kpi-card[data-toggle="tooltip"] {
+    cursor: help;
+}
+
+.attribution-empty-guidance {
+    color: #7f8c9a;
+    font-size: 13px;
+    padding: 15px;
+    text-align: center;
+    border: 1px dashed #dfe6ee;
+    border-radius: 4px;
+}
+
+.attribution-empty-guidance .fui-info-circle {
+    margin-right: 5px;
+}
+
+/* Touchpoint mix empty state - style like paragraph */
+.attribution-page .touchpoint-mix li.touchpoint-empty {
+    display: block;
+    border-bottom: none;
+    padding: 6px 15px;
+    margin-left: 0;
+    list-style-type: none !important;
+}
+
+.attribution-page .touchpoint-mix li.touchpoint-empty::marker {
+    content: none;
 }

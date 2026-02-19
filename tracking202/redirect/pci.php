@@ -24,8 +24,8 @@ $click_row = memcache_mysql_fetch_assoc($db, $click_sql);
 
 $click_id = $click_row['click_id'];
 $aff_campaign_id = $click_row['aff_campaign_id'];
-$mysql['click_id'] = $db->real_escape_string($click_id);
-$mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_id);
+$mysql['click_id'] = $db->real_escape_string((string) $click_id);
+$mysql['aff_campaign_id'] = $db->real_escape_string((string) $aff_campaign_id);
 $mysql['click_out'] = '1';
 
 $click_sql = "UPDATE    202_clicks_record
@@ -37,13 +37,13 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 //see if cloaking was turned on
 if ($click_row['click_cloaking'] == 1) { 
 	$cloaking_on = true;
-	$mysql['site_url_id'] = $db->real_escape_string($click_row['click_cloaking_site_url_id']);
+	$mysql['site_url_id'] = $db->real_escape_string((string) $click_row['click_cloaking_site_url_id']);
 	$site_url_sql = "SELECT site_url_address FROM 202_site_urls WHERE site_url_id='".$mysql['site_url_id']."' limit 1";
 	$site_url_row = memcache_mysql_fetch_assoc($db, $site_url_sql);
 	$cloaking_site_url = $site_url_row['site_url_address'];
 } else {
 	$cloaking_on = false;
-	$mysql['site_url_id'] = $db->real_escape_string($click_row['click_redirect_site_url_id']);
+	$mysql['site_url_id'] = $db->real_escape_string((string) $click_row['click_redirect_site_url_id']);
 	$site_url_sql = "SELECT site_url_address FROM 202_site_urls WHERE site_url_id='".$mysql['site_url_id']."' limit 1";
 	$site_url_row = memcache_mysql_fetch_assoc($db, $site_url_sql);
 	$redirect_site_url = $site_url_row['site_url_address'];  	

@@ -63,7 +63,7 @@ switch ($case) {
 		$handle = fopen($file, 'rb'); 	
 		$row = @fgetcsv($handle, 100000, ",", escape: '\\');
 		for ($x = 0; $x < count($row); $x++) { 
-			$html = array_map('htmlentities', $row);
+			$html = array_map(htmlentities(...), $row);
 			echo '<tr>';	
 				echo '<td>'.$html[$x].'</td>';
 				echo '<td><label class="radio" style="display: inline;"><input type="radio" data-toggle="radio" name="click_id" value="'.$x.'"/></label</td>';

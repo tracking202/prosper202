@@ -10,18 +10,16 @@ use Prosper202\Attribution\Calculation\ConversionBatch;
 use Prosper202\Attribution\Repository\ConversionRepositoryInterface;
 use RuntimeException;
 
-final class MysqlConversionRepository implements ConversionRepositoryInterface
+final readonly class MysqlConversionRepository implements ConversionRepositoryInterface
 {
-    private readonly ConversionJourneyRepository $journeyRepository;
-    private readonly ConversionHydrator $hydrator;
+    private ConversionJourneyRepository $journeyRepository;
 
     public function __construct(
-        private readonly mysqli $connection,
+        private mysqli $connection,
         ?ConversionJourneyRepository $journeyRepository = null,
-        ?ConversionHydrator $hydrator = null
+        private ?ConversionHydrator $hydrator = new ConversionHydrator()
     ) {
         $this->journeyRepository = $journeyRepository ?? new ConversionJourneyRepository($connection);
-        $this->hydrator = $hydrator ?? new ConversionHydrator();
     }
 
     public function fetchForUser(int $userId, int $startTime, int $endTime, ?int $afterConversionId = null, int $limit = 5000): ConversionBatch

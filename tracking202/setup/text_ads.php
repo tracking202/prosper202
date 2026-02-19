@@ -277,44 +277,59 @@ if ((($editing === true) || ($add_success !== true)) && !empty($mysql['aff_campa
 }
 
 template_top('Text Ads Setup');  ?>
+<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
-<?php include_once __DIR__ . '/_config/setup_nav.php'; ?>
-
-<div class="row" style="margin-bottom: 15px;">
+<!-- Page Header - Design System -->
+<div class="row" style="margin-bottom: 28px;">
 	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-5">
-				<h6>Text Ad Setup (optional)</h6>
+		<div class="setup-page-header">
+			<div class="setup-page-header__icon">
+				<span class="glyphicon glyphicon-font"></span>
 			</div>
-			<div class="col-xs-7">
-				<div class="<?php if($error) echo "error"; else echo "success";?> pull-right" style="margin-top: 20px;">
-					<small>
-						<?php if ($error) { ?> 
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-						<?php } ?>
-						<?php if ($add_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
-						<?php } ?>
-						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> You deletion was successful. You have successfully removed a landing page.
-						<?php } ?>
-						
-					</small>
-				</div>
+			<div class="setup-page-header__text">
+				<h1 class="setup-page-header__title">Text Ads</h1>
+				<p class="setup-page-header__subtitle">Store your ad copy variations for tracking headline, description, and display URL performance</p>
 			</div>
 		</div>
 	</div>
+</div>
+
+<?php if ($error) { ?>
+<div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
-		<small>Here is where you enter in your text ad information. If you have too many text-ads and do not want to enter them all, you can skip this step.</small>
+		<div class="alert alert-danger">
+			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
+		</div>
 	</div>
 </div>
+<?php } ?>
+
+<?php if ($add_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
+		</div>
+	</div>
+</div>
+<?php } ?>
+
+<?php if ($delete_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed a text ad.
+		</div>
+	</div>
+</div>
+<?php } ?>
 
 <div class="row form_seperator" style="margin-bottom:15px;">
 	<div class="col-xs-12"></div>
 </div>
 
 <div class="row">
-	<div class="col-xs-7">
+	<div class="col-md-6">
 		<small><strong>Add Your Text Ads</strong></small><br/>
 		<span class="infotext">Here you can add different text ads you might use with your PPC marketing.</span>
 		
@@ -429,8 +444,8 @@ template_top('Text Ads Setup');  ?>
 		</form>
 	</div>
 
-	<div class="col-xs-4 col-xs-offset-1">
-		<div class="panel panel-default">
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">Advanced Landing Page Text Ads</div>
 			<div class="panel-body">
 				<ul>        
@@ -453,12 +468,12 @@ template_top('Text Ads Setup');  ?>
 										
 								$html['text_ad_name'] = htmlentities((string)($text_ad_row['text_ad_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 								$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-								
+
 								if ($userObj->hasPermission("remove_text_ad")) {
-									printf('<li>%s - <a href="?copy_text_ad_id=%s">copy</a> - <a href="?edit_text_ad_id=%s">edit</a> - <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'],  $html['text_ad_id'], $html['text_ad_name']);
-								} else {
-									printf('<li>%s - <a href="?copy_text_ad_id=%s">copy</a> - <a href="?edit_text_ad_id=%s">edit</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
-								}		
+								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
+							} else {
+								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
+							}		
 							
 										
 							}
@@ -469,7 +484,7 @@ template_top('Text Ads Setup');  ?>
 			</div>
 		</div>
 
-		<div class="panel panel-default">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">Direct Link/Simple Landing Page Text Ads</div>
 			<div class="panel-body">
 				<ul>        
@@ -477,7 +492,7 @@ template_top('Text Ads Setup');  ?>
 					$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
 					$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
 					if ($aff_network_result->num_rows == 0 ) { 
-						?><li>You have not added any networks.</li><?php
+						?><li class="empty-state">No categories added yet. Add a category first to organize your text ads.</li><?php
 					}
 					
 					while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
@@ -512,9 +527,9 @@ template_top('Text Ads Setup');  ?>
 										$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 										
 										if ($userObj->hasPermission("remove_text_ad")) {
-											printf('<li>%s - <a href="?copy_text_ad_id=%s">copy</a> - <a href="?edit_text_ad_id=%s">edit</a> - <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'],  $html['text_ad_id'], $html['text_ad_name']);
+											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
 										} else {
-											printf('<li>%s - <a href="?copy_text_ad_id=%s">copy</a> - <a href="?edit_text_ad_id=%s">edit</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
+											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
 										}
 							
 										
@@ -545,5 +560,509 @@ $(document).ready(function() {
     <?php } ?>
 });
 </script>
+
+<style>
+/* ===========================================
+   TEXT ADS - Enhanced Design System Styles
+   =========================================== */
+
+/* ---- Page Header ---- */
+.setup-page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+}
+
+.setup-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.setup-page-header__icon .glyphicon {
+    font-size: 24px;
+    color: #fff;
+    font-weight: 600;
+}
+
+.setup-page-header__text { flex: 1; }
+
+.setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.5px;
+}
+
+.setup-page-header__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 400;
+    line-height: 1.5;
+}
+
+/* ---- Panels & Cards ---- */
+.panel-default {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.panel-default:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    border-color: #cbd5e1;
+}
+
+.panel-heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 20px;
+    font-weight: 600;
+    color: #1e293b;
+    font-size: 14px;
+    letter-spacing: 0.2px;
+}
+
+.panel-body {
+    padding: 20px;
+    background: #fff;
+}
+
+/* ---- Alerts ---- */
+.alert {
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+
+.alert i {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+.alert-success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border-color: #86efac;
+    color: #166534;
+}
+
+.alert-danger {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border-color: #fca5a5;
+    color: #991b1b;
+}
+
+.alert-warning {
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border-color: #fcd34d;
+    color: #92400e;
+}
+
+.alert-info {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border-color: #7dd3fc;
+    color: #0c4a6e;
+}
+
+/* ---- Form Elements ---- */
+.form-group {
+    margin-bottom: 20px;
+    transition: all 0.3s ease;
+}
+
+.form-group.has-error .form-control {
+    border-color: #f87171;
+    background: #fff5f5;
+}
+
+.form-group.has-error .form-control:focus {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+}
+
+.form-control {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    transition: all 0.3s ease;
+    background: #fff;
+}
+
+.form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+    outline: none;
+}
+
+.form-control:disabled,
+.form-control[disabled] {
+    background-color: #f8fafc;
+    color: #94a3b8;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.input-sm {
+    padding: 8px 12px;
+    font-size: 13px;
+    height: auto;
+}
+
+/* ---- Buttons ---- */
+.btn {
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    display: inline-block;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: middle;
+    user-select: none;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.btn-sm {
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+.btn-p202 {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: #fff;
+    border: 1px solid transparent;
+}
+
+.btn-p202:hover {
+    background: linear-gradient(135deg, #0056b3 0%, #003d82 100%);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+}
+
+.btn-p202:disabled {
+    background: #cbd5e1;
+    color: #64748b;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.btn-danger {
+    background: #ef4444;
+    color: #fff;
+    border: 1px solid transparent;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+.btn-danger:disabled {
+    background: #cbd5e1;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-block {
+    width: 100%;
+}
+
+/* ---- Lists ---- */
+ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 0;
+    color: #1e293b;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+li:hover {
+    color: #007bff;
+    padding-left: 4px;
+}
+
+.filter_text_ad_name {
+    font-weight: 500;
+    flex: 1;
+    min-width: 100px;
+}
+
+li a {
+    color: #007bff;
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    border-bottom: 1px solid transparent;
+}
+
+li a:hover {
+    color: #0056b3;
+    border-bottom-color: #007bff;
+}
+
+/* ---- Setup List Items (New Pattern) ---- */
+.list-action {
+    display: inline-block;
+    margin-left: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    transition: all 0.2s ease;
+    background: transparent;
+    color: #007bff;
+    text-decoration: none;
+    border: 1px solid transparent;
+}
+
+.list-action:first-of-type {
+    margin-left: 12px;
+}
+
+.list-action:hover {
+    background: #f0f7ff;
+    border-color: #007bff;
+    color: #0056b3;
+}
+
+.list-action-danger {
+    color: #ef4444;
+}
+
+.list-action-danger:hover {
+    background: #fef2f2;
+    border-color: #ef4444;
+    color: #991b1b;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 24px 16px;
+    color: #9ca3af;
+    border: 1px dashed #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+/* Deprecated - keeping for backwards compatibility */
+.setup-list-name,
+.setup-list-actions {
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.setup-list-name {
+    flex: 1;
+    max-width: 70%;
+    word-break: break-word;
+}
+
+.setup-list-actions {
+    white-space: nowrap;
+    margin-left: 12px;
+}
+
+.action-copy,
+.action-edit,
+.action-remove {
+    color: #007bff;
+    text-decoration: none;
+    border: 1px solid transparent;
+}
+
+/* ---- Radio & Checkbox Styles ---- */
+.radio label,
+.checkbox label {
+    padding-left: 24px;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #1e293b;
+    cursor: pointer;
+    user-select: none;
+}
+
+.radio input[type="radio"],
+.checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin-left: -24px;
+    margin-right: 8px;
+    cursor: pointer;
+    accent-color: #007bff;
+}
+
+/* ---- Ad Preview Panel ---- */
+.panel .panel-body {
+    background: #fff;
+}
+
+.panel-body span {
+    display: block;
+    margin-bottom: 12px;
+    color: #1e293b;
+    line-height: 1.6;
+}
+
+.panel-body span:last-child {
+    margin-bottom: 0;
+}
+
+#ad-preview-headline {
+    font-weight: 700;
+    font-size: 16px;
+    color: #007bff;
+    margin-bottom: 8px;
+}
+
+#ad-preview-body {
+    font-size: 14px;
+    color: #475569;
+    line-height: 1.5;
+}
+
+#ad-preview-url {
+    font-size: 13px;
+    color: #0d9488;
+    font-weight: 500;
+}
+
+/* ---- Form Separator ---- */
+.form_seperator {
+    border-top: 2px solid #e2e8f0;
+    margin: 24px 0 !important;
+}
+
+/* ---- Info Text ---- */
+.infotext {
+    display: block;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: #64748b;
+    font-weight: 400;
+    line-height: 1.6;
+}
+
+/* ---- Loader ---- */
+.loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    opacity: 0.7;
+}
+
+/* ---- Control Label ---- */
+.control-label {
+    font-weight: 600;
+    color: #1e293b;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+/* ---- Responsive Design ---- */
+@media (max-width: 768px) {
+    .setup-page-header {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px 16px;
+    }
+
+    .setup-page-header__icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    .setup-page-header__icon .glyphicon {
+        font-size: 20px;
+    }
+
+    .setup-page-header__title {
+        font-size: 20px;
+    }
+
+    .setup-page-header__subtitle {
+        font-size: 13px;
+    }
+
+    .panel-heading {
+        padding: 14px 16px;
+        font-size: 13px;
+    }
+
+    .panel-body {
+        padding: 16px;
+    }
+
+    .btn {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+
+    .form-control {
+        padding: 8px 10px;
+        font-size: 14px;
+    }
+
+    .control-label {
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 480px) {
+    .setup-page-header {
+        padding: 16px 12px;
+    }
+
+    .setup-page-header__title {
+        font-size: 18px;
+    }
+
+    .setup-page-header__subtitle {
+        font-size: 12px;
+    }
+}
+</style>
 
 <?php template_bottom();

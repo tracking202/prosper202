@@ -14,6 +14,7 @@ use Prosper202\Database\Tables\AttributionTables;
 use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
+use Prosper202\Database\Tables\SyncTables;
 use Prosper202\Database\Exceptions\SchemaInstallException;
 
 /**
@@ -21,15 +22,13 @@ use Prosper202\Database\Exceptions\SchemaInstallException;
  */
 final class SchemaInstaller
 {
-    private mysqli $connection;
     /** @var array<string> */
     private array $createdTables = [];
     /** @var array<string> */
     private array $errors = [];
 
-    public function __construct(mysqli $connection)
+    public function __construct(private readonly mysqli $connection)
     {
-        $this->connection = $connection;
     }
 
     /**
@@ -45,6 +44,7 @@ final class SchemaInstaller
 
         try {
             $this->createCoreTables();
+            $this->createSyncTables();
             $this->createUserTables();
             $this->createClickTables();
             $this->createTrackingTables();
@@ -81,6 +81,14 @@ final class SchemaInstaller
     public function createUserTables(): void
     {
         $this->createTablesFromDefinitions(UserTables::getDefinitions());
+    }
+
+    /**
+     * Create server-side sync orchestration tables.
+     */
+    public function createSyncTables(): void
+    {
+        $this->createTablesFromDefinitions(SyncTables::getDefinitions());
     }
 
     /**

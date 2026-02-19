@@ -12,13 +12,13 @@ use Prosper202\Database\Exceptions\PartitionException;
  */
 final class PartitionInstaller
 {
-    private mysqli $connection;
+    private readonly mysqli $connection;
     private bool $partitioningSupported;
 
     public function __construct(mysqli $connection)
     {
         $this->connection = $connection;
-        $this->partitioningSupported = PartitionStrategy::isSupported($connection);
+        $this->partitioningSupported = PartitionStrategy::isSupported($this->connection);
     }
 
     /**

@@ -132,15 +132,15 @@ if ($_GET['t202id']) {
 //INSERT THIS CLICK BELOW, if this click doesn't already exisit
 
 //get mysql variables 
-$mysql['user_id'] = $db->real_escape_string($tracker_row['user_id']);
-$mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
-$mysql['ppc_account_id'] = $db->real_escape_string($tracker_row['ppc_account_id']);
-$mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
-$mysql['click_payout'] = $db->real_escape_string($tracker_row['aff_campaign_payout']);
+$mysql['user_id'] = $db->real_escape_string((string) $tracker_row['user_id']);
+$mysql['aff_campaign_id'] = $db->real_escape_string((string) $tracker_row['aff_campaign_id']);
+$mysql['ppc_account_id'] = $db->real_escape_string((string) $tracker_row['ppc_account_id']);
+$mysql['click_cpc'] = $db->real_escape_string((string) $tracker_row['click_cpc']);
+$mysql['click_payout'] = $db->real_escape_string((string) $tracker_row['aff_campaign_payout']);
 $mysql['click_time'] = time();
 
-$mysql['landing_page_id'] = $db->real_escape_string($tracker_row['landing_page_id']);
-$mysql['text_ad_id'] = $db->real_escape_string($tracker_row['text_ad_id']);
+$mysql['landing_page_id'] = $db->real_escape_string((string) $tracker_row['landing_page_id']);
+$mysql['text_ad_id'] = $db->real_escape_string((string) $tracker_row['text_ad_id']);
 
 //now gather variables for the clicks record db
 //lets determine if cloaking is on
@@ -162,7 +162,7 @@ if ($cloaking_on == true) {
 
 	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
 	$click_cloaking_site_url_id = INDEXES::get_site_url_id($db); 
-	$mysql['click_cloaking_site_url_id'] = $db->real_escape_string($click_cloaking_site_url_id);         
+	$mysql['click_cloaking_site_url_id'] = $db->real_escape_string((string) $click_cloaking_site_url_id);         
 	
 }
 
@@ -191,7 +191,7 @@ $data=($de->setDirtyHour($mysql['click_id']));
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 
 $click_redirect_site_url_id = INDEXES::get_site_url_id($db); 
-$mysql['click_redirect_site_url_id'] = $db->real_escape_string($click_redirect_site_url_id);
+$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string) $click_redirect_site_url_id);
 
 
 

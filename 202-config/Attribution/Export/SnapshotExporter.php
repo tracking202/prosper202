@@ -8,7 +8,7 @@ use Prosper202\Attribution\Snapshot;
 
 final class SnapshotExporter
 {
-    private string $basePath;
+    private readonly string $basePath;
 
     public function __construct(?string $basePath = null)
     {
@@ -77,7 +77,7 @@ final class SnapshotExporter
     private function writeXls(string $directory, string $fileBase, array $snapshots): string
     {
         $path = $directory . DIRECTORY_SEPARATOR . $fileBase . '.xls';
-        $rows = array_map([$this, 'normaliseSnapshot'], $snapshots);
+        $rows = array_map($this->normaliseSnapshot(...), $snapshots);
 
         $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 

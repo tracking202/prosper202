@@ -5,7 +5,7 @@ use GuzzleHttp\json_decode;
 include_once(__DIR__ . '/functions-upgrade.php');
 
 // Add ipAddress function
-function ipAddress($ip_address)
+function ipAddress($ip_address): stdClass
 {
     $ip = new stdClass;
     if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
@@ -28,12 +28,12 @@ function ipAddress($ip_address)
 //our own die, that will display the them around the error message
 
 // Add prosper_log function
-function prosper_log($category, $message) {
+function prosper_log($category, $message): void {
     // Simple logging function - you can expand this as needed
     error_log("[Prosper202][$category] $message");
 }
 
-function get_absolute_url()
+function get_absolute_url(): string
 {
 	$absolutepath = substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 	$absolutepath = str_replace('\\', '/', $absolutepath);
@@ -54,22 +54,48 @@ function _die($message): never
 
 
 //our own function for controling mysqls and monitoring then.
-function _mysqli_query($sql)
+/**
+ * Execute a MySQL query.
+ *
+ * Supports two calling conventions:
+ * - _mysqli_query($sql) - uses global $db
+ * - _mysqli_query($db, $sql) - uses provided $db
+ *
+ * @param \mysqli|string $db_or_sql Database connection or SQL query
+ * @param string|null $sql SQL query (if first param is db connection)
+ * @return \mysqli_result|bool
+ *
+ * @overload
+ * @param string $sql
+ * @return \mysqli_result|bool
+ *
+ * @overload
+ * @param \mysqli $db
+ * @param string $sql
+ * @return \mysqli_result|bool
+ */
+function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
 {
-	global $db;
+	// Support both calling conventions:
+	//   _mysqli_query($sql)         — 1 arg, uses global $db
+	//   _mysqli_query($db, $sql)    — 2 args, uses provided $db
+	if ($sql === null) {
+		$sql = $db_or_sql;
+		global $db;
+	} else {
+		$db = $db_or_sql;
+	}
 
-	// Handle both DB instance and direct mysqli connection
 	if ($db instanceof \mysqli) {
 		$result = @$db->query($sql);
 	} else {
-		// Assume $db is a DB wrapper class with getConnection method
 		$connection = $db->getConnection();
 		$result = @$connection->query($sql);
 	}
 	return $result;
 }
 
-function salt_user_pass($user_pass)
+function salt_user_pass($user_pass): string
 {
 
 	$salt = '202';
@@ -105,7 +131,7 @@ if (!function_exists('array_any')) {
 }
 
 
-function is_installed()
+function is_installed(): bool
 {
 	// Skip the check if we're accessing the installer or API key setup
 	if (
@@ -132,7 +158,7 @@ function is_installed()
 	return false;
 }
 
-function upgrade_needed()
+function upgrade_needed(): bool
 {
 
 	// Call static methods
@@ -145,7 +171,7 @@ function upgrade_needed()
 	}
 }
 
-function info_top()
+function info_top(): void
 {
 	$wp202 = getWallpaper();
 ?>
@@ -330,7 +356,7 @@ function info_top()
 						if ($lastDecimal == '0') {
 							$calcVersion = $decimals[0] . '.' . ($decimals[1] - 1) . '.9';
 						} else {
-							$calcVersion = $decimals[0] . '.' . $decals[1] . '.' . ($lastDecimal - 1);
+							$calcVersion = $decimals[0] . '.' . $decimals[1] . '.' . ($lastDecimal - 1);
 						}
 
 						if ($calcVersion == $version) {
@@ -382,6 +408,7 @@ function info_top()
 								$log .= "Temporary directory doesn't exist or isn't writable. ";
 							}
 
+							$upgrade_done = false;
 							if ($FilesUpdated == true) {
 								// Clear all PHP caches
 								clear_php_caches();

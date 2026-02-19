@@ -12,11 +12,11 @@ use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use RuntimeException;
 use Throwable;
 
-final class MysqlModelRepository implements ModelRepositoryInterface
+final readonly class MysqlModelRepository implements ModelRepositoryInterface
 {
     public function __construct(
-        private readonly mysqli $writeConnection,
-        private readonly ?mysqli $readConnection = null
+        private mysqli $writeConnection,
+        private ?mysqli $readConnection = null
     ) {
     }
 
@@ -284,7 +284,7 @@ final class MysqlModelRepository implements ModelRepositoryInterface
             $params[] = &$values[$index];
         }
 
-        if (!call_user_func_array([$statement, 'bind_param'], $params)) {
+        if (!call_user_func_array($statement->bind_param(...), $params)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }

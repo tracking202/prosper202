@@ -10,7 +10,7 @@ $mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_publ
 $tracker_sql = "SELECT  landing_page_type
 				FROM      202_landing_pages
 				WHERE   landing_page_id_public='".$mysql['landing_page_id_public']."'";
-$tracker_row = memcache_mysql_fetch_assoc($db);       
+$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);       
 
 if (!$tracker_row) { die(); }
 if ($tracker_row['landing_page_type'] == 0) { 

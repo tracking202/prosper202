@@ -9,35 +9,35 @@ use InvalidArgumentException;
 /**
  * Immutable value object describing a scheduled attribution export job.
  */
-final class ExportJob
+final readonly class ExportJob
 {
     /**
      * @param array<string, mixed> $options
      */
     public function __construct(
-        public readonly ?int $exportId,
-        public readonly int $userId,
-        public readonly int $modelId,
-        public readonly ScopeType $scopeType,
-        public readonly ?int $scopeId,
-        public readonly int $startHour,
-        public readonly int $endHour,
-        public readonly ExportFormat $format,
-        public readonly array $options,
-        public readonly ?ExportWebhook $webhook,
-        public readonly ExportStatus $status,
-        public readonly int $queuedAt,
-        public readonly ?int $startedAt,
-        public readonly ?int $completedAt,
-        public readonly ?int $failedAt,
-        public readonly ?string $filePath,
-        public readonly ?int $rowsExported,
-        public readonly ?string $lastError,
-        public readonly ?int $webhookAttemptedAt,
-        public readonly ?int $webhookStatusCode,
-        public readonly ?string $webhookResponseBody,
-        public readonly int $createdAt,
-        public readonly int $updatedAt
+        public ?int $exportId,
+        public int $userId,
+        public int $modelId,
+        public ScopeType $scopeType,
+        public ?int $scopeId,
+        public int $startHour,
+        public int $endHour,
+        public ExportFormat $format,
+        public array $options,
+        public ?ExportWebhook $webhook,
+        public ExportStatus $status,
+        public int $queuedAt,
+        public ?int $startedAt,
+        public ?int $completedAt,
+        public ?int $failedAt,
+        public ?string $filePath,
+        public ?int $rowsExported,
+        public ?string $lastError,
+        public ?int $webhookAttemptedAt,
+        public ?int $webhookStatusCode,
+        public ?string $webhookResponseBody,
+        public int $createdAt,
+        public int $updatedAt
     ) {
         if ($this->startHour > $this->endHour) {
             throw new InvalidArgumentException('Export start hour must be before the end hour.');

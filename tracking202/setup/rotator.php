@@ -94,47 +94,67 @@ if (isset($_GET['delete_rotator_id'])) {
 
 
 template_top('Smart Redirector'); ?>
+<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
-<?php include_once __DIR__ . '/_config/setup_nav.php'; ?>
-
-<div class="row" style="margin-bottom: 15px;">
+<!-- Page Header - Design System -->
+<div class="row" style="margin-bottom: 28px;">
 	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-5">
-				<h6>Smart Redirector Setup</h6>
+		<div class="setup-page-header">
+			<div class="setup-page-header__icon">
+				<span class="glyphicon glyphicon-refresh"></span>
 			</div>
-			<div class="col-xs-7">
-				<div class="error pull-right" id="form_erors" style="display: none;margin-top: 20px;">
-					<small><span class="fui-alert"></span> Hey! Make sure all field are filled.</small>
-				</div>
-				<div class="<?php if ($error) echo "error";
-							else echo "success"; ?> pull-right" id="form_response" style="margin-top: 20px;">
-					<small>
-						<?php if ($error) { ?>
-							<span class="fui-alert"></span> There were errors with your submission. <?php echo $error['token']; ?>
-						<?php } ?>
-						<?php if ($add_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.
-						<?php } ?>
-						<?php if ($delete_success == true) { ?>
-							<span class="fui-check-inverted"></span> Your deletion was successful. You have successfully removed a redirector.
-						<?php } ?>
-					</small>
-				</div>
+			<div class="setup-page-header__text">
+				<h1 class="setup-page-header__title">Redirector</h1>
+				<p class="setup-page-header__subtitle">Create intelligent routing rules based on country, device, browser, or custom criteria</p>
 			</div>
 		</div>
 	</div>
+</div>
+
+<div class="row" style="margin-bottom: 15px; display: none;" id="form_erors">
 	<div class="col-xs-12">
-		<small>Setup Smart Redirector, to redirect visitors based on rules you define.</small>
+		<div class="alert alert-danger">
+			<i class="fa fa-exclamation-circle"></i> Hey! Make sure all fields are filled.
+		</div>
 	</div>
 </div>
+
+<?php if ($error) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-danger">
+			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
+		</div>
+	</div>
+</div>
+<?php } ?>
+
+<?php if ($add_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
+		</div>
+	</div>
+</div>
+<?php } ?>
+
+<?php if ($delete_success == true) { ?>
+<div class="row" style="margin-bottom: 15px;">
+	<div class="col-xs-12">
+		<div class="alert alert-success">
+			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed a redirector.
+		</div>
+	</div>
+</div>
+<?php } ?>
 
 <div class="row form_seperator" style="margin-bottom:15px;">
 	<div class="col-xs-12"></div>
 </div>
 
 <div class="row">
-	<div class="col-xs-7">
+	<div class="col-md-6">
 		<small><strong>Add New Smart Redirector</strong></small><br />
 		<span class="infotext">Give a name for your redirector.</span>
 
@@ -147,8 +167,8 @@ template_top('Smart Redirector'); ?>
 		</form>
 	</div>
 
-	<div class="col-xs-5">
-		<div class="panel panel-default">
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">My Smart Redirectors</div>
 
 			<div class="panel-body">
@@ -161,7 +181,7 @@ template_top('Smart Redirector'); ?>
 						$sql = "SELECT * FROM `202_rotators` WHERE `user_id`='" . $mysql['user_id'] . "' ORDER BY `name` ASC";
 						$result = $db->query($sql) or record_mysql_error($sql);
 						if ($result->num_rows == 0) {
-						?><li>You have not added any redirectors.</li><?php
+						?><li class="empty-state">No redirectors added yet</li><?php
 																	}
 
 																	while ($row = $result->fetch_array(MYSQLI_ASSOC)) {
@@ -169,7 +189,7 @@ template_top('Smart Redirector'); ?>
 																		$html['id'] = htmlentities((string) $row['id'], ENT_QUOTES, 'UTF-8');
 
 																		if ($userObj->hasPermission("remove_rotator")) {
-																			printf('<li><span class="filter_rotator_name">%s</span> - <a href="?delete_rotator_id=%s&delete_rotator_name=%s">remove</a></li>', $html['name'], $html['id'], $html['name']);
+																			printf('<li><span class="filter_rotator_name">%s</span> <a href="?delete_rotator_id=%s&delete_rotator_name=%s" class="list-action list-action-danger" onclick="return confirmSubmit(\'Are you sure?\');">remove</a></li>', $html['name'], $html['id'], $html['name']);
 																		} else {
 																			printf('<li><span class="filter_rotator_name">%s</span></li>', $html['name']);
 																		}
@@ -192,7 +212,7 @@ template_top('Smart Redirector'); ?>
 																				}
 
 										?>
-									<li><?php echo $rule_row['rule_name'] . " - " . $criteria; ?> (<a href="" id="rule_details" data-id="<?php echo $rule_row['id']; ?>" data-toggle="modal" data-target="#rule_values_modal">Details</a>)</li>
+									<li><span class="filter_rule_name"><?php echo $rule_row['rule_name']; ?></span><span class="rule-criteria"><?php echo $criteria; ?></span> <a href="" id="rule_details" data-id="<?php echo $rule_row['id']; ?>" data-toggle="modal" data-target="#rule_values_modal" class="list-action">Details</a></li>
 								<?php }
 																			echo "</ul>";
 								?>
@@ -404,4 +424,396 @@ template_top('Smart Redirector'); ?>
 		</div>
 	</div>
 </div>
+<style>
+/* ===========================================
+   SMART REDIRECTOR - Modern Design System
+   =========================================== */
+
+/* Page Header - Blue Gradient */
+.setup-page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+}
+
+.setup-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+    font-size: 24px;
+    color: #fff;
+}
+
+.setup-page-header__icon .glyphicon {
+    font-size: 24px;
+    color: #fff;
+}
+
+.setup-page-header__text {
+    flex: 1;
+}
+
+.setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.setup-page-header__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 400;
+    line-height: 1.4;
+}
+
+/* Panel Styles - Modern Design */
+.panel-default {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    background: #fff;
+    transition: box-shadow 0.2s ease;
+}
+
+.panel-default:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.panel-heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 20px;
+    font-weight: 600;
+    color: #1e293b;
+    font-size: 15px;
+}
+
+.panel-body {
+    padding: 20px;
+}
+
+/* Form Elements - Modern Style */
+.form-control {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+    outline: none;
+}
+
+.input-sm {
+    padding: 6px 10px;
+    font-size: 13px;
+    height: 32px;
+}
+
+/* Button Styles */
+.btn {
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    border: none;
+    padding: 8px 16px;
+    font-size: 14px;
+}
+
+.btn-p202 {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+}
+
+.btn-p202:hover {
+    background: linear-gradient(135deg, #0056b3 0%, #003d82 100%);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4);
+    color: #fff;
+    text-decoration: none;
+}
+
+.btn-default {
+    background: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+}
+
+.btn-default:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+
+.btn-xs {
+    padding: 6px 12px;
+    font-size: 12px;
+    height: auto;
+}
+
+/* Alert Styles - Success & Danger */
+.alert {
+    border-radius: 8px;
+    padding: 12px 16px;
+    border: 1px solid;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    margin-bottom: 0;
+}
+
+.alert-success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border-color: #86efac;
+    color: #166534;
+}
+
+.alert-success .fa {
+    color: #22c55e;
+    font-size: 16px;
+}
+
+.alert-danger {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border-color: #fca5a5;
+    color: #991b1b;
+}
+
+.alert-danger .fa {
+    color: #ef4444;
+    font-size: 16px;
+}
+
+/* Section Separator */
+.form_seperator {
+    border-bottom: 1px solid #e2e8f0;
+}
+
+/* List Styling */
+.list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.list > li {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 13px;
+    color: #475569;
+}
+
+.list > li:last-child {
+    border-bottom: none;
+}
+
+.list > li:hover {
+    background: #f8fafc;
+}
+
+.list > li a {
+    color: #007bff;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.list > li a:hover {
+    text-decoration: underline;
+}
+
+/* Info Text */
+.infotext {
+    font-size: 13px;
+    color: #64748b;
+    display: block;
+    margin-bottom: 12px;
+}
+
+/* Checkbox Styling */
+.checkbox {
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    margin-right: 6px;
+    accent-color: #007bff;
+}
+
+/* Modal Styles */
+.modal-header {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 20px;
+}
+
+.modal-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+    margin: 0;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-footer {
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+    padding: 12px 16px;
+}
+
+/* Form Group Styling */
+.form-group {
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.form-group label {
+    font-size: 14px;
+    color: #334155;
+    font-weight: 500;
+    margin: 0;
+    white-space: nowrap;
+}
+
+.form-group select,
+.form-group input {
+    flex: 1;
+    max-width: 200px;
+}
+
+/* List Item Name Styling */
+.filter_rotator_name,
+.filter_rule_name {
+    font-weight: 500;
+    color: #1e293b;
+    flex: 1;
+    min-width: 100px;
+}
+
+.rule-criteria {
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 400;
+}
+
+/* List Action Links */
+.list-action {
+    color: #007bff;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.list-action:hover {
+    background: #f0f7ff;
+    color: #0056b3;
+    text-decoration: none;
+}
+
+.list-action-danger {
+    color: #dc2626;
+}
+
+.list-action-danger:hover {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 24px 16px;
+    color: #9ca3af;
+    border: 1px dashed #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.list > li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .setup-page-header {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px 16px;
+    }
+
+    .setup-page-header__icon {
+        width: 48px;
+        height: 48px;
+        font-size: 20px;
+    }
+
+    .setup-page-header__title {
+        font-size: 20px;
+    }
+
+    .setup-page-header__subtitle {
+        font-size: 13px;
+    }
+
+    .alert {
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 16px;
+    }
+
+    .form-group {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .form-group select,
+    .form-group input {
+        width: 100%;
+        max-width: none;
+    }
+
+    .list > li {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .list-action {
+        align-self: flex-start;
+    }
+}
+</style>
+
 <?php template_bottom();

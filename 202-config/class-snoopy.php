@@ -257,8 +257,6 @@ class Snoopy
 
 	function submit($URI, $formvars = "", $formfiles = "")
 	{
-		unset($postdata);
-
 		$postdata = $this->_prepare_post_body($formvars, $formfiles);
 
 		$URI_PARTS = parse_url((string) $URI);
@@ -783,7 +781,7 @@ class Snoopy
 		fwrite($fp, $headers . $body, strlen($headers . $body));
 
 		$this->_redirectaddr = false;
-		unset($this->headers);
+		$this->headers = [];
 
 		while ($currentHeader = fgets($fp, $this->_maxlinelen)) {
 			if ($this->read_timeout > 0 && $this->_check_timeout($fp)) {
@@ -946,7 +944,7 @@ class Snoopy
 		$result_headers = file("$headerfile");
 
 		$this->_redirectaddr = false;
-		unset($this->headers);
+		$this->headers = [];
 
 		for ($currentHeader = 0; $currentHeader < count($result_headers); $currentHeader++) {
 

@@ -1,9 +1,9 @@
 <?php
 
 declare(strict_types=1);
-#only allow numeric t202ids
-$t202id = $_GET['t202id'];
-if (!is_numeric($t202id)) die();
+#only allow numeric t202ids, reject 0 as invalid
+$t202id = $_GET['t202id'] ?? '';
+if (!is_numeric($t202id) || (int)$t202id <= 0) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
 include_once(substr(__DIR__, 0, -21) . '/202-config/connect2.php');
@@ -107,7 +107,69 @@ if ($usedCachedRedirect == true) {
 		}
 	}
 
-	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+	http_response_code(503);
+	die('<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Service Temporarily Unavailable</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .error-card {
+            background: white;
+            border-radius: 16px;
+            padding: 48px;
+            max-width: 480px;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+        }
+        .error-icon {
+            width: 80px;
+            height: 80px;
+            background: #fef3c7;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+        .error-icon svg { width: 40px; height: 40px; color: #d97706; }
+        h1 { color: #1f2937; font-size: 24px; margin-bottom: 12px; }
+        p { color: #6b7280; font-size: 16px; line-height: 1.6; }
+        .error-code {
+            display: inline-block;
+            background: #f3f4f6;
+            color: #6b7280;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-top: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-card">
+        <div class="error-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+            </svg>
+        </div>
+        <h1>Service Temporarily Unavailable</h1>
+        <p>We are experiencing technical difficulties. Please try again in a few moments.</p>
+        <span class="error-code">Error 503</span>
+    </div>
+</body>
+</html>');
 }
 
 //grab tracker data
@@ -144,6 +206,73 @@ $tracker_sql = "SELECT 202_trackers.user_id,
 
 $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
+// Check if tracker exists BEFORE using its data
+if (!$tracker_row) {
+	http_response_code(404);
+	die('<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tracking Link Not Found</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .error-card {
+            background: white;
+            border-radius: 16px;
+            padding: 48px;
+            max-width: 480px;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+        }
+        .error-icon {
+            width: 80px;
+            height: 80px;
+            background: #fee2e2;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+        .error-icon svg { width: 40px; height: 40px; color: #dc2626; }
+        h1 { color: #1f2937; font-size: 24px; margin-bottom: 12px; }
+        p { color: #6b7280; font-size: 16px; line-height: 1.6; }
+        .error-code {
+            display: inline-block;
+            background: #f3f4f6;
+            color: #6b7280;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-top: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-card">
+        <div class="error-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+        </div>
+        <h1>Tracking Link Not Found</h1>
+        <p>The tracking link you requested does not exist or has been removed. Please check the URL and try again.</p>
+        <span class="error-code">Error 404</span>
+    </div>
+</body>
+</html>');
+}
+
 if ($memcacheWorking) {
 
 	$url = $tracker_row['aff_campaign_url'];
@@ -162,11 +291,6 @@ $mysql['user_id'] = $db->real_escape_string((string)($tracker_row['user_id'] ?? 
 //now this sets timezone
 date_default_timezone_set($tracker_row['user_timezone']);
 
-
-if (!$tracker_row) {
-	die();
-}
-
 //get mysql variables 
 $mysql['aff_campaign_id'] = $db->real_escape_string((string)($tracker_row['aff_campaign_id'] ?? '0'));
 $mysql['ppc_account_id'] = $db->real_escape_string((string)($tracker_row['ppc_account_id'] ?? '0'));
@@ -176,7 +300,7 @@ if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
 	$_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
 	if (is_numeric($_GET['t202b'])) {
 		$bid = number_format($_GET['t202b'], 5, '.', '');
-		$mysql['click_cpc'] = $db->real_escape_string($bid);
+		$mysql['click_cpc'] = $db->real_escape_string((string)$bid);
 	} else {
 		$mysql['click_cpc'] = $db->real_escape_string((string)($tracker_row['click_cpc'] ?? ''));
 	}
@@ -446,7 +570,7 @@ if ($total_vars > 0) {
 	$variables = implode(",", $custom_var_ids);
 	$variable_set_id = INDEXES::get_variable_set_id($db, $variables);
 
-	$mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);
+	$mysql['variable_set_id'] = $db->real_escape_string((string)$variable_set_id);
 
 	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
 	$var_result = $db->query($var_sql) or record_mysql_error($db);

@@ -93,12 +93,12 @@ class SessionCookie extends \Slim\Middleware
         ini_set('session.use_cookies', '0');
         session_cache_limiter(false);
         session_set_save_handler(
-            [$this, 'open'],
-            [$this, 'close'],
-            [$this, 'read'],
-            [$this, 'write'],
-            [$this, 'destroy'],
-            [$this, 'gc']
+            $this->open(...),
+            $this->close(...),
+            $this->read(...),
+            $this->write(...),
+            $this->destroy(...),
+            $this->gc(...)
         );
     }
 

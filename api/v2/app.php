@@ -5,17 +5,17 @@ declare(strict_types=1);
 use Api\Attribution\Controller;
 use Prosper202\Attribution\AttributionService;
 use Prosper202\Attribution\AttributionServiceFactory;
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
 
 require_once __DIR__ . '/../../202-config/connect.php';
 require_once __DIR__ . '/../../vendor/autoload.php';
 
-\Slim\Slim::registerAutoloader();
-
 const ATTRIBUTION_AUTH_OVERRIDE_KEY = '__prosper_attribution_auth_override';
 
-function create_attribution_app(?AttributionService $service = null): \Slim\Slim
+function create_attribution_app(?AttributionService $service = null): \Slim\App
 {
-    $app = new \Slim\Slim();
+    $app = new \Slim\App();
     $service ??= AttributionServiceFactory::create();
     $controller = new Controller($service);
 
@@ -24,157 +24,189 @@ function create_attribution_app(?AttributionService $service = null): \Slim\Slim
     return $app;
 }
 
-function register_attribution_routes(\Slim\Slim $app, Controller $controller): void
+function register_attribution_routes(\Slim\App $app, Controller $controller): void
 {
     $app->group('/attribution', function () use ($app, $controller): void {
-        $app->get('/models', function () use ($app, $controller): void {
-            $params = $app->request()->params();
-            $userId = attribution_authorized_user_id($app);
+        $app->get('/models', function (Request $request, Response $response) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $userId = attribution_authorized_user_id($request);
             if ($userId !== null) {
                 $params['user_id'] = $userId;
             }
 
             $result = $controller->listModels($params);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'view_attribution_reports'));
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('view_attribution_reports'));
 
-        $app->post('/models', function () use ($app, $controller): void {
-            $params = $app->request()->params();
-            $auth = attribution_authorized_request($app);
+        $app->post('/models', function (Request $request, Response $response) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $auth = attribution_authorized_user_id($request);
             if ($auth !== null) {
                 $params['user_id'] = $auth;
             }
 
-            $payload = array_merge($params, decode_json_body($app));
+            $payload = array_merge($params, decode_json_body($request));
             $result = $controller->createModel($payload);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('manage_attribution_models'));
 
-        $app->get('/models/:modelId/snapshots', function ($modelId) use ($app, $controller): void {
-            $params = $app->request()->params();
-            $userId = attribution_authorized_user_id($app);
+        $app->get('/models/{modelId}/snapshots', function (Request $request, Response $response, array $args) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $userId = attribution_authorized_user_id($request);
             if ($userId !== null) {
                 $params['user_id'] = $userId;
             }
 
-            $result = $controller->getSnapshots($params, ['modelId' => $modelId]);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'view_attribution_reports'));
+            $result = $controller->getSnapshots($params, ['modelId' => $args['modelId']]);
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('view_attribution_reports'));
 
-        $app->get('/models/:modelId/exports', function ($modelId) use ($app, $controller): void {
-            $params = $app->request()->params();
-            $auth = attribution_authorized_request($app);
+        $app->get('/models/{modelId}/exports', function (Request $request, Response $response, array $args) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $auth = attribution_authorized_user_id($request);
             if ($auth !== null) {
                 $params['user_id'] = $auth;
             }
 
-            $result = $controller->listExports($params, ['modelId' => $modelId]);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+            $result = $controller->listExports($params, ['modelId' => $args['modelId']]);
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('manage_attribution_models'));
 
-        $app->post('/models/:modelId/exports', function ($modelId) use ($app, $controller): void {
-            $params = $app->request()->params();
-            $auth = attribution_authorized_request($app);
+        $app->post('/models/{modelId}/exports', function (Request $request, Response $response, array $args) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $auth = attribution_authorized_user_id($request);
             if ($auth !== null) {
                 $params['user_id'] = $auth;
             }
 
-            $payload = array_merge($params, decode_json_body($app));
-            $result = $controller->scheduleExport((int) $modelId, $payload);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+            $payload = array_merge($params, decode_json_body($request));
+            $result = $controller->scheduleExport((int) $args['modelId'], $payload);
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('manage_attribution_models'));
 
-        $app->patch('/models/:modelId', function ($modelId) use ($app, $controller): void {
-            $params = $app->request()->params();
-            $auth = attribution_authorized_request($app);
+        $app->patch('/models/{modelId}', function (Request $request, Response $response, array $args) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $auth = attribution_authorized_user_id($request);
             if ($auth !== null) {
                 $params['user_id'] = $auth;
             }
 
-            $payload = array_merge($params, decode_json_body($app));
-            $result = $controller->updateModel((int) $modelId, $payload);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+            $payload = array_merge($params, decode_json_body($request));
+            $result = $controller->updateModel((int) $args['modelId'], $payload);
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('manage_attribution_models'));
 
-        $app->delete('/models/:modelId', function ($modelId) use ($app, $controller): void {
-            $params = $app->request()->params();
-            $auth = attribution_authorized_request($app);
+        $app->delete('/models/{modelId}', function (Request $request, Response $response, array $args) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $auth = attribution_authorized_user_id($request);
             if ($auth !== null) {
                 $params['user_id'] = $auth;
             }
 
-            $result = $controller->deleteModel((int) $modelId, $params);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+            $result = $controller->deleteModel((int) $args['modelId'], $params);
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('manage_attribution_models'));
 
-        $app->get('/sandbox', function () use ($app, $controller): void {
-            $params = $app->request()->params();
-            $auth = attribution_authorized_request($app);
+        $app->get('/sandbox', function (Request $request, Response $response) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $auth = attribution_authorized_user_id($request);
             if ($auth !== null) {
                 $params['user_id'] = $auth;
             }
 
             $result = $controller->sandbox($params);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'manage_attribution_models'));
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('manage_attribution_models'));
 
-        $app->get('/metrics', function () use ($app, $controller): void {
-            $params = $app->request()->params();
-            $userId = attribution_authorized_user_id($app);
+        $app->get('/metrics', function (Request $request, Response $response) use ($controller): Response {
+            global $db;
+            $params = $request->getQueryParams();
+            $userId = attribution_authorized_user_id($request);
             if ($userId !== null) {
                 $params['user_id'] = $userId;
             }
 
             $result = $controller->getMetrics($params);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'view_attribution_reports'));
 
-        $app->get('/anomalies', function () use ($app, $controller): void {
-            $params = $app->request()->params();
-            $userId = attribution_authorized_user_id($app);
+            // Supplement with total click count from 202_clicks (attribution only
+            // counts clicks tied to conversions; the dashboard should show ALL clicks)
+            if ($result['status'] === 200 && $db && $userId !== null) {
+                $startHour = isset($params['start_hour']) ? (int) $params['start_hour'] : (time() - (24 * 3600));
+                $endHour = isset($params['end_hour']) ? (int) $params['end_hour'] : time();
+                $scope = isset($params['scope']) ? (string) $params['scope'] : 'global';
+                $scopeId = isset($params['scope_id']) && is_numeric($params['scope_id']) ? (int) $params['scope_id'] : null;
+
+                $clickSql = "SELECT COUNT(*) AS total FROM 202_clicks WHERE user_id = ? AND click_time BETWEEN ? AND ?";
+                $bindTypes = 'iii';
+                $bindValues = [$userId, $startHour, $endHour];
+
+                // Apply scope filter to match attribution query filtering
+                $scopeColumns = [
+                    'campaign' => 'aff_campaign_id',
+                    'account' => 'ppc_account_id',
+                    'landing_page' => 'landing_page_id',
+                ];
+                if ($scope !== 'global' && $scopeId !== null && isset($scopeColumns[$scope])) {
+                    $clickSql .= " AND {$scopeColumns[$scope]} = ?";
+                    $bindTypes .= 'i';
+                    $bindValues[] = $scopeId;
+                }
+
+                $stmt = $db->prepare($clickSql);
+                if ($stmt) {
+                    $stmt->bind_param($bindTypes, ...$bindValues);
+                    $stmt->execute();
+                    $clickResult = $stmt->get_result();
+                    $row = $clickResult ? $clickResult->fetch_assoc() : null;
+                    $stmt->close();
+                    if ($row && isset($result['payload']['data']['totals'])) {
+                        $result['payload']['data']['totals']['clicks'] = (int) $row['total'];
+                    }
+                }
+            }
+
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('view_attribution_reports'));
+
+        $app->get('/anomalies', function (Request $request, Response $response) use ($controller): Response {
+            $params = $request->getQueryParams();
+            $userId = attribution_authorized_user_id($request);
             if ($userId !== null) {
                 $params['user_id'] = $userId;
             }
 
             $result = $controller->getAnomalies($params);
-            respond_json($app, $result['payload'], $result['status']);
-        })->add(attribution_authorization_middleware($app, 'view_attribution_reports'));
+            return respond_json($response, $result['payload'], $result['status']);
+        })->add(attribution_authorization_middleware('view_attribution_reports'));
     });
 
-    $app->get('/health', function () use ($app): void {
-        respond_json($app, ['error' => false, 'message' => 'Attribution API ready']);
+    $app->get('/health', function (Request $request, Response $response): Response {
+        return respond_json($response, ['error' => false, 'message' => 'Attribution API ready']);
     });
 }
 
-function attribution_authorization_middleware(\Slim\Slim $app, string $permission): callable
+function attribution_authorization_middleware(string $permission): callable
 {
-    return function () use ($app, $permission): void {
-        $params = $app->request()->params();
+    return function (Request $request, Response $response, callable $next) use ($permission) {
+        $params = $request->getQueryParams();
         $auth = authorize_attribution_request($params, $permission);
         if ($auth['status'] !== 200) {
-            respond_json($app, $auth['payload'], $auth['status']);
-            $app->stop();
-            return;
+            return respond_json($response, $auth['payload'], $auth['status']);
         }
 
-        $environment = $app->environment();
-        $environment['prosper.attribution_auth'] = $auth;
+        $request = $request->withAttribute('prosper.attribution_auth', $auth);
+        return $next($request, $response);
     };
 }
 
-function attribution_authorized_user_id(\Slim\Slim $app): ?int
+function attribution_authorized_user_id(Request $request): ?int
 {
-    $environment = $app->environment();
-    if (isset($environment['prosper.attribution_auth']['user_id'])) {
-        return (int) $environment['prosper.attribution_auth']['user_id'];
+    $auth = $request->getAttribute('prosper.attribution_auth');
+    if (is_array($auth) && isset($auth['user_id'])) {
+        return (int) $auth['user_id'];
     }
 
     return null;
-}
-
-function attribution_authorized_request(\Slim\Slim $app): ?int
-{
-    return attribution_authorized_user_id($app);
 }
 
 /**
@@ -279,7 +311,7 @@ function override_attribution_authorization(?int $userId, array $permissions = [
 
     $GLOBALS[ATTRIBUTION_AUTH_OVERRIDE_KEY] = [
         'user_id' => $userId,
-        'permissions' => array_values(array_unique(array_map('strval', $permissions))),
+        'permissions' => array_values(array_unique(array_map(strval(...), $permissions))),
     ];
 }
 
@@ -296,9 +328,9 @@ function user_has_permission(int $userId, string $permission): bool
 /**
  * @return array<string, mixed>
  */
-function decode_json_body(\Slim\Slim $app): array
+function decode_json_body(Request $request): array
 {
-    $body = (string) $app->request()->getBody();
+    $body = (string) $request->getBody();
     if ($body === '') {
         return [];
     }
@@ -312,10 +344,10 @@ function decode_json_body(\Slim\Slim $app): array
     return is_array($decoded) ? $decoded : [];
 }
 
-function respond_json(\Slim\Slim $app, array $payload, int $status = 200): void
+function respond_json(Response $response, array $payload, int $status = 200): Response
 {
-    $response = $app->response();
-    $response->status($status);
-    $response->header('Content-Type', 'application/json');
-    $response->body(json_encode($payload));
+    $response = $response->withStatus($status);
+    $response = $response->withHeader('Content-Type', 'application/json');
+    $response->getBody()->write(json_encode($payload));
+    return $response;
 }

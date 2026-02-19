@@ -26,14 +26,14 @@ use Prosper202\Attribution\ExportWebhook;
 /**
  * High-level façade for attribution operations consumed by controllers and CLI jobs.
  */
-final class AttributionService
+final readonly class AttributionService
 {
     public function __construct(
-        private readonly ModelRepositoryInterface $modelRepository,
-        private readonly SnapshotRepositoryInterface $snapshotRepository,
-        private readonly TouchpointRepositoryInterface $touchpointRepository,
-        private readonly AuditRepositoryInterface $auditRepository,
-        private readonly ExportJobRepositoryInterface $exportRepository
+        private ModelRepositoryInterface $modelRepository,
+        private SnapshotRepositoryInterface $snapshotRepository,
+        private TouchpointRepositoryInterface $touchpointRepository,
+        private AuditRepositoryInterface $auditRepository,
+        private ExportJobRepositoryInterface $exportRepository
     ) {
     }
 
@@ -44,9 +44,7 @@ final class AttributionService
     {
         $models = $this->modelRepository->findForUser($userId, $filter);
 
-        return array_map(static function (ModelDefinition $model): array {
-            return self::formatModel($model);
-        }, $models);
+        return array_map(self::formatModel(...), $models);
     }
 
     /**
@@ -238,7 +236,7 @@ final class AttributionService
         );
 
         return [
-            'models' => array_map(static fn (ModelDefinition $model): array => self::formatModel($model), $models),
+            'models' => array_map(self::formatModel(...), $models),
             'summary' => [
                 'message' => 'Attribution sandbox scaffolding ready. Computation engine will populate metrics in a subsequent iteration.',
                 'scope' => $scope->value,

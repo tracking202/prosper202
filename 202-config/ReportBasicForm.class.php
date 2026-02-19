@@ -438,7 +438,7 @@ class ReportBasicForm
 
 	/**
 	 * Adds the lead offer_list
-	 * @return string
+	 * @return void
 	 */
 	function setOfferList($arg0)
 	{
@@ -3021,7 +3021,7 @@ class ReportBasicForm
 
 	static function echoCell($str)
 	{
-		echo "\"" . $str . "\"" . ",";
+		echo $str . "\t";
 	}
 
 	static function echoRow()

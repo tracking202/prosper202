@@ -57,7 +57,7 @@ use Prosper202\Validation\ValidationException;
  */
 class AttributionController extends SetupController
 {
-    private AttributionService $attributionService;
+    private readonly AttributionService $attributionService;
     private ModelRepositoryInterface $modelRepository;
     private SetupFormValidator $validator;
     
@@ -248,7 +248,7 @@ class AttributionController extends SetupController
     {
         try {
             return ModelType::from($type);
-        } catch (\ValueError $e) {
+        } catch (\ValueError) {
             throw new ValidationException('Validation failed', ['model_type' => 'Invalid model type']);
         }
     }
@@ -260,8 +260,8 @@ class AttributionController extends SetupController
     {
         $slug = strtolower(trim($name));
         $slug = preg_replace('/[^a-z0-9\-]/', '-', $slug);
-        $slug = preg_replace('/-+/', '-', $slug);
-        return trim($slug, '-');
+        $slug = preg_replace('/-+/', '-', (string) $slug);
+        return trim((string) $slug, '-');
     }
     
     /**

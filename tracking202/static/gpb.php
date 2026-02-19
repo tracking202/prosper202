@@ -276,8 +276,8 @@ if($mysql['ppc_account_id']){
 if (is_numeric($mysql['click_id'])) {
 
 	$conv_time = time();
-	$click_time_to_date = new DateTime(date('Y-m-d h:i:s', $mysql['click_time']));
-	$conv_time_to_date = new DateTime(date('Y-m-d h:i:s', $conv_time));
+	$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $mysql['click_time']));
+	$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
 	$diff = $click_time_to_date->diff($conv_time_to_date);
 	$mysql['time_difference'] =  $db->real_escape_string($diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec');
 	$mysql['conv_time'] = $db->real_escape_string($conv_time);

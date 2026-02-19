@@ -40,12 +40,29 @@ if ($showEdit) {
 
 template_top('Get Trackers');  ?>
 
+<link rel="stylesheet" href="/202-css/design-system.css">
+
+<!-- Page Header - Design System -->
+<div class="row" style="margin-bottom: 28px;">
+	<div class="col-xs-12">
+		<div class="setup-page-header">
+			<div class="setup-page-header__icon">
+				<span class="glyphicon glyphicon-link"></span>
+			</div>
+			<div class="setup-page-header__text">
+				<h1 class="setup-page-header__title">Get Links</h1>
+				<p class="setup-page-header__subtitle">Generate tracking links for your campaigns</p>
+			</div>
+		</div>
+	</div>
+</div>
+
 <div class="row" style="margin-bottom: 15px;">
 	<div class="col-xs-12">
-		<h6>Get tracking links to be used in your campaigns</h6>
-	</div>
-	<div class="col-xs-12">
-		<small>Please make sure to test your links.<br />If you are using a landing page, you should have already installed your landing page code prior to coming to this step.</small>
+		<div class="alert alert-info">
+			<i class="fa fa-info-circle"></i>
+			<strong>Tip:</strong> Make sure to test your links. If using a landing page, install your landing page code first.
+		</div>
 	</div>
 </div>
 
@@ -54,7 +71,7 @@ template_top('Get Trackers');  ?>
 </div>
 
 <div class="row">
-	<div class="col-xs-7">
+	<div class="col-md-6">
 		<form method="post" id="tracking_form" class="form-horizontal" role="form" style="margin:0px 0px 0px 15px;">
 			<?php if ($showEdit) { ?>
 				<input type="hidden" name="edit_tracker" value="1">
@@ -309,13 +326,13 @@ template_top('Get Trackers');  ?>
 		</form>
 	</div>
 
-	<div class="col-xs-4 col-xs-offset-1">
-		<div class="panel panel-default">
+		<div class="col-md-6">
+			<div class="panel panel-default setup-side-panel">
 			<div class="panel-heading">My Tracking Links</div>
 			<div class="panel-body pre-scrollable" style="max-height: 915px;">
 				<div id="filterTrackers">
 					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
-					<ul class="list">
+					<ul class="list setup-list">
 						<?php
 						$trackers_sql = "SELECT 
 									 2tr.tracker_id,
@@ -372,18 +389,18 @@ template_top('Get Trackers');  ?>
 							}
 						?>
 							<li>
-								<span class="small">Id:<?php echo $tracker_row['tracker_id']; ?> -
-									(<?php echo '<span class="filter_tracker_display_name">' . $display_name . '</span> - ' . date('m/d/y', (int)$tracker_row['tracker_time']); ?>)</span> -
+								<span class="filter_tracker_display_name"><?php echo $display_name; ?></span>
+								<span class="filter_tracker_meta">Id:<?php echo $tracker_row['tracker_id']; ?> &bullet; <?php echo date('m/d/y', (int)$tracker_row['tracker_time']); ?></span>
 								<?php if ($tracker_row['landing_page_id'] != 0) { ?>
-									<a href="<?php echo $destination_url; ?>">link</a> -
+									<a href="<?php echo $destination_url; ?>" class="list-action" title="Open tracking link">link</a>
 								<?php } else if ($tracker_row['rotator_id']) { ?>
-									<a href="http://<?php echo getTrackingDomain() . get_absolute_url(); ?>tracking202/redirect/rtr.php?t202id=<?php echo $tracker_row['tracker_id_public']; ?>&t202kw=<?php echo $vars_query; ?>">link</a> -
+									<a href="http://<?php echo getTrackingDomain() . get_absolute_url(); ?>tracking202/redirect/rtr.php?t202id=<?php echo $tracker_row['tracker_id_public']; ?>&t202kw=<?php echo $vars_query; ?>" class="list-action" title="Open tracking link">link</a>
 								<?php } else { ?>
-									<a href="http://<?php echo getTrackingDomain() . get_absolute_url(); ?>tracking202/redirect/dl.php?t202id=<?php echo $tracker_row['tracker_id_public']; ?>&t202kw=<?php echo $vars_query; ?>">link</a> -
+									<a href="http://<?php echo getTrackingDomain() . get_absolute_url(); ?>tracking202/redirect/dl.php?t202id=<?php echo $tracker_row['tracker_id_public']; ?>&t202kw=<?php echo $vars_query; ?>" class="list-action" title="Open tracking link">link</a>
 								<?php } ?>
-								<a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_trackers.php?edit_tracker_id=<?php echo $tracker_row['tracker_id_public']; ?>"><i class="fa fa-pencil-square-o"></i></a>
+								<a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_trackers.php?edit_tracker_id=<?php echo $tracker_row['tracker_id_public']; ?>" class="list-action" title="Edit this tracker"><i class="fa fa-pencil-square-o"></i> edit</a>
 								<?php if ($userObj->hasPermission("remove_tracker")) { ?>
-									- <a href="#" class="delete_tracker" data-id="<?php echo $tracker_row['tracker_id']; ?>"><i class="fa fa-trash"></i></a>
+									<a href="#" class="delete_tracker list-action list-action-danger" data-id="<?php echo $tracker_row['tracker_id']; ?>" title="Delete this tracker" onclick="return confirmSubmit('Are you sure you want to delete this tracker?');"><i class="fa fa-trash"></i> remove</a>
 								<?php } ?>
 							</li>
 						<?php } ?>
@@ -505,4 +522,209 @@ template_top('Get Trackers');  ?>
 
 	});
 </script>
+<style>
+/* Setup Page Header */
+.setup-page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+}
+.setup-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+}
+.setup-page-header__icon .glyphicon {
+    font-size: 28px;
+}
+.setup-page-header__text {
+    flex: 1;
+}
+.setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+}
+.setup-page-header__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* Enhanced Panel Styling */
+.panel {
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border: 1px solid #e2e8f0;
+}
+.panel-heading {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
+    border-bottom: 1px solid #e2e8f0;
+    border-radius: 12px 12px 0 0 !important;
+    padding: 16px 20px;
+}
+.panel-title {
+    font-weight: 600;
+    font-size: 15px;
+    color: #1e293b;
+}
+.panel-body {
+    padding: 24px;
+}
+
+/* Form Enhancements */
+.form-control {
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 14px;
+    transition: all 0.2s ease;
+}
+.form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.15);
+}
+
+/* Button Enhancements */
+.btn-primary {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);
+    transition: all 0.2s ease;
+}
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.35);
+}
+.btn-success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+}
+
+/* Setup List Styling */
+.setup-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.setup-list li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background-color 0.2s ease;
+}
+.setup-list li:last-child {
+    border-bottom: none;
+}
+.setup-list li:hover {
+    background-color: #f9fafb;
+}
+
+.filter_tracker_display_name {
+    font-weight: 600;
+    color: #1e293b;
+    word-break: break-word;
+    font-size: 14px;
+    flex: 1 1 100%;
+}
+
+.filter_tracker_meta {
+    font-size: 12px;
+    color: #64748b;
+    flex: 1 1 100%;
+    margin-top: -8px;
+}
+
+.list-action {
+    text-decoration: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #007bff;
+    background-color: rgba(0, 123, 255, 0.08);
+    white-space: nowrap;
+}
+
+.list-action:hover {
+    color: #0056b3;
+    background-color: rgba(0, 123, 255, 0.15);
+}
+
+.list-action-danger {
+    color: #ef4444;
+    background-color: rgba(239, 68, 68, 0.08);
+}
+
+.list-action-danger:hover {
+    color: #dc2626;
+    background-color: rgba(239, 68, 68, 0.15);
+}
+
+.empty-state {
+    text-align: center;
+    padding: 24px 16px;
+    color: #9ca3af;
+    border: 1px dashed #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .setup-page-header {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px;
+    }
+    .setup-page-header__title {
+        font-size: 20px;
+    }
+
+    .setup-list li {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .filter_tracker_display_name {
+        flex-basis: 100%;
+        margin-bottom: 4px;
+    }
+
+    .filter_tracker_meta {
+        flex-basis: 100%;
+        margin-top: 0;
+        margin-bottom: 4px;
+    }
+
+    .list-action {
+        width: 100%;
+        justify-content: center;
+        flex-basis: 100%;
+    }
+}
+</style>
+
 <?php template_bottom();

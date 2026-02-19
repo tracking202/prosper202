@@ -7,22 +7,22 @@ namespace Prosper202\Attribution;
 /**
  * Represents a computed attribution snapshot for a specific model and scope.
  */
-final class Snapshot
+final readonly class Snapshot
 {
     public function __construct(
-        public readonly ?int $snapshotId,
-        public readonly int $modelId,
-        public readonly int $userId,
-        public readonly ScopeType $scopeType,
-        public readonly ?int $scopeId,
-        public readonly int $dateHour,
-        public readonly int $lookbackStart,
-        public readonly int $lookbackEnd,
-        public readonly int $attributedClicks,
-        public readonly int $attributedConversions,
-        public readonly float $attributedRevenue,
-        public readonly float $attributedCost,
-        public readonly int $createdAt
+        public ?int $snapshotId,
+        public int $modelId,
+        public int $userId,
+        public ScopeType $scopeType,
+        public ?int $scopeId,
+        public int $dateHour,
+        public int $lookbackStart,
+        public int $lookbackEnd,
+        public int $attributedClicks,
+        public int $attributedConversions,
+        public float $attributedRevenue,
+        public float $attributedCost,
+        public int $createdAt
     ) {
     }
 

@@ -7,7 +7,7 @@ namespace Prosper202\Attribution\Analytics;
 /**
  * Container aggregating the analytics response pieces served by the API.
  */
-final class AnalyticsSummary
+final readonly class AnalyticsSummary
 {
     /**
      * @param array<string, float|null> $totals
@@ -16,10 +16,10 @@ final class AnalyticsSummary
      * @param AnomalyAlert[] $anomalies
      */
     public function __construct(
-        public readonly array $totals,
-        public readonly array $snapshots,
-        public readonly array $touchpointMix,
-        public readonly array $anomalies
+        public array $totals,
+        public array $snapshots,
+        public array $touchpointMix,
+        public array $anomalies
     ) {
     }
 }

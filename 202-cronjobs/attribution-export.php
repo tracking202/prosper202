@@ -8,8 +8,6 @@ use Prosper202\Attribution\ExportStatus;
 use Prosper202\Attribution\Repository\Mysql\MysqlExportJobRepository;
 use Prosper202\Attribution\Repository\Mysql\MysqlSnapshotRepository;
 use Prosper202\Attribution\Snapshot;
-use RuntimeException;
-use Throwable;
 
 require_once __DIR__ . '/../202-config/connect.php';
 require_once __DIR__ . '/../vendor/autoload.php';
@@ -243,7 +241,7 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         'start_hour' => $job->startHour,
         'end_hour' => $job->endHour,
         'rows_exported' => $fileInfo['rows'],
-        'file_name' => basename($fileInfo['path']),
+        'file_name' => basename((string) $fileInfo['path']),
         'file_contents' => $encodedContents,
         'download_url' => buildWebhookDownloadUrl($job),
         'completed_at' => $fileInfo['completed_at'],
