@@ -3021,7 +3021,7 @@ class ReportBasicForm
 
 	static function echoCell($str)
 	{
-		echo "\"" . $str . "\"" . ",";
+		echo $str . "\t";
 	}
 
 	static function echoRow()
