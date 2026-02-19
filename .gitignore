@@ -56,3 +56,6 @@ rector.php
 RECTOR_FINDINGS.md
 rector_report.txt
 PHPSTAN_AND_CODE_QUALITY_TOOLS.md
+/mysql_data_test_install
+build/Dockerfile
+code-review-findings-modernize-install-not-done.md
