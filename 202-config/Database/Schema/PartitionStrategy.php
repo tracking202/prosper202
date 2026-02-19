@@ -52,9 +52,8 @@ final class PartitionStrategy
         $partitionDefs[] = "PARTITION p{$maxPartition} VALUES LESS THAN MAXVALUE ENGINE = InnoDB";
 
         $sql .= implode(',', $partitionDefs);
-        $sql .= ") */";
 
-        return $sql;
+        return $sql . ") */";
     }
 
     /**
@@ -101,9 +100,8 @@ final class PartitionStrategy
         $partitionDefs[] = "PARTITION p{$i} VALUES LESS THAN MAXVALUE ENGINE = InnoDB";
 
         $sql .= implode(',', $partitionDefs);
-        $sql .= ") */";
 
-        return $sql;
+        return $sql . ") */";
     }
 
     /**
@@ -178,7 +176,7 @@ final class PartitionStrategy
      */
     private static function validateIdentifier(string $value, string $label): void
     {
-        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $value)) {
+        if (!preg_match('/^[a-zA-Z_]\w*$/', $value)) {
             throw new \InvalidArgumentException("Invalid {$label}: '{$value}'");
         }
     }

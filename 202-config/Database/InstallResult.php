@@ -25,7 +25,6 @@ final readonly class InstallResult
      * Create a successful result.
      *
      * @param array<string> $createdTables
-     * @param float $executionTime
      */
     public static function success(array $createdTables = [], float $executionTime = 0.0): self
     {
@@ -42,7 +41,6 @@ final readonly class InstallResult
      *
      * @param array<string> $errors
      * @param array<string> $createdTables Tables created before failure
-     * @param float $executionTime
      */
     public static function failure(array $errors, array $createdTables = [], float $executionTime = 0.0): self
     {
