@@ -76,6 +76,11 @@ class INSTALL
             }
         }
 
+        // Log non-fatal warnings
+        foreach ($result->warnings as $warning) {
+            error_log('INSTALL::install_databases() warning - ' . $warning);
+        }
+
         // Seed initial data
         $seeder = new DataSeeder($db);
         $seeder->seed();

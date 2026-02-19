@@ -158,10 +158,9 @@ final class DataSeeder
      */
     private function executeQuery(string $sql, string $label): void
     {
-        $result = _mysqli_query($sql);
+        $result = $this->connection->query($sql);
         if ($result === false) {
-            $error = $this->connection->error ?: 'Unknown query failure';
-            $this->errors[] = "Failed to seed {$label}: {$error}";
+            $this->errors[] = "Failed to seed {$label}: {$this->connection->error}";
         }
     }
 

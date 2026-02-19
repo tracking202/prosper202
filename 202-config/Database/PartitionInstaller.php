@@ -98,10 +98,9 @@ final readonly class PartitionInstaller
      */
     private function disableStrictMode(): void
     {
-        $result = _mysqli_query("SET session sql_mode= ''");
+        $result = $this->connection->query("SET session sql_mode= ''");
         if ($result === false) {
-            $error = $this->connection->error ?: 'Unknown failure';
-            error_log("PartitionInstaller: Failed to disable MySQL strict mode: {$error}");
+            error_log("PartitionInstaller: Failed to disable MySQL strict mode: {$this->connection->error}");
         }
     }
 }

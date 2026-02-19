@@ -176,7 +176,7 @@ final class PartitionStrategy
      */
     private static function validateIdentifier(string $value, string $label): void
     {
-        if (!preg_match('/^[a-zA-Z_]\w*$/', $value)) {
+        if (!preg_match('/^[a-zA-Z0-9_]+$/', $value)) {
             throw new \InvalidArgumentException("Invalid {$label}: '{$value}'");
         }
     }

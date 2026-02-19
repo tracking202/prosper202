@@ -13,12 +13,14 @@ final readonly class InstallResult
      * @param array<string> $createdTables List of tables that were created
      * @param array<string> $errors List of errors encountered
      * @param float $executionTime Time taken to execute in seconds
+     * @param array<string> $warnings List of non-fatal warnings
      */
     public function __construct(
         public bool $success,
         public array $createdTables = [],
         public array $errors = [],
-        public float $executionTime = 0.0
+        public float $executionTime = 0.0,
+        public array $warnings = []
     ) {}
 
     /**
@@ -26,13 +28,17 @@ final readonly class InstallResult
      *
      * @param array<string> $createdTables
      */
-    public static function success(array $createdTables = [], float $executionTime = 0.0): self
+    /**
+     * @param array<string> $warnings
+     */
+    public static function success(array $createdTables = [], float $executionTime = 0.0, array $warnings = []): self
     {
         return new self(
             success: true,
             createdTables: $createdTables,
             errors: [],
-            executionTime: $executionTime
+            executionTime: $executionTime,
+            warnings: $warnings
         );
     }
 
@@ -41,14 +47,16 @@ final readonly class InstallResult
      *
      * @param array<string> $errors
      * @param array<string> $createdTables Tables created before failure
+     * @param array<string> $warnings
      */
-    public static function failure(array $errors, array $createdTables = [], float $executionTime = 0.0): self
+    public static function failure(array $errors, array $createdTables = [], float $executionTime = 0.0, array $warnings = []): self
     {
         return new self(
             success: false,
             createdTables: $createdTables,
             errors: $errors,
-            executionTime: $executionTime
+            executionTime: $executionTime,
+            warnings: $warnings
         );
     }
 

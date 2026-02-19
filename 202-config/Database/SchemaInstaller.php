@@ -26,6 +26,8 @@ final class SchemaInstaller
     private array $createdTables = [];
     /** @var array<string> */
     private array $errors = [];
+    /** @var array<string> */
+    private array $warnings = [];
 
     public function __construct(private readonly mysqli $connection)
     {
@@ -55,10 +57,10 @@ final class SchemaInstaller
         $executionTime = microtime(true) - $startTime;
 
         if (count($this->errors) > 0) {
-            return InstallResult::failure($this->errors, $this->createdTables, $executionTime);
+            return InstallResult::failure($this->errors, $this->createdTables, $executionTime, $this->warnings);
         }
 
-        return InstallResult::success($this->createdTables, $executionTime);
+        return InstallResult::success($this->createdTables, $executionTime, $this->warnings);
     }
 
     /**
@@ -158,12 +160,11 @@ final class SchemaInstaller
      */
     private function executeStatement(string $sql, ?string $tableName = null): bool
     {
-        $result = _mysqli_query($sql);
+        $result = $this->connection->query($sql);
 
         if ($result === false) {
-            $error = $this->connection->error ?: 'Unknown query failure';
             $label = $tableName ?? 'unknown';
-            $this->errors[] = "Failed to create table '{$label}': {$error}";
+            $this->errors[] = "Failed to create table '{$label}': {$this->connection->error}";
             return false;
         }
 
@@ -179,10 +180,9 @@ final class SchemaInstaller
      */
     private function disableStrictMode(): void
     {
-        $result = _mysqli_query("SET session sql_mode= ''");
+        $result = $this->connection->query("SET session sql_mode= ''");
         if ($result === false) {
-            $error = $this->connection->error ?: 'Unknown failure';
-            $this->errors[] = "Warning: Failed to disable MySQL strict mode: {$error}";
+            $this->warnings[] = "Failed to disable MySQL strict mode: {$this->connection->error}";
         }
     }
 
@@ -192,10 +192,9 @@ final class SchemaInstaller
     private function setCollations(): void
     {
         $sql = "ALTER TABLE `" . TableRegistry::IPS_V6 . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
-        $result = _mysqli_query($sql);
+        $result = $this->connection->query($sql);
         if ($result === false) {
-            $error = $this->connection->error ?: 'Unknown failure';
-            $this->errors[] = "Warning: Failed to set collation on " . TableRegistry::IPS_V6 . ": {$error}";
+            $this->warnings[] = "Failed to set collation on " . TableRegistry::IPS_V6 . ": {$this->connection->error}";
         }
     }
 
@@ -217,5 +216,15 @@ final class SchemaInstaller
     public function getErrors(): array
     {
         return $this->errors;
+    }
+
+    /**
+     * Get any warnings that occurred (non-fatal issues).
+     *
+     * @return array<string>
+     */
+    public function getWarnings(): array
+    {
+        return $this->warnings;
     }
 }
