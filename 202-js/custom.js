@@ -1274,14 +1274,19 @@ function runSpy() {
 
 	spyXhr = $.get("/tracking202/ajax/click_history.php", params)
 		.done(function(data) {
-			var $parsed = $(data);
-
 			if (spyLatestTime === 0) {
 				// First load — full page replacement
 				$("#m-content").html(data);
+				// Extract latest time from the DOM element we just inserted
+				var $domTime = $('#spy-latest-time');
+				if ($domTime.length) {
+					var t = parseInt($domTime.data('time'), 10);
+					if (t > 0) spyLatestTime = t;
+				}
 				goSpy();
 			} else {
-				// Incremental — prepend new rows to existing table
+				// Incremental — parse only when we need to extract elements
+				var $parsed = $(data);
 				var $newRows = $parsed.filter('tr');
 				if ($newRows.length > 0) {
 					$newRows.hide();
@@ -1294,15 +1299,11 @@ function runSpy() {
 						$allRows.slice(spyMaxRows).remove();
 					}
 				}
-			}
-
-			// Update latest time from server response
-			// For full load, search DOM; for incremental, search parsed response
-			var $timeEl = (spyLatestTime === 0) ? $('#spy-latest-time') : $parsed.filter('#spy-latest-time');
-			if ($timeEl.length) {
-				var t = parseInt($timeEl.data('time'), 10);
-				if (t > 0) {
-					spyLatestTime = t;
+				// Extract latest time from parsed response (not in DOM)
+				var $parsedTime = $parsed.filter('#spy-latest-time');
+				if ($parsedTime.length) {
+					var t = parseInt($parsedTime.data('time'), 10);
+					if (t > 0) spyLatestTime = t;
 				}
 			}
 		});

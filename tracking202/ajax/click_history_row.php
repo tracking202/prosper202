@@ -1,8 +1,9 @@
 <?php
+declare(strict_types=1);
 /**
  * Renders a single <tr> for the click history table.
- * Expected variables in scope: $click_row, $html, $mysql, $x, $db (or $queryDb)
- * Used by click_history.php for incremental spy updates.
+ * Expected variables in scope: $click_row (assoc array), $html (array), $x (int).
+ * Included by click_history.php inside a while loop for incremental spy updates.
  */
 
 $html['referer'] = htmlentities((string)($click_row['referer'] ?? ''), ENT_QUOTES, 'UTF-8');

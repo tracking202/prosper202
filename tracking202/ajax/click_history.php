@@ -50,20 +50,37 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 
 
 	$db_table = "2c";
-	$query = query($command, $db_table, null, null, null, null, null, null, null, true);
 
-	// Incremental fetch: only return rows newer than $since
+	// Detect incremental mode before calling query() so we can skip
+	// the count query and LIMIT clause that are wasted for incremental
 	$since = null;
 	if (isset($_GET['since']) && is_numeric($_GET['since'])) {
 		$since = (int)$_GET['since'];
-		$query['click_sql'] = preg_replace(
+	}
+	$incremental = ($since !== null);
+
+	// Incremental: skip count (result discarded) and limit (would silently
+	// drop new clicks under high traffic since the since-filter already bounds rows)
+	$spyCount = $incremental ? false : null;
+	$spyLimit = $incremental ? false : null;
+
+	$query = query($command, $db_table, null, null, null, null, null, $spyLimit, $spyCount, true);
+
+	if ($incremental) {
+		$newSql = preg_replace(
 			'/\s+ORDER\s+BY\s+/i',
 			' AND click_time > ' . $since . ' ORDER BY ',
 			$query['click_sql'],
-			1
+			1,
+			$replaceCount
 		);
+		if ($replaceCount > 0) {
+			$query['click_sql'] = $newSql;
+		} else {
+			// Fallback: append directly (no ORDER BY in SQL — shouldn't happen)
+			$query['click_sql'] .= ' AND click_time > ' . $since;
+		}
 	}
-	$incremental = ($since !== null);
 } else {
 	$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,
@@ -122,6 +139,7 @@ if (!empty($incremental)) {
 		echo '<span id="spy-latest-time" data-time="' . (int)$since . '"></span>';
 		exit;
 	}
+	$html = [];
 	$x = 0;
 	while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
 		if ((int)$click_row['click_time'] > $latestTime) {
