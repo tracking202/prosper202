@@ -1539,7 +1539,7 @@ function query(
     if ($count == true) {
         $query['from'] = $fromRow;
         $query['to'] = $toRow;
-        $query['pages'] = ($limitValue !== null && $limitValue > 0) ? ceil($rows / $limitValue) + 1 : 1;
+        $query['pages'] = ($limitValue !== null && $limitValue > 0) ? (int)ceil($rows / $limitValue) : 1;
         if (($query['from'] == 1) && ($query['to'] == 0)) {
             $query['from'] = 0;
         }
@@ -1551,7 +1551,7 @@ function query(
         $query['from'] = $fromRow;
         $query['to'] = $toRow;
         $limitForPages = ($limitValue !== null && $limitValue > 0) ? $limitValue : ($rows ?? 0);
-        $query['pages'] = ($limitForPages > 0) ? ceil(($rows ?? 0) / $limitForPages) + 1 : 1;
+        $query['pages'] = ($limitForPages > 0) ? (int)ceil(($rows ?? 0) / $limitForPages) : 1;
         if (($query['from'] == 1) && ($query['to'] == 0)) {
             $query['from'] = 0;
         }
