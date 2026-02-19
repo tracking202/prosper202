@@ -28,6 +28,7 @@ final class PartitionStrategy
      * @param int $partitions Number of partitions to create
      * @param int $increment Value increment per partition
      * @return string The ALTER TABLE statement for partitioning
+     * @throws \InvalidArgumentException If table name or column name is invalid
      */
     public static function byRange(
         string $tableName,
@@ -35,6 +36,9 @@ final class PartitionStrategy
         int $partitions = self::DEFAULT_PARTITION_COUNT,
         int $increment = self::DEFAULT_RANGE_INCREMENT
     ): string {
+        self::validateIdentifier($tableName, 'table name');
+        self::validateIdentifier($column, 'column name');
+
         $sql = "/*!50100 ALTER TABLE `{$tableName}` PARTITION BY RANGE ({$column}) (";
 
         $partitionDefs = [];
@@ -61,6 +65,8 @@ final class PartitionStrategy
      * @param int $startTime Unix timestamp to start from
      * @param int $weeksAhead Number of weeks into the future to partition
      * @return string The ALTER TABLE statement for partitioning
+     * @throws \InvalidArgumentException If table name or column name is invalid
+     * @throws \RuntimeException If time computation fails
      */
     public static function byTime(
         string $tableName,
@@ -68,16 +74,26 @@ final class PartitionStrategy
         int $startTime,
         int $weeksAhead = 156 // 3 years
     ): string {
+        self::validateIdentifier($tableName, 'table name');
+        self::validateIdentifier($column, 'column name');
+
         $sql = "/*!50100 ALTER TABLE `{$tableName}` PARTITION BY RANGE ({$column}) (";
 
         $partitionDefs = [];
         $partitionTime = $startTime;
         $endTime = strtotime("+{$weeksAhead} weeks", $startTime);
+        if ($endTime === false) {
+            throw new \RuntimeException("Failed to compute end time from start={$startTime}, weeks={$weeksAhead}");
+        }
 
         $i = 0;
         while ($partitionTime <= $endTime) {
             $partitionDefs[] = "PARTITION p{$i} VALUES LESS THAN ({$partitionTime}) ENGINE = InnoDB";
-            $partitionTime = strtotime('+1 week', $partitionTime);
+            $nextTime = strtotime('+1 week', $partitionTime);
+            if ($nextTime === false) {
+                throw new \RuntimeException("Failed to compute next partition time from {$partitionTime}");
+            }
+            $partitionTime = $nextTime;
             $i++;
         }
 
@@ -153,5 +169,17 @@ final class PartitionStrategy
             ['table' => TableRegistry::CLICKS, 'column' => 'click_time'],
             ['table' => TableRegistry::DATAENGINE, 'column' => 'click_time'],
         ];
+    }
+
+    /**
+     * Validate that a SQL identifier (table or column name) is safe.
+     *
+     * @throws \InvalidArgumentException If the identifier contains unsafe characters
+     */
+    private static function validateIdentifier(string $value, string $label): void
+    {
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $value)) {
+            throw new \InvalidArgumentException("Invalid {$label}: '{$value}'");
+        }
     }
 }

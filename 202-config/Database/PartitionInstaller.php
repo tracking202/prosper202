@@ -5,7 +5,6 @@ namespace Prosper202\Database;
 
 use mysqli;
 use Prosper202\Database\Schema\PartitionStrategy;
-use Prosper202\Database\Exceptions\PartitionException;
 
 /**
  * Handles creation of database partitions for high-volume tables.
@@ -23,8 +22,6 @@ final class PartitionInstaller
 
     /**
      * Install all partitions.
-     *
-     * @throws PartitionException If partitioning is not supported
      */
     public function install(): void
     {
@@ -103,7 +100,10 @@ final class PartitionInstaller
      */
     private function disableStrictMode(): void
     {
-        $sql = "SET session sql_mode= ''";
-        _mysqli_query($sql);
+        $result = _mysqli_query("SET session sql_mode= ''");
+        if ($result === false) {
+            $error = $this->connection->error ?: 'Unknown failure';
+            error_log("PartitionInstaller: Failed to disable MySQL strict mode: {$error}");
+        }
     }
 }

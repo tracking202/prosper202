@@ -81,6 +81,13 @@ class INSTALL
         $seeder->seed();
         $seeder->seedVersion($php_version);
 
+        // Log any seed errors
+        if ($seeder->hasErrors()) {
+            foreach ($seeder->getErrors() as $error) {
+                error_log('INSTALL::install_databases() - ' . $error);
+            }
+        }
+
         // Add publisher IDs to all existing users
         createPublisherIds();
     }

@@ -2,7 +2,6 @@
 202-config.php
 202-config*.php
 !202-config-sample.php
-202-config copy.php
 phpstan.neon
 
 # Environment / secrets
@@ -45,7 +44,6 @@ CLAUDE.md
 
 # Database
 /mysql_data/
-202-config copy.php
 /mysql_data_staging/
 
 # Session files

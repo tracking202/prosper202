@@ -15,7 +15,7 @@ use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
 use Prosper202\Database\Tables\SyncTables;
-use Prosper202\Database\Exceptions\SchemaInstallException;
+use Prosper202\Database\Schema\TableRegistry;
 
 /**
  * Orchestrates the creation of all database tables.
@@ -42,21 +42,17 @@ final class SchemaInstaller
 
         $this->disableStrictMode();
 
-        try {
-            $this->createCoreTables();
-            $this->createSyncTables();
-            $this->createUserTables();
-            $this->createClickTables();
-            $this->createTrackingTables();
-            $this->createCampaignTables();
-            $this->createAttributionTables();
-            $this->createRotatorTables();
-            $this->createAdNetworkTables();
-            $this->createMiscTables();
-            $this->setCollations();
-        } catch (SchemaInstallException $e) {
-            $this->errors[] = $e->getMessage();
-        }
+        $this->createCoreTables();
+        $this->createSyncTables();
+        $this->createUserTables();
+        $this->createClickTables();
+        $this->createTrackingTables();
+        $this->createCampaignTables();
+        $this->createAttributionTables();
+        $this->createRotatorTables();
+        $this->createAdNetworkTables();
+        $this->createMiscTables();
+        $this->setCollations();
 
         $executionTime = microtime(true) - $startTime;
 
@@ -166,11 +162,18 @@ final class SchemaInstaller
     {
         $result = _mysqli_query($sql);
 
-        if ($result !== false && $tableName !== null) {
+        if ($result === false) {
+            $error = $this->connection->error ?: 'Unknown query failure';
+            $label = $tableName ?? 'unknown';
+            $this->errors[] = "Failed to create table '{$label}': {$error}";
+            return false;
+        }
+
+        if ($tableName !== null) {
             $this->createdTables[] = $tableName;
         }
 
-        return $result !== false;
+        return true;
     }
 
     /**
@@ -178,8 +181,11 @@ final class SchemaInstaller
      */
     private function disableStrictMode(): void
     {
-        $sql = "SET session sql_mode= ''";
-        _mysqli_query($sql);
+        $result = _mysqli_query("SET session sql_mode= ''");
+        if ($result === false) {
+            $error = $this->connection->error ?: 'Unknown failure';
+            $this->errors[] = "Warning: Failed to disable MySQL strict mode: {$error}";
+        }
     }
 
     /**
@@ -187,9 +193,12 @@ final class SchemaInstaller
      */
     private function setCollations(): void
     {
-        // Set collation for IPv6 table
-        $sql = "ALTER TABLE `202_ips_v6` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
-        _mysqli_query($sql);
+        $sql = "ALTER TABLE `" . TableRegistry::IPS_V6 . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
+        $result = _mysqli_query($sql);
+        if ($result === false) {
+            $error = $this->connection->error ?: 'Unknown failure';
+            $this->errors[] = "Warning: Failed to set collation on " . TableRegistry::IPS_V6 . ": {$error}";
+        }
     }
 
     /**

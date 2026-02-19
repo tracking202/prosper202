@@ -545,7 +545,10 @@ final class MiscTables
                 `b202_fbpa_outbound_clicks` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`b202_fbpa_id`),
                 UNIQUE KEY `landing_page_id` (`landing_page_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+            'InnoDB',
+            'utf8mb4',
+            'utf8mb4_bin'
         );
     }
 
@@ -559,7 +562,10 @@ final class MiscTables
                 `content_type_description` varchar(100) COLLATE utf8mb4_bin DEFAULT NULL,
                 PRIMARY KEY (`content_type_id`),
                 KEY `content_type_id` (`content_type_id`,`content_type_description`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+            'InnoDB',
+            'utf8mb4',
+            'utf8mb4_bin'
         );
     }
 
@@ -573,7 +579,10 @@ final class MiscTables
                 `event_type_description` varchar(100) COLLATE utf8mb4_bin DEFAULT NULL,
                 PRIMARY KEY (`event_type_id`),
                 KEY `event_type_id` (`event_type_id`,`event_type_description`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+            'InnoDB',
+            'utf8mb4',
+            'utf8mb4_bin'
         );
     }
 }
