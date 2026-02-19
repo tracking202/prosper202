@@ -33,8 +33,6 @@ final class SchemaInstaller
 
     /**
      * Install all database tables.
-     *
-     * @return InstallResult
      */
     public function install(): InstallResult
     {
