@@ -3609,16 +3609,16 @@ class DisplayData
             switch ($reportType) {
 
                 case 'keyword':
-                    $featureKey = $html['keyword'];
+                    $featureKey = $html['keyword'] ?? false;
                     break;
                 case 'textad':
-                    $featureKey = $html['text_ad_name'];
+                    $featureKey = $html['text_ad_name'] ?? false;
                     break;
                 case 'referer':
-                    $featureKey = $html['referer_name'];
+                    $featureKey = $html['referer_name'] ?? false;
                     break;
                 case 'ip':
-                    $featureKey = $html['ip_address'];
+                    $featureKey = $html['ip_address'] ?? false;
                     break;
                 case 'country':
                     if (isset($html['country_name']) && isset($html['country_code'])) {
@@ -3642,19 +3642,19 @@ class DisplayData
                     }
                     break;
                 case 'isp':
-                    $featureKey = $html['isp_name'];
+                    $featureKey = $html['isp_name'] ?? false;
                     break;
                 case 'landingpage':
-                    $featureKey = $html['landing_page_nickname'];
+                    $featureKey = $html['landing_page_nickname'] ?? false;
                     break;
                 case 'device':
-                    $featureKey = $html['device_name'];
+                    $featureKey = $html['device_name'] ?? false;
                     break;
                 case 'browser':
-                    $featureKey = $html['browser_name'];
+                    $featureKey = $html['browser_name'] ?? false;
                     break;
                 case 'platform':
-                    $featureKey = $html['platform_name'];
+                    $featureKey = $html['platform_name'] ?? false;
                     break;
             }
 
@@ -3690,15 +3690,17 @@ class DisplayData
             $obj2 = new ArrayObject($it->current());
             $html = $obj2->getIterator();
 
-            if ($i != $obj->count() - 1) {
-                echo "- " . $html['ppc_network_name'] . "\t" . $html['clicks'] . "\t" . $html['click_out'] . "\t" . $html['ctr'] . "\t" . $html['leads'] . "\t" . $html['su_ratio'] . "\t" . $html['payout'] . "\t" . $html['epc'] . "\t" . $html['cpc'] . "\t" . $html['income'] . "\t" . $html['cost'] . "\t" . $html['net'] . "\t" . $html['roi'] . "\n";
+            if ($i != $obj->count() - 1 && isset($html['variables']) && $html['variables']) {
+                $networkRow = $html[0] ?? [];
+                echo "- " . ($networkRow['ppc_network_name'] ?? '') . "\t" . ($networkRow['clicks'] ?? '') . "\t" . ($networkRow['click_out'] ?? '') . "\t" . ($networkRow['ctr'] ?? '') . "\t" . ($networkRow['leads'] ?? '') . "\t" . ($networkRow['su_ratio'] ?? '') . "\t" . ($networkRow['payout'] ?? '') . "\t" . ($networkRow['epc'] ?? '') . "\t" . ($networkRow['cpc'] ?? '') . "\t" . ($networkRow['income'] ?? '') . "\t" . ($networkRow['cost'] ?? '') . "\t" . ($networkRow['net'] ?? '') . "\t" . ($networkRow['roi'] ?? '') . "\n";
 
                 foreach ($html['variables'] as $variables) {
-                    echo " - " . $variables['variable_name'] . "\t" . $variables['clicks'] . "\t" . $variables['click_out'] . "\t" . $variables['ctr'] . "\t" . $variables['leads'] . "\t" . $variables['su_ratio'] . "\t" . $variables['payout'] . "\t" . $variables['epc'] . "\t" . $variables['cpc'] . "\t" . $variables['income'] . "\t" . $variables['cost'] . "\t" . $variables['net'] . "\t" . $variables['roi'] . "\n";
+                    $varRow = $variables[0] ?? [];
+                    echo " - " . ($varRow['variable_name'] ?? '') . "\t" . ($varRow['clicks'] ?? '') . "\t" . ($varRow['click_out'] ?? '') . "\t" . ($varRow['ctr'] ?? '') . "\t" . ($varRow['leads'] ?? '') . "\t" . ($varRow['su_ratio'] ?? '') . "\t" . ($varRow['payout'] ?? '') . "\t" . ($varRow['epc'] ?? '') . "\t" . ($varRow['cpc'] ?? '') . "\t" . ($varRow['income'] ?? '') . "\t" . ($varRow['cost'] ?? '') . "\t" . ($varRow['net'] ?? '') . "\t" . ($varRow['roi'] ?? '') . "\n";
 
-                    foreach ($variables['values'] as $value) {
+                    foreach ($variables['values'] ?? [] as $value) {
 
-                        echo " -- " . $value['variable_value'] . "\t" . $value['clicks'] . "\t" . $value['click_out'] . "\t" . $value['ctr'] . "\t" . $value['leads'] . "\t" . $value['su_ratio'] . "\t" . $value['payout'] . "\t" . $value['epc'] . "\t" . $value['cpc'] . "\t" . $value['income'] . "\t" . $value['cost'] . "\t" . $value['net'] . "\t" . $value['roi'] . "\n";
+                        echo " -- " . ($value['variable_value'] ?? '') . "\t" . ($value['clicks'] ?? '') . "\t" . ($value['click_out'] ?? '') . "\t" . ($value['ctr'] ?? '') . "\t" . ($value['leads'] ?? '') . "\t" . ($value['su_ratio'] ?? '') . "\t" . ($value['payout'] ?? '') . "\t" . ($value['epc'] ?? '') . "\t" . ($value['cpc'] ?? '') . "\t" . ($value['income'] ?? '') . "\t" . ($value['cost'] ?? '') . "\t" . ($value['net'] ?? '') . "\t" . ($value['roi'] ?? '') . "\n";
                     }
                 }
             }
