@@ -15,7 +15,7 @@ use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
 use Prosper202\Database\Tables\SyncTables;
-use Prosper202\Database\Exceptions\SchemaInstallException;
+use Prosper202\Database\Schema\TableRegistry;
 
 /**
  * Orchestrates the creation of all database tables.
@@ -26,6 +26,8 @@ final class SchemaInstaller
     private array $createdTables = [];
     /** @var array<string> */
     private array $errors = [];
+    /** @var array<string> */
+    private array $warnings = [];
 
     public function __construct(private readonly mysqli $connection)
     {
@@ -33,8 +35,6 @@ final class SchemaInstaller
 
     /**
      * Install all database tables.
-     *
-     * @return InstallResult
      */
     public function install(): InstallResult
     {
@@ -42,29 +42,25 @@ final class SchemaInstaller
 
         $this->disableStrictMode();
 
-        try {
-            $this->createCoreTables();
-            $this->createSyncTables();
-            $this->createUserTables();
-            $this->createClickTables();
-            $this->createTrackingTables();
-            $this->createCampaignTables();
-            $this->createAttributionTables();
-            $this->createRotatorTables();
-            $this->createAdNetworkTables();
-            $this->createMiscTables();
-            $this->setCollations();
-        } catch (SchemaInstallException $e) {
-            $this->errors[] = $e->getMessage();
-        }
+        $this->createCoreTables();
+        $this->createSyncTables();
+        $this->createUserTables();
+        $this->createClickTables();
+        $this->createTrackingTables();
+        $this->createCampaignTables();
+        $this->createAttributionTables();
+        $this->createRotatorTables();
+        $this->createAdNetworkTables();
+        $this->createMiscTables();
+        $this->setCollations();
 
         $executionTime = microtime(true) - $startTime;
 
         if (count($this->errors) > 0) {
-            return InstallResult::failure($this->errors, $this->createdTables, $executionTime);
+            return InstallResult::failure($this->errors, $this->createdTables, $executionTime, $this->warnings);
         }
 
-        return InstallResult::success($this->createdTables, $executionTime);
+        return InstallResult::success($this->createdTables, $executionTime, $this->warnings);
     }
 
     /**
@@ -164,13 +160,19 @@ final class SchemaInstaller
      */
     private function executeStatement(string $sql, ?string $tableName = null): bool
     {
-        $result = _mysqli_query($sql);
+        $result = $this->connection->query($sql);
 
-        if ($result !== false && $tableName !== null) {
+        if ($result === false) {
+            $label = $tableName ?? 'unknown';
+            $this->errors[] = "Failed to create table '{$label}': {$this->connection->error}";
+            return false;
+        }
+
+        if ($tableName !== null) {
             $this->createdTables[] = $tableName;
         }
 
-        return $result !== false;
+        return true;
     }
 
     /**
@@ -178,8 +180,10 @@ final class SchemaInstaller
      */
     private function disableStrictMode(): void
     {
-        $sql = "SET session sql_mode= ''";
-        _mysqli_query($sql);
+        $result = $this->connection->query("SET session sql_mode= ''");
+        if ($result === false) {
+            $this->warnings[] = "Failed to disable MySQL strict mode: {$this->connection->error}";
+        }
     }
 
     /**
@@ -187,9 +191,11 @@ final class SchemaInstaller
      */
     private function setCollations(): void
     {
-        // Set collation for IPv6 table
-        $sql = "ALTER TABLE `202_ips_v6` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
-        _mysqli_query($sql);
+        $sql = "ALTER TABLE `" . TableRegistry::IPS_V6 . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
+        $result = $this->connection->query($sql);
+        if ($result === false) {
+            $this->warnings[] = "Failed to set collation on " . TableRegistry::IPS_V6 . ": {$this->connection->error}";
+        }
     }
 
     /**
@@ -210,5 +216,15 @@ final class SchemaInstaller
     public function getErrors(): array
     {
         return $this->errors;
+    }
+
+    /**
+     * Get any warnings that occurred (non-fatal issues).
+     *
+     * @return array<string>
+     */
+    public function getWarnings(): array
+    {
+        return $this->warnings;
     }
 }

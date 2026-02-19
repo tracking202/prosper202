@@ -2,7 +2,6 @@
 202-config.php
 202-config*.php
 !202-config-sample.php
-202-config copy.php
 phpstan.neon
 
 # Environment / secrets
@@ -45,7 +44,6 @@ CLAUDE.md
 
 # Database
 /mysql_data/
-202-config copy.php
 /mysql_data_staging/
 
 # Session files
@@ -58,3 +56,6 @@ rector.php
 RECTOR_FINDINGS.md
 rector_report.txt
 PHPSTAN_AND_CODE_QUALITY_TOOLS.md
+/mysql_data_test_install
+build/Dockerfile
+code-review-findings-modernize-install-not-done.md

@@ -151,6 +151,9 @@ final class TableRegistry
     public const string BOT202_FACEBOOK_PIXEL_CONTENT_TYPE = '202_bot202_facebook_pixel_content_type';
     public const string BOT202_FACEBOOK_PIXEL_CLICK_EVENTS = '202_bot202_facebook_pixel_click_events';
 
+    /** @var array<string>|null */
+    private static ?array $allTables = null;
+
     /**
      * Get all table names as an array.
      *
@@ -158,8 +161,7 @@ final class TableRegistry
      */
     public static function getAllTables(): array
     {
-        $reflection = new \ReflectionClass(self::class);
-        return array_values($reflection->getConstants());
+        return self::$allTables ??= array_values((new \ReflectionClass(self::class))->getConstants());
     }
 
     /**

@@ -76,10 +76,22 @@ class INSTALL
             }
         }
 
+        // Log non-fatal warnings
+        foreach ($result->warnings as $warning) {
+            error_log('INSTALL::install_databases() warning - ' . $warning);
+        }
+
         // Seed initial data
         $seeder = new DataSeeder($db);
         $seeder->seed();
         $seeder->seedVersion($php_version);
+
+        // Log any seed errors
+        if ($seeder->hasErrors()) {
+            foreach ($seeder->getErrors() as $error) {
+                error_log('INSTALL::install_databases() - ' . $error);
+            }
+        }
 
         // Add publisher IDs to all existing users
         createPublisherIds();

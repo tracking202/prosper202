@@ -22,22 +22,4 @@ final readonly class SchemaDefinition
         public string $charset = 'utf8mb4',
         public string $collation = 'utf8mb4_general_ci'
     ) {}
-
-    /**
-     * Get the table name without the 202_ prefix.
-     */
-    public function getShortName(): string
-    {
-        return str_starts_with($this->tableName, '202_')
-            ? substr($this->tableName, 4)
-            : $this->tableName;
-    }
-
-    /**
-     * Check if this table uses a specific storage engine.
-     */
-    public function usesEngine(string $engine): bool
-    {
-        return strcasecmp($this->engine, $engine) === 0;
-    }
 }
