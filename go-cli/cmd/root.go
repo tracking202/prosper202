@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"p202/internal/api"
 	configpkg "p202/internal/config"
@@ -18,7 +19,8 @@ var groupName string
 var rootCmd = &cobra.Command{
 	Use:           "p202",
 	Short:         "Prosper202 CLI",
-	Long:          "p202 is a command-line tool for managing a Prosper202 tracking instance.\nDesigned for both human operators and AI agents.",
+	Long: "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
+		"Designed for both human operators and AI agents.",  // alias list appended dynamically in Execute()
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -30,7 +32,22 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+func buildAliasHelp() string {
+	var parts []string
+	for _, cmd := range rootCmd.Commands() {
+		for _, alias := range cmd.Aliases {
+			parts = append(parts, fmt.Sprintf("%s (%s)", alias, cmd.Name()))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n\nUI-friendly aliases: " + strings.Join(parts, ", ") + ". Original names also work."
+}
+
 func Execute() {
+	rootCmd.Long = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
+		"Designed for both human operators and AI agents." + buildAliasHelp()
 	if err := rootCmd.Execute(); err != nil {
 		if category := api.ErrorCategory(err); category != "" {
 			fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", category, err)

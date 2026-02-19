@@ -15,7 +15,7 @@ import (
 
 var conversionCmd = &cobra.Command{
 	Use:   "conversion",
-	Short: "Manage conversions",
+	Short: "Manage conversions (revenue events recorded via postback or pixel)",
 }
 
 var conversionListCmd = &cobra.Command{

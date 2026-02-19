@@ -8,7 +8,7 @@ import (
 
 var reportCmd = &cobra.Command{
 	Use:   "report",
-	Short: "Generate reports",
+	Short: "Generate performance reports — summary, breakdown by dimension, time series, and day/week parting",
 }
 
 // collectReportParams gathers the shared filter flags used across report subcommands.
@@ -39,7 +39,7 @@ func addReportFilters(cmd *cobra.Command) {
 
 var reportSummaryCmd = &cobra.Command{
 	Use:   "summary",
-	Short: "Get summary report",
+	Short: "Get aggregate totals — clicks, conversions, revenue, cost, profit, ROI for a period",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profiles, err := resolveMultiProfiles(cmd)
 		if err != nil {
@@ -71,7 +71,7 @@ var reportSummaryCmd = &cobra.Command{
 
 var reportBreakdownCmd = &cobra.Command{
 	Use:   "breakdown",
-	Short: "Get breakdown report by dimension",
+	Short: "Get stats broken down by a dimension (campaign, traffic source, country, landing page, etc.)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -94,7 +94,7 @@ var reportBreakdownCmd = &cobra.Command{
 
 var reportTimeseriesCmd = &cobra.Command{
 	Use:   "timeseries",
-	Short: "Get time series report",
+	Short: "Get stats over time — daily/hourly buckets of clicks, conversions, revenue, etc.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -115,7 +115,7 @@ var reportTimeseriesCmd = &cobra.Command{
 
 var reportWeekpartCmd = &cobra.Command{
 	Use:   "weekpart",
-	Short: "Get week-parting report by day of week",
+	Short: "Get stats grouped by day of week (Mon-Sun) to find best-performing days",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -138,7 +138,7 @@ var reportWeekpartCmd = &cobra.Command{
 
 var reportDaypartCmd = &cobra.Command{
 	Use:   "daypart",
-	Short: "Get day-parting report by hour of day",
+	Short: "Get stats grouped by hour of day (0-23) to find best-performing hours",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {

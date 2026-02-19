@@ -4736,3 +4736,41 @@ func TestListAllWinsOverLimit(t *testing.T) {
 		t.Fatalf("data length = %d, want 1", len(data))
 	}
 }
+
+func TestUIFriendlyAliasesHitSameEndpoints(t *testing.T) {
+	tests := []struct {
+		alias        string
+		canonical    string
+		subcommand   string
+		wantEndpoint string
+	}{
+		{"traffic-source", "ppc-account", "list", "/api/v3/ppc-accounts"},
+		{"traffic-network", "ppc-network", "list", "/api/v3/ppc-networks"},
+		{"category", "aff-network", "list", "/api/v3/aff-networks"},
+		{"redirector", "rotator", "list", "/api/v3/rotators"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.alias, func(t *testing.T) {
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				w.WriteHeader(200)
+				w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":25,"offset":0}}`))
+			}))
+			defer srv.Close()
+
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key")
+
+			_, _, err := executeCommand("--json", tt.alias, tt.subcommand)
+			if err != nil {
+				t.Fatalf("%s %s error: %v", tt.alias, tt.subcommand, err)
+			}
+			if gotPath != tt.wantEndpoint {
+				t.Errorf("alias %q hit %q, want %q", tt.alias, gotPath, tt.wantEndpoint)
+			}
+		})
+	}
+}
