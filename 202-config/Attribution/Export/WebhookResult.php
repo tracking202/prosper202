@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution\Export;
 
-final class WebhookResult
+final readonly class WebhookResult
 {
     public function __construct(
-        public readonly ?int $statusCode,
-        public readonly ?string $responseBody,
-        public readonly ?string $errorMessage,
+        public ?int $statusCode,
+        public ?string $responseBody,
+        public ?string $errorMessage,
     ) {
     }
 }

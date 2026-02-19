@@ -13,6 +13,7 @@ class ReportDaypartCommand extends BaseCommand
 {
     protected static $defaultName = 'report:daypart';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -308,7 +308,7 @@ function addslashes_gpc($gpc)
 function stripslashes_deep($value)
 {
 	$value = is_array($value) ?
-		array_map('stripslashes_deep', $value) :
+		array_map(stripslashes_deep(...), $value) :
 		stripslashes((string) $value);
 
 	return $value;
@@ -317,7 +317,7 @@ function stripslashes_deep($value)
 function urlencode_deep($value)
 {
 	$value = is_array($value) ?
-		array_map('urlencode_deep', $value) :
+		array_map(urlencode_deep(...), $value) :
 		urlencode((string) $value);
 
 	return $value;

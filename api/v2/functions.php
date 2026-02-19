@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-function getAuth($db, $variables){
+function getAuth($db, $variables): mixed {
 	$mysql['api_key'] = $db->real_escape_string($variables['apikey']);
 	$key_sql = "SELECT 	*
 				FROM   	`202_api_keys` 
@@ -17,26 +17,27 @@ function getAuth($db, $variables){
 		$user_result = _mysqli_query($db, $user_sql);
 		$user_row = $user_result->fetch_assoc();
 		showCategories($db, $variables, $mysql['user_id']);
+		return ['msg' => 'Authorized', 'error' => false, 'status' => 202];
 		//return array('msg' => 'Authorized', 'error' => false, 'status' => 202);
 	} else {
 		return ['msg' => 'Unauthorized', 'error' => true, 'status' => 401];
 	}
 }
 
-function showCategories($db, $vars, $user){
+function showCategories($db, $vars, $user = null): void {
     foreach ($vars as $key=>$var)
         $vars[$key]=$db->real_escape_string($var);
     //$vars = $db->real_escape_string($vars);
   //  print_r($vars);
 
     if($vars['action']=="list")
-        $data= listCategories($db,$user);
+        listCategories($db,$user);
    // print_r($data);
  
    
 }
 
-function listCategories($db,$user){
+function listCategories($db,$user): void {
     $mysql['user_id'] = $db->real_escape_string($user);
     $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
     $aff_network_result = $db->query($aff_network_sql) or die();
@@ -53,7 +54,7 @@ $json = str_replace('\\/', '/', json_encode($cat));
 print_r(pretty_json($json));
 
 }
-function runReports($db, $vars, $user, $timezone){
+function runReports($db, $vars, $user, $timezone): array {
 
 	date_default_timezone_set($timezone);
 
@@ -80,7 +81,7 @@ function runReports($db, $vars, $user, $timezone){
 			
 			if(!validateDate($vars['date_from']) || !validateDate($vars['date_to'])){
 				$data = ['msg' => 'Wrong date format', 'error' => true, 'status' => 404];
-				$json = json_encode($data, true);
+				$json = json_encode($data);
 				print_r(pretty_json($json));
 				die();
 			}
@@ -98,39 +99,32 @@ function runReports($db, $vars, $user, $timezone){
 		{
 		    case 'keywords':
 				return reportQuery($db, "keywords", "keyword_id", "keyword", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
 
 			case 'text_ads':
 				return reportQuery($db, "text_ads", "text_ad_id", "text_ad_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
 
 			case 'referers':
 				return reportQuery($db, "referers", "site_domain_id", "referer", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
 
 			case 'ips':
 				return reportQuery($db, "ips", "ip_id", "ip_address", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
 
 			case 'countries':
 				return reportQuery($db, "locations_country", "country_id", "country_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
 
 			case 'cities':
 				return reportQuery($db, "locations_city", "city_id", "city_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
 
 			case 'cities':
 				return reportQuery($db, "locations_city", "city_id", "city_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
 
 			case 'carriers':
 				return reportQuery($db, "locations_isp", "isp_id", "isp_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
 
 			case 'landing_pages':
 				return reportQuery($db, "landing_pages", "landing_page_id", "landing_page", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-				break;
+			default:
+				return [];
 		}
 
 	} else {
@@ -139,7 +133,7 @@ function runReports($db, $vars, $user, $timezone){
 	
 }
 
-function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid = null, $c1 = null, $c2 = null, $c3 = null, $c4 = null){
+function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid = null, $c1 = null, $c2 = null, $c3 = null, $c4 = null): array {
 
 	$date = [
 			'date_from' => date('m/d/Y', $date_from),
@@ -410,7 +404,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 	
 }
 
-function getCampaignID($db, $campaign, $user){
+function getCampaignID($db, $campaign, $user): bool {
 	$mysql['user_id'] = $db->real_escape_string($user);
 	$mysql['campaign_id'] = $db->real_escape_string($campaign);
 	$key_sql = "SELECT 	*
@@ -422,20 +416,20 @@ function getCampaignID($db, $campaign, $user){
 	if($key_result->num_rows > 0) {
 		return true;
 	} else {
-		$json = json_encode(['msg' => 'Campaign not found', 'error' => true, 'status' => 404], true);
+		$json = json_encode(['msg' => 'Campaign not found', 'error' => true, 'status' => 404]);
 		print_r(pretty_json($json));
 		die();
 	}
 }
 
-function validateDate($date, $format = 'm/d/Y')
-{	
+function validateDate($date, $format = 'm/d/Y'): bool
+{
 	$d = DateTime::createFromFormat($format, $date);
     return $d && $d->format($format) == $date;
 }
 
-function getTimestamp($datefrom, $dateto)
-{	
+function getTimestamp($datefrom, $dateto): array
+{
 	$date = [];
 
 	$from = explode('/', (string) $datefrom);
@@ -458,7 +452,7 @@ function getTimestamp($datefrom, $dateto)
     return $date;
 }
 
-function pretty_json($json) {
+function pretty_json($json): string {
  
     $result      = '';
     $pos         = 0;
@@ -509,7 +503,7 @@ function pretty_json($json) {
     return $result;
 }
 
-function dollar_format($amount, $cpv = false) {
+function dollar_format($amount, $cpv = false): string {
 	if ($cpv == true) {
 		$decimals = 5;
 	} else {

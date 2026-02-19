@@ -9,13 +9,8 @@ use Api\V3\Exception\NotFoundException;
 
 class ClicksController
 {
-    private \mysqli $db;
-    private int $userId;
-
-    public function __construct(\mysqli $db, int $userId)
+    public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
-        $this->db = $db;
-        $this->userId = $userId;
     }
 
     public function list(array $params): array

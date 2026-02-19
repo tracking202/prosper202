@@ -12,6 +12,7 @@ class UserRoleListCommand extends BaseCommand
 {
     protected static $defaultName = 'user:role:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

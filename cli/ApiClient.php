@@ -6,15 +6,11 @@ namespace P202Cli;
 
 class ApiClient
 {
-    private string $baseUrl;
-    private string $apiKey;
-    private int $timeout;
+    private readonly string $baseUrl;
 
-    public function __construct(string $baseUrl, string $apiKey, int $timeout = 30)
+    public function __construct(string $baseUrl, private readonly string $apiKey, private readonly int $timeout = 30)
     {
         $this->baseUrl = rtrim($baseUrl, '/') . '/api/v3';
-        $this->apiKey = $apiKey;
-        $this->timeout = $timeout;
     }
 
     public static function fromConfig(Config $config): self

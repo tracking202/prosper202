@@ -14,6 +14,7 @@ class UserRoleAssignCommand extends BaseCommand
 {
     protected static $defaultName = 'user:role:assign';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

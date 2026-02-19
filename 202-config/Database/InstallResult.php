@@ -6,7 +6,7 @@ namespace Prosper202\Database;
 /**
  * Value object representing the result of a database installation operation.
  */
-final class InstallResult
+final readonly class InstallResult
 {
     /**
      * @param bool $success Whether the installation was successful
@@ -15,10 +15,10 @@ final class InstallResult
      * @param float $executionTime Time taken to execute in seconds
      */
     public function __construct(
-        public readonly bool $success,
-        public readonly array $createdTables = [],
-        public readonly array $errors = [],
-        public readonly float $executionTime = 0.0
+        public bool $success,
+        public array $createdTables = [],
+        public array $errors = [],
+        public float $executionTime = 0.0
     ) {}
 
     /**

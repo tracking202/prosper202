@@ -13,6 +13,7 @@ class ClickGetCommand extends BaseCommand
 {
     protected static $defaultName = 'click:get';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

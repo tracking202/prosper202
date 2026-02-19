@@ -15,6 +15,7 @@ class AttributionModelDeleteCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:model:delete';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

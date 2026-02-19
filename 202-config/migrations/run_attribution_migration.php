@@ -33,9 +33,9 @@ try {
     
     // Split SQL into individual statements
     $statements = array_filter(
-        array_map('trim', explode(';', $sql)),
+        array_map(trim(...), explode(';', $sql)),
         function($stmt) {
-            return !empty($stmt) && !preg_match('/^\s*--/', $stmt);
+            return !empty($stmt) && !preg_match('/^\s*--/', (string) $stmt);
         }
     );
     

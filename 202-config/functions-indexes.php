@@ -18,21 +18,21 @@ if (!function_exists('getIndexesInstance')) {
 if (!function_exists('get_country_id')) {
     function get_country_id($country_name, $country_code)
     {
-        return getIndexesInstance()->get_country_id($country_name, $country_code);
+        return INDEXES::get_country_id($country_name, $country_code);
     }
 }
 
 if (!function_exists('get_city_id')) {
     function get_city_id($city_name, $country_id)
     {
-        return getIndexesInstance()->get_city_id($city_name, $country_id);
+        return INDEXES::get_city_id($city_name, $country_id);
     }
 }
 
 if (!function_exists('get_isp_id')) {
     function get_isp_id($isp)
     {
-        return getIndexesInstance()->get_isp_id($isp);
+        return INDEXES::get_isp_id($isp);
     }
 }
 
@@ -67,28 +67,28 @@ if (!function_exists('get_keyword_id')) {
 if (!function_exists('get_c1_id')) {
     function get_c1_id($c1)
     {
-        return getIndexesInstance()->get_c1_id($c1);
+        return INDEXES::get_c1_id($c1);
     }
 }
 
 if (!function_exists('get_c2_id')) {
     function get_c2_id($c2)
     {
-        return getIndexesInstance()->get_c2_id($c2);
+        return INDEXES::get_c2_id($c2);
     }
 }
 
 if (!function_exists('get_c3_id')) {
     function get_c3_id($c3)
     {
-        return getIndexesInstance()->get_c3_id($c3);
+        return INDEXES::get_c3_id($c3);
     }
 }
 
 if (!function_exists('get_c4_id')) {
     function get_c4_id($c4)
     {
-        return getIndexesInstance()->get_c4_id($c4);
+        return INDEXES::get_c4_id($c4);
     }
 }
 

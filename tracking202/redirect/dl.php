@@ -1,9 +1,9 @@
 <?php
 
 declare(strict_types=1);
-#only allow numeric t202ids
-$t202id = $_GET['t202id'];
-if (!is_numeric($t202id)) die();
+#only allow numeric t202ids, reject 0 as invalid
+$t202id = $_GET['t202id'] ?? '';
+if (!is_numeric($t202id) || (int)$t202id <= 0) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
 include_once(substr(__DIR__, 0, -21) . '/202-config/connect2.php');

@@ -311,7 +311,7 @@ function override_attribution_authorization(?int $userId, array $permissions = [
 
     $GLOBALS[ATTRIBUTION_AUTH_OVERRIDE_KEY] = [
         'user_id' => $userId,
-        'permissions' => array_values(array_unique(array_map('strval', $permissions))),
+        'permissions' => array_values(array_unique(array_map(strval(...), $permissions))),
     ];
 }
 

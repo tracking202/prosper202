@@ -38,8 +38,9 @@ function addConversionLog($click_id, $txid, $campaign_id, $click_payout_added, $
     $db->query($log_sql);
 }
 
-function ignoreDuplicates()
+function ignoreDuplicates(): bool
 {
+    $the_request = [];
     switch ($_SERVER['REQUEST_METHOD']) {
         case 'GET':
             $the_request = &$_GET;

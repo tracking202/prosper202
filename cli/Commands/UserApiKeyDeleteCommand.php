@@ -15,6 +15,7 @@ class UserApiKeyDeleteCommand extends BaseCommand
 {
     protected static $defaultName = 'user:apikey:delete';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

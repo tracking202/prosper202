@@ -9,19 +9,19 @@ use InvalidArgumentException;
 /**
  * Immutable value object describing an attribution model configuration.
  */
-final class ModelDefinition
+final readonly class ModelDefinition
 {
     public function __construct(
-        public readonly ?int $modelId,
-        public readonly int $userId,
-        public readonly string $name,
-        public readonly string $slug,
-        public readonly ModelType $type,
-        public readonly array $weightingConfig,
-        public readonly bool $isActive,
-        public readonly bool $isDefault,
-        public readonly int $createdAt,
-        public readonly int $updatedAt
+        public ?int $modelId,
+        public int $userId,
+        public string $name,
+        public string $slug,
+        public ModelType $type,
+        public array $weightingConfig,
+        public bool $isActive,
+        public bool $isDefault,
+        public int $createdAt,
+        public int $updatedAt
     ) {
         if ($this->name === '') {
             throw new InvalidArgumentException('Model name cannot be empty.');

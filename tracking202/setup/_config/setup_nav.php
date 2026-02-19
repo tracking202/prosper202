@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // Get current page name for active state
-$currentPage = basename($_SERVER['PHP_SELF'], '.php');
+$currentPage = basename((string) $_SERVER['PHP_SELF'], '.php');
 
 // Check for related pages (e.g., get_landing_code variants)
 $lpCodePages = ['get_landing_code', 'get_simple_landing_code', 'get_adv_landing_code'];

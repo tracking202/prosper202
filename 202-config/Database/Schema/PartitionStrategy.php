@@ -13,12 +13,12 @@ final class PartitionStrategy
     /**
      * Default number of range partitions to create.
      */
-    private const DEFAULT_PARTITION_COUNT = 100;
+    private const int DEFAULT_PARTITION_COUNT = 100;
 
     /**
      * Default increment for range partitions.
      */
-    private const DEFAULT_RANGE_INCREMENT = 500000;
+    private const int DEFAULT_RANGE_INCREMENT = 500000;
 
     /**
      * Generate a RANGE partition SQL statement by ID column.

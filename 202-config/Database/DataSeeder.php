@@ -9,13 +9,10 @@ use Prosper202\Database\Schema\TableRegistry;
 /**
  * Seeds initial data into newly created database tables.
  */
-final class DataSeeder
+final readonly class DataSeeder
 {
-    private mysqli $connection;
-
-    public function __construct(mysqli $connection)
+    public function __construct(private mysqli $connection)
     {
-        $this->connection = $connection;
     }
 
     /**

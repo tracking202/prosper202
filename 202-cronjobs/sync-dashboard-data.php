@@ -45,7 +45,7 @@ function cleanup() {
 }
 
 // Register cleanup function
-register_shutdown_function('cleanup');
+register_shutdown_function(cleanup(...));
 
 // Set up error handling
 set_error_handler(function($severity, $message, $file, $line): void {

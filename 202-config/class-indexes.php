@@ -8,7 +8,7 @@ class INDEXES
 {
 
     // this returns the location_country_id, when a Country Code is given
-    function get_country_id($country_name, $country_code)
+    public static function get_country_id($country_name, $country_code)
     {
         global $memcacheWorking, $memcache;
         $database = DB::getInstance();
@@ -62,7 +62,7 @@ class INDEXES
     }
 
     // this returns the location_city_id, when a City name is given
-    function get_city_id($city_name, $country_id)
+    public static function get_city_id($city_name, $country_id)
     {
         global $memcacheWorking, $memcache;
         $database = DB::getInstance();
@@ -116,7 +116,7 @@ class INDEXES
     }
 
     // this returns the isp_id, when a isp name is given
-    function get_isp_id($isp)
+    public static function get_isp_id($isp)
     {
         global $memcacheWorking, $memcache;
         $database = DB::getInstance();
@@ -361,7 +361,7 @@ class INDEXES
     }
 
     // this returns the c1 id
-    function get_c1_id($c1)
+    public static function get_c1_id($c1)
     {
         global $memcacheWorking, $memcache;
         $database = DB::getInstance();
@@ -417,7 +417,7 @@ class INDEXES
     }
 
     // this returns the c2 id
-    function get_c2_id($c2)
+    public static function get_c2_id($c2)
     {
         global $memcacheWorking, $memcache;
         $database = DB::getInstance();
@@ -473,7 +473,7 @@ class INDEXES
     }
 
     // this returns the c3 id
-    function get_c3_id($c3)
+    public static function get_c3_id($c3)
     {
         global $memcacheWorking, $memcache;
         $database = DB::getInstance();
@@ -529,7 +529,7 @@ class INDEXES
     }
 
     // this returns the c4 id
-    function get_c4_id($c4)
+    public static function get_c4_id($c4)
     {
         global $memcacheWorking, $memcache;
         $database = DB::getInstance();
@@ -654,5 +654,224 @@ class INDEXES
             $device_id = $device_row['device_id'];
         }
         return $device_id;
+    }
+
+    public static function get_region_id($region_name, $country_id)
+    {
+        global $memcacheWorking, $memcache;
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+
+        $mysql['region_name'] = $db->real_escape_string($region_name);
+        $mysql['country_id'] = $db->real_escape_string((string) $country_id);
+
+        if ($memcacheWorking) {
+            $time = 2592000;
+            $getID = $memcache->get(md5("region-id" . $region_name . $country_id . systemHash()));
+            if ($getID) {
+                return $getID;
+            } else {
+                $region_sql = "SELECT region_id FROM 202_locations_region WHERE region_name='" . $mysql['region_name'] . "' AND country_id='" . $mysql['country_id'] . "'";
+                $region_result = _mysqli_query($region_sql);
+                $region_row = $region_result->fetch_assoc();
+                if ($region_row['region_id']) {
+                    $region_id = $region_row['region_id'];
+                    $setID = setCache(md5("region-id" . $region_name . $country_id . systemHash()), $region_id, $time);
+                    return $region_id;
+                } else {
+                    $region_sql = "INSERT INTO 202_locations_region SET region_name='" . $mysql['region_name'] . "', country_id='" . $mysql['country_id'] . "'";
+                    $region_result = _mysqli_query($region_sql);
+                    $region_id = $db->insert_id;
+                    $setID = setCache(md5("region-id" . $region_name . $country_id . systemHash()), $region_id, $time);
+                    return $region_id;
+                }
+            }
+        } else {
+            $region_sql = "SELECT region_id FROM 202_locations_region WHERE region_name='" . $mysql['region_name'] . "' AND country_id='" . $mysql['country_id'] . "'";
+            $region_result = _mysqli_query($region_sql);
+            $region_row = $region_result->fetch_assoc();
+            if ($region_row['region_id']) {
+                return $region_row['region_id'];
+            } else {
+                $region_sql = "INSERT INTO 202_locations_region SET region_name='" . $mysql['region_name'] . "', country_id='" . $mysql['country_id'] . "'";
+                $region_result = _mysqli_query($region_sql);
+                return $db->insert_id;
+            }
+        }
+    }
+
+    public static function get_variable_id($variable, $ppc_variable_id)
+    {
+        global $memcacheWorking, $memcache;
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+
+        $variable = substr((string) $variable, 0, 350);
+        $mysql['var'] = $db->real_escape_string($variable);
+        $mysql['ppc_variable_id'] = $db->real_escape_string($ppc_variable_id);
+
+        if ($memcacheWorking) {
+            $time = 2592000;
+            $var_id = $memcache->get(md5($mysql['ppc_variable_id'] . $mysql['var'] . systemHash()));
+            if (!$var_id) {
+                $var_sql = "SELECT custom_variable_id FROM 202_custom_variables WHERE ppc_variable_id = '" . $mysql['ppc_variable_id'] . "' AND variable = '" . $mysql['var'] . "'";
+                $var_result = _mysqli_query($var_sql);
+                $var_row = $var_result->fetch_assoc();
+                if ($var_row['custom_variable_id']) {
+                    $var_id = $var_row['custom_variable_id'];
+                    $setID = setCache(md5($ppc_variable_id . $variable . systemHash()), $var_id, $time);
+                } else {
+                    $var_sql = "INSERT INTO 202_custom_variables SET ppc_variable_id = '" . $mysql['ppc_variable_id'] . "', variable = '" . $mysql['var'] . "'";
+                    $var_result = _mysqli_query($var_sql);
+                    $var_id = $db->insert_id;
+                    $setID = setCache(md5($ppc_variable_id . $variable . systemHash()), $var_id, $time);
+                }
+            }
+        } else {
+            $var_sql = "SELECT custom_variable_id FROM 202_custom_variables WHERE ppc_variable_id = '" . $mysql['ppc_variable_id'] . "' AND variable = '" . $mysql['var'] . "'";
+            $var_result = _mysqli_query($var_sql);
+            $var_row = $var_result->fetch_assoc();
+            if ($var_row['custom_variable_id']) {
+                $var_id = $var_row['custom_variable_id'];
+            } else {
+                $var_sql = "INSERT INTO 202_custom_variables SET ppc_variable_id = '" . $mysql['ppc_variable_id'] . "', variable = '" . $mysql['var'] . "'";
+                $var_result = _mysqli_query($var_sql);
+                $var_id = $db->insert_id;
+            }
+        }
+
+        return $var_id;
+    }
+
+    public static function get_utm_id($utm_var, $utm_type)
+    {
+        global $memcacheWorking, $memcache;
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+
+        $utm_var = substr((string) $utm_var, 0, 350);
+        $mysql['utm_var'] = $db->real_escape_string($utm_var);
+        $mysql['utm_type'] = $db->real_escape_string($utm_type);
+
+        if ($memcacheWorking) {
+            $time = 2592000;
+            $getUtm = $memcache->get(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()));
+            if ($getUtm) {
+                return $getUtm;
+            } else {
+                $utm_sql = "SELECT " . $mysql['utm_type'] . "_id FROM 202_" . $mysql['utm_type'] . " WHERE " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
+                $utm_result = _mysqli_query($utm_sql);
+                $utm_row = $utm_result->fetch_assoc();
+                if ($utm_row) {
+                    $utm_id = $utm_row[$mysql['utm_type'] . "_id"];
+                    $setID = setCache(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()), $utm_id, $time);
+                    return $utm_id;
+                } else {
+                    $utm_sql = "INSERT INTO 202_" . $mysql['utm_type'] . " SET " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
+                    $utm_result = _mysqli_query($utm_sql);
+                    $utm_id = $db->insert_id;
+                    $setID = setCache(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()), $utm_id, $time);
+                    return $utm_id;
+                }
+            }
+        } else {
+            $utm_sql = "SELECT " . $mysql['utm_type'] . "_id FROM 202_" . $mysql['utm_type'] . " WHERE " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
+            $utm_result = _mysqli_query($utm_sql);
+            $utm_row = $utm_result->fetch_assoc();
+            if ($utm_row) {
+                return $utm_row[$mysql['utm_type'] . "_id"];
+            } else {
+                $utm_sql = "INSERT INTO 202_" . $mysql['utm_type'] . " SET " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
+                $utm_result = _mysqli_query($utm_sql);
+                return $db->insert_id;
+            }
+        }
+    }
+
+    public static function get_variable_set_id($variables)
+    {
+        global $memcacheWorking, $memcache;
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+
+        $mysql['variables'] = $db->real_escape_string($variables);
+
+        if ($memcacheWorking) {
+            $time = 2592000;
+            $getSet = $memcache->get(md5('variable_set' . $variables . systemHash()));
+            if ($getSet) {
+                return $getSet;
+            } else {
+                $var_sql = "SELECT variable_set_id FROM 202_variable_sets WHERE variables = '" . $mysql['variables'] . "'";
+                $var_result = _mysqli_query($var_sql);
+                $var_row = $var_result->fetch_assoc();
+                if ($var_row['variable_set_id']) {
+                    $var_id = $var_row['variable_set_id'];
+                    $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
+                    return $var_id;
+                } else {
+                    $var_sql = "INSERT INTO 202_variable_sets SET variables = '" . $mysql['variables'] . "'";
+                    $var_result = _mysqli_query($var_sql);
+                    $var_id = $db->insert_id;
+                    $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
+                    return $var_id;
+                }
+            }
+        } else {
+            $var_sql = "SELECT variable_set_id FROM 202_variable_sets WHERE variables = '" . $mysql['variables'] . "'";
+            $var_result = _mysqli_query($var_sql);
+            $var_row = $var_result->fetch_assoc();
+            if ($var_row['variable_set_id']) {
+                return $var_row['variable_set_id'];
+            } else {
+                $var_sql = "INSERT INTO 202_variable_sets SET variables = '" . $mysql['variables'] . "'";
+                $var_result = _mysqli_query($var_sql);
+                return $db->insert_id;
+            }
+        }
+    }
+
+    public static function get_custom_var_id($custom_var_name, $custom_var_data)
+    {
+        global $memcacheWorking, $memcache;
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+
+        $custom_var_data = substr((string) $custom_var_data, 0, 350);
+        $mysql[$custom_var_name] = $db->real_escape_string($custom_var_data);
+
+        if ($memcacheWorking) {
+            $time = 2592000;
+            $getcustomvar = $memcache->get(md5($custom_var_name . "-id" . $custom_var_data . systemHash()));
+            if ($getcustomvar) {
+                return $getcustomvar;
+            } else {
+                $custom_sql = "SELECT " . $custom_var_name . "_id FROM 202_tracking_" . $custom_var_name . " WHERE " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
+                $custom_result = _mysqli_query($custom_sql);
+                $custom_row = $custom_result->fetch_assoc();
+                if ($custom_row[$custom_var_name . "_id"]) {
+                    $custom_id = $custom_row[$custom_var_name . "_id"];
+                    $setID = setCache(md5($custom_var_name . "-id" . $custom_var_data . systemHash()), $custom_id, $time);
+                    return $custom_id;
+                } else {
+                    $custom_sql = "INSERT INTO 202_tracking_" . $custom_var_name . " SET " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
+                    $custom_result = _mysqli_query($custom_sql);
+                    $custom_id = $db->insert_id;
+                    $setID = setCache(md5($custom_var_name . "-id" . $custom_var_data . systemHash()), $custom_id, $time);
+                    return $custom_id;
+                }
+            }
+        } else {
+            $custom_sql = "SELECT " . $custom_var_name . "_id FROM 202_tracking_" . $custom_var_name . " WHERE " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
+            $custom_result = _mysqli_query($custom_sql);
+            $custom_row = $custom_result->fetch_assoc();
+            if ($custom_row[$custom_var_name . "_id"]) {
+                return $custom_row[$custom_var_name . "_id"];
+            } else {
+                $custom_sql = "INSERT INTO 202_tracking_" . $custom_var_name . " SET " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
+                $custom_result = _mysqli_query($custom_sql);
+                return $db->insert_id;
+            }
+        }
     }
 }

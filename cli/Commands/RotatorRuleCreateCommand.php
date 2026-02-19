@@ -14,6 +14,7 @@ class RotatorRuleCreateCommand extends BaseCommand
 {
     protected static $defaultName = 'rotator:rule:create';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();
@@ -39,14 +40,14 @@ class RotatorRuleCreateCommand extends BaseCommand
         ];
 
         if ($input->getOption('criteria_json')) {
-            $body['criteria'] = json_decode($input->getOption('criteria_json'), true);
+            $body['criteria'] = json_decode((string) $input->getOption('criteria_json'), true);
             if ($body['criteria'] === null) {
                 $output->writeln('<error>Invalid JSON in --criteria_json</error>');
                 return Command::FAILURE;
             }
         }
         if ($input->getOption('redirects_json')) {
-            $body['redirects'] = json_decode($input->getOption('redirects_json'), true);
+            $body['redirects'] = json_decode((string) $input->getOption('redirects_json'), true);
             if ($body['redirects'] === null) {
                 $output->writeln('<error>Invalid JSON in --redirects_json</error>');
                 return Command::FAILURE;

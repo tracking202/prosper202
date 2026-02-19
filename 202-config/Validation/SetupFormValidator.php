@@ -59,7 +59,7 @@ class SetupFormValidator
     /**
      * Validate numeric value
      */
-    public function validateNumeric(mixed $value, string $fieldName = 'field', float $min = null, float $max = null): ValidationResult
+    public function validateNumeric(mixed $value, string $fieldName = 'field', ?float $min = null, ?float $max = null): ValidationResult
     {
         if ($value === null || $value === '') {
             return ValidationResult::failure("$fieldName is required");
@@ -85,7 +85,7 @@ class SetupFormValidator
     /**
      * Validate integer value
      */
-    public function validateInteger(mixed $value, string $fieldName = 'field', int $min = null, int $max = null): ValidationResult
+    public function validateInteger(mixed $value, string $fieldName = 'field', ?int $min = null, ?int $max = null): ValidationResult
     {
         if ($value === null || $value === '') {
             return ValidationResult::failure("$fieldName is required");

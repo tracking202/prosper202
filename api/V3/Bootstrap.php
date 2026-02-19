@@ -52,7 +52,7 @@ final class Bootstrap
             }
             self::$db = $conn;
             return self::$db;
-        } catch (\Exception $e) {
+        } catch (\Exception) {
             throw new \RuntimeException('Database connection failed');
         }
     }

@@ -14,6 +14,7 @@ class RotatorUpdateCommand extends BaseCommand
 {
     protected static $defaultName = 'rotator:update';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

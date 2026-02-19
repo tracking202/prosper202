@@ -34,8 +34,9 @@ $whatCache = false;
 $memcacheInstalled = false;
 global $memcacheWorking;
 $memcacheWorking = false;
-/** @var \Memcache|\Memcached $memcache */
+/** @var \Memcache|\Memcached|null $memcache */
 $memcache = null; // Initialize $memcache
+$mchost = $mchost ?? '127.0.0.1';
 
 if (extension_loaded('memcache') && class_exists('Memcache')) {
     $whatCache = 'memcache';
@@ -81,6 +82,15 @@ function setCache($key, $value, $exp = null)
     }
 }
 
+function getCache(string $key, $default = false)
+{
+    global $memcache;
+    if ($memcache instanceof \Memcached || $memcache instanceof \Memcache) {
+        return call_user_func([$memcache, 'get'], $key);
+    }
+    return $default;
+}
+
 
 include_once(CONFIG_PATH . '/geo/inc/geoipcity.inc');
 include_once(CONFIG_PATH . '/geo/inc/geoipregionvars.php');
@@ -99,6 +109,32 @@ if (!function_exists('array_any')) {
 include_once(CONFIG_PATH . '/Mobile_Detect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
+
+if (!function_exists('geoip_open')) {
+    function geoip_open($filename, $flags)
+    {
+        if (file_exists($filename)) {
+            return fopen($filename, 'r');
+        }
+        return false;
+    }
+}
+
+if (!function_exists('geoip_org_by_addr')) {
+    function geoip_org_by_addr($gi, $addr)
+    {
+        return "Unknown ISP/Organization";
+    }
+}
+
+if (!function_exists('geoip_close')) {
+    function geoip_close($gi)
+    {
+        if ($gi && is_resource($gi)) {
+            fclose($gi);
+        }
+    }
+}
 
 // Initialize $tid and $db variables to prevent undefined variable errors
 if (!isset($tid)) {
@@ -138,7 +174,7 @@ if ($memcacheWorking) {
         // Default to user 1 if no ID is found
         $tid = '1';
     }
-    $_SESSION['privacy'] = $memcache->get(md5('user_pref_privacy_' . $tid . systemHash()));
+    $_SESSION['privacy'] = getCache(md5('user_pref_privacy_' . $tid . systemHash()));
 }
 
 //exit strict mode - only if db connection is available
@@ -182,7 +218,7 @@ $tempip = explode(",", (string) $_SERVER['HTTP_X_FORWARDED_FOR']);
 $_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
 $ip_address = ipAddress($_SERVER['HTTP_X_FORWARDED_FOR']);
 
-function trackingEnabled()
+function trackingEnabled(): bool
 {
     $trackingEnabled = true;
 
@@ -193,21 +229,39 @@ function trackingEnabled()
     return $trackingEnabled;
 }
 
-function _mysqli_query($db, $sql)
+function _mysqli_query($dbOrSql, $sql = null)
 {
-    $result = $db->query($sql) or record_mysql_error($db); //or die($db->error . '<br/><br/>' . $sql);
+    if ($sql === null) {
+        $sql = (string) $dbOrSql;
+        $db = $GLOBALS['db'] ?? null;
+    } else {
+        $db = $dbOrSql;
+    }
+
+    if (!$db instanceof \mysqli) {
+        $database = \DB::getInstance();
+        $db = method_exists($database, 'getConnection')
+            ? $database->getConnection()
+            : null;
+    }
+
+    if (!$db instanceof \mysqli) {
+        record_mysql_error((string) $sql);
+    }
+
+    $result = $db->query((string) $sql) or record_mysql_error($db, (string) $sql); //or die($db->error . '<br/><br/>' . $sql);
     return $result;
 }
 
 // our own die, that will display the them around the error message
-function _die($message): never
+function _die($message, ...$legacyArgs): never
 {
     echo $message;
     die();
 }
 
 // this funciton delays an SQL statement, puts in in a mysql table, to be cron jobbed out every 5 minutes
-function delay_sql($db, $delayed_sql)
+function delay_sql($db, $delayed_sql): void
 {
     $mysql['delayed_sql'] = str_replace("'", "''", $delayed_sql);
     $mysql['delayed_time'] = time();
@@ -675,14 +729,8 @@ function setClickIdCookie($click_id, $campaign_id = 0)
         setcookie('tracking202subid-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
         setcookie('tracking202subid_a_' . $campaign_id . '-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
 
-        //samesite=none secure cookies
-        if (PHP_VERSION_ID < 70300) {
-            header('Set-Cookie: tracking202subid=' . $click_id . ';max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
-            header('Set-Cookie: tracking202subid_a_' . $campaign_id . '=' . $click_id . '; max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
-        } else {
-            setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-            setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-        }
+        setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -701,12 +749,7 @@ function setClickIdCookieForLp($click_id_public, $lp_public_id)
         //legacy cookies
         setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
 
-        //samesite=none secure cookies
-        if (PHP_VERSION_ID < 70300) {
-            header('Set-Cookie: tracking202rlp_' . $lp_public_id . '=' . $click_id_public . ';max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
-        } else {
-            setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-        }
+        setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -798,15 +841,15 @@ class PLATFORMS
             }
         }
 
-        if (isset($ip_address) && $ip_address && PLATFORMS::botCheck($ip_address)) {
+        if ($ip_address && PLATFORMS::botCheck($ip_address)) {
             $type = "4";
             $result->device->family = "Bot";
         }
 
         // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string((string)($result->ua->family ?? ''));
-        $mysql['platform'] = $db->real_escape_string((string)($result->os->family ?? ''));
-        $mysql['device'] = $db->real_escape_string((string)($result->device->family ?? ''));
+        $mysql['browser'] = $db->real_escape_string((string)$result->ua->family);
+        $mysql['platform'] = $db->real_escape_string((string)$result->os->family);
+        $mysql['device'] = $db->real_escape_string((string)$result->device->family);
         $mysql['device_type'] = $db->real_escape_string((string)$type);
 
 
@@ -943,7 +986,7 @@ class PLATFORMS
         [$range, $netmask] = explode('/', (string) $range, 2);
         $range_decimal = ip2long($range);
         $ip_decimal = ip2long($ip->address);
-        $wildcard_decimal = 2 ** (32 - $netmask) - 1;
+        $wildcard_decimal = 2 ** (32 - (int)$netmask) - 1;
         $netmask_decimal = ~$wildcard_decimal;
         return (($ip_decimal & $netmask_decimal) == ($range_decimal & $netmask_decimal));
     }
@@ -1372,10 +1415,24 @@ class INDEXES
     }
 
     // this returns the site_url_id, when a site_url_address is given
-    public static function get_site_url_id($db, $site_url_address)
+    public static function get_site_url_id($dbOrSiteUrl, $site_url_address = null)
     {
         global $memcacheWorking, $memcache;
         $time = 2592000; // 30 days in sec
+
+        if ($site_url_address === null) {
+            $site_url_address = $dbOrSiteUrl;
+            $database = DB::getInstance();
+            $db = method_exists($database, 'getConnection')
+                ? $database->getConnection()
+                : null;
+        } else {
+            $db = $dbOrSiteUrl;
+        }
+
+        if (!$db instanceof \mysqli) {
+            return 0;
+        }
         
         // Handle null or empty site_url_address
         if ($site_url_address === null || $site_url_address === '') {
@@ -1433,10 +1490,26 @@ class INDEXES
     }
 
     // this returns the keyword_id
-    public static function get_utm_id($db, $utm_var, $utm_type)
+    public static function get_utm_id($dbOrUtmVar, $utm_var_or_type, $utm_type = null)
     {
         global $memcacheWorking, $memcache;
         $time = 2592000; // 30 days in sec - Define $time
+
+        if ($utm_type === null) {
+            $utm_var = $dbOrUtmVar;
+            $utm_type = $utm_var_or_type;
+            $database = DB::getInstance();
+            $db = method_exists($database, 'getConnection')
+                ? $database->getConnection()
+                : null;
+        } else {
+            $db = $dbOrUtmVar;
+            $utm_var = $utm_var_or_type;
+        }
+
+        if (!$db instanceof \mysqli) {
+            return 0;
+        }
 
         // only grab the first 350 characters of the utm variable
         $utm_var = substr((string) $utm_var, 0, 350);
@@ -1490,10 +1563,26 @@ class INDEXES
         }
     }
 
-    public static function get_variable_id($db, $variable, $ppc_variable_id)
+    public static function get_variable_id($dbOrVariable, $variableOrPpcVariableId, $ppc_variable_id = null)
     {
         global $memcacheWorking, $memcache;
         $time = 2592000; // 30 days in sec - Define $time
+
+        if ($ppc_variable_id === null) {
+            $variable = $dbOrVariable;
+            $ppc_variable_id = $variableOrPpcVariableId;
+            $database = DB::getInstance();
+            $db = method_exists($database, 'getConnection')
+                ? $database->getConnection()
+                : null;
+        } else {
+            $db = $dbOrVariable;
+            $variable = $variableOrPpcVariableId;
+        }
+
+        if (!$db instanceof \mysqli) {
+            return 0;
+        }
 
         // only grab the first 350 characters of the variable
         $variable = substr((string) $variable, 0, 350);
@@ -1541,10 +1630,24 @@ class INDEXES
         return $var_id;
     }
 
-    public static function get_variable_set_id($db, $variables)
+    public static function get_variable_set_id($dbOrVariables, $variables = null)
     {
         global $memcacheWorking, $memcache;
         $time = 2592000; // 30 days in sec - Define $time
+
+        if ($variables === null) {
+            $variables = $dbOrVariables;
+            $database = DB::getInstance();
+            $db = method_exists($database, 'getConnection')
+                ? $database->getConnection()
+                : null;
+        } else {
+            $db = $dbOrVariables;
+        }
+
+        if (!$db instanceof \mysqli) {
+            return 0;
+        }
 
         $mysql['variables'] = $db->real_escape_string($variables);
 
@@ -1609,10 +1712,24 @@ class INDEXES
     }
 
     // this returns the keyword_id
-    public static function get_keyword_id($db, $keyword)
+    public static function get_keyword_id($dbOrKeyword, $keyword = null)
     {
         global $memcacheWorking, $memcache;
         $time = 2592000; // 30 days in sec
+
+        if ($keyword === null) {
+            $keyword = $dbOrKeyword;
+            $database = DB::getInstance();
+            $db = method_exists($database, 'getConnection')
+                ? $database->getConnection()
+                : null;
+        } else {
+            $db = $dbOrKeyword;
+        }
+
+        if (!$db instanceof \mysqli) {
+            return 0;
+        }
         // only grab the first 255 characters of keyword
         // $keyword = substr($keyword, 0, 255);
 
@@ -1662,9 +1779,25 @@ class INDEXES
     }
 
     // this returns the c1 id
-    public static function get_custom_var_id($db, $custom_var_name, $custom_var_data)
+    public static function get_custom_var_id($dbOrCustomVarName, $custom_var_name_or_data, $custom_var_data = null)
     {
         global $memcacheWorking, $memcache;
+
+        if ($custom_var_data === null) {
+            $custom_var_name = $dbOrCustomVarName;
+            $custom_var_data = $custom_var_name_or_data;
+            $database = DB::getInstance();
+            $db = method_exists($database, 'getConnection')
+                ? $database->getConnection()
+                : null;
+        } else {
+            $db = $dbOrCustomVarName;
+            $custom_var_name = $custom_var_name_or_data;
+        }
+
+        if (!$db instanceof \mysqli) {
+            return 0;
+        }
 
         // only grab the first 350 charactesr of custom_var
         $custom_var_data = substr((string) $custom_var_data, 0, 350);
@@ -2075,7 +2208,7 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
 
 function replaceTokens($url, $tokens = [], $fillblanks = 0)
 {
-    $tokens = array_map('rawurlencode202', $tokens);
+    $tokens = array_map(rawurlencode202(...), $tokens);
 
     if (isset($tokens['c1']) || $fillblanks)
         $url = preg_replace('/\[\[c1\]\]/i', (string) $tokens['c1'], (string) $url);
@@ -2255,34 +2388,6 @@ function getIspData($ip)
         define('GEOIP_MEMORY_CACHE', 1);
     }
 
-    // Implement missing geoip functions if they don't exist
-    if (!function_exists('geoip_open')) {
-        function geoip_open($filename, $flags)
-        {
-            if (file_exists($filename)) {
-                return fopen($filename, 'r');
-            }
-            return false;
-        }
-    }
-
-    if (!function_exists('geoip_org_by_addr')) {
-        function geoip_org_by_addr($gi, $addr)
-        {
-            // Simplified implementation - in real world you'd need a proper ISP database library
-            return "Unknown ISP/Organization";
-        }
-    }
-
-    if (!function_exists('geoip_close')) {
-        function geoip_close($gi)
-        {
-            if ($gi && is_resource($gi)) {
-                fclose($gi);
-            }
-        }
-    }
-
     if (file_exists($isp_file)) {
         $giisp = geoip_open(substr(__DIR__, 0, -10) . "/202-config/geo/GeoIPISP.dat", GEOIP_MEMORY_CACHE);
         $isp = geoip_org_by_addr($giisp, $ip->address);
@@ -2299,7 +2404,7 @@ function getIspData($ip)
     return $isp;
 }
 
-function systemHash()
+function systemHash(): string
 {
     $hash = hash('ripemd160', $_SERVER['HTTP_HOST'] . $_SERVER['SERVER_ADDR']);
     return $hash;
@@ -2319,12 +2424,7 @@ function setPCIdCookie($click_id_public)
         //legacy cookies
         setcookie('tracking202pci-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
 
-        //samesite=none secure cookies
-        if (PHP_VERSION_ID < 70300) {
-            header('Set-Cookie: tracking202pci=' . $click_id_public . ';max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
-        } else {
-            setcookie('tracking202pci', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-        }
+        setcookie('tracking202pci', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -2342,12 +2442,7 @@ function setOutboundCookie($outbound_site_url)
         //legacy cookies
         setcookie('tracking202outbound-legacy', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
 
-        //samesite=none secure cookies
-        if (PHP_VERSION_ID < 70300) {
-            header('Set-Cookie: tracking202outbound=' . $outbound_site_url . ';max-age=' . $expire_header . ';Path=/;Domain=' . $domain . ';SameSite=None; Secure');
-        } else {
-            setcookie('tracking202outbound', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-        }
+        setcookie('tracking202outbound', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -2415,16 +2510,35 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
     return $redirect_site_url;
 }
 
-function record_mysql_error($db, $sql): never
+function record_mysql_error($dbOrSql, $sql = null): never
 {
     global $server_row, $ip_address; // Add global $ip_address
+
+    if ($sql === null) {
+        $sql = (string) $dbOrSql;
+        $db = $GLOBALS['db'] ?? null;
+    } else {
+        $db = $dbOrSql;
+    }
+
+    if (!$db instanceof \mysqli) {
+        $database = \DB::getInstance();
+        $db = method_exists($database, 'getConnection')
+            ? $database->getConnection()
+            : null;
+    }
+
+    if (!$db instanceof \mysqli) {
+        error_log('Database connection unavailable - SQL: ' . $sql);
+        echo 'Database error. The webmaster has been notified.';
+        die();
+    }
 
     // record the mysql error
     $clean['mysql_error_text'] = mysqli_error($db);
 
-    // if on dev server, echo the error
-
-    echo $sql . '<br/><br/>' . $clean['mysql_error_text'] . '<br/><br/>';
+    // log the error server-side only
+    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
 
     $ipForError = $ip_address ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? ''));
@@ -2511,12 +2625,12 @@ function getSplitTestValue(array $values)
     }
 }
 
-function get_absolute_url()
+function get_absolute_url(): string
 {
     return substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 }
 
-function getTrackingDomain()
+function getTrackingDomain(): string
 {
     global $db;
 
@@ -2602,7 +2716,7 @@ function ip_in_range($ip, $range)
             $range_dec = ip2long($range);
             $ip_dec = ip2long($ip);
 
-            $wildcard_dec = 2 ** (32 - $netmask) - 1;
+            $wildcard_dec = 2 ** (32 - (int)$netmask) - 1;
             $netmask_dec = ~$wildcard_dec;
 
             return (($ip_dec & $netmask_dec) == ($range_dec & $netmask_dec));
@@ -2791,7 +2905,7 @@ function getTrackerDetail(&$mysql)
     if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
         $_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
         if (is_numeric($_GET['t202b'])) {
-            $bid = number_format($_GET['t202b'], 5, '.', '');
+            $bid = number_format((float) $_GET['t202b'], 5, '.', '');
             $mysql['click_cpc'] = $db->real_escape_string($bid);
         } else {
             $mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
@@ -2861,7 +2975,7 @@ function getTrackerDetailPT(&$mysql)
     if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
         $_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
         if (is_numeric($_GET['t202b'])) {
-            $bid = number_format($_GET['t202b'], 5, '.', '');
+            $bid = number_format((float) $_GET['t202b'], 5, '.', '');
             $mysql['click_cpc'] = $db->real_escape_string($bid);
         } else {
             $mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
@@ -2884,7 +2998,7 @@ function getTrackerDetailPT(&$mysql)
     return $tracker_row;
 }
 
-function getClickId()
+function getClickId(): string
 {
     global $db;
 
@@ -2906,6 +3020,7 @@ function getClickIdPublic($click_id)
 function insertClicks($mysql)
 {
     global $db;
+    $click_sql = '';
 
     if (!$mysql['ppc_account_id']) {
         $mysql['ppc_account_id'] = '0';
@@ -3121,6 +3236,7 @@ function insertClicksVariable($mysql, $tracker_row)
 function insertClicksSite($mysql)
 {
     global $db;
+    $click_sql = '';
 
     switch ($mysql['lp_type']) {
         case 'dl':
@@ -3204,7 +3320,7 @@ function insertClicksTracking($mysql)
 }
 
 
-function processCacheRedirect()
+function processCacheRedirect(): void
 {
     global $db, $memcacheWorking, $memcache;
     $usedCachedRedirect = false;
@@ -3217,11 +3333,7 @@ function processCacheRedirect()
 
         //if a cached key is found for this t202id, redirect to that url
         if ($memcacheWorking) {
-            if ($memcache instanceof Memcached || $memcache instanceof Memcache) {
-                $getUrl = $memcache->get(md5('url_' . $t202id . systemHash()));
-            } else {
-                $getUrl = false; // Handle the case where $memcache is not properly initialized
-            }
+            $getUrl = getCache(md5('url_' . $t202id . systemHash()));
             if ($getUrl) {
 
                 $new_url = str_replace("[[subid]]", "p202", $getUrl);
@@ -3337,12 +3449,12 @@ function setDirtyHour($mysql)
     $de->setDirtyHour($mysql['click_id']);
 }
 
-function isSSL()
+function isSSL(): bool
 {
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || intval($_SERVER['SERVER_PORT']) == intval(getservbyname('https', 'tcp'));
 }
 
-function getScheme()
+function getScheme(): string
 {
     if (isSSL()) {
         $scheme = 'https';
@@ -3353,7 +3465,7 @@ function getScheme()
     return $scheme;
 }
 
-function is_prefetch()
+function is_prefetch(): bool
 {
     $prefetch = false;
 
@@ -3462,6 +3574,7 @@ function getCVars(&$mysql)
 function getKeyword(&$mysql)
 {
     global $db;
+    $keyword = '';
     /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
     //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
     $referer_url_parsed = @parse_url((string) $_SERVER['HTTP_REFERER']);
@@ -3588,7 +3701,7 @@ function getForeignPayout($currency, $payout_currency, $payout)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3683,7 +3796,7 @@ function getPayout(&$mysql)
     $mysql['click_payout'] = $sql_row !== null ? $db->real_escape_string($sql_row['click_payout']) : '0';
 }
 
-function getUrlVars202()
+function getUrlVars202(): array
 {
     $urlvarslist = [];
     $temp = explode('&', (string) $_SERVER['QUERY_STRING']);

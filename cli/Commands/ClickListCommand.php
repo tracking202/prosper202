@@ -13,6 +13,7 @@ class ClickListCommand extends BaseCommand
 {
     protected static $defaultName = 'click:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

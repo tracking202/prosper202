@@ -86,7 +86,9 @@ LEFT JOIN 202_site_domains as 2ccd ON (2ccd.site_domain_id = 2cc.site_domain_id)
 LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.site_domain_id) 
 ";
 	$db_table = "2c";
-	$query = query($command);
+	$offset = isset($_POST['offset']) && is_numeric($_POST['offset']) ? (int)$_POST['offset'] : 0;
+	$order = isset($_POST['order']) ? $_POST['order'] : null;
+	$query = query($command, $db_table, null, null, null, $order, $offset);
 }
 
 
@@ -94,9 +96,10 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 $click_sql = $query['click_sql'];
 $click_result = $db->query($click_sql) or record_mysql_error($click_sql);
 
-$html['from'] = $html['from'] = htmlentities((string)$query['from'], ENT_QUOTES, 'UTF-8');
+$html['from'] = htmlentities((string)$query['from'], ENT_QUOTES, 'UTF-8');
 $html['to'] = htmlentities((string)$query['to'], ENT_QUOTES, 'UTF-8');
 $html['rows'] = htmlentities((string)$query['rows'], ENT_QUOTES, 'UTF-8');
+$html['order'] = htmlentities((string)($_POST['order'] ?? ''), ENT_QUOTES, 'UTF-8');
 ?>
 <div class="row" style="margin-top: 10px;">
 	<div class="col-xs-6">
@@ -327,29 +330,27 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 </div>
 </div>
 
-<?php if (($query['pages'] > 2) and ($_GET['spy'] != 1)) { ?>
+<?php if (($query['pages'] > 1) and (($_GET['spy'] ?? '') != 1)) { ?>
 	<div class="row">
 		<div class="col-xs-12 text-center">
 			<div class="pagination" id="table-pages">
 				<ul>
 					<?php if ($query['offset'] > 0) {
-						printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'%tracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $query['offset'] - 1, $html['order']);
+						printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'%stracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $query['offset'] - 1, $html['order'] ?? '');
 					}
 
-					if ($query['pages'] > 1) {
-						for ($i = 0; $i < $query['pages'] - 1; $i++) {
-							if (($i >= $query['offset'] - 10) and ($i < $query['offset'] + 11)) {
-								if ($query['offset'] == $i) {
-									$class = 'class="active"';
-								}
-								printf(' <li %s><a onclick="loadContent(\'%stracking202/ajax/click_history.php\',\'%s\',\'%s\');">%s</a></li>', $class, get_absolute_url(), $i, $html['order'], $i + 1);
-								unset($class);
+					for ($i = 0; $i < $query['pages']; $i++) {
+						if (($i >= $query['offset'] - 10) and ($i < $query['offset'] + 11)) {
+							$class = '';
+							if ($query['offset'] == $i) {
+								$class = 'class="active"';
 							}
+							printf(' <li %s><a onclick="loadContent(\'%stracking202/ajax/click_history.php\',\'%s\',\'%s\');">%s</a></li>', $class, get_absolute_url(), $i, $html['order'] ?? '', $i + 1);
 						}
 					}
 
-					if ($query['offset'] > 0) {
-						printf(' <li class="next"><a class="fui-arrow-right" onclick="loadContent(\'%stracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $query['offset'] + 1, $html['order']);
+					if ($query['offset'] < $query['pages'] - 1) {
+						printf(' <li class="next"><a class="fui-arrow-right" onclick="loadContent(\'%stracking202/ajax/click_history.php\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $query['offset'] + 1, $html['order'] ?? '');
 					}
 					?>
 				</ul>

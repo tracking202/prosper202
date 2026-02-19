@@ -14,6 +14,7 @@ class UserPreferencesUpdateCommand extends BaseCommand
 {
     protected static $defaultName = 'user:prefs:update';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -12,16 +12,10 @@ use Api\V3\Support\SyncEngine;
 
 class SyncController
 {
-    private \mysqli $db;
-    private int $userId;
-    private ServerStateStore $store;
-    private SyncEngine $engine;
+    private readonly SyncEngine $engine;
 
-    public function __construct(\mysqli $db, int $userId, ?ServerStateStore $store = null, ?SyncEngine $engine = null)
+    public function __construct(private readonly \mysqli $db, private readonly int $userId, private readonly ?ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
     {
-        $this->db = $db;
-        $this->userId = $userId;
-        $this->store = $store ?? new ServerStateStore();
         $this->engine = $engine ?? new SyncEngine($this->store);
     }
 

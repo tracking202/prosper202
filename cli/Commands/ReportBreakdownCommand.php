@@ -13,6 +13,7 @@ class ReportBreakdownCommand extends BaseCommand
 {
     protected static $defaultName = 'report:breakdown';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -8,15 +8,11 @@ use Api\V3\HttpException;
 
 class ValidationException extends HttpException
 {
-    /** @var array<string, string> field => message */
-    private array $fieldErrors;
-
     /**
      * @param array<string, string> $fieldErrors
      */
-    public function __construct(string $message = 'Validation failed', array $fieldErrors = [], ?\Throwable $previous = null)
+    public function __construct(string $message = 'Validation failed', private readonly array $fieldErrors = [], ?\Throwable $previous = null)
     {
-        $this->fieldErrors = $fieldErrors;
         parent::__construct($message, 422, $previous);
     }
 

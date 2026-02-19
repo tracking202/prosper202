@@ -13,6 +13,7 @@ class ConversionGetCommand extends BaseCommand
 {
     protected static $defaultName = 'conversion:get';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

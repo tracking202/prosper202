@@ -2,9 +2,9 @@
 declare(strict_types=1);
 use UAParser\Parser;
 
-#only allow numeric id
-$tracker_id = $_GET['t202id']; 
-if (!is_numeric($tracker_id)) die();
+#only allow numeric id, reject 0 as invalid
+$tracker_id = $_GET['t202id'] ?? '';
+if (!is_numeric($tracker_id) || (int)$tracker_id <= 0) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 

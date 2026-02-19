@@ -10,15 +10,10 @@ use Api\V3\Exception\ValidationException;
 
 class AttributionController
 {
-    private \mysqli $db;
-    private int $userId;
+    private const array VALID_MODEL_TYPES = ['first_touch', 'last_touch', 'linear', 'time_decay', 'position_based', 'algorithmic'];
 
-    private const VALID_MODEL_TYPES = ['first_touch', 'last_touch', 'linear', 'time_decay', 'position_based', 'algorithmic'];
-
-    public function __construct(\mysqli $db, int $userId)
+    public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
-        $this->db = $db;
-        $this->userId = $userId;
     }
 
     // --- Models ---

@@ -7,17 +7,17 @@ namespace Prosper202\Attribution;
 /**
  * Captures a single touchpoint's credit contribution within a snapshot run.
  */
-final class Touchpoint
+final readonly class Touchpoint
 {
     public function __construct(
-        public readonly ?int $touchpointId,
-        public readonly ?int $snapshotId,
-        public readonly int $conversionId,
-        public readonly int $clickId,
-        public readonly int $position,
-        public readonly float $credit,
-        public readonly float $weight,
-        public readonly int $createdAt
+        public ?int $touchpointId,
+        public ?int $snapshotId,
+        public int $conversionId,
+        public int $clickId,
+        public int $position,
+        public float $credit,
+        public float $weight,
+        public int $createdAt
     ) {
     }
 

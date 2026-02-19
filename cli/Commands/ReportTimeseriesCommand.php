@@ -13,6 +13,7 @@ class ReportTimeseriesCommand extends BaseCommand
 {
     protected static $defaultName = 'report:timeseries';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

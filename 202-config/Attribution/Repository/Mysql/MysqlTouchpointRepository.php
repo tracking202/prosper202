@@ -11,11 +11,11 @@ use Prosper202\Attribution\Touchpoint;
 use RuntimeException;
 use Throwable;
 
-final class MysqlTouchpointRepository implements TouchpointRepositoryInterface
+final readonly class MysqlTouchpointRepository implements TouchpointRepositoryInterface
 {
     public function __construct(
-        private readonly mysqli $writeConnection,
-        private readonly ?mysqli $readConnection = null
+        private mysqli $writeConnection,
+        private ?mysqli $readConnection = null
     ) {
     }
 

@@ -13,6 +13,7 @@ class UserApiKeyListCommand extends BaseCommand
 {
     protected static $defaultName = 'user:apikey:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

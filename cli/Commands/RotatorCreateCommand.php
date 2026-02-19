@@ -13,6 +13,7 @@ class RotatorCreateCommand extends BaseCommand
 {
     protected static $defaultName = 'rotator:create';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

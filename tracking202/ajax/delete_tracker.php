@@ -48,5 +48,4 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_trac
 	$sql = "DELETE FROM 202_trackers WHERE tracker_id = '".$mysql['tracker_id']."' AND user_id = '".$mysql['user_id']."'";
 	$result = $db->query($sql);
 
-} ?>  
- 
+} ?>

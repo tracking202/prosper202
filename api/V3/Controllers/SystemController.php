@@ -9,11 +9,8 @@ use Api\V3\Support\ServerStateStore;
 
 class SystemController
 {
-    private \mysqli $db;
-
-    public function __construct(\mysqli $db)
+    public function __construct(private readonly \mysqli $db)
     {
-        $this->db = $db;
     }
 
     public function health(): array

@@ -8,9 +8,9 @@ use Api\V3\Exception\DatabaseException;
 
 class ServerStateStore
 {
-    private const DEFAULT_RETENTION = 5000;
+    private const int DEFAULT_RETENTION = 5000;
 
-    private string $baseDir;
+    private readonly string $baseDir;
 
     public function __construct(?string $baseDir = null)
     {

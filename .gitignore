@@ -53,3 +53,7 @@ CLAUDE.md
 # Go CLI build artifacts
 go-cli/prosper202-cli
 go-cli/*.exe
+rector.php
+RECTOR_FINDINGS.md
+rector_report.txt
+PHPSTAN_AND_CODE_QUALITY_TOOLS.md

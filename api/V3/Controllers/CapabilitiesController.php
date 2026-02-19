@@ -6,11 +6,8 @@ namespace Api\V3\Controllers;
 
 class CapabilitiesController
 {
-    private \mysqli $db;
-
-    public function __construct(\mysqli $db)
+    public function __construct(private readonly \mysqli $db)
     {
-        $this->db = $db;
     }
 
     public function versions(): array

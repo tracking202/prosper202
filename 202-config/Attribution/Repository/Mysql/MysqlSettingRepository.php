@@ -221,7 +221,7 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
         }
         $params = array_merge([$types], $refs);
 
-        if (!call_user_func_array([$statement, 'bind_param'], $params)) {
+        if (!call_user_func_array($statement->bind_param(...), $params)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }

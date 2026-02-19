@@ -296,7 +296,7 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and (!isset($add_success) || $add_suc
 	if (isset($_POST['aff_network_id'])) {
 		$selected['aff_network_id'] = $_POST['aff_network_id'];
 	}
-	$html = array_map('htmlentities', $_POST);
+	$html = array_map(htmlentities(...), $_POST);
 }
 
 template_top('Affiliate Campaigns Setup');

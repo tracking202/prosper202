@@ -27,7 +27,7 @@ final class AttributionSettingsService
         private readonly ?JourneyMaintenanceRepositoryInterface $journeyRepository = null,
         ?Closure $clock = null
     ) {
-        $this->clock = $clock ?? static fn (): int => time();
+        $this->clock = $clock ?? time(...);
     }
 
     /**
