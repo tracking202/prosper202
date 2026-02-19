@@ -1257,21 +1257,63 @@ function unset_user_pref_time_predefined() {
 	$('#user_pref_time_predefined').val($("#user_pref_time_predefined option:first").val()); 
 }
 
-function runSpy() {
+var spyLatestTime = 0;
+var spyXhr = null;
+var spyMaxRows = 200;
 
-	$.get("/tracking202/ajax/click_history.php", {spy: '1'})
+function runSpy() {
+	// Cancel any in-flight request to prevent pile-up
+	if (spyXhr && spyXhr.readyState !== 4) {
+		spyXhr.abort();
+	}
+
+	var params = { spy: '1' };
+	if (spyLatestTime > 0) {
+		params.since = spyLatestTime;
+	}
+
+	spyXhr = $.get("/tracking202/ajax/click_history.php", params)
 		.done(function(data) {
-			$("#m-content").html(data); 
-		  	goSpy();
+			var $parsed = $(data);
+
+			if (spyLatestTime === 0) {
+				// First load — full page replacement
+				$("#m-content").html(data);
+				goSpy();
+			} else {
+				// Incremental — prepend new rows to existing table
+				var $newRows = $parsed.filter('tr');
+				if ($newRows.length > 0) {
+					$newRows.hide();
+					$("#stats-table tbody").prepend($newRows);
+					$newRows.find('[data-toggle="tooltip"]').tooltip({ html: true });
+					$newRows.fadeIn(1000);
+					// Cap total rows to prevent DOM bloat
+					var $allRows = $("#stats-table tbody tr");
+					if ($allRows.length > spyMaxRows) {
+						$allRows.slice(spyMaxRows).remove();
+					}
+				}
+			}
+
+			// Update latest time from server response
+			// For full load, search DOM; for incremental, search parsed response
+			var $timeEl = (spyLatestTime === 0) ? $('#spy-latest-time') : $parsed.filter('#spy-latest-time');
+			if ($timeEl.length) {
+				var t = parseInt($timeEl.data('time'), 10);
+				if (t > 0) {
+					spyLatestTime = t;
+				}
+			}
 		});
 }
 
 function goSpy() {
-	setTimeout(appearSpy,1);  
-} 
+	setTimeout(appearSpy, 1);
+}
 
-function appearSpy(){
-    $('.new-click').fadeIn(1000);
+function appearSpy() {
+	$('.new-click').fadeIn(1000);
 }
 
 function rotator_tags_autocomplete(selector, type){

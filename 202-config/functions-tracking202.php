@@ -1502,10 +1502,14 @@ function query(
 
     $rows = null;
     if ($count == true || $limitValue !== null || $pref_limit !== false) {
-        $count_sql_to_run = $isspy ? "select count(*) as count from 202_clicks_spy" : $count_sql . $count_where;
+        // For spy mode, apply the 24-hour time bound to the count query too
+        if ($isspy) {
+            $spy_count_from = time() - 86400;
+            $count_where .= " AND click_time > " . $spy_count_from . " ";
+        }
+        $count_sql_to_run = $count_sql . $count_where;
         if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
-            $join = $isspy ? " WHERE " : " AND 2c.";
-            $count_sql_to_run .= $join . "click_id='" . $mysql['user_landing_subid'] . "'";
+            $count_sql_to_run .= " AND 2c.click_id='" . $mysql['user_landing_subid'] . "'";
         }
         $count_result = _mysqli_query($count_sql_to_run);
         $count_row = $count_result ? $count_result->fetch_assoc() : null;

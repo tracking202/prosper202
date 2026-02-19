@@ -5,6 +5,8 @@ include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
+$incremental = false;
+
 //if spy is enabled, run the query in a certain way.
 if (isset($_GET['spy']) && $_GET['spy'] == 1) {
 
@@ -48,7 +50,20 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 
 
 	$db_table = "2c";
-	$query = query($command);
+	$query = query($command, $db_table, null, null, null, null, null, null, null, true);
+
+	// Incremental fetch: only return rows newer than $since
+	$since = null;
+	if (isset($_GET['since']) && is_numeric($_GET['since'])) {
+		$since = (int)$_GET['since'];
+		$query['click_sql'] = preg_replace(
+			'/\s+ORDER\s+BY\s+/i',
+			' AND click_time > ' . $since . ' ORDER BY ',
+			$query['click_sql'],
+			1
+		);
+	}
+	$incremental = ($since !== null);
 } else {
 	$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,
@@ -92,9 +107,31 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 }
 
 
-//run query
+//run query — use read-only connection for spy view
 $click_sql = $query['click_sql'];
-$click_result = $db->query($click_sql) or record_mysql_error($click_sql);
+$isSpy = (isset($_GET['spy']) && $_GET['spy'] == 1);
+$queryDb = ($isSpy && $dbro instanceof mysqli) ? $dbro : $db;
+$click_result = $queryDb->query($click_sql) or record_mysql_error($click_sql);
+
+// For incremental spy mode, output just the new rows and exit early
+if (!empty($incremental)) {
+	AUTH::set_timezone($_SESSION['user_timezone']);
+	$latestTime = 0;
+	if ($click_result->num_rows == 0) {
+		// No new rows — output just the time marker
+		echo '<span id="spy-latest-time" data-time="' . (int)$since . '"></span>';
+		exit;
+	}
+	$x = 0;
+	while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
+		if ((int)$click_row['click_time'] > $latestTime) {
+			$latestTime = (int)$click_row['click_time'];
+		}
+		include __DIR__ . '/click_history_row.php';
+	}
+	echo '<span id="spy-latest-time" data-time="' . $latestTime . '"></span>';
+	exit;
+}
 
 $html['from'] = htmlentities((string)$query['from'], ENT_QUOTES, 'UTF-8');
 $html['to'] = htmlentities((string)$query['to'], ENT_QUOTES, 'UTF-8');
@@ -148,6 +185,8 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 					$new = true;
 				}
 
+				$spyLatestTime = 0; // Track latest click_time for incremental fetching
+
 				//if there is no clicks to display let them know :(
 				if ($click_result->num_rows == 0) {
 				?><div style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">You have no data to display with your above filters currently.</div><?php if (isset($_GET['spy']) && $_GET['spy'] == 1) {
@@ -158,6 +197,10 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																													$x = 0; // Initialize row alternating variable
 																																																																																													$new = true; // Initialize new clicks flag
 																																																																																													while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
+																																																																																														// Track latest time for spy incremental fetching
+																																																																																														if ((int)$click_row['click_time'] > $spyLatestTime) {
+																																																																																															$spyLatestTime = (int)$click_row['click_time'];
+																																																																																														}
 
 																																																																																														$mysql['click_id'] = $db->real_escape_string((string) $click_row['click_id']);
 
@@ -327,6 +370,9 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 		html: true
 	});
 </script>
+<?php if ($isSpy && $spyLatestTime > 0) { ?>
+<span id="spy-latest-time" data-time="<?php echo $spyLatestTime; ?>"></span>
+<?php } ?>
 </div>
 </div>
 
