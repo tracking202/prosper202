@@ -18,9 +18,8 @@ function record_mysql_error($dbOrSql, $sql = null): never
     // record the mysql error
     $clean['mysql_error_text'] = mysqli_error($db);
 
-    // if on dev server, echo the error
-
-    echo (string) $sql . '<br/><br/>' . $clean['mysql_error_text'] . '<br/><br/>';
+    // log the error server-side only
+    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
     $auth = new AUTH();
     $auth->set_timezone($_SESSION['user_timezone']);

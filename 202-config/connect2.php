@@ -2529,16 +2529,16 @@ function record_mysql_error($dbOrSql, $sql = null): never
     }
 
     if (!$db instanceof \mysqli) {
-        echo (string) $sql . '<br/><br/>Database connection unavailable<br/><br/>';
+        error_log('Database connection unavailable - SQL: ' . $sql);
+        echo 'Database error. The webmaster has been notified.';
         die();
     }
 
     // record the mysql error
     $clean['mysql_error_text'] = mysqli_error($db);
 
-    // if on dev server, echo the error
-
-    echo $sql . '<br/><br/>' . $clean['mysql_error_text'] . '<br/><br/>';
+    // log the error server-side only
+    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
 
     $ipForError = $ip_address ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? ''));

@@ -11,7 +11,7 @@ include_once(__DIR__ . '/DashboardAPI.class.php');
 class DashboardDataManager
 {
     private static $db;
-    private readonly ?DashboardAPI $api;
+    private ?DashboardAPI $api = null;
 
     public function __construct()
     {
@@ -21,7 +21,6 @@ class DashboardDataManager
         } catch (Exception $e) {
             error_log('DashboardDataManager: Database connection failed: ' . $e->getMessage());
             self::$db = null;
-            $this->api = null;
             return;
         }
 

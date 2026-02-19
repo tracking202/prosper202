@@ -6,9 +6,9 @@ namespace Prosper202\Attribution\Export;
 
 use Prosper202\Attribution\Snapshot;
 
-final readonly class SnapshotExporter
+final class SnapshotExporter
 {
-    private string $basePath;
+    private readonly string $basePath;
 
     public function __construct(?string $basePath = null)
     {
