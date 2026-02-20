@@ -13,6 +13,7 @@ class SystemErrorsCommand extends BaseCommand
 {
     protected static $defaultName = 'system:errors';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

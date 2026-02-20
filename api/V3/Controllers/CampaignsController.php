@@ -30,6 +30,7 @@ class CampaignsController extends Controller
         ];
     }
 
+    #[\Override]
     protected function beforeCreate(array $payload): array
     {
         return [

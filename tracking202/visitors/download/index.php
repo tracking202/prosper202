@@ -156,7 +156,7 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 		$html['ppc_account_name'] = htmlentities((string)($click_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['ip_address'] = htmlentities((string)($click_row['ip_address'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['isp_name'] = htmlentities((string)($click_row['isp_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['click_cpc'] = htmlentities((string) dollar_format($click_row['click_cpc']), ENT_QUOTES, 'UTF-8');
+		$html['click_cpc'] = htmlentities((string) dollar_format($click_row['click_cpc'] ?? 0), ENT_QUOTES, 'UTF-8');
 		$html['keyword'] = htmlentities((string)($click_row['keyword'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['click_lead'] = htmlentities((string)($click_row['click_lead'] ?? ''), ENT_QUOTES, 'UTF-8');
 		$html['click_filtered'] = htmlentities((string)($click_row['click_filtered'] ?? ''), ENT_QUOTES, 'UTF-8');      
@@ -164,13 +164,12 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 		$html['platform_name'] = htmlentities((string)($click_row['platform_name'] ?? ''), ENT_QUOTES, 'UTF-8');      
 				
 		$html['location'] = '';
-		if ($click_row['location_country_name']) {
-			if ($click_row['location_country_name']) { 
-				$origin = $click_row['location_country_name']; 
-			} if (($click_row['location_region_code']) and (!is_numeric($click_row['location_region_code']))) { 
-				$origin = $click_row['location_region_code'] . ', ' . $origin; 
-			} if ($click_row['location_city_name']) { 
-				$origin = $click_row['location_city_name'] . ', ' . $origin;  
+		if ($click_row['country_name'] ?? '') {
+			$origin = $click_row['country_name'];
+			if (($click_row['region_name'] ?? '') and (!is_numeric($click_row['region_name']))) {
+				$origin = $click_row['region_name'] . ', ' . $origin;
+			} if ($click_row['city_name'] ?? '') {
+				$origin = $click_row['city_name'] . ', ' . $origin;
 			}
 			
 			$html['origin'] = htmlentities((string) $origin, ENT_QUOTES, 'UTF-8');  
@@ -185,7 +184,7 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 		}
 		
 	echo 	$click_row['click_id'] . "\t" . 
-			date('m/d/y g:ia',$click_row['click_time']) . "\t" . 
+			date('m/d/y g:ia', (int)$click_row['click_time']) . "\t" . 
 			$html['browser_name'] . "\t" . 
 			$html['platform_name']  . "\t" . 
 			$html['ppc_network_name']  . "\t" . 
@@ -204,11 +203,11 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 			$html['cloaking'] . "\t" . 
 			$html['redirect'] . "\t" . 
 			$html['keyword'] . "\t" .
-			$click_row['gclid'] . "\t" .
-			$click_row['utm_campaign'] . "\t" .
-			$click_row['utm_content'] . "\t" .
-			$click_row['utm_medium'] . "\t" .
-			$click_row['utm_source'] . "\t" .
-			$click_row['utm_term'] . "\n";
+			($click_row['gclid'] ?? '') . "\t" .
+			($click_row['utm_campaign'] ?? '') . "\t" .
+			($click_row['utm_content'] ?? '') . "\t" .
+			($click_row['utm_medium'] ?? '') . "\t" .
+			($click_row['utm_source'] ?? '') . "\t" .
+			($click_row['utm_term'] ?? '') . "\n";
 			
 	}

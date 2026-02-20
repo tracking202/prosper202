@@ -13,6 +13,7 @@ class AttributionModelCreateCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:model:create';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

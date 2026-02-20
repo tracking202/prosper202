@@ -60,10 +60,10 @@ class ContentTypes extends \Slim\Middleware
     public function __construct($settings = [])
     {
         $defaults = [
-            'application/json' => [$this, 'parseJson'],
-            'application/xml' => [$this, 'parseXml'],
-            'text/xml' => [$this, 'parseXml'],
-            'text/csv' => [$this, 'parseCsv']
+            'application/json' => $this->parseJson(...),
+            'application/xml' => $this->parseXml(...),
+            'text/xml' => $this->parseXml(...),
+            'text/csv' => $this->parseCsv(...)
         ];
         $this->contentTypes = array_merge($defaults, $settings);
     }
@@ -121,6 +121,8 @@ class ContentTypes extends \Slim\Middleware
                 return $result;
             }
         }
+
+        return $input;
     }
 
     /**

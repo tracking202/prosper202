@@ -15,6 +15,7 @@ class ConversionDeleteCommand extends BaseCommand
 {
     protected static $defaultName = 'conversion:delete';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

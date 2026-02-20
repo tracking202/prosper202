@@ -23,15 +23,13 @@ use Prosper202\Database\Exceptions\SchemaInstallException;
  */
 final class SchemaInstaller
 {
-    private mysqli $connection;
     /** @var array<string> */
     private array $createdTables = [];
     /** @var array<string> */
     private array $errors = [];
 
-    public function __construct(mysqli $connection)
+    public function __construct(private readonly mysqli $connection)
     {
-        $this->connection = $connection;
     }
 
     /**

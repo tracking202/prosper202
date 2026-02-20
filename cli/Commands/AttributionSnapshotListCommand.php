@@ -14,6 +14,7 @@ class AttributionSnapshotListCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:snapshot:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

@@ -98,7 +98,7 @@ if (!empty($_GET['edit_aff_network_id'])) {
 	$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
 	$aff_network_row = $aff_network_result->fetch_assoc();
 
-	$html = array_map('htmlentities', $aff_network_row);
+	$html = array_map(htmlentities(...), $aff_network_row);
 	$html['aff_network_id'] = htmlentities((string)($_GET['edit_aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$autocomplete_aff_network_name =  $html['aff_network_name'];
 }
@@ -107,7 +107,7 @@ if (!empty($_GET['edit_aff_network_id'])) {
 if (($_SERVER['REQUEST_METHOD'] == 'POST') and ($add_success != true)) {
 
 	$selected['aff_network_id'] = $_POST['aff_network_id'] ?? '';
-	$html = array_map('htmlentities', $_POST);
+	$html = array_map(htmlentities(...), $_POST);
 }
 
 if (isset($_GET['delete_aff_network_id'])) {

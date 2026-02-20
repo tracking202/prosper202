@@ -7,12 +7,12 @@ namespace Prosper202\Validation;
 /**
  * Immutable value object representing the result of a validation operation.
  */
-final class ValidationResult
+final readonly class ValidationResult
 {
     public function __construct(
-        public readonly bool $isValid,
-        public readonly ?string $errorMessage = null,
-        public readonly mixed $sanitizedValue = null
+        public bool $isValid,
+        public ?string $errorMessage = null,
+        public mixed $sanitizedValue = null
     ) {
     }
     

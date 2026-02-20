@@ -13,13 +13,10 @@ use Prosper202\Attribution\Analytics\AnalyticsResponseTransformer;
 /**
  * Thin controller that prepares request parameters for the attribution service.
  */
-final class Controller
+final readonly class Controller
 {
-    private AttributionService $service;
-
-    public function __construct(AttributionService $service)
+    public function __construct(private AttributionService $service)
     {
-        $this->service = $service;
     }
 
     /**
@@ -298,9 +295,9 @@ final class Controller
         $modelSlugs = [];
         if (isset($params['models'])) {
             if (is_array($params['models'])) {
-                $modelSlugs = array_map('strval', $params['models']);
+                $modelSlugs = array_map(strval(...), $params['models']);
             } elseif (is_string($params['models'])) {
-                $modelSlugs = array_filter(array_map('trim', explode(',', $params['models'])));
+                $modelSlugs = array_filter(array_map(trim(...), explode(',', $params['models'])));
             }
         }
 

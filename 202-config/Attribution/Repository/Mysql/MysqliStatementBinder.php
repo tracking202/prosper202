@@ -32,7 +32,7 @@ trait MysqliStatementBinder
         }
         unset($value);
 
-        if (!call_user_func_array([$stmt, 'bind_param'], $values)) {
+        if (!call_user_func_array($stmt->bind_param(...), $values)) {
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }

@@ -8,14 +8,14 @@ use Prosper202\Attribution\Repository\ExportRepositoryInterface;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 
-final class ExportProcessor
+final readonly class ExportProcessor
 {
     public function __construct(
-        private readonly ExportRepositoryInterface $exportRepository,
-        private readonly SnapshotRepositoryInterface $snapshotRepository,
-        private readonly ModelRepositoryInterface $modelRepository,
-        private readonly SnapshotExporter $snapshotExporter,
-        private readonly WebhookDispatcher $webhookDispatcher,
+        private ExportRepositoryInterface $exportRepository,
+        private SnapshotRepositoryInterface $snapshotRepository,
+        private ModelRepositoryInterface $modelRepository,
+        private SnapshotExporter $snapshotExporter,
+        private WebhookDispatcher $webhookDispatcher,
     ) {
     }
 

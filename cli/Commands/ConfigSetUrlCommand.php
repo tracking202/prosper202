@@ -23,7 +23,7 @@ class ConfigSetUrlCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $config = new Config();
-        $url = rtrim($input->getArgument('url'), '/');
+        $url = rtrim((string) $input->getArgument('url'), '/');
         $config->set('url', $url);
         $config->save();
         $output->writeln("<info>URL set to:</info> $url");

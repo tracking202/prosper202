@@ -84,7 +84,7 @@ if (isset($errors['general'])) {
             <div class="form-group">
                 <label for="model_name">Model Name <span class="text-danger">*</span></label>
                 <input type="text" class="form-control" id="model_name" name="model_name" 
-                       value="<?php echo htmlspecialchars($selected['model_name']); ?>" 
+                       value="<?php echo htmlspecialchars((string) $selected['model_name']); ?>" 
                        placeholder="e.g., Time Decay - 7 Days" required
                        autocomplete="off" autocapitalize="words">
                 <?php if (isset($errors['model_name'])): ?>
@@ -104,7 +104,7 @@ if (isset($errors['general'])) {
                         <option value="<?php echo $type->value; ?>" 
                                 <?php echo $selected['model_type'] === $type->value ? 'selected' : ''; ?>
                                 data-requires-config="<?php echo $type->requiresWeighting() ? 'true' : 'false'; ?>">
-                            <?php echo htmlspecialchars($type->label()); ?>
+                            <?php echo htmlspecialchars((string) $type->label()); ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -213,7 +213,7 @@ if (isset($errors['general'])) {
                 <div class="form-group">
                     <label for="algorithmic_config">Configuration Parameters</label>
                     <textarea class="form-control" id="algorithmic_config" name="algorithmic_config" rows="3"
-                              placeholder="Advanced configuration options..."><?php echo htmlspecialchars($selected['algorithmic_config']); ?></textarea>
+                              placeholder="Advanced configuration options..."><?php echo htmlspecialchars((string) $selected['algorithmic_config']); ?></textarea>
                     <small class="form-text text-muted">Advanced configuration for algorithmic attribution (contact support for details)</small>
                 </div>
             </div>
@@ -284,10 +284,10 @@ if (isset($errors['general'])) {
             </h6>
             <div style="margin: 12px 0;">
                 <div style="font-weight: bold; font-size: 15px; color: #2c3e50; margin-bottom: 6px;">
-                    <?php echo htmlspecialchars($currentModel->name); ?>
+                    <?php echo htmlspecialchars((string) $currentModel->name); ?>
                 </div>
                 <div style="color: #34495e; font-size: 13px; margin-bottom: 8px;">
-                    <strong>Type:</strong> <?php echo htmlspecialchars($currentModel->type->label()); ?>
+                    <strong>Type:</strong> <?php echo htmlspecialchars((string) $currentModel->type->label()); ?>
                 </div>
                 <div style="margin-bottom: 4px;">
                     <?php if ($currentModel->isDefault): ?>
@@ -324,12 +324,12 @@ if (isset($errors['general'])) {
                         <li class="setup-list-item<?php echo $isCurrentModel ? ' setup-list-item--active' : ''; ?>">
                             <span class="setup-list-name">
                                 <span class="filter_model_name">
-                                    <?php echo htmlspecialchars($model->name); ?>
+                                    <?php echo htmlspecialchars((string) $model->name); ?>
                                     <?php if ($model->isDefault): ?>
                                         <span class="label label-success" style="font-size: 10px; margin-left: 6px;">Default</span>
                                     <?php endif; ?>
                                     <div class="setup-list-meta">
-                                        <strong><?php echo htmlspecialchars($model->type->label()); ?></strong>
+                                        <strong><?php echo htmlspecialchars((string) $model->type->label()); ?></strong>
                                         <span class="setup-list-status">
                                             <?php if ($model->isActive): ?>
                                                 <span style="color: #27ae60; font-weight: bold;">Active</span>

@@ -9,7 +9,7 @@ use Api\V3\Exception\ValidationException;
 
 class SyncEngine
 {
-    private const ENTITY_ENDPOINTS = [
+    private const array ENTITY_ENDPOINTS = [
         'aff-networks' => 'aff-networks',
         'ppc-networks' => 'ppc-networks',
         'ppc-accounts' => 'ppc-accounts',
@@ -20,7 +20,7 @@ class SyncEngine
         'trackers' => 'trackers',
     ];
 
-    private const DEPENDENCY_ORDER = [
+    private const array DEPENDENCY_ORDER = [
         'aff-networks',
         'ppc-networks',
         'ppc-accounts',
@@ -31,7 +31,7 @@ class SyncEngine
         'trackers',
     ];
 
-    private const ENTITY_ID_FIELDS = [
+    private const array ENTITY_ID_FIELDS = [
         'aff-networks' => ['aff_network_id', 'id'],
         'ppc-networks' => ['ppc_network_id', 'id'],
         'ppc-accounts' => ['ppc_account_id', 'id'],
@@ -42,7 +42,7 @@ class SyncEngine
         'trackers' => ['tracker_id', 'id'],
     ];
 
-    private const FK_DEPENDENCIES = [
+    private const array FK_DEPENDENCIES = [
         'ppc-accounts' => [
             'ppc_network_id' => 'ppc-networks',
         ],
@@ -69,7 +69,7 @@ class SyncEngine
         ],
     ];
 
-    private const IMMUTABLE_FIELDS = [
+    private const array IMMUTABLE_FIELDS = [
         'campaigns' => ['id', 'user_id', 'aff_campaign_id', 'aff_campaign_time', 'aff_campaign_id_public', 'aff_campaign_deleted'],
         'aff-networks' => ['id', 'user_id', 'aff_network_id', 'aff_network_deleted'],
         'ppc-networks' => ['id', 'user_id', 'ppc_network_id', 'ppc_network_deleted'],
@@ -80,11 +80,8 @@ class SyncEngine
         'text-ads' => ['id', 'user_id', 'text_ad_id', 'text_ad_deleted'],
     ];
 
-    private ServerStateStore $store;
-
-    public function __construct(ServerStateStore $store)
+    public function __construct(private readonly ServerStateStore $store)
     {
-        $this->store = $store;
     }
 
     public static function supportedEntities(): array

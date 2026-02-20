@@ -1,0 +1,2911 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Method Prosper202\\Attribution\\Repository\\ModelRepositoryInterface\:\:delete\(\) invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/Attribution/AttributionIntegrationService.php'
+
+		-
+			message: '#^Result of method Prosper202\\Attribution\\Repository\\ModelRepositoryInterface\:\:delete\(\) \(void\) is used\.$#'
+			identifier: method.void
+			count: 1
+			path: '202-config/Attribution/AttributionIntegrationService.php'
+
+		-
+			message: '#^Ternary operator condition is always false\.$#'
+			identifier: ternary.alwaysFalse
+			count: 1
+			path: '202-config/Attribution/AttributionIntegrationService.php'
+
+		-
+			message: '#^Variable \$slug on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.variable
+			count: 1
+			path: '202-config/Attribution/AttributionService.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 3
+			path: '202-config/Attribution/AttributionServiceFactory.php'
+
+		-
+			message: '#^Comparison operation "\>" between int\<1, max\> and 0 is always true\.$#'
+			identifier: greater.alwaysTrue
+			count: 1
+			path: '202-config/Attribution/Calculation/AssistedStrategy.php'
+
+		-
+			message: '#^Instanceof between Prosper202\\Attribution\\Calculation\\ConversionTouchpoint and Prosper202\\Attribution\\Calculation\\ConversionTouchpoint will always evaluate to true\.$#'
+			identifier: instanceof.alwaysTrue
+			count: 1
+			path: '202-config/Attribution/Calculation/ConversionRecord.php'
+
+		-
+			message: '#^Comparison operation "\>" between int\<1, max\> and 0 is always true\.$#'
+			identifier: greater.alwaysTrue
+			count: 2
+			path: '202-config/Attribution/Calculation/PositionBasedStrategy.php'
+
+		-
+			message: '#^Strict comparison using \!\=\= between non\-empty\-array and array\{\} will always evaluate to true\.$#'
+			identifier: notIdentical.alwaysTrue
+			count: 1
+			path: '202-config/Attribution/Calculation/TimeDecayStrategy.php'
+
+		-
+			message: '#^Call to function property_exists\(\) with Prosper202\\Attribution\\Export\\ExportJob and ''exportId'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: '202-config/Attribution/Export/SnapshotExporter.php'
+
+		-
+			message: '#^Call to function is_array\(\) with array\<int, string\> will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: '202-config/Attribution/Export/WebhookDispatcher.php'
+
+		-
+			message: '#^Variable \$http_response_header in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.variable
+			count: 1
+			path: '202-config/Attribution/Export/WebhookDispatcher.php'
+
+		-
+			message: '#^Using nullsafe property access "\?\-\>headers" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
+			identifier: nullsafe.neverNull
+			count: 1
+			path: '202-config/Attribution/ExportJob.php'
+
+		-
+			message: '#^Call to an undefined method Memcache\:\:delete\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: '202-config/Attribution/Repository/Mysql/ConversionJourneyRepository.php'
+
+		-
+			message: '#^Call to an undefined method Memcached\:\:delete\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: '202-config/Attribution/Repository/Mysql/ConversionJourneyRepository.php'
+
+		-
+			message: '#^Method Prosper202\\Attribution\\Repository\\Mysql\\ConversionJourneyRepository\:\:bind\(\) is unused\.$#'
+			identifier: method.unused
+			count: 1
+			path: '202-config/Attribution/Repository/Mysql/ConversionJourneyRepository.php'
+
+		-
+			message: '#^Call to function unset\(\) contains undefined variable \$value\.$#'
+			identifier: unset.variable
+			count: 1
+			path: '202-config/Attribution/Repository/Mysql/MysqlExportJobRepository.php'
+
+		-
+			message: '#^Using nullsafe method call on non\-nullable type mysqli_result\|false\. Use \-\> instead\.$#'
+			identifier: nullsafe.neverNull
+			count: 1
+			path: '202-config/Attribution/Repository/Mysql/MysqlExportRepository.php'
+
+		-
+			message: '#^Method Prosper202\\Attribution\\Repository\\Mysql\\MysqlSettingRepository\:\:bind\(\) is unused\.$#'
+			identifier: method.unused
+			count: 1
+			path: '202-config/Attribution/Repository/Mysql/MysqlSettingRepository.php'
+
+		-
+			message: '#^Instanceof between mysqli_stmt and mysqli_stmt will always evaluate to true\.$#'
+			identifier: instanceof.alwaysTrue
+			count: 1
+			path: '202-config/Attribution/Repository/Mysql/MysqlTouchpointRepository.php'
+
+		-
+			message: '#^Constant DASHBOARD_API_URL not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/DashboardAPI.class.php'
+
+		-
+			message: '#^Call to function is_array\(\) with array will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: '202-config/DashboardDataManager.class.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/DashboardDataManager.class.php'
+
+		-
+			message: '#^Class DashboardDataManager has an uninitialized readonly property \$api\. Assign it in the constructor\.$#'
+			identifier: property.uninitializedReadonly
+			count: 1
+			path: '202-config/DashboardDataManager.class.php'
+
+		-
+			message: '#^Constant DASHBOARD_CACHE_TTL not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/DashboardDataManager.class.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 8
+			path: '202-config/Database/DataSeeder.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/Database/PartitionInstaller.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 3
+			path: '202-config/Database/SchemaInstaller.php'
+
+		-
+			message: '#^Property Prosper202\\Database\\SchemaInstaller\:\:\$connection is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: '202-config/Database/SchemaInstaller.php'
+
+		-
+			message: '#^Parameter \#3 \$value of function curl_setopt expects bool, int given\.$#'
+			identifier: argument.type
+			count: 1
+			path: '202-config/FraudDetectionIPQS.class.php'
+
+		-
+			message: '#^Method Mobile_Detect\:\:getHttpHeader\(\) should return string\|null but return statement is missing\.$#'
+			identifier: return.missing
+			count: 1
+			path: '202-config/Mobile_Detect.php'
+
+		-
+			message: '#^Method Mobile_Detect\:\:version\(\) should return float\|string but returns false\.$#'
+			identifier: return.type
+			count: 2
+			path: '202-config/Mobile_Detect.php'
+
+		-
+			message: '#^PHPDoc tag @method has invalid value \(boolean is\[\.\.\.\]\(\)\)\: Unexpected token "\[", expected ''\('' at offset 69 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/Mobile_Detect.php'
+
+		-
+			message: '#^Parameter \#1 \$httpHeaders of method Mobile_Detect\:\:setHttpHeaders\(\) expects array\|null, string given\.$#'
+			identifier: argument.type
+			count: 1
+			path: '202-config/Mobile_Detect.php'
+
+		-
+			message: '#^Property Mobile_Detect\:\:\$userAgent \(string\) does not accept null\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: '202-config/Mobile_Detect.php'
+
+		-
+			message: '#^Cannot call method getDetailId\(\) on class\-string\|object\.$#'
+			identifier: method.nonObject
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^Cannot call method getId\(\) on class\-string\|object\.$#'
+			identifier: method.nonObject
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^Method ReportBasicForm\:\:setOfferList\(\) should return string but return statement is missing\.$#'
+			identifier: return.missing
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 41 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 45 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 46 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 47 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 3
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 48 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 3
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 49 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 50 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 51 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 53 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 54 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 59 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(boolean\)\: Unexpected token "\\n\\t ", expected variable at offset 46 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(boolean\)\: Unexpected token "\\n\\t ", expected variable at offset 47 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(boolean\)\: Unexpected token "\\n\\t ", expected variable at offset 49 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(boolean\)\: Unexpected token "\\n\\t ", expected variable at offset 52 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(boolean\)\: Unexpected token "\\n\\t ", expected variable at offset 53 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(boolean\)\: Unexpected token "\\n\\t ", expected variable at offset 54 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(boolean\)\: Unexpected token "\\n\\t ", expected variable at offset 56 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(boolean\)\: Unexpected token "\\n\\t ", expected variable at offset 57 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t ", expected variable at offset 39 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t ", expected variable at offset 44 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t ", expected variable at offset 49 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t ", expected variable at offset 51 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t ", expected variable at offset 54 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t \* ", expected variable at offset 103 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t \* ", expected variable at offset 68 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t \* ", expected variable at offset 74 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(int\)\: Unexpected token "\\n\\t \* ", expected variable at offset 80 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 46 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 51 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 52 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 3
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 53 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 58 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 66 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t ", expected variable at offset 66 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t ", expected variable at offset 70 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t ", expected variable at offset 73 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t ", expected variable at offset 74 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t ", expected variable at offset 77 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t ", expected variable at offset 81 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t ", expected variable at offset 85 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t \* ", expected variable at offset 49 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t \* ", expected variable at offset 53 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t \* ", expected variable at offset 56 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t \* ", expected variable at offset 57 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t \* ", expected variable at offset 60 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t \* ", expected variable at offset 64 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t \* ", expected variable at offset 68 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed\)\: Unexpected token "\\n\\t \* ", expected variable at offset 88 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 43 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 47 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @return has invalid value \(\$report_string\)\: Unexpected token "\$report_string", expected type at offset 56 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @return has invalid value \(\$report_string\)\: Unexpected token "\$report_string", expected type at offset 64 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportBasicForm.class.php'
+
+		-
+			message: '#^Call to function is_callable\(\) with Closure\(string, mixed\)\: mixed will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Call to function is_object\(\) with mixed will always evaluate to false\.$#'
+			identifier: function.impossibleType
+			count: 4
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Call to function is_string\(\) with array\<mixed, mixed\> will always evaluate to false\.$#'
+			identifier: function.impossibleType
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryAffiliateNetworkForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryAffiliateNetworkForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryAffiliateNetworkForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryBrowserForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryBrowserForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryBrowserForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC1Form\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC1Form\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC1Form\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC1Form\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC2Form\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC2Form\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC2Form\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC2Form\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC3Form\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC3Form\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC3Form\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC3Form\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC4Form\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC4Form\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC4Form\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryC4Form\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCampaignForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCampaignForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCampaignForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCityForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCityForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCityForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCountryForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCountryForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCountryForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCustomVarParameterForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCustomVarParameterForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCustomVarValueForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryCustomVarValueForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryDeviceNameForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryDeviceNameForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryDeviceNameForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryDeviceTypeForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryDeviceTypeForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryDeviceTypeForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryForm\:\:getExportRowHeaderHtml\(\) should return string but return statement is missing\.$#'
+			identifier: return.missing
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryForm\:\:getExportRowHtml\(\) should return string but return statement is missing\.$#'
+			identifier: return.missing
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIntervalForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIntervalForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIntervalForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIpForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIpForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIpForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIspForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIspForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryIspForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryKeywordForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryKeywordForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryKeywordForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryLandingPageForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryLandingPageForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryLandingPageForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPlatformForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPlatformForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPlatformForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPpcAccountForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPpcAccountForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPpcAccountForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPpcNetworkForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPpcNetworkForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPpcNetworkForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPublishersForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryPublishersForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRedirectForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRedirectForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRedirectForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRefererForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRefererForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRefererForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRegionForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRegionForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRegionForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorRuleForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorRuleForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorRuleForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorRuleRedirectForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorRuleRedirectForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryRotatorRuleRedirectForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTextAdForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTextAdForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTextAdForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTotalForm\:\:getChildForm\(\) has invalid return type Form\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTotalForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTotalForm\:\:getReportParameters\(\) should return int but returns \$this\(ReportSummaryTotalForm\)\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTransactionsForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTransactionsForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryTransactionsForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmCampaignForm\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmCampaignForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmCampaignForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmCampaignForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmContentForm\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmContentForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmContentForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmContentForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmMediumForm\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmMediumForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmMediumForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmMediumForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmSourceForm\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmSourceForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmSourceForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmSourceForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmTermForm\:\:getId\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmTermForm\:\:getName\(\) should return int but returns string\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmTermForm\:\:getPrintTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Method ReportSummaryUtmTermForm\:\:getTitle\(\) should return string but returns int\.$#'
+			identifier: return.type
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(RevenueReportGroupForm\)\: Unexpected token "\\n\\t ", expected variable at offset 62 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array\)\: Unexpected token "\\n\\t ", expected variable at offset 45 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 40 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 41 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 4
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 42 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 3
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 43 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 5
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 45 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 46 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 5
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 47 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 3
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 48 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 50 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 51 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 56 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer\)\: Unexpected token "\\n\\t ", expected variable at offset 57 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 37 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 11
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 42 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 47 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 11
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 48 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 51 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 2
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 52 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 54 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 57 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n\\t ", expected variable at offset 58 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Property ReportSummaryForm\:\:\$tabIndexArray \(unknown_type\) does not accept default value of type array\.$#'
+			identifier: property.defaultValue
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Property ReportSummaryForm\:\:\$tabIndexArray has unknown class unknown_type as its type\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Return type \(string\) of method ReportSummaryForm\:\:getEndTime\(\) should be compatible with return type \(int\) of method ReportBasicForm\:\:getEndTime\(\)$#'
+			identifier: method.childReturnType
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Return type \(string\) of method ReportSummaryForm\:\:getStartTime\(\) should be compatible with return type \(int\) of method ReportBasicForm\:\:getStartTime\(\)$#'
+			identifier: method.childReturnType
+			count: 1
+			path: '202-config/ReportSummaryForm.class.php'
+
+		-
+			message: '#^Access to an undefined property Role\:\:\$permissionList\.$#'
+			identifier: property.notFound
+			count: 2
+			path: '202-config/Role.class.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/Role.class.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/User.class.php'
+
+		-
+			message: '#^Deprecated in PHP 8\.4\: Parameter \#3 \$min \(float\) is implicitly nullable via default value null\.$#'
+			identifier: parameter.implicitlyNullable
+			count: 1
+			path: '202-config/Validation/SetupFormValidator.php'
+
+		-
+			message: '#^Deprecated in PHP 8\.4\: Parameter \#3 \$min \(int\) is implicitly nullable via default value null\.$#'
+			identifier: parameter.implicitlyNullable
+			count: 1
+			path: '202-config/Validation/SetupFormValidator.php'
+
+		-
+			message: '#^Deprecated in PHP 8\.4\: Parameter \#4 \$max \(float\) is implicitly nullable via default value null\.$#'
+			identifier: parameter.implicitlyNullable
+			count: 1
+			path: '202-config/Validation/SetupFormValidator.php'
+
+		-
+			message: '#^Deprecated in PHP 8\.4\: Parameter \#4 \$max \(int\) is implicitly nullable via default value null\.$#'
+			identifier: parameter.implicitlyNullable
+			count: 1
+			path: '202-config/Validation/SetupFormValidator.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(integer the requested CURLOPT\.\)\: Unexpected token "the", expected variable at offset 130 on line 5$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/class-curl.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(mixed by reference data to be written\.\)\: Unexpected token "by", expected variable at offset 224 on line 7$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/class-curl.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(none\.\)\: Unexpected token "\.", expected variable at offset 268 on line 6$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/class-curl.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string \[optional\] name of the datum\.\)\: Unexpected token "\[", expected variable at offset 275 on line 8$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/class-curl.php'
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string by reference data to be written\.\)\: Unexpected token "by", expected variable at offset 56 on line 3$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: '202-config/class-curl.php'
+
+		-
+			message: '#^Property curl\:\:\$m_caseless \(array\) does not accept null\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: '202-config/class-curl.php'
+
+		-
+			message: '#^Property curl\:\:\$m_followed \(array\) does not accept null\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: '202-config/class-curl.php'
+
+		-
+			message: '#^Variable \$theArray might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/class-curl.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/class-dataengine-slim.php'
+
+		-
+			message: '#^Property DataEngine\:\:\$forDownload is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: '202-config/class-dataengine-slim.php'
+
+		-
+			message: '#^Property DataEngine\:\:\$mysql is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: '202-config/class-dataengine-slim.php'
+
+		-
+			message: '#^Property DataEngine\:\:\$total_clicks is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: '202-config/class-dataengine-slim.php'
+
+		-
+			message: '#^Static property DataEngine\:\:\$found_rows is unused\.$#'
+			identifier: property.unused
+			count: 1
+			path: '202-config/class-dataengine-slim.php'
+
+		-
+			message: '#^Strict comparison using \!\=\= between mixed and null will always evaluate to true\.$#'
+			identifier: notIdentical.alwaysTrue
+			count: 1
+			path: '202-config/class-dataengine-slim.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 3
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Comparison operation "\>\=" between int\<0, max\> and 0 is always true\.$#'
+			identifier: greaterOrEqual.alwaysTrue
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Expression "\$currency_row\[''user_account_currency''\]" on a separate line does not do anything\.$#'
+			identifier: expr.resultUnused
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 42
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^If condition is always true\.$#'
+			identifier: if.alwaysTrue
+			count: 4
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Instanceof between mysqli and mysqli will always evaluate to true\.$#'
+			identifier: instanceof.alwaysTrue
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Non\-static access to static property UserPrefs\:\:\$mysql\.$#'
+			identifier: staticProperty.nonStaticAccess
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Property DataEngine\:\:\$total_clicks is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Static property DataEngine\:\:\$db \(mysqli\|null\) does not accept false\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Strict comparison using \=\=\= between mysqli\|null and false will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 6
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 20
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$class might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$currency_row might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$dateFormat might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$featureKey might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$featureLabel might not be defined\.$#'
+			identifier: variable.undefined
+			count: 3
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$groupby might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$key might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$name might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$rangeFormat might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$rangeGroupby might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$select_by_id might not be defined\.$#'
+			identifier: variable.undefined
+			count: 6
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$totals might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Variable \$typeName might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/class-filterengine.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 4
+			path: '202-config/class-filterengine.php'
+
+		-
+			message: '#^Property FilterEngine\:\:\$mysql is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: '202-config/class-filterengine.php'
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 6
+			path: '202-config/class-filterengine.php'
+
+		-
+			message: '#^Variable \$row might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-filterengine.php'
+
+		-
+			message: '#^Call to method getIpInfo\(\) on an unknown class IPRegistry\\IPRegistry\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/class-indexes.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 14
+			path: '202-config/class-indexes.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 31
+			path: '202-config/class-indexes.php'
+
+		-
+			message: '#^Instantiated class IPRegistry\\IPRegistry not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/class-indexes.php'
+
+		-
+			message: '#^Call to function unset\(\) contains undefined variable \$postdata\.$#'
+			identifier: unset.variable
+			count: 1
+			path: '202-config/class-snoopy.php'
+
+		-
+			message: '#^Cannot unset property Snoopy\:\:\$headers because it might have hooks in a subclass\.$#'
+			identifier: unset.possiblyHookedProperty
+			count: 2
+			path: '202-config/class-snoopy.php'
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 8
+			path: '202-config/class-snoopy.php'
+
+		-
+			message: '#^Variable \$match might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/class-snoopy.php'
+
+		-
+			message: '#^Method XmlToArray\:\:__construct\(\) has invalid return type none\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/class-xmltoarray.php'
+
+		-
+			message: '#^PHPDoc tag @param references unknown parameter\: \$data$#'
+			identifier: parameter.notFound
+			count: 1
+			path: '202-config/class-xmltoarray.php'
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 1
+			path: '202-config/class-xmltoarray.php'
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 4
+			path: '202-config/clickserver_api_management.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/connect.php'
+
+		-
+			message: '#^Offset 0 on array\{string, non\-falsy\-string\} in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.offset
+			count: 1
+			path: '202-config/connect.php'
+
+		-
+			message: '#^Offset 0 on non\-empty\-list\<array\{string, int\<0, max\>\}\|string\> in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.offset
+			count: 1
+			path: '202-config/connect.php'
+
+		-
+			message: '#^Offset 0 on non\-empty\-list\<array\{string, non\-falsy\-string\}\> in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.offset
+			count: 1
+			path: '202-config/connect.php'
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 2
+			path: '202-config/connect.php'
+
+		-
+			message: '#^Variable \$mchost might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/connect.php'
+
+		-
+			message: '#^Binary operation "\-" between 32 and string results in an error\.$#'
+			identifier: binaryOp.invalid
+			count: 2
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Call to an undefined method Memcache\|Memcached\:\:get\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Call to an undefined static method INDEXES\:\:get_custom_var_id\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Call to an undefined static method INDEXES\:\:get_utm_id\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 5
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Call to an undefined static method INDEXES\:\:get_variable_id\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Call to an undefined static method INDEXES\:\:get_variable_set_id\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 2
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Comparison operation "\<" between int\<80300, 80599\> and 70300 is always false\.$#'
+			identifier: smaller.alwaysFalse
+			count: 4
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Function geoip_close not found\.$#'
+			identifier: function.notFound
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Function geoip_open not found\.$#'
+			identifier: function.notFound
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Function geoip_org_by_addr not found\.$#'
+			identifier: function.notFound
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Function memcache_mysql_fetch_assoc invoked with 2 parameters, 1 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Inner named functions are not supported by PHPStan\. Consider refactoring to an anonymous function, class method, or a top\-level\-defined function\. See issue \#165 \(https\://github\.com/phpstan/phpstan/issues/165\) for more details\.$#'
+			identifier: function.inner
+			count: 3
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^PHPDoc tag @var with type Memcache\|Memcached is not subtype of native type null\.$#'
+			identifier: varTag.nativeType
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Parameter \#1 \$num of function number_format expects float, string given\.$#'
+			identifier: argument.type
+			count: 2
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Parameter \#3 \$value of function curl_setopt expects bool, int given\.$#'
+			identifier: argument.type
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Property UAParser\\Result\\AbstractSoftware\:\:\$family \(string\) on left side of \?\? is not nullable\.$#'
+			identifier: nullCoalesce.property
+			count: 3
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_ip_id\(\) invoked with 2 parameters, 1 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_keyword_id\(\) invoked with 2 parameters, 1 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_site_url_id\(\) invoked with 2 parameters, 1 required\.$#'
+			identifier: arguments.count
+			count: 6
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Variable \$click_sql might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Variable \$ip_address in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.variable
+			count: 1
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Variable \$keyword might not be defined\.$#'
+			identifier: variable.undefined
+			count: 4
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Variable \$mchost might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/connect2.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 2
+			path: '202-config/convlogs.php'
+
+		-
+			message: '#^Variable \$the_request might not be defined\.$#'
+			identifier: variable.undefined
+			count: 3
+			path: '202-config/convlogs.php'
+
+		-
+			message: '#^Call to an undefined method DataEngine\:\:getSummary\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: '202-config/data/index.php'
+
+		-
+			message: '#^Variable \$type might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/data/index.php'
+
+		-
+			message: '#^Comparison operation "\>" between int\<3601, 86400\> and 3600 is always true\.$#'
+			identifier: greater.alwaysTrue
+			count: 1
+			path: '202-config/formatting.php'
+
+		-
+			message: '#^Comparison operation "\>\=" between int\<86401, max\> and 86400 is always true\.$#'
+			identifier: greaterOrEqual.alwaysTrue
+			count: 1
+			path: '202-config/formatting.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 4
+			path: '202-config/functions-auth.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 8
+			path: '202-config/functions-auth.php'
+
+		-
+			message: '#^Offset 1 on array\{non\-falsy\-string, numeric\-string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: '202-config/functions-auth.php'
+
+		-
+			message: '#^Parameter \#3 \$value of function curl_setopt expects bool, int given\.$#'
+			identifier: argument.type
+			count: 1
+			path: '202-config/functions-auth.php'
+
+		-
+			message: '#^Strict comparison using \=\=\= between non\-empty\-string and false will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 1
+			path: '202-config/functions-auth.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 3
+			path: '202-config/functions-db.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 2
+			path: '202-config/functions-install.php'
+
+		-
+			message: '#^Access to an undefined property MagpieRSS\:\:\$ERROR\.$#'
+			identifier: property.notFound
+			count: 2
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Access to an undefined property MagpieRSS\:\:\$etag\.$#'
+			identifier: property.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Access to an undefined property MagpieRSS\:\:\$last_modified\.$#'
+			identifier: property.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Access to an undefined property Snoopy\:\:\$use_gzip\.$#'
+			identifier: property.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Constant MAGPIE_CACHE_AGE not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Constant MAGPIE_CACHE_DIR not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Constant MAGPIE_CACHE_ON not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Constant MAGPIE_DEBUG not found\.$#'
+			identifier: constant.notFound
+			count: 8
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Constant MAGPIE_FETCH_TIME_OUT not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Constant MAGPIE_USE_GZIP not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Function debug not found\.$#'
+			identifier: function.notFound
+			count: 5
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Function map_attrs not found\.$#'
+			identifier: function.notFound
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^If condition is always true\.$#'
+			identifier: if.alwaysTrue
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Left side of and is always true\.$#'
+			identifier: logicalAnd.leftAlwaysTrue
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Loose comparison using \=\= between ''Z'' and ''Z'' will always evaluate to true\.$#'
+			identifier: equal.alwaysTrue
+			count: 1
+			path: '202-config/functions-rss.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 27
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 60
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Function grab_timeframe invoked with 0 parameters, 1 required\.$#'
+			identifier: arguments.count
+			count: 2
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^If condition is always true\.$#'
+			identifier: if.alwaysTrue
+			count: 1
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Parameter \#3 \$value of function curl_setopt expects bool, int given\.$#'
+			identifier: argument.type
+			count: 16
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Parameter \#4 \$month of function mktime expects int\|null, string given\.$#'
+			identifier: argument.type
+			count: 15
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Parameter \#5 \$day of function mktime expects int\|null, string given\.$#'
+			identifier: argument.type
+			count: 12
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Parameter \#6 \$year of function mktime expects int\|null, string given\.$#'
+			identifier: argument.type
+			count: 18
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Strict comparison using \!\=\= between mixed and '''' will always evaluate to true\.$#'
+			identifier: notIdentical.alwaysTrue
+			count: 1
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Strict comparison using \=\=\= between int\<0, max\>\|false and true will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 3
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 5
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Variable \$filterEngine might not be defined\.$#'
+			identifier: variable.undefined
+			count: 6
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Variable \$odbname might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Variable \$odbpass might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Variable \$odbuser might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Variable \$time might not be defined\.$#'
+			identifier: variable.undefined
+			count: 3
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Variable \$url might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/functions-tracking202.php'
+
+		-
+			message: '#^Function grab_timeframe invoked with 0 parameters, 1 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-tracking202api.php'
+
+		-
+			message: '#^Undefined variable\: \$postArray$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/functions-tracking202api.php'
+
+		-
+			message: '#^Call to function method_exists\(\) with DataEngine and ''getSummary'' will always evaluate to false\.$#'
+			identifier: function.impossibleType
+			count: 1
+			path: '202-config/functions-upgrade.php'
+
+		-
+			message: '#^Call to function method_exists\(\) with DataEngine and ''setRowsForOldClickU…'' will always evaluate to false\.$#'
+			identifier: function.impossibleType
+			count: 1
+			path: '202-config/functions-upgrade.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 2
+			path: '202-config/functions-upgrade.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 412
+			path: '202-config/functions-upgrade.php'
+
+		-
+			message: '#^Negated boolean expression is always false\.$#'
+			identifier: booleanNot.alwaysFalse
+			count: 2
+			path: '202-config/functions-upgrade.php'
+
+		-
+			message: '#^Variable \$mysql_partitioning_fail might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/functions-upgrade.php'
+
+		-
+			message: '#^Variable \$p_count might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/functions-upgrade.php'
+
+		-
+			message: '#^Variable \$redirect_name might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/functions-upgrade.php'
+
+		-
+			message: '#^Binary operation "\-" between string and 1 results in an error\.$#'
+			identifier: binaryOp.invalid
+			count: 2
+			path: '202-config/functions.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/functions.php'
+
+		-
+			message: '#^Loose comparison using \=\= between false and true will always evaluate to false\.$#'
+			identifier: equal.alwaysFalse
+			count: 1
+			path: '202-config/functions.php'
+
+		-
+			message: '#^PHPDoc tag @param references unknown parameter\: \$db$#'
+			identifier: parameter.notFound
+			count: 1
+			path: '202-config/functions.php'
+
+		-
+			message: '#^Parameter \#1 \$array of function array_pop is passed by reference, so it expects variables only\.$#'
+			identifier: argument.byRef
+			count: 1
+			path: '202-config/functions.php'
+
+		-
+			message: '#^Parameter \#1 \$string of function str_pad expects string, int given\.$#'
+			identifier: argument.type
+			count: 2
+			path: '202-config/functions.php'
+
+		-
+			message: '#^Parameter \#3 \$value of function curl_setopt expects bool, int given\.$#'
+			identifier: argument.type
+			count: 2
+			path: '202-config/functions.php'
+
+		-
+			message: '#^Undefined variable\: \$decals$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/functions.php'
+
+		-
+			message: '#^Undefined variable\: \$upgrade_done$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/functions.php'
+
+		-
+			message: '#^Variable \$error might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/get_apikey.php'
+
+		-
+			message: '#^Function _mysqli_query invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 5
+			path: '202-config/install.php'
+
+		-
+			message: '#^Offset ''user_pass'' on array\{user_email\: ''''\|''\<div class\="error"…'', user_name\: ''''\|''\<div class\="error"…'', user_pass\: ''''\|''\<div class\="error"…''\} in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.offset
+			count: 3
+			path: '202-config/install.php'
+
+		-
+			message: '#^Variable \$db might not be defined\.$#'
+			identifier: variable.undefined
+			count: 9
+			path: '202-config/install.php'
+
+		-
+			message: '#^Variable \$hash in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.variable
+			count: 1
+			path: '202-config/install.php'
+
+		-
+			message: '#^Constant ABSPATH not found\.$#'
+			identifier: constant.notFound
+			count: 2
+			path: '202-config/l10n.php'
+
+		-
+			message: '#^Constant LANGDIR not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/l10n.php'
+
+		-
+			message: '#^Constant PLUGINDIR not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/l10n.php'
+
+		-
+			message: '#^Function get_template_directory not found\.$#'
+			identifier: function.notFound
+			count: 1
+			path: '202-config/l10n.php'
+
+		-
+			message: '#^Instantiated class CachedFileReader not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/l10n.php'
+
+		-
+			message: '#^Instantiated class gettext_reader not found\.$#'
+			identifier: class.notFound
+			count: 1
+			path: '202-config/l10n.php'
+
+		-
+			message: '#^Constant MYSQL_DATABASE not found\.$#'
+			identifier: constant.notFound
+			count: 3
+			path: '202-config/migrations/run_attribution_migration_standalone.php'
+
+		-
+			message: '#^Constant MYSQL_HOST not found\.$#'
+			identifier: constant.notFound
+			count: 3
+			path: '202-config/migrations/run_attribution_migration_standalone.php'
+
+		-
+			message: '#^Constant MYSQL_PASS not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/migrations/run_attribution_migration_standalone.php'
+
+		-
+			message: '#^Constant MYSQL_USER not found\.$#'
+			identifier: constant.notFound
+			count: 2
+			path: '202-config/migrations/run_attribution_migration_standalone.php'
+
+		-
+			message: '#^Negated boolean expression is always false\.$#'
+			identifier: booleanNot.alwaysFalse
+			count: 1
+			path: '202-config/migrations/run_attribution_migration_standalone.php'
+
+		-
+			message: '#^Variable \$db might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: '202-config/requirements.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 4
+			path: '202-config/sessions.php'
+
+		-
+			message: '#^Offset 1 on array\{non\-falsy\-string, non\-falsy\-string, string\} in isset\(\) always exists and is not nullable\.$#'
+			identifier: isset.offset
+			count: 1
+			path: '202-config/setup-config.php'
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 1
+			path: '202-config/setup-config.php'
+
+		-
+			message: '#^Constant TRACKING202_ADS_URL not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/template.php'
+
+		-
+			message: '#^Loose comparison using \=\= between false and ''No'' will always evaluate to false\.$#'
+			identifier: equal.alwaysFalse
+			count: 1
+			path: '202-config/template.php'
+
+		-
+			message: '#^Loose comparison using \=\= between false and ''Yes'' will always evaluate to false\.$#'
+			identifier: equal.alwaysFalse
+			count: 1
+			path: '202-config/template.php'
+
+		-
+			message: '#^Strict comparison using \!\=\= between mixed and null will always evaluate to true\.$#'
+			identifier: notIdentical.alwaysTrue
+			count: 5
+			path: '202-config/template.php'
+
+		-
+			message: '#^Ternary operator condition is always true\.$#'
+			identifier: ternary.alwaysTrue
+			count: 1
+			path: '202-config/template.php'
+
+		-
+			message: '#^Constant PROSPER202_VERSION not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: '202-config/upgrade.php'
+
+		-
+			message: '#^If condition is always true\.$#'
+			identifier: if.alwaysTrue
+			count: 6
+			path: '202-config/upgrade.php'
+
+		-
+			message: '#^Variable \$db might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/upgrade.php'
+
+		-
+			message: '#^Variable \$memcacheInstalled might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/upgrade.php'
+
+		-
+			message: '#^Variable \$partition_support might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/upgrade.php'
+
+		-
+			message: '#^Variable \$time_from might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: '202-config/upgrade.php'
+
+		-
+			message: '#^Variable \$version might not be defined\.$#'
+			identifier: variable.undefined
+			count: 4
+			path: '202-config/upgrade.php'
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: api/V3/Bootstrap.php
+
+		-
+			message: '#^Call to function is_callable\(\) with callable\(\)\: mixed will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: api/V3/Controllers/SyncController.php
+
+		-
+			message: '#^Property Api\\V3\\Controllers\\SyncController\:\:\$db is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: api/V3/Controllers/SyncController.php
+
+		-
+			message: '#^Property Api\\V3\\Controllers\\UsersController\:\:\$userId is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: api/V3/Controllers/UsersController.php
+
+		-
+			message: '#^Constructor of class Api\\V3\\Exception\\DatabaseException has an unused parameter \$internalDetail\.$#'
+			identifier: constructor.unusedParameter
+			count: 1
+			path: api/V3/Exception/DatabaseException.php
+
+		-
+			message: '#^Call to function is_array\(\) with array will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 2
+			path: api/V3/Support/ServerStateStore.php
+
+		-
+			message: '#^Offset ''name'' on array\{redirect_url\: string, redirect_campaign\: string, redirect_lp\: string, weight\: string, name\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Offset ''redirect_url'' on array\{redirect_url\: string, redirect_campaign\: string, redirect_lp\: string, weight\: string, name\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Offset ''rule_name'' on array\{rule_name\: string, splittest\: string, status\: string, criteria\: array, redirects\: array\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Offset ''splittest'' on array\{rule_name\: string, splittest\: string, status\: string, criteria\: array, redirects\: array\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Offset ''statement'' on array\{type\: string, statement\: string, value\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Offset ''status'' on array\{rule_name\: string, splittest\: string, status\: string, criteria\: array, redirects\: array\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Offset ''type'' on array\{type\: string, statement\: string, value\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Offset ''value'' on array\{type\: string, statement\: string, value\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Offset ''weight'' on array\{redirect_url\: string, redirect_campaign\: string, redirect_lp\: string, weight\: string, name\: string\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: api/V3/Support/SyncEngine.php
+
+		-
+			message: '#^Anonymous function has an unused use \$auth\.$#'
+			identifier: closure.unusedUse
+			count: 1
+			path: api/V3/index.php
+
+		-
+			message: '#^Anonymous function has an unused use \$queryParams\.$#'
+			identifier: closure.unusedUse
+			count: 1
+			path: api/V3/index.php
+
+		-
+			message: '#^Expression "\$su_ratio \- 0" on a separate line does not do anything\.$#'
+			identifier: expr.resultUnused
+			count: 1
+			path: api/v1/functions.php
+
+		-
+			message: '#^If condition is always true\.$#'
+			identifier: if.alwaysTrue
+			count: 1
+			path: api/v1/functions.php
+
+		-
+			message: '#^Parameter \#2 \$flags of function json_encode expects int, true given\.$#'
+			identifier: argument.type
+			count: 2
+			path: api/v1/functions.php
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 13
+			path: api/v1/functions.php
+
+		-
+			message: '#^Method Slim\\Helper\\Set\:\:__unset\(\) with return type void returns mixed but should not return anything\.$#'
+			identifier: return.void
+			count: 1
+			path: api/v2/Slim/Helper/Set.php
+
+		-
+			message: '#^Method Slim\\Helper\\Set\:\:protect\(\) has invalid return type Slim\\Helper\\Closure\.$#'
+			identifier: class.notFound
+			count: 1
+			path: api/v2/Slim/Helper/Set.php
+
+		-
+			message: '#^PHPDoc tag @param for parameter \$callable with type Slim\\Helper\\Closure is not subtype of native type Closure\.$#'
+			identifier: parameter.phpDocType
+			count: 1
+			path: api/v2/Slim/Helper/Set.php
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(Closure        The closure that defines the object\)\: Unexpected token "The", expected variable at offset 149 on line 4$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: api/v2/Slim/Helper/Set.php
+
+		-
+			message: '#^Parameter \$callable of method Slim\\Helper\\Set\:\:protect\(\) has invalid type Slim\\Helper\\Closure\.$#'
+			identifier: class.notFound
+			count: 1
+			path: api/v2/Slim/Helper/Set.php
+
+		-
+			message: '#^Method Slim\\Http\\Request\:\:cookies\(\) should return array\|string\|null but returns Slim\\Helper\\Set\.$#'
+			identifier: return.type
+			count: 1
+			path: api/v2/Slim/Http/Request.php
+
+		-
+			message: '#^Parameter \#1 \$data of static method Slim\\Http\\Headers\:\:extract\(\) expects array, Slim\\Environment given\.$#'
+			identifier: argument.type
+			count: 1
+			path: api/v2/Slim/Http/Request.php
+
+		-
+			message: '#^Method Slim\\Http\\Response\:\:getIterator\(\) should return Slim\\Http\\Headers but returns Traversable\<mixed, mixed\>\.$#'
+			identifier: return.type
+			count: 1
+			path: api/v2/Slim/Http/Response.php
+
+		-
+			message: '#^PHPDoc tag @return has invalid value \(array\[int status, array headers, string body\]\)\: Unexpected token "\[", expected TOKEN_HORIZONTAL_WS at offset 242 on line 8$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: api/v2/Slim/Http/Response.php
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(string\)\: Unexpected token "\\n     \* ", expected variable at offset 185 on line 7$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: api/v2/Slim/Http/Util.php
+
+		-
+			message: '#^Parameter \#1 \$expires of static method Slim\\Http\\Util\:\:getIv\(\) expects int, string given\.$#'
+			identifier: argument.type
+			count: 1
+			path: api/v2/Slim/Http/Util.php
+
+		-
+			message: '#^Parameter \#3 \$value of static method Slim\\Http\\Util\:\:setCookieHeader\(\) expects string, array given\.$#'
+			identifier: argument.type
+			count: 1
+			path: api/v2/Slim/Http/Util.php
+
+		-
+			message: '#^Parameter &\$headers by\-ref type of method Slim\\Http\\Util\:\:serializeCookies\(\) expects Slim\\Http\\Headers, array given\.$#'
+			identifier: parameterByRef.type
+			count: 2
+			path: api/v2/Slim/Http/Util.php
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(\\Slim\|\\Slim\\Middleware\)\: Unexpected token "\\n     ", expected variable at offset 228 on line 8$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: api/v2/Slim/Middleware.php
+
+		-
+			message: '#^Method Slim\\Middleware\\ContentTypes\:\:parseJson\(\) should return array\|string but return statement is missing\.$#'
+			identifier: return.missing
+			count: 2
+			path: api/v2/Slim/Middleware/ContentTypes.php
+
+		-
+			message: '#^PHPDoc tag @return has invalid value \(array\[status, header, body\]\)\: Unexpected token "\[", expected TOKEN_HORIZONTAL_WS at offset 449 on line 10$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: api/v2/Slim/Middleware/MethodOverride.php
+
+		-
+			message: '#^Parameter \#1 \$env of method Slim\\Middleware\\PrettyExceptions\:\:renderBody\(\) expects array, Slim\\Environment given\.$#'
+			identifier: argument.type
+			count: 1
+			path: api/v2/Slim/Middleware/PrettyExceptions.php
+
+		-
+			message: '#^Parameter \#1 \$value of function session_cache_limiter expects string\|null, false given\.$#'
+			identifier: argument.type
+			count: 1
+			path: api/v2/Slim/Middleware/SessionCookie.php
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(Callable\|array\[Callable\]\)\: Unexpected token "\\n     \* ", expected variable at offset 523 on line 11$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: api/v2/Slim/Route.php
+
+		-
+			message: '#^PHPDoc tag @return contains unresolvable type\.$#'
+			identifier: return.unresolvableType
+			count: 1
+			path: api/v2/Slim/Router.php
+
+		-
+			message: '#^Access to an undefined property Slim\\Slim\:\:\$log\.$#'
+			identifier: property.notFound
+			count: 1
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^Access to an undefined property Slim\\Slim\:\:\$mode\.$#'
+			identifier: property.notFound
+			count: 1
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^Access to an undefined property Slim\\Slim\:\:\$settings\.$#'
+			identifier: property.notFound
+			count: 2
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^Access to an undefined property Slim\\Slim\:\:\$view\.$#'
+			identifier: property.notFound
+			count: 4
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^Default value of the parameter \#4 \$errline \(string\) of method Slim\\Slim\:\:handleErrors\(\) is incompatible with type int\.$#'
+			identifier: parameter.defaultValue
+			count: 1
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^Method Slim\\Slim\:\:handleErrors\(\) should return bool but empty return statement found\.$#'
+			identifier: return.empty
+			count: 1
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(\\Slim\\Middleware\)\: Unexpected token "\\n     ", expected variable at offset 223 on line 7$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^PHPDoc tag @param has invalid value \(array \(See notes above\)\)\: Unexpected token "\(", expected variable at offset 1073 on line 28$#'
+			identifier: phpDoc.parseError
+			count: 1
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^PHPDoc tag @var for property Slim\\Slim\:\:\$apps contains unresolvable type\.$#'
+			identifier: property.unresolvableType
+			count: 1
+			path: api/v2/Slim/Slim.php
+
+		-
+			message: '#^Call to an undefined method Slim\\Helper\\Set\:\:keep\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: api/v2/Slim/View.php
+
+		-
+			message: '#^PHPDoc tag @param for parameter \$value with type mixed is not subtype of native type Closure\.$#'
+			identifier: parameter.phpDocType
+			count: 1
+			path: api/v2/Slim/View.php
+
+		-
+			message: '#^Call to static method getInstance\(\) on an unknown class DB\.$#'
+			identifier: class.notFound
+			count: 1
+			path: api/v2/app.php
+
+		-
+			message: '#^Function showCategories invoked with 2 parameters, 3 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: api/v2/categories/index.php
+
+		-
+			message: '#^Variable \$db might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: api/v2/categories/index.php
+
+		-
+			message: '#^Constant MYSQL_ASSOC not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: api/v2/functions.php
+
+		-
+			message: '#^Expression "\$su_ratio \- 0" on a separate line does not do anything\.$#'
+			identifier: expr.resultUnused
+			count: 1
+			path: api/v2/functions.php
+
+		-
+			message: '#^Parameter \#2 \$flags of function json_encode expects int, true given\.$#'
+			identifier: argument.type
+			count: 2
+			path: api/v2/functions.php
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 9
+			path: api/v2/functions.php

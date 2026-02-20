@@ -12,6 +12,7 @@ class SystemCronCommand extends BaseCommand
 {
     protected static $defaultName = 'system:cron';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

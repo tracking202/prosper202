@@ -11,7 +11,7 @@ use Prosper202\Attribution\Touchpoint;
 
 final class TimeDecayStrategy implements AttributionStrategyInterface
 {
-    private const DEFAULT_HALF_LIFE_HOURS = 48;
+    private const int DEFAULT_HALF_LIFE_HOURS = 48;
 
     public function calculate(ModelDefinition $model, ConversionBatch $batch): CalculationResult
     {

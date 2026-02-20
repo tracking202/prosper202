@@ -17,7 +17,7 @@ AUTH::require_user();
 //show real or filtered clicks
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
-	$user_result = _mysqli_query($user_sql, $dbGlobalLink); //($user_sql);
+	$user_result = _mysqli_query($user_sql);
 	$user_row = $user_result->fetch_assoc();
 
 	$html['user_pref_group_1'] = htmlentities((string)($user_row['user_pref_group_1'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -46,9 +46,9 @@ AUTH::require_user();
 	}
 
 	header("Content-type: application/octet-stream");
-	header("Content-Disposition: attachment; filename=\"GroupOverviewReport" . date("mdy") . ".csv\"");
-	header("Expires: 0");
+	header("Content-Disposition: attachment; filename=T202_group_overview_" . time() . ".xls");
 	header("Pragma: no-cache");
+	header("Expires: -1");
 	ReportBasicForm::echoCell("Group Overview Report for " . date("m/d/Y", strtotime($summary_form->getStartDate())) . " to " . date("m/d/Y", strtotime($summary_form->getEndDate())));
 	ReportBasicForm::echoRow();
 	ReportBasicForm::echoCell($summary_form->getRanOn());
@@ -96,4 +96,3 @@ AUTH::require_user();
 	}
 
 ?>
-

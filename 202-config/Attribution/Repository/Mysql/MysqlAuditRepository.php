@@ -8,9 +8,9 @@ use mysqli;
 use Prosper202\Attribution\Repository\AuditRepositoryInterface;
 use RuntimeException;
 
-final class MysqlAuditRepository implements AuditRepositoryInterface
+final readonly class MysqlAuditRepository implements AuditRepositoryInterface
 {
-    public function __construct(private readonly mysqli $connection)
+    public function __construct(private mysqli $connection)
     {
     }
 

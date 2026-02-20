@@ -13,6 +13,7 @@ class AttributionExportListCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:export:list';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

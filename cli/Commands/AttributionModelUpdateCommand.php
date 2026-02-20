@@ -14,6 +14,7 @@ class AttributionModelUpdateCommand extends BaseCommand
 {
     protected static $defaultName = 'attribution:model:update';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

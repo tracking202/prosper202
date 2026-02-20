@@ -135,6 +135,8 @@ $html = [];
 		}
 	}
 
+	$db->begin_transaction();
+
 	$tracker_sql = "INSERT INTO `202_trackers`
 					SET			`user_id`='".$mysql['user_id']."',
 								`aff_campaign_id`='".$mysql['aff_campaign_id']."',
@@ -146,8 +148,13 @@ $html = [];
 								`rotator_id`='".$mysql['rotator_id']."',
 								`click_cloaking`='".$mysql['click_cloaking']."',
 								`tracker_time`='".$mysql['tracker_time']."'";
-	$tracker_result = $db->query($tracker_sql) or record_mysql_error($tracker_sql);
-	
+	$tracker_result = $db->query($tracker_sql);
+	if (!$tracker_result) {
+		$db->rollback();
+		record_mysql_error($tracker_sql);
+		die('Error creating tracker');
+	}
+
 	$tracker_row['tracker_id'] = $db->insert_id;
 	$mysql['tracker_id'] = $db->real_escape_string((string)$tracker_row['tracker_id']);
 
@@ -157,13 +164,20 @@ $html = [];
 		$tracker_id_public = random_int(1,9) . $tracker_row['tracker_id'] . random_int(1,9);
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
 	}
-	
+
 	$tracker_id_public = $mysql['tracker_id_public'];
 
 	$tracker_sql = "UPDATE 		`202_trackers`
 					SET			`tracker_id_public`='".$mysql['tracker_id_public']."'
-					WHERE		`tracker_id`='".$mysql['tracker_id']."'"; 
-	$tracker_result = $db->query($tracker_sql) or record_mysql_error($tracker_sql);
+					WHERE		`tracker_id`='".$mysql['tracker_id']."'";
+	$tracker_result = $db->query($tracker_sql);
+	if (!$tracker_result) {
+		$db->rollback();
+		record_mysql_error($tracker_sql);
+		die('Error setting tracker ID');
+	}
+
+	$db->commit();
 
 	$parsed_url = [];
 	if (!empty($landing_page_row['landing_page_url'])) {

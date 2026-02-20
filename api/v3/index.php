@@ -439,7 +439,7 @@ try {
     $code = $e->getHttpStatus();
     $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
     Bootstrap::errorResponse($message, $code);
-} catch (\Throwable $e) {
+} catch (\Throwable) {
     Bootstrap::errorResponse('Internal server error', 500);
 }
 

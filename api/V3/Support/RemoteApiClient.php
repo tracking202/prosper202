@@ -8,10 +8,9 @@ use Api\V3\Exception\DatabaseException;
 
 class RemoteApiClient
 {
-    private string $baseUrl;
-    private string $apiKey;
+    private readonly string $baseUrl;
 
-    public function __construct(string $url, string $apiKey)
+    public function __construct(string $url, private readonly string $apiKey)
     {
         $url = trim($url);
         if ($url === '') {
@@ -26,7 +25,6 @@ class RemoteApiClient
         }
 
         $this->baseUrl = $url;
-        $this->apiKey = $apiKey;
     }
 
     /**

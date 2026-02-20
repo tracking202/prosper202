@@ -13,6 +13,7 @@ class UserGetCommand extends BaseCommand
 {
     protected static $defaultName = 'user:get';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

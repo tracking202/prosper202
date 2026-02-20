@@ -371,7 +371,7 @@ class Route
         //Convert URL params into regex patterns, construct a regex for this route, init params
         $patternAsRegex = preg_replace_callback(
             '#:([\w]+)\+?#',
-            [$this, 'matchesCallback'],
+            $this->matchesCallback(...),
             str_replace(')', ')?', (string)$this->pattern)
         );
         if (str_ends_with($this->pattern, '/')) {

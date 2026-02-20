@@ -14,6 +14,7 @@ class UserCreateCommand extends BaseCommand
 {
     protected static $defaultName = 'user:create';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

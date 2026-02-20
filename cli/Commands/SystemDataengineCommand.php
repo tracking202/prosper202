@@ -12,6 +12,7 @@ class SystemDataengineCommand extends BaseCommand
 {
     protected static $defaultName = 'system:dataengine';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

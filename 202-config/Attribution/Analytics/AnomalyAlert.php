@@ -7,14 +7,14 @@ namespace Prosper202\Attribution\Analytics;
 /**
  * Lightweight DTO describing an anomaly detected for the dashboard.
  */
-final class AnomalyAlert
+final readonly class AnomalyAlert
 {
     public function __construct(
-        public readonly string $metric,
-        public readonly string $severity,
-        public readonly string $direction,
-        public readonly float $deltaPercent,
-        public readonly string $message
+        public string $metric,
+        public string $severity,
+        public string $direction,
+        public float $deltaPercent,
+        public string $message
     ) {
     }
 }

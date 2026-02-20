@@ -9,10 +9,7 @@ use Api\V3\Exception\ValidationException;
 
 class ReportsController
 {
-    private \mysqli $db;
-    private int $userId;
-
-    private const BREAKDOWNS = [
+    private const array BREAKDOWNS = [
         'campaign'     => ['table' => '202_aff_campaigns',      'id' => 'aff_campaign_id',  'name' => 'aff_campaign_name',  'de_id' => 'aff_campaign_id'],
         'aff_network'  => ['table' => '202_aff_networks',       'id' => 'aff_network_id',   'name' => 'aff_network_name',   'de_id' => 'aff_network_id'],
         'ppc_account'  => ['table' => '202_ppc_accounts',       'id' => 'ppc_account_id',   'name' => 'ppc_account_name',   'de_id' => 'ppc_account_id'],
@@ -29,8 +26,8 @@ class ReportsController
         'text_ad'      => ['table' => '202_text_ads',            'id' => 'text_ad_id',       'name' => 'text_ad_name',       'de_id' => 'text_ad_id'],
     ];
 
-    private const ALLOWED_SORTS = ['total_clicks', 'total_leads', 'total_income', 'total_cost', 'total_net', 'roi', 'epc', 'conv_rate'];
-    private const DAYPART_ALLOWED_SORTS = [
+    private const array ALLOWED_SORTS = ['total_clicks', 'total_leads', 'total_income', 'total_cost', 'total_net', 'roi', 'epc', 'conv_rate'];
+    private const array DAYPART_ALLOWED_SORTS = [
         'hour_of_day',
         'total_clicks',
         'total_click_throughs',
@@ -44,7 +41,7 @@ class ReportsController
         'roi',
         'cpa',
     ];
-    private const WEEKPART_ALLOWED_SORTS = [
+    private const array WEEKPART_ALLOWED_SORTS = [
         'day_of_week',
         'total_clicks',
         'total_click_throughs',
@@ -58,8 +55,8 @@ class ReportsController
         'roi',
         'cpa',
     ];
-    private const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    private const METRIC_FIELDS = [
+    private const array DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    private const array METRIC_FIELDS = [
         'total_clicks',
         'total_click_throughs',
         'total_leads',
@@ -72,16 +69,14 @@ class ReportsController
         'roi',
         'cpa',
     ];
-    private const INTEGER_METRIC_FIELDS = [
+    private const array INTEGER_METRIC_FIELDS = [
         'total_clicks',
         'total_click_throughs',
         'total_leads',
     ];
 
-    public function __construct(\mysqli $db, int $userId)
+    public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
-        $this->db = $db;
-        $this->userId = $userId;
     }
 
     public function summary(array $params): array

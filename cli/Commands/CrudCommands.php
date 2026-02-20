@@ -43,16 +43,9 @@ class CrudCommands
     private static function buildListCommand(string $entity, string $endpoint, array $listParams): Command
     {
         $cmd = new class($entity, $endpoint, $listParams) extends BaseCommand {
-            private string $entity;
-            private string $endpoint;
-            private array $listParams;
-
-            public function __construct(string $entity, string $endpoint, array $listParams)
+            public function __construct(private readonly string $entity, private readonly string $endpoint, private readonly array $listParams)
             {
-                $this->entity = $entity;
-                $this->endpoint = $endpoint;
-                $this->listParams = $listParams;
-                parent::__construct("{$entity}:list");
+                parent::__construct("{$this->entity}:list");
             }
 
             protected function configure(): void
@@ -86,14 +79,9 @@ class CrudCommands
     private static function buildGetCommand(string $entity, string $endpoint): Command
     {
         return new class($entity, $endpoint) extends BaseCommand {
-            private string $entity;
-            private string $endpoint;
-
-            public function __construct(string $entity, string $endpoint)
+            public function __construct(private readonly string $entity, private readonly string $endpoint)
             {
-                $this->entity = $entity;
-                $this->endpoint = $endpoint;
-                parent::__construct("{$entity}:get");
+                parent::__construct("{$this->entity}:get");
             }
 
             protected function configure(): void
@@ -114,18 +102,9 @@ class CrudCommands
     private static function buildCreateCommand(string $entity, string $endpoint, array $fields, array $required): Command
     {
         return new class($entity, $endpoint, $fields, $required) extends BaseCommand {
-            private string $entity;
-            private string $endpoint;
-            private array $fields;
-            private array $required;
-
-            public function __construct(string $entity, string $endpoint, array $fields, array $required)
+            public function __construct(private readonly string $entity, private readonly string $endpoint, private readonly array $fields, private readonly array $required)
             {
-                $this->entity = $entity;
-                $this->endpoint = $endpoint;
-                $this->fields = $fields;
-                $this->required = $required;
-                parent::__construct("{$entity}:create");
+                parent::__construct("{$this->entity}:create");
             }
 
             protected function configure(): void
@@ -168,16 +147,9 @@ class CrudCommands
     private static function buildUpdateCommand(string $entity, string $endpoint, array $fields): Command
     {
         return new class($entity, $endpoint, $fields) extends BaseCommand {
-            private string $entity;
-            private string $endpoint;
-            private array $fields;
-
-            public function __construct(string $entity, string $endpoint, array $fields)
+            public function __construct(private readonly string $entity, private readonly string $endpoint, private readonly array $fields)
             {
-                $this->entity = $entity;
-                $this->endpoint = $endpoint;
-                $this->fields = $fields;
-                parent::__construct("{$entity}:update");
+                parent::__construct("{$this->entity}:update");
             }
 
             protected function configure(): void
@@ -214,14 +186,9 @@ class CrudCommands
     private static function buildDeleteCommand(string $entity, string $endpoint): Command
     {
         return new class($entity, $endpoint) extends BaseCommand {
-            private string $entity;
-            private string $endpoint;
-
-            public function __construct(string $entity, string $endpoint)
+            public function __construct(private readonly string $entity, private readonly string $endpoint)
             {
-                $this->entity = $entity;
-                $this->endpoint = $endpoint;
-                parent::__construct("{$entity}:delete");
+                parent::__construct("{$this->entity}:delete");
             }
 
             protected function configure(): void

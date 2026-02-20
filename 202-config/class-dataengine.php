@@ -98,69 +98,51 @@ class DataEngine
         return self::$found_rows;
     }
 
-    function getReportData($reportType, $clickFrom, $clickTo, $cpv)
+    function getReportData($reportType, $clickFrom, $clickTo, $cpv): mixed
     {
         switch ($reportType) {
             case 'LpOverview':
                 return $this->doLpOverviewReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'campaignOverview':
                 return $this->doCampaignOverviewReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'slp_direct_link_per_ppc':
                 return $this->doPerPpcReport('slp_direct_link', $clickFrom, $clickTo, $cpv);
-                break;
             case 'alp_per_ppc':
                 return $this->doPerPpcReport('alp', $clickFrom, $clickTo, $cpv);
-                break;
             case 'breakdown':
                 return $this->doBreakdownReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'hourly':
                 return $this->doHourlyReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'weekly':
                 return $this->doWeeklyReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'keyword':
                 return $this->doKeywordReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'textad':
                 return $this->doTextadReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'referer':
                 return $this->doRefererReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'ip':
                 return $this->doIPReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'country':
                 return $this->doCountryReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'region':
                 return $this->doRegionReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'city':
                 return $this->doCityReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'isp':
                 return $this->doISPReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'landingpage':
                 return $this->doLandingPageReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'device':
                 return $this->doDeviceReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'browser':
                 return $this->doBrowserReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'platform':
                 return $this->doPlatformReport($clickFrom, $clickTo, $cpv);
-                break;
             case 'variable':
                 return $this->doVariableReport($clickFrom, $clickTo, $cpv);
-                break;
+            default:
+                return null;
         }
     }
 
@@ -311,7 +293,6 @@ class DataEngine
      *
      * foreach ($filters as $key => $value) {
      * if ($filterInClickLevel == true) {
-     * break;
      * }
      * if (!in_array($key, $filterInIpxLevel)) {
      * $filterInClickLevel = true;
@@ -3628,16 +3609,16 @@ class DisplayData
             switch ($reportType) {
 
                 case 'keyword':
-                    $featureKey = $html['keyword'];
+                    $featureKey = $html['keyword'] ?? false;
                     break;
                 case 'textad':
-                    $featureKey = $html['text_ad_name'];
+                    $featureKey = $html['text_ad_name'] ?? false;
                     break;
                 case 'referer':
-                    $featureKey = $html['referer_name'];
+                    $featureKey = $html['referer_name'] ?? false;
                     break;
                 case 'ip':
-                    $featureKey = $html['ip_address'];
+                    $featureKey = $html['ip_address'] ?? false;
                     break;
                 case 'country':
                     if (isset($html['country_name']) && isset($html['country_code'])) {
@@ -3661,19 +3642,19 @@ class DisplayData
                     }
                     break;
                 case 'isp':
-                    $featureKey = $html['isp_name'];
+                    $featureKey = $html['isp_name'] ?? false;
                     break;
                 case 'landingpage':
-                    $featureKey = $html['landing_page_nickname'];
+                    $featureKey = $html['landing_page_nickname'] ?? false;
                     break;
                 case 'device':
-                    $featureKey = $html['device_name'];
+                    $featureKey = $html['device_name'] ?? false;
                     break;
                 case 'browser':
-                    $featureKey = $html['browser_name'];
+                    $featureKey = $html['browser_name'] ?? false;
                     break;
                 case 'platform':
-                    $featureKey = $html['platform_name'];
+                    $featureKey = $html['platform_name'] ?? false;
                     break;
             }
 
@@ -3709,15 +3690,17 @@ class DisplayData
             $obj2 = new ArrayObject($it->current());
             $html = $obj2->getIterator();
 
-            if ($i != $obj->count() - 1) {
-                echo "- " . $html['ppc_network_name'] . "\t" . $html['clicks'] . "\t" . $html['click_out'] . "\t" . $html['ctr'] . "\t" . $html['leads'] . "\t" . $html['su_ratio'] . "\t" . $html['payout'] . "\t" . $html['epc'] . "\t" . $html['cpc'] . "\t" . $html['income'] . "\t" . $html['cost'] . "\t" . $html['net'] . "\t" . $html['roi'] . "\n";
+            if ($i != $obj->count() - 1 && isset($html['variables']) && $html['variables']) {
+                $networkRow = $html[0] ?? [];
+                echo "- " . ($networkRow['ppc_network_name'] ?? '') . "\t" . ($networkRow['clicks'] ?? '') . "\t" . ($networkRow['click_out'] ?? '') . "\t" . ($networkRow['ctr'] ?? '') . "\t" . ($networkRow['leads'] ?? '') . "\t" . ($networkRow['su_ratio'] ?? '') . "\t" . ($networkRow['payout'] ?? '') . "\t" . ($networkRow['epc'] ?? '') . "\t" . ($networkRow['cpc'] ?? '') . "\t" . ($networkRow['income'] ?? '') . "\t" . ($networkRow['cost'] ?? '') . "\t" . ($networkRow['net'] ?? '') . "\t" . ($networkRow['roi'] ?? '') . "\n";
 
                 foreach ($html['variables'] as $variables) {
-                    echo " - " . $variables['variable_name'] . "\t" . $variables['clicks'] . "\t" . $variables['click_out'] . "\t" . $variables['ctr'] . "\t" . $variables['leads'] . "\t" . $variables['su_ratio'] . "\t" . $variables['payout'] . "\t" . $variables['epc'] . "\t" . $variables['cpc'] . "\t" . $variables['income'] . "\t" . $variables['cost'] . "\t" . $variables['net'] . "\t" . $variables['roi'] . "\n";
+                    $varRow = $variables[0] ?? [];
+                    echo " - " . ($varRow['variable_name'] ?? '') . "\t" . ($varRow['clicks'] ?? '') . "\t" . ($varRow['click_out'] ?? '') . "\t" . ($varRow['ctr'] ?? '') . "\t" . ($varRow['leads'] ?? '') . "\t" . ($varRow['su_ratio'] ?? '') . "\t" . ($varRow['payout'] ?? '') . "\t" . ($varRow['epc'] ?? '') . "\t" . ($varRow['cpc'] ?? '') . "\t" . ($varRow['income'] ?? '') . "\t" . ($varRow['cost'] ?? '') . "\t" . ($varRow['net'] ?? '') . "\t" . ($varRow['roi'] ?? '') . "\n";
 
-                    foreach ($variables['values'] as $value) {
+                    foreach ($variables['values'] ?? [] as $value) {
 
-                        echo " -- " . $value['variable_value'] . "\t" . $value['clicks'] . "\t" . $value['click_out'] . "\t" . $value['ctr'] . "\t" . $value['leads'] . "\t" . $value['su_ratio'] . "\t" . $value['payout'] . "\t" . $value['epc'] . "\t" . $value['cpc'] . "\t" . $value['income'] . "\t" . $value['cost'] . "\t" . $value['net'] . "\t" . $value['roi'] . "\n";
+                        echo " -- " . ($value['variable_value'] ?? '') . "\t" . ($value['clicks'] ?? '') . "\t" . ($value['click_out'] ?? '') . "\t" . ($value['ctr'] ?? '') . "\t" . ($value['leads'] ?? '') . "\t" . ($value['su_ratio'] ?? '') . "\t" . ($value['payout'] ?? '') . "\t" . ($value['epc'] ?? '') . "\t" . ($value['cpc'] ?? '') . "\t" . ($value['income'] ?? '') . "\t" . ($value['cost'] ?? '') . "\t" . ($value['net'] ?? '') . "\t" . ($value['roi'] ?? '') . "\n";
                     }
                 }
             }
@@ -3852,9 +3835,9 @@ class UserPrefs
         } catch (Exception) {
             self::$db = false;
         }
-        $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
+        self::$mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
 
-        $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $this->mysql['user_id'];
+        $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . self::$mysql['user_id'];
         $user_result = _mysqli_query($user_sql); // ($user_sql);
         $user_row = $user_result->fetch_assoc();
         $breakdown = $user_row['user_pref_breakdown'];

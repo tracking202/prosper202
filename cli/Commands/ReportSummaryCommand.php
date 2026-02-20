@@ -13,6 +13,7 @@ class ReportSummaryCommand extends BaseCommand
 {
     protected static $defaultName = 'report:summary';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

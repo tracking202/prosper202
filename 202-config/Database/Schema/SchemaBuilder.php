@@ -8,7 +8,6 @@ namespace Prosper202\Database\Schema;
  */
 final class SchemaBuilder
 {
-    private string $tableName;
     /** @var array<string> */
     private array $columns = [];
     private ?string $primaryKey = null;
@@ -23,9 +22,8 @@ final class SchemaBuilder
     private string $collation = 'utf8mb4_general_ci';
     private ?int $autoIncrement = null;
 
-    private function __construct(string $tableName)
+    private function __construct(private readonly string $tableName)
     {
-        $this->tableName = $tableName;
     }
 
     /**

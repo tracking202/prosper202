@@ -8,16 +8,12 @@ use Api\V3\HttpException;
 
 class ConflictException extends HttpException
 {
-    /** @var array<string, mixed> */
-    private array $details;
-
     /**
      * @param array<string, mixed> $details
      */
-    public function __construct(string $message = 'Conflict', array $details = [], ?\Throwable $previous = null)
+    public function __construct(string $message = 'Conflict', private readonly array $details = [], ?\Throwable $previous = null)
     {
         parent::__construct($message, 409, $previous);
-        $this->details = $details;
     }
 
     /** @return array<string, mixed> */

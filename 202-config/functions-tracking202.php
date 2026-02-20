@@ -3,20 +3,23 @@
 use UAParser\Parser;
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.
-function record_mysql_error($sql): never
+function record_mysql_error($dbOrSql, $sql = null): never
 {
-    $database = DB::getInstance();
-    $db = $database->getConnection();
+    if ($sql === null) {
+        $sql = (string) $dbOrSql;
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+    } else {
+        $db = $dbOrSql;
+    }
 
     global $server_row;
 
     // record the mysql error
     $clean['mysql_error_text'] = mysqli_error($db);
 
-    // if on dev server, echo the error
-
-    echo $sql . '<br/><br/>' . $clean['mysql_error_text'] . '<br/><br/>';
-    die();
+    // log the error server-side only
+    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
     $auth = new AUTH();
     $auth->set_timezone($_SESSION['user_timezone']);
@@ -128,7 +131,7 @@ function dollar_format($amount, $currency = null, $cpv = false)
 
     if ($currency_before == '' && $currency_after == '') $currency_before = $currency;
 
-    if ($amount !== '' && $amount !== null) {
+    if ($amount !== null) {
         if ($amount >= 0) {
             $new_amount = $currency_before . number_format($amount, $decimals) . $currency_after;
         } else {
@@ -181,6 +184,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
         $html['subid'] = '';
     }
 
+    $filterEngine = new FilterEngine();
     if ($show_filters) {
         $filterEngine = new FilterEngine;
         $html['filter_name1'] = htmlentities((string) $filterEngine->getFilter('filter_name', 1), ENT_QUOTES, 'UTF-8');
@@ -852,8 +856,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'today') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, date('m', time()), date('d', time()), date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -863,8 +867,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'yesterday') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400), date('d', time() - 86400), date('Y', time() - 86400));
-                $time['to'] = mktime(23, 59, 59, date('m', time() - 86400), date('d', time() - 86400), date('Y', time() - 86400));
+                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 86400), (int) date('d', time() - 86400), (int) date('Y', time() - 86400));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', time() - 86400), (int) date('d', time() - 86400), (int) date('Y', time() - 86400));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -874,8 +878,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'last7') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 7), date('d', time() - 86400 * 7), date('Y', time() - 86400 * 7));
-                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 86400 * 7), (int) date('d', time() - 86400 * 7), (int) date('Y', time() - 86400 * 7));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -885,8 +889,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'last14') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 14), date('d', time() - 86400 * 14), date('Y', time() - 86400 * 14));
-                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 86400 * 14), (int) date('d', time() - 86400 * 14), (int) date('Y', time() - 86400 * 14));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -896,8 +900,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'last30') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, date('m', time() - 86400 * 30), date('d', time() - 86400 * 30), date('Y', time() - 86400 * 30));
-                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 86400 * 30), (int) date('d', time() - 86400 * 30), (int) date('Y', time() - 86400 * 30));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -907,8 +911,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'thismonth') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, date('m', time()), 1, date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, (int) date('m', time()), 1, (int) date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -918,8 +922,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'lastmonth') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, date('m', time() - 2629743), 1, date('Y', time() - 2629743));
-                $time['to'] = mktime(23, 59, 59, date('m', time() - 2629743), getLastDayOfMonth(date('m', time() - 2629743), date('Y', time() - 2629743)), date('Y', time() - 2629743));
+                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 2629743), 1, (int) date('Y', time() - 2629743));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', time() - 2629743), getLastDayOfMonth((int) date('m', time() - 2629743), (int) date('Y', time() - 2629743)), (int) date('Y', time() - 2629743));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -929,8 +933,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'thisyear') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, 1, 1, date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, date('m', time()), date('d', time()), date('Y', time()));
+                $time['from'] = mktime(0, 0, 0, 1, 1, (int) date('Y', time()));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -940,8 +944,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             if (element.val() == 'lastyear') {
                 <?php
 
-                $time['from'] = mktime(0, 0, 0, 1, 1, date('Y', time() - 31556926));
-                $time['to'] = mktime(0, 0, 0, 12, getLastDayOfMonth(date('m', time() - 31556926), date('Y', time() - 31556926)), date('Y', time() - 31556926));
+                $time['from'] = mktime(0, 0, 0, 1, 1, (int) date('Y', time() - 31556926));
+                $time['to'] = mktime(0, 0, 0, 12, getLastDayOfMonth((int) date('m', time() - 31556926), (int) date('Y', time() - 31556926)), (int) date('Y', time() - 31556926));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1009,7 +1013,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 
 function display_calendar2(...$args) { return display_calendar(...$args); }
 
-function grab_timeframe()
+function grab_timeframe(): array
 {
     $auth = new AUTH();
     $auth->set_timezone($_SESSION['user_timezone']);
@@ -1022,6 +1026,11 @@ function grab_timeframe()
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
     $user_row = $user_result->fetch_assoc() ?? [];
     $pref_time = $user_row['user_pref_time_predefined'] ?? '';
+
+    $time = [
+        'from' => time(),
+        'to' => time(),
+    ];
 
     if (($pref_time == 'today') or (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '')) {
         $time['from'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
@@ -1099,7 +1108,7 @@ function getLastDayOfMonth($month, $year)
     return (int)date("d", mktime(0, 0, 0, (int)$month + 1, 0, (int)$year));
 }
 
-function getTrackingDomain()
+function getTrackingDomain(): string
 {
     $tracking_domain = $_SERVER['SERVER_NAME'];
 
@@ -1530,7 +1539,7 @@ function query(
     if ($count == true) {
         $query['from'] = $fromRow;
         $query['to'] = $toRow;
-        $query['pages'] = ($limitValue !== null && $limitValue > 0) ? ceil($rows / $limitValue) + 1 : 1;
+        $query['pages'] = ($limitValue !== null && $limitValue > 0) ? (int)ceil($rows / $limitValue) : 1;
         if (($query['from'] == 1) && ($query['to'] == 0)) {
             $query['from'] = 0;
         }
@@ -1542,7 +1551,7 @@ function query(
         $query['from'] = $fromRow;
         $query['to'] = $toRow;
         $limitForPages = ($limitValue !== null && $limitValue > 0) ? $limitValue : ($rows ?? 0);
-        $query['pages'] = ($limitForPages > 0) ? ceil(($rows ?? 0) / $limitForPages) + 1 : 1;
+        $query['pages'] = ($limitForPages > 0) ? (int)ceil(($rows ?? 0) / $limitForPages) : 1;
         if (($query['from'] == 1) && ($query['to'] == 0)) {
             $query['from'] = 0;
         }
@@ -2195,7 +2204,7 @@ class INDEXES
     }
 
     // this returns the site_domain_id, when a site_url_address is given
-    function get_site_domain_id($site_url_address)
+    public static function get_site_domain_id($site_url_address)
     {
         global $memcacheWorking, $memcache;
 
@@ -2264,7 +2273,7 @@ class INDEXES
     }
 
     // this returns the site_url_id, when a site_url_address is given
-    function get_site_url_id($site_url_address)
+    public static function get_site_url_id($site_url_address)
     {
         global $memcacheWorking, $memcache;
 
@@ -2802,14 +2811,13 @@ function clickserver_api_upgrade_url($key)
     $data = json_decode($result, true);
 
     if ($data['isValidKey'] != 'true' || $data['isValidDomain'] != 'true') {
+        curl_close($ch);
         return false;
-        die();
     }
 
     $download_url = $data['downloadURL'];
-    return $download_url;
-
     curl_close($ch);
+    return $download_url;
 }
 
 function clickserver_api_key_validate($key)
@@ -2828,13 +2836,11 @@ function clickserver_api_key_validate($key)
     $data = json_decode($result, true);
 
     if ($data['isValidKey'] != 'true' || $data['isValidDomain'] != 'true') {
+        curl_close($ch);
         return false;
-        die();
     }
-
-    return true;
-
     curl_close($ch);
+    return true;
 }
 
 function api_key_validate($key)
@@ -2852,7 +2858,7 @@ function api_key_validate($key)
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     // Set post fields
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     // Execute
@@ -2868,7 +2874,7 @@ function api_key_validate($key)
     return $result;
 }
 
-function systemHash()
+function systemHash(): string
 {
     $hash = hash('ripemd160', $_SERVER['HTTP_HOST'] . $_SERVER['SERVER_ADDR']);
     return $hash;
@@ -2931,7 +2937,7 @@ function updateSurveyData($install_hash, $post)
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     // Set post fields
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     // Execute
@@ -2965,7 +2971,7 @@ function rotator_data($query, $type)
     return $result;
 }
 
-function changelog()
+function changelog(): array
 {
     // Initiate curl
     $ch = curl_init();
@@ -2984,7 +2990,7 @@ function changelog()
     return json_decode($result, true);
 }
 
-function changelogPremium()
+function changelogPremium(): array
 {
     // Initiate curl
     $ch = curl_init();
@@ -3005,7 +3011,7 @@ function changelogPremium()
 
 function callAutoCron($endpoint)
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
     $domain = $protocol . '' . getTrackingDomain() . get_absolute_url();
     $domain = base64_encode($domain);
 
@@ -3028,7 +3034,7 @@ function callAutoCron($endpoint)
 
 function registerDailyEmail($time, $timezone, $hash)
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
     $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
     $domain = base64_encode($domain);
 
@@ -3070,7 +3076,7 @@ function tagUserByNetwork($install_hash, $type, $network)
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     // Set post fields
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     // Execute
@@ -3083,9 +3089,9 @@ function tagUserByNetwork($install_hash, $type, $network)
     curl_close($ch);
 }
 
-function getDNIHost()
+function getDNIHost(): string
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
     $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
     return base64_encode($domain);
 }
@@ -3121,7 +3127,7 @@ function authDniNetworks($hash, $network, $key, $affId)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/auth/' . $network);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     $result = curl_exec($ch);
     $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -3140,7 +3146,7 @@ function authDniNetworks($hash, $network, $key, $affId)
     }
 }
 
-function getDniOffers($hash, $network, $key, $affId, $currency, $offset, $limit, $sort_by, $filter_by)
+function getDniOffers($hash, $network, $key, $affId, $offset, $limit, $sort_by, $filter_by, $currency = '')
 {
     $fields = [
         'api_key' => $key,
@@ -3156,7 +3162,7 @@ function getDniOffers($hash, $network, $key, $affId, $currency, $offset, $limit,
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/all/' . $offset . '/' . $limit);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     $result = curl_exec($ch);
     curl_close($ch);
@@ -3176,7 +3182,7 @@ function getDniOfferById($hash, $network, $key, $affId, $id)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/id/' . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     $result = curl_exec($ch);
     curl_close($ch);
@@ -3196,7 +3202,7 @@ function requestDniOfferAccess($hash, $network, $key, $affId, $id, $type)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/' . $type . '/' . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     $result = curl_exec($ch);
     curl_close($ch);
@@ -3216,7 +3222,7 @@ function submitDniOfferAnswers($hash, $network, $api_key, $affId, $id, $answers)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/answers/' . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     $result = curl_exec($ch);
     curl_close($ch);
@@ -3238,7 +3244,7 @@ function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/setup/' . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     $result = curl_exec($ch);
     curl_close($ch);
@@ -3282,7 +3288,7 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
     curl_setopt($ch, CURLOPT_URL, $url . $id);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     $result = curl_exec($ch);
     curl_close($ch);
@@ -3303,7 +3309,7 @@ function getForeignPayout($currency, $payout_currency, $payout)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3325,7 +3331,7 @@ function validateCustomersApiKey($key)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3348,7 +3354,7 @@ function validateRevContentCredentials($id, $secret)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/validate-revcontent-credentials');
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3374,7 +3380,7 @@ function pushToRevContent($id, $secret, $boost, $boost_id, array $ads)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/push-revcontent');
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3398,7 +3404,7 @@ function pushToFacebook($api_key, $group, $ad_set_id, array $ads)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/push-facebook/' . $api_key);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3446,6 +3452,7 @@ function getData($url)
 
 function showHelp($page)
 {
+    $url = '';
     switch ($page) {
         case 'step1':
             $url = "http://click202.com/tracking202/redirect/dl.php?t202id=7158893&t202kw=";
@@ -3514,7 +3521,7 @@ function showHelp($page)
             break;
     }
 
-    if ($url) {
+    if ($url !== '') {
         echo '<a href="' . $url . 'helpdocs" class="btn btn-info btn-xs" target="_blank"><span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Get Help"></span></a>';
     }
 }
@@ -3524,7 +3531,7 @@ function createId($length)
     return bin2hex(random_bytes($length));
 }
 
-function createPublisherIds()
+function createPublisherIds(): void
 {
     if (function_exists('random_bytes')) {
         $sql = "SELECT user_id FROM 202_users WHERE TRIM(COALESCE(`user_public_publisher_id`, '')) = ''";
@@ -3541,7 +3548,7 @@ function createPublisherIds()
     }
 }
 
-function getDashEmail()
+function getDashEmail(): string|bool
 {
 
     global $db;
@@ -3570,6 +3577,8 @@ function getDashEmail()
             }
         }
     }
+
+    return false;
 }
 
 function getSetDashEmail($key)
@@ -3584,7 +3593,7 @@ function getSetDashEmail($key)
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-customers-email');
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3596,6 +3605,10 @@ function getSetDashEmail($key)
 
 function  upgrade_config()
 {
+    $odbname = '';
+    $odbuser = '';
+    $odbpass = '';
+
 
     //check to see if the sample config file exists
     if (!file_exists('202-config-sample.php')) {
@@ -3694,7 +3707,7 @@ function  upgrade_config()
     chmod('202-config.php', 0666);
 }
 
-function getSecureStatus()
+function getSecureStatus(): bool
 {
     $secure = false;
     if (

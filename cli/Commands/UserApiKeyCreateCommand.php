@@ -13,6 +13,7 @@ class UserApiKeyCreateCommand extends BaseCommand
 {
     protected static $defaultName = 'user:apikey:create';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();

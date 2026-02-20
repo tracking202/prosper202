@@ -13,6 +13,7 @@ class ConversionCreateCommand extends BaseCommand
 {
     protected static $defaultName = 'conversion:create';
 
+    #[\Override]
     protected function configure(): void
     {
         parent::configure();
