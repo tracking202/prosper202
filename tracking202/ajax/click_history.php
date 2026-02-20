@@ -69,7 +69,7 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 	if ($incremental) {
 		$newSql = preg_replace(
 			'/\s+ORDER\s+BY\s+/i',
-			' AND click_time > ' . $since . ' ORDER BY ',
+			' AND click_time >= ' . $since . ' ORDER BY ',
 			$query['click_sql'],
 			1,
 			$replaceCount
@@ -78,7 +78,7 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 			$query['click_sql'] = $newSql;
 		} else {
 			// Fallback: append directly (no ORDER BY in SQL — shouldn't happen)
-			$query['click_sql'] .= ' AND click_time > ' . $since;
+			$query['click_sql'] .= ' AND click_time >= ' . $since;
 		}
 	}
 } else {
@@ -133,7 +133,6 @@ $click_result = $queryDb->query($click_sql) or record_mysql_error($click_sql);
 // For incremental spy mode, output just the new rows and exit early
 if (!empty($incremental)) {
 	AUTH::set_timezone($_SESSION['user_timezone']);
-	$latestTime = 0;
 	if ($click_result->num_rows == 0) {
 		// No new rows — output just the time marker
 		echo '<span id="spy-latest-time" data-time="' . (int)$since . '"></span>';
@@ -141,12 +140,8 @@ if (!empty($incremental)) {
 	}
 	$html = [];
 	while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
-		if ((int)$click_row['click_time'] > $latestTime) {
-			$latestTime = (int)$click_row['click_time'];
-		}
 		include __DIR__ . '/click_history_row.php';
 	}
-	echo '<span id="spy-latest-time" data-time="' . $latestTime . '"></span>';
 	exit;
 }
 
@@ -287,7 +282,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 
 																																																																																														if ($html['referer']) {
 																																																																																															$parsed = parse_url((string) $html['referer']);
-																																																																																															if (empty($parsed['scheme'])) {
+																																																																																															if ($parsed !== false && empty($parsed['scheme'])) {
 																																																																																																$html['referer'] = 'http://' . $html['referer'];
 																																																																																															}
 																																																																																														}
@@ -302,11 +297,12 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																														}
 
 																																																																																														$ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'], $click_row['ppc_account_name']);
+																																																																																														$html['type_name'] = htmlentities((string)($click_row['type_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 																																																																																														if (!$click_row['type_name']) {
-																																																																																															$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $click_row['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/other.png"/></span></span>';
+																																																																																															$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $html['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/other.png"/></span></span>';
 																																																																																														} else {
-																																																																																															$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $click_row['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/' . $click_row['type_name'] . '.png"/></span></span> <img src="' . get_absolute_url() . '202-img/icons/browsers/' . getBrowserIcon($html['browser_name']) . '.png">';
+																																																																																															$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $html['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/' . urlencode((string)$click_row['type_name']) . '.png"/></span></span> <img src="' . get_absolute_url() . '202-img/icons/browsers/' . urlencode(getBrowserIcon($html['browser_name'])) . '.png">';
 																																																																																														}
 
 																																																																																														if (!$html['country_code']) {

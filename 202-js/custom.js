@@ -1262,8 +1262,11 @@ var spyXhr = null;
 var spyMaxRows = 200;
 
 function runSpy() {
-	// Cancel any in-flight request to prevent pile-up
+	// If in-flight request exists...
 	if (spyXhr && spyXhr.readyState !== 4) {
+		// Never abort the initial full load — it's expensive and must complete
+		if (spyLatestTime === 0) return;
+		// Cancel stale incremental requests to prevent pile-up
 		spyXhr.abort();
 	}
 
@@ -1285,9 +1288,16 @@ function runSpy() {
 				}
 				goSpy();
 			} else {
-				// Incremental — parse only when we need to extract elements
-				var $parsed = $(data);
-				var $newRows = $parsed.filter('tr');
+				// Incremental — wrap in <table> for correct parsing of <tr> elements
+				var $temp = $('<table><tbody>' + data + '</tbody></table>');
+				var $newRows = $temp.find('tbody tr');
+				if ($newRows.length > 0) {
+					// Deduplicate: skip rows whose click_id already exists in the DOM
+					$newRows = $newRows.filter(function() {
+						var cid = $(this).data('click-id');
+						return cid && $('#' + cid).length === 0;
+					});
+				}
 				if ($newRows.length > 0) {
 					$newRows.hide();
 					$("#stats-table tbody").prepend($newRows);
@@ -1299,11 +1309,18 @@ function runSpy() {
 						$allRows.slice(spyMaxRows).remove();
 					}
 				}
-				// Extract latest time from parsed response (not in DOM)
-				var $parsedTime = $parsed.filter('#spy-latest-time');
-				if ($parsedTime.length) {
-					var t = parseInt($parsedTime.data('time'), 10);
-					if (t > 0) spyLatestTime = t;
+				// Extract latest time from data-click-time attributes on new rows
+				$temp.find('tr[data-click-time]').each(function() {
+					var t = parseInt($(this).data('click-time'), 10);
+					if (t > spyLatestTime) spyLatestTime = t;
+				});
+				// Fallback: 0-rows response uses a <span> (no <tr> wrapping issue)
+				if ($newRows.length === 0) {
+					var $span = $(data).filter('#spy-latest-time');
+					if ($span.length) {
+						var t = parseInt($span.data('time'), 10);
+						if (t > 0) spyLatestTime = t;
+					}
 				}
 			}
 		});

@@ -49,17 +49,18 @@ $html['isp_name'] = htmlentities((string)($click_row['isp_name'] ?? ''), ENT_QUO
 
 if ($html['referer']) {
 	$parsed = parse_url((string) $html['referer']);
-	if (empty($parsed['scheme'])) {
+	if ($parsed !== false && empty($parsed['scheme'])) {
 		$html['referer'] = 'http://' . $html['referer'];
 	}
 }
 
 $ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'], $click_row['ppc_account_name']);
+$html['type_name'] = htmlentities((string)($click_row['type_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 if (!$click_row['type_name']) {
-	$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $click_row['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/other.png"/></span></span>';
+	$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $html['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/other.png"/></span></span>';
 } else {
-	$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $click_row['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/' . $click_row['type_name'] . '.png"/></span></span> <img src="' . get_absolute_url() . '202-img/icons/browsers/' . getBrowserIcon($html['browser_name']) . '.png">';
+	$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $html['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/' . urlencode((string)$click_row['type_name']) . '.png"/></span></span> <img src="' . get_absolute_url() . '202-img/icons/browsers/' . urlencode(getBrowserIcon($html['browser_name'])) . '.png">';
 }
 
 if (!$html['country_code']) {
@@ -70,7 +71,7 @@ if ($click_row['click_alp'] == 1) {
 	$html['aff_campaign_name'] = $html['landing_page_nickname'];
 }
 ?>
-					<tr class="new-click" style="display:none;">
+					<tr class="new-click" style="display:none;" data-click-time="<?php echo (int)$click_row['click_time']; ?>" data-click-id="<?php echo $html['click_id']; ?>">
 						<td id="<?php echo $html['click_id']; ?>"><?php printf('%s', $html['click_id']); ?></td>
 						<td style="text-align:left; padding-left:10px;"><?php echo $html['click_time']; ?></td>
 						<td class="device_info"><?php echo $html['device_type']; ?></td>
