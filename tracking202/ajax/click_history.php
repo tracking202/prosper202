@@ -140,7 +140,6 @@ if (!empty($incremental)) {
 		exit;
 	}
 	$html = [];
-	$x = 0;
 	while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
 		if ((int)$click_row['click_time'] > $latestTime) {
 			$latestTime = (int)$click_row['click_time'];
@@ -305,7 +304,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																														$ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'], $click_row['ppc_account_name']);
 
 																																																																																														if (!$click_row['type_name']) {
-																																																																																															$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $click_row['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/other.png/></span></span>';
+																																																																																															$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $click_row['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/other.png"/></span></span>';
 																																																																																														} else {
 																																																																																															$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $click_row['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/' . $click_row['type_name'] . '.png"/></span></span> <img src="' . get_absolute_url() . '202-img/icons/browsers/' . getBrowserIcon($html['browser_name']) . '.png">';
 																																																																																														}
@@ -356,7 +355,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 																																																																																														else echo "-"; ?></td>
 						<td class="referer">
 							<?php if ($html['referer'] != '') {
-																																																																																															printf('<a href="%s" target="_new" ><img src="%s202-img/icons/16x16/control_end_blue.png" alt="Referer" title="Referer: %s"/></a></div>', $html['referer'], get_absolute_url(), $html['referer']);
+																																																																																															printf('<a href="%s" target="_new" ><img src="%s202-img/icons/16x16/control_end_blue.png" alt="Referer" title="Referer: %s"/></a>', $html['referer'], get_absolute_url(), $html['referer']);
 																																																																																														} ?>
 							<?php if ($html['landing'] != '') {
 																																																																																															printf('<a href="%s" target="_new"><img src="%s202-img/icons/16x16/control_pause_blue.png" alt="Landing"  title="Landing Page: %s"/></a>', $html['landing'], get_absolute_url(), $html['landing']);
