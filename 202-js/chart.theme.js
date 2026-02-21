@@ -102,3 +102,6 @@ Highcharts.theme = {
 
 // Apply the theme
 Highcharts.setOptions(Highcharts.theme);
+
+// Disable accessibility module warning (no accessibility.js bundled)
+Highcharts.setOptions({ accessibility: { enabled: false } });
