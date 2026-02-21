@@ -62,7 +62,11 @@ if ($isSpy) {
 	$spyLimit = $incremental ? false : null;
 
 	$extra_where = ($since !== null) ? 'AND click_time >= ' . $since : null;
-	$query = query($command, $db_table, null, null, null, null, null, $spyLimit, $spyCount, true, $extra_where);
+	// Spy view uses its own 24-hour time window (applied inside query() when
+	// $isspy=true), so skip the calendar time preference — otherwise a saved
+	// date range like "yesterday" or "last month" silently excludes all recent
+	// clicks because the ranges don't overlap.
+	$query = query($command, $db_table, false, null, null, null, null, $spyLimit, $spyCount, true, $extra_where);
 } else {
 	$offset = isset($_POST['offset']) && is_numeric($_POST['offset']) ? (int)$_POST['offset'] : 0;
 	$order = isset($_POST['order']) ? $_POST['order'] : null;
