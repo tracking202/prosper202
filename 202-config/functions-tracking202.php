@@ -1157,7 +1157,8 @@ function query(
     $offset = null,
     $pref_limit = null,
     $count = null,
-    $isspy = false
+    $isspy = false,
+    $extra_where = null
 )
 {
     $database = DB::getInstance();
@@ -1471,6 +1472,13 @@ function query(
         $from = time() - 86400;
         $click_sql .= " AND click_time > " . $from . " ";
     }
+
+    // Append caller-supplied extra WHERE conditions (e.g. incremental time bound)
+    if ($extra_where !== null && $extra_where !== '') {
+        $click_sql .= ' ' . $extra_where;
+        $count_where .= ' ' . $extra_where;
+    }
+
     // set limit preferences
     if ($pref_order) {
         $orderClause = trim((string) $pref_order);
@@ -1569,6 +1577,23 @@ function query(
     $query['click_sql'] = $click_sql;
 
     return $query;
+}
+
+/**
+ * Validates a URL for safe use in href attributes.
+ * Blocks dangerous schemes (javascript:, data:, vbscript:, etc.)
+ * while allowing http, https, and scheme-relative URLs.
+ */
+function safe_url(string $url): string
+{
+    if ($url === '') {
+        return '';
+    }
+    $scheme = parse_url($url, PHP_URL_SCHEME);
+    if ($scheme !== null && !in_array(strtolower($scheme), ['http', 'https'], true)) {
+        return '';
+    }
+    return $url;
 }
 
 function pcc_network_icon($ppc_network_name, $ppc_account_name)

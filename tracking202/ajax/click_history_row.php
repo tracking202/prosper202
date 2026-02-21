@@ -2,16 +2,19 @@
 declare(strict_types=1);
 /**
  * Renders a single <tr> for the click history table.
- * Expected variables in scope: $click_row (assoc array), $html (array).
- * Included by click_history.php inside a while loop for incremental spy updates.
+ * Expected variables in scope:
+ *   $click_row (assoc array from DB)
+ *   $html (array, may contain prior values)
+ *   $tr_attrs (string, attributes for the <tr> tag)
+ * Included by click_history.php inside a while loop for both full and incremental renders.
  */
 
-$html['referer'] = htmlentities((string)($click_row['referer'] ?? ''), ENT_QUOTES, 'UTF-8');
+$html['referer'] = htmlentities(safe_url((string)($click_row['referer'] ?? '')), ENT_QUOTES, 'UTF-8');
 $html['referer_host'] = htmlentities((string)($click_row['referer_host'] ?? ''), ENT_QUOTES, 'UTF-8');
 
-$html['landing'] = htmlentities((string)($click_row['landing'] ?? ''), ENT_QUOTES, 'UTF-8');
+$html['landing'] = htmlentities(safe_url((string)($click_row['landing'] ?? '')), ENT_QUOTES, 'UTF-8');
 
-$html['outbound'] = htmlentities((string)($click_row['outbound'] ?? ''), ENT_QUOTES, 'UTF-8');
+$html['outbound'] = htmlentities(safe_url((string)($click_row['outbound'] ?? '')), ENT_QUOTES, 'UTF-8');
 
 if ($click_row['click_cloaking']) {
 	if (!$click_row['click_alp']) {
@@ -23,7 +26,7 @@ if ($click_row['click_cloaking']) {
 	$html['cloaking'] = '';
 }
 
-$html['redirect'] = htmlentities((string)($click_row['redirect'] ?? ''), ENT_QUOTES, 'UTF-8');
+$html['redirect'] = htmlentities(safe_url((string)($click_row['redirect'] ?? '')), ENT_QUOTES, 'UTF-8');
 
 $html['click_id'] = htmlentities((string)($click_row['click_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 $html['click_time'] = date('m/d/y g:ia', (int)$click_row['click_time']);
@@ -71,7 +74,7 @@ if ($click_row['click_alp'] == 1) {
 	$html['aff_campaign_name'] = $html['landing_page_nickname'];
 }
 ?>
-					<tr class="new-click" style="display:none;" data-click-time="<?php echo (int)$click_row['click_time']; ?>" data-click-id="<?php echo $html['click_id']; ?>">
+					<tr <?php echo $tr_attrs ?? ''; ?>>
 						<td id="<?php echo $html['click_id']; ?>"><?php printf('%s', $html['click_id']); ?></td>
 						<td style="text-align:left; padding-left:10px;"><?php echo $html['click_time']; ?></td>
 						<td class="device_info"><?php echo $html['device_type']; ?></td>
