@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS `202_tracking_cx` (
     `cx_name` varchar(50) NOT NULL,
     `cx_value` varchar(350) NOT NULL,
     PRIMARY KEY (`cx_id`),
-    UNIQUE KEY `cx_name_value` (`cx_name`, `cx_value`(191))
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+    UNIQUE KEY `cx_name_value` (`cx_name`, `cx_value`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC;
 
 -- Junction table: click_id → cx_id (many-to-many)
 CREATE TABLE IF NOT EXISTS `202_clicks_tracking_cx` (

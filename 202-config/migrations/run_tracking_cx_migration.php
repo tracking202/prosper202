@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+use Prosper202\Database\Tables\TrackingCxTables;
+
 /**
  * Migrate c1–c4 tracking data into the new EAV tables.
  *
@@ -105,52 +107,40 @@ function get_migration_state(mysqli $db, string $name): array
 function save_migration_state(mysqli $db, string $name, int $lastId, int $total, bool $complete): void
 {
     $now = date('Y-m-d H:i:s');
-    $completedAt = $complete ? "'{$now}'" : 'NULL';
+    $completedAt = $complete ? $now : null;
 
-    $sql = "INSERT INTO 202_migration_state
+    $stmt = $db->prepare(
+        "INSERT INTO 202_migration_state
                 (migration_name, last_processed_id, total_rows, started_at, updated_at, completed_at)
-            VALUES ('" . $db->real_escape_string($name) . "', {$lastId}, {$total}, '{$now}', '{$now}', {$completedAt})
+            VALUES (?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
-                last_processed_id = {$lastId},
-                total_rows        = {$total},
-                updated_at        = '{$now}',
-                completed_at      = {$completedAt}";
-
-    $result = $db->query($sql);
-    if (!$result) {
-        throw new RuntimeException("Failed to save migration state: " . $db->error);
+                last_processed_id = VALUES(last_processed_id),
+                total_rows        = VALUES(total_rows),
+                updated_at        = VALUES(updated_at),
+                completed_at      = VALUES(completed_at)"
+    );
+    if (!$stmt) {
+        throw new RuntimeException("Failed to prepare migration state: " . $db->error);
     }
+    $stmt->bind_param('siisss', $name, $lastId, $total, $now, $now, $completedAt);
+    if (!$stmt->execute()) {
+        $stmt->close();
+        throw new RuntimeException("Failed to save migration state: " . $stmt->error);
+    }
+    $stmt->close();
 }
 
 // ── Phase 0: Create tables ──────────────────────────────────
 
 echo "Phase 0: Creating tables (if needed)...\n";
 
-$sqlFile = __DIR__ . '/create_tracking_cx_tables.sql';
-if (!file_exists($sqlFile)) {
-    fwrite(STDERR, "Error: {$sqlFile} not found.\n");
-    exit(1);
-}
-
-$sql = file_get_contents($sqlFile);
-if ($sql === false) {
-    fwrite(STDERR, "Error: Could not read {$sqlFile}.\n");
-    exit(1);
-}
-
-$statements = array_filter(
-    array_map('trim', explode(';', $sql)),
-    function (string $stmt): bool {
-        $stmt = trim($stmt);
-        return $stmt !== '' && !str_starts_with($stmt, '--');
-    }
-);
+$definitions = TrackingCxTables::getDefinitions();
 
 if (!$dryRun) {
-    foreach ($statements as $stmt) {
-        $result = $db->query($stmt);
+    foreach ($definitions as $definition) {
+        $result = $db->query($definition->createStatement);
         if (!$result) {
-            fwrite(STDERR, "Table creation failed: " . $db->error . "\n");
+            fwrite(STDERR, "Table creation failed ({$definition->tableName}): " . $db->error . "\n");
             exit(1);
         }
     }
