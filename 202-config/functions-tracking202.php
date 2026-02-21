@@ -1582,15 +1582,20 @@ function query(
 /**
  * Validates a URL for safe use in href attributes.
  * Blocks dangerous schemes (javascript:, data:, vbscript:, etc.)
- * while allowing http, https, and scheme-relative URLs.
+ * while allowing http, https, scheme-relative, and relative URLs.
  */
 function safe_url(string $url): string
 {
+    $url = trim($url);
     if ($url === '') {
         return '';
     }
     $scheme = parse_url($url, PHP_URL_SCHEME);
     if ($scheme !== null && !in_array(strtolower($scheme), ['http', 'https'], true)) {
+        return '';
+    }
+    // Catch obfuscated schemes that parse_url misses (e.g. tab/newline inside scheme)
+    if (preg_match('/^(javascript|data|vbscript)\s*:/i', $url) === 1) {
         return '';
     }
     return $url;

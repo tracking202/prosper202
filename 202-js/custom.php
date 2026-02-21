@@ -1387,21 +1387,96 @@ function unset_user_pref_time_predefined() {
 	$("#user_pref_time_predefined").select2().val($("#user_pref_time_predefined option:first").val()).trigger("change");
 }
 
-function runSpy() {
+var spyLatestTime = 0;
+var spyLatestId = 0;
+var spyXhr = null;
+var spyMaxRows = 200;
 
-	$.get("<?php echo get_absolute_url();?>tracking202/ajax/click_history.php", {spy: '1'})
+function runSpy() {
+	// If in-flight request exists...
+	if (spyXhr && spyXhr.readyState !== 4) {
+		// Never abort the initial full load — it's expensive and must complete
+		if (spyLatestTime === 0) return;
+		// Cancel stale incremental requests to prevent pile-up
+		spyXhr.abort();
+	}
+
+	var params = { spy: '1' };
+	if (spyLatestTime > 0) {
+		params.since = spyLatestTime;
+		if (spyLatestId > 0) {
+			params.since_id = spyLatestId;
+		}
+	}
+
+	spyXhr = $.get("<?php echo get_absolute_url();?>tracking202/ajax/click_history.php", params)
 		.done(function(data) {
-			$("#m-content").html(data); 
-		  	goSpy();
+			if (spyLatestTime === 0) {
+				// First load — full page replacement
+				$("#m-content").html(data);
+				// Extract latest time and id from the DOM element we just inserted
+				var $domTime = $('#spy-latest-time');
+				if ($domTime.length) {
+					var t = parseInt($domTime.data('time'), 10);
+					var id = parseInt($domTime.data('id'), 10);
+					if (t > 0) spyLatestTime = t;
+					if (id > 0) spyLatestId = id;
+				}
+				goSpy();
+			} else {
+				// Incremental — wrap in <table> for correct parsing of <tr> elements
+				var $temp = $('<table><tbody>' + data + '</tbody></table>');
+				var $newRows = $temp.find('tbody tr');
+				if ($newRows.length > 0) {
+					// Deduplicate: skip rows whose click_id already exists in the DOM
+					$newRows = $newRows.filter(function() {
+						var cid = $(this).data('click-id');
+						return cid && $('#' + cid).length === 0;
+					});
+				}
+				if ($newRows.length > 0) {
+					$newRows.hide();
+					$("#stats-table tbody").prepend($newRows);
+					$newRows.find('[data-toggle="tooltip"]').tooltip({ html: true });
+					$newRows.fadeIn(1000);
+					// Cap total rows to prevent DOM bloat
+					var $allRows = $("#stats-table tbody tr");
+					if ($allRows.length > spyMaxRows) {
+						$allRows.slice(spyMaxRows).remove();
+					}
+				}
+				// Update cursor from new rows
+				$temp.find('tr[data-click-time]').each(function() {
+					var t = parseInt($(this).data('click-time'), 10);
+					var id = parseInt($(this).data('click-id'), 10);
+					if (t > spyLatestTime || (t === spyLatestTime && id > spyLatestId)) {
+						spyLatestTime = t;
+						spyLatestId = id;
+					}
+				});
+				// Fallback: 0-rows response uses a <span> marker
+				var $span = $(data).filter('#spy-latest-time');
+				if ($span.length) {
+					var t = parseInt($span.data('time'), 10);
+					var id = parseInt($span.data('id'), 10);
+					if (t > 0) spyLatestTime = t;
+					if (id > 0) spyLatestId = id;
+				}
+			}
+		})
+		.fail(function(jqXHR, textStatus) {
+			if (textStatus === 'abort') return;
+			// For real errors, keep spy alive with next poll
+			setTimeout(runSpy, 5000);
 		});
 }
 
 function goSpy() {
-	setTimeout(appearSpy,1);  
-} 
+	setTimeout(appearSpy, 1);
+}
 
-function appearSpy(){
-    $('.new-click').fadeIn(1000);
+function appearSpy() {
+	$('.new-click').fadeIn(1000);
 }
 
 function rotator_tags_autocomplete(selector, type){

@@ -187,6 +187,8 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 
 			case "tracking202": ?>
 				<script type="text/javascript" src="https://code.highcharts.com/highcharts.js"></script>
+				<!-- Uncomment to enable Highcharts accessibility (screen readers, keyboard nav) -->
+				<!-- <script type="text/javascript" src="https://code.highcharts.com/modules/accessibility.js"></script> -->
 				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/chart.theme.js"></script>
 				<?php if (isset($navigation[2]) && isset($navigation[3]) && ($navigation[2] == "setup") and ($navigation[3] == "aff_campaigns.php")) { ?>
 					<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery.tablesorter.min.js"></script>
@@ -206,6 +208,8 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/account.php"></script>
 				<?php if (isset($navigation[2]) && $navigation[2] == 'attribution.php') { ?>
 					<script type="text/javascript" src="https://code.highcharts.com/highcharts.js"></script>
+					<!-- Uncomment to enable Highcharts accessibility (screen readers, keyboard nav) -->
+					<!-- <script type="text/javascript" src="https://code.highcharts.com/modules/accessibility.js"></script> -->
 					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/chart.theme.js"></script>
 					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/attribution.js"></script>
 				<?php } ?>

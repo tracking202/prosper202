@@ -33,8 +33,8 @@ $html['click_time'] = date('m/d/y g:ia', (int)$click_row['click_time']);
 $html['landing_page_nickname'] = htmlentities((string)($click_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');
 $html['text_ad_name'] = htmlentities((string)($click_row['text_ad_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 
-if ($click_row['aff_campaign_name'] != null) {
-	$html['aff_campaign_name'] = htmlentities((string)($click_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+if (!empty($click_row['aff_campaign_name'])) {
+	$html['aff_campaign_name'] = htmlentities((string)$click_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
 } else {
 	$html['aff_campaign_name'] = "Redirector url";
 }
@@ -51,9 +51,11 @@ $html['city_name'] = htmlentities((string)($click_row['city_name'] ?? ''), ENT_Q
 $html['isp_name'] = htmlentities((string)($click_row['isp_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 if ($html['referer']) {
-	$parsed = parse_url((string) $html['referer']);
+	// Parse the raw URL before HTML encoding — htmlentities breaks & into &amp;
+	$raw_referer = safe_url((string)($click_row['referer'] ?? ''));
+	$parsed = parse_url($raw_referer);
 	if ($parsed !== false && empty($parsed['scheme'])) {
-		$html['referer'] = 'http://' . $html['referer'];
+		$html['referer'] = htmlentities('http://' . $raw_referer, ENT_QUOTES, 'UTF-8');
 	}
 }
 

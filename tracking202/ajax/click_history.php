@@ -51,8 +51,12 @@ if ($isSpy) {
 	// Detect incremental mode before calling query() so we can skip
 	// the count query and LIMIT clause that are wasted for incremental
 	$since = null;
+	$since_id = null;
 	if (isset($_GET['since']) && is_numeric($_GET['since'])) {
 		$since = (int)$_GET['since'];
+	}
+	if (isset($_GET['since_id']) && is_numeric($_GET['since_id'])) {
+		$since_id = (int)$_GET['since_id'];
 	}
 	$incremental = ($since !== null);
 
@@ -61,12 +65,19 @@ if ($isSpy) {
 	$spyCount = $incremental ? false : null;
 	$spyLimit = $incremental ? false : null;
 
-	$extra_where = ($since !== null) ? 'AND click_time >= ' . $since : null;
+	if ($since !== null && $since_id !== null) {
+		$extra_where = 'AND (click_time > ' . $since . ' OR (click_time = ' . $since . ' AND 2c.click_id > ' . $since_id . '))';
+	} elseif ($since !== null) {
+		$extra_where = 'AND click_time > ' . $since;
+	} else {
+		$extra_where = null;
+	}
 	// Spy view uses its own 24-hour time window (applied inside query() when
 	// $isspy=true), so skip the calendar time preference — otherwise a saved
 	// date range like "yesterday" or "last month" silently excludes all recent
 	// clicks because the ranges don't overlap.
-	$query = query($command, $db_table, false, null, null, null, null, $spyLimit, $spyCount, true, $extra_where);
+	$use_ro = ($dbro instanceof mysqli);
+	$query = query($command, $db_table, false, null, null, null, null, $spyLimit, $spyCount, $use_ro, $extra_where);
 } else {
 	$offset = isset($_POST['offset']) && is_numeric($_POST['offset']) ? (int)$_POST['offset'] : 0;
 	$order = isset($_POST['order']) ? $_POST['order'] : null;
@@ -76,22 +87,31 @@ if ($isSpy) {
 
 //run query — use read-only connection for spy view
 $click_sql = $query['click_sql'];
-$queryDb = ($isSpy && $dbro instanceof mysqli) ? $dbro : $db;
-$click_result = $queryDb->query($click_sql) or record_mysql_error($click_sql);
+$query_db = ($isSpy && $dbro instanceof mysqli) ? $dbro : $db;
+$click_result = $query_db->query($click_sql) or record_mysql_error($click_sql);
 
 // For incremental spy mode, output just the new rows and exit early
-if (!empty($incremental)) {
+if ($incremental) {
 	AUTH::set_timezone($_SESSION['user_timezone']);
 	if ($click_result->num_rows == 0) {
 		// No new rows — output just the time marker
-		echo '<span id="spy-latest-time" data-time="' . (int)$since . '"></span>';
+		echo '<span id="spy-latest-time" data-time="' . (int)$since . '" data-id="' . (int)$since_id . '"></span>';
 		exit;
 	}
 	$html = [];
+	$latestTime = (int)$since;
+	$latestId = (int)($since_id ?? 0);
 	while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
+		$ct = (int)$click_row['click_time'];
+		$ci = (int)$click_row['click_id'];
+		if ($ct > $latestTime || ($ct === $latestTime && $ci > $latestId)) {
+			$latestTime = $ct;
+			$latestId = $ci;
+		}
 		$tr_attrs = 'class="new-click" style="display:none;" data-click-time="' . (int)$click_row['click_time'] . '" data-click-id="' . htmlentities((string)($click_row['click_id'] ?? ''), ENT_QUOTES, 'UTF-8') . '"';
 		include __DIR__ . '/click_history_row.php';
 	}
+	echo '<span id="spy-latest-time" data-time="' . $latestTime . '" data-id="' . $latestId . '"></span>';
 	exit;
 }
 
@@ -143,6 +163,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 				<?php
 
 				$spyLatestTime = 0; // Track latest click_time for incremental fetching
+				$spyLatestId = 0;
 				$new = true; // Initialize new clicks flag for spy animation
 
 				//if there is no clicks to display let them know :(
@@ -156,9 +177,12 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 
 				//now display all the clicks — row rendering delegated to click_history_row.php
 				while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
-					// Track latest time for spy incremental fetching
-					if ((int)$click_row['click_time'] > $spyLatestTime) {
-						$spyLatestTime = (int)$click_row['click_time'];
+					// Track latest time and click_id for spy incremental fetching
+					$ct = (int)$click_row['click_time'];
+					$ci = (int)$click_row['click_id'];
+					if ($ct > $spyLatestTime || ($ct === $spyLatestTime && $ci > $spyLatestId)) {
+						$spyLatestTime = $ct;
+						$spyLatestId = $ci;
 					}
 
 					// Determine <tr> attributes for spy new-click animation
@@ -185,7 +209,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 			});
 		</script>
 <?php if ($isSpy && $spyLatestTime > 0) { ?>
-		<span id="spy-latest-time" data-time="<?php echo $spyLatestTime; ?>"></span>
+		<span id="spy-latest-time" data-time="<?php echo $spyLatestTime; ?>" data-id="<?php echo $spyLatestId; ?>"></span>
 <?php } ?>
 	</div>
 </div>
