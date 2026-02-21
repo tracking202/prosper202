@@ -102,3 +102,9 @@ Highcharts.theme = {
 
 // Apply the theme
 Highcharts.setOptions(Highcharts.theme);
+
+// Accessibility is off by default (accessibility.js is not bundled for performance).
+// To enable, include the Highcharts accessibility module script before this file.
+if (!(Highcharts.A11yModule || Highcharts.AccessibilityComponent)) {
+	Highcharts.setOptions({ accessibility: { enabled: false } });
+}

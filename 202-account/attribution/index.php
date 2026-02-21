@@ -28,6 +28,8 @@ if (!isset($userObj) || !$userObj->hasPermission('view_attribution_reports')) {
 $assetBase = get_absolute_url();
 $extraHead = <<<HTML
     <script src="https://code.highcharts.com/highcharts.js"></script>
+    <!-- Uncomment to enable Highcharts accessibility (screen readers, keyboard nav) -->
+    <!-- <script src="https://code.highcharts.com/modules/accessibility.js"></script> -->
     <script src="{$assetBase}202-js/chart.theme.js"></script>
     <style>
         .attribution-dashboard .dashboard-panel { margin-top: 20px; }

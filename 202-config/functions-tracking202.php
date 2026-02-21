@@ -1157,7 +1157,8 @@ function query(
     $offset = null,
     $pref_limit = null,
     $count = null,
-    $isspy = false
+    $isspy = false,
+    $extra_where = null
 )
 {
     $database = DB::getInstance();
@@ -1471,6 +1472,13 @@ function query(
         $from = time() - 86400;
         $click_sql .= " AND click_time > " . $from . " ";
     }
+
+    // Append caller-supplied extra WHERE conditions (e.g. incremental time bound)
+    if ($extra_where !== null && $extra_where !== '') {
+        $click_sql .= ' ' . $extra_where;
+        $count_where .= ' ' . $extra_where;
+    }
+
     // set limit preferences
     if ($pref_order) {
         $orderClause = trim((string) $pref_order);
@@ -1502,10 +1510,14 @@ function query(
 
     $rows = null;
     if ($count == true || $limitValue !== null || $pref_limit !== false) {
-        $count_sql_to_run = $isspy ? "select count(*) as count from 202_clicks_spy" : $count_sql . $count_where;
+        // For spy mode, apply the 24-hour time bound to the count query too
+        if ($isspy) {
+            $spy_count_from = time() - 86400;
+            $count_where .= " AND click_time > " . $spy_count_from . " ";
+        }
+        $count_sql_to_run = $count_sql . $count_where;
         if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
-            $join = $isspy ? " WHERE " : " AND 2c.";
-            $count_sql_to_run .= $join . "click_id='" . $mysql['user_landing_subid'] . "'";
+            $count_sql_to_run .= " AND 2c.click_id='" . $mysql['user_landing_subid'] . "'";
         }
         $count_result = _mysqli_query($count_sql_to_run);
         $count_row = $count_result ? $count_result->fetch_assoc() : null;
@@ -1565,6 +1577,28 @@ function query(
     $query['click_sql'] = $click_sql;
 
     return $query;
+}
+
+/**
+ * Validates a URL for safe use in href attributes.
+ * Blocks dangerous schemes (javascript:, data:, vbscript:, etc.)
+ * while allowing http, https, scheme-relative, and relative URLs.
+ */
+function safe_url(string $url): string
+{
+    $url = trim($url);
+    if ($url === '') {
+        return '';
+    }
+    $scheme = parse_url($url, PHP_URL_SCHEME);
+    if ($scheme !== null && !in_array(strtolower($scheme), ['http', 'https'], true)) {
+        return '';
+    }
+    // Catch obfuscated schemes that parse_url misses (e.g. tab/newline inside scheme)
+    if (preg_match('/^(javascript|data|vbscript)\s*:/i', $url) === 1) {
+        return '';
+    }
+    return $url;
 }
 
 function pcc_network_icon($ppc_network_name, $ppc_account_name)
