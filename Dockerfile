@@ -79,7 +79,7 @@ COPY --from=production /var/www/html /var/www/html
 EXPOSE 80
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 \
-    CMD ["curl", "-sf", "http://localhost/health/", "-o", "/dev/null"]
+    CMD ["curl", "-sf", "http://localhost/nginx-health", "-o", "/dev/null"]
 
 # ─────────────────────────────────────────────────────────
 # Development PHP-FPM (code bind-mounted at runtime)
@@ -91,7 +91,9 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 COPY build/php/conf.d/error-reporting.ini $PHP_INI_DIR/conf.d/zz-dev.ini
 
 COPY build/scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY build/scripts/docker-cron.sh       /usr/local/bin/docker-cron.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+             /usr/local/bin/docker-cron.sh
 
 WORKDIR /var/www/html
 
