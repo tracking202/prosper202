@@ -885,11 +885,77 @@ configure_database_interactive() {
     fi
 }
 
+setup_docker_env() {
+    local env_file="$SCRIPT_DIR/.env"
+    local env_example="$SCRIPT_DIR/.env.example"
+
+    if [ -f "$env_file" ]; then
+        print_info ".env file already exists"
+        # Source it so we can use the values
+        set -a
+        source "$env_file"
+        set +a
+        return 0
+    fi
+
+    if [ ! -f "$env_example" ]; then
+        print_error ".env.example not found"
+        return 1
+    fi
+
+    # Copy the template
+    cp "$env_example" "$env_file"
+
+    if [ "$INTERACTIVE" = true ] && [ "$CI_MODE" != true ]; then
+        local root_pass=""
+        local app_pass=""
+
+        echo ""
+        prompt_with_default "MySQL root password" "" "root_pass" "true"
+        if [ -z "$root_pass" ]; then
+            root_pass=$(openssl rand -base64 24 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)
+            print_info "Generated random root password"
+        fi
+
+        prompt_with_default "MySQL app password" "" "app_pass" "true"
+        if [ -z "$app_pass" ]; then
+            app_pass=$(openssl rand -base64 24 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)
+            print_info "Generated random app password"
+        fi
+
+        sed_in_place "s|MYSQL_ROOT_PASSWORD=changeme_root|MYSQL_ROOT_PASSWORD=${root_pass}|" "$env_file"
+        sed_in_place "s|MYSQL_PASSWORD=changeme_app|MYSQL_PASSWORD=${app_pass}|" "$env_file"
+    else
+        # Non-interactive: generate random passwords
+        local root_pass
+        local app_pass
+        root_pass=$(openssl rand -base64 24 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)
+        app_pass=$(openssl rand -base64 24 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)
+
+        sed_in_place "s|MYSQL_ROOT_PASSWORD=changeme_root|MYSQL_ROOT_PASSWORD=${root_pass}|" "$env_file"
+        sed_in_place "s|MYSQL_PASSWORD=changeme_app|MYSQL_PASSWORD=${app_pass}|" "$env_file"
+        print_info "Generated random database passwords in .env"
+    fi
+
+    # Source the final .env so variables are available
+    set -a
+    source "$env_file"
+    set +a
+
+    print_success ".env created from template"
+    return 0
+}
+
 start_docker_containers() {
     print_subheader "Starting Docker Containers"
     echo ""
 
     cd "$SCRIPT_DIR"
+
+    # Set up .env file with credentials
+    if ! setup_docker_env; then
+        return 1
+    fi
 
     # Determine docker compose command
     local compose_cmd
@@ -900,6 +966,7 @@ start_docker_containers() {
     fi
 
     # Build and start containers (build handles pulling base images)
+    # Composer deps are baked into the image during docker build.
     print_info "Building and starting containers..."
     $compose_cmd up -d --build > "$TMP_DIR/docker_output.log" 2>&1 &
     local pid=$!
@@ -916,7 +983,8 @@ start_docker_containers() {
 
     print_success "Containers started"
 
-    # Wait for database to be ready
+    # Wait for database to be ready (healthcheck handles this, but
+    # we also wait here so the config file can be tested).
     print_info "Waiting for database to be ready..."
     local max_attempts=60
     local attempt=0
@@ -926,8 +994,7 @@ start_docker_containers() {
     tput civis 2>/dev/null || true
 
     while [ $attempt -lt $max_attempts ]; do
-        # Try to connect to MySQL
-        if $compose_cmd exec -T db mysqladmin ping -h localhost -u root -proot_password &>/dev/null 2>&1; then
+        if $compose_cmd exec -T db mysqladmin ping -h localhost -u root "-p${MYSQL_ROOT_PASSWORD}" &>/dev/null 2>&1; then
             break
         fi
         ((attempt++))
@@ -942,35 +1009,19 @@ start_docker_containers() {
 
     if [ $attempt -ge $max_attempts ]; then
         print_error "Database did not become ready in time"
-        print_info "Check container status with: docker compose ps"
-        print_info "Check logs with: docker compose logs db"
+        print_info "Check container status with: $compose_cmd ps"
+        print_info "Check logs with: $compose_cmd logs db"
         return 1
     fi
 
     print_success "Database is ready"
 
-    # Install dependencies inside container
-    print_info "Installing dependencies in container..."
-    $compose_cmd exec -T web composer install --no-dev --no-interaction --optimize-autoloader > "$TMP_DIR/docker_output.log" 2>&1 &
-    local pid=$!
-    spinner $pid "Installing dependencies..."
-    wait $pid
-    local composer_result=$?
-
-    if [ $composer_result -ne 0 ]; then
-        print_warning "Dependency installation had issues. Check container logs."
-        if [ "$VERBOSE" = true ]; then
-            cat "$TMP_DIR/docker_output.log"
-        fi
-    else
-        print_success "Dependencies installed"
-    fi
-
-    # Set Docker-specific database config
+    # Set database config for 202-config.php generation.
+    # These match the service names in docker-compose.yaml.
     DB_HOST="db"
-    DB_NAME="prosper202"
-    DB_USER="root"
-    DB_PASS="root_password"
+    DB_NAME="${MYSQL_DATABASE:-prosper202}"
+    DB_USER="${MYSQL_USER:-prosper202}"
+    DB_PASS="${MYSQL_PASSWORD}"
     DB_HOST_RO="db"
     MC_HOST="memcached"
 
@@ -1187,17 +1238,24 @@ show_summary() {
     local lines=()
 
     if [ "$install_type" = "docker" ]; then
-        lines+=("${ARROW} Application:  ${BOLD}http://localhost:8000${RESET}")
-        lines+=("${ARROW} phpMyAdmin:   ${BOLD}http://localhost:8080${RESET}")
+        local http_port="${HTTP_PORT:-80}"
+        if [ "$http_port" = "80" ]; then
+            lines+=("${ARROW} Application:  ${BOLD}http://localhost${RESET}")
+        else
+            lines+=("${ARROW} Application:  ${BOLD}http://localhost:${http_port}${RESET}")
+        fi
         lines+=("")
-        lines+=("Default credentials for phpMyAdmin:")
-        lines+=("  User: root | Password: root_password")
+        lines+=("Credentials are stored in .env (do not commit this file)")
         lines+=("")
         lines+=("Useful commands:")
-        lines+=("  docker compose logs -f    ${DIM}# View logs${RESET}")
-        lines+=("  docker compose down       ${DIM}# Stop containers${RESET}")
-        lines+=("  docker compose restart    ${DIM}# Restart services${RESET}")
-        lines+=("  docker compose ps         ${DIM}# Check status${RESET}")
+        lines+=("  docker compose logs -f      ${DIM}# View logs${RESET}")
+        lines+=("  docker compose down         ${DIM}# Stop containers${RESET}")
+        lines+=("  docker compose restart      ${DIM}# Restart services${RESET}")
+        lines+=("  docker compose ps           ${DIM}# Check status${RESET}")
+        lines+=("  docker compose build --no-cache  ${DIM}# Full rebuild${RESET}")
+        lines+=("")
+        lines+=("Dev mode (with phpMyAdmin on :8080):")
+        lines+=("  docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d")
     else
         lines+=("Next steps:")
         lines+=("  1. Configure your web server to point to:")
