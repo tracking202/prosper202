@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 include_once(__DIR__ . '/202-config/connect.php');
-include_once(__DIR__ . '/202-config/Mobile_Detect.php');
+include_once(__DIR__ . '/202-config/DeviceDetect.php');
 include_once(__DIR__ . '/vendor/autoload.php');
 
 use UAParser\Parser;
@@ -28,7 +28,7 @@ if (!is_installed()) {
 $user_sql = "SET @@global.sql_mode= ''";
 $user_results = $db->query($user_sql);
 
-$detect = new Mobile_Detect;
+$detect = new DeviceDetect();
 $parser = Parser::create();
 $userAgent = $detect->getUserAgent();
 if ($userAgent === null || $userAgent === '') {

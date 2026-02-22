@@ -469,9 +469,9 @@ if (isset($utm_content) && $utm_content != '') {
 $mysql['utm_content_id'] = $db->real_escape_string((string)$utm_content_id);
 
 
-// Initialize Mobile_Detect if not already done
+// Initialize DeviceDetect if not already done
 if (!isset($detect)) {
-	$detect = new Mobile_Detect();
+	$detect = new DeviceDetect();
 }
 
 $device_id = PLATFORMS::get_device_info($db, $detect, $_GET['ua'] ?? '');

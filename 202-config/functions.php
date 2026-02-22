@@ -205,10 +205,6 @@ function info_top(): void
 		<!-- Loading Custom CSS -->
 		<link href="<?php echo get_absolute_url(); ?>202-css/custom.min.css"
 			rel="stylesheet" />
-		<!--[if lt IE 9]>
-      <script src="https://dp5k1x6z3k332.cloudfront.net/html5shiv.js"></script>
-      <script src="https://dp5k1x6z3k332.cloudfront.net/respond.min.js"></script>
-<![endif]-->
 		<!-- Load JS here -->
 		<script src="https://dp5k1x6z3k332.cloudfront.net/jquery-1.11.2.min.js"></script>
 		<script type="text/javascript"

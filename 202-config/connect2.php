@@ -92,8 +92,6 @@ function getCache(string $key, $default = false)
 }
 
 
-include_once(CONFIG_PATH . '/geo/inc/geoipcity.inc');
-include_once(CONFIG_PATH . '/geo/inc/geoipregionvars.php');
 include_once(CONFIG_PATH . '/functions-auth.php');
 if (!function_exists('array_any')) {
     function array_any(array $items, callable $callback): bool
@@ -106,35 +104,9 @@ if (!function_exists('array_any')) {
         return false;
     }
 }
-include_once(CONFIG_PATH . '/Mobile_Detect.php');
+include_once(CONFIG_PATH . '/DeviceDetect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
-
-if (!function_exists('geoip_open')) {
-    function geoip_open($filename, $flags)
-    {
-        if (file_exists($filename)) {
-            return fopen($filename, 'r');
-        }
-        return false;
-    }
-}
-
-if (!function_exists('geoip_org_by_addr')) {
-    function geoip_org_by_addr($gi, $addr)
-    {
-        return "Unknown ISP/Organization";
-    }
-}
-
-if (!function_exists('geoip_close')) {
-    function geoip_close($gi)
-    {
-        if ($gi && is_resource($gi)) {
-            fclose($gi);
-        }
-    }
-}
 
 // Initialize $tid and $db variables to prevent undefined variable errors
 if (!isset($tid)) {
@@ -759,7 +731,7 @@ class PLATFORMS
     public static function get_device_info($db, $detect, $ua_string = '')
     {
         global $memcacheWorking, $memcache;
-        $detect = new Mobile_Detect();
+        $detect = new DeviceDetect();
 
         if ($ua_string != '')
             $ua = $detect->setUserAgent($ua_string);
@@ -2381,27 +2353,23 @@ function getGeoData($ip)
 
 function getIspData($ip)
 {
-    $isp_file = substr(__DIR__, 0, -10) . "/202-config/geo/GeoIPISP.dat";
+    $ip_address = is_string($ip) ? $ip : ($ip->address ?? '');
 
-    // Define the missing constant if it doesn't exist
-    if (!defined('GEOIP_MEMORY_CACHE')) {
-        define('GEOIP_MEMORY_CACHE', 1);
-    }
-
-    if (file_exists($isp_file)) {
-        $giisp = geoip_open(substr(__DIR__, 0, -10) . "/202-config/geo/GeoIPISP.dat", GEOIP_MEMORY_CACHE);
-        $isp = geoip_org_by_addr($giisp, $ip->address);
-
-        if (! $isp) {
-            $isp = "Unknown ISP/Carrier";
+    // Try GeoIP2 ISP database (.mmdb) first
+    $mmdb_file = CONFIG_PATH . '/geo/GeoIP2-ISP.mmdb';
+    if ($ip_address !== '' && file_exists($mmdb_file)) {
+        try {
+            $reader = new Reader($mmdb_file);
+            $record = $reader->isp($ip_address);
+            $isp = $record->isp ?: ($record->organization ?: 'Unknown ISP/Carrier');
+            $reader->close();
+            return $isp;
+        } catch (\Exception) {
+            // Fall through to default
         }
-
-        geoip_close($giisp);
-    } else {
-        $isp = "Unknown ISP/Carrier";
     }
 
-    return $isp;
+    return "Unknown ISP/Carrier";
 }
 
 function systemHash(): string

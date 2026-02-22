@@ -163,10 +163,6 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<link href="<?php echo get_absolute_url(); ?>202-css/css/select2.css" rel="stylesheet" />
 		<!-- Loading Custom CSS -->
 		<link href="<?php echo get_absolute_url(); ?>202-css/custom.css" rel="stylesheet">
-		<!--[if lt IE 9]>
-      <script src="202-js/html5shiv.js"></script>
-      <script src="202-js/respond.min.js"></script>
-<![endif]-->
 		<!-- Load JS here -->
 		<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery-1.11.2.min.js"></script>
 		<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery-ui.min.js"></script>

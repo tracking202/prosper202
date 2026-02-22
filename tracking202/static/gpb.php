@@ -5,7 +5,6 @@ use Prosper202\Attribution\AttributionServiceFactory;
 use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
-include_once(substr(__DIR__, 0,-19) . '/202-config/class-snoopy.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 
 /**
@@ -250,13 +249,15 @@ if($mysql['ppc_account_id']){
 
 			break;
 		case 4:
-			$snoopy = new Snoopy;
-			$snoopy->agent="Mozilla/5.0 Postback202-Bot v1.8";
+			$ctx = stream_context_create(['http' => [
+				'user_agent' => 'Mozilla/5.0 Postback202-Bot v1.8',
+				'timeout' => 10,
+			]]);
 
         	foreach($pixel_urls as $pixel_url){
 			  if(isset($pixel_url))
 			    $pixel_url=replaceTokens($pixel_url,$tokens);
-			    $snoopy->fetchtext($pixel_url);
+			    @file_get_contents($pixel_url, false, $ctx);
 			    header('HTTP/1.1 202 Accepted', true, 202);
 			    header('Content-Type: application/json');
 			    $response = ['error' => false, 'code' => 202, 'msg' => 'Postback successful'];

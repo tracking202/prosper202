@@ -91,7 +91,7 @@ $GeoData = getGeoData($ip_address);
 $parser = Parser::create();
 
 //Device type
-$detect = new Mobile_Detect;
+$detect = new DeviceDetect();
 $ua = $detect->getUserAgent();
 $result = $parser->parse($ua);
 
@@ -379,7 +379,7 @@ $rule = array_merge($ruleDefaults, is_array($rule) ? $rule : []);
 $escape = static fn($value) => $db->real_escape_string((string)($value ?? ''));
 
 $uaParam = (string)($_GET['ua'] ?? '');
-$detectInstance = new Mobile_Detect();
+$detectInstance = new DeviceDetect();
 if ($uaParam !== '') {
 	$detectInstance->setUserAgent($uaParam);
 }

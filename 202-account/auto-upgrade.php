@@ -3,25 +3,25 @@
 declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/functions-upgrade.php');
-include_once(str_repeat("../", 1) . '202-config/functions-rss.php');
 include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
 
 AUTH::require_user();
 
 ini_set('memory_limit', '-1');
 
-$rss = fetch_rss('https://my.tracking202.com/clickserver/currentversion/paid/');
-if (isset($rss->items) && 0 != count($rss->items)) {
+$update_needed = false;
+$latest_version = $version;
+$download_link = '';
 
-	$rss->items = array_slice($rss->items, 0, 1);
-	foreach ($rss->items as $item) {
-		$latest_version = $item['title'];
-		$download_link = $item['link'];
-		//if current version, is older than the latest version, return true for an update is now needed.
+$rss_xml = @file_get_contents('https://my.tracking202.com/clickserver/currentversion/paid/');
+if ($rss_xml !== false) {
+	$rss_feed = @simplexml_load_string($rss_xml);
+	if ($rss_feed !== false && isset($rss_feed->channel->item)) {
+		$item = $rss_feed->channel->item[0];
+		$latest_version = (string) $item->title;
+		$download_link = (string) $item->link;
 		if (version_compare($version, $latest_version) == '-1') {
 			$update_needed = true;
-		} else {
-			$update_needed = false;
 		}
 	}
 }
