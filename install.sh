@@ -903,8 +903,9 @@ setup_docker_env() {
         return 1
     fi
 
-    # Copy the template
+    # Copy the template, restrict permissions (contains passwords)
     cp "$env_example" "$env_file"
+    chmod 600 "$env_file"
 
     if [ "$INTERACTIVE" = true ] && [ "$CI_MODE" != true ]; then
         local root_pass=""

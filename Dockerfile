@@ -41,7 +41,14 @@ COPY composer.json composer.lock* ./
 RUN composer install --no-dev --no-interaction --optimize-autoloader --no-scripts
 
 COPY . .
-RUN composer dump-autoload --no-dev --optimize
+RUN composer dump-autoload --no-dev --optimize \
+    && rm -f /usr/bin/composer
+
+# Remove build-only tools from the production image.
+# git/unzip are needed by composer at build time but are attack
+# surface at runtime (RCE → exfiltrate code, install packages).
+RUN apt-get purge -y --auto-remove git unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 # Writable dirs for runtime
 RUN mkdir -p 202-config/logs 202-cronjobs \
