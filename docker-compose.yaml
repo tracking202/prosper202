@@ -1,0 +1,193 @@
+##
+## Prosper202 — Production Docker Compose
+##
+## Prerequisites:
+##   cp .env.example .env       # fill in passwords
+##   cp 202-config-sample.php 202-config.php  # set DB credentials
+##
+## Usage:
+##   Production:  docker compose up -d --build
+##   Development: docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
+##   Rebuild:     docker compose build --no-cache && docker compose up -d
+##
+## Architecture (high-traffic tracking):
+##   client → nginx (static + reverse proxy)
+##          → php-fpm (app) → mysql + memcached
+##   cron worker → php-fpm (background) → mysql + memcached
+##
+
+services:
+  # ── Nginx reverse proxy & static files ──────────────────
+  # Built from the same Dockerfile as app. Static files are
+  # baked in from the production stage — no shared volumes needed.
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: nginx
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+    networks:
+      - frontend
+
+  # ── PHP-FPM application ─────────────────────────────────
+  # The main request handler. 202-config.php is bind-mounted
+  # so credentials stay outside the image.
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    volumes:
+      - ./202-config.php:/var/www/html/202-config.php:ro
+    environment:
+      APP_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 512M
+    networks:
+      - frontend
+      - backend
+
+  # ── Cron worker ─────────────────────────────────────────
+  # Same image as app, different entrypoint. Runs the
+  # Prosper202 cronjob loop (DataEngine, cleanup, delayed SQL).
+  cron:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    volumes:
+      - ./202-config.php:/var/www/html/202-config.php:ro
+    entrypoint: ["/usr/local/bin/docker-cron.sh"]
+    environment:
+      APP_ENV: production
+      CRON_INTERVAL: "${CRON_INTERVAL:-60}"
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    networks:
+      - backend
+
+  # ── MySQL 8.0 ───────────────────────────────────────────
+  # Tuned for write-heavy click tracking workloads.
+  # InnoDB settings sized for 2 GB memory limit.
+  db:
+    image: mysql:8.0
+    command:
+      - --innodb-buffer-pool-size=1G
+      - --innodb-log-file-size=256M
+      - --innodb-flush-log-at-trx-commit=2
+      - --innodb-flush-method=O_DIRECT
+      - --max-connections=256
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-name-resolve
+      - --innodb-io-capacity=2000
+      - --innodb-io-capacity-max=4000
+      - --innodb-read-io-threads=8
+      - --innodb-write-io-threads=8
+      - --slow-query-log=ON
+      - --slow-query-log-file=/var/log/mysql/slow.log
+      - --long-query-time=1
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-prosper202}"
+      MYSQL_USER: "${MYSQL_USER:-prosper202}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}"
+    volumes:
+      - db-data:/var/lib/mysql
+      - db-logs:/var/log/mysql
+      - ./build/mysql/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${MYSQL_PORT:-127.0.0.1:3306}:3306"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend
+
+  # ── Memcached ───────────────────────────────────────────
+  # Critical for tracking resilience — click redirects fall
+  # back to memcached when MySQL is unreachable.
+  memcached:
+    image: memcached:1.6-bookworm
+    command:
+      - -m
+      - "${MEMCACHED_MEMORY:-256}"
+      - -c
+      - "4096"
+      - -t
+      - "4"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 320M
+    networks:
+      - backend
+
+  # ── phpMyAdmin (dev profile only) ───────────────────────
+  phpmyadmin:
+    image: phpmyadmin:5
+    profiles: ["dev"]
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: db
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - backend
+
+volumes:
+  db-data:
+  db-logs:
+
+networks:
+  frontend:
+  backend:

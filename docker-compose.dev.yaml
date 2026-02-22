@@ -1,0 +1,48 @@
+##
+## Development overrides for Prosper202.
+##
+## Usage:
+##   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
+##
+## Changes from production:
+##   - Source code is bind-mounted (live reload on edit)
+##   - PHP errors displayed in browser
+##   - Dev Composer dependencies installed (phpunit, phpstan)
+##   - phpMyAdmin available on :8080
+##
+
+services:
+  nginx:
+    build:
+      target: nginx
+    volumes:
+      - ./build/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - .:/var/www/html:ro
+    depends_on:
+      app:
+        condition: service_started
+
+  app:
+    build:
+      target: development
+    volumes:
+      - .:/var/www/html
+    environment:
+      APP_ENV: development
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+
+  cron:
+    build:
+      target: development
+    volumes:
+      - .:/var/www/html
+    environment:
+      APP_ENV: development
+      CRON_INTERVAL: "30"
+
+  phpmyadmin:
+    profiles: []

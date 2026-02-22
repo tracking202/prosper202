@@ -7,12 +7,12 @@ phpstan.neon
 
 # Environment / secrets
 .env
-.env.*
+.env.local
+!.env.example
 
-# Docker
-docker-compose.yaml
+# Docker (staging/local overrides stay untracked)
 docker-compose.staging.yml
-docker-compose.*.yml
+docker-compose.local.yaml
 
 # Dependencies
 /node_modules/
@@ -25,7 +25,6 @@ composer.lock
 build/debug/
 build/logs/
 build/staging-config.php
-/build/
 
 # Development and documentation
 /docs/
