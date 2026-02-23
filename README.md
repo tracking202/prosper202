@@ -139,7 +139,7 @@ cd go-cli && make test
 
 ## License
 
-Business Source License 1.1 (BUSL-1.1) — see [LICENSE](https://github.com/tracking202/prosper202/blob/master/LICENSE) for the full text.
+Business Source License 1.1 (BUSL-1.1) — see [LICENSE](LICENSE) for the full text.
 
 - **Licensor:** Blue Terra LLC
 - **Licensed Work:** Prosper202

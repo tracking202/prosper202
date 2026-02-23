@@ -12,7 +12,7 @@
 # Change Date:          2031-02-22
 # Change License:       GPL-2.0-or-later
 #
-# For the full license text, see https://github.com/tracking202/prosper202/blob/master/LICENSE
+# For the full license text, see the LICENSE file in the project root.
 #
 # Copyright (c) 2024-2026 Blue Terra LLC. All rights reserved.
 # "Business Source License" is a trademark of MariaDB Corporation Ab.
