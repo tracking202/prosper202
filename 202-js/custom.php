@@ -1606,15 +1606,13 @@ function autocomplete_names(selector, type){
 $(document).ready(function() {
 	var smBaseUrl = "<?php echo get_absolute_url(); ?>";
 	var smPanelOpen = false;
-	var smPollInterval = 5 * 60 * 1000; // 5 minutes
-	var smPollTimer = null;
 	var smCurrentCategory = null; // null = all
 
 	// Fetch unread count on page load
 	smUpdateBadge();
 
-	// Poll for new messages periodically
-	smPollTimer = setInterval(smUpdateBadge, smPollInterval);
+	// Poll for new messages periodically (5 minutes)
+	setInterval(smUpdateBadge, 5 * 60 * 1000);
 
 	// Toggle panel on bell click
 	$(document).on('click', '#sm-bell', function(e) {

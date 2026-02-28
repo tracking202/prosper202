@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+use Prosper202\Database\Schema\TableRegistry;
+
 /**
  * Server Messaging Client
  *
@@ -170,7 +172,8 @@ class ServerMessaging
             return false;
         }
 
-        $result = $this->db->query('SELECT last_success FROM 202_server_messages_sync WHERE id = 1 LIMIT 1');
+        $table = TableRegistry::SERVER_MESSAGES_SYNC;
+        $result = $this->db->query("SELECT last_success FROM {$table} WHERE id = 1 LIMIT 1");
         if (!$result || $result->num_rows === 0) {
             return true;
         }
@@ -194,7 +197,8 @@ class ServerMessaging
             return false;
         }
 
-        $sql = "INSERT INTO 202_server_messages
+        $table = TableRegistry::SERVER_MESSAGES;
+        $sql = "INSERT INTO {$table}
                 (message_id, type, category, title, body, action_url, action_label, priority, icon, image_url, format, expires_at, published_at, fetched_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
@@ -236,8 +240,26 @@ class ServerMessaging
             $icon = $msg['icon'] ?? null;
             $imageUrl = $msg['image_url'] ?? null;
             $format = $msg['format'] ?? 'plain';
-            $expiresAt = !empty($msg['expires_at']) ? (int) strtotime((string) $msg['expires_at']) : null;
-            $publishedAt = !empty($msg['published_at']) ? (int) strtotime((string) $msg['published_at']) : $now;
+
+            $expiresAt = null;
+            if (!empty($msg['expires_at'])) {
+                $parsed = strtotime((string) $msg['expires_at']);
+                if ($parsed === false) {
+                    error_log('ServerMessaging: Invalid expires_at for message ' . $messageId . ': ' . $msg['expires_at']);
+                    continue;
+                }
+                $expiresAt = $parsed;
+            }
+
+            $publishedAt = $now;
+            if (!empty($msg['published_at'])) {
+                $parsed = strtotime((string) $msg['published_at']);
+                if ($parsed === false) {
+                    error_log('ServerMessaging: Invalid published_at for message ' . $messageId . ': ' . $msg['published_at']);
+                    continue;
+                }
+                $publishedAt = $parsed;
+            }
 
             $stmt->bind_param(
                 'sssssssisssiii',
@@ -276,31 +298,43 @@ class ServerMessaging
         }
 
         $now = time();
+        $msgTable = TableRegistry::SERVER_MESSAGES;
 
-        $stmt = $this->db->prepare('DELETE FROM 202_server_messages WHERE expires_at IS NOT NULL AND expires_at < ?');
+        $stmt = $this->db->prepare("DELETE FROM {$msgTable} WHERE expires_at IS NOT NULL AND expires_at < ?");
         if (!$stmt) {
             return;
         }
         $stmt->bind_param('i', $now);
         if (!$stmt->execute()) {
             error_log('ServerMessaging: Failed to clean expired messages: ' . $stmt->error);
+            $stmt->close();
+            return;
         }
+
+        $deletedCount = $stmt->affected_rows;
         $stmt->close();
 
-        // Clean orphaned user state and reply rows
+        // Only clean orphans if messages were actually deleted
+        if ($deletedCount === 0) {
+            return;
+        }
+
+        $stateTable = TableRegistry::SERVER_MESSAGE_USER_STATE;
+        $replyTable = TableRegistry::SERVER_MESSAGE_REPLIES;
+
         $result = $this->db->query(
-            'DELETE s FROM 202_server_message_user_state s
-             LEFT JOIN 202_server_messages m ON s.message_id = m.message_id
-             WHERE m.message_id IS NULL'
+            "DELETE s FROM {$stateTable} s
+             LEFT JOIN {$msgTable} m ON s.message_id = m.message_id
+             WHERE m.message_id IS NULL"
         );
         if ($result === false) {
             error_log('ServerMessaging: Failed to clean orphaned user state: ' . $this->db->error);
         }
 
         $result = $this->db->query(
-            'DELETE r FROM 202_server_message_replies r
-             LEFT JOIN 202_server_messages m ON r.message_id = m.message_id
-             WHERE m.message_id IS NULL'
+            "DELETE r FROM {$replyTable} r
+             LEFT JOIN {$msgTable} m ON r.message_id = m.message_id
+             WHERE m.message_id IS NULL"
         );
         if ($result === false) {
             error_log('ServerMessaging: Failed to clean orphaned replies: ' . $this->db->error);
@@ -326,6 +360,8 @@ class ServerMessaging
 
         $userId = $this->getCurrentUserId();
         $now = time();
+        $msgTable = TableRegistry::SERVER_MESSAGES;
+        $stateTable = TableRegistry::SERVER_MESSAGE_USER_STATE;
 
         $sql = "SELECT m.id, m.message_id, m.type, m.category, m.title, m.body,
                     m.action_url, m.action_label, m.priority, m.icon, m.image_url,
@@ -334,8 +370,8 @@ class ServerMessaging
                     COALESCE(us.is_dismissed, 0) AS is_dismissed,
                     us.read_at,
                     us.dismissed_at
-                FROM 202_server_messages m
-                LEFT JOIN 202_server_message_user_state us
+                FROM {$msgTable} m
+                LEFT JOIN {$stateTable} us
                     ON m.message_id = us.message_id AND us.user_id = ?
                 WHERE COALESCE(us.is_dismissed, 0) = 0
                 AND (m.expires_at IS NULL OR m.expires_at > ?)";
@@ -385,10 +421,12 @@ class ServerMessaging
 
         $userId = $this->getCurrentUserId();
         $now = time();
+        $msgTable = TableRegistry::SERVER_MESSAGES;
+        $stateTable = TableRegistry::SERVER_MESSAGE_USER_STATE;
 
         $sql = "SELECT COUNT(*) AS cnt
-                FROM 202_server_messages m
-                LEFT JOIN 202_server_message_user_state us
+                FROM {$msgTable} m
+                LEFT JOIN {$stateTable} us
                     ON m.message_id = us.message_id AND us.user_id = ?
                 WHERE COALESCE(us.is_read, 0) = 0
                 AND COALESCE(us.is_dismissed, 0) = 0
@@ -425,10 +463,12 @@ class ServerMessaging
 
         $userId = $this->getCurrentUserId();
         $now = time();
+        $msgTable = TableRegistry::SERVER_MESSAGES;
+        $stateTable = TableRegistry::SERVER_MESSAGE_USER_STATE;
 
         $sql = "SELECT DISTINCT m.category
-                FROM 202_server_messages m
-                LEFT JOIN 202_server_message_user_state us
+                FROM {$msgTable} m
+                LEFT JOIN {$stateTable} us
                     ON m.message_id = us.message_id AND us.user_id = ?
                 WHERE COALESCE(us.is_dismissed, 0) = 0
                 AND (m.expires_at IS NULL OR m.expires_at > ?)
@@ -481,10 +521,11 @@ class ServerMessaging
 
         $userId = $this->getCurrentUserId();
         $now = time();
+        $stateTable = TableRegistry::SERVER_MESSAGE_USER_STATE;
 
         // Ensure state row exists
         $insert = $this->db->prepare(
-            "INSERT IGNORE INTO 202_server_message_user_state (message_id, user_id) VALUES (?, ?)"
+            "INSERT IGNORE INTO {$stateTable} (message_id, user_id) VALUES (?, ?)"
         );
         if (!$insert) {
             return false;
@@ -497,7 +538,7 @@ class ServerMessaging
         $insert->close();
 
         // Set the flag
-        $sql = "UPDATE 202_server_message_user_state SET {$flagColumn} = 1, {$timestampColumn} = ? WHERE message_id = ? AND user_id = ? AND {$flagColumn} = 0";
+        $sql = "UPDATE {$stateTable} SET {$flagColumn} = 1, {$timestampColumn} = ? WHERE message_id = ? AND user_id = ? AND {$flagColumn} = 0";
         $stmt = $this->db->prepare($sql);
         if (!$stmt) {
             return false;
@@ -542,12 +583,14 @@ class ServerMessaging
 
         $userId = $this->getCurrentUserId();
         $now = time();
+        $msgTable = TableRegistry::SERVER_MESSAGES;
+        $stateTable = TableRegistry::SERVER_MESSAGE_USER_STATE;
 
         // First, ensure state rows exist for all visible messages
-        $sql = "INSERT IGNORE INTO 202_server_message_user_state (message_id, user_id)
+        $sql = "INSERT IGNORE INTO {$stateTable} (message_id, user_id)
                 SELECT m.message_id, ?
-                FROM 202_server_messages m
-                LEFT JOIN 202_server_message_user_state us
+                FROM {$msgTable} m
+                LEFT JOIN {$stateTable} us
                     ON m.message_id = us.message_id AND us.user_id = ?
                 WHERE us.id IS NULL
                 AND (m.expires_at IS NULL OR m.expires_at > ?)";
@@ -565,8 +608,8 @@ class ServerMessaging
 
         // Now mark all as read
         $stmt = $this->db->prepare(
-            'UPDATE 202_server_message_user_state SET is_read = 1, read_at = ?
-             WHERE user_id = ? AND is_read = 0 AND is_dismissed = 0'
+            "UPDATE {$stateTable} SET is_read = 1, read_at = ?
+             WHERE user_id = ? AND is_read = 0 AND is_dismissed = 0"
         );
         if (!$stmt) {
             return 0;
@@ -604,9 +647,11 @@ class ServerMessaging
 
         $userId = $this->getCurrentUserId();
         $now = time();
+        $msgTable = TableRegistry::SERVER_MESSAGES;
+        $replyTable = TableRegistry::SERVER_MESSAGE_REPLIES;
 
         // Verify the message exists
-        $check = $this->db->prepare('SELECT id FROM 202_server_messages WHERE message_id = ? LIMIT 1');
+        $check = $this->db->prepare("SELECT id FROM {$msgTable} WHERE message_id = ? LIMIT 1");
         if (!$check) {
             return false;
         }
@@ -624,7 +669,7 @@ class ServerMessaging
 
         // Store reply locally
         $stmt = $this->db->prepare(
-            'INSERT INTO 202_server_message_replies (message_id, user_id, body, sent_to_server, created_at) VALUES (?, ?, ?, 0, ?)'
+            "INSERT INTO {$replyTable} (message_id, user_id, body, sent_to_server, created_at) VALUES (?, ?, ?, 0, ?)"
         );
         if (!$stmt) {
             return false;
@@ -659,10 +704,11 @@ class ServerMessaging
 
         $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
         $types = str_repeat('s', count($messageIds));
+        $replyTable = TableRegistry::SERVER_MESSAGE_REPLIES;
 
         $stmt = $this->db->prepare(
             "SELECT r.message_id, r.body, r.created_at, u.user_name
-             FROM 202_server_message_replies r
+             FROM {$replyTable} r
              LEFT JOIN 202_users u ON r.user_id = u.user_id
              WHERE r.message_id IN ({$placeholders})
              ORDER BY r.created_at ASC"
@@ -714,9 +760,10 @@ class ServerMessaging
 
         if ($decoded !== null) {
             $serverReplyId = isset($decoded['reply_id']) ? (string) $decoded['reply_id'] : null;
+            $replyTable = TableRegistry::SERVER_MESSAGE_REPLIES;
 
             $stmt = $this->db->prepare(
-                'UPDATE 202_server_message_replies SET sent_to_server = 1, server_reply_id = ? WHERE id = ?'
+                "UPDATE {$replyTable} SET sent_to_server = 1, server_reply_id = ? WHERE id = ?"
             );
             if ($stmt) {
                 $stmt->bind_param('si', $serverReplyId, $replyId);
@@ -767,7 +814,7 @@ class ServerMessaging
                 }
 
                 if ($href !== '') {
-                    $cleaned = function_exists('clean_url') ? clean_url($href) : $href;
+                    $cleaned = clean_url($href);
                     if ($cleaned === '' || (!str_starts_with($cleaned, 'http') && !str_starts_with($cleaned, 'mailto:'))) {
                         return '<a>';
                     }
@@ -820,11 +867,12 @@ class ServerMessaging
         }
 
         $now = time();
+        $syncTable = TableRegistry::SERVER_MESSAGES_SYNC;
 
         $sqlMap = [
-            'start'   => 'UPDATE 202_server_messages_sync SET last_sync = ? WHERE id = 1',
-            'success' => 'UPDATE 202_server_messages_sync SET last_success = ?, error_count = 0, last_error = NULL WHERE id = 1',
-            'error'   => 'UPDATE 202_server_messages_sync SET error_count = error_count + 1, last_error = ? WHERE id = 1',
+            'start'   => "UPDATE {$syncTable} SET last_sync = ? WHERE id = 1",
+            'success' => "UPDATE {$syncTable} SET last_success = ?, error_count = 0, last_error = NULL WHERE id = 1",
+            'error'   => "UPDATE {$syncTable} SET last_sync = {$now}, error_count = error_count + 1, last_error = ? WHERE id = 1",
         ];
 
         $sql = $sqlMap[$status] ?? null;
