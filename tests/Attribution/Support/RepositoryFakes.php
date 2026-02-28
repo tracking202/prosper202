@@ -36,7 +36,7 @@ final class InMemoryModelRepository implements ModelRepositoryInterface
                 name: 'Test Position Model',
                 slug: 'test-position-model',
                 type: ModelType::POSITION_BASED,
-                weightingConfig: ['first' => 0.3, 'last' => 0.4],
+                weightingConfig: ['first_touch_weight' => 0.3, 'last_touch_weight' => 0.4],
                 isActive: true,
                 isDefault: true,
                 createdAt: $now,
@@ -305,37 +305,19 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
     /**
      * @var array<int, ExportJob>
      */
-    private array $jobs = [];
+    public array $jobs = [];
 
     private int $nextId = 1;
-
-    /** @var callable|null */
-    private $clock;
-
-    /**
-     * @param callable():int|null $clock
-     */
-    public function __construct(?callable $clock = null)
-    {
-        $this->clock = $clock;
-    }
 
     public function create(ExportJob $job): ExportJob
     {
         $id = $this->nextId++;
-        $created = new ExportJob(
-            exportId: $id,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: $job->status,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt
-        );
+        $created = $job->withStatus($job->status, [
+            'export_id' => $id,
+            'queued_at' => $job->queuedAt,
+            'created_at' => $job->createdAt,
+            'updated_at' => $job->updatedAt,
+        ]);
         $this->jobs[$id] = $created;
 
         return clone $created;
@@ -356,7 +338,7 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
             static fn (ExportJob $job): bool => $job->status === ExportStatus::PENDING
         );
 
-        usort($pending, static fn (ExportJob $a, ExportJob $b): int => ($a->createdAt ?? 0) <=> ($b->createdAt ?? 0));
+        usort($pending, static fn (ExportJob $a, ExportJob $b): int => $a->createdAt <=> $b->createdAt);
         $batch = array_slice($pending, 0, max(1, $limit));
 
         return array_map(static fn (ExportJob $job): ExportJob => clone $job, $batch);
@@ -368,21 +350,10 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
             return;
         }
 
-        $job = $this->jobs[$jobId];
-        $this->jobs[$jobId] = new ExportJob(
-            exportId: $job->exportId,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: ExportStatus::PROCESSING,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt,
-            processedAt: $timestamp
-        );
+        $this->jobs[$jobId] = $this->jobs[$jobId]->withStatus(ExportStatus::PROCESSING, [
+            'started_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
     }
 
     public function markCompleted(int $jobId, string $filePath, int $rowsExported, int $timestamp): void
@@ -391,24 +362,13 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
             return;
         }
 
-        $job = $this->jobs[$jobId];
-        $this->jobs[$jobId] = new ExportJob(
-            exportId: $job->exportId,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: ExportStatus::COMPLETED,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt,
-            processedAt: $job->processedAt,
-            completedAt: $timestamp,
-            filePath: $filePath,
-            rowsExported: $rowsExported
-        );
+        $this->jobs[$jobId] = $this->jobs[$jobId]->withStatus(ExportStatus::COMPLETED, [
+            'file_path' => $filePath,
+            'rows_exported' => $rowsExported,
+            'completed_at' => $timestamp,
+            'updated_at' => $timestamp,
+            'last_error' => null,
+        ]);
     }
 
     public function markFailed(int $jobId, string $error, int $timestamp): void
@@ -417,23 +377,11 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
             return;
         }
 
-        $job = $this->jobs[$jobId];
-        $this->jobs[$jobId] = new ExportJob(
-            exportId: $job->exportId,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: ExportStatus::FAILED,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt,
-            processedAt: $job->processedAt,
-            failedAt: $timestamp,
-            errorMessage: $error
-        );
+        $this->jobs[$jobId] = $this->jobs[$jobId]->withStatus(ExportStatus::FAILED, [
+            'failed_at' => $timestamp,
+            'updated_at' => $timestamp,
+            'last_error' => $error,
+        ]);
     }
 
     public function recordWebhookAttempt(int $jobId, int $timestamp, ?int $statusCode, ?string $responseBody): void
@@ -442,29 +390,12 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
             return;
         }
 
-        $job = $this->jobs[$jobId];
-        $this->jobs[$jobId] = new ExportJob(
-            exportId: $job->exportId,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: $job->status,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt,
-            processedAt: $job->processedAt,
-            completedAt: $job->completedAt,
-            failedAt: $job->failedAt,
-            filePath: $job->filePath,
-            rowsExported: $job->rowsExported,
-            errorMessage: $job->errorMessage,
-            webhookAttemptedAt: $timestamp,
-            webhookStatusCode: $statusCode,
-            webhookResponseBody: $responseBody
-        );
+        $this->jobs[$jobId] = $this->jobs[$jobId]->withStatus($this->jobs[$jobId]->status, [
+            'webhook_attempted_at' => $timestamp,
+            'webhook_status_code' => $statusCode,
+            'webhook_response_body' => $responseBody,
+            'updated_at' => $timestamp,
+        ]);
     }
 
     /**
@@ -479,7 +410,7 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
             }
         );
 
-        usort($filtered, static fn (ExportJob $a, ExportJob $b): int => ($b->createdAt ?? 0) <=> ($a->createdAt ?? 0));
+        usort($filtered, static fn (ExportJob $a, ExportJob $b): int => $b->queuedAt <=> $a->queuedAt);
         $slice = array_slice($filtered, 0, max(1, $limit));
 
         return array_map(static fn (ExportJob $job): ExportJob => clone $job, $slice);
@@ -491,10 +422,5 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
     public function all(): array
     {
         return array_map(static fn (ExportJob $job): ExportJob => clone $job, $this->jobs);
-    }
-
-    private function now(): int
-    {
-        return $this->clock ? ($this->clock)() : time();
     }
 }

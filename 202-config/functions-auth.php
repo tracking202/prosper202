@@ -78,7 +78,10 @@ class AUTH
         }
        // die('prepared statement...');
         $stmt->bind_param('s', $username);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new \RuntimeException('Login query execute failed: ' . $db->error);
+        }
         $result = $stmt->get_result();
         $user_row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -113,7 +116,10 @@ class AUTH
             throw new \RuntimeException('Unable to prepare password upgrade query: ' . $db->error);
         }
         $stmt->bind_param('si', $new_hash, $user_id);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new \RuntimeException('Password upgrade execute failed: ' . $db->error);
+        }
         $stmt->close();
     }
 
@@ -162,7 +168,10 @@ class AUTH
         }
 
         $stmt->bind_param('s', $installHash);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return $userId;
+        }
         $result = $stmt->get_result();
         $ownerRow = $result ? $result->fetch_assoc() : null;
         $stmt->close();

@@ -183,7 +183,7 @@ final class InMemoryModelRepository implements ModelRepositoryInterface
                 name: 'Test Position Model',
                 slug: 'test-position-model',
                 type: ModelType::POSITION_BASED,
-                weightingConfig: ['first' => 0.3, 'last' => 0.4],
+                weightingConfig: ['first_touch_weight' => 0.3, 'last_touch_weight' => 0.4],
                 isActive: true,
                 isDefault: true,
                 createdAt: $now,
