@@ -10,6 +10,9 @@ phpstan.neon
 .env.*
 
 # Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
 docker-compose.yaml
 docker-compose.staging.yml
 docker-compose.*.yml
