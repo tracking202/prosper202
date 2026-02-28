@@ -6,7 +6,9 @@ This document defines the API contract between the central server (`my.tracking2
 
 The central server sends targeted messages to individual Prosper202 installations. Each installation polls the central server periodically (every 15 minutes) and caches messages locally. Messages are displayed in a slide-in notification panel accessible via a bell icon in the Prosper202 navbar.
 
-## API Endpoint
+**v2 Features:** Rich HTML bodies, image attachments, message categories with filtering, two-way replies, per-user read/dismissed state.
+
+## API Endpoints
 
 ### GET `/api/v1/server-messages/{install_hash}`
 
@@ -18,14 +20,8 @@ Returns all active messages targeted at the specified installation.
 |---|---|---|
 | `Accept` | `application/json` | Yes |
 | `X-P202-Api-Key` | Customer API key from `202_users.p202_customer_api_key` | No (recommended) |
-| `X-P202-Version` | Prosper202 version string (e.g., `1.9.61`) | No |
+| `X-P202-Version` | Prosper202 version string (e.g., `1.9.62`) | No |
 | `User-Agent` | `Prosper202-ServerMessaging/{version}` | Auto-set by client |
-
-#### Path Parameters
-
-| Parameter | Type | Description |
-|---|---|---|
-| `install_hash` | string | Unique installation identifier from `202_users.install_hash` |
 
 #### Response (200 OK)
 
@@ -35,8 +31,11 @@ Returns all active messages targeted at the specified installation.
     {
       "id": "msg_abc123",
       "type": "info",
+      "category": "update",
       "title": "New Feature Available",
-      "body": "We just released multi-touch attribution. Update to the latest version to try it out.",
+      "body": "<p>We just released <strong>multi-touch attribution</strong>. Update to try it out.</p><ul><li>Last-touch</li><li>First-touch</li><li>Linear</li></ul>",
+      "format": "html",
+      "image_url": "https://my.tracking202.com/images/attribution-banner.jpg",
       "action_url": "https://my.tracking202.com/updates/attribution",
       "action_label": "Learn More",
       "priority": 1,
@@ -47,8 +46,11 @@ Returns all active messages targeted at the specified installation.
     {
       "id": "msg_def456",
       "type": "warning",
+      "category": "alert",
       "title": "Security Update Required",
       "body": "A critical security patch is available. Please update your installation as soon as possible.",
+      "format": "plain",
+      "image_url": null,
       "action_url": "https://my.tracking202.com/downloads",
       "action_label": "Download Update",
       "priority": 10,
@@ -66,8 +68,11 @@ Returns all active messages targeted at the specified installation.
 |---|---|---|---|
 | `id` | string | **Yes** | Unique message identifier (used for dedup). Must be stable across requests. |
 | `type` | string | No | Message type: `info`, `warning`, `success`, `action`. Default: `info` |
+| `category` | string | No | Message category for filtering: `general`, `update`, `alert`, `news`, `promo`. Default: `general` |
 | `title` | string | **Yes** | Short message title (max 500 chars) |
-| `body` | string | **Yes** | Message body text. Plain text, newlines preserved. (max ~2000 chars) |
+| `body` | string | **Yes** | Message body. Plain text or safe HTML depending on `format`. |
+| `format` | string | No | Body format: `plain` (escaped + nl2br) or `html` (sanitized subset). Default: `plain` |
+| `image_url` | string\|null | No | Hero image URL displayed above the body. Must be https. |
 | `action_url` | string\|null | No | Optional CTA button URL |
 | `action_label` | string\|null | No | Optional CTA button label (default: "Learn More") |
 | `priority` | integer | No | Higher = more prominent (0-255). Default: 0 |
@@ -84,6 +89,28 @@ Returns all active messages targeted at the specified installation.
 | `success` | Green | `fui-check-circle` | Congratulations, milestones, positive feedback |
 | `action` | Purple | `fui-gear` | Required actions, configuration needed |
 
+#### Message Categories
+
+| Category | Use Case |
+|---|---|
+| `general` | Default — general announcements |
+| `update` | Software updates, new versions |
+| `alert` | Security alerts, critical notices |
+| `news` | Blog posts, company news |
+| `promo` | Promotions, discounts, offers |
+
+Categories appear as filter tabs in the message panel when more than one category has active messages.
+
+#### Rich HTML Body (format: "html")
+
+When `format` is `html`, the client sanitizes the body to this safe subset of tags:
+
+**Allowed:** `<b>`, `<i>`, `<strong>`, `<em>`, `<a>`, `<br>`, `<p>`, `<ul>`, `<ol>`, `<li>`, `<code>`, `<pre>`, `<h4>`, `<h5>`, `<h6>`, `<blockquote>`, `<hr>`, `<span>`, `<img>`
+
+**Link handling:** All `<a>` tags are forced to `target="_blank" rel="noopener noreferrer"`. Only `http://`, `https://`, and `mailto:` URLs are allowed.
+
+**Image handling:** Inline `<img>` tags must use `https://` src URLs. They are auto-sized with `max-width:100%`.
+
 #### Error Responses
 
 | Status | Body | Meaning |
@@ -93,13 +120,48 @@ Returns all active messages targeted at the specified installation.
 | `429` | `{"error": "Rate limited"}` | Too many requests |
 | `500` | `{"error": "Internal server error"}` | Server error |
 
+---
+
+### POST `/api/v1/server-messages/{install_hash}/reply`
+
+Receives a reply from a Prosper202 user to a specific message.
+
+#### Request
+
+```json
+{
+  "message_id": "msg_abc123",
+  "body": "Thanks, we'll update this weekend!",
+  "user_id": 1
+}
+```
+
+| Header | Value | Required |
+|---|---|---|
+| `Content-Type` | `application/json` | Yes |
+| `X-P202-Api-Key` | Customer API key | Recommended |
+| `X-P202-Version` | Prosper202 version string | No |
+
+#### Response (200 OK)
+
+```json
+{
+  "success": true,
+  "reply_id": "reply_xyz789"
+}
+```
+
+The `reply_id` is stored locally so the client can correlate server-side replies.
+
+---
+
 ## Targeting Strategy
 
 The central server can target messages to:
 
 1. **All installations** - Broadcast messages (return for every `install_hash`)
 2. **Specific installations** - Target by `install_hash`
-3. **Version-based** - Filter by `X-P202-Version` header (e.g., only show to versions < 1.9.61)
+3. **Version-based** - Filter by `X-P202-Version` header (e.g., only show to versions < 1.9.62)
 4. **Customer tier** - Filter by `X-P202-Api-Key` (premium vs free)
 
 ## Laravel Implementation Example
@@ -121,8 +183,11 @@ return new class extends Migration
             $table->id();
             $table->string('message_id', 100)->unique();
             $table->string('type', 20)->default('info');
+            $table->string('category', 50)->default('general');
             $table->string('title', 500);
             $table->text('body');
+            $table->string('format', 10)->default('plain');
+            $table->string('image_url', 500)->nullable();
             $table->string('action_url', 500)->nullable();
             $table->string('action_label', 100)->nullable();
             $table->unsignedTinyInteger('priority')->default(0);
@@ -133,6 +198,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['is_active', 'expires_at']);
+            $table->index('category');
         });
 
         // Pivot table for targeting specific installations
@@ -145,10 +211,24 @@ return new class extends Migration
             $table->unique(['server_message_id', 'install_hash']);
             $table->index('install_hash');
         });
+
+        // Replies received from installations
+        Schema::create('server_message_replies', function (Blueprint $table) {
+            $table->id();
+            $table->string('message_id', 100);
+            $table->string('install_hash', 255);
+            $table->unsignedInteger('remote_user_id')->nullable();
+            $table->text('body');
+            $table->timestamps();
+
+            $table->index('message_id');
+            $table->index('install_hash');
+        });
     }
 
     public function down(): void
     {
+        Schema::dropIfExists('server_message_replies');
         Schema::dropIfExists('server_message_targets');
         Schema::dropIfExists('server_messages');
     }
@@ -163,22 +243,14 @@ return new class extends Migration
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ServerMessage extends Model
 {
     protected $fillable = [
-        'message_id',
-        'type',
-        'title',
-        'body',
-        'action_url',
-        'action_label',
-        'priority',
-        'icon',
-        'published_at',
-        'expires_at',
-        'is_active',
+        'message_id', 'type', 'category', 'title', 'body', 'format',
+        'image_url', 'action_url', 'action_label', 'priority', 'icon',
+        'published_at', 'expires_at', 'is_active',
     ];
 
     protected $casts = [
@@ -188,24 +260,16 @@ class ServerMessage extends Model
         'expires_at' => 'datetime',
     ];
 
-    /**
-     * Targeted installations (empty = broadcast to all).
-     */
-    public function targets(): BelongsToMany
+    public function targets(): HasMany
     {
-        return $this->belongsToMany(
-            Installation::class,
-            'server_message_targets',
-            'server_message_id',
-            'install_hash',
-            'id',
-            'install_hash'
-        );
+        return $this->hasMany(ServerMessageTarget::class);
     }
 
-    /**
-     * Scope to active, non-expired messages.
-     */
+    public function replies(): HasMany
+    {
+        return $this->hasMany(ServerMessageReply::class, 'message_id', 'message_id');
+    }
+
     public function scopeActive($query)
     {
         return $query
@@ -216,15 +280,10 @@ class ServerMessage extends Model
             });
     }
 
-    /**
-     * Scope to messages visible to a specific installation.
-     */
     public function scopeForInstallation($query, string $installHash)
     {
         return $query->where(function ($q) use ($installHash) {
-            // Broadcast messages (no targets)
             $q->whereDoesntHave('targets')
-              // Or specifically targeted
               ->orWhereHas('targets', function ($tq) use ($installHash) {
                   $tq->where('install_hash', $installHash);
               });
@@ -242,6 +301,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\ServerMessage;
+use App\Models\ServerMessageReply;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -260,8 +320,11 @@ class ServerMessageController extends Controller
             'data' => $messages->map(fn (ServerMessage $msg) => [
                 'id' => $msg->message_id,
                 'type' => $msg->type,
+                'category' => $msg->category,
                 'title' => $msg->title,
                 'body' => $msg->body,
+                'format' => $msg->format,
+                'image_url' => $msg->image_url,
                 'action_url' => $msg->action_url,
                 'action_label' => $msg->action_label,
                 'priority' => $msg->priority,
@@ -271,27 +334,55 @@ class ServerMessageController extends Controller
             ]),
         ]);
     }
+
+    public function reply(Request $request, string $installHash): JsonResponse
+    {
+        $validated = $request->validate([
+            'message_id' => 'required|string|max:100',
+            'body' => 'required|string|max:2000',
+            'user_id' => 'nullable|integer',
+        ]);
+
+        $reply = ServerMessageReply::create([
+            'message_id' => $validated['message_id'],
+            'install_hash' => $installHash,
+            'remote_user_id' => $validated['user_id'] ?? null,
+            'body' => $validated['body'],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'reply_id' => 'reply_' . $reply->id,
+        ]);
+    }
 }
 ```
 
-### Route
+### Routes
 
 ```php
 // routes/api.php
 Route::prefix('v1')->group(function () {
     Route::get('server-messages/{installHash}', [ServerMessageController::class, 'index']);
+    Route::post('server-messages/{installHash}/reply', [ServerMessageController::class, 'reply']);
 });
 ```
 
-### Admin: Create a Message (Tinker / Nova / Custom Admin)
+### Creating Messages (Tinker / Nova / Admin)
 
 ```php
-// Broadcast to all installations
+use App\Models\ServerMessage;
+use Illuminate\Support\Str;
+
+// Broadcast rich HTML message with image to all installations
 ServerMessage::create([
     'message_id' => 'msg_' . Str::random(12),
     'type' => 'info',
+    'category' => 'update',
     'title' => 'New Feature: Multi-Touch Attribution',
-    'body' => 'We just released multi-touch attribution. Update to the latest version to try it out.',
+    'body' => '<p>We just released <strong>multi-touch attribution</strong>!</p><ul><li>Last-touch</li><li>First-touch</li><li>Linear weighting</li></ul>',
+    'format' => 'html',
+    'image_url' => 'https://my.tracking202.com/images/attribution-banner.jpg',
     'action_url' => 'https://my.tracking202.com/updates/attribution',
     'action_label' => 'Learn More',
     'priority' => 5,
@@ -299,31 +390,38 @@ ServerMessage::create([
     'expires_at' => now()->addDays(30),
 ]);
 
-// Target specific installation
+// Target a specific installation with a plain text alert
 $msg = ServerMessage::create([
     'message_id' => 'msg_' . Str::random(12),
     'type' => 'warning',
+    'category' => 'alert',
     'title' => 'Your license expires soon',
-    'body' => 'Your Prosper202 license expires in 7 days. Renew now to keep your tracking running.',
+    'body' => "Your Prosper202 license expires in 7 days.\nRenew now to keep your tracking running.",
+    'format' => 'plain',
     'action_url' => 'https://my.tracking202.com/renew',
     'action_label' => 'Renew License',
     'priority' => 10,
     'published_at' => now(),
 ]);
-// Attach to specific install_hash
-DB::table('server_message_targets')->insert([
-    'server_message_id' => $msg->id,
-    'install_hash' => 'abc123def456...',
-    'created_at' => now(),
-    'updated_at' => now(),
-]);
+$msg->targets()->create(['install_hash' => 'abc123def456...']);
 ```
 
 ## Client Behavior (Prosper202 Side)
 
-1. **Polling**: The client checks for new messages every 15 minutes via `ServerMessaging::syncMessages()`
-2. **Dedup**: Messages are upserted by `message_id` — updating content but preserving read/dismissed state
-3. **Expiry**: Expired messages are automatically cleaned on each sync
-4. **Read tracking**: Messages are marked read when clicked in the panel
-5. **Dismiss**: Users can dismiss individual messages (permanently hidden)
-6. **Badge**: Unread count badge updates every 5 minutes via AJAX
+1. **Polling**: Syncs every 15 minutes via `ServerMessaging::syncMessages()`
+2. **Dedup**: Messages upserted by `message_id` — content updates but user state preserved
+3. **Expiry**: Expired messages auto-cleaned on sync
+4. **Per-user state**: Each user sees their own read/dismissed state independently
+5. **Categories**: Filter tabs appear when messages span multiple categories
+6. **Rich content**: HTML bodies sanitized to safe subset; hero images displayed above body
+7. **Replies**: Users can reply inline; replies stored locally and POSTed to central server
+8. **Badge**: Unread count badge polls every 5 minutes via AJAX
+
+## Database Tables (Prosper202 Side)
+
+| Table | Purpose |
+|---|---|
+| `202_server_messages` | Cached messages from central server |
+| `202_server_messages_sync` | Sync tracking (last success, errors) |
+| `202_server_message_user_state` | Per-user read/dismissed state |
+| `202_server_message_replies` | User replies (local + sent-to-server tracking) |

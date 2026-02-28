@@ -3232,10 +3232,68 @@ class UPGRADE
             $prosper202_version = '1.9.61';
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.61') {
+        if ($prosper202_version == '1.9.61') {
 
-            $prosper202_version = '1.9.61';
+            // Add category, image_url, format columns to 202_server_messages
+            $sql = "SHOW COLUMNS FROM `202_server_messages` LIKE 'category'";
+            $result = _mysqli_query($sql);
+            if (!($result && mysqli_num_rows($result) > 0)) {
+                $sql = "ALTER TABLE `202_server_messages`
+                        ADD COLUMN `category` varchar(50) NOT NULL DEFAULT 'general' AFTER `type`,
+                        ADD COLUMN `image_url` varchar(500) DEFAULT NULL AFTER `icon`,
+                        ADD COLUMN `format` varchar(10) NOT NULL DEFAULT 'plain' AFTER `image_url`";
+                $result = _mysqli_query($sql);
+            }
+
+            // Create per-user message state table (replaces per-installation read/dismissed)
+            $sql = "CREATE TABLE IF NOT EXISTS `202_server_message_user_state` (
+              `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+              `message_id` varchar(100) NOT NULL COMMENT 'References 202_server_messages.message_id',
+              `user_id` mediumint(8) unsigned NOT NULL,
+              `is_read` tinyint(1) NOT NULL DEFAULT '0',
+              `is_dismissed` tinyint(1) NOT NULL DEFAULT '0',
+              `read_at` int(10) unsigned DEFAULT NULL,
+              `dismissed_at` int(10) unsigned DEFAULT NULL,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `message_user` (`message_id`, `user_id`),
+              KEY `user_dismissed` (`user_id`, `is_dismissed`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Migrate existing per-installation read/dismissed state to per-user table
+            $sql = "INSERT IGNORE INTO `202_server_message_user_state`
+                    (message_id, user_id, is_read, is_dismissed, read_at, dismissed_at)
+                    SELECT message_id, COALESCE(read_by_user_id, 1), is_read, is_dismissed, read_at, dismissed_at
+                    FROM `202_server_messages`
+                    WHERE is_read = 1 OR is_dismissed = 1";
+            $result = _mysqli_query($sql);
+
+            // Create message replies table
+            $sql = "CREATE TABLE IF NOT EXISTS `202_server_message_replies` (
+              `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+              `message_id` varchar(100) NOT NULL COMMENT 'References 202_server_messages.message_id',
+              `user_id` mediumint(8) unsigned NOT NULL,
+              `body` text NOT NULL,
+              `sent_to_server` tinyint(1) NOT NULL DEFAULT '0',
+              `server_reply_id` varchar(100) DEFAULT NULL,
+              `created_at` int(10) unsigned NOT NULL,
+              PRIMARY KEY (`id`),
+              KEY `message_created` (`message_id`, `created_at`),
+              KEY `user_id` (`user_id`),
+              KEY `pending_send` (`sent_to_server`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            $sql = "UPDATE 202_version SET version='1.9.62'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.62';
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if ($prosper202_version > '1.9.62') {
+
+            $prosper202_version = '1.9.62';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }

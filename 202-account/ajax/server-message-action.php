@@ -42,6 +42,27 @@ switch ($action) {
         $response = ['success' => true, 'unread_count' => $messaging->getUnreadCount()];
         break;
 
+    case 'reply':
+        if ($messageId === '') {
+            $response = ['success' => false, 'error' => 'Missing message_id'];
+            break;
+        }
+        $body = trim($_POST['body'] ?? '');
+        if ($body === '') {
+            $response = ['success' => false, 'error' => 'Reply body cannot be empty'];
+            break;
+        }
+        $result = $messaging->submitReply($messageId, $body);
+        $response = [
+            'success' => $result,
+            'unread_count' => $messaging->getUnreadCount(),
+        ];
+        if ($result) {
+            $response['reply_user'] = $_SESSION['user_name'] ?? 'You';
+            $response['reply_time'] = 'just now';
+        }
+        break;
+
     default:
         $response = ['success' => false, 'error' => 'Unknown action'];
 }

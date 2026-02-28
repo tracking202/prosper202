@@ -32,6 +32,8 @@ final class CoreTables
             self::userDataFeedback(),
             self::serverMessages(),
             self::serverMessagesSync(),
+            self::serverMessageUserState(),
+            self::serverMessageReplies(),
         ];
     }
 
@@ -177,12 +179,15 @@ final class CoreTables
                 `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
                 `message_id` varchar(100) NOT NULL COMMENT 'Unique ID from central server',
                 `type` varchar(20) NOT NULL DEFAULT 'info',
+                `category` varchar(50) NOT NULL DEFAULT 'general',
                 `title` varchar(500) NOT NULL,
                 `body` text NOT NULL,
                 `action_url` varchar(500) DEFAULT NULL,
                 `action_label` varchar(100) DEFAULT NULL,
                 `priority` tinyint(3) unsigned NOT NULL DEFAULT '0',
                 `icon` varchar(50) DEFAULT NULL,
+                `image_url` varchar(500) DEFAULT NULL,
+                `format` varchar(10) NOT NULL DEFAULT 'plain',
                 `expires_at` int(10) unsigned DEFAULT NULL,
                 `published_at` int(10) unsigned NOT NULL,
                 `fetched_at` int(10) unsigned NOT NULL,
@@ -210,6 +215,45 @@ final class CoreTables
                 `error_count` int(11) NOT NULL DEFAULT '0',
                 `last_error` text,
                 PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function serverMessageUserState(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::SERVER_MESSAGE_USER_STATE,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::SERVER_MESSAGE_USER_STATE . "` (
+                `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `message_id` varchar(100) NOT NULL COMMENT 'References 202_server_messages.message_id',
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `is_read` tinyint(1) NOT NULL DEFAULT '0',
+                `is_dismissed` tinyint(1) NOT NULL DEFAULT '0',
+                `read_at` int(10) unsigned DEFAULT NULL,
+                `dismissed_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `message_user` (`message_id`, `user_id`),
+                KEY `user_dismissed` (`user_id`, `is_dismissed`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function serverMessageReplies(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::SERVER_MESSAGE_REPLIES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::SERVER_MESSAGE_REPLIES . "` (
+                `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `message_id` varchar(100) NOT NULL COMMENT 'References 202_server_messages.message_id',
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `body` text NOT NULL,
+                `sent_to_server` tinyint(1) NOT NULL DEFAULT '0',
+                `server_reply_id` varchar(100) DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`id`),
+                KEY `message_created` (`message_id`, `created_at`),
+                KEY `user_id` (`user_id`),
+                KEY `pending_send` (`sent_to_server`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

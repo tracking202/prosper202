@@ -1608,6 +1608,7 @@ $(document).ready(function() {
 	var smPanelOpen = false;
 	var smPollInterval = 5 * 60 * 1000; // 5 minutes
 	var smPollTimer = null;
+	var smCurrentCategory = null; // null = all
 
 	// Fetch unread count on page load
 	smUpdateBadge();
@@ -1687,7 +1688,11 @@ $(document).ready(function() {
 	});
 
 	// Mark message as read on click (anywhere on the item body)
-	$(document).on('click', '.sm-item', function() {
+	$(document).on('click', '.sm-item', function(e) {
+		// Don't mark as read if clicking on reply input, send button, or action button
+		if ($(e.target).closest('.sm-reply-form, .sm-reply-send, .sm-item-action-btn, .sm-item-dismiss').length) {
+			return;
+		}
 		var $item = $(this);
 		if ($item.hasClass('sm-item-unread')) {
 			var messageId = $item.data('message-id');
@@ -1702,6 +1707,87 @@ $(document).ready(function() {
 			}, 'json');
 		}
 	});
+
+	// Category filter tabs
+	$(document).on('click', '.sm-cat-tab', function(e) {
+		e.preventDefault();
+		var cat = $(this).data('category');
+		$('.sm-cat-tab').removeClass('sm-cat-active');
+		$(this).addClass('sm-cat-active');
+
+		if (cat === 'all') {
+			smCurrentCategory = null;
+		} else {
+			smCurrentCategory = cat;
+		}
+		smLoadMessages();
+	});
+
+	// Reply: submit on send button click
+	$(document).on('click', '.sm-reply-send', function(e) {
+		e.preventDefault();
+		e.stopPropagation();
+		var $form = $(this).closest('.sm-reply-form');
+		smSubmitReply($form);
+	});
+
+	// Reply: submit on Enter key
+	$(document).on('keydown', '.sm-reply-input', function(e) {
+		if (e.keyCode === 13) {
+			e.preventDefault();
+			var $form = $(this).closest('.sm-reply-form');
+			smSubmitReply($form);
+		}
+	});
+
+	function smSubmitReply($form) {
+		var $input = $form.find('.sm-reply-input');
+		var body = $.trim($input.val());
+		var messageId = $form.data('message-id');
+
+		if (!body) return;
+
+		var $sendBtn = $form.find('.sm-reply-send');
+		$sendBtn.prop('disabled', true);
+		$input.prop('disabled', true);
+
+		$.post(smBaseUrl + '202-account/ajax/server-message-action.php', {
+			action: 'reply',
+			message_id: messageId,
+			body: body
+		}, function(data) {
+			$sendBtn.prop('disabled', false);
+			$input.prop('disabled', false);
+
+			if (data.success) {
+				$input.val('');
+
+				// Append the reply to the replies section
+				var $item = $form.closest('.sm-item');
+				var $replies = $item.find('.sm-replies');
+				if ($replies.length === 0) {
+					$replies = $('<div class="sm-replies"></div>');
+					$form.before($replies);
+				}
+
+				var replyHtml =
+					'<div class="sm-reply sm-reply-new">' +
+					'<span class="sm-reply-user">' + $('<span>').text(data.reply_user || 'You').html() + '</span> ' +
+					'<span class="sm-reply-time">' + $('<span>').text(data.reply_time || 'just now').html() + '</span>' +
+					'<div class="sm-reply-body">' + $('<div>').text(body).html() + '</div>' +
+					'</div>';
+
+				$replies.append(replyHtml);
+
+				// Mark as read
+				$item.removeClass('sm-item-unread').addClass('sm-item-read');
+				smSetBadge(data.unread_count);
+			}
+		}, 'json').fail(function() {
+			$sendBtn.prop('disabled', false);
+			$input.prop('disabled', false);
+		});
+	}
 
 	function smOpenPanel() {
 		smPanelOpen = true;
@@ -1721,8 +1807,18 @@ $(document).ready(function() {
 			'<div class="sm-loading"><img src="' + smBaseUrl + '202-img/loader-small.gif" alt="Loading..."></div>'
 		);
 
-		$.get(smBaseUrl + '202-account/ajax/server-messages.php', function(html) {
+		var params = {};
+		if (smCurrentCategory) {
+			params.category = smCurrentCategory;
+		}
+
+		$.get(smBaseUrl + '202-account/ajax/server-messages.php', params, function(html) {
 			$('#sm-panel-body').html(html);
+			// Restore active category tab
+			if (smCurrentCategory) {
+				$('.sm-cat-tab').removeClass('sm-cat-active');
+				$('.sm-cat-tab[data-category="' + smCurrentCategory + '"]').addClass('sm-cat-active');
+			}
 		}).fail(function() {
 			$('#sm-panel-body').html(
 				'<div class="sm-empty"><p>Could not load messages.</p></div>'

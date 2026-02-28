@@ -149,6 +149,8 @@ final class TableRegistry
     // Server messaging tables
     public const string SERVER_MESSAGES = '202_server_messages';
     public const string SERVER_MESSAGES_SYNC = '202_server_messages_sync';
+    public const string SERVER_MESSAGE_USER_STATE = '202_server_message_user_state';
+    public const string SERVER_MESSAGE_REPLIES = '202_server_message_replies';
 
     // Bot202 Facebook Pixel tables
     public const string BOT202_FACEBOOK_PIXEL_ASSISTANT = '202_bot202_facebook_pixel_assistant';
