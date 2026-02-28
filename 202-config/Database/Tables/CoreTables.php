@@ -191,15 +191,10 @@ final class CoreTables
                 `expires_at` int(10) unsigned DEFAULT NULL,
                 `published_at` int(10) unsigned NOT NULL,
                 `fetched_at` int(10) unsigned NOT NULL,
-                `is_read` tinyint(1) NOT NULL DEFAULT '0',
-                `is_dismissed` tinyint(1) NOT NULL DEFAULT '0',
-                `read_at` int(10) unsigned DEFAULT NULL,
-                `dismissed_at` int(10) unsigned DEFAULT NULL,
-                `read_by_user_id` mediumint(8) unsigned DEFAULT NULL,
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `message_id` (`message_id`),
-                KEY `is_read_dismissed` (`is_read`, `is_dismissed`),
-                KEY `priority_published` (`priority` DESC, `published_at` DESC)
+                KEY `priority_published` (`priority` DESC, `published_at` DESC),
+                KEY `expires_at` (`expires_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

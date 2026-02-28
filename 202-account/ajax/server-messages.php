@@ -38,6 +38,10 @@ if (empty($messages)) { ?>
 <?php exit;
 }
 
+// Batch-load replies for all messages in a single query (avoids N+1)
+$messageIds = array_column($messages, 'message_id');
+$allReplies = $messaging->getRepliesBatch($messageIds);
+
 foreach ($messages as $msg) {
     $typeClass = match ($msg['type']) {
         'warning' => 'sm-item-warning',
@@ -65,12 +69,10 @@ foreach ($messages as $msg) {
     $categoryValue = htmlspecialchars($msg['category'] ?? 'general', ENT_QUOTES, 'UTF-8');
 
     $publishedAt = (int) $msg['published_at'];
-    $timeAgo = function_exists('human_time_diff')
-        ? human_time_diff($publishedAt, time()) . ' ago'
-        : date('M j, Y', $publishedAt);
+    $timeAgo = human_time_diff($publishedAt, time()) . ' ago';
 
-    // Get replies for this message
-    $replies = $messaging->getReplies($msg['message_id']);
+    // Get replies from batch-loaded data
+    $replies = $allReplies[$msg['message_id']] ?? [];
     ?>
     <div class="sm-item <?php echo $typeClass . ' ' . $readClass; ?>" data-message-id="<?php echo $messageId; ?>" data-category="<?php echo $categoryValue; ?>">
         <div class="sm-item-icon">
@@ -104,9 +106,7 @@ foreach ($messages as $msg) {
                     <?php foreach ($replies as $reply) {
                         $replyBody = htmlspecialchars($reply['body'], ENT_QUOTES, 'UTF-8');
                         $replyUser = htmlspecialchars($reply['user_name'] ?? 'You', ENT_QUOTES, 'UTF-8');
-                        $replyTime = function_exists('human_time_diff')
-                            ? human_time_diff((int) $reply['created_at'], time()) . ' ago'
-                            : date('M j g:ia', (int) $reply['created_at']);
+                        $replyTime = human_time_diff((int) $reply['created_at'], time()) . ' ago';
                     ?>
                         <div class="sm-reply">
                             <span class="sm-reply-user"><?php echo $replyUser; ?></span>

@@ -67,4 +67,10 @@ switch ($action) {
         $response = ['success' => false, 'error' => 'Unknown action'];
 }
 
-echo json_encode($response);
+$json = json_encode($response);
+if ($json === false) {
+    http_response_code(500);
+    echo '{"success":false,"error":"Response encoding failed"}';
+} else {
+    echo $json;
+}

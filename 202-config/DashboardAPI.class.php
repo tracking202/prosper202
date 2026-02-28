@@ -161,4 +161,84 @@ class DashboardAPI
     {
         return $this->fetchEndpoint('sponsors');
     }
+
+    /**
+     * Make an HTTP request to the API with custom headers and optional POST body.
+     *
+     * @param string $endpoint Relative endpoint path (appended to baseUrl)
+     * @param array $extraHeaders Additional HTTP headers
+     * @param string|null $postBody JSON POST body (null = GET request)
+     * @return array|null Decoded JSON or null on failure
+     */
+    public function request(string $endpoint, array $extraHeaders = [], ?string $postBody = null): ?array
+    {
+        $url = $this->baseUrl . '/' . $endpoint;
+
+        $ch = curl_init();
+        if ($ch === false) {
+            error_log("DashboardAPI: Failed to initialize cURL");
+            return null;
+        }
+
+        $headers = [
+            'Accept: application/json',
+            'Content-Type: application/json',
+        ];
+        foreach ($extraHeaders as $header) {
+            $headers[] = $header;
+        }
+
+        $opts = [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $this->timeout,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_USERAGENT => 'Prosper202/' . PROSPER202_VERSION,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 3,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTPHEADER => $headers,
+        ];
+
+        if ($postBody !== null) {
+            $opts[CURLOPT_POST] = true;
+            $opts[CURLOPT_POSTFIELDS] = $postBody;
+        }
+
+        curl_setopt_array($ch, $opts);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false || !empty($error)) {
+            error_log("DashboardAPI: cURL error for {$url}: {$error}");
+            return null;
+        }
+
+        if ($httpCode < 200 || $httpCode >= 300) {
+            error_log("DashboardAPI: HTTP {$httpCode} error for {$url}");
+            return null;
+        }
+
+        if (!is_string($response) || $response === '') {
+            error_log("DashboardAPI: Empty response from {$url}");
+            return null;
+        }
+
+        $decoded = json_decode($response, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log("DashboardAPI: JSON decode error for {$url}: " . json_last_error_msg());
+            return null;
+        }
+
+        if (!is_array($decoded)) {
+            error_log("DashboardAPI: Invalid response format from {$url}");
+            return null;
+        }
+
+        return $decoded;
+    }
 }

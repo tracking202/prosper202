@@ -18,19 +18,16 @@ declare(strict_types=1);
 class ServerMessaging
 {
     private ?\mysqli $db;
-    private string $baseUrl;
-    private int $timeout = 10;
+    private DashboardAPI $api;
     private int $syncInterval = 900; // 15 minutes
+
+    /** @var array{install_hash: ?string, api_key: ?string}|null Cached credentials */
+    private ?array $credentials = null;
 
     /** @var string[] Allowed HTML tags for rich message bodies */
     private const array ALLOWED_TAGS = [
         'b', 'i', 'strong', 'em', 'a', 'br', 'p', 'ul', 'ol', 'li',
         'code', 'pre', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'span', 'img',
-    ];
-
-    /** @var string[] Valid message categories */
-    private const array VALID_CATEGORIES = [
-        'general', 'update', 'alert', 'news', 'promo',
     ];
 
     public function __construct()
@@ -43,71 +40,78 @@ class ServerMessaging
             $this->db = null;
         }
 
-        $this->baseUrl = defined('DASHBOARD_API_URL') ? DASHBOARD_API_URL : 'https://my.tracking202.com/api/v1';
+        $this->api = new DashboardAPI();
     }
 
     /**
      * Get the current user ID from the session.
+     * Callers gate on AUTH::require_user() so the session is always set.
      */
     private function getCurrentUserId(): int
     {
-        return isset($_SESSION['user_id']) ? (int) $_SESSION['user_id'] : 1;
+        return (int) $_SESSION['user_id'];
     }
 
     /**
-     * Get the install_hash for the current installation.
+     * Load install_hash and API key in a single query (cached per request).
      */
-    private function getInstallHash(): ?string
+    private function getCredentials(): array
     {
+        if ($this->credentials !== null) {
+            return $this->credentials;
+        }
+
+        $this->credentials = ['install_hash' => null, 'api_key' => null];
+
         if ($this->db === null) {
-            return null;
+            return $this->credentials;
         }
 
         $userId = $this->getCurrentUserId();
-        $stmt = $this->db->prepare('SELECT install_hash FROM 202_users WHERE user_id = ? LIMIT 1');
+        $stmt = $this->db->prepare(
+            'SELECT install_hash, p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
+        );
         if (!$stmt) {
-            return null;
+            return $this->credentials;
         }
 
         $stmt->bind_param('i', $userId);
         if (!$stmt->execute()) {
             $stmt->close();
-            return null;
+            return $this->credentials;
         }
 
         $result = $stmt->get_result();
         $row = $result->fetch_assoc();
         $stmt->close();
 
-        return $row['install_hash'] ?? null;
+        if ($row !== null) {
+            $this->credentials = [
+                'install_hash' => $row['install_hash'] ?? null,
+                'api_key' => $row['p202_customer_api_key'] ?? null,
+            ];
+        }
+
+        return $this->credentials;
     }
 
     /**
-     * Get the customer API key for authenticated requests.
+     * Build auth headers for API requests.
+     *
+     * @return string[] HTTP headers
      */
-    private function getApiKey(): ?string
+    private function buildApiHeaders(): array
     {
-        if ($this->db === null) {
-            return null;
+        $creds = $this->getCredentials();
+        $headers = [
+            'X-P202-Version: ' . PROSPER202_VERSION,
+        ];
+
+        if (!empty($creds['api_key'])) {
+            $headers[] = 'X-P202-Api-Key: ' . $creds['api_key'];
         }
 
-        $userId = $this->getCurrentUserId();
-        $stmt = $this->db->prepare('SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1');
-        if (!$stmt) {
-            return null;
-        }
-
-        $stmt->bind_param('i', $userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return null;
-        }
-
-        $result = $stmt->get_result();
-        $row = $result->fetch_assoc();
-        $stmt->close();
-
-        return $row['p202_customer_api_key'] ?? null;
+        return $headers;
     }
 
     // =========================================================================
@@ -127,7 +131,7 @@ class ServerMessaging
             return true;
         }
 
-        $installHash = $this->getInstallHash();
+        $installHash = $this->getCredentials()['install_hash'];
         if (empty($installHash)) {
             error_log('ServerMessaging: No install_hash found, cannot sync');
             return false;
@@ -135,11 +139,20 @@ class ServerMessaging
 
         $this->updateSyncStatus('start');
 
-        $messages = $this->fetchFromServer($installHash);
-        if ($messages === null) {
+        $decoded = $this->api->request(
+            'server-messages/' . urlencode($installHash),
+            $this->buildApiHeaders()
+        );
+
+        if ($decoded === null) {
             $this->updateSyncStatus('error', 'Failed to fetch messages from server');
             return false;
         }
+
+        // Support both {data: [...]} wrapper and plain array
+        $messages = isset($decoded['data']) && is_array($decoded['data'])
+            ? $decoded['data']
+            : $decoded;
 
         $stored = $this->storeMessages($messages);
         if ($stored) {
@@ -173,82 +186,7 @@ class ServerMessaging
     }
 
     /**
-     * Fetch messages from the central server API.
-     */
-    private function fetchFromServer(string $installHash): ?array
-    {
-        $url = $this->baseUrl . '/server-messages/' . urlencode($installHash);
-        $apiKey = $this->getApiKey();
-
-        $ch = curl_init();
-        if ($ch === false) {
-            error_log('ServerMessaging: Failed to initialize cURL');
-            return null;
-        }
-
-        $headers = [
-            'Accept: application/json',
-            'Content-Type: application/json',
-            'X-P202-Version: ' . (defined('PROSPER202_VERSION') ? PROSPER202_VERSION : 'unknown'),
-        ];
-
-        if (!empty($apiKey)) {
-            $headers[] = 'X-P202-Api-Key: ' . $apiKey;
-        }
-
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => $this->timeout,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_USERAGENT => 'Prosper202-ServerMessaging/' . (defined('PROSPER202_VERSION') ? PROSPER202_VERSION : '1.0'),
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 3,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_HTTPHEADER => $headers,
-        ]);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($response === false || !empty($error)) {
-            error_log("ServerMessaging: cURL error: {$error}");
-            return null;
-        }
-
-        if ($httpCode !== 200) {
-            error_log("ServerMessaging: HTTP {$httpCode} from server");
-            return null;
-        }
-
-        if (!is_string($response) || $response === '') {
-            error_log('ServerMessaging: Empty response from server');
-            return null;
-        }
-
-        $decoded = json_decode($response, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            error_log('ServerMessaging: JSON decode error: ' . json_last_error_msg());
-            return null;
-        }
-
-        if (isset($decoded['data']) && is_array($decoded['data'])) {
-            return $decoded['data'];
-        }
-
-        if (is_array($decoded) && !isset($decoded['data'])) {
-            return $decoded;
-        }
-
-        return null;
-    }
-
-    /**
      * Store fetched messages in the local database.
-     * Includes new fields: category, image_url, format.
      */
     private function storeMessages(array $messages): bool
     {
@@ -339,20 +277,34 @@ class ServerMessaging
 
         $now = time();
 
-        // Clean expired messages
         $stmt = $this->db->prepare('DELETE FROM 202_server_messages WHERE expires_at IS NOT NULL AND expires_at < ?');
-        if ($stmt) {
-            $stmt->bind_param('i', $now);
-            $stmt->execute();
-            $stmt->close();
+        if (!$stmt) {
+            return;
         }
+        $stmt->bind_param('i', $now);
+        if (!$stmt->execute()) {
+            error_log('ServerMessaging: Failed to clean expired messages: ' . $stmt->error);
+        }
+        $stmt->close();
 
-        // Clean orphaned user state rows for messages that no longer exist
-        $this->db->query(
+        // Clean orphaned user state and reply rows
+        $result = $this->db->query(
             'DELETE s FROM 202_server_message_user_state s
              LEFT JOIN 202_server_messages m ON s.message_id = m.message_id
              WHERE m.message_id IS NULL'
         );
+        if ($result === false) {
+            error_log('ServerMessaging: Failed to clean orphaned user state: ' . $this->db->error);
+        }
+
+        $result = $this->db->query(
+            'DELETE r FROM 202_server_message_replies r
+             LEFT JOIN 202_server_messages m ON r.message_id = m.message_id
+             WHERE m.message_id IS NULL'
+        );
+        if ($result === false) {
+            error_log('ServerMessaging: Failed to clean orphaned replies: ' . $this->db->error);
+        }
     }
 
     // =========================================================================
@@ -375,7 +327,9 @@ class ServerMessaging
         $userId = $this->getCurrentUserId();
         $now = time();
 
-        $sql = "SELECT m.*,
+        $sql = "SELECT m.id, m.message_id, m.type, m.category, m.title, m.body,
+                    m.action_url, m.action_label, m.priority, m.icon, m.image_url,
+                    m.format, m.expires_at, m.published_at, m.fetched_at,
                     COALESCE(us.is_read, 0) AS is_read,
                     COALESCE(us.is_dismissed, 0) AS is_dismissed,
                     us.read_at,
@@ -502,30 +456,63 @@ class ServerMessaging
     }
 
     // =========================================================================
-    // Read / Dismiss (per-user)
+    // Read / Dismiss (per-user) — unified via setUserState()
     // =========================================================================
 
     /**
-     * Ensure a user-state row exists for the given message + user, then return it.
-     * Uses INSERT IGNORE to avoid race conditions.
+     * Ensure a user-state row exists, then set a flag on it.
+     *
+     * @param string $messageId Server-assigned message ID
+     * @param string $flagColumn 'is_read' or 'is_dismissed'
+     * @param string $timestampColumn 'read_at' or 'dismissed_at'
+     * @return bool True if the flag was set (i.e. it was not already set)
      */
-    private function ensureUserState(string $messageId, int $userId): bool
+    private function setUserState(string $messageId, string $flagColumn, string $timestampColumn): bool
     {
         if ($this->db === null) {
             return false;
         }
 
-        $sql = "INSERT IGNORE INTO 202_server_message_user_state (message_id, user_id) VALUES (?, ?)";
+        // Whitelist column names to prevent SQL injection
+        $allowed = ['is_read' => 'read_at', 'is_dismissed' => 'dismissed_at'];
+        if (!isset($allowed[$flagColumn]) || $allowed[$flagColumn] !== $timestampColumn) {
+            return false;
+        }
+
+        $userId = $this->getCurrentUserId();
+        $now = time();
+
+        // Ensure state row exists
+        $insert = $this->db->prepare(
+            "INSERT IGNORE INTO 202_server_message_user_state (message_id, user_id) VALUES (?, ?)"
+        );
+        if (!$insert) {
+            return false;
+        }
+        $insert->bind_param('si', $messageId, $userId);
+        if (!$insert->execute()) {
+            $insert->close();
+            return false;
+        }
+        $insert->close();
+
+        // Set the flag
+        $sql = "UPDATE 202_server_message_user_state SET {$flagColumn} = 1, {$timestampColumn} = ? WHERE message_id = ? AND user_id = ? AND {$flagColumn} = 0";
         $stmt = $this->db->prepare($sql);
         if (!$stmt) {
             return false;
         }
 
-        $stmt->bind_param('si', $messageId, $userId);
-        $ok = $stmt->execute();
+        $stmt->bind_param('isi', $now, $messageId, $userId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return false;
+        }
+
+        $affected = $stmt->affected_rows;
         $stmt->close();
 
-        return $ok;
+        return $affected > 0;
     }
 
     /**
@@ -533,32 +520,7 @@ class ServerMessaging
      */
     public function markAsRead(string $messageId): bool
     {
-        if ($this->db === null) {
-            return false;
-        }
-
-        $userId = $this->getCurrentUserId();
-        $now = time();
-
-        $this->ensureUserState($messageId, $userId);
-
-        $stmt = $this->db->prepare(
-            'UPDATE 202_server_message_user_state SET is_read = 1, read_at = ? WHERE message_id = ? AND user_id = ? AND is_read = 0'
-        );
-        if (!$stmt) {
-            return false;
-        }
-
-        $stmt->bind_param('isi', $now, $messageId, $userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return false;
-        }
-
-        $affected = $stmt->affected_rows;
-        $stmt->close();
-
-        return $affected > 0;
+        return $this->setUserState($messageId, 'is_read', 'read_at');
     }
 
     /**
@@ -566,32 +528,7 @@ class ServerMessaging
      */
     public function dismissMessage(string $messageId): bool
     {
-        if ($this->db === null) {
-            return false;
-        }
-
-        $userId = $this->getCurrentUserId();
-        $now = time();
-
-        $this->ensureUserState($messageId, $userId);
-
-        $stmt = $this->db->prepare(
-            'UPDATE 202_server_message_user_state SET is_dismissed = 1, dismissed_at = ? WHERE message_id = ? AND user_id = ? AND is_dismissed = 0'
-        );
-        if (!$stmt) {
-            return false;
-        }
-
-        $stmt->bind_param('isi', $now, $messageId, $userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return false;
-        }
-
-        $affected = $stmt->affected_rows;
-        $stmt->close();
-
-        return $affected > 0;
+        return $this->setUserState($messageId, 'is_dismissed', 'dismissed_at');
     }
 
     /**
@@ -606,7 +543,7 @@ class ServerMessaging
         $userId = $this->getCurrentUserId();
         $now = time();
 
-        // First, ensure state rows exist for all unread messages
+        // First, ensure state rows exist for all visible messages
         $sql = "INSERT IGNORE INTO 202_server_message_user_state (message_id, user_id)
                 SELECT m.message_id, ?
                 FROM 202_server_messages m
@@ -616,11 +553,15 @@ class ServerMessaging
                 AND (m.expires_at IS NULL OR m.expires_at > ?)";
 
         $stmt = $this->db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param('iii', $userId, $userId, $now);
-            $stmt->execute();
-            $stmt->close();
+        if (!$stmt) {
+            return 0;
         }
+        $stmt->bind_param('iii', $userId, $userId, $now);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return 0;
+        }
+        $stmt->close();
 
         // Now mark all as read
         $stmt = $this->db->prepare(
@@ -649,10 +590,6 @@ class ServerMessaging
 
     /**
      * Submit a reply to a message. Stored locally and sent to the central server.
-     *
-     * @param string $messageId The message being replied to
-     * @param string $body The reply text
-     * @return bool True if the reply was stored
      */
     public function submitReply(string $messageId, string $body): bool
     {
@@ -702,52 +639,52 @@ class ServerMessaging
         $replyId = $stmt->insert_id;
         $stmt->close();
 
-        // Try to send to central server (non-blocking — mark as sent on success)
         $this->sendReplyToServer($replyId, $messageId, $body);
-
-        // Auto-mark as read
         $this->markAsRead($messageId);
 
         return true;
     }
 
     /**
-     * Get replies for a specific message.
+     * Get replies for a list of message IDs in a single query (batch).
      *
-     * @param string $messageId The message ID
-     * @return array List of reply rows
+     * @param string[] $messageIds
+     * @return array<string, array> Keyed by message_id
      */
-    public function getReplies(string $messageId): array
+    public function getRepliesBatch(array $messageIds): array
     {
-        if ($this->db === null) {
+        if ($this->db === null || $messageIds === []) {
             return [];
         }
 
+        $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
+        $types = str_repeat('s', count($messageIds));
+
         $stmt = $this->db->prepare(
-            'SELECT r.*, u.user_name
+            "SELECT r.message_id, r.body, r.created_at, u.user_name
              FROM 202_server_message_replies r
              LEFT JOIN 202_users u ON r.user_id = u.user_id
-             WHERE r.message_id = ?
-             ORDER BY r.created_at ASC'
+             WHERE r.message_id IN ({$placeholders})
+             ORDER BY r.created_at ASC"
         );
         if (!$stmt) {
             return [];
         }
 
-        $stmt->bind_param('s', $messageId);
+        $stmt->bind_param($types, ...$messageIds);
         if (!$stmt->execute()) {
             $stmt->close();
             return [];
         }
 
         $result = $stmt->get_result();
-        $replies = [];
+        $grouped = [];
         while ($row = $result->fetch_assoc()) {
-            $replies[] = $row;
+            $grouped[$row['message_id']][] = $row;
         }
         $stmt->close();
 
-        return $replies;
+        return $grouped;
     }
 
     /**
@@ -755,71 +692,39 @@ class ServerMessaging
      */
     private function sendReplyToServer(int $replyId, string $messageId, string $body): void
     {
-        $installHash = $this->getInstallHash();
+        $installHash = $this->getCredentials()['install_hash'];
         if (empty($installHash)) {
-            return;
-        }
-
-        $url = $this->baseUrl . '/server-messages/' . urlencode($installHash) . '/reply';
-        $apiKey = $this->getApiKey();
-
-        $ch = curl_init();
-        if ($ch === false) {
             return;
         }
 
         $payload = json_encode([
             'message_id' => $messageId,
             'body' => $body,
-            'user_id' => $this->getCurrentUserId(),
         ]);
-
         if ($payload === false) {
+            error_log('ServerMessaging: Failed to encode reply payload: ' . json_last_error_msg());
             return;
         }
 
-        $headers = [
-            'Accept: application/json',
-            'Content-Type: application/json',
-            'X-P202-Version: ' . (defined('PROSPER202_VERSION') ? PROSPER202_VERSION : 'unknown'),
-        ];
+        $decoded = $this->api->request(
+            'server-messages/' . urlencode($installHash) . '/reply',
+            $this->buildApiHeaders(),
+            $payload
+        );
 
-        if (!empty($apiKey)) {
-            $headers[] = 'X-P202-Api-Key: ' . $apiKey;
-        }
-
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 5,
-            CURLOPT_CONNECTTIMEOUT => 3,
-            CURLOPT_USERAGENT => 'Prosper202-ServerMessaging/' . (defined('PROSPER202_VERSION') ? PROSPER202_VERSION : '1.0'),
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_HTTPHEADER => $headers,
-        ]);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        // Mark as sent on success
-        if ($response !== false && $httpCode >= 200 && $httpCode < 300) {
-            $decoded = json_decode((string) $response, true);
-            $serverReplyId = (is_array($decoded) && isset($decoded['reply_id'])) ? (string) $decoded['reply_id'] : null;
+        if ($decoded !== null) {
+            $serverReplyId = isset($decoded['reply_id']) ? (string) $decoded['reply_id'] : null;
 
             $stmt = $this->db->prepare(
                 'UPDATE 202_server_message_replies SET sent_to_server = 1, server_reply_id = ? WHERE id = ?'
             );
             if ($stmt) {
                 $stmt->bind_param('si', $serverReplyId, $replyId);
-                $stmt->execute();
+                if (!$stmt->execute()) {
+                    error_log('ServerMessaging: Failed to mark reply as sent: ' . $stmt->error);
+                }
                 $stmt->close();
             }
-        } else {
-            error_log("ServerMessaging: Failed to send reply to server (HTTP {$httpCode})");
         }
     }
 
@@ -840,35 +745,33 @@ class ServerMessaging
             return $this->sanitizeHtml($body);
         }
 
-        // Plain text: escape then convert newlines
         return nl2br(htmlspecialchars($body, ENT_QUOTES, 'UTF-8'));
     }
 
     /**
      * Sanitize HTML body to a safe subset of tags.
-     * Strips all tags except the allow list.
-     * Ensures <a> tags open in new tabs and have rel="noopener".
      */
     private function sanitizeHtml(string $html): string
     {
         $allowedTagStr = '<' . implode('><', self::ALLOWED_TAGS) . '>';
         $html = strip_tags($html, $allowedTagStr);
 
-        // Process <a> tags: enforce target and rel attributes
+        // Process <a> tags: enforce target and rel, validate URL scheme
         $html = preg_replace_callback(
             '/<a\s+([^>]*)>/i',
             function (array $matches): string {
                 $attrs = $matches[1];
-
-                // Extract href
                 $href = '';
                 if (preg_match('/href\s*=\s*["\']([^"\']*)["\']/', $attrs, $hrefMatch)) {
                     $href = $hrefMatch[1];
                 }
 
-                // Only allow http/https/mailto URLs
-                if ($href !== '' && !preg_match('#^(https?://|mailto:)#i', $href)) {
-                    return '<a>';
+                if ($href !== '') {
+                    $cleaned = function_exists('clean_url') ? clean_url($href) : $href;
+                    if ($cleaned === '' || (!str_starts_with($cleaned, 'http') && !str_starts_with($cleaned, 'mailto:'))) {
+                        return '<a>';
+                    }
+                    $href = $cleaned;
                 }
 
                 $safeHref = htmlspecialchars($href, ENT_QUOTES, 'UTF-8');
@@ -877,12 +780,11 @@ class ServerMessaging
             $html
         ) ?? $html;
 
-        // Process <img> tags: enforce reasonable attributes
+        // Process <img> tags: enforce https src, sanitize attributes
         $html = preg_replace_callback(
             '/<img\s+([^>]*)>/i',
             function (array $matches): string {
                 $attrs = $matches[1];
-
                 $src = '';
                 if (preg_match('/src\s*=\s*["\']([^"\']*)["\']/', $attrs, $srcMatch)) {
                     $src = $srcMatch[1];
@@ -919,27 +821,31 @@ class ServerMessaging
 
         $now = time();
 
-        if ($status === 'start') {
-            $stmt = $this->db->prepare('UPDATE 202_server_messages_sync SET last_sync = ? WHERE id = 1');
-            if ($stmt) {
-                $stmt->bind_param('i', $now);
-                $stmt->execute();
-                $stmt->close();
-            }
-        } elseif ($status === 'success') {
-            $stmt = $this->db->prepare('UPDATE 202_server_messages_sync SET last_success = ?, error_count = 0, last_error = NULL WHERE id = 1');
-            if ($stmt) {
-                $stmt->bind_param('i', $now);
-                $stmt->execute();
-                $stmt->close();
-            }
-        } elseif ($status === 'error') {
-            $stmt = $this->db->prepare('UPDATE 202_server_messages_sync SET error_count = error_count + 1, last_error = ? WHERE id = 1');
-            if ($stmt) {
-                $stmt->bind_param('s', $error);
-                $stmt->execute();
-                $stmt->close();
-            }
+        $sqlMap = [
+            'start'   => 'UPDATE 202_server_messages_sync SET last_sync = ? WHERE id = 1',
+            'success' => 'UPDATE 202_server_messages_sync SET last_success = ?, error_count = 0, last_error = NULL WHERE id = 1',
+            'error'   => 'UPDATE 202_server_messages_sync SET error_count = error_count + 1, last_error = ? WHERE id = 1',
+        ];
+
+        $sql = $sqlMap[$status] ?? null;
+        if ($sql === null) {
+            return;
         }
+
+        $stmt = $this->db->prepare($sql);
+        if (!$stmt) {
+            return;
+        }
+
+        if ($status === 'error') {
+            $stmt->bind_param('s', $error);
+        } else {
+            $stmt->bind_param('i', $now);
+        }
+
+        if (!$stmt->execute()) {
+            error_log('ServerMessaging: Failed to update sync status: ' . $stmt->error);
+        }
+        $stmt->close();
     }
 }

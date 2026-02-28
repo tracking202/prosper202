@@ -1817,7 +1817,9 @@ $(document).ready(function() {
 			// Restore active category tab
 			if (smCurrentCategory) {
 				$('.sm-cat-tab').removeClass('sm-cat-active');
-				$('.sm-cat-tab[data-category="' + smCurrentCategory + '"]').addClass('sm-cat-active');
+				$('.sm-cat-tab').filter(function() {
+					return $(this).data('category') === smCurrentCategory;
+				}).addClass('sm-cat-active');
 			}
 		}).fail(function() {
 			$('#sm-panel-body').html(
@@ -1827,6 +1829,9 @@ $(document).ready(function() {
 	}
 
 	function smUpdateBadge() {
+		if (document.hidden) {
+			return;
+		}
 		$.post(smBaseUrl + '202-account/ajax/server-message-action.php', {
 			action: 'count'
 		}, function(data) {
