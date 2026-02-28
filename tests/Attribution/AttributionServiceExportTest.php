@@ -9,7 +9,6 @@ require_once __DIR__ . '/Support/RepositoryFakes.php';
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\AttributionService;
-use Prosper202\Attribution\ExportFormat;
 use Prosper202\Attribution\ExportStatus;
 use Prosper202\Attribution\Repository\NullAuditRepository;
 use Prosper202\Attribution\ScopeType;

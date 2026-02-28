@@ -7,61 +7,47 @@ namespace Tests\Attribution\Export;
 require_once __DIR__ . '/../Support/RepositoryFakes.php';
 
 use PHPUnit\Framework\TestCase;
-use Prosper202\Attribution\AttributionService;
+use Prosper202\Attribution\Export\ExportFormat;
+use Prosper202\Attribution\Export\ExportJob;
 use Prosper202\Attribution\Export\ExportProcessor;
+use Prosper202\Attribution\Export\ExportStatus;
 use Prosper202\Attribution\Export\SnapshotExporter;
 use Prosper202\Attribution\Export\WebhookDispatcher;
-use Prosper202\Attribution\Repository\NullAuditRepository;
+use Prosper202\Attribution\Repository\ExportRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
-use Tests\Attribution\Support\InMemoryExportRepository;
 use Tests\Attribution\Support\InMemoryModelRepository;
 use Tests\Attribution\Support\InMemorySnapshotRepository;
-use Tests\Attribution\Support\InMemoryTouchpointRepository;
 
 final class ExportProcessorTest extends TestCase
 {
-    private InMemoryExportRepository $exportRepository;
+    private InMemoryExportRepo $exportRepository;
     private InMemoryModelRepository $modelRepository;
     private InMemorySnapshotRepository $snapshotRepository;
-    private InMemoryTouchpointRepository $touchpointRepository;
-    private SnapshotExporter $snapshotExporter;
-    private WebhookDispatcher $webhookDispatcher;
     private ExportProcessor $processor;
-    private AttributionService $service;
     private string $exportPath;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->exportRepository = new InMemoryExportRepository(fn (): int => 1_700_000_100);
+        $this->exportRepository = new InMemoryExportRepo();
         $this->modelRepository = new InMemoryModelRepository();
         $this->snapshotRepository = new InMemorySnapshotRepository();
-        $this->touchpointRepository = new InMemoryTouchpointRepository();
-        $auditRepository = new NullAuditRepository();
 
         $this->exportPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'prosper202-export-tests';
         if (is_dir($this->exportPath)) {
             $this->recursiveDelete($this->exportPath);
         }
 
-        $this->snapshotExporter = new SnapshotExporter($this->exportPath);
-        $this->webhookDispatcher = new WebhookDispatcher();
-
-        $this->service = new AttributionService(
-            $this->modelRepository,
-            $this->snapshotRepository,
-            $this->touchpointRepository,
-            $auditRepository,
-            $this->exportRepository
-        );
+        $snapshotExporter = new SnapshotExporter($this->exportPath);
+        $webhookDispatcher = new WebhookDispatcher();
 
         $this->processor = new ExportProcessor(
             $this->exportRepository,
             $this->snapshotRepository,
             $this->modelRepository,
-            $this->snapshotExporter,
-            $this->webhookDispatcher
+            $snapshotExporter,
+            $webhookDispatcher
         );
     }
 
@@ -77,15 +63,33 @@ final class ExportProcessorTest extends TestCase
     public function testProcessPendingCompletesJob(): void
     {
         $now = (int) floor(time() / 3600) * 3600;
-        $this->service->scheduleSnapshotExport(
-            1,
-            1,
-            ScopeType::GLOBAL,
-            null,
-            $now - 7200,
-            $now,
-            \Prosper202\Attribution\Export\ExportFormat::CSV
+        $timestamp = time();
+
+        $job = new ExportJob(
+            exportId: null,
+            userId: 1,
+            modelId: 1,
+            scopeType: ScopeType::GLOBAL,
+            scopeId: null,
+            startHour: $now - 7200,
+            endHour: $now,
+            format: ExportFormat::CSV,
+            status: ExportStatus::PENDING,
+            filePath: null,
+            downloadToken: null,
+            webhookUrl: null,
+            webhookMethod: 'POST',
+            webhookHeaders: [],
+            webhookStatusCode: null,
+            webhookResponseBody: null,
+            lastAttemptedAt: null,
+            completedAt: null,
+            errorMessage: null,
+            createdAt: $timestamp,
+            updatedAt: $timestamp,
         );
+
+        $this->exportRepository->create($job);
 
         $results = $this->processor->processPending(5);
 
@@ -95,25 +99,41 @@ final class ExportProcessorTest extends TestCase
 
         $jobs = $this->exportRepository->findForUser(1);
         $this->assertCount(1, $jobs);
-        $job = $jobs[0];
-        $this->assertSame('completed', $job->status->value);
-        $this->assertNotNull($job->filePath);
-        $this->assertFileExists($job->filePath);
+        $this->assertSame('completed', $jobs[0]->status->value);
+        $this->assertNotNull($jobs[0]->filePath);
+        $this->assertFileExists($jobs[0]->filePath);
     }
 
     public function testProcessPendingMarksJobsFailedWhenModelMissing(): void
     {
         $now = (int) floor(time() / 3600) * 3600;
-        $this->service->scheduleSnapshotExport(
-            1,
-            1,
-            ScopeType::GLOBAL,
-            null,
-            $now - 3600,
-            $now,
-            \Prosper202\Attribution\Export\ExportFormat::CSV
+        $timestamp = time();
+
+        $job = new ExportJob(
+            exportId: null,
+            userId: 1,
+            modelId: 1,
+            scopeType: ScopeType::GLOBAL,
+            scopeId: null,
+            startHour: $now - 3600,
+            endHour: $now,
+            format: ExportFormat::CSV,
+            status: ExportStatus::PENDING,
+            filePath: null,
+            downloadToken: null,
+            webhookUrl: null,
+            webhookMethod: 'POST',
+            webhookHeaders: [],
+            webhookStatusCode: null,
+            webhookResponseBody: null,
+            lastAttemptedAt: null,
+            completedAt: null,
+            errorMessage: null,
+            createdAt: $timestamp,
+            updatedAt: $timestamp,
         );
 
+        $this->exportRepository->create($job);
         $this->modelRepository->delete(1, 1);
 
         $results = $this->processor->processPending(5);
@@ -151,5 +171,77 @@ final class ExportProcessorTest extends TestCase
         }
 
         @rmdir($path);
+    }
+}
+
+/**
+ * In-memory fake for ExportRepositoryInterface (Export subsystem).
+ */
+final class InMemoryExportRepo implements ExportRepositoryInterface
+{
+    /** @var array<int, ExportJob> */
+    public array $jobs = [];
+
+    private int $nextId = 1;
+
+    public function create(ExportJob $job): ExportJob
+    {
+        $job->exportId = $this->nextId++;
+        $this->jobs[$job->exportId] = $job;
+
+        return $job;
+    }
+
+    public function update(ExportJob $job): ExportJob
+    {
+        if ($job->exportId !== null) {
+            $this->jobs[$job->exportId] = $job;
+        }
+
+        return $job;
+    }
+
+    public function findById(int $exportId): ?ExportJob
+    {
+        return $this->jobs[$exportId] ?? null;
+    }
+
+    public function findForUser(int $userId, ?int $modelId = null, int $limit = 25): array
+    {
+        $filtered = array_filter(
+            $this->jobs,
+            static function (ExportJob $job) use ($userId, $modelId): bool {
+                if ($job->userId !== $userId) {
+                    return false;
+                }
+                if ($modelId !== null && $job->modelId !== $modelId) {
+                    return false;
+                }
+                return true;
+            }
+        );
+
+        usort($filtered, static fn (ExportJob $a, ExportJob $b): int => $b->createdAt <=> $a->createdAt);
+
+        return array_slice(array_values($filtered), 0, $limit);
+    }
+
+    public function claimPending(int $limit = 10): array
+    {
+        $now = time();
+        $claimed = [];
+
+        foreach ($this->jobs as $job) {
+            if ($job->status !== ExportStatus::PENDING) {
+                continue;
+            }
+            $job->markProcessing($now);
+            $claimed[] = $job;
+            if (count($claimed) >= $limit) {
+                break;
+            }
+        }
+
+        return $claimed;
     }
 }

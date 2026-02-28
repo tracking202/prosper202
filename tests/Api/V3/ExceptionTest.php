@@ -193,7 +193,7 @@ final class ExceptionTest extends TestCase
     public function testConflictExceptionAcceptsPreviousException(): void
     {
         $prev = new \RuntimeException('duplicate key');
-        $e = new ConflictException('Conflict', $prev);
+        $e = new ConflictException('Conflict', [], $prev);
 
         $this->assertSame($prev, $e->getPrevious());
     }

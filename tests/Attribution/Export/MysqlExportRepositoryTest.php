@@ -97,6 +97,7 @@ final class FakeMysqli extends \mysqli
         // Skip parent constructor to avoid real connections.
     }
 
+    #[\ReturnTypeWillChange]
     public function prepare(string $query): FakeStatement
     {
         return new FakeStatement($this, $query);
@@ -223,6 +224,29 @@ final class FakeStatement
     private function performUpdate(): void
     {
         $values = $this->bound;
+
+        // claimPending uses: SET status=?, last_attempted_at=?, updated_at=? WHERE export_id=? AND status=?
+        if (count($values) === 5) {
+            $exportId = (int) ($values[3] ?? 0);
+            if (!isset($this->connection->jobs[$exportId])) {
+                $this->affected_rows = 0;
+                return;
+            }
+
+            $row =& $this->connection->jobs[$exportId];
+            if ($row['status'] !== ($values[4] ?? null)) {
+                $this->affected_rows = 0;
+                return;
+            }
+
+            $row['status'] = $values[0];
+            $row['last_attempted_at'] = $values[1];
+            $row['updated_at'] = $values[2];
+            $this->affected_rows = 1;
+            return;
+        }
+
+        // Full update: 13 params — 12 SET fields + WHERE export_id
         $exportId = (int) ($values[12] ?? 0);
         if (!isset($this->connection->jobs[$exportId])) {
             $this->affected_rows = 0;

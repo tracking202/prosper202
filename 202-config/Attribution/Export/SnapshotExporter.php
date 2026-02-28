@@ -51,7 +51,7 @@ final class SnapshotExporter
             throw new \RuntimeException('Unable to open export file for writing: ' . $path);
         }
 
-        fputcsv($handle, ['Date (UTC)', 'Attributed Clicks', 'Attributed Conversions', 'Attributed Revenue', 'Attributed Cost', 'ROI %', 'Profit']);
+        fputcsv($handle, ['Date (UTC)', 'Attributed Clicks', 'Attributed Conversions', 'Attributed Revenue', 'Attributed Cost', 'ROI %', 'Profit'], ',', '"', '\\');
 
         foreach ($snapshots as $snapshot) {
             $row = $this->normaliseSnapshot($snapshot);
@@ -63,7 +63,7 @@ final class SnapshotExporter
                 number_format($row['attributed_cost'], 2, '.', ''),
                 $row['roi'] !== null ? number_format($row['roi'], 2, '.', '') : '',
                 number_format($row['profit'], 2, '.', ''),
-            ]);
+            ], ',', '"', '\\');
         }
 
         fclose($handle);

@@ -157,7 +157,7 @@ function writeRow($handle, ExportFormat $format, array $row): void
         return;
     }
 
-    fputcsv($handle, $row);
+    fputcsv($handle, $row, ',', '"', '\\');
 }
 
 function buildWebhookDownloadUrl(ExportJob $job): ?string
