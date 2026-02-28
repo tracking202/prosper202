@@ -202,6 +202,32 @@ try {
         $r->get('/timeseries', fn() => $crud($cls)->timeseries($queryParams));
         $r->get('/daypart',    fn() => $crud($cls)->daypart($queryParams));
         $r->get('/weekpart',   fn() => $crud($cls)->weekpart($queryParams));
+
+        $cmpCls = \Api\V3\Controllers\ReportsCompareController::class;
+        $r->get('/compare',    fn() => $crud($cmpCls)->compare($queryParams));
+        $r->get('/top-bottom', fn() => $crud($cmpCls)->topBottom($queryParams));
+        $r->get('/funnel',     fn() => $crud($cmpCls)->funnel($queryParams));
+        $r->get('/pivot',      fn() => $crud($cmpCls)->pivot($queryParams));
+    });
+
+    // ── Traffic quality & anomalies ─────────────────────────────────
+    $router->group('/traffic', function (Router $r) use ($crud, &$queryParams) {
+        $cls = \Api\V3\Controllers\TrafficQualityController::class;
+        $r->get('/quality',   fn() => $crud($cls)->quality($queryParams));
+        $r->get('/anomalies', fn() => $crud($cls)->anomalies($queryParams));
+    });
+
+    // ── Optimization recommendations ────────────────────────────────
+    $router->group('/optimize', function (Router $r) use ($crud, &$queryParams) {
+        $cls = \Api\V3\Controllers\OptimizeController::class;
+        $r->get('/budget',  fn() => $crud($cls)->budget($queryParams));
+        $r->get('/daypart', fn() => $crud($cls)->daypart($queryParams));
+        $r->get('/geo',     fn() => $crud($cls)->geo($queryParams));
+    });
+
+    // ── A/B test analysis ───────────────────────────────────────────
+    $router->get('/test/analyze/{id}', function ($ctx) use ($crud, &$queryParams) {
+        return $crud(\Api\V3\Controllers\TestAnalyzeController::class)->analyze((int)$ctx['id'], $queryParams);
     });
 
     // ── API capabilities ────────────────────────────────────────────
@@ -391,7 +417,10 @@ try {
             'text_ads'      => '/text-ads',
             'clicks'        => '/clicks',
             'conversions'   => '/conversions',
-            'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
+            'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|compare|top-bottom|funnel|pivot}',
+            'traffic'       => '/traffic/{quality|anomalies}',
+            'optimize'      => '/optimize/{budget|daypart|geo}',
+            'test'          => '/test/analyze/{rotator_id}',
             'rotators'      => '/rotators',
             'attribution'   => '/attribution/models',
             'users'         => '/users',

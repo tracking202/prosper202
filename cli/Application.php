@@ -41,6 +41,25 @@ class Application extends ConsoleApplication
         $this->add(new Commands\ReportTimeseriesCommand());
         $this->add(new Commands\ReportDaypartCommand());
         $this->add(new Commands\ReportWeekpartCommand());
+        $this->add(new Commands\ReportCompareCommand());
+        $this->add(new Commands\ReportTopBottomCommand());
+        $this->add(new Commands\ReportFunnelCommand());
+        $this->add(new Commands\ReportPivotCommand());
+
+        // --- Traffic analysis ---
+        $this->add(new Commands\TrafficQualityCommand());
+        $this->add(new Commands\TrafficAnomaliesCommand());
+
+        // --- Optimization ---
+        $this->add(new Commands\OptimizeBudgetCommand());
+        $this->add(new Commands\OptimizeDaypartCommand());
+        $this->add(new Commands\OptimizeGeoCommand());
+
+        // --- A/B test analysis ---
+        $this->add(new Commands\TestAnalyzeCommand());
+
+        // --- Bulk operations ---
+        $this->add(new Commands\BulkUpdateBidsCommand());
 
         // --- Rotators ---
         $this->add(new Commands\RotatorListCommand());
