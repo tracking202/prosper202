@@ -707,6 +707,18 @@ if ($cloaking_on === true) {
 } else {
 	$redirectLocation = setPrePopVars($urlvars, $redirect_site_url, false);
 }
+
+// Never send an empty Location header — Safari retries the same URL in a loop,
+// generating dozens of duplicate clicks per single page load.
+if ($redirectLocation === null || $redirectLocation === '') {
+	http_response_code(502);
+	die('<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Redirect Error</title></head>
+<body><h1>Redirect Error</h1><p>This tracking link has no destination URL configured. Please check your campaign settings.</p></body>
+</html>');
+}
+
 header('Location: ' . $redirectLocation);
 if (function_exists('fastcgi_finish_request')) {
 	fastcgi_finish_request();
