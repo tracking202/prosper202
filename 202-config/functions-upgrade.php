@@ -3183,10 +3183,59 @@ class UPGRADE
             $prosper202_version = '1.9.60';
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.60') {
+        if ($prosper202_version == '1.9.60') {
 
-            $prosper202_version = '1.9.60';
+            // Create server messages table for custom messaging from my.tracking202.com
+            $sql = "CREATE TABLE IF NOT EXISTS `202_server_messages` (
+              `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+              `message_id` varchar(100) NOT NULL COMMENT 'Unique ID from central server',
+              `type` varchar(20) NOT NULL DEFAULT 'info',
+              `title` varchar(500) NOT NULL,
+              `body` text NOT NULL,
+              `action_url` varchar(500) DEFAULT NULL,
+              `action_label` varchar(100) DEFAULT NULL,
+              `priority` tinyint(3) unsigned NOT NULL DEFAULT '0',
+              `icon` varchar(50) DEFAULT NULL,
+              `expires_at` int(10) unsigned DEFAULT NULL,
+              `published_at` int(10) unsigned NOT NULL,
+              `fetched_at` int(10) unsigned NOT NULL,
+              `is_read` tinyint(1) NOT NULL DEFAULT '0',
+              `is_dismissed` tinyint(1) NOT NULL DEFAULT '0',
+              `read_at` int(10) unsigned DEFAULT NULL,
+              `dismissed_at` int(10) unsigned DEFAULT NULL,
+              `read_by_user_id` mediumint(8) unsigned DEFAULT NULL,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `message_id` (`message_id`),
+              KEY `is_read_dismissed` (`is_read`, `is_dismissed`),
+              KEY `priority_published` (`priority` DESC, `published_at` DESC)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Create server messages sync tracking table
+            $sql = "CREATE TABLE IF NOT EXISTS `202_server_messages_sync` (
+              `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+              `last_sync` int(10) unsigned DEFAULT NULL,
+              `last_success` int(10) unsigned DEFAULT NULL,
+              `error_count` int(11) NOT NULL DEFAULT '0',
+              `last_error` text,
+              PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Insert initial sync tracking row
+            $sql = "INSERT IGNORE INTO `202_server_messages_sync` (`id`) VALUES (1)";
+            $result = _mysqli_query($sql);
+
+            $sql = "UPDATE 202_version SET version='1.9.61'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.61';
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if ($prosper202_version > '1.9.61') {
+
+            $prosper202_version = '1.9.61';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }

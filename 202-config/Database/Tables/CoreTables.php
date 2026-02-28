@@ -30,6 +30,8 @@ final class CoreTables
             self::offers(),
             self::filters(),
             self::userDataFeedback(),
+            self::serverMessages(),
+            self::serverMessagesSync(),
         ];
     }
 
@@ -163,6 +165,51 @@ final class CoreTables
                 `modal_status` tinyint(1) NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function serverMessages(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::SERVER_MESSAGES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::SERVER_MESSAGES . "` (
+                `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `message_id` varchar(100) NOT NULL COMMENT 'Unique ID from central server',
+                `type` varchar(20) NOT NULL DEFAULT 'info',
+                `title` varchar(500) NOT NULL,
+                `body` text NOT NULL,
+                `action_url` varchar(500) DEFAULT NULL,
+                `action_label` varchar(100) DEFAULT NULL,
+                `priority` tinyint(3) unsigned NOT NULL DEFAULT '0',
+                `icon` varchar(50) DEFAULT NULL,
+                `expires_at` int(10) unsigned DEFAULT NULL,
+                `published_at` int(10) unsigned NOT NULL,
+                `fetched_at` int(10) unsigned NOT NULL,
+                `is_read` tinyint(1) NOT NULL DEFAULT '0',
+                `is_dismissed` tinyint(1) NOT NULL DEFAULT '0',
+                `read_at` int(10) unsigned DEFAULT NULL,
+                `dismissed_at` int(10) unsigned DEFAULT NULL,
+                `read_by_user_id` mediumint(8) unsigned DEFAULT NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `message_id` (`message_id`),
+                KEY `is_read_dismissed` (`is_read`, `is_dismissed`),
+                KEY `priority_published` (`priority` DESC, `published_at` DESC)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function serverMessagesSync(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::SERVER_MESSAGES_SYNC,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::SERVER_MESSAGES_SYNC . "` (
+                `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `last_sync` int(10) unsigned DEFAULT NULL,
+                `last_success` int(10) unsigned DEFAULT NULL,
+                `error_count` int(11) NOT NULL DEFAULT '0',
+                `last_error` text,
+                PRIMARY KEY (`id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

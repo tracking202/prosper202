@@ -1602,4 +1602,152 @@ function autocomplete_names(selector, type){
 	$(".tt-input").css('top', '5px');
 }
 
+// ===== Server Messages =====
+$(document).ready(function() {
+	var smBaseUrl = "<?php echo get_absolute_url(); ?>";
+	var smPanelOpen = false;
+	var smPollInterval = 5 * 60 * 1000; // 5 minutes
+	var smPollTimer = null;
 
+	// Fetch unread count on page load
+	smUpdateBadge();
+
+	// Poll for new messages periodically
+	smPollTimer = setInterval(smUpdateBadge, smPollInterval);
+
+	// Toggle panel on bell click
+	$(document).on('click', '#sm-bell', function(e) {
+		e.preventDefault();
+		e.stopPropagation();
+		if (smPanelOpen) {
+			smClosePanel();
+		} else {
+			smOpenPanel();
+		}
+	});
+
+	// Close panel
+	$(document).on('click', '#sm-panel-close', function(e) {
+		e.preventDefault();
+		smClosePanel();
+	});
+
+	// Close panel on overlay click
+	$(document).on('click', '#sm-overlay', function() {
+		smClosePanel();
+	});
+
+	// Close on Escape key
+	$(document).on('keydown', function(e) {
+		if (e.keyCode === 27 && smPanelOpen) {
+			smClosePanel();
+		}
+	});
+
+	// Mark all as read
+	$(document).on('click', '#sm-mark-all-read', function(e) {
+		e.preventDefault();
+		$.post(smBaseUrl + '202-account/ajax/server-message-action.php', {
+			action: 'read_all'
+		}, function(data) {
+			if (data.success) {
+				$('.sm-item-unread').removeClass('sm-item-unread').addClass('sm-item-read');
+				smSetBadge(0);
+			}
+		}, 'json');
+	});
+
+	// Dismiss a message
+	$(document).on('click', '.sm-item-dismiss', function(e) {
+		e.preventDefault();
+		e.stopPropagation();
+		var $btn = $(this);
+		var messageId = $btn.data('message-id');
+		var $item = $btn.closest('.sm-item');
+
+		$.post(smBaseUrl + '202-account/ajax/server-message-action.php', {
+			action: 'dismiss',
+			message_id: messageId
+		}, function(data) {
+			if (data.success) {
+				$item.fadeOut(200, function() {
+					$(this).remove();
+					if ($('.sm-item').length === 0) {
+						$('#sm-panel-body').html(
+							'<div class="sm-empty">' +
+							'<span class="fui-check-circle"></span>' +
+							'<p>No messages right now.</p>' +
+							'</div>'
+						);
+					}
+				});
+				smSetBadge(data.unread_count);
+			}
+		}, 'json');
+	});
+
+	// Mark message as read on click (anywhere on the item body)
+	$(document).on('click', '.sm-item', function() {
+		var $item = $(this);
+		if ($item.hasClass('sm-item-unread')) {
+			var messageId = $item.data('message-id');
+			$.post(smBaseUrl + '202-account/ajax/server-message-action.php', {
+				action: 'read',
+				message_id: messageId
+			}, function(data) {
+				if (data.success) {
+					$item.removeClass('sm-item-unread').addClass('sm-item-read');
+					smSetBadge(data.unread_count);
+				}
+			}, 'json');
+		}
+	});
+
+	function smOpenPanel() {
+		smPanelOpen = true;
+		$('#sm-panel').addClass('sm-open');
+		$('#sm-overlay').addClass('sm-open');
+		smLoadMessages();
+	}
+
+	function smClosePanel() {
+		smPanelOpen = false;
+		$('#sm-panel').removeClass('sm-open');
+		$('#sm-overlay').removeClass('sm-open');
+	}
+
+	function smLoadMessages() {
+		$('#sm-panel-body').html(
+			'<div class="sm-loading"><img src="' + smBaseUrl + '202-img/loader-small.gif" alt="Loading..."></div>'
+		);
+
+		$.get(smBaseUrl + '202-account/ajax/server-messages.php', function(html) {
+			$('#sm-panel-body').html(html);
+		}).fail(function() {
+			$('#sm-panel-body').html(
+				'<div class="sm-empty"><p>Could not load messages.</p></div>'
+			);
+		});
+	}
+
+	function smUpdateBadge() {
+		$.post(smBaseUrl + '202-account/ajax/server-message-action.php', {
+			action: 'count'
+		}, function(data) {
+			if (data.success) {
+				smSetBadge(data.unread_count);
+			}
+		}, 'json').fail(function() {
+			// Silent fail for badge updates
+		});
+	}
+
+	function smSetBadge(count) {
+		var $badge = $('#sm-badge');
+		if (count > 0) {
+			$badge.text(count > 99 ? '99+' : count).show();
+		} else {
+			$badge.hide();
+		}
+	}
+});

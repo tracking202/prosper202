@@ -275,6 +275,12 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-resources/" id="ResourcesPage"><span class="fui-star-2"></span> Hot Deals & Discounts </a></li>
 							</ul>
 							<ul class="nav navbar-nav navbar-right">
+								<li id="sm-bell-wrapper" class="dropdown">
+									<a href="#" id="sm-bell" class="dropdown-toggle" title="Messages">
+										<span class="fui-chat"></span>
+										<span id="sm-badge" class="sm-badge" style="display:none;">0</span>
+									</a>
+								</li>
 								<li id="account-dropdown" class="dropdown <?php if (isset($navigation[1]) && isset($navigation[2]) && $navigation[1] == '202-account' and $navigation[2]) {
 																				echo 'active';
 																			} ?>">
@@ -466,6 +472,21 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			<?php } ?>
 		<?php } //for publisher check
 		?>
+		<!-- Server Messages Panel -->
+		<div id="sm-overlay" class="sm-overlay"></div>
+		<div id="sm-panel" class="sm-panel">
+			<div class="sm-panel-header">
+				<h5>Messages</h5>
+				<div class="sm-panel-actions">
+					<a href="#" id="sm-mark-all-read" title="Mark all as read"><span class="fui-check"></span></a>
+					<a href="#" id="sm-panel-close" title="Close"><span class="fui-cross"></span></a>
+				</div>
+			</div>
+			<div id="sm-panel-body" class="sm-panel-body">
+				<div class="sm-loading"><img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" alt="Loading..."></div>
+			</div>
+		</div>
+
 		<script type="text/javascript">
 			$(document).ready(function() {
 				navigator.sendBeacon("//<?php echo getTrackingDomain() . get_absolute_url(); ?>202-cronjobs/");

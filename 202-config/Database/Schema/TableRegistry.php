@@ -146,6 +146,10 @@ final class TableRegistry
     // DNI tables
     public const string DNI_NETWORKS = '202_dni_networks';
 
+    // Server messaging tables
+    public const string SERVER_MESSAGES = '202_server_messages';
+    public const string SERVER_MESSAGES_SYNC = '202_server_messages_sync';
+
     // Bot202 Facebook Pixel tables
     public const string BOT202_FACEBOOK_PIXEL_ASSISTANT = '202_bot202_facebook_pixel_assistant';
     public const string BOT202_FACEBOOK_PIXEL_CONTENT_TYPE = '202_bot202_facebook_pixel_content_type';
