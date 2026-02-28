@@ -55,7 +55,7 @@ final class AuthClassTest extends TestCase
     {
         $_SESSION = [
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => time(),
         ];
 
@@ -68,7 +68,7 @@ final class AuthClassTest extends TestCase
     {
         $_SESSION = [
             'user_name' => 'testuser',
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => time(),
         ];
 
@@ -109,7 +109,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => time() - 60000, // More than 50000 seconds ago
         ];
 
@@ -123,7 +123,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => time(),
         ];
 
@@ -138,13 +138,14 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => $oldTime,
         ];
 
         AUTH::logged_in();
 
-        $this->assertGreaterThan($oldTime, $_SESSION['session_time']);
+        // logged_in() sets session_time to time(), which is at least 100s after $oldTime
+        $this->assertGreaterThanOrEqual($oldTime + 100, $_SESSION['session_time']);
     }
 
     public function testGenerateRandomStringReturnsCorrectLength(): void
