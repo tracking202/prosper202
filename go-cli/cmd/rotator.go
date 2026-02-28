@@ -203,6 +203,24 @@ var rotatorDeleteCmd = &cobra.Command{
 	},
 }
 
+var rotatorRuleListCmd = &cobra.Command{
+	Use:   "rule-list <rotator_id>",
+	Short: "List all routing rules for a redirector/rotator",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("rotators/"+args[0]+"/rules", nil)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
 var rotatorRuleCreateCmd = &cobra.Command{
 	Use:   "rule-create <rotator_id>",
 	Short: "Add a routing rule to a redirector/rotator (criteria + redirect targets)",
@@ -397,6 +415,6 @@ func init() {
 	rotatorRuleUpdateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_url":"...","weight":"50","name":"A"}]`)
 
 	rotatorCmd.AddCommand(rotatorListCmd, rotatorGetCmd, rotatorCreateCmd, rotatorUpdateCmd, rotatorDeleteCmd)
-	rotatorCmd.AddCommand(rotatorRuleCreateCmd, rotatorRuleDeleteCmd, rotatorRuleUpdateCmd)
+	rotatorCmd.AddCommand(rotatorRuleListCmd, rotatorRuleCreateCmd, rotatorRuleDeleteCmd, rotatorRuleUpdateCmd)
 	rootCmd.AddCommand(rotatorCmd)
 }

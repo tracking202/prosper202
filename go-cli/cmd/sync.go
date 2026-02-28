@@ -762,12 +762,243 @@ func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 	return true, nil
 }
 
+var syncJobGetCmd = &cobra.Command{
+	Use:   "job-get <job_id>",
+	Short: "Get status and details of a specific sync job",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fromProfile, _ := cmd.Flags().GetString("from")
+		fromProfile = strings.TrimSpace(fromProfile)
+		if fromProfile == "" {
+			return fmt.Errorf("--from is required (profile that orchestrates sync)")
+		}
+		c, err := api.NewFromProfile(fromProfile)
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("sync/jobs/"+args[0], nil)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var syncJobRunCmd = &cobra.Command{
+	Use:   "job-run <job_id>",
+	Short: "Manually trigger execution of a queued sync job",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fromProfile, _ := cmd.Flags().GetString("from")
+		fromProfile = strings.TrimSpace(fromProfile)
+		if fromProfile == "" {
+			return fmt.Errorf("--from is required (profile that orchestrates sync)")
+		}
+		c, err := api.NewFromProfile(fromProfile)
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("sync/jobs/"+args[0]+"/run", nil)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var syncJobCancelCmd = &cobra.Command{
+	Use:   "job-cancel <job_id>",
+	Short: "Cancel a queued or running sync job",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fromProfile, _ := cmd.Flags().GetString("from")
+		fromProfile = strings.TrimSpace(fromProfile)
+		if fromProfile == "" {
+			return fmt.Errorf("--from is required (profile that orchestrates sync)")
+		}
+		c, err := api.NewFromProfile(fromProfile)
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("sync/jobs/"+args[0]+"/cancel", nil)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var syncJobEventsCmd = &cobra.Command{
+	Use:   "job-events <job_id>",
+	Short: "View event log for a sync job",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fromProfile, _ := cmd.Flags().GetString("from")
+		fromProfile = strings.TrimSpace(fromProfile)
+		if fromProfile == "" {
+			return fmt.Errorf("--from is required (profile that orchestrates sync)")
+		}
+		c, err := api.NewFromProfile(fromProfile)
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		if v, _ := cmd.Flags().GetString("limit"); v != "" {
+			params["limit"] = v
+		}
+		if v, _ := cmd.Flags().GetString("offset"); v != "" {
+			params["offset"] = v
+		}
+		data, err := c.Get("sync/jobs/"+args[0]+"/events", params)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var syncChangesCmd = &cobra.Command{
+	Use:   "changes <entity>",
+	Short: "View incremental changes feed for an entity",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fromProfile, _ := cmd.Flags().GetString("from")
+		fromProfile = strings.TrimSpace(fromProfile)
+		if fromProfile == "" {
+			return fmt.Errorf("--from is required")
+		}
+		c, err := api.NewFromProfile(fromProfile)
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		if v, _ := cmd.Flags().GetString("cursor"); v != "" {
+			params["cursor"] = v
+		}
+		if v, _ := cmd.Flags().GetString("limit"); v != "" {
+			params["limit"] = v
+		}
+		if v, _ := cmd.Flags().GetString("updated_since"); v != "" {
+			params["updated_since"] = v
+		}
+		if v, _ := cmd.Flags().GetString("deleted_since"); v != "" {
+			params["deleted_since"] = v
+		}
+		data, err := c.Get("changes/"+args[0], params)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var syncAuditListCmd = &cobra.Command{
+	Use:   "audit-list",
+	Short: "List audit trail of sync jobs",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fromProfile, _ := cmd.Flags().GetString("from")
+		fromProfile = strings.TrimSpace(fromProfile)
+		if fromProfile == "" {
+			return fmt.Errorf("--from is required")
+		}
+		c, err := api.NewFromProfile(fromProfile)
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		for _, f := range []string{"actor", "source", "target", "status", "from_epoch", "to_epoch", "format"} {
+			if v, _ := cmd.Flags().GetString(f); v != "" {
+				params[f] = v
+			}
+		}
+		data, err := c.Get("audit/sync-jobs", params)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var syncAuditGetCmd = &cobra.Command{
+	Use:   "audit-get <job_id>",
+	Short: "Get audit details for a specific sync job",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fromProfile, _ := cmd.Flags().GetString("from")
+		fromProfile = strings.TrimSpace(fromProfile)
+		if fromProfile == "" {
+			return fmt.Errorf("--from is required")
+		}
+		c, err := api.NewFromProfile(fromProfile)
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		if v, _ := cmd.Flags().GetString("format"); v != "" {
+			params["format"] = v
+		}
+		data, err := c.Get("audit/sync-jobs/"+args[0], params)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
 func init() {
 	addSyncFlags(syncCmd)
 	addSyncFlags(syncStatusCmd)
 	addSyncFlags(syncHistoryCmd)
 	addSyncFlags(reSyncCmd)
 
+	// Job management commands use --from for the orchestrating profile
+	syncJobGetCmd.Flags().String("from", "", "Orchestrating profile name")
+	_ = syncJobGetCmd.MarkFlagRequired("from")
+
+	syncJobRunCmd.Flags().String("from", "", "Orchestrating profile name")
+	_ = syncJobRunCmd.MarkFlagRequired("from")
+
+	syncJobCancelCmd.Flags().String("from", "", "Orchestrating profile name")
+	_ = syncJobCancelCmd.MarkFlagRequired("from")
+
+	syncJobEventsCmd.Flags().String("from", "", "Orchestrating profile name")
+	_ = syncJobEventsCmd.MarkFlagRequired("from")
+	syncJobEventsCmd.Flags().StringP("limit", "l", "", "Max events to show")
+	syncJobEventsCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+
+	// Changes feed
+	syncChangesCmd.Flags().String("from", "", "Profile name")
+	_ = syncChangesCmd.MarkFlagRequired("from")
+	syncChangesCmd.Flags().String("cursor", "", "Pagination cursor from previous response")
+	syncChangesCmd.Flags().StringP("limit", "l", "", "Max results (1-1000)")
+	syncChangesCmd.Flags().String("updated_since", "", "Unix timestamp filter for updated records")
+	syncChangesCmd.Flags().String("deleted_since", "", "Unix timestamp filter for deleted records")
+
+	// Audit trail
+	syncAuditListCmd.Flags().String("from", "", "Profile name")
+	_ = syncAuditListCmd.MarkFlagRequired("from")
+	syncAuditListCmd.Flags().String("actor", "", "Filter by actor")
+	syncAuditListCmd.Flags().String("source", "", "Filter by source profile")
+	syncAuditListCmd.Flags().String("target", "", "Filter by target profile")
+	syncAuditListCmd.Flags().String("status", "", "Filter by status")
+	syncAuditListCmd.Flags().String("from_epoch", "", "Filter: from Unix timestamp")
+	syncAuditListCmd.Flags().String("to_epoch", "", "Filter: to Unix timestamp")
+	syncAuditListCmd.Flags().String("format", "", "Output format: json or csv")
+
+	syncAuditGetCmd.Flags().String("from", "", "Profile name")
+	_ = syncAuditGetCmd.MarkFlagRequired("from")
+	syncAuditGetCmd.Flags().String("format", "", "Output format: json or csv")
+
 	syncCmd.AddCommand(syncStatusCmd, syncHistoryCmd)
+	syncCmd.AddCommand(syncJobGetCmd, syncJobRunCmd, syncJobCancelCmd, syncJobEventsCmd)
+	syncCmd.AddCommand(syncChangesCmd)
+	syncCmd.AddCommand(syncAuditListCmd, syncAuditGetCmd)
 	rootCmd.AddCommand(syncCmd, reSyncCmd)
 }

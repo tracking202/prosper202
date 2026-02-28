@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -516,7 +518,55 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	deleteCmd.Flags().String("ids", "", "Comma-separated IDs to delete in bulk")
 
-	parentCmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
+	// bulk-upsert
+	bulkUpsertCmd := &cobra.Command{
+		Use:   "bulk-upsert <file>",
+		Short: fmt.Sprintf("Bulk create or update %s from a JSON file", entity.Plural),
+		Long: fmt.Sprintf("Reads a JSON file containing an array of %s rows and sends them\n"+
+			"to the bulk-upsert endpoint. Rows with an existing ID are updated;\n"+
+			"rows without are created. Requires an Idempotency-Key header (auto-generated\n"+
+			"unless --idempotency-key is provided).", entity.Name),
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+			done := metrics.Timer("bulk-upsert", entity.Endpoint)
+			defer func() { done(retErr == nil, errString(retErr)) }()
+			c, err := api.NewFromConfig()
+			if err != nil {
+				return err
+			}
+
+			fileData, err := os.ReadFile(args[0])
+			if err != nil {
+				return fmt.Errorf("reading file %s: %w", args[0], err)
+			}
+
+			var rows []interface{}
+			if err := json.Unmarshal(fileData, &rows); err != nil {
+				return fmt.Errorf("invalid JSON in %s: expected an array of objects: %w", args[0], err)
+			}
+
+			idempotencyKey, _ := cmd.Flags().GetString("idempotency-key")
+			if idempotencyKey == "" {
+				b := make([]byte, 16)
+				if _, err := rand.Read(b); err != nil {
+					return fmt.Errorf("generating idempotency key: %w", err)
+				}
+				idempotencyKey = hex.EncodeToString(b)
+			}
+
+			body := map[string]interface{}{"rows": rows}
+			headers := map[string]string{"Idempotency-Key": idempotencyKey}
+			data, err := c.PostWithHeaders(entity.Endpoint+"/bulk-upsert", body, headers)
+			if err != nil {
+				return err
+			}
+			render(data)
+			return nil
+		},
+	}
+	bulkUpsertCmd.Flags().String("idempotency-key", "", "Idempotency key (auto-generated if omitted)")
+
+	parentCmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd, bulkUpsertCmd)
 	rootCmd.AddCommand(parentCmd)
 	return parentCmd
 }

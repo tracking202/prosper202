@@ -261,6 +261,10 @@ func (c *Client) Post(path string, body interface{}) ([]byte, error) {
 	return c.do("POST", path, nil, body)
 }
 
+func (c *Client) PostWithHeaders(path string, body interface{}, headers map[string]string) ([]byte, error) {
+	return c.doWithHeaders("POST", path, nil, body, headers)
+}
+
 func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
 }
@@ -271,6 +275,10 @@ func (c *Client) Delete(path string) error {
 }
 
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {
+	return c.doWithHeaders(method, path, params, body, nil)
+}
+
+func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, extraHeaders map[string]string) ([]byte, error) {
 	u := c.baseURL + "/" + strings.TrimLeft(path, "/")
 
 	if len(params) > 0 {
@@ -301,6 +309,9 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
 	if idx := strings.LastIndex(c.baseURL, "/api/v"); idx != -1 {
 		req.Header.Set("X-P202-API-Version", c.baseURL[idx+5:])
+	}
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.http.Do(req)

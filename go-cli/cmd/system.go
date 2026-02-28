@@ -117,10 +117,27 @@ var systemDataengineCmd = &cobra.Command{
 	},
 }
 
+var systemMetricsCmd = &cobra.Command{
+	Use:   "metrics",
+	Short: "Show system performance metrics, queue status, and alerts",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("system/metrics", nil)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
 func init() {
 	systemErrorsCmd.Flags().StringP("limit", "l", "", "Max errors to show")
 
 	systemCmd.AddCommand(systemHealthCmd, systemVersionCmd, systemDBStatsCmd,
-		systemCronCmd, systemErrorsCmd, systemDataengineCmd)
+		systemCronCmd, systemErrorsCmd, systemDataengineCmd, systemMetricsCmd)
 	rootCmd.AddCommand(systemCmd)
 }
