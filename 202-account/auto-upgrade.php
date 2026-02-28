@@ -13,14 +13,33 @@ $update_needed = false;
 $latest_version = $version;
 $download_link = '';
 
-$rss_xml = @file_get_contents('https://my.tracking202.com/clickserver/currentversion/paid/');
-if ($rss_xml !== false) {
+$rss_xml = null;
+if (function_exists('curl_init')) {
+	$ch = curl_init('https://my.tracking202.com/clickserver/currentversion/paid/');
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+	curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+	curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+	$rss_xml = curl_exec($ch);
+	$http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+	if ($rss_xml === false || $http_code >= 400) {
+		$rss_xml = null;
+	}
+	curl_close($ch);
+} elseif (ini_get('allow_url_fopen')) {
+	$rss_xml = @file_get_contents('https://my.tracking202.com/clickserver/currentversion/paid/');
+	if ($rss_xml === false) {
+		$rss_xml = null;
+	}
+}
+
+if ($rss_xml !== null) {
 	$rss_feed = @simplexml_load_string($rss_xml);
 	if ($rss_feed !== false && isset($rss_feed->channel->item)) {
 		$item = $rss_feed->channel->item[0];
 		$latest_version = (string) $item->title;
 		$download_link = (string) $item->link;
-		if (version_compare($version, $latest_version) == '-1') {
+		if (version_compare($version, $latest_version) < 0) {
 			$update_needed = true;
 		}
 	}

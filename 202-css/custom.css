@@ -1632,3 +1632,8 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
 .css-toggle input:checked + .css-toggle-slider::before {
     transform: translateX(24px);
 }
+.css-toggle input:focus-visible + .css-toggle-slider {
+    outline: 2px solid #2c3e50;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(41, 128, 185, 0.4);
+}

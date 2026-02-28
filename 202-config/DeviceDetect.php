@@ -18,11 +18,6 @@ class DeviceDetect
         'Symbian', 'J2ME', 'MIDP', 'Kindle', 'Silk',
     ];
 
-    private const TABLET_KEYWORDS = [
-        'iPad', 'Android.*(?!Mobile)', 'Kindle', 'Silk', 'PlayBook',
-        'Nexus 7', 'Nexus 10', 'Galaxy Tab', 'SM-T', 'Surface',
-    ];
-
     public function __construct()
     {
         $this->userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';

@@ -731,7 +731,9 @@ class PLATFORMS
     public static function get_device_info($db, $detect, $ua_string = '')
     {
         global $memcacheWorking, $memcache;
-        $detect = new DeviceDetect();
+        if (!$detect instanceof DeviceDetect) {
+            $detect = new DeviceDetect();
+        }
 
         if ($ua_string != '')
             $ua = $detect->setUserAgent($ua_string);
@@ -2355,9 +2357,13 @@ function getIspData($ip)
 {
     $ip_address = is_string($ip) ? $ip : ($ip->address ?? '');
 
+    if ($ip_address === '') {
+        return "Unknown ISP/Carrier";
+    }
+
     // Try GeoIP2 ISP database (.mmdb) first
     $mmdb_file = CONFIG_PATH . '/geo/GeoIP2-ISP.mmdb';
-    if ($ip_address !== '' && file_exists($mmdb_file)) {
+    if (file_exists($mmdb_file)) {
         try {
             $reader = new Reader($mmdb_file);
             $record = $reader->isp($ip_address);
@@ -2365,7 +2371,16 @@ function getIspData($ip)
             $reader->close();
             return $isp;
         } catch (\Exception) {
-            // Fall through to default
+            // Fall through to legacy .dat fallback
+        }
+    }
+
+    // Legacy GeoIPISP.dat fallback via PHP geoip extension
+    $dat_file = CONFIG_PATH . '/geo/GeoIPISP.dat';
+    if (file_exists($dat_file) && function_exists('geoip_org_by_name')) {
+        $isp = @geoip_org_by_name($ip_address);
+        if ($isp) {
+            return $isp;
         }
     }
 

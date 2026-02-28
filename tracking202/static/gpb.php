@@ -222,48 +222,51 @@ if($mysql['ppc_account_id']){
 		case 1:
 			header('HTTP/1.1 202 Accepted', true, 202);
 			foreach($pixel_urls as $pixel_url){
-			  if(isset($pixel_url))
+			  if(!empty($pixel_url)) {
 			    $pixel_url=replaceTokens($pixel_url,$tokens);
-			    echo "<img src='{$pixel_url}' height='0' width='0' style='display:none' />\n";  
+			    echo "<img src='{$pixel_url}' height='0' width='0' style='display:none' />\n";
+			  }
 			}
 
 			break;
 		case 2:
 			header('HTTP/1.1 202 Accepted', true, 202);
 	        foreach($pixel_urls as $pixel_url){
-			  if(isset($pixel_url))
+			  if(!empty($pixel_url)) {
 			    $pixel_url=replaceTokens($pixel_url,$tokens);
-			 
-			    echo "<iframe src='{$pixel_url}' height='0' width='0'></iframe>\n";  
+			    echo "<iframe src='{$pixel_url}' height='0' width='0'></iframe>\n";
+			  }
 			}
 
 			break;
 		case 3:
 			header('HTTP/1.1 202 Accepted', true, 202);
 	        foreach($pixel_urls as $pixel_url){
-			  if(isset($pixel_url))
+			  if(!empty($pixel_url)) {
 			   $pixel_url=replaceTokens($pixel_url,$tokens);
-			  
 			   echo "<script async src='{$pixel_url}'></script>\n";
+			  }
 			}
 
 			break;
 		case 4:
-			$ctx = stream_context_create(['http' => [
-				'user_agent' => 'Mozilla/5.0 Postback202-Bot v1.8',
-				'timeout' => 10,
-			]]);
-
         	foreach($pixel_urls as $pixel_url){
-			  if(isset($pixel_url))
+			  if(!empty($pixel_url)) {
 			    $pixel_url=replaceTokens($pixel_url,$tokens);
-			    @file_get_contents($pixel_url, false, $ctx);
-			    header('HTTP/1.1 202 Accepted', true, 202);
-			    header('Content-Type: application/json');
-			    $response = ['error' => false, 'code' => 202, 'msg' => 'Postback successful'];
-			    print_r(json_encode($response));
-
+			    $ch = curl_init($pixel_url);
+			    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+			    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+			    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 Postback202-Bot v1.8');
+			    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+			    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+			    curl_exec($ch);
+			    curl_close($ch);
+			  }
 			}
+			header('HTTP/1.1 202 Accepted', true, 202);
+			header('Content-Type: application/json');
+			$response = ['error' => false, 'code' => 202, 'msg' => 'Postback successful'];
+			print_r(json_encode($response));
 			break;
 
 		case 5:

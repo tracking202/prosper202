@@ -397,7 +397,7 @@ template_top('User Management'); ?>
 						<label for="user_active" class="col-xs-4 control-label" style="text-align: left;">Active:</label>
 						<div class="col-xs-5">
 							<label class="css-toggle">
-								<input type="checkbox" name="user_active" id="custom-switch-03" <?php if ($editing == true) {
+								<input type="checkbox" name="user_active" id="user_active" <?php if ($editing == true) {
 																				if (isset($html['user_active']) && $html['user_active'] == true) echo 'checked';
 																			} else {
 																				echo 'checked';
