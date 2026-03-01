@@ -13,24 +13,9 @@ $update_needed = false;
 $latest_version = $version;
 $download_link = '';
 
-$rss_xml = null;
-if (function_exists('curl_init')) {
-	$ch = curl_init('https://my.tracking202.com/clickserver/currentversion/paid/');
-	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-	curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-	curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-	curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-	$rss_xml = curl_exec($ch);
-	$http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-	if ($rss_xml === false || $http_code >= 400) {
-		$rss_xml = null;
-	}
-	curl_close($ch);
-} elseif (ini_get('allow_url_fopen')) {
-	$rss_xml = @file_get_contents('https://my.tracking202.com/clickserver/currentversion/paid/');
-	if ($rss_xml === false) {
-		$rss_xml = null;
-	}
+$rss_xml = getUrl('https://my.tracking202.com/clickserver/currentversion/paid/', 'GET', 10);
+if ($rss_xml === '') {
+	$rss_xml = null;
 }
 
 if ($rss_xml !== null) {
