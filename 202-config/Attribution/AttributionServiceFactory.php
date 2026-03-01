@@ -29,6 +29,7 @@ use Prosper202\Attribution\Repository\ConversionRepositoryInterface;
 use Prosper202\Attribution\AttributionJobRunner;
 use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
 use Prosper202\Attribution\Repository\Mysql\MysqlExportJobRepository;
+use Prosper202\Database\Connection;
 
 /**
  * Simple factory used to wire default attribution services.
@@ -43,16 +44,14 @@ final class AttributionServiceFactory
         ?ExportJobRepositoryInterface $exportRepository = null
     ): AttributionService {
         if ($modelRepository === null || $snapshotRepository === null || $touchpointRepository === null || $auditRepository === null || $exportRepository === null) {
-            $db = \DB::getInstance();
-            $writeConnection = $db?->getConnection();
-            $readConnection = $db?->getConnectionro();
+            $conn = self::buildConnection();
 
-            if ($writeConnection instanceof \mysqli) {
-                $modelRepository ??= new MysqlModelRepository($writeConnection, $readConnection);
-                $snapshotRepository ??= new MysqlSnapshotRepository($writeConnection, $readConnection);
-                $touchpointRepository ??= new MysqlTouchpointRepository($writeConnection, $readConnection);
-                $auditRepository ??= new MysqlAuditRepository($writeConnection);
-                $exportRepository ??= new MysqlExportJobRepository($writeConnection, $readConnection);
+            if ($conn !== null) {
+                $modelRepository ??= new MysqlModelRepository($conn);
+                $snapshotRepository ??= new MysqlSnapshotRepository($conn);
+                $touchpointRepository ??= new MysqlTouchpointRepository($conn);
+                $auditRepository ??= new MysqlAuditRepository($conn);
+                $exportRepository ??= new MysqlExportJobRepository($conn);
             }
         }
 
@@ -72,16 +71,14 @@ final class AttributionServiceFactory
         ?ConversionRepositoryInterface $conversionRepository = null,
         ?AuditRepositoryInterface $auditRepository = null
     ): AttributionJobRunner {
-        $db = \DB::getInstance();
-        $writeConnection = $db?->getConnection();
-        $readConnection = $db?->getConnectionro();
+        $conn = self::buildConnection();
 
-        if ($writeConnection instanceof \mysqli) {
-            $modelRepository ??= new MysqlModelRepository($writeConnection, $readConnection);
-            $snapshotRepository ??= new MysqlSnapshotRepository($writeConnection, $readConnection);
-            $touchpointRepository ??= new MysqlTouchpointRepository($writeConnection, $readConnection);
-            $conversionRepository ??= new MysqlConversionRepository($writeConnection);
-            $auditRepository ??= new MysqlAuditRepository($writeConnection);
+        if ($conn !== null) {
+            $modelRepository ??= new MysqlModelRepository($conn);
+            $snapshotRepository ??= new MysqlSnapshotRepository($conn);
+            $touchpointRepository ??= new MysqlTouchpointRepository($conn);
+            $conversionRepository ??= new MysqlConversionRepository($conn);
+            $auditRepository ??= new MysqlAuditRepository($conn);
         }
 
         return new AttributionJobRunner(
@@ -99,14 +96,12 @@ final class AttributionServiceFactory
         ?JourneyMaintenanceRepositoryInterface $journeyRepository = null
     ): SettingsService {
         if ($settingsRepository === null || $modelRepository === null || $journeyRepository === null) {
-            $db = \DB::getInstance();
-            $writeConnection = $db?->getConnection();
-            $readConnection = $db?->getConnectionro();
+            $conn = self::buildConnection();
 
-            if ($writeConnection instanceof \mysqli) {
-                $settingsRepository ??= new MysqlSettingRepository($writeConnection, $readConnection);
-                $modelRepository ??= new MysqlModelRepository($writeConnection, $readConnection);
-                $journeyRepository ??= new ConversionJourneyRepository($writeConnection);
+            if ($conn !== null) {
+                $settingsRepository ??= new MysqlSettingRepository($conn);
+                $modelRepository ??= new MysqlModelRepository($conn);
+                $journeyRepository ??= new ConversionJourneyRepository($conn);
             }
         }
 
@@ -115,5 +110,18 @@ final class AttributionServiceFactory
             $modelRepository ?? new NullModelRepository(),
             $journeyRepository
         );
+    }
+
+    private static function buildConnection(): ?Connection
+    {
+        $db = \DB::getInstance();
+        $writeConnection = $db?->getConnection();
+        $readConnection = $db?->getConnectionro();
+
+        if (!$writeConnection instanceof \mysqli) {
+            return null;
+        }
+
+        return new Connection($writeConnection, $readConnection);
     }
 }

@@ -10,23 +10,28 @@ use Prosper202\Attribution\Export\ExportJob;
 use Prosper202\Attribution\Export\ExportStatus;
 use Prosper202\Attribution\Repository\ExportRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
+use Prosper202\Database\Connection;
 
 final readonly class MysqlExportRepository implements ExportRepositoryInterface
 {
-    private mysqli $read;
+    private Connection $conn;
 
-    public function __construct(private mysqli $write, ?mysqli $read = null)
+    /**
+     * @param Connection|mysqli $connection Connection instance or legacy mysqli for backwards compatibility
+     */
+    public function __construct(Connection|mysqli $connection, ?mysqli $readConnection = null)
     {
-        $this->read = $read ?? $this->write;
+        if ($connection instanceof Connection) {
+            $this->conn = $connection;
+        } else {
+            $this->conn = new Connection($connection, $readConnection);
+        }
     }
 
     public function create(ExportJob $job): ExportJob
     {
         $sql = 'INSERT INTO 202_attribution_exports (user_id, model_id, scope_type, scope_id, start_hour, end_hour, format, status, file_path, download_token, webhook_url, webhook_method, webhook_headers, webhook_status_code, webhook_response_body, last_attempted_at, completed_at, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-        $stmt = $this->write->prepare($sql);
-        if (!$stmt) {
-            throw new \RuntimeException('Unable to prepare export insert statement: ' . $this->write->error);
-        }
+        $stmt = $this->conn->prepareWrite($sql);
 
         $scopeType = $job->scopeType->value;
         $scopeId = $job->scopeId;
@@ -87,10 +92,7 @@ final readonly class MysqlExportRepository implements ExportRepositoryInterface
     public function update(ExportJob $job): ExportJob
     {
         $sql = 'UPDATE 202_attribution_exports SET status = ?, file_path = ?, download_token = ?, webhook_url = ?, webhook_method = ?, webhook_headers = ?, webhook_status_code = ?, webhook_response_body = ?, last_attempted_at = ?, completed_at = ?, error_message = ?, updated_at = ? WHERE export_id = ? LIMIT 1';
-        $stmt = $this->write->prepare($sql);
-        if (!$stmt) {
-            throw new \RuntimeException('Unable to prepare export update statement: ' . $this->write->error);
-        }
+        $stmt = $this->conn->prepareWrite($sql);
 
         $status = $job->status->value;
         $filePath = $job->filePath;
@@ -135,10 +137,7 @@ final readonly class MysqlExportRepository implements ExportRepositoryInterface
     public function findById(int $exportId): ?ExportJob
     {
         $sql = 'SELECT * FROM 202_attribution_exports WHERE export_id = ? LIMIT 1';
-        $stmt = $this->read->prepare($sql);
-        if (!$stmt) {
-            throw new \RuntimeException('Unable to prepare export lookup: ' . $this->read->error);
-        }
+        $stmt = $this->conn->prepareRead($sql);
 
         $stmt->bind_param('i', $exportId);
         if (!$stmt->execute()) {
@@ -169,17 +168,8 @@ final readonly class MysqlExportRepository implements ExportRepositoryInterface
         $types .= 'i';
         $params[] = $limit;
 
-        $stmt = $this->read->prepare($sql);
-        if (!$stmt) {
-            throw new \RuntimeException('Unable to prepare export listing: ' . $this->read->error);
-        }
-
-        $paramsRefs = [];
-        foreach ($params as $index => $value) {
-            $paramsRefs[$index] = &$params[$index];
-        }
-        array_unshift($paramsRefs, $types);
-        $stmt->bind_param(...$paramsRefs);
+        $stmt = $this->conn->prepareRead($sql);
+        $this->conn->bind($stmt, $types, $params);
         if (!$stmt->execute()) {
             throw new \RuntimeException('Failed to list exports: ' . $stmt->error);
         }
@@ -202,10 +192,7 @@ final readonly class MysqlExportRepository implements ExportRepositoryInterface
         $limit = max(1, min(50, $limit));
         $now = time();
         $sql = 'SELECT * FROM 202_attribution_exports WHERE status = ? ORDER BY created_at ASC LIMIT ?';
-        $stmt = $this->write->prepare($sql);
-        if (!$stmt) {
-            throw new \RuntimeException('Unable to prepare pending selection: ' . $this->write->error);
-        }
+        $stmt = $this->conn->prepareWrite($sql);
 
         $pending = ExportStatus::PENDING->value;
         $stmt->bind_param('si', $pending, $limit);
@@ -218,10 +205,7 @@ final readonly class MysqlExportRepository implements ExportRepositoryInterface
         if ($result) {
             while ($row = $result->fetch_assoc()) {
                 $job = $this->hydrate($row);
-                $update = $this->write->prepare('UPDATE 202_attribution_exports SET status = ?, last_attempted_at = ?, updated_at = ? WHERE export_id = ? AND status = ? LIMIT 1');
-                if (!$update) {
-                    throw new \RuntimeException('Unable to prepare claim update: ' . $this->write->error);
-                }
+                $update = $this->conn->prepareWrite('UPDATE 202_attribution_exports SET status = ?, last_attempted_at = ?, updated_at = ? WHERE export_id = ? AND status = ? LIMIT 1');
 
                 $processing = ExportStatus::PROCESSING->value;
                 $exportId = $job->exportId;

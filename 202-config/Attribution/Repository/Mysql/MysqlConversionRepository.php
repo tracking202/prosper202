@@ -5,21 +5,30 @@ declare(strict_types=1);
 namespace Prosper202\Attribution\Repository\Mysql;
 
 use mysqli;
-use mysqli_stmt;
 use Prosper202\Attribution\Calculation\ConversionBatch;
 use Prosper202\Attribution\Repository\ConversionRepositoryInterface;
-use RuntimeException;
+use Prosper202\Database\Connection;
 
 final readonly class MysqlConversionRepository implements ConversionRepositoryInterface
 {
     private ConversionJourneyRepository $journeyRepository;
+    private Connection $conn;
 
+    /**
+     * @param Connection|mysqli $connection Connection instance or legacy mysqli for backwards compatibility
+     */
     public function __construct(
-        private mysqli $connection,
+        Connection|mysqli $connection,
         ?ConversionJourneyRepository $journeyRepository = null,
         private ?ConversionHydrator $hydrator = new ConversionHydrator()
     ) {
-        $this->journeyRepository = $journeyRepository ?? new ConversionJourneyRepository($connection);
+        if ($connection instanceof Connection) {
+            $this->conn = $connection;
+            $this->journeyRepository = $journeyRepository ?? new ConversionJourneyRepository($connection);
+        } else {
+            $this->conn = new Connection($connection);
+            $this->journeyRepository = $journeyRepository ?? new ConversionJourneyRepository($connection);
+        }
     }
 
     public function fetchForUser(int $userId, int $startTime, int $endTime, ?int $afterConversionId = null, int $limit = 5000): ConversionBatch
@@ -45,10 +54,7 @@ ORDER BY conv.conv_id ASC
 LIMIT ?
 SQL;
 
-        $stmt = $this->connection->prepare($sql);
-        if ($stmt === false) {
-            throw new RuntimeException('Unable to prepare conversion lookup statement: ' . $this->connection->error);
-        }
+        $stmt = $this->conn->prepareRead($sql);
 
         $lastId = $afterConversionId ?? 0;
         $stmt->bind_param('iiiii', $userId, $startTime, $endTime, $lastId, $limit);

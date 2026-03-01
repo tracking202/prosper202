@@ -8,21 +8,29 @@ use mysqli;
 use mysqli_result;
 use Prosper202\Attribution\Repository\JourneyMaintenanceRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
+use Prosper202\Database\Connection;
 use RuntimeException;
-use Throwable;
 
 /**
  * Persists and retrieves ordered touchpoint journeys for conversions.
  */
 final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryInterface
 {
-    use MysqliStatementBinder;
-
     public const DEFAULT_LOOKBACK_WINDOW = 30 * 24 * 60 * 60; // 30 days
     public const int MAX_TOUCHES = 25;
 
-    public function __construct(private readonly mysqli $connection)
+    private Connection $conn;
+
+    /**
+     * @param Connection|mysqli $connection Connection instance or legacy mysqli for backwards compatibility
+     */
+    public function __construct(Connection|mysqli $connection)
     {
+        if ($connection instanceof Connection) {
+            $this->conn = $connection;
+        } else {
+            $this->conn = new Connection($connection);
+        }
     }
 
     /**
@@ -44,20 +52,10 @@ final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryI
             $primaryClickTime
         );
 
-        if (!$this->connection->begin_transaction()) {
-            throw new RuntimeException('Unable to begin conversion journey transaction: ' . $this->connection->error);
-        }
-
-        try {
+        $this->conn->transaction(function () use ($conversionId, $journeyTouches): void {
             $this->deleteExistingJourney($conversionId);
             $this->insertJourney($conversionId, $journeyTouches);
-            if (!$this->connection->commit()) {
-                throw new RuntimeException('Unable to commit conversion journey transaction: ' . $this->connection->error);
-            }
-        } catch (Throwable $exception) {
-            $this->connection->rollback();
-            throw $exception;
-        }
+        });
 
         $this->purgeJourneyCache($conversionId);
     }
@@ -163,9 +161,9 @@ WHERE conv_id IN ($idList)
 ORDER BY conv_id ASC, position ASC
 SQL;
 
-        $result = $this->connection->query($sql);
+        $result = $this->conn->readConnection()->query($sql);
         if ($result === false) {
-            throw new RuntimeException('Unable to fetch conversion journeys: ' . $this->connection->error);
+            throw new RuntimeException('Unable to fetch conversion journeys: ' . $this->conn->readConnection()->error);
         }
 
         $journeys = [];
@@ -204,10 +202,7 @@ ORDER BY click_time DESC, click_id DESC
 LIMIT ?
 SQL;
 
-        $stmt = $this->connection->prepare($sql);
-        if ($stmt === false) {
-            throw new RuntimeException('Unable to prepare journey lookup statement: ' . $this->connection->error);
-        }
+        $stmt = $this->conn->prepareRead($sql);
 
         $limit = self::MAX_TOUCHES;
         $stmt->bind_param('iiiii', $userId, $campaignId, $lookbackStart, $conversionTime, $limit);
@@ -262,10 +257,7 @@ INSERT INTO 202_conversion_touchpoints (conv_id, click_id, click_time, position,
 VALUES (?, ?, ?, ?, ?)
 SQL;
 
-        $stmt = $this->connection->prepare($sql);
-        if ($stmt === false) {
-            throw new RuntimeException('Unable to prepare journey insert statement: ' . $this->connection->error);
-        }
+        $stmt = $this->conn->prepareWrite($sql);
 
         $createdAt = time();
         foreach ($journey as $position => $touch) {
@@ -280,11 +272,7 @@ SQL;
 
     private function deleteExistingJourney(int $conversionId): void
     {
-        $stmt = $this->connection->prepare('DELETE FROM 202_conversion_touchpoints WHERE conv_id = ?');
-        if ($stmt === false) {
-            throw new RuntimeException('Unable to prepare journey delete statement: ' . $this->connection->error);
-        }
-
+        $stmt = $this->conn->prepareWrite('DELETE FROM 202_conversion_touchpoints WHERE conv_id = ?');
         $stmt->bind_param('i', $conversionId);
         $stmt->execute();
         $stmt->close();
@@ -356,12 +344,8 @@ SQL;
         $types .= 'i';
         $params[] = $limit;
 
-        $stmt = $this->connection->prepare($sql);
-        if ($stmt === false) {
-            throw new RuntimeException('Unable to prepare conversion lookup statement: ' . $this->connection->error);
-        }
-
-        $this->bindStatement($stmt, $types, $params);
+        $stmt = $this->conn->prepareRead($sql);
+        $this->conn->bind($stmt, $types, $params);
         $stmt->execute();
         $result = $stmt->get_result();
 
@@ -382,20 +366,5 @@ SQL;
         $stmt->close();
 
         return $rows;
-    }
-
-    /**
-     * @param array<int, mixed> $params
-     */
-    private function bind(\mysqli_stmt $stmt, string $types, array $params): void
-    {
-        $refs = [];
-        foreach ($params as $index => $value) {
-            $refs[$index] = &$params[$index];
-        }
-
-        if (!call_user_func_array($stmt->bind_param(...), array_merge([$types], $refs))) {
-            throw new RuntimeException('Failed to bind MySQL parameters.');
-        }
     }
 }

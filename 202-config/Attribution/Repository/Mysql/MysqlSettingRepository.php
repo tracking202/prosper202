@@ -9,16 +9,23 @@ use mysqli_stmt;
 use Prosper202\Attribution\Repository\SettingsRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Settings\Setting;
+use Prosper202\Database\Connection;
 use RuntimeException;
 
 final class MysqlSettingRepository implements SettingsRepositoryInterface
 {
-    use MysqliStatementBinder;
+    private readonly Connection $conn;
 
-    public function __construct(
-        private readonly mysqli $writeConnection,
-        private readonly ?mysqli $readConnection = null
-    ) {
+    /**
+     * @param Connection|mysqli $connection Connection instance or legacy mysqli for backwards compatibility
+     */
+    public function __construct(Connection|mysqli $connection, ?mysqli $readConnection = null)
+    {
+        if ($connection instanceof Connection) {
+            $this->conn = $connection;
+        } else {
+            $this->conn = new Connection($connection, $readConnection);
+        }
     }
 
     public function findByScope(int $userId, ScopeType $scopeType, ?int $scopeId): ?Setting
@@ -63,8 +70,8 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
         }
 
         $sql = 'SELECT * FROM 202_attribution_settings WHERE user_id = ? AND (' . implode(' OR ', $parts) . ')';
-        $stmt = $this->prepareRead($sql);
-        $this->bindStatement($stmt, $types, $params);
+        $stmt = $this->conn->prepareRead($sql);
+        $this->conn->bind($stmt, $types, $params);
         $stmt->execute();
         $result = $stmt->get_result();
 
@@ -95,7 +102,7 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
 
         if ($settingId === null) {
             $sql = 'INSERT INTO 202_attribution_settings (user_id, scope_type, scope_id, model_id, multi_touch_enabled, multi_touch_enabled_at, multi_touch_disabled_at, effective_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-            $stmt = $this->prepareWrite($sql);
+            $stmt = $this->conn->prepareWrite($sql);
 
             $userId = (int) $row['user_id'];
             $scopeType = (string) $row['scope_type'];
@@ -119,14 +126,14 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
             );
 
             $stmt->execute();
-            $insertId = $stmt->insert_id ?: $this->writeConnection->insert_id;
+            $insertId = $stmt->insert_id ?: $this->conn->writeConnection()->insert_id;
             $stmt->close();
 
             return $this->requireById((int) $insertId);
         }
 
         $sql = 'UPDATE 202_attribution_settings SET model_id = ?, multi_touch_enabled = ?, multi_touch_enabled_at = ?, multi_touch_disabled_at = ?, effective_at = ?, updated_at = ? WHERE setting_id = ? LIMIT 1';
-        $stmt = $this->prepareWrite($sql);
+        $stmt = $this->conn->prepareWrite($sql);
 
         $modelId = (int) $row['model_id'];
         $effectiveAt = (int) $row['effective_at'];
@@ -152,7 +159,7 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
     public function findDisabledSettings(): array
     {
         $sql = 'SELECT * FROM 202_attribution_settings WHERE multi_touch_enabled = 0';
-        $stmt = $this->prepareRead($sql);
+        $stmt = $this->conn->prepareRead($sql);
         $stmt->execute();
         $result = $stmt->get_result();
 
@@ -169,29 +176,9 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
         return $settings;
     }
 
-    private function prepareRead(string $sql): mysqli_stmt
-    {
-        return $this->prepare($this->readConnection ?? $this->writeConnection, $sql);
-    }
-
-    private function prepareWrite(string $sql): mysqli_stmt
-    {
-        return $this->prepare($this->writeConnection, $sql);
-    }
-
-    private function prepare(mysqli $connection, string $sql): mysqli_stmt
-    {
-        $statement = $connection->prepare($sql);
-        if ($statement === false) {
-            throw new RuntimeException('Failed to prepare MySQL statement: ' . $connection->error);
-        }
-
-        return $statement;
-    }
-
     private function requireById(int $settingId): Setting
     {
-        $stmt = $this->prepareRead('SELECT * FROM 202_attribution_settings WHERE setting_id = ? LIMIT 1');
+        $stmt = $this->conn->prepareRead('SELECT * FROM 202_attribution_settings WHERE setting_id = ? LIMIT 1');
         $stmt->bind_param('i', $settingId);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -208,21 +195,5 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
     private function buildScopeKey(ScopeType $scopeType, ?int $scopeId): string
     {
         return sprintf('%s:%s', $scopeType->value, $scopeId === null ? 'null' : $scopeId);
-    }
-
-    /**
-     * @param array<int, mixed> $values
-     */
-    private function bind(mysqli_stmt $statement, string $types, array $values): void
-    {
-        $refs = [];
-        foreach ($values as $index => $value) {
-            $refs[$index] = &$values[$index];
-        }
-        $params = array_merge([$types], $refs);
-
-        if (!call_user_func_array($statement->bind_param(...), $params)) {
-            throw new RuntimeException('Failed to bind MySQL parameters.');
-        }
     }
 }
