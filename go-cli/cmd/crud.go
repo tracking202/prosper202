@@ -474,7 +474,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					fmt.Scanln(&answer)
 					answer = strings.ToLower(strings.TrimSpace(answer))
 					if answer != "y" && answer != "yes" {
-						output.Success(jsonOutput, "Bulk delete of %d %s cancelled by user.", len(idList), entity.Plural)
+						output.Cancelled(jsonOutput, "Bulk delete of %d %s cancelled by user.", len(idList), entity.Plural)
 						return nil
 					}
 				}
@@ -502,7 +502,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				var answer string
 				fmt.Scanln(&answer)
 				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-					output.Success(jsonOutput, "%s %s not deleted (cancelled by user).", capitalize(entity.Name), args[0])
+					output.Cancelled(jsonOutput, "%s %s not deleted (cancelled by user).", capitalize(entity.Name), args[0])
 					return nil
 				}
 			}

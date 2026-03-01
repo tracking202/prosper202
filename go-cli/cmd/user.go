@@ -165,7 +165,7 @@ var userDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				output.Success(jsonOutput, "User %s not deleted (cancelled by user).", args[0])
+				output.Cancelled(jsonOutput, "User %s not deleted (cancelled by user).", args[0])
 				return nil
 			}
 		}
@@ -244,7 +244,7 @@ var userRoleRemoveCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				output.Success(jsonOutput, "Role %s not removed from user %s (cancelled by user).", args[1], args[0])
+				output.Cancelled(jsonOutput, "Role %s not removed from user %s (cancelled by user).", args[1], args[0])
 				return nil
 			}
 		}
@@ -314,7 +314,7 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				output.Success(jsonOutput, "API key for user %s not deleted (cancelled by user).", args[0])
+				output.Cancelled(jsonOutput, "API key for user %s not deleted (cancelled by user).", args[0])
 				return nil
 			}
 		}
@@ -363,7 +363,7 @@ var userAPIKeyRotateCmd = &cobra.Command{
 				var answer string
 				fmt.Scanln(&answer)
 				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-					output.Success(jsonOutput, "Old API key kept (deletion cancelled by user).")
+					output.Cancelled(jsonOutput, "Old API key kept (deletion cancelled by user).")
 				} else {
 					if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
 						return err

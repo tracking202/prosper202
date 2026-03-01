@@ -163,7 +163,7 @@ var rotatorDeleteCmd = &cobra.Command{
 				fmt.Scanln(&answer)
 				answer = strings.ToLower(strings.TrimSpace(answer))
 				if answer != "y" && answer != "yes" {
-					output.Success(jsonOutput, "Bulk delete of %d rotators cancelled by user.", len(idList))
+					output.Cancelled(jsonOutput, "Bulk delete of %d rotators cancelled by user.", len(idList))
 					return nil
 				}
 			}
@@ -191,7 +191,7 @@ var rotatorDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				output.Success(jsonOutput, "Rotator %s not deleted (cancelled by user).", args[0])
+				output.Cancelled(jsonOutput, "Rotator %s not deleted (cancelled by user).", args[0])
 				return nil
 			}
 		}
@@ -277,7 +277,7 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 				fmt.Scanln(&answer)
 				answer = strings.ToLower(strings.TrimSpace(answer))
 				if answer != "y" && answer != "yes" {
-					output.Success(jsonOutput, "Bulk delete of %d rules from rotator %s cancelled by user.", len(idList), rotatorID)
+					output.Cancelled(jsonOutput, "Bulk delete of %d rules from rotator %s cancelled by user.", len(idList), rotatorID)
 					return nil
 				}
 			}
@@ -305,7 +305,7 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				output.Success(jsonOutput, "Rule %s from rotator %s not deleted (cancelled by user).", args[1], args[0])
+				output.Cancelled(jsonOutput, "Rule %s from rotator %s not deleted (cancelled by user).", args[1], args[0])
 				return nil
 			}
 		}

@@ -153,7 +153,7 @@ var attrModelDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				output.Success(jsonOutput, "Attribution model %s not deleted (cancelled by user).", args[0])
+				output.Cancelled(jsonOutput, "Attribution model %s not deleted (cancelled by user).", args[0])
 				return nil
 			}
 		}

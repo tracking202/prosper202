@@ -274,6 +274,37 @@ func TestSuccessJSON(t *testing.T) {
 	}
 }
 
+func TestCancelledText(t *testing.T) {
+	out := captureStdout(t, func() {
+		Cancelled(false, "User %s not deleted (cancelled by user).", "42")
+	})
+
+	expected := "User 42 not deleted (cancelled by user).\n"
+	if out != expected {
+		t.Errorf("Cancelled() output = %q, want %q", out, expected)
+	}
+}
+
+func TestCancelledJSON(t *testing.T) {
+	out := captureStdout(t, func() {
+		Cancelled(true, "User %s not deleted (cancelled by user).", "42")
+	})
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("expected valid JSON, got: %s", out)
+	}
+	if result["cancelled"] != true {
+		t.Errorf("expected cancelled=true, got %v", result["cancelled"])
+	}
+	if result["success"] != nil {
+		t.Errorf("expected no success key, got %v", result["success"])
+	}
+	if result["message"] != "User 42 not deleted (cancelled by user)." {
+		t.Errorf("expected message with cancelled context, got %v", result["message"])
+	}
+}
+
 func TestFormatValue(t *testing.T) {
 	tests := []struct {
 		name  string

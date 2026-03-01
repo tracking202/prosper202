@@ -76,12 +76,7 @@ var analyticsCmd = &cobra.Command{
 			groupBy = mapped
 		}
 		if !analyticsAllowedGroupBy[groupBy] {
-			valid := make([]string, 0, len(analyticsAllowedGroupBy))
-			for k := range analyticsAllowedGroupBy {
-				valid = append(valid, k)
-			}
-			sort.Strings(valid)
-			return validationError("unsupported --group-by value %q. Valid: %s (aliases: lp=landing_page)", groupBy, strings.Join(valid, ", "))
+			return validationError("unsupported --group-by value %q. Valid: %s (aliases: %s)", groupBy, strings.Join(sortedBoolMapKeys(analyticsAllowedGroupBy), ", "), formatAliases(analyticsGroupByAliases))
 		}
 
 		params := map[string]string{
@@ -139,12 +134,7 @@ var analyticsCmd = &cobra.Command{
 				sortBy = mapped
 			}
 			if !analyticsAllowedSort[sortBy] {
-				validSort := make([]string, 0, len(analyticsAllowedSort))
-				for k := range analyticsAllowedSort {
-					validSort = append(validSort, k)
-				}
-				sort.Strings(validSort)
-				return validationError("unsupported --sort value %q. Valid: %s (aliases: clicks, conversions, revenue, profit, cost)", sortBy, strings.Join(validSort, ", "))
+				return validationError("unsupported --sort value %q. Valid: %s (aliases: %s)", sortBy, strings.Join(sortedBoolMapKeys(analyticsAllowedSort), ", "), formatAliases(analyticsSortAliases))
 			}
 			params["sort"] = sortBy
 			if sortDir == "" {
@@ -160,6 +150,24 @@ var analyticsCmd = &cobra.Command{
 		render(data)
 		return nil
 	},
+}
+
+func sortedBoolMapKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func formatAliases(aliases map[string]string) string {
+	parts := make([]string, 0, len(aliases))
+	for k, v := range aliases {
+		parts = append(parts, k+"="+v)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
 
 func init() {

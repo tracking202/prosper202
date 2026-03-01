@@ -92,7 +92,7 @@ var configRemoveProfileCmd = &cobra.Command{
 			fmt.Scanln(&answer)
 			answer = strings.ToLower(strings.TrimSpace(answer))
 			if answer != "y" && answer != "yes" {
-				output.Success(jsonOutput, "Profile %s not removed (cancelled by user).", name)
+				output.Cancelled(jsonOutput, "Profile %s not removed (cancelled by user).", name)
 				return nil
 			}
 		}

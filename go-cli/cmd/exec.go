@@ -96,6 +96,16 @@ var execCmd = &cobra.Command{
 		sortedProfiles := append([]string(nil), profiles...)
 		sort.Strings(sortedProfiles)
 
+		// Collect failed profile names once, before output-mode branching.
+		var failedNames []string
+		if anyFailed {
+			for _, p := range sortedProfiles {
+				if r := resultMap[p]; r.Err != nil || r.ExitCode != 0 {
+					failedNames = append(failedNames, p)
+				}
+			}
+		}
+
 		if jsonOutput {
 			payload := map[string]interface{}{
 				"results": map[string]interface{}{},
@@ -126,44 +136,27 @@ var execCmd = &cobra.Command{
 
 			data, _ := json.Marshal(payload)
 			render(data)
-
-			if anyFailed {
-				failedNames := make([]string, 0)
-				for _, p := range sortedProfiles {
-					if r := resultMap[p]; r.Err != nil || r.ExitCode != 0 {
-						failedNames = append(failedNames, p)
-					}
+		} else {
+			for _, profile := range sortedProfiles {
+				result := resultMap[profile]
+				fmt.Printf("=== %s ===\n", profile)
+				if strings.TrimSpace(result.Stdout) != "" {
+					fmt.Println(strings.TrimRight(result.Stdout, "\n"))
 				}
-				return fmt.Errorf("profiles failed: %s", strings.Join(failedNames, ", "))
+				if strings.TrimSpace(result.Stderr) != "" {
+					fmt.Println(strings.TrimRight(result.Stderr, "\n"))
+				}
+				if result.Err != nil {
+					fmt.Printf("error: %v\n", result.Err)
+				}
+				if result.ExitCode != 0 {
+					fmt.Printf("exit code: %d\n", result.ExitCode)
+				}
+				fmt.Println()
 			}
-			return nil
-		}
-
-		for _, profile := range sortedProfiles {
-			result := resultMap[profile]
-			fmt.Printf("=== %s ===\n", profile)
-			if strings.TrimSpace(result.Stdout) != "" {
-				fmt.Println(strings.TrimRight(result.Stdout, "\n"))
-			}
-			if strings.TrimSpace(result.Stderr) != "" {
-				fmt.Println(strings.TrimRight(result.Stderr, "\n"))
-			}
-			if result.Err != nil {
-				fmt.Printf("error: %v\n", result.Err)
-			}
-			if result.ExitCode != 0 {
-				fmt.Printf("exit code: %d\n", result.ExitCode)
-			}
-			fmt.Println()
 		}
 
 		if anyFailed {
-			failedNames := make([]string, 0)
-			for _, p := range sortedProfiles {
-				if r := resultMap[p]; r.Err != nil || r.ExitCode != 0 {
-					failedNames = append(failedNames, p)
-				}
-			}
 			return fmt.Errorf("profiles failed: %s", strings.Join(failedNames, ", "))
 		}
 		return nil

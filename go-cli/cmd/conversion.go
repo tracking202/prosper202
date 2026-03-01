@@ -154,7 +154,7 @@ var conversionDeleteCmd = &cobra.Command{
 				fmt.Scanln(&answer)
 				answer = strings.ToLower(strings.TrimSpace(answer))
 				if answer != "y" && answer != "yes" {
-					output.Success(jsonOutput, "Bulk delete of %d conversions cancelled by user.", len(idList))
+					output.Cancelled(jsonOutput, "Bulk delete of %d conversions cancelled by user.", len(idList))
 					return nil
 				}
 			}
@@ -182,7 +182,7 @@ var conversionDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				output.Success(jsonOutput, "Conversion %s not deleted (cancelled by user).", args[0])
+				output.Cancelled(jsonOutput, "Conversion %s not deleted (cancelled by user).", args[0])
 				return nil
 			}
 		}

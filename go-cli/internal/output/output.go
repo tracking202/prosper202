@@ -100,6 +100,22 @@ func Success(jsonMode bool, format string, args ...interface{}) {
 	fmt.Println(msg)
 }
 
+// Cancelled prints a message for user-aborted operations.
+// When jsonMode is true, it emits {"cancelled": true, "message": "..."} as JSON.
+// This is distinct from Success — the requested operation was NOT performed.
+func Cancelled(jsonMode bool, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if jsonMode {
+		data, _ := json.Marshal(map[string]interface{}{
+			"cancelled": true,
+			"message":   msg,
+		})
+		fmt.Println(string(data))
+		return
+	}
+	fmt.Println(msg)
+}
+
 func renderTable(items []interface{}) {
 	if len(items) == 0 {
 		fmt.Println("No results.")

@@ -28,6 +28,11 @@ Success messages for void operations (delete, etc.) are also structured:
 {"success": true, "message": "Campaign 42 deleted."}
 ```
 
+User-cancelled operations (when `--force` is not used and the user declines) are distinct from success:
+```json
+{"cancelled": true, "message": "Campaign 42 not deleted (cancelled by user)."}
+```
+
 ## Non-Interactive Mode
 
 For automation, avoid interactive prompts:
