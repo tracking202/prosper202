@@ -164,6 +164,9 @@ func sortedBoolMapKeys(m map[string]bool) []string {
 func formatAliases(aliases map[string]string) string {
 	parts := make([]string, 0, len(aliases))
 	for k, v := range aliases {
+		if k == v {
+			continue
+		}
 		parts = append(parts, k+"="+v)
 	}
 	sort.Strings(parts)
