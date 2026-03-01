@@ -2,6 +2,7 @@
 declare(strict_types=1);
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
 //get the aff_camapaign_id
 $mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['acip']);
 
@@ -22,19 +23,11 @@ $cpa_row = $cpa_result->fetch_assoc();
 
 $mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa']);
 	
-if ($mysql['click_cpa']) {
-	$sql_set = "click_cpc='".$mysql['click_cpa']."', click_lead='1', click_filtered='0'";
-} else {
-	$sql_set = "click_lead='1', click_filtered='0'";
-}
-
-//ok now update and fire the pixel tracking
-$click_sql = "UPDATE 202_clicks SET ".$sql_set." WHERE click_id='".$mysql['click_id']."' AND aff_campaign_id='".$mysql['aff_campaign_id']."'";
-$db->query($click_sql);
-
-$click_sql = "UPDATE 202_clicks_spy SET ".$sql_set." WHERE click_id='".$mysql['click_id']."' AND aff_campaign_id='".$mysql['aff_campaign_id']."'";
-$db->query($click_sql);
-
-//set dirty hour
-$de = new DataEngine();
-$data=($de->setDirtyHour($mysql['click_id']));
+p202ApplyConversionUpdate(
+	$db,
+	(string) $mysql['click_id'],
+	(string) $mysql['click_cpa'],
+	false,
+	'',
+	(string) $mysql['aff_campaign_id']
+);
