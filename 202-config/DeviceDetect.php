@@ -15,7 +15,11 @@ class DeviceDetect
     private const MOBILE_KEYWORDS = [
         'Mobile', 'Android', 'iPhone', 'iPod', 'Windows Phone', 'BlackBerry',
         'Opera Mini', 'Opera Mobi', 'IEMobile', 'webOS', 'Fennec',
-        'Symbian', 'J2ME', 'MIDP', 'Kindle', 'Silk',
+        'Symbian', 'J2ME', 'MIDP',
+    ];
+
+    private const TABLET_KEYWORDS = [
+        'PlayBook', 'Kindle', 'Silk', 'Nexus 7', 'Nexus 10', 'Galaxy Tab', 'SM-T', 'Surface',
     ];
 
     public function __construct()
@@ -23,10 +27,10 @@ class DeviceDetect
         $this->userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
     }
 
-    public function setUserAgent(string $ua): string
+    public function setUserAgent(string $ua): self
     {
         $this->userAgent = $ua;
-        return $this->userAgent;
+        return $this;
     }
 
     public function getUserAgent(): string
@@ -51,7 +55,7 @@ class DeviceDetect
             return true;
         }
 
-        foreach (['PlayBook', 'Kindle', 'Silk', 'Nexus 7', 'Nexus 10', 'Galaxy Tab', 'SM-T', 'Surface'] as $keyword) {
+        foreach (self::TABLET_KEYWORDS as $keyword) {
             if (stripos($ua, $keyword) !== false) {
                 return true;
             }

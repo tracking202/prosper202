@@ -735,9 +735,10 @@ class PLATFORMS
             $detect = new DeviceDetect();
         }
 
-        if ($ua_string != '')
-            $ua = $detect->setUserAgent($ua_string);
-        else
+        if ($ua_string != '') {
+            $detect->setUserAgent($ua_string);
+            $ua = $detect->getUserAgent();
+        } else
             $ua = $detect->getUserAgent();
 
         // If Cache working
