@@ -1,17 +1,27 @@
 <?php
 
 declare(strict_types=1);
-function getUrl($url, $requestType = 'GET', $timeout = 30, $postArray = [])
+function getUrl($url, $requestType = 'GET', $timeout = 30, $postArray = [], $headers = [], $userAgent = '', $connectTimeout = 5)
 {
 	$ch = curl_init();
 	curl_setopt($ch, CURLOPT_URL, $url);
 	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
 	curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+	curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
 
 	if ($requestType == "POST") {
 		$postString = http_build_query($postArray);
 		curl_setopt($ch, CURLOPT_POST, true);
 		curl_setopt($ch, CURLOPT_POSTFIELDS, $postString);
+	}
+
+	if (!empty($headers)) {
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+	}
+
+	if ($userAgent !== '') {
+		curl_setopt($ch, CURLOPT_USERAGENT, $userAgent);
 	}
 
 	$result = curl_exec($ch);
