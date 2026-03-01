@@ -43,7 +43,7 @@ var diffCmd = &cobra.Command{
 		}
 		if target != "all" {
 			if _, ok := portableEntities[target]; !ok {
-				return fmt.Errorf("unsupported entity %q", target)
+				return fmt.Errorf("unsupported entity %q. Supported: all, %s", target, strings.Join(sortedPortableEntities(), ", "))
 			}
 		}
 

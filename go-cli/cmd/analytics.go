@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -75,7 +76,12 @@ var analyticsCmd = &cobra.Command{
 			groupBy = mapped
 		}
 		if !analyticsAllowedGroupBy[groupBy] {
-			return validationError("unsupported --group-by value %q", groupBy)
+			valid := make([]string, 0, len(analyticsAllowedGroupBy))
+			for k := range analyticsAllowedGroupBy {
+				valid = append(valid, k)
+			}
+			sort.Strings(valid)
+			return validationError("unsupported --group-by value %q. Valid: %s (aliases: lp=landing_page)", groupBy, strings.Join(valid, ", "))
 		}
 
 		params := map[string]string{
@@ -133,7 +139,12 @@ var analyticsCmd = &cobra.Command{
 				sortBy = mapped
 			}
 			if !analyticsAllowedSort[sortBy] {
-				return validationError("unsupported --sort value %q", sortBy)
+				validSort := make([]string, 0, len(analyticsAllowedSort))
+				for k := range analyticsAllowedSort {
+					validSort = append(validSort, k)
+				}
+				sort.Strings(validSort)
+				return validationError("unsupported --sort value %q. Valid: %s (aliases: clicks, conversions, revenue, profit, cost)", sortBy, strings.Join(validSort, ", "))
 			}
 			params["sort"] = sortBy
 			if sortDir == "" {

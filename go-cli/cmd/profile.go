@@ -56,7 +56,7 @@ var configAddProfileCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		output.Success("Profile %s added.", name)
+		output.Success(jsonOutput, "Profile %s added.", name)
 		return nil
 	},
 }
@@ -92,7 +92,7 @@ var configRemoveProfileCmd = &cobra.Command{
 			fmt.Scanln(&answer)
 			answer = strings.ToLower(strings.TrimSpace(answer))
 			if answer != "y" && answer != "yes" {
-				fmt.Println("Cancelled.")
+				output.Success(jsonOutput, "Profile %s not removed (cancelled by user).", name)
 				return nil
 			}
 		}
@@ -102,7 +102,7 @@ var configRemoveProfileCmd = &cobra.Command{
 			return err
 		}
 
-		output.Success("Profile %s removed.", name)
+		output.Success(jsonOutput, "Profile %s removed.", name)
 		return nil
 	},
 }
@@ -132,7 +132,7 @@ var configUseProfileCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		output.Success("Active profile set to %s.", name)
+		output.Success(jsonOutput, "Active profile set to %s.", name)
 		return nil
 	},
 }
@@ -219,7 +219,7 @@ var configRenameProfileCmd = &cobra.Command{
 			return err
 		}
 
-		output.Success("Profile %s renamed to %s.", oldName, newName)
+		output.Success(jsonOutput, "Profile %s renamed to %s.", oldName, newName)
 		return nil
 	},
 }

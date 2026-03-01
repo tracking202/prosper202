@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"p202/internal/api"
 
@@ -29,7 +30,7 @@ var dataImportCmd = &cobra.Command{
 		entity := args[0]
 		endpoint, ok := portableEntities[entity]
 		if !ok {
-			return fmt.Errorf("unsupported entity %q", entity)
+			return fmt.Errorf("unsupported entity %q. Supported: %s", entity, strings.Join(sortedPortableEntities(), ", "))
 		}
 
 		raw, err := os.ReadFile(args[1])

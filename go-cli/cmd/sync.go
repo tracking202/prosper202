@@ -338,7 +338,7 @@ func runSyncProfiles(entities []string, fromProfile, toProfile string, opts sync
 				sourceNames[currentEntity][sourceID] = key
 			}
 			if key == "" {
-				err := fmt.Errorf("source record has empty natural key")
+				err := fmt.Errorf("source %s record has empty natural key (id=%s)", currentEntity, sourceID)
 				if !handleSyncRecordError(currentEntity, key, err, opts.SkipErrors, &result) {
 					return nil, err
 				}
@@ -501,7 +501,7 @@ func selectedSyncEntities(entity string) ([]string, error) {
 		return append([]string(nil), syncDependencyOrder...), nil
 	}
 	if _, ok := portableEntities[entity]; !ok {
-		return nil, fmt.Errorf("unsupported entity %q", entity)
+		return nil, fmt.Errorf("unsupported entity %q. Supported: all, %s", entity, strings.Join(sortedPortableEntities(), ", "))
 	}
 	return []string{entity}, nil
 }

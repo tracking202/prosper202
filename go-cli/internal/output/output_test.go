@@ -237,7 +237,7 @@ func TestRenderEmptyDataArray(t *testing.T) {
 
 func TestSuccess(t *testing.T) {
 	out := captureStdout(t, func() {
-		Success("Campaign %s deleted.", "42")
+		Success(false, "Campaign %s deleted.", "42")
 	})
 
 	expected := "Campaign 42 deleted.\n"
@@ -248,12 +248,29 @@ func TestSuccess(t *testing.T) {
 
 func TestSuccessNoArgs(t *testing.T) {
 	out := captureStdout(t, func() {
-		Success("Operation completed.")
+		Success(false, "Operation completed.")
 	})
 
 	expected := "Operation completed.\n"
 	if out != expected {
 		t.Errorf("Success() output = %q, want %q", out, expected)
+	}
+}
+
+func TestSuccessJSON(t *testing.T) {
+	out := captureStdout(t, func() {
+		Success(true, "Campaign %s deleted.", "42")
+	})
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("expected valid JSON, got: %s", out)
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+	if result["message"] != "Campaign 42 deleted." {
+		t.Errorf("expected message='Campaign 42 deleted.', got %v", result["message"])
 	}
 }
 

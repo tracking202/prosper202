@@ -50,7 +50,7 @@ var exportCmd = &cobra.Command{
 		} else {
 			endpoint, ok := portableEntities[target]
 			if !ok {
-				return fmt.Errorf("unsupported entity %q", target)
+				return fmt.Errorf("unsupported entity %q. Supported: %s", target, strings.Join(sortedPortableEntities(), ", "))
 			}
 			rows, err := fetchAllRows(c, endpoint)
 			if err != nil {
@@ -77,7 +77,7 @@ var exportCmd = &cobra.Command{
 			if err := os.WriteFile(outputPath, pretty, 0600); err != nil {
 				return err
 			}
-			output.Success("Export written to %s", outputPath)
+			output.Success(jsonOutput, "Export written to %s", outputPath)
 			return nil
 		}
 

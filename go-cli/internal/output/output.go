@@ -86,8 +86,18 @@ func RenderCSV(data []byte) {
 }
 
 // Success prints a success message for void operations (delete, etc).
-func Success(format string, args ...interface{}) {
-	fmt.Printf(format+"\n", args...)
+// When jsonMode is true, it emits {"success": true, "message": "..."} as JSON.
+func Success(jsonMode bool, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if jsonMode {
+		data, _ := json.Marshal(map[string]interface{}{
+			"success": true,
+			"message": msg,
+		})
+		fmt.Println(string(data))
+		return
+	}
+	fmt.Println(msg)
 }
 
 func renderTable(items []interface{}) {

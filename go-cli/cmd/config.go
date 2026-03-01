@@ -39,7 +39,7 @@ var configSetURLCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		fmt.Printf("URL set for profile %s: %s\n", resolvedName, p.URL)
+		output.Success(jsonOutput, "URL set for profile %s: %s", resolvedName, p.URL)
 		return nil
 	},
 }
@@ -65,7 +65,7 @@ var configSetKeyCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		fmt.Printf("API key set for profile %s (%s)\n", resolvedName, p.MaskedKey())
+		output.Success(jsonOutput, "API key set for profile %s (%s)", resolvedName, p.MaskedKey())
 		return nil
 	},
 }
@@ -158,7 +158,7 @@ var configSetDefaultCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		output.Success("Default set: %s=%s", key, value)
+		output.Success(jsonOutput, "Default set: %s=%s", key, value)
 		return nil
 	},
 }
@@ -232,7 +232,7 @@ var configUnsetDefaultCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		output.Success("Default removed: %s", key)
+		output.Success(jsonOutput, "Default removed: %s", key)
 		return nil
 	},
 }

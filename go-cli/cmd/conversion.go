@@ -154,7 +154,7 @@ var conversionDeleteCmd = &cobra.Command{
 				fmt.Scanln(&answer)
 				answer = strings.ToLower(strings.TrimSpace(answer))
 				if answer != "y" && answer != "yes" {
-					fmt.Println("Cancelled.")
+					output.Success(jsonOutput, "Bulk delete of %d conversions cancelled by user.", len(idList))
 					return nil
 				}
 			}
@@ -169,7 +169,7 @@ var conversionDeleteCmd = &cobra.Command{
 				}
 				deleted++
 			}
-			output.Success("Deleted %d of %d conversions.", deleted, len(idList))
+			output.Success(jsonOutput, "Deleted %d of %d conversions.", deleted, len(idList))
 			if failed > 0 {
 				return partialFailureError("failed to delete %d conversions", failed)
 			}
@@ -182,14 +182,14 @@ var conversionDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
+				output.Success(jsonOutput, "Conversion %s not deleted (cancelled by user).", args[0])
 				return nil
 			}
 		}
 		if err := c.Delete("conversions/" + args[0]); err != nil {
 			return err
 		}
-		output.Success("Conversion %s deleted.", args[0])
+		output.Success(jsonOutput, "Conversion %s deleted.", args[0])
 		return nil
 	},
 }

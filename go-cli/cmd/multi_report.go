@@ -65,7 +65,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 	if groupTag != "" {
 		matches := cfg.ResolveGroup(groupTag)
 		if len(matches) == 0 {
-			return nil, fmt.Errorf("no profiles found for group %q", groupTag)
+			return nil, fmt.Errorf("no profiles found for group %q. Assign tags with: p202 config tag-profile <profile> %s", groupTag, groupTag)
 		}
 		return matches, nil
 	}
@@ -79,7 +79,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 			continue
 		}
 		if !available[name] {
-			return nil, fmt.Errorf("profile %q not found", name)
+			return nil, fmt.Errorf("profile %q not found. Available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 		}
 		seen[name] = true
 		profiles = append(profiles, name)

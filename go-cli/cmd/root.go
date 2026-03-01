@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -49,12 +50,30 @@ func Execute() {
 	rootCmd.Long = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
 		"Designed for both human operators and AI agents." + buildAliasHelp()
 	if err := rootCmd.Execute(); err != nil {
-		if category := api.ErrorCategory(err); category != "" {
+		code := exitCodeForError(err)
+		category := api.ErrorCategory(err)
+
+		if jsonOutput {
+			// Structured JSON error on stderr so agents can parse it.
+			errObj := map[string]interface{}{
+				"error":     true,
+				"message":   err.Error(),
+				"exit_code": code,
+			}
+			if category != "" {
+				errObj["category"] = category
+			}
+			if apiErr, ok := err.(*api.APIError); ok && len(apiErr.FieldErrors) > 0 {
+				errObj["field_errors"] = apiErr.FieldErrors
+			}
+			data, _ := json.Marshal(errObj)
+			fmt.Fprintln(os.Stderr, string(data))
+		} else if category != "" {
 			fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", category, err)
 		} else {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
-		os.Exit(exitCodeForError(err))
+		os.Exit(code)
 	}
 }
 

@@ -128,7 +128,13 @@ var execCmd = &cobra.Command{
 			render(data)
 
 			if anyFailed {
-				return fmt.Errorf("one or more profiles failed")
+				failedNames := make([]string, 0)
+				for _, p := range sortedProfiles {
+					if r := resultMap[p]; r.Err != nil || r.ExitCode != 0 {
+						failedNames = append(failedNames, p)
+					}
+				}
+				return fmt.Errorf("profiles failed: %s", strings.Join(failedNames, ", "))
 			}
 			return nil
 		}
@@ -152,7 +158,13 @@ var execCmd = &cobra.Command{
 		}
 
 		if anyFailed {
-			return fmt.Errorf("one or more profiles failed")
+			failedNames := make([]string, 0)
+			for _, p := range sortedProfiles {
+				if r := resultMap[p]; r.Err != nil || r.ExitCode != 0 {
+					failedNames = append(failedNames, p)
+				}
+			}
+			return fmt.Errorf("profiles failed: %s", strings.Join(failedNames, ", "))
 		}
 		return nil
 	},

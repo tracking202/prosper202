@@ -4774,3 +4774,90 @@ func TestUIFriendlyAliasesHitSameEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteSuccessOutputJSON(t *testing.T) {
+	// When --json --force is set, delete should emit {"success":true,"message":"..."}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(204)
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "testkey123")
+
+	stdout, _, err := executeCommand("--json", "conversion", "delete", "42", "--force")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &result); err != nil {
+		t.Fatalf("expected valid JSON output, got: %s (err: %v)", stdout, err)
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+	if msg, ok := result["message"].(string); !ok || !strings.Contains(msg, "42") {
+		t.Errorf("expected message containing '42', got %v", result["message"])
+	}
+}
+
+func TestConfigSetURLOutputJSON(t *testing.T) {
+	// Config set-url with --json should produce valid JSON success output.
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	stdout, _, err := executeCommand("--json", "config", "set-url", "https://new.example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &result); err != nil {
+		t.Fatalf("config set-url --json should emit valid JSON, got: %s", stdout)
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+}
+
+func TestUnsupportedEntityListsValid(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:1", "testkey123")
+
+	_, _, err := executeCommand("export", "invalid-entity")
+	if err == nil {
+		t.Fatal("expected error for unsupported entity")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "Supported:") {
+		t.Errorf("error should list supported entities, got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "campaigns") {
+		t.Errorf("error should include 'campaigns' in supported list, got: %s", errMsg)
+	}
+}
+
+func TestGroupNotFoundSuggestsTagCommand(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "main", map[string]map[string]interface{}{
+		"main": {"url": "http://localhost:1", "api_key": "testkey123"},
+	})
+
+	_, _, err := executeCommand("exec", "--group", "nonexistent", "--", "system", "health")
+	if err == nil {
+		t.Fatal("expected error for empty group")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "tag-profile") {
+		t.Errorf("error should suggest tag-profile command, got: %s", errMsg)
+	}
+}

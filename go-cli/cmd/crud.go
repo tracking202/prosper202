@@ -474,7 +474,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					fmt.Scanln(&answer)
 					answer = strings.ToLower(strings.TrimSpace(answer))
 					if answer != "y" && answer != "yes" {
-						fmt.Println("Cancelled.")
+						output.Success(jsonOutput, "Bulk delete of %d %s cancelled by user.", len(idList), entity.Plural)
 						return nil
 					}
 				}
@@ -489,7 +489,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					}
 					deleted++
 				}
-				output.Success("Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
+				output.Success(jsonOutput, "Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
 				if failed > 0 {
 					return partialFailureError("failed to delete %d %s", failed, entity.Plural)
 				}
@@ -502,14 +502,14 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				var answer string
 				fmt.Scanln(&answer)
 				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-					fmt.Println("Cancelled.")
+					output.Success(jsonOutput, "%s %s not deleted (cancelled by user).", capitalize(entity.Name), args[0])
 					return nil
 				}
 			}
 			if err := c.Delete(entity.Endpoint + "/" + args[0]); err != nil {
 				return err
 			}
-			output.Success("%s %s deleted.", capitalize(entity.Name), args[0])
+			output.Success(jsonOutput, "%s %s deleted.", capitalize(entity.Name), args[0])
 			return nil
 		},
 	}
@@ -835,7 +835,7 @@ func init() {
 						tracker := trackers[index]
 						trackerID, ok := extractIntField(tracker, "tracker_id", "id")
 						if !ok {
-							results <- bulkResult{index: index, err: fmt.Errorf("tracker row missing tracker_id")}
+							results <- bulkResult{index: index, err: fmt.Errorf("tracker at offset %d missing tracker_id field", index)}
 							continue
 						}
 

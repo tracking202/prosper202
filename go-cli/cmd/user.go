@@ -165,14 +165,14 @@ var userDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
+				output.Success(jsonOutput, "User %s not deleted (cancelled by user).", args[0])
 				return nil
 			}
 		}
 		if err := c.Delete("users/" + args[0]); err != nil {
 			return err
 		}
-		output.Success("User %s deleted.", args[0])
+		output.Success(jsonOutput, "User %s deleted.", args[0])
 		return nil
 	},
 }
@@ -244,14 +244,14 @@ var userRoleRemoveCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
+				output.Success(jsonOutput, "Role %s not removed from user %s (cancelled by user).", args[1], args[0])
 				return nil
 			}
 		}
 		if err := c.Delete("users/" + args[0] + "/roles/" + args[1]); err != nil {
 			return err
 		}
-		output.Success("Role %s removed from user %s.", args[1], args[0])
+		output.Success(jsonOutput, "Role %s removed from user %s.", args[1], args[0])
 		return nil
 	},
 }
@@ -314,14 +314,14 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 			var answer string
 			fmt.Scanln(&answer)
 			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
+				output.Success(jsonOutput, "API key for user %s not deleted (cancelled by user).", args[0])
 				return nil
 			}
 		}
 		if err := c.Delete("users/" + args[0] + "/api-keys/" + args[1]); err != nil {
 			return err
 		}
-		output.Success("API key deleted for user %s.", args[0])
+		output.Success(jsonOutput, "API key deleted for user %s.", args[0])
 		return nil
 	},
 }
@@ -363,7 +363,7 @@ var userAPIKeyRotateCmd = &cobra.Command{
 				var answer string
 				fmt.Scanln(&answer)
 				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-					fmt.Println("Skipping old key deletion.")
+					output.Success(jsonOutput, "Old API key kept (deletion cancelled by user).")
 				} else {
 					if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
 						return err

@@ -52,7 +52,7 @@ var configTagProfileCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		output.Success("Tags updated for profile %s.", name)
+		output.Success(jsonOutput, "Tags updated for profile %s.", name)
 		return nil
 	},
 }
@@ -99,7 +99,7 @@ var configUntagProfileCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		output.Success("Tags updated for profile %s.", name)
+		output.Success(jsonOutput, "Tags updated for profile %s.", name)
 		return nil
 	},
 }
