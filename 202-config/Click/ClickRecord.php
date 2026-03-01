@@ -6,6 +6,9 @@ namespace Prosper202\Click;
 
 final class ClickRecord
 {
+    // Pre-allocated click ID (0 = auto-generate from counter table)
+    public int $clickId = 0;
+
     // Core click data (202_clicks)
     public int $userId = 0;
     public int $affCampaignId = 0;

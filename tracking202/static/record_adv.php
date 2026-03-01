@@ -363,139 +363,46 @@ if ($device_id['type'] == '4') {
 
 
 
-//ok we have the main data, now insert this row
-$click_sql = "INSERT INTO   202_clicks_counter SET click_id=DEFAULT";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
-
-//now gather the info for the advance click insert
-$click_id = $db->insert_id;
-$mysql['click_id'] = $db->real_escape_string((string) $click_id);
+// Pre-allocate click_id so we can compute click_id_public and site URLs
+$conn = new \Prosper202\Database\Connection($db);
+$clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
+$click_id = $clickRepo->allocateClickId();
 $click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
-$mysql['click_id_public'] = $db->real_escape_string((string) $click_id_public);
+$mysql['click_id'] = (string) $click_id;
+$mysql['click_id_public'] = (string) $click_id_public;
 
-//because this is a simple landing page, set click_alp (which stands for click advanced landing page, equal to 0)
+//because this is an advanced landing page, set click_alp = 1
 $mysql['click_alp'] = 1;
 
-//ok we have the main data, now insert this row
-$click_sql = "INSERT INTO   202_clicks
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							user_id = '" . $mysql['user_id'] . "',   
-							landing_page_id='" . $mysql['landing_page_id'] . "',
-							ppc_account_id = '" . $mysql['ppc_account_id'] . "',   
-							click_cpc = '" . $mysql['click_cpc'] . "',   
-							click_payout = '" . $mysql['click_payout'] . "',   
-							click_filtered = '" . $mysql['click_filtered'] . "',
-							click_bot = '" . $mysql['click_bot'] . "',   
-							click_alp = '" . $mysql['click_alp'] . "',   
-							click_time = '" . $mysql['click_time'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
-
-
+// Compute variable_set_id
 $total_vars = count($custom_var_ids);
-
 if ($total_vars > 0) {
-
 	$variables = implode(",", $custom_var_ids);
 	$variable_set_id = $trackingRepo->findOrCreateVariableSet($variables);
-
-	$mysql['variable_set_id'] = $db->real_escape_string((string) $variable_set_id);
-
-	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
-	$var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+	$mysql['variable_set_id'] = (string) $variable_set_id;
 } else {
-	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "',0)";
-	$var_result = $db->query($var_sql) or record_mysql_error($db, $var_sql);
+	$mysql['variable_set_id'] = '0';
 }
 
-
-// insert gclid and utm vars
-$click_sql = "INSERT INTO   202_google
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							gclid = '" . $mysql['gclid'] . "',
-                            utm_source_id = '" . $mysql['utm_source_id'] . "',
-                            utm_medium_id = '" . $mysql['utm_medium_id'] . "',
-utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
-utm_term_id = '" . $mysql['utm_term_id'] . "',
-utm_content_id = '" . $mysql['utm_content_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
-
-//ok we have the main data, now insert this row
-$click_sql = "INSERT INTO  202_clicks_spy
-			  SET          	 	click_id='" . $mysql['click_id'] . "',
-							user_id = '" . $mysql['user_id'] . "',   
-							landing_page_id='" . $mysql['landing_page_id'] . "',
-							ppc_account_id = '" . $mysql['ppc_account_id'] . "',   
-							click_cpc = '" . $mysql['click_cpc'] . "',   
-							click_payout = '" . $mysql['click_payout'] . "',   
-							click_filtered = '" . $mysql['click_filtered'] . "',
-							click_bot = '" . $mysql['click_bot'] . "',   
-							click_alp = '" . $mysql['click_alp'] . "',   
-							click_time = '" . $mysql['click_time'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
-
-//now we have the click's advance data, now insert this row
-$click_sql = "INSERT INTO  202_clicks_advance
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							text_ad_id='" . $mysql['text_ad_id'] . "',
-							keyword_id='" . $mysql['keyword_id'] . "',
-							ip_id='" . $mysql['ip_id'] . "',
-							country_id='" . $mysql['country_id'] . "',
-							region_id='" . $mysql['region_id'] . "',
-							isp_id='" . $mysql['isp_id'] . "',
-							city_id='" . $mysql['city_id'] . "',
-							platform_id='" . $mysql['platform_id'] . "',
-							browser_id='" . $mysql['browser_id'] . "',
-							device_id='" . $mysql['device_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
-
-//insert the tracking data
-$click_sql = "
-	INSERT INTO
-		202_clicks_tracking
-	SET
-		click_id='" . $mysql['click_id'] . "',
-		c1_id = '" . $mysql['c1_id'] . "',
-		c2_id = '" . $mysql['c2_id'] . "',
-		c3_id = '" . $mysql['c3_id'] . "',
-		c4_id = '" . $mysql['c4_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
-
+// Determine cloaking
 if (!$tracker_row['click_cloaking']) {
 	$mysql['click_cloaking'] = -1;
 } else {
-	$mysql['click_cloaking'] = $db->real_escape_string((string) $tracker_row['click_cloaking']);
+	$mysql['click_cloaking'] = (int) $tracker_row['click_cloaking'];
 }
 
-
-//ok we have our click recorded table, now lets insert theses
-$click_sql = "INSERT INTO   202_clicks_record
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							click_id_public='" . $mysql['click_id_public'] . "',
-							click_cloaking='" . $mysql['click_cloaking'] . "',
-							click_in='" . $mysql['click_in'] . "',
-							click_out='" . $mysql['click_out'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
-
-
-
+// Compute site URLs
 $landing_site_url = $_SERVER['HTTP_REFERER'] ?? ((string) ($_GET['referer'] ?? ''));
 $click_landing_site_url_id = $locationRepo->findOrCreateSiteUrl($landing_site_url);
-$mysql['click_landing_site_url_id'] = $db->real_escape_string((string) $click_landing_site_url_id);
+$mysql['click_landing_site_url_id'] = (string) $click_landing_site_url_id;
 $mysql['click_outbound_site_url_id'] = '0';
 $mysql['click_cloaking_site_url_id'] = '0';
 $mysql['click_redirect_site_url_id'] = '0';
 
-$old_lp_site_url = 'http://' . $_SERVER['REDIRECT_SERVER_NAME'] . '/lp/' . $landing_page_id_public;
-
-//insert this
-$click_sql = "INSERT INTO   202_clicks_site
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							click_referer_site_url_id='" . $mysql['click_referer_site_url_id'] . "',
-							click_landing_site_url_id='" . $mysql['click_landing_site_url_id'] . "',
-							click_outbound_site_url_id='" . $mysql['click_outbound_site_url_id'] . "',
-							click_cloaking_site_url_id='" . $mysql['click_cloaking_site_url_id'] . "',
-							click_redirect_site_url_id='" . $mysql['click_redirect_site_url_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
+// Record click via repository (replaces 9 raw INSERT statements with parameterized, transactional writes)
+$clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
+$clickRecord->clickId = $click_id;
+$clickRepo->recordClick($clickRecord);
 
 
 //set the cookie

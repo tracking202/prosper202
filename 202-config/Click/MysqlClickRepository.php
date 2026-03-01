@@ -12,15 +12,36 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     {
     }
 
+    /**
+     * Allocate a click_id from the counter table (outside of transaction).
+     *
+     * Use this when the hot path needs click_id before calling recordClick()
+     * (e.g. to generate click_id_public and compute site URLs).
+     */
+    public function allocateClickId(): int
+    {
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
+        );
+        $clickId = $this->conn->executeInsert($stmt);
+        $stmt->close();
+
+        return $clickId;
+    }
+
     public function recordClick(ClickRecord $click): int
     {
         return $this->conn->transaction(function () use ($click): int {
-            // 1. Generate click_id via counter table
-            $stmt = $this->conn->prepareWrite(
-                'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
-            );
-            $clickId = $this->conn->executeInsert($stmt);
-            $stmt->close();
+            // 1. Generate or use pre-allocated click_id
+            if ($click->clickId > 0) {
+                $clickId = $click->clickId;
+            } else {
+                $stmt = $this->conn->prepareWrite(
+                    'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
+                );
+                $clickId = $this->conn->executeInsert($stmt);
+                $stmt->close();
+            }
 
             // 2. 202_clicks — core click data
             $stmt = $this->conn->prepareWrite(

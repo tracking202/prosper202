@@ -10,9 +10,18 @@ final class InMemoryClickRepository implements ClickRepositoryInterface
     public array $clicks = [];
     private int $nextId = 1;
 
+    public function allocateClickId(): int
+    {
+        return $this->nextId++;
+    }
+
     public function recordClick(ClickRecord $click): int
     {
-        $id = $this->nextId++;
+        if ($click->clickId > 0) {
+            $id = $click->clickId;
+        } else {
+            $id = $this->nextId++;
+        }
         $this->clicks[$id] = clone $click;
 
         return $id;

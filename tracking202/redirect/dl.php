@@ -538,171 +538,38 @@ if ($device_id['type'] == '4') {
 }
 
 
-//ok we have the main data, now insert this row
-$click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-
-
-//now gather the info for the advance click insert
-$click_id = $db->insert_id;
-$mysql['click_id'] = $db->real_escape_string((string)$click_id);
-
-//because this is a simple landing page, set click_alp (which stands for click advanced landing page, equal to 0)
+// Pre-allocate click_id (single DB write before redirect for minimal latency)
+$conn = new \Prosper202\Database\Connection($db);
+$clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
+$click_id = $clickRepo->allocateClickId();
+$mysql['click_id'] = (string) $click_id;
 $mysql['click_alp'] = 0;
 
-
-//ok we have the main data, now insert this row
-$click_sql = "INSERT INTO   202_clicks
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							user_id = '" . $mysql['user_id'] . "',   
-							aff_campaign_id = '" . $mysql['aff_campaign_id'] . "',   
-							ppc_account_id = '" . $mysql['ppc_account_id'] . "',   
-							click_cpc = '" . $mysql['click_cpc'] . "',   
-							click_payout = '" . $mysql['click_payout'] . "',   
-							click_alp = '" . $mysql['click_alp'] . "',
-							click_filtered = '" . $mysql['click_filtered'] . "',
-							click_bot = '" . $mysql['click_bot'] . "',
-							click_time = '" . $mysql['click_time'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-$total_vars = count($custom_var_ids);
-
-if ($total_vars > 0) {
-
-	$variables = implode(",", $custom_var_ids);
-	$variable_set_id = $trackingRepo->findOrCreateVariableSet($variables);
-
-	$mysql['variable_set_id'] = $db->real_escape_string((string)$variable_set_id);
-
-	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
-	$var_result = $db->query($var_sql) or record_mysql_error($db);
-} else {
-	$var_sql = "INSERT INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "',0)";
-	$var_result = $db->query($var_sql) or record_mysql_error($db);
-}
-
-// insert gclid and utm vars
-$click_sql = "INSERT INTO   202_google
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							gclid = '" . $mysql['gclid'] . "',
-                            utm_source_id = '" . $mysql['utm_source_id'] . "',
-                            utm_medium_id = '" . $mysql['utm_medium_id'] . "',
-utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
-utm_term_id = '" . $mysql['utm_term_id'] . "',
-utm_content_id = '" . $mysql['utm_content_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-//ok we have the main data, now insert this row
-$click_sql = "INSERT INTO   202_clicks_spy
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							user_id = '" . $mysql['user_id'] . "',   
-							aff_campaign_id = '" . $mysql['aff_campaign_id'] . "',   
-							ppc_account_id = '" . $mysql['ppc_account_id'] . "',   
-							click_cpc = '" . $mysql['click_cpc'] . "',   
-							click_payout = '" . $mysql['click_payout'] . "',   
-							click_filtered = '" . $mysql['click_filtered'] . "',
-							click_bot = '" . $mysql['click_bot'] . "',
-							click_alp = '" . $mysql['click_alp'] . "',
-							click_time = '" . $mysql['click_time'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-
-
-//now we have the click's advance data, now insert this row
-$click_sql = "INSERT INTO   202_clicks_advance
-			  SET           click_id='" . $mysql['click_id'] . "',
-							text_ad_id='" . $mysql['text_ad_id'] . "',
-							keyword_id='" . $mysql['keyword_id'] . "',
-							ip_id='" . $mysql['ip_id'] . "',
-							country_id='" . $mysql['country_id'] . "',
-							region_id='" . $mysql['region_id'] . "',
-							isp_id='" . $mysql['isp_id'] . "',
-							city_id='" . $mysql['city_id'] . "',
-							platform_id='" . $mysql['platform_id'] . "',
-							browser_id='" . $mysql['browser_id'] . "',
-							device_id='" . $mysql['device_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-//insert the tracking data
-$click_sql = "
-	INSERT INTO
-		202_clicks_tracking
-	SET
-		click_id='" . $mysql['click_id'] . "',
-		c1_id = '" . $mysql['c1_id'] . "',
-		c2_id = '" . $mysql['c2_id'] . "',
-		c3_id = '" . $mysql['c3_id'] . "',
-		c4_id = '" . $mysql['c4_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-//now gather variables for the clicks record db
-//lets determine if cloaking is on
+// Determine cloaking (needed for redirect decision)
 $cloaking_on = false;
 $mysql['click_id_public'] = '';
-if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking on                                                             
+if (($tracker_row['click_cloaking'] == 1) or
 	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
-	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1)) //if no tracker but but by default campaign has cloaking on
+	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1))
 ) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
-	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
 	$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
-	$mysql['click_id_public'] = $db->real_escape_string((string)$click_id_public);
+	$mysql['click_id_public'] = (string) $click_id_public;
 } else {
 	$mysql['click_cloaking'] = 0;
 }
 
-//ok we have our click recorded table, now lets insert theses
-$click_sql = "INSERT INTO   202_clicks_record
-			  SET           click_id='" . $mysql['click_id'] . "',
-							click_id_public='" . $mysql['click_id_public'] . "',
-							click_cloaking='" . $mysql['click_cloaking'] . "',
-							click_in='" . $mysql['click_in'] . "',
-							click_out='" . $mysql['click_out'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-// if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
-if ($tracker_row['user_pref_referer_data'] == 't202ref') {
-	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
-		$mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
-		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_GET['t202ref']);
-	} else { //if not found revert to what we usually do
-		if (isset($referer_query['url'])) {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
-		} else {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
-		}
-	}
-} else { //user wants the real referer first
-
-	// now lets get variables for clicks site
-	// so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-	if (isset($referer_query['url'])) {
-		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
-	} else {
-		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
-	}
-}
-
-$mysql['click_referer_site_url_id'] = $db->real_escape_string((string)$click_referer_site_url_id);
-
-$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
-$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
+// Compute redirect URL (needed before redirect)
+$redirect_site_url = rotateTrackerUrl($db, $tracker_row);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
 
 $cloaking_site_url = '';
-if ($cloaking_on == true) {
+if ($cloaking_on === true) {
 	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
 
-
-//rotate the urls
-$redirect_site_url = rotateTrackerUrl($db, $tracker_row);
-
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
-
-
+// Redirect user ASAP (only 1 DB write so far vs. 8 in old code)
 $urlvars = getPrePopVars($_GET);
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
 if ($cloaking_on === true) {
@@ -715,16 +582,50 @@ if (function_exists('fastcgi_finish_request')) {
 	fastcgi_finish_request();
 }
 
-$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
-$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
+// --- Everything below runs after user has been redirected ---
 
-//insert this
-$click_sql = "INSERT INTO   202_clicks_site
-                          SET           click_id='" . $mysql['click_id'] . "',
-                                                        click_referer_site_url_id='" . $mysql['click_referer_site_url_id'] . "',
-                                                        click_outbound_site_url_id='" . $mysql['click_outbound_site_url_id'] . "',
-                                                        click_redirect_site_url_id='" . $mysql['click_redirect_site_url_id'] . "'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
+// Compute variable_set_id
+$total_vars = count($custom_var_ids);
+if ($total_vars > 0) {
+	$variables = implode(",", $custom_var_ids);
+	$variable_set_id = $trackingRepo->findOrCreateVariableSet($variables);
+	$mysql['variable_set_id'] = (string) $variable_set_id;
+} else {
+	$mysql['variable_set_id'] = '0';
+}
+
+// Compute site URLs
+if ($tracker_row['user_pref_referer_data'] == 't202ref') {
+	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') {
+		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_GET['t202ref']);
+	} else {
+		if (isset($referer_query['url'])) {
+			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+		} else {
+			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
+		}
+	}
+} else {
+	if (isset($referer_query['url'])) {
+		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+	} else {
+		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
+	}
+}
+$mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
+
+$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
+
+$mysql['click_cloaking_site_url_id'] = '0';
+$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
+$mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
+
+// Record click via repository (all 9 tables in one atomic transaction, AFTER redirect)
+$clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
+$clickRecord->clickId = $click_id;
+$clickRepo->recordClick($clickRecord);
 
 
 //update the click summary table
