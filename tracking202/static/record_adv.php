@@ -7,6 +7,9 @@ header("Expires: -1");
 include_once(substr(__DIR__, 0, -19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 
+$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
+$trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
+
 $_GET += [
 	'lpip' => '',
 	't202id' => '',
@@ -179,27 +182,27 @@ if (str_starts_with((string) $keyword, 't202var_')) {
 }
 
 $keyword = str_replace('%20', ' ', $keyword);
-$keyword_id = INDEXES::get_keyword_id($db, $keyword);
+$keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = $db->real_escape_string((string) $keyword_id);
 
 $c1 = $db->real_escape_string((string)$_GET['c1']);
 $c1 = str_replace('%20', ' ', $c1);
-$c1_id = INDEXES::get_c1_id($db, $c1);
+$c1_id = $trackingRepo->findOrCreateC1($c1);
 $mysql['c1_id'] = $db->real_escape_string((string) $c1_id);
 
 $c2 = $db->real_escape_string((string)$_GET['c2']);
 $c2 = str_replace('%20', ' ', $c2);
-$c2_id = INDEXES::get_c2_id($db, $c2);
+$c2_id = $trackingRepo->findOrCreateC2($c2);
 $mysql['c2_id'] = $db->real_escape_string((string) $c2_id);
 
 $c3 = $db->real_escape_string((string)$_GET['c3']);
 $c3 = str_replace('%20', ' ', $c3);
-$c3_id = INDEXES::get_c3_id($db, $c3);
+$c3_id = $trackingRepo->findOrCreateC3($c3);
 $mysql['c3_id'] = $db->real_escape_string((string) $c3_id);
 
 $c4 = $db->real_escape_string((string)$_GET['c4']);
 $c4 = str_replace('%20', ' ', $c4);
-$c4_id = INDEXES::get_c4_id($db, $c4);
+$c4_id = $trackingRepo->findOrCreateC4($c4);
 $mysql['c4_id'] = $db->real_escape_string((string) $c4_id);
 
 $mysql['gclid'] = $db->real_escape_string((string)$_GET['gclid']);
@@ -219,7 +222,7 @@ foreach ($parameters as $key => $value) {
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = INDEXES::get_variable_id($db, $variable, $ppc_variable_ids[$key]);
+		$variable_id = $trackingRepo->findOrCreateVariable($variable, (int) $ppc_variable_ids[$key]);
 		$custom_var_ids[] = $variable_id;
 	}
 }
@@ -228,7 +231,7 @@ foreach ($parameters as $key => $value) {
 $utm_source = $db->real_escape_string((string)$_GET['utm_source']);
 if (isset($utm_source) && $utm_source != '') {
 	$utm_source = str_replace('%20', ' ', $utm_source);
-	$utm_source_id = INDEXES::get_utm_id($db, $utm_source, 'utm_source');
+	$utm_source_id = $trackingRepo->findOrCreateUtm($utm_source, 'utm_source');
 } else {
 	$utm_source_id = 0;
 }
@@ -238,7 +241,7 @@ $mysql['utm_source_id'] = $db->real_escape_string((string) $utm_source_id);
 $utm_medium = $db->real_escape_string((string)$_GET['utm_medium']);
 if (isset($utm_medium) && $utm_medium != '') {
 	$utm_medium = str_replace('%20', ' ', $utm_medium);
-	$utm_medium_id = INDEXES::get_utm_id($db, $utm_medium, 'utm_medium');
+	$utm_medium_id = $trackingRepo->findOrCreateUtm($utm_medium, 'utm_medium');
 } else {
 	$utm_medium_id = 0;
 }
@@ -248,7 +251,7 @@ $mysql['utm_medium_id'] = $db->real_escape_string((string) $utm_medium_id);
 $utm_campaign = $db->real_escape_string((string)$_GET['utm_campaign']);
 if (isset($utm_campaign) && $utm_campaign != '') {
 	$utm_campaign = str_replace('%20', ' ', $utm_campaign);
-	$utm_campaign_id = INDEXES::get_utm_id($db, $utm_campaign, 'utm_campaign');
+	$utm_campaign_id = $trackingRepo->findOrCreateUtm($utm_campaign, 'utm_campaign');
 } else {
 	$utm_campaign_id = 0;
 }
@@ -258,7 +261,7 @@ $mysql['utm_campaign_id'] = $db->real_escape_string((string) $utm_campaign_id);
 $utm_term = $db->real_escape_string((string)$_GET['utm_term']);
 if (isset($utm_term) && $utm_term != '') {
 	$utm_term = str_replace('%20', ' ', $utm_term);
-	$utm_term_id = INDEXES::get_utm_id($db, $utm_term, 'utm_term');
+	$utm_term_id = $trackingRepo->findOrCreateUtm($utm_term, 'utm_term');
 } else {
 	$utm_term_id = 0;
 }
@@ -268,14 +271,14 @@ $mysql['utm_term_id'] = $db->real_escape_string((string) $utm_term_id);
 $utm_content = $db->real_escape_string((string)$_GET['utm_content']);
 if (isset($utm_content) && $utm_content != '') {
 	$utm_content = str_replace('%20', ' ', $utm_content);
-	$utm_content_id = INDEXES::get_utm_id($db, $utm_content, 'utm_content');
+	$utm_content_id = $trackingRepo->findOrCreateUtm($utm_content, 'utm_content');
 } else {
 	$utm_content_id = 0;
 }
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
 $ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
-$ip_id = INDEXES::get_ip_id($db, $ip);
+$ip_id = $locationRepo->findOrCreateIp($ip);
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
 //$device_id = PLATFORMS::get_device_info($db);
@@ -315,7 +318,7 @@ if ($user_row['user_pref_referer_data'] == 't202ref') {
 		$_referer_site_url = (string) ($_GET['referer'] ?? '');
 	}
 }
-$click_referer_site_url_id = INDEXES::get_site_url_id($db, $_referer_site_url);
+$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_referer_site_url);
 
 $mysql['click_referer_site_url_id'] = $db->real_escape_string((string) $click_referer_site_url_id);
 
@@ -329,15 +332,15 @@ $GeoData = getGeoData($ip_address);
 
 $countryName = $GeoData['country'] ?? '';
 $countryCode = $GeoData['country_code'] ?? '';
-$country_id = INDEXES::get_country_id($db, $countryName, $countryCode);
+$country_id = $locationRepo->findOrCreateCountry($countryName, $countryCode);
 $mysql['country_id'] = $db->real_escape_string((string) $country_id);
 
 $regionName = $GeoData['region'] ?? '';
-$region_id = INDEXES::get_region_id($db, $regionName, $country_id);
+$region_id = $locationRepo->findOrCreateRegion($regionName, $country_id);
 $mysql['region_id'] = $db->real_escape_string((string) $region_id);
 
 $cityName = $GeoData['city'] ?? '';
-$city_id = INDEXES::get_city_id($db, $cityName, $country_id);
+$city_id = $locationRepo->findOrCreateCity($cityName, $country_id);
 $mysql['city_id'] = $db->real_escape_string((string) $city_id);
 
 
@@ -347,7 +350,7 @@ if ($user_row['maxmind_isp'] == '1') {
 		$IspDataParts = explode(',', $IspData);
 		$IspData = $IspDataParts[0];
 	}
-	$isp_id = INDEXES::get_isp_id($db, $IspData);
+	$isp_id = $locationRepo->findOrCreateIsp($IspData);
 	$mysql['isp_id'] = $db->real_escape_string((string) $isp_id);
 }
 
@@ -393,7 +396,7 @@ $total_vars = count($custom_var_ids);
 if ($total_vars > 0) {
 
 	$variables = implode(",", $custom_var_ids);
-	$variable_set_id = INDEXES::get_variable_set_id($db, $variables);
+	$variable_set_id = $trackingRepo->findOrCreateVariableSet($variables);
 
 	$mysql['variable_set_id'] = $db->real_escape_string((string) $variable_set_id);
 
@@ -476,7 +479,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db, $click_sql);
 
 
 $landing_site_url = $_SERVER['HTTP_REFERER'] ?? ((string) ($_GET['referer'] ?? ''));
-$click_landing_site_url_id = INDEXES::get_site_url_id($db, $landing_site_url);
+$click_landing_site_url_id = $locationRepo->findOrCreateSiteUrl($landing_site_url);
 $mysql['click_landing_site_url_id'] = $db->real_escape_string((string) $click_landing_site_url_id);
 $mysql['click_outbound_site_url_id'] = '0';
 $mysql['click_cloaking_site_url_id'] = '0';
