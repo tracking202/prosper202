@@ -146,7 +146,7 @@ final class ClickRepositoryTest extends TestCase
         self::assertSame(0, $click->clickFiltered);
         self::assertSame(0, $click->clickBot);
         self::assertSame(0, $click->clickAlp);
-        self::assertSame('', $click->clickTime);
+        self::assertSame(0, $click->clickTime);
         self::assertSame('', $click->gclid);
         self::assertSame(1, $click->clickIn);
         self::assertSame(0, $click->clickOut);

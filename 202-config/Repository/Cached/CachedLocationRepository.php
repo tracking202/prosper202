@@ -6,6 +6,7 @@ namespace Prosper202\Repository\Cached;
 
 use Closure;
 use Prosper202\Repository\LocationRepositoryInterface;
+use Prosper202\Repository\Mysql\MysqlLocationRepository;
 
 final class CachedLocationRepository implements LocationRepositoryInterface
 {
@@ -25,7 +26,7 @@ final class CachedLocationRepository implements LocationRepositoryInterface
 
     public function findOrCreateCountry(string $name, string $code): int
     {
-        $key = md5('country-id' . $name . $this->systemHash);
+        $key = md5('country-id' . $code . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
         if ($cached !== false) {
@@ -104,7 +105,11 @@ final class CachedLocationRepository implements LocationRepositoryInterface
 
     public function findOrCreateSiteDomain(string $url): int
     {
-        $host = $this->extractDomainHost($url);
+        $host = MysqlLocationRepository::extractDomainHost($url);
+
+        if ($host === '') {
+            return 0;
+        }
 
         $key = md5('domain-id' . $host . $this->systemHash);
 
@@ -138,25 +143,4 @@ final class CachedLocationRepository implements LocationRepositoryInterface
         return $id;
     }
 
-    private function extractDomainHost(string $url): string
-    {
-        $url = trim($url);
-        if ($url === '') {
-            return '';
-        }
-
-        $parsed = @parse_url($url);
-        if ($parsed === false) {
-            return '';
-        }
-
-        if (isset($parsed['host'])) {
-            $host = trim($parsed['host']);
-        } else {
-            $parts = explode('/', $parsed['path'] ?? '', 2);
-            $host = trim($parts[0]);
-        }
-
-        return str_replace('www.', '', $host);
-    }
 }

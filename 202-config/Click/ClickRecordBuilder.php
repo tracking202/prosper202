@@ -15,9 +15,8 @@ final class ClickRecordBuilder
 {
     /**
      * @param array<string, string|int> $mysql The legacy $mysql array with all resolved IDs
-     * @param list<int> $customVarIds Custom variable IDs from network parameters
      */
-    public static function fromLegacyArray(array $mysql, array $customVarIds = []): ClickRecord
+    public static function fromLegacyArray(array $mysql): ClickRecord
     {
         $click = new ClickRecord();
 
@@ -31,7 +30,7 @@ final class ClickRecordBuilder
         $click->clickFiltered = (int) ($mysql['click_filtered'] ?? 0);
         $click->clickBot = (int) ($mysql['click_bot'] ?? 0);
         $click->clickAlp = (int) ($mysql['click_alp'] ?? 0);
-        $click->clickTime = (string) ($mysql['click_time'] ?? '');
+        $click->clickTime = (int) ($mysql['click_time'] ?? 0);
 
         // Advance (202_clicks_advance)
         $click->textAdId = (int) ($mysql['text_ad_id'] ?? 0);

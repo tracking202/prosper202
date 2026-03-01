@@ -15,9 +15,15 @@ use Prosper202\Repository\Mysql\MysqlTrackingRepository;
 
 final class LookupRepositoryFactory
 {
+    private static ?Connection $conn = null;
     private static ?LocationRepositoryInterface $location = null;
     private static ?DeviceRepositoryInterface $device = null;
     private static ?TrackingRepositoryInterface $tracking = null;
+
+    public static function connection(mysqli $db): Connection
+    {
+        return self::$conn ??= new Connection($db);
+    }
 
     public static function location(mysqli $db): LocationRepositoryInterface
     {
@@ -36,6 +42,7 @@ final class LookupRepositoryFactory
 
     public static function reset(): void
     {
+        self::$conn = null;
         self::$location = null;
         self::$device = null;
         self::$tracking = null;
@@ -43,7 +50,7 @@ final class LookupRepositoryFactory
 
     private static function buildLocation(mysqli $db): LocationRepositoryInterface
     {
-        $conn = new Connection($db);
+        $conn = self::connection($db);
         $mysql = new MysqlLocationRepository($conn);
 
         if (!self::isCacheAvailable()) {
@@ -60,7 +67,7 @@ final class LookupRepositoryFactory
 
     private static function buildDevice(mysqli $db): DeviceRepositoryInterface
     {
-        $conn = new Connection($db);
+        $conn = self::connection($db);
         $mysql = new MysqlDeviceRepository($conn);
 
         if (!self::isCacheAvailable()) {
@@ -77,7 +84,7 @@ final class LookupRepositoryFactory
 
     private static function buildTracking(mysqli $db): TrackingRepositoryInterface
     {
-        $conn = new Connection($db);
+        $conn = self::connection($db);
         $mysql = new MysqlTrackingRepository($conn);
 
         if (!self::isCacheAvailable()) {

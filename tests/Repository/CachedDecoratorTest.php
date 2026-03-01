@@ -80,7 +80,7 @@ final class CachedDecoratorTest extends TestCase
 
         $cached->findOrCreateCountry('United States', 'US');
 
-        $expectedKey = md5('country-id' . 'United States' . 'fakehash');
+        $expectedKey = md5('country-id' . 'US' . 'fakehash');
         self::assertSame($expectedKey, $setKeys[0]);
     }
 

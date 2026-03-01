@@ -118,7 +118,7 @@ final readonly class Connection
         $row = ($result instanceof mysqli_result) ? $result->fetch_assoc() : null;
         $stmt->close();
 
-        return $row ?: null;
+        return $row ?? null;
     }
 
     /**

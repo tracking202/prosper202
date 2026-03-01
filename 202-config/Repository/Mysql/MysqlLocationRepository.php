@@ -128,25 +128,10 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
 
     public function findOrCreateSiteDomain(string $url): int
     {
-        $host = $this->extractDomainHost($url);
+        $host = self::extractDomainHost($url);
 
         if ($host === '') {
-            $stmt = $this->conn->prepareRead(
-                'SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host = ?'
-            );
-            $stmt->bind_param('s', $host);
-            $row = $this->conn->fetchOne($stmt);
-
-            if ($row !== null) {
-                return (int) $row['site_domain_id'];
-            }
-
-            $stmt = $this->conn->prepareWrite(
-                'INSERT INTO 202_site_domains SET site_domain_host = ?'
-            );
-            $stmt->bind_param('s', $host);
-
-            return $this->conn->executeInsert($stmt);
+            return 0;
         }
 
         $stmt = $this->conn->prepareRead(
@@ -222,7 +207,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         return $this->conn->executeInsert($stmt);
     }
 
-    private function extractDomainHost(string $url): string
+    public static function extractDomainHost(string $url): string
     {
         $url = trim($url);
         if ($url === '') {

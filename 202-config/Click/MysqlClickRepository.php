@@ -24,7 +24,6 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
         );
         $clickId = $this->conn->executeInsert($stmt);
-        $stmt->close();
 
         return $clickId;
     }
@@ -40,7 +39,6 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
                 );
                 $clickId = $this->conn->executeInsert($stmt);
-                $stmt->close();
             }
 
             // 2. 202_clicks — core click data
@@ -52,7 +50,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     click_filtered = ?, click_bot = ?,
                     click_alp = ?, click_time = ?'
             );
-            $this->conn->bind($stmt, 'iiiiissiiis', [
+            $this->conn->bind($stmt, 'iiiiissiiii', [
                 $clickId, $click->userId, $click->affCampaignId,
                 $click->landingPageId, $click->ppcAccountId,
                 $click->clickCpc, $click->clickPayout,
@@ -96,7 +94,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     click_filtered = ?, click_bot = ?,
                     click_alp = ?, click_time = ?'
             );
-            $this->conn->bind($stmt, 'iiiiissiiis', [
+            $this->conn->bind($stmt, 'iiiiissiiii', [
                 $clickId, $click->userId, $click->affCampaignId,
                 $click->landingPageId, $click->ppcAccountId,
                 $click->clickCpc, $click->clickPayout,

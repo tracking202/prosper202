@@ -352,19 +352,21 @@ if ($user_row['maxmind_isp'] == '1') {
 	}
 	$isp_id = $locationRepo->findOrCreateIsp($IspData);
 	$mysql['isp_id'] = $db->real_escape_string((string) $isp_id);
+} else {
+	$mysql['isp_id'] = '0';
 }
 
 if ($device_id['type'] == '4') {
 	$mysql['click_filtered'] = '1';
 } else {
-	$click_filtered = FILTER::startFilter($db, $click_id, $ip_id, $ip_address, $user_id);
+	$click_filtered = FILTER::startFilter($db, 0, $ip_id, $ip_address, $user_id);
 	$mysql['click_filtered'] = $db->real_escape_string((string) $click_filtered);
 }
 
 
 
 // Pre-allocate click_id so we can compute click_id_public and site URLs
-$conn = new \Prosper202\Database\Connection($db);
+$conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
 $clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
 $click_id = $clickRepo->allocateClickId();
 $click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);

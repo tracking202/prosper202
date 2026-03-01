@@ -36,7 +36,7 @@ final class ClickRecordBuilderTest extends TestCase
         self::assertSame(0, $click->clickFiltered);
         self::assertSame(1, $click->clickBot);
         self::assertSame(0, $click->clickAlp);
-        self::assertSame('1709251200', $click->clickTime);
+        self::assertSame(1709251200, $click->clickTime);
     }
 
     public function testFromLegacyArrayMapsAdvanceFields(): void
@@ -150,7 +150,7 @@ final class ClickRecordBuilderTest extends TestCase
         self::assertSame(0, $click->affCampaignId);
         self::assertSame('0', $click->clickCpc);
         self::assertSame('0', $click->clickPayout);
-        self::assertSame('', $click->clickTime);
+        self::assertSame(0, $click->clickTime);
         self::assertSame('', $click->gclid);
         self::assertSame('', $click->clickIdPublic);
         self::assertSame(0, $click->clickId);

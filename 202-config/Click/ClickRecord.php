@@ -19,7 +19,7 @@ final class ClickRecord
     public int $clickFiltered = 0;
     public int $clickBot = 0;
     public int $clickAlp = 0;
-    public string $clickTime = '';
+    public int $clickTime = 0;
 
     // Advance data (202_clicks_advance)
     public int $textAdId = 0;

@@ -379,7 +379,7 @@ if ($device_id['type'] == '4') {
 
 
 // Pre-allocate click_id so we can compute click_id_public and site URLs
-$conn = new \Prosper202\Database\Connection($db);
+$conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
 $clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
 $click_id = $clickRepo->allocateClickId();
 $click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);

@@ -539,23 +539,24 @@ if ($device_id['type'] == '4') {
 
 
 // Pre-allocate click_id (single DB write before redirect for minimal latency)
-$conn = new \Prosper202\Database\Connection($db);
+$conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
 $clickRepo = new \Prosper202\Click\MysqlClickRepository($conn);
 $click_id = $clickRepo->allocateClickId();
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_alp'] = 0;
 
+// Always generate click_id_public (needed for PCI-based lookups)
+$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+$mysql['click_id_public'] = (string) $click_id_public;
+
 // Determine cloaking (needed for redirect decision)
 $cloaking_on = false;
-$mysql['click_id_public'] = '';
 if (($tracker_row['click_cloaking'] == 1) or
 	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
 	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1))
 ) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
-	$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
-	$mysql['click_id_public'] = (string) $click_id_public;
 } else {
 	$mysql['click_cloaking'] = 0;
 }
