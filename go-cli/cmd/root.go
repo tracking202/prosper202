@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -63,7 +64,8 @@ func Execute() {
 			if category != "" {
 				errObj["category"] = category
 			}
-			if apiErr, ok := err.(*api.APIError); ok && len(apiErr.FieldErrors) > 0 {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && len(apiErr.FieldErrors) > 0 {
 				errObj["field_errors"] = apiErr.FieldErrors
 			}
 			data, _ := json.Marshal(errObj)

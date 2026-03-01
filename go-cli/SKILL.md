@@ -39,7 +39,6 @@ For automation, avoid interactive prompts:
 
 - `--force` / `-f` — skip all confirmation prompts (delete, remove, etc.)
 - `--user_pass <password>` — supply password directly (user create/update)
-- `--no-interaction` — Cobra built-in, suppresses all prompts
 
 ## CRUD Commands
 
