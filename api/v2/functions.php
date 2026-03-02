@@ -38,6 +38,7 @@ function showCategories($db, $vars, $user = null): void {
 }
 
 function listCategories($db,$user): void {
+    $cat = ['categories' => []];
     $mysql['user_id'] = $db->real_escape_string($user);
     $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
     $aff_network_result = $db->query($aff_network_sql) or die();
@@ -57,6 +58,11 @@ print_r(pretty_json($json));
 function runReports($db, $vars, $user, $timezone): array {
 
 	date_default_timezone_set($timezone);
+	$c1 = null;
+	$c2 = null;
+	$c3 = null;
+	$c4 = null;
+	$cid = null;
 
 	$report_types = ['keywords', 'text_ads', 'referers', 'ips', 'countries', 'cities', 'carriers', 'landing_pages']; //report types
 
@@ -142,6 +148,18 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 	];
 
 	$data = [];
+	$total_clicks = 0;
+	$total_click_throughs = 0;
+	$total_ctr_ratio = 0;
+	$total_cost = 0.0;
+	$total_avg_cpc = 0.0;
+	$total_leads = 0;
+	$total_su_ratio = 0.0;
+	$total_payout = 0.0;
+	$total_income = 0.0;
+	$total_epc = 0.0;
+	$total_net = 0.0;
+	$total_roi = 0.0;
 
 	$mysql['user_id'] = $db->real_escape_string($user);
 	$select_id = $db->real_escape_string($id);
@@ -169,7 +187,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 									 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2lp.landing_page_id = 2c.landing_page_id)";
 				} else {
 					//If any other report type
-					$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+				   		$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
 				}
 
 				//If any of C1-C4 variables are set
@@ -301,7 +319,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					$total_leads += $leads;
 
 				//signup ratio
-					$su_ratio - 0;
+					$su_ratio = 0;
 					$su_ratio = @round($leads/$clicks*100,2);
 
 					$total_su_ratio = @round($total_leads/$total_clicks*100,2);
