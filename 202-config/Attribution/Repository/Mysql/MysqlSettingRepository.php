@@ -94,8 +94,8 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
 
         if ($settingId === null) {
             // Build dynamic INSERT to handle nullable columns with SQL NULL
-            $columns = ['user_id', 'scope_type', 'model_id', 'multi_touch_enabled', 'effective_at', 'created_at', 'updated_at'];
-            $placeholders = ['?', '?', '?', '?', '?', '?', '?'];
+            $columns = ['user_id', 'scope_type', 'model_id', 'multi_touch_enabled', 'effective_at', 'created_at'];
+            $placeholders = ['?', '?', '?', '?', '?', '?'];
             $types = 'isiiii';
             $params = [(int) $row['user_id'], (string) $row['scope_type'], (int) $row['model_id'], $enabled, (int) $row['effective_at'], (int) $row['created_at']];
 
@@ -132,7 +132,8 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
                 $placeholders[] = 'NULL';
             }
 
-            // updated_at (already in params as last item)
+            $columns[] = 'updated_at';
+            $placeholders[] = '?';
             $params[] = (int) $row['updated_at'];
             $types .= 'i';
 
