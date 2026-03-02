@@ -55,7 +55,6 @@ final class MysqlReportRepository implements ReportRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
-        $this->conn->execute($stmt);
         $row = $this->conn->fetchOne($stmt);
 
         return $row ?? [];
@@ -99,7 +98,6 @@ final class MysqlReportRepository implements ReportRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -129,7 +127,6 @@ final class MysqlReportRepository implements ReportRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -154,7 +151,6 @@ final class MysqlReportRepository implements ReportRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $allTypes, $allBinds);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -178,7 +174,6 @@ final class MysqlReportRepository implements ReportRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $allTypes, $allBinds);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }

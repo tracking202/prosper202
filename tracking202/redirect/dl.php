@@ -570,10 +570,57 @@ if ($cloaking_on === true) {
 	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
 
-// Redirect user ASAP (only 1 DB write so far vs. 8 in old code)
+// Helper: compute remaining click data and record
+$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo): void {
+	// Compute variable_set_id
+	$total_vars = count($custom_var_ids);
+	if ($total_vars > 0) {
+		$variables = implode(",", $custom_var_ids);
+		$variable_set_id = $trackingRepo->findOrCreateVariableSet($variables);
+		$mysql['variable_set_id'] = (string) $variable_set_id;
+	} else {
+		$mysql['variable_set_id'] = '0';
+	}
+
+	// Compute site URLs
+	if ($tracker_row['user_pref_referer_data'] == 't202ref') {
+		if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') {
+			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_GET['t202ref']);
+		} else {
+			if (isset($referer_query['url'])) {
+				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+			} else {
+				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
+			}
+		}
+	} else {
+		if (isset($referer_query['url'])) {
+			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+		} else {
+			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
+		}
+	}
+	$mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
+
+	$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+	$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+	$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
+
+	$mysql['click_cloaking_site_url_id'] = '0';
+	$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
+	$mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
+
+	// Record click via repository (all 9 tables in one atomic transaction)
+	$clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
+	$clickRecord->clickId = $click_id;
+	$clickRepo->recordClick($clickRecord);
+};
+
 $urlvars = getPrePopVars($_GET);
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
 if ($cloaking_on === true) {
+	// Cloaked: cl.php needs click rows to exist, so record BEFORE redirect
+	$computeAndRecordClick();
 	$redirectLocation = setPrePopVars($urlvars, $cloaking_site_url, true);
 } else {
 	$redirectLocation = setPrePopVars($urlvars, $redirect_site_url, false);
@@ -585,48 +632,10 @@ if (function_exists('fastcgi_finish_request')) {
 
 // --- Everything below runs after user has been redirected ---
 
-// Compute variable_set_id
-$total_vars = count($custom_var_ids);
-if ($total_vars > 0) {
-	$variables = implode(",", $custom_var_ids);
-	$variable_set_id = $trackingRepo->findOrCreateVariableSet($variables);
-	$mysql['variable_set_id'] = (string) $variable_set_id;
-} else {
-	$mysql['variable_set_id'] = '0';
+// Non-cloaked: record click after redirect for lower latency
+if ($cloaking_on !== true) {
+	$computeAndRecordClick();
 }
-
-// Compute site URLs
-if ($tracker_row['user_pref_referer_data'] == 't202ref') {
-	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') {
-		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_GET['t202ref']);
-	} else {
-		if (isset($referer_query['url'])) {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
-		} else {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
-		}
-	}
-} else {
-	if (isset($referer_query['url'])) {
-		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
-	} else {
-		$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
-	}
-}
-$mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
-
-$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
-$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
-
-$mysql['click_cloaking_site_url_id'] = '0';
-$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
-$mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
-
-// Record click via repository (all 9 tables in one atomic transaction, AFTER redirect)
-$clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
-$clickRecord->clickId = $click_id;
-$clickRepo->recordClick($clickRecord);
 
 
 //update the click summary table

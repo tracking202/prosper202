@@ -17,12 +17,22 @@ use Throwable;
  * Consolidates the prepare/bind/execute boilerplate that was duplicated
  * across every Attribution repository implementation.
  */
-final readonly class Connection
+final class Connection
 {
-    private mysqli $read;
+    private readonly mysqli $read;
+
+    /**
+     * Keeps bound parameter values alive until the statement is executed.
+     *
+     * mysqli's bind_param stores references; if the values go out of scope
+     * before execute(), the parameters can become NULL/garbled.
+     *
+     * @var array<int, array<int, mixed>> keyed by spl_object_id($stmt)
+     */
+    private array $boundValues = [];
 
     public function __construct(
-        private mysqli $write,
+        private readonly mysqli $write,
         ?mysqli $read = null
     ) {
         $this->read = $read ?? $this->write;
@@ -74,12 +84,17 @@ final readonly class Connection
         // Re-index to ensure contiguous numeric keys.
         $values = array_values($values);
 
+        // Store values on the Connection so the references survive until execute().
+        $stmtId = spl_object_id($stmt);
+        $this->boundValues[$stmtId] = $values;
+
         $refs = [$types];
-        foreach ($values as $index => $value) {
-            $refs[] = &$values[$index];
+        foreach ($this->boundValues[$stmtId] as $index => $value) {
+            $refs[] = &$this->boundValues[$stmtId][$index];
         }
 
         if (!call_user_func_array($stmt->bind_param(...), $refs)) {
+            unset($this->boundValues[$stmtId]);
             throw new RuntimeException('Failed to bind MySQL parameters.');
         }
     }
@@ -101,9 +116,11 @@ final readonly class Connection
             } catch (\Error) {
                 $error = '(unknown)';
             }
+            unset($this->boundValues[spl_object_id($stmt)]);
             $stmt->close();
             throw new RuntimeException('MySQL execute failed: ' . $error);
         }
+        unset($this->boundValues[spl_object_id($stmt)]);
     }
 
     /**

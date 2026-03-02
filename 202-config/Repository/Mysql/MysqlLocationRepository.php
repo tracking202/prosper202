@@ -183,20 +183,22 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         if ($isIpv6) {
             $encoded = function_exists('inet6_aton') ? inet6_aton($address) : inet_pton($address);
 
+            // Legacy pattern: insert encoded IPv6 into ips_v6 first to get its
+            // auto-increment ip_id, then store that id as ip_address in 202_ips.
+            // The read query joins: 202_ips_v6.ip_id = 202_ips.ip_address.
+            $stmt = $this->conn->prepareWrite(
+                'INSERT INTO 202_ips_v6 SET ip_address = ?'
+            );
+            $stmt->bind_param('s', $encoded);
+            $ipv6Id = $this->conn->executeInsert($stmt);
+
+            $ipv6IdStr = (string) $ipv6Id;
             $stmt = $this->conn->prepareWrite(
                 'INSERT INTO 202_ips SET ip_address = ?'
             );
-            $stmt->bind_param('s', $address);
-            $ipId = $this->conn->executeInsert($stmt);
+            $stmt->bind_param('s', $ipv6IdStr);
 
-            $stmt = $this->conn->prepareWrite(
-                'INSERT INTO 202_ips_v6 SET ip_address = ?, ip_id = ?'
-            );
-            $stmt->bind_param('si', $encoded, $ipId);
-            $this->conn->execute($stmt);
-            $stmt->close();
-
-            return $ipId;
+            return $this->conn->executeInsert($stmt);
         }
 
         $stmt = $this->conn->prepareWrite(

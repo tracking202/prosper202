@@ -36,14 +36,12 @@ final class MysqlCrudRepository implements CrudRepositoryInterface
         $countSql = "SELECT COUNT(*) AS total FROM {$c->table} WHERE {$c->userIdColumn} = ?$delFilter";
         $countStmt = $this->conn->prepareRead($countSql);
         $this->conn->bind($countStmt, 'i', [$userId]);
-        $this->conn->execute($countStmt);
         $total = (int) ($this->conn->fetchOne($countStmt)['total'] ?? 0);
 
         $cols = implode(', ', $c->selectColumns);
         $sql = "SELECT $cols FROM {$c->table} WHERE {$c->userIdColumn} = ?$delFilter ORDER BY {$c->primaryKey} DESC LIMIT ? OFFSET ?";
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, 'iii', [$userId, $limit, $offset]);
-        $this->conn->execute($stmt);
 
         return ['rows' => $this->conn->fetchAll($stmt), 'total' => $total];
     }
@@ -57,7 +55,6 @@ final class MysqlCrudRepository implements CrudRepositoryInterface
         $sql = "SELECT $cols FROM {$c->table} WHERE {$c->primaryKey} = ? AND {$c->userIdColumn} = ?$delFilter LIMIT 1";
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, 'ii', [$id, $userId]);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchOne($stmt);
     }

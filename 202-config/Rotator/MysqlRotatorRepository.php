@@ -19,7 +19,6 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
             'SELECT COUNT(*) AS total FROM 202_rotators WHERE user_id = ?'
         );
         $this->conn->bind($countStmt, 'i', [$userId]);
-        $this->conn->execute($countStmt);
         $countRow = $this->conn->fetchOne($countStmt);
         $total = (int) ($countRow['total'] ?? 0);
 
@@ -28,7 +27,6 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
              FROM 202_rotators WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?'
         );
         $this->conn->bind($stmt, 'iii', [$userId, $limit, $offset]);
-        $this->conn->execute($stmt);
         $rows = $this->conn->fetchAll($stmt);
 
         return ['rows' => $rows, 'total' => $total];
@@ -41,7 +39,6 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
              FROM 202_rotators WHERE id = ? AND user_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'ii', [$id, $userId]);
-        $this->conn->execute($stmt);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row === null) {
@@ -54,7 +51,6 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
              FROM 202_rotator_rules WHERE rotator_id = ? ORDER BY id ASC'
         );
         $this->conn->bind($ruleStmt, 'i', [$id]);
-        $this->conn->execute($ruleStmt);
         $ruleRows = $this->conn->fetchAll($ruleStmt);
 
         $rules = [];
@@ -76,7 +72,6 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
                  FROM 202_rotator_rules_criteria WHERE rule_id IN ($placeholders)"
             );
             $this->conn->bind($cStmt, $types, $ruleIds);
-            $this->conn->execute($cStmt);
             foreach ($this->conn->fetchAll($cStmt) as $c) {
                 $rules[$c['rule_id']]['criteria'][] = $c;
             }
@@ -87,7 +82,6 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
                  FROM 202_rotator_rules_redirects WHERE rule_id IN ($placeholders)"
             );
             $this->conn->bind($rStmt, $types, $ruleIds);
-            $this->conn->execute($rStmt);
             foreach ($this->conn->fetchAll($rStmt) as $rd) {
                 $rules[$rd['rule_id']]['redirects'][] = $rd;
             }
@@ -191,7 +185,6 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
                 (int) ($data['splittest'] ?? 0), (int) ($data['status'] ?? 1),
             ]);
             $ruleId = $this->conn->executeInsert($stmt);
-            $stmt->close();
 
             if (!empty($data['criteria']) && is_array($data['criteria'])) {
                 $stmt = $this->conn->prepareWrite(

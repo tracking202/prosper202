@@ -61,6 +61,10 @@ final class InMemoryLocationRepository implements LocationRepositoryInterface
     {
         $host = $this->extractDomainHost($url);
 
+        if ($host === '') {
+            return 0;
+        }
+
         return $this->siteDomains[$host] ??= $this->nextId++;
     }
 

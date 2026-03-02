@@ -18,7 +18,6 @@ final class MysqlUserRepository implements UserRepositoryInterface
         $countStmt = $this->conn->prepareRead(
             'SELECT COUNT(*) AS total FROM 202_users WHERE user_deleted = 0'
         );
-        $this->conn->execute($countStmt);
         $countRow = $this->conn->fetchOne($countStmt);
         $total = (int) ($countRow['total'] ?? 0);
 
@@ -28,7 +27,6 @@ final class MysqlUserRepository implements UserRepositoryInterface
              FROM 202_users WHERE user_deleted = 0 ORDER BY user_id ASC LIMIT ? OFFSET ?'
         );
         $this->conn->bind($stmt, 'ii', [$limit, $offset]);
-        $this->conn->execute($stmt);
         $rows = $this->conn->fetchAll($stmt);
 
         return ['rows' => $rows, 'total' => $total];
@@ -42,7 +40,6 @@ final class MysqlUserRepository implements UserRepositoryInterface
              FROM 202_users WHERE user_id = ? AND user_deleted = 0 LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$id]);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchOne($stmt);
     }
@@ -64,7 +61,6 @@ final class MysqlUserRepository implements UserRepositoryInterface
                 $now, $data['active'] ?? 1,
             ]);
             $userId = $this->conn->executeInsert($stmt);
-            $stmt->close();
 
             $stmt = $this->conn->prepareWrite(
                 'INSERT INTO 202_users_pref (user_id) VALUES (?)'
@@ -129,7 +125,6 @@ final class MysqlUserRepository implements UserRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT role_id, role_name FROM 202_roles ORDER BY role_id'
         );
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -160,7 +155,6 @@ final class MysqlUserRepository implements UserRepositoryInterface
             'SELECT api_key_id, user_id, api_key, created_at FROM 202_api_keys WHERE user_id = ?'
         );
         $this->conn->bind($stmt, 'i', [$userId]);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -174,10 +168,7 @@ final class MysqlUserRepository implements UserRepositoryInterface
             'INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)'
         );
         $this->conn->bind($stmt, 'isi', [$userId, $key, $now]);
-        $id = $this->conn->executeInsert($stmt);
-        $stmt->close();
-
-        return $id;
+        return $this->conn->executeInsert($stmt);
     }
 
     public function deleteApiKey(int $keyId, int $userId): void
@@ -196,7 +187,6 @@ final class MysqlUserRepository implements UserRepositoryInterface
             'SELECT * FROM 202_users_pref WHERE user_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$userId]);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchOne($stmt);
     }

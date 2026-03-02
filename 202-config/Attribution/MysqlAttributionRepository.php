@@ -37,7 +37,6 @@ final class MysqlAttributionRepository implements AttributionRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -50,7 +49,6 @@ final class MysqlAttributionRepository implements AttributionRepositoryInterface
              FROM 202_attribution_models WHERE model_id = ? AND user_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'ii', [$id, $userId]);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchOne($stmt);
     }
@@ -74,10 +72,8 @@ final class MysqlAttributionRepository implements AttributionRepositoryInterface
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $this->conn->bind($stmt, 'issssiiii', [$userId, $name, $slug, $type, $config, $isActive, $isDefault, $now, $now]);
-        $id = $this->conn->executeInsert($stmt);
-        $stmt->close();
 
-        return $id;
+        return $this->conn->executeInsert($stmt);
     }
 
     public function updateModel(int $id, int $userId, array $data): void
@@ -178,7 +174,6 @@ final class MysqlAttributionRepository implements AttributionRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -192,7 +187,6 @@ final class MysqlAttributionRepository implements AttributionRepositoryInterface
              FROM 202_attribution_exports WHERE model_id = ? AND user_id = ? ORDER BY export_id DESC'
         );
         $this->conn->bind($stmt, 'ii', [$modelId, $userId]);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -217,9 +211,6 @@ final class MysqlAttributionRepository implements AttributionRepositoryInterface
             $now, $now, $now,
             (string) ($data['webhook_url'] ?? ''),
         ]);
-        $id = $this->conn->executeInsert($stmt);
-        $stmt->close();
-
-        return $id;
+        return $this->conn->executeInsert($stmt);
     }
 }

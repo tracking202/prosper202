@@ -22,7 +22,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
             return 0;
         }
 
-        return $this->findOrCreateSimple('202_keywords', 'keyword_id', 'keyword_name', $name);
+        return $this->findOrCreateSimple('202_keywords', 'keyword_id', 'keyword', $name);
     }
 
     public function findOrCreateC1(string $value): int

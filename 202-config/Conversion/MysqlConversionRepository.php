@@ -39,7 +39,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         $countStmt = $this->conn->prepareRead("SELECT COUNT(*) AS total FROM 202_conversion_logs cl $whereClause");
         $this->conn->bind($countStmt, $types, $binds);
-        $this->conn->execute($countStmt);
         $total = (int) ($this->conn->fetchOne($countStmt)['total'] ?? 0);
 
         $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
@@ -57,7 +56,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
-        $this->conn->execute($stmt);
 
         return ['rows' => $this->conn->fetchAll($stmt), 'total' => $total];
     }
@@ -73,7 +71,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, 'ii', [$id, $userId]);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchOne($stmt);
     }
@@ -90,7 +87,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             'SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1'
         );
         $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
-        $this->conn->execute($clickStmt);
         $click = $this->conn->fetchOne($clickStmt);
 
         if ($click === null) {
@@ -109,7 +105,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             );
             $this->conn->bind($stmt, 'isidiii', [$clickId, $transactionId, $campaignId, $payout, $userId, $clickTime, $convTime]);
             $convId = $this->conn->executeInsert($stmt);
-            $stmt->close();
 
             $stmt = $this->conn->prepareWrite(
                 'UPDATE 202_clicks SET click_lead = 1, click_payout = ? WHERE click_id = ? AND user_id = ?'
