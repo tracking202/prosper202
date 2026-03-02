@@ -181,11 +181,11 @@ class curl
 			trigger_error('Failed to initialize cURL handle.', E_USER_ERROR);
 		}
 
-		$this->m_caseless = null;
+		$this->m_caseless = [];
 		$this->m_header = null;
 		$this->m_options = null;
 		$this->m_status = null;
-		$this->m_followed = null;
+		$this->m_followed = [];
 
 		if (!empty($theURL)) {
 			$this->setopt(CURLOPT_URL, $theURL);
@@ -243,10 +243,11 @@ class curl
 			return '';
 		}
 
-		if ($this->getOption(CURLOPT_HEADER)) {
+			if ($this->getOption(CURLOPT_HEADER)) {
 
-			$this->m_followed = [];
-			$rv = $theReturnValue;
+				$this->m_followed = [];
+				$rv = $theReturnValue;
+				$theArray = ['', ''];
 
 			while (count($this->m_followed) <= $this->m_status['redirect_count']) {
 				$theArray = preg_split("/(\r\n){2,2}/", $rv, 2);
@@ -302,7 +303,7 @@ class curl
 	 * Returns the current setting of the request option.  If no
 	 * option has been set, it return null.
 	 *
-	 * @param integer the requested CURLOPT.
+	 * @param int $theOption The requested CURLOPT option.
 	 * @returns mixed
 	 */
 
@@ -411,7 +412,7 @@ class curl
 
 	/**
 	 * @desc Post string as an array
-	 * @param string by reference data to be written.
+	 * @param string $thePostString Data to be parsed.
 	 * @return array hash containing the post string as individual elements, urldecoded.
 	 * @access public
 	 */
@@ -434,8 +435,8 @@ class curl
 	 * as checkboxes.
 	 *
 	 * @desc Return data as a post string.
-	 * @param mixed by reference data to be written.
-	 * @param string [optional] name of the datum.
+	 * @param mixed $theData Data to be written.
+	 * @param string|null $theName Optional name of the datum.
 	 * @access public
 	 */
 
@@ -466,7 +467,6 @@ class curl
 	 * Assumed preconditions: CURLOPT_HEADER and expected CURLOPT_FOLLOWLOCATION set.
 	 * The content is returned as an array of headers of arrays of header lines.
 	 *
-	 * @param none.
 	 * @returns mixed an empty array implies no headers.
 	 * @access public
 	 */
