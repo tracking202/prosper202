@@ -80,7 +80,7 @@ final class InMemoryUserRepository implements UserRepositoryInterface
         }
 
         if (array_key_exists('user_pass', $data) && $data['user_pass'] !== '') {
-            $this->users[$id]['user_pass'] = password_hash((string) $data['user_pass'], PASSWORD_BCRYPT);
+            $this->users[$id]['user_pass'] = hash_user_pass((string) $data['user_pass']);
             $updated = true;
         }
 
