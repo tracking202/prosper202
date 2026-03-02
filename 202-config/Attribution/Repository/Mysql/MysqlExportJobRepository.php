@@ -93,57 +93,46 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
     {
         $sql = 'SELECT * FROM 202_attribution_exports WHERE export_id = ? LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);
-        $stmt->bind_param('i', $jobId);
-        $this->conn->execute($stmt);
-        $result = $stmt->get_result();
-        $row = $result ? $result->fetch_assoc() : null;
-        $stmt->close();
+        $this->conn->bind($stmt, 'i', [$jobId]);
+        $row = $this->conn->fetchOne($stmt);
 
         return $row ? ExportJob::fromDatabaseRow($row) : null;
     }
 
     public function findPending(int $limit = 10): array
     {
-        $sql = 'SELECT * FROM 202_attribution_exports WHERE status = \'pending\' ORDER BY queued_at ASC LIMIT ?';
+        $sql = "SELECT * FROM 202_attribution_exports WHERE status = 'pending' ORDER BY queued_at ASC LIMIT ?";
         $stmt = $this->conn->prepareRead($sql);
         $limit = max(1, $limit);
-        $stmt->bind_param('i', $limit);
-        $this->conn->execute($stmt);
-        $result = $stmt->get_result();
-        $jobs = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $jobs[] = ExportJob::fromDatabaseRow($row);
-            }
-        }
-        $stmt->close();
+        $this->conn->bind($stmt, 'i', [$limit]);
+        $rows = $this->conn->fetchAll($stmt);
 
-        return $jobs;
+        return array_map(fn(array $row) => ExportJob::fromDatabaseRow($row), $rows);
     }
 
     public function markProcessing(int $jobId, int $timestamp): void
     {
-        $sql = 'UPDATE 202_attribution_exports SET status = \'processing\', started_at = ?, updated_at = ? WHERE export_id = ? LIMIT 1';
+        $sql = "UPDATE 202_attribution_exports SET status = 'processing', started_at = ?, updated_at = ? WHERE export_id = ? LIMIT 1";
         $stmt = $this->conn->prepareWrite($sql);
-        $stmt->bind_param('iii', $timestamp, $timestamp, $jobId);
+        $this->conn->bind($stmt, 'iii', [$timestamp, $timestamp, $jobId]);
         $this->conn->execute($stmt);
         $stmt->close();
     }
 
     public function markCompleted(int $jobId, string $filePath, int $rowsExported, int $timestamp): void
     {
-        $sql = 'UPDATE 202_attribution_exports SET status = \'completed\', file_path = ?, rows_exported = ?, completed_at = ?, updated_at = ?, last_error = NULL WHERE export_id = ? LIMIT 1';
+        $sql = "UPDATE 202_attribution_exports SET status = 'completed', file_path = ?, rows_exported = ?, completed_at = ?, updated_at = ?, last_error = NULL WHERE export_id = ? LIMIT 1";
         $stmt = $this->conn->prepareWrite($sql);
-        $stmt->bind_param('siiii', $filePath, $rowsExported, $timestamp, $timestamp, $jobId);
+        $this->conn->bind($stmt, 'siiii', [$filePath, $rowsExported, $timestamp, $timestamp, $jobId]);
         $this->conn->execute($stmt);
         $stmt->close();
     }
 
     public function markFailed(int $jobId, string $error, int $timestamp): void
     {
-        $sql = 'UPDATE 202_attribution_exports SET status = \'failed\', failed_at = ?, updated_at = ?, last_error = ? WHERE export_id = ? LIMIT 1';
+        $sql = "UPDATE 202_attribution_exports SET status = 'failed', failed_at = ?, updated_at = ?, last_error = ? WHERE export_id = ? LIMIT 1";
         $stmt = $this->conn->prepareWrite($sql);
-        $stmt->bind_param('iisi', $timestamp, $timestamp, $error, $jobId);
+        $this->conn->bind($stmt, 'iisi', [$timestamp, $timestamp, $error, $jobId]);
         $this->conn->execute($stmt);
         $stmt->close();
     }
@@ -172,18 +161,10 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $sql = 'SELECT * FROM 202_attribution_exports WHERE user_id = ? AND model_id = ? ORDER BY queued_at DESC LIMIT ?';
         $stmt = $this->conn->prepareRead($sql);
         $limit = max(1, $limit);
-        $stmt->bind_param('iii', $userId, $modelId, $limit);
-        $this->conn->execute($stmt);
-        $result = $stmt->get_result();
-        $jobs = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $jobs[] = ExportJob::fromDatabaseRow($row);
-            }
-        }
-        $stmt->close();
+        $this->conn->bind($stmt, 'iii', [$userId, $modelId, $limit]);
+        $rows = $this->conn->fetchAll($stmt);
 
-        return $jobs;
+        return array_map(fn(array $row) => ExportJob::fromDatabaseRow($row), $rows);
     }
 
     private function addIntParam(string &$types, array &$values, ?int $value): void

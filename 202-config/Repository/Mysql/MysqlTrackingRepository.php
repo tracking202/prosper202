@@ -60,7 +60,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT custom_variable_id FROM 202_custom_variables WHERE ppc_variable_id = ? AND variable = ?'
         );
-        $stmt->bind_param('is', $ppcVariableId, $value);
+        $this->conn->bind($stmt, 'is', [$ppcVariableId, $value]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -70,7 +70,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_custom_variables SET ppc_variable_id = ?, variable = ?'
         );
-        $stmt->bind_param('is', $ppcVariableId, $value);
+        $this->conn->bind($stmt, 'is', [$ppcVariableId, $value]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -80,7 +80,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT variable_set_id FROM 202_variable_sets WHERE variables = ?'
         );
-        $stmt->bind_param('s', $variables);
+        $this->conn->bind($stmt, 's', [$variables]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -90,7 +90,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_variable_sets SET variables = ?'
         );
-        $stmt->bind_param('s', $variables);
+        $this->conn->bind($stmt, 's', [$variables]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -130,7 +130,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         $stmt = $this->conn->prepareRead(
             "SELECT {$idColumn} FROM {$table} WHERE {$valueColumn} = ?"
         );
-        $stmt->bind_param('s', $value);
+        $this->conn->bind($stmt, 's', [$value]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -140,7 +140,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             "INSERT INTO {$table} SET {$valueColumn} = ?"
         );
-        $stmt->bind_param('s', $value);
+        $this->conn->bind($stmt, 's', [$value]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -150,7 +150,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         $stmt = $this->conn->prepareRead(
             "SELECT {$idColumn} FROM {$table} WHERE {$valueColumn} = ?"
         );
-        $stmt->bind_param('s', $value);
+        $this->conn->bind($stmt, 's', [$value]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -160,7 +160,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             "INSERT INTO {$table} SET {$valueColumn} = ?"
         );
-        $stmt->bind_param('s', $value);
+        $this->conn->bind($stmt, 's', [$value]);
 
         return $this->conn->executeInsert($stmt);
     }
