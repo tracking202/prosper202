@@ -127,23 +127,27 @@ final class InMemoryUserRepository implements UserRepositoryInterface
         ));
     }
 
-    public function createApiKey(int $userId, string $name): int
+    public function createApiKey(int $userId, string $name): string
     {
         $id = $this->nextApiKeyId++;
+        $key = bin2hex(random_bytes(32));
         $this->apiKeys[$id] = [
-            'api_key_id' => $id,
             'user_id' => $userId,
-            'api_key' => bin2hex(random_bytes(32)),
+            'api_key' => $key,
             'created_at' => time(),
+            'scope' => null,
         ];
 
-        return $id;
+        return $key;
     }
 
-    public function deleteApiKey(int $keyId, int $userId): void
+    public function deleteApiKey(string $apiKey, int $userId): void
     {
-        if (isset($this->apiKeys[$keyId]) && $this->apiKeys[$keyId]['user_id'] === $userId) {
-            unset($this->apiKeys[$keyId]);
+        foreach ($this->apiKeys as $id => $k) {
+            if ($k['api_key'] === $apiKey && $k['user_id'] === $userId) {
+                unset($this->apiKeys[$id]);
+                return;
+            }
         }
     }
 

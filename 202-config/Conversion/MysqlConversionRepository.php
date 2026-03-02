@@ -82,24 +82,25 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             throw new RuntimeException('click_id is required');
         }
 
-        // Look up source click
-        $clickStmt = $this->conn->prepareRead(
-            'SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1'
-        );
-        $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
-        $click = $this->conn->fetchOne($clickStmt);
-
-        if ($click === null) {
-            throw new RuntimeException('Click not found or not owned by user');
-        }
-
-        $payout = (float) ($data['payout'] ?? $click['click_payout'] ?? 0);
         $transactionId = (string) ($data['transaction_id'] ?? '');
         $convTime = (int) ($data['conv_time'] ?? time());
-        $campaignId = (int) $click['aff_campaign_id'];
-        $clickTime = (int) ($click['click_time'] ?? 0);
+        $payoutOverride = isset($data['payout']) ? (float) $data['payout'] : null;
 
-        return $this->conn->transaction(function () use ($clickId, $transactionId, $campaignId, $payout, $userId, $clickTime, $convTime): int {
+        return $this->conn->transaction(function () use ($clickId, $transactionId, $payoutOverride, $userId, $convTime): int {
+            // Look up source click inside transaction with FOR UPDATE to prevent TOCTOU race
+            $clickStmt = $this->conn->prepareWrite(
+                'SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+            );
+            $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
+            $click = $this->conn->fetchOne($clickStmt);
+
+            if ($click === null) {
+                throw new RuntimeException('Click not found or not owned by user');
+            }
+
+            $payout = $payoutOverride ?? (float) ($click['click_payout'] ?? 0);
+            $campaignId = (int) $click['aff_campaign_id'];
+            $clickTime = (int) ($click['click_time'] ?? 0);
             $stmt = $this->conn->prepareWrite(
                 'INSERT INTO 202_conversion_logs (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)'
             );

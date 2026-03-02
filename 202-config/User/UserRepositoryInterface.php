@@ -42,9 +42,9 @@ interface UserRepositoryInterface
      */
     public function listApiKeys(int $userId): array;
 
-    public function createApiKey(int $userId, string $name): int;
+    public function createApiKey(int $userId, string $name): string;
 
-    public function deleteApiKey(int $keyId, int $userId): void;
+    public function deleteApiKey(string $apiKey, int $userId): void;
 
     /**
      * @return array<string, mixed>|null

@@ -79,9 +79,7 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $this->addIntParam($types, $values, (int) $row['updated_at']);
 
         $this->conn->bind($stmt, $types, $values);
-        $stmt->execute();
-        $insertId = $stmt->insert_id ?: $this->conn->writeConnection()->insert_id;
-        $stmt->close();
+        $insertId = $this->conn->executeInsert($stmt);
 
         $created = $this->findById((int) $insertId);
         if ($created === null) {
@@ -96,7 +94,7 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $sql = 'SELECT * FROM 202_attribution_exports WHERE export_id = ? LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);
         $stmt->bind_param('i', $jobId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -110,7 +108,7 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $stmt = $this->conn->prepareRead($sql);
         $limit = max(1, $limit);
         $stmt->bind_param('i', $limit);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $jobs = [];
         if ($result) {
@@ -128,7 +126,7 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $sql = 'UPDATE 202_attribution_exports SET status = \'processing\', started_at = ?, updated_at = ? WHERE export_id = ? LIMIT 1';
         $stmt = $this->conn->prepareWrite($sql);
         $stmt->bind_param('iii', $timestamp, $timestamp, $jobId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
     }
 
@@ -137,7 +135,7 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $sql = 'UPDATE 202_attribution_exports SET status = \'completed\', file_path = ?, rows_exported = ?, completed_at = ?, updated_at = ?, last_error = NULL WHERE export_id = ? LIMIT 1';
         $stmt = $this->conn->prepareWrite($sql);
         $stmt->bind_param('siiii', $filePath, $rowsExported, $timestamp, $timestamp, $jobId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
     }
 
@@ -146,7 +144,7 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $sql = 'UPDATE 202_attribution_exports SET status = \'failed\', failed_at = ?, updated_at = ?, last_error = ? WHERE export_id = ? LIMIT 1';
         $stmt = $this->conn->prepareWrite($sql);
         $stmt->bind_param('iisi', $timestamp, $timestamp, $error, $jobId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
     }
 
@@ -165,7 +163,7 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $this->addIntParam($types, $values, $jobId);
 
         $this->conn->bind($stmt, $types, $values);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
     }
 
@@ -175,7 +173,7 @@ final readonly class MysqlExportJobRepository implements ExportJobRepositoryInte
         $stmt = $this->conn->prepareRead($sql);
         $limit = max(1, $limit);
         $stmt->bind_param('iii', $userId, $modelId, $limit);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $jobs = [];
         if ($result) {

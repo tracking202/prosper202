@@ -103,6 +103,10 @@ final class InMemoryRotatorRepository implements RotatorRepositoryInterface
 
     public function delete(int $id, int $userId): void
     {
+        if (!isset($this->rotators[$id]) || $this->rotators[$id]['user_id'] !== $userId) {
+            throw new RuntimeException("Rotator $id not found or not owned by user");
+        }
+
         // Cascade delete: criteria → redirects → rules → rotator
         $ruleIds = array_keys(array_filter(
             $this->rules,

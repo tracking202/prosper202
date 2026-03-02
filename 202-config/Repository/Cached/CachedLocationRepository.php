@@ -41,7 +41,7 @@ final class CachedLocationRepository implements LocationRepositoryInterface
 
     public function findOrCreateCity(string $name, int $countryId): int
     {
-        $key = md5('city-id' . $name . $countryId . $this->systemHash);
+        $key = md5('city-id' . $name . '|' . $countryId . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
         if ($cached !== false) {
@@ -56,7 +56,7 @@ final class CachedLocationRepository implements LocationRepositoryInterface
 
     public function findOrCreateRegion(string $name, int $countryId): int
     {
-        $key = md5('region-id' . $name . $countryId . $this->systemHash);
+        $key = md5('region-id' . $name . '|' . $countryId . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
         if ($cached !== false) {

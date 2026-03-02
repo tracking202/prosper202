@@ -33,7 +33,7 @@ final readonly class MysqlAuditRepository implements AuditRepositoryInterface
         $createdAt = time();
         $modelParam = $modelId;
         $stmt->bind_param('iissi', $userId, $modelParam, $action, $payload, $createdAt);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
     }
 }

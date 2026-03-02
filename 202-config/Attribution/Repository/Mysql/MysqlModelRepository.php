@@ -34,7 +34,7 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
         $sql = 'SELECT * FROM 202_attribution_models WHERE model_id = ? LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);
         $stmt->bind_param('i', $modelId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -47,7 +47,7 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
         $sql = 'SELECT * FROM 202_attribution_models WHERE user_id = ? AND is_default = 1 LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);
         $stmt->bind_param('i', $userId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -75,7 +75,7 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $values);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $models = [];
         if ($result) {
@@ -93,7 +93,7 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
         $sql = 'SELECT * FROM 202_attribution_models WHERE user_id = ? AND model_slug = ? LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);
         $stmt->bind_param('is', $userId, $slug);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -125,11 +125,9 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
                 $createdAt,
                 $updatedAt
             );
-            $stmt->execute();
-            $insertId = $stmt->insert_id ?: $this->conn->writeConnection()->insert_id;
-            $stmt->close();
+            $insertId = $this->conn->executeInsert($stmt);
 
-            return $this->requireModelById((int) $insertId);
+            return $this->requireModelById($insertId);
         }
 
         $sql = 'UPDATE 202_attribution_models SET model_name = ?, model_slug = ?, model_type = ?, weighting_config = ?, is_active = ?, is_default = ?, created_at = ?, updated_at = ? WHERE model_id = ? LIMIT 1';
@@ -147,7 +145,7 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
             $updatedAt,
             $modelId
         );
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
 
         return $this->requireModelById($modelId);
@@ -165,12 +163,12 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
         $this->conn->transaction(function () use ($userId, $modelId): void {
             $stmtReset = $this->conn->prepareWrite('UPDATE 202_attribution_models SET is_default = 0 WHERE user_id = ?');
             $stmtReset->bind_param('i', $userId);
-            $stmtReset->execute();
+            $this->conn->execute($stmtReset);
             $stmtReset->close();
 
             $stmtSet = $this->conn->prepareWrite('UPDATE 202_attribution_models SET is_default = 1, is_active = 1 WHERE model_id = ? LIMIT 1');
             $stmtSet->bind_param('i', $modelId);
-            $stmtSet->execute();
+            $this->conn->execute($stmtSet);
             $stmtSet->close();
         });
     }
@@ -181,7 +179,7 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
             // First verify the model exists and belongs to the user
             $checkStmt = $this->conn->prepareWrite('SELECT 1 FROM 202_attribution_models WHERE model_id = ? AND user_id = ? LIMIT 1');
             $checkStmt->bind_param('ii', $modelId, $userId);
-            $checkStmt->execute();
+            $this->conn->execute($checkStmt);
             $result = $checkStmt->get_result();
             $exists = $result && $result->num_rows > 0;
             $checkStmt->close();
@@ -193,13 +191,13 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
             // Reset all models for this user to non-default
             $resetStmt = $this->conn->prepareWrite('UPDATE 202_attribution_models SET is_default = 0 WHERE user_id = ?');
             $resetStmt->bind_param('i', $userId);
-            $resetStmt->execute();
+            $this->conn->execute($resetStmt);
             $resetStmt->close();
 
             // Set the specified model as default (and activate it)
             $setStmt = $this->conn->prepareWrite('UPDATE 202_attribution_models SET is_default = 1, is_active = 1 WHERE model_id = ? LIMIT 1');
             $setStmt->bind_param('i', $modelId);
-            $setStmt->execute();
+            $this->conn->execute($setStmt);
             $setStmt->close();
 
             return true;
@@ -211,22 +209,22 @@ final readonly class MysqlModelRepository implements ModelRepositoryInterface
         $this->conn->transaction(function () use ($modelId, $userId): void {
             $stmt = $this->conn->prepareWrite('DELETE tp FROM 202_attribution_touchpoints tp INNER JOIN 202_attribution_snapshots s ON tp.snapshot_id = s.snapshot_id WHERE s.model_id = ?');
             $stmt->bind_param('i', $modelId);
-            $stmt->execute();
+            $this->conn->execute($stmt);
             $stmt->close();
 
             $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_snapshots WHERE model_id = ?');
             $stmt->bind_param('i', $modelId);
-            $stmt->execute();
+            $this->conn->execute($stmt);
             $stmt->close();
 
             $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_settings WHERE model_id = ?');
             $stmt->bind_param('i', $modelId);
-            $stmt->execute();
+            $this->conn->execute($stmt);
             $stmt->close();
 
             $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_models WHERE model_id = ? AND user_id = ?');
             $stmt->bind_param('ii', $modelId, $userId);
-            $stmt->execute();
+            $this->conn->execute($stmt);
             $stmt->close();
         });
     }

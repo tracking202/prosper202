@@ -152,14 +152,14 @@ final class MysqlUserRepository implements UserRepositoryInterface
     public function listApiKeys(int $userId): array
     {
         $stmt = $this->conn->prepareRead(
-            'SELECT api_key_id, user_id, api_key, created_at FROM 202_api_keys WHERE user_id = ?'
+            'SELECT user_id, api_key, created_at, scope FROM 202_api_keys WHERE user_id = ?'
         );
         $this->conn->bind($stmt, 'i', [$userId]);
 
         return $this->conn->fetchAll($stmt);
     }
 
-    public function createApiKey(int $userId, string $name): int
+    public function createApiKey(int $userId, string $name): string
     {
         $key = bin2hex(random_bytes(32));
         $now = time();
@@ -168,15 +168,18 @@ final class MysqlUserRepository implements UserRepositoryInterface
             'INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)'
         );
         $this->conn->bind($stmt, 'isi', [$userId, $key, $now]);
-        return $this->conn->executeInsert($stmt);
+        $this->conn->execute($stmt);
+        $stmt->close();
+
+        return $key;
     }
 
-    public function deleteApiKey(int $keyId, int $userId): void
+    public function deleteApiKey(string $apiKey, int $userId): void
     {
         $stmt = $this->conn->prepareWrite(
-            'DELETE FROM 202_api_keys WHERE api_key_id = ? AND user_id = ?'
+            'DELETE FROM 202_api_keys WHERE api_key = ? AND user_id = ?'
         );
-        $this->conn->bind($stmt, 'ii', [$keyId, $userId]);
+        $this->conn->bind($stmt, 'si', [$apiKey, $userId]);
         $this->conn->execute($stmt);
         $stmt->close();
     }

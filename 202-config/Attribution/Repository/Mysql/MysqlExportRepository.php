@@ -56,7 +56,7 @@ final readonly class MysqlExportRepository implements ExportRepositoryInterface
         $modelId = $job->modelId;
 
         $stmt->bind_param(
-            'iississssssssssssssi',
+            'iissiissssssssssssii',
             $userId,
             $modelId,
             $scopeType,
@@ -109,7 +109,7 @@ final readonly class MysqlExportRepository implements ExportRepositoryInterface
         $exportId = $job->exportId;
 
         $stmt->bind_param(
-            'ssssssssssssi',
+            'sssssssssssii',
             $status,
             $filePath,
             $downloadToken,

@@ -44,6 +44,7 @@ final class CachedTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateC1(string $value): int
     {
+        $value = substr($value, 0, 350);
         $key = md5('c1-id' . $value . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
@@ -59,6 +60,7 @@ final class CachedTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateC2(string $value): int
     {
+        $value = substr($value, 0, 350);
         $key = md5('c2-id' . $value . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
@@ -74,6 +76,7 @@ final class CachedTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateC3(string $value): int
     {
+        $value = substr($value, 0, 350);
         $key = md5('c3-id' . $value . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
@@ -89,6 +92,7 @@ final class CachedTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateC4(string $value): int
     {
+        $value = substr($value, 0, 350);
         $key = md5('c4-id' . $value . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
@@ -104,7 +108,8 @@ final class CachedTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateVariable(string $value, int $ppcVariableId): int
     {
-        $key = md5($ppcVariableId . $value . $this->systemHash);
+        $value = substr($value, 0, 350);
+        $key = md5('variable-id' . $ppcVariableId . '|' . $value . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
         if ($cached !== false) {
@@ -134,7 +139,8 @@ final class CachedTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateCustomVar(string $name, string $data): int
     {
-        $key = md5($name . '-id' . $data . $this->systemHash);
+        $data = substr($data, 0, 350);
+        $key = md5('customvar-' . $name . '|' . $data . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
         if ($cached !== false) {
@@ -149,7 +155,8 @@ final class CachedTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateUtm(string $value, string $type): int
     {
-        $key = md5($type . '_id' . $value . $this->systemHash);
+        $value = substr($value, 0, 350);
+        $key = md5('utm-' . $type . '|' . $value . $this->systemHash);
 
         $cached = ($this->cacheGet)($key);
         if ($cached !== false) {

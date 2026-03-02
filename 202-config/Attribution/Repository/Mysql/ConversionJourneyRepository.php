@@ -206,7 +206,7 @@ SQL;
 
         $limit = self::MAX_TOUCHES;
         $stmt->bind_param('iiiii', $userId, $campaignId, $lookbackStart, $conversionTime, $limit);
-        $stmt->execute();
+        $this->conn->execute($stmt);
 
         $journey = [];
         $result = $stmt->get_result();
@@ -264,7 +264,7 @@ SQL;
             $clickId = $touch['click_id'];
             $clickTime = $touch['click_time'];
             $stmt->bind_param('iiiii', $conversionId, $clickId, $clickTime, $position, $createdAt);
-            $stmt->execute();
+            $this->conn->execute($stmt);
         }
 
         $stmt->close();
@@ -274,7 +274,7 @@ SQL;
     {
         $stmt = $this->conn->prepareWrite('DELETE FROM 202_conversion_touchpoints WHERE conv_id = ?');
         $stmt->bind_param('i', $conversionId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
     }
 
@@ -346,7 +346,7 @@ SQL;
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $params);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
 
         $rows = [];

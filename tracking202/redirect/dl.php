@@ -545,9 +545,9 @@ $click_id = $clickRepo->allocateClickId();
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_alp'] = 0;
 
-// Always generate click_id_public (needed for PCI-based lookups)
-$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
-$mysql['click_id_public'] = (string) $click_id_public;
+// Generate click_id_public only when cloaking is active (needed for PCI-based lookups via cl.php)
+$click_id_public = '';
+$mysql['click_id_public'] = '';
 
 // Determine cloaking (needed for redirect decision)
 $cloaking_on = false;
@@ -557,6 +557,8 @@ if (($tracker_row['click_cloaking'] == 1) or
 ) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
+	$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+	$mysql['click_id_public'] = (string) $click_id_public;
 } else {
 	$mysql['click_cloaking'] = 0;
 }
@@ -571,7 +573,7 @@ if ($cloaking_on === true) {
 }
 
 // Helper: compute remaining click data and record
-$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo): void {
+$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url): void {
 	// Compute variable_set_id
 	$total_vars = count($custom_var_ids);
 	if ($total_vars > 0) {
@@ -606,7 +608,12 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 	$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 	$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 
-	$mysql['click_cloaking_site_url_id'] = '0';
+	if ($cloaking_on && $cloaking_site_url !== '') {
+		$click_cloaking_site_url_id = $locationRepo->findOrCreateSiteUrl($cloaking_site_url);
+		$mysql['click_cloaking_site_url_id'] = (string) $click_cloaking_site_url_id;
+	} else {
+		$mysql['click_cloaking_site_url_id'] = '0';
+	}
 	$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
 	$mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 

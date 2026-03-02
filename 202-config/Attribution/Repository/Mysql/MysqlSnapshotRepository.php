@@ -49,7 +49,7 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $values);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $snapshots = [];
         if ($result) {
@@ -80,7 +80,7 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $values);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -141,11 +141,9 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
                     $createdAt
                 );
             }
-            $stmt->execute();
-            $insertId = $stmt->insert_id ?: $this->conn->writeConnection()->insert_id;
-            $stmt->close();
+            $insertId = $this->conn->executeInsert($stmt);
 
-            return $this->requireSnapshotById((int) $insertId);
+            return $this->requireSnapshotById($insertId);
         }
 
         $snapshotId = (int) $snapshot->snapshotId;
@@ -187,7 +185,7 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
                 $snapshotId
             );
         }
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
 
         return $this->requireSnapshotById($snapshotId);
@@ -198,11 +196,8 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
         $sql = 'DELETE FROM 202_attribution_snapshots WHERE created_at < ?';
         $stmt = $this->conn->prepareWrite($sql);
         $stmt->bind_param('i', $timestamp);
-        $stmt->execute();
-        $affected = $stmt->affected_rows;
-        $stmt->close();
 
-        return $affected;
+        return $this->conn->executeUpdate($stmt);
     }
 
     private function requireSnapshotById(int $snapshotId): Snapshot
@@ -210,7 +205,7 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
         $sql = 'SELECT * FROM 202_attribution_snapshots WHERE snapshot_id = ? LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);
         $stmt->bind_param('i', $snapshotId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $row = $result ? $result->fetch_assoc() : null;
         $stmt->close();

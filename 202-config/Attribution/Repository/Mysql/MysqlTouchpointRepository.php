@@ -33,7 +33,7 @@ final readonly class MysqlTouchpointRepository implements TouchpointRepositoryIn
         $sql = 'SELECT * FROM 202_attribution_touchpoints WHERE snapshot_id = ? ORDER BY position ASC, touchpoint_id ASC';
         $stmt = $this->conn->prepareRead($sql);
         $stmt->bind_param('i', $snapshotId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $result = $stmt->get_result();
         $touchpoints = [];
         if ($result) {
@@ -83,7 +83,7 @@ final readonly class MysqlTouchpointRepository implements TouchpointRepositoryIn
                     $weight,
                     $createdAt
                 );
-                $stmt->execute();
+                $this->conn->execute($stmt);
             }
 
             $stmt->close();
@@ -95,7 +95,7 @@ final readonly class MysqlTouchpointRepository implements TouchpointRepositoryIn
         $sql = 'DELETE FROM 202_attribution_touchpoints WHERE snapshot_id = ?';
         $stmt = $this->conn->prepareWrite($sql);
         $stmt->bind_param('i', $snapshotId);
-        $stmt->execute();
+        $this->conn->execute($stmt);
         $stmt->close();
     }
 }

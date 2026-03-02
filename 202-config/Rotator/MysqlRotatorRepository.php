@@ -144,6 +144,17 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
     public function delete(int $id, int $userId): void
     {
         $this->conn->transaction(function () use ($id, $userId): void {
+            // Verify ownership BEFORE cascade-deleting children
+            $stmt = $this->conn->prepareWrite(
+                'SELECT id FROM 202_rotators WHERE id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+            );
+            $this->conn->bind($stmt, 'ii', [$id, $userId]);
+            $row = $this->conn->fetchOne($stmt);
+
+            if ($row === null) {
+                throw new RuntimeException("Rotator $id not found or not owned by user");
+            }
+
             $stmt = $this->conn->prepareWrite(
                 'DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?'
             );
@@ -166,9 +177,9 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
             $stmt->close();
 
             $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_rotators WHERE id = ? AND user_id = ?'
+                'DELETE FROM 202_rotators WHERE id = ?'
             );
-            $this->conn->bind($stmt, 'ii', [$id, $userId]);
+            $this->conn->bind($stmt, 'i', [$id]);
             $this->conn->execute($stmt);
             $stmt->close();
         });
@@ -246,8 +257,10 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
             if (!empty($sets)) {
                 $values[] = $ruleId;
                 $types .= 'i';
+                $values[] = $rotatorId;
+                $types .= 'i';
                 $stmt = $this->conn->prepareWrite(
-                    'UPDATE 202_rotator_rules SET ' . implode(', ', $sets) . ' WHERE id = ?'
+                    'UPDATE 202_rotator_rules SET ' . implode(', ', $sets) . ' WHERE id = ? AND rotator_id = ?'
                 );
                 $this->conn->bind($stmt, $types, $values);
                 $this->conn->execute($stmt);

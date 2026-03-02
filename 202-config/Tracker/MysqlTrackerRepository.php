@@ -50,7 +50,6 @@ final class MysqlTrackerRepository implements TrackerRepositoryInterface
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, 's', [$publicId]);
-        $this->conn->execute($stmt);
 
         return $this->conn->fetchOne($stmt);
     }

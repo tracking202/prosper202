@@ -77,8 +77,14 @@ final class Connection
      */
     public function bind(object $stmt, string $types, array $values): void
     {
-        if ($types === '' || $values === []) {
+        if ($types === '' && $values === []) {
             return;
+        }
+
+        if (strlen($types) !== count($values)) {
+            throw new RuntimeException(
+                'bind_param type string length (' . strlen($types) . ') does not match value count (' . count($values) . ').'
+            );
         }
 
         // Re-index to ensure contiguous numeric keys.
@@ -133,6 +139,9 @@ final class Connection
         $this->execute($stmt);
         $result = $stmt->get_result();
         $row = ($result instanceof mysqli_result) ? $result->fetch_assoc() : null;
+        if ($result instanceof mysqli_result) {
+            $result->free();
+        }
         $stmt->close();
 
         return $row ?? null;

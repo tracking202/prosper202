@@ -195,15 +195,15 @@ final class UserRepositoryTest extends TestCase
         $repo = $this->makeRepo();
         $userId = $this->createTestUser($repo);
 
-        $keyId = $repo->createApiKey($userId, 'test-key');
+        $apiKey = $repo->createApiKey($userId, 'test-key');
+        self::assertNotEmpty($apiKey);
 
         $keys = $repo->listApiKeys($userId);
         self::assertCount(1, $keys);
-        self::assertSame($keyId, $keys[0]['api_key_id']);
+        self::assertSame($apiKey, $keys[0]['api_key']);
         self::assertSame($userId, $keys[0]['user_id']);
-        self::assertNotEmpty($keys[0]['api_key']);
 
-        $repo->deleteApiKey($keyId, $userId);
+        $repo->deleteApiKey($apiKey, $userId);
 
         self::assertCount(0, $repo->listApiKeys($userId));
     }
@@ -212,9 +212,9 @@ final class UserRepositoryTest extends TestCase
     {
         $repo = $this->makeRepo();
         $userId = $this->createTestUser($repo);
-        $keyId = $repo->createApiKey($userId, 'key');
+        $apiKey = $repo->createApiKey($userId, 'key');
 
-        $repo->deleteApiKey($keyId, 9999); // wrong user
+        $repo->deleteApiKey($apiKey, 9999); // wrong user
 
         self::assertCount(1, $repo->listApiKeys($userId), 'Key should not be deleted by wrong user');
     }
