@@ -295,8 +295,17 @@ class AUTH
 						WHERE 	user_id='" . $_SESSION['user_id'] . "'";
             _mysqli_query($user_sql);
             $_SESSION['valid_key'] = true;
+            // Warm the CLI shell license cache so p202 shell works without its own round-trip.
+            @file_put_contents(
+                sys_get_temp_dir() . '/p202_shell_' . hash('sha256', $user_api_key) . '.cache',
+                '1'
+            );
             return true;
         } else {
+            // Invalidate CLI shell cache when the key is no longer valid.
+            @unlink(
+                sys_get_temp_dir() . '/p202_shell_' . hash('sha256', $user_api_key) . '.cache'
+            );
             return false;
         }
     }

@@ -7,7 +7,7 @@ namespace Api\V3\Controllers;
 class CapabilitiesController
 {
     private const string CLICKSERVER_VALIDATE_URL = 'https://my.tracking202.com/api/v2/validate-customers-key';
-    private const int SHELL_CACHE_TTL_SECONDS = 600; // 10 minutes
+    private const int SHELL_CACHE_TTL_SECONDS = 28800; // 8 hours
 
     public function __construct(
         private readonly \mysqli $db,
