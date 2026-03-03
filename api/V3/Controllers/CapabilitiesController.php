@@ -6,8 +6,12 @@ namespace Api\V3\Controllers;
 
 class CapabilitiesController
 {
-    public function __construct(private readonly \mysqli $db)
-    {
+    private const string CLICKSERVER_VALIDATE_URL = 'https://my.tracking202.com/api/v2/validate-customers-key';
+
+    public function __construct(
+        private readonly \mysqli $db,
+        private readonly ?int $userId = null,
+    ) {
     }
 
     public function versions(): array
@@ -44,6 +48,7 @@ class CapabilitiesController
                         'bulk_upsert_per_minute' => 60,
                     ],
                 ],
+                'shell' => $this->shellAccess(),
                 'server' => [
                     'build' => $this->resolveBuildVersion(),
                     'commit' => defined('P202_GIT_COMMIT') ? (string)P202_GIT_COMMIT : 'unknown',
@@ -118,5 +123,76 @@ class CapabilitiesController
             }
         }
         return 500;
+    }
+
+    /**
+     * Determine shell access by validating the user's ClickServer API key
+     * against my.tracking202.com. Returns false if the user has no key or
+     * the key is invalid. On network failure, denies access (fail-closed).
+     */
+    private function shellAccess(): bool
+    {
+        if ($this->userId === null) {
+            return false;
+        }
+
+        $customerKey = $this->loadClickServerKey();
+        if ($customerKey === '') {
+            return false;
+        }
+
+        return $this->validateClickServerKey($customerKey);
+    }
+
+    private function loadClickServerKey(): string
+    {
+        $stmt = $this->db->prepare(
+            'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
+        );
+        if (!$stmt) {
+            return '';
+        }
+        $stmt->bind_param('i', $this->userId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return '';
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            return '';
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        return trim((string)($row['p202_customer_api_key'] ?? ''));
+    }
+
+    private function validateClickServerKey(string $key): bool
+    {
+        $ch = curl_init();
+        if ($ch === false) {
+            return false;
+        }
+
+        curl_setopt($ch, CURLOPT_URL, self::CLICKSERVER_VALIDATE_URL);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(['key' => $key]));
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        // Verify SSL in production; matches the security posture of the API.
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+
+        $response = curl_exec($ch);
+        $failed = curl_errno($ch) || $response === false;
+        curl_close($ch);
+
+        if ($failed) {
+            return false;
+        }
+
+        $data = json_decode((string)$response, true);
+        return is_array($data) && ($data['msg'] ?? '') === 'Key valid';
     }
 }
