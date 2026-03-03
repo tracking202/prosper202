@@ -35,6 +35,12 @@ type entityLookups struct {
 var diffCmd = &cobra.Command{
 	Use:   "diff <entity|all>",
 	Short: "Compare entities between two profiles",
+	Long: "Compare entity configurations between two Prosper202 profiles.\n\n" +
+		"Shows records only in source, only in target, changed (with field-level diffs), and identical.\n" +
+		"Use 'all' to compare everything, or specify a single entity type.\n" +
+		"Entities: campaigns, aff-networks, ppc-networks, ppc-accounts, landing-pages, text-ads, rotators, trackers.",
+	Example: "  p202 diff all --from prod --to staging --json\n" +
+		"  p202 diff campaigns --from prod --to staging --json",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target := strings.TrimSpace(args[0])
@@ -634,4 +640,10 @@ func init() {
 	_ = diffCmd.MarkFlagRequired("to")
 
 	rootCmd.AddCommand(diffCmd)
+
+	registerMeta("diff", commandMeta{
+		Examples:     []string{"p202 diff all --from prod --to staging --json", "p202 diff campaigns --from prod --to staging --json"},
+		OutputFields: []string{"from", "to", "summary", "only_in_source", "only_in_target", "changed", "identical_count"},
+		Related:      []string{"sync", "sync status"},
+	})
 }

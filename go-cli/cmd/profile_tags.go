@@ -15,6 +15,9 @@ import (
 var configTagProfileCmd = &cobra.Command{
 	Use:   "tag-profile <name> <tag> [<tag>...]",
 	Short: "Add tags to a profile",
+	Long: "Add one or more tags to a profile. Tags are used for grouping profiles\n" +
+		"(e.g. --group production in multi-profile commands).",
+	Example: "  p202 config tag-profile prod production\n  p202 config tag-profile staging dev qa",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := normalizeProfileName(args[0])
@@ -58,8 +61,10 @@ var configTagProfileCmd = &cobra.Command{
 }
 
 var configUntagProfileCmd = &cobra.Command{
-	Use:   "untag-profile <name> <tag> [<tag>...]",
-	Short: "Remove tags from a profile",
+	Use:     "untag-profile <name> <tag> [<tag>...]",
+	Short:   "Remove tags from a profile",
+	Long:    "Remove one or more tags from a profile.",
+	Example: "  p202 config untag-profile staging qa",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := normalizeProfileName(args[0])
@@ -125,4 +130,13 @@ func normalizeTag(raw string) (string, error) {
 
 func init() {
 	configCmd.AddCommand(configTagProfileCmd, configUntagProfileCmd)
+
+	registerMeta("config tag-profile", commandMeta{
+		Examples: []string{"p202 config tag-profile prod production", "p202 config tag-profile staging dev qa"},
+		Related:  []string{"config untag-profile", "config list-profiles"},
+	})
+	registerMeta("config untag-profile", commandMeta{
+		Examples: []string{"p202 config untag-profile staging qa"},
+		Related:  []string{"config tag-profile", "config list-profiles"},
+	})
 }

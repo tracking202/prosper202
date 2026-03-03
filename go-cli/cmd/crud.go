@@ -237,17 +237,50 @@ func resolveForeignKeyNames(c *api.Client, rows []map[string]interface{}) error 
 	return nil
 }
 
+func crudFieldNames(fields []crudField, requiredOnly bool) []string {
+	names := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if requiredOnly && !f.Required {
+			continue
+		}
+		names = append(names, f.Name)
+	}
+	return names
+}
+
+func buildCrudCreateExample(entityName string, fields []crudField) string {
+	parts := []string{"p202 " + entityName + " create"}
+	for _, f := range fields {
+		if f.Required {
+			parts = append(parts, fmt.Sprintf("--%s '<value>'", f.Name))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
 func registerCRUD(entity crudEntity) *cobra.Command {
 	parentCmd := &cobra.Command{
 		Use:     entity.Name,
 		Aliases: entity.Aliases,
 		Short:   fmt.Sprintf("Manage %s", entity.Plural),
+		Long: fmt.Sprintf("Manage %s.\n\n"+
+			"Subcommands: list, get, create, update, delete.\n"+
+			"All subcommands support --json for machine-readable output and --csv for spreadsheet export.", entity.Plural),
 	}
+
+	allFieldNames := crudFieldNames(entity.Fields, false)
+	requiredFieldNames := crudFieldNames(entity.Fields, true)
 
 	// list
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: fmt.Sprintf("List %s", entity.Plural),
+		Long: fmt.Sprintf("List %s with optional filters and pagination.\n\n"+
+			"Use --json for machine-readable output. Use --all to fetch every row across all pages.\n"+
+			"Use --resolve-names to replace foreign key IDs with human-readable names.", entity.Plural),
+		Example: fmt.Sprintf("  p202 %s list --json\n"+
+			"  p202 %s list --limit 10\n"+
+			"  p202 %s list --all --resolve-names", entity.Name, entity.Name, entity.Name),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("list", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
@@ -355,7 +388,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	getCmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: fmt.Sprintf("Get a %s by ID", entity.Name),
-		Args:  cobra.ExactArgs(1),
+		Long: fmt.Sprintf("Retrieve a single %s record by its numeric ID.\n\n"+
+			"Returns all fields for the record. Use --json for machine-readable output.", entity.Name),
+		Example: fmt.Sprintf("  p202 %s get 42 --json", entity.Name),
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("get", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
@@ -376,6 +412,11 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	createCmd := &cobra.Command{
 		Use:   "create",
 		Short: fmt.Sprintf("Create a new %s", entity.Name),
+		Long: fmt.Sprintf("Create a new %s.\n\nRequired flags: %s\nOptional flags: %s",
+			entity.Name,
+			strings.Join(requiredFieldNames, ", "),
+			strings.Join(allFieldNames, ", ")),
+		Example: "  " + buildCrudCreateExample(entity.Name, entity.Fields),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("create", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
@@ -410,7 +451,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	updateCmd := &cobra.Command{
 		Use:   "update <id>",
 		Short: fmt.Sprintf("Update a %s", entity.Name),
-		Args:  cobra.ExactArgs(1),
+		Long: fmt.Sprintf("Update an existing %s by ID. Pass only the fields you want to change.\n\n"+
+			"Available fields: %s", entity.Name, strings.Join(allFieldNames, ", ")),
+		Example: fmt.Sprintf("  p202 %s update 42 --%s '<new value>' --json", entity.Name, allFieldNames[0]),
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("update", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
@@ -443,6 +487,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	deleteCmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: fmt.Sprintf("Delete a %s", entity.Name),
+		Long: fmt.Sprintf("Delete a %s by ID. Prompts for confirmation unless --force is passed.\n\n"+
+			"Use --ids for bulk deletion of multiple records.", entity.Name),
+		Example: fmt.Sprintf("  p202 %s delete 42 --force\n"+
+			"  p202 %s delete --ids 1,2,3 --force", entity.Name, entity.Name),
 		Args: func(cmd *cobra.Command, args []string) error {
 			idsFlag, _ := cmd.Flags().GetString("ids")
 			if strings.TrimSpace(idsFlag) != "" {
@@ -657,13 +705,48 @@ func init() {
 			campaignCmd = cmd
 			campaignEntity = e
 		}
+
+		// Register agent metadata for each CRUD subcommand
+		allNames := crudFieldNames(e.Fields, false)
+		registerMeta(e.Name+" list", commandMeta{
+			Examples: []string{
+				"p202 " + e.Name + " list --json",
+				"p202 " + e.Name + " list --limit 10",
+				"p202 " + e.Name + " list --all --resolve-names",
+			},
+			OutputFields: allNames,
+			Related:      []string{e.Name + " get", e.Name + " create"},
+		})
+		registerMeta(e.Name+" get", commandMeta{
+			Examples:     []string{"p202 " + e.Name + " get 42 --json"},
+			OutputFields: allNames,
+			Related:      []string{e.Name + " list", e.Name + " update"},
+		})
+		registerMeta(e.Name+" create", commandMeta{
+			Examples:     []string{buildCrudCreateExample(e.Name, e.Fields)},
+			OutputFields: allNames,
+			Related:      []string{e.Name + " list", e.Name + " get"},
+		})
+		registerMeta(e.Name+" update", commandMeta{
+			Examples:     []string{fmt.Sprintf("p202 %s update 42 --%s '<new value>' --json", e.Name, allNames[0])},
+			OutputFields: allNames,
+			Related:      []string{e.Name + " get"},
+		})
+		registerMeta(e.Name+" delete", commandMeta{
+			Examples:     []string{"p202 " + e.Name + " delete 42 --force", "p202 " + e.Name + " delete --ids 1,2,3 --force"},
+			OutputFields: []string{},
+			Related:      []string{e.Name + " list"},
+		})
 	}
 
 	if campaignCmd != nil {
 		cloneCmd := &cobra.Command{
 			Use:   "clone <id>",
 			Short: "Clone a campaign",
-			Args:  cobra.ExactArgs(1),
+			Long:  "Create a copy of an existing campaign with all its settings. Optionally override the name with --name.",
+			Example: "  p202 campaign clone 42 --json\n" +
+				"  p202 campaign clone 42 --name 'Q2 Offer Copy'",
+			Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				c, err := api.NewFromConfig()
 				if err != nil {
@@ -697,13 +780,21 @@ func init() {
 		}
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
 		campaignCmd.AddCommand(cloneCmd)
+
+		registerMeta("campaign clone", commandMeta{
+			Examples:     []string{"p202 campaign clone 42 --json", "p202 campaign clone 42 --name 'Q2 Offer Copy'"},
+			OutputFields: crudFieldNames(campaignEntity.Fields, false),
+			Related:      []string{"campaign get", "campaign list"},
+		})
 	}
 
 	if trackerCmd != nil {
 		getURLCmd := &cobra.Command{
-			Use:   "get-url <id>",
-			Short: "Get tracking URL for a tracker",
-			Args:  cobra.ExactArgs(1),
+			Use:     "get-url <id>",
+			Short:   "Get tracking URL for a tracker",
+			Long:    "Retrieve the tracking URL for a specific tracker by its ID. This is the URL you place in your traffic source.",
+			Example: "  p202 tracker get-url 42 --json",
+			Args:    cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				c, err := api.NewFromConfig()
 				if err != nil {
@@ -720,6 +811,9 @@ func init() {
 		createWithURLCmd := &cobra.Command{
 			Use:   "create-with-url",
 			Short: "Create a tracker and return its tracking URL",
+			Long: "Create a new tracker and immediately return both the tracker record and its\n" +
+				"tracking URL in a single response. This is the most common way to set up tracking.",
+			Example: "  p202 tracker create-with-url --aff_campaign_id 5 --ppc_account_id 3 --json",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				c, err := api.NewFromConfig()
 				if err != nil {
@@ -776,6 +870,10 @@ func init() {
 		bulkURLsCmd := &cobra.Command{
 			Use:   "bulk-urls",
 			Short: "Fetch tracking URLs for multiple trackers",
+			Long: "Fetch tracking URLs for multiple trackers concurrently. Optionally filter by\n" +
+				"campaign or PPC account. Results include tracker_id and the tracking URL.",
+			Example: "  p202 tracker bulk-urls --json\n" +
+				"  p202 tracker bulk-urls --aff_campaign_id 5 --concurrency 10 --json",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				c, err := api.NewFromConfig()
 				if err != nil {
@@ -896,5 +994,21 @@ func init() {
 		bulkURLsCmd.Flags().Int("concurrency", 5, "Number of concurrent URL fetches")
 
 		trackerCmd.AddCommand(getURLCmd, createWithURLCmd, bulkURLsCmd)
+
+		registerMeta("tracker get-url", commandMeta{
+			Examples:     []string{"p202 tracker get-url 42 --json"},
+			OutputFields: []string{"tracking_url", "base_url"},
+			Related:      []string{"tracker list", "tracker create-with-url"},
+		})
+		registerMeta("tracker create-with-url", commandMeta{
+			Examples:     []string{"p202 tracker create-with-url --aff_campaign_id 5 --ppc_account_id 3 --json"},
+			OutputFields: []string{"tracker", "tracking_url"},
+			Related:      []string{"tracker get-url", "tracker list", "campaign list"},
+		})
+		registerMeta("tracker bulk-urls", commandMeta{
+			Examples:     []string{"p202 tracker bulk-urls --json", "p202 tracker bulk-urls --aff_campaign_id 5 --concurrency 10 --json"},
+			OutputFields: []string{"tracker_id", "aff_campaign_id", "tracking_url"},
+			Related:      []string{"tracker list", "tracker get-url"},
+		})
 	}
 }

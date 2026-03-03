@@ -56,6 +56,15 @@ var analyticsAllowedSort = map[string]bool{
 var analyticsCmd = &cobra.Command{
 	Use:   "analytics",
 	Short: "Query performance stats grouped by campaign, traffic source, country, etc. (shorthand for report breakdown)",
+	Long: "Shorthand for report breakdown with friendlier flag names.\n\n" +
+		"Supported --group-by values: campaign, aff_network, ppc_account, ppc_network,\n" +
+		"landing_page (alias: lp), keyword, country, city, browser, platform, device, isp, text_ad.\n\n" +
+		"Sort aliases: clicks, conversions, revenue, profit, roi, epc, conv_rate, cost.\n" +
+		"These map to: total_clicks, total_leads, total_income, total_net, roi, epc, conv_rate, total_cost.",
+	Example: "  p202 analytics --group-by campaign --period last7 --json\n" +
+		"  p202 analytics --group-by country --sort revenue --sort-dir DESC --limit 10 --json\n" +
+		"  p202 analytics --group-by lp --period last30 --aff_campaign_id 5 --json\n" +
+		"  p202 analytics --group-by ppc_account --days 14 --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !envFlagEnabled("CLI_ENABLE_ANALYTICS_SHORTHAND", true) {
 			return fmt.Errorf("analytics shorthand is disabled (set CLI_ENABLE_ANALYTICS_SHORTHAND=1 to enable)")
@@ -169,4 +178,14 @@ func init() {
 	analyticsCmd.Flags().String("country_id", "", "Filter by country ID")
 
 	rootCmd.AddCommand(analyticsCmd)
+
+	registerMeta("analytics", commandMeta{
+		Examples: []string{
+			"p202 analytics --group-by campaign --period last7 --json",
+			"p202 analytics --group-by country --sort revenue --sort-dir DESC --limit 10 --json",
+			"p202 analytics --group-by lp --period last30 --aff_campaign_id 5 --json",
+		},
+		OutputFields: []string{"dimension", "total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"},
+		Related:      []string{"report breakdown", "report summary"},
+	})
 }

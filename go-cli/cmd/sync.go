@@ -83,6 +83,14 @@ type syncRunOutput struct {
 var syncCmd = &cobra.Command{
 	Use:   "sync <entity|all>",
 	Short: "Sync entities from one profile to another",
+	Long: "Sync entity configurations from one Prosper202 profile to another.\n\n" +
+		"Entities sync in dependency order: aff-networks -> ppc-networks -> ppc-accounts ->\n" +
+		"campaigns -> landing-pages -> text-ads -> rotators -> trackers.\n\n" +
+		"Use 'all' to sync everything, or specify a single entity type.\n" +
+		"Use --dry-run to preview changes without writing.",
+	Example: "  p202 sync all --from prod --to staging --dry-run --json\n" +
+		"  p202 sync all --from prod --to staging --json\n" +
+		"  p202 sync campaigns --from prod --to staging --force-update --json",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts, fromProfile, toProfile, err := readSyncFlags(cmd)
@@ -96,6 +104,9 @@ var syncCmd = &cobra.Command{
 var syncStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show sync status and drift summary between profiles",
+	Long: "Show sync status comparing entity counts, mappings, and drift between two profiles.\n\n" +
+		"Shows new records on source, missing on target, and mapping counts per entity.",
+	Example: "  p202 sync status --from prod --to staging --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fromProfile, _ := cmd.Flags().GetString("from")
 		toProfile, _ := cmd.Flags().GetString("to")
@@ -178,8 +189,10 @@ var syncStatusCmd = &cobra.Command{
 }
 
 var syncHistoryCmd = &cobra.Command{
-	Use:   "history",
-	Short: "Show sync history between profiles",
+	Use:     "history",
+	Short:   "Show sync history between profiles",
+	Long:    "Show the history of sync operations between two profiles including timestamps and results.",
+	Example: "  p202 sync history --from prod --to staging --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fromProfile, _ := cmd.Flags().GetString("from")
 		toProfile, _ := cmd.Flags().GetString("to")
@@ -213,6 +226,10 @@ var syncHistoryCmd = &cobra.Command{
 var reSyncCmd = &cobra.Command{
 	Use:   "re-sync",
 	Short: "Run incremental sync using stored sync manifest",
+	Long: "Run incremental sync that only processes records that have changed since the last sync.\n\n" +
+		"Uses stored manifest hashes to skip unchanged records. Much faster than full sync.",
+	Example: "  p202 re-sync --from prod --to staging --json\n" +
+		"  p202 re-sync --from prod --to staging --force-update --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts, fromProfile, toProfile, err := readSyncFlags(cmd)
 		if err != nil {
@@ -770,4 +787,25 @@ func init() {
 
 	syncCmd.AddCommand(syncStatusCmd, syncHistoryCmd)
 	rootCmd.AddCommand(syncCmd, reSyncCmd)
+
+	registerMeta("sync", commandMeta{
+		Examples:     []string{"p202 sync all --from prod --to staging --dry-run --json", "p202 sync campaigns --from prod --to staging --json"},
+		OutputFields: []string{"source", "target", "dry_run", "force_update", "incremental", "results"},
+		Related:      []string{"sync status", "re-sync", "diff"},
+	})
+	registerMeta("sync status", commandMeta{
+		Examples:     []string{"p202 sync status --from prod --to staging --json"},
+		OutputFields: []string{"source", "target", "last_sync", "data"},
+		Related:      []string{"sync", "diff"},
+	})
+	registerMeta("sync history", commandMeta{
+		Examples:     []string{"p202 sync history --from prod --to staging --json"},
+		OutputFields: []string{"source", "target", "last_sync", "data"},
+		Related:      []string{"sync", "sync status"},
+	})
+	registerMeta("re-sync", commandMeta{
+		Examples:     []string{"p202 re-sync --from prod --to staging --json"},
+		OutputFields: []string{"source", "target", "dry_run", "incremental", "results"},
+		Related:      []string{"sync", "sync status"},
+	})
 }

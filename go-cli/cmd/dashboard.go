@@ -9,6 +9,13 @@ import (
 var dashboardCmd = &cobra.Command{
 	Use:   "dashboard",
 	Short: "Get dashboard overview — total clicks, conversions, revenue, cost, profit, and ROI for a period",
+	Long: "Get a dashboard overview with aggregate totals for a time period.\n\n" +
+		"Supports multi-profile mode via --profiles, --all-profiles, or --group to aggregate\n" +
+		"across multiple Prosper202 instances.",
+	Example: "  p202 dashboard --period today --json\n" +
+		"  p202 dashboard --period last7 --json\n" +
+		"  p202 dashboard --period last30 --all-profiles --json\n" +
+		"  p202 dashboard --period today --group production --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profiles, err := resolveMultiProfiles(cmd)
 		if err != nil {
@@ -54,4 +61,10 @@ func init() {
 	addMultiProfileFlags(dashboardCmd)
 
 	rootCmd.AddCommand(dashboardCmd)
+
+	registerMeta("dashboard", commandMeta{
+		Examples:     []string{"p202 dashboard --period today --json", "p202 dashboard --period last7 --all-profiles --json"},
+		OutputFields: []string{"total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"},
+		Related:      []string{"report summary", "report breakdown"},
+	})
 }

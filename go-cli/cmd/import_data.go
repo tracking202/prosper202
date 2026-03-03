@@ -24,6 +24,13 @@ var immutableFieldsByEntity = map[string][]string{
 var dataImportCmd = &cobra.Command{
 	Use:   "import <entity> <file>",
 	Short: "Import entities from JSON",
+	Long: "Import entity configurations from a JSON file.\n\n" +
+		"The file can be a JSON array of records, or an object with a 'data' array.\n" +
+		"Immutable fields (IDs, timestamps) are automatically stripped.\n" +
+		"Use --dry-run to validate without creating records.",
+	Example: "  p202 import campaigns backup.json --json\n" +
+		"  p202 import campaigns backup.json --dry-run --json\n" +
+		"  p202 import campaigns backup.json --skip-errors --json",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entity := args[0]
@@ -138,4 +145,10 @@ func init() {
 	dataImportCmd.Flags().Bool("dry-run", false, "Validate import and count records without creating them")
 	dataImportCmd.Flags().Bool("skip-errors", false, "Continue importing after record-level failures")
 	rootCmd.AddCommand(dataImportCmd)
+
+	registerMeta("import", commandMeta{
+		Examples:     []string{"p202 import campaigns backup.json --json", "p202 import campaigns backup.json --dry-run --json"},
+		OutputFields: []string{"entity", "total", "imported", "failed", "dry_run", "errors"},
+		Related:      []string{"export"},
+	})
 }

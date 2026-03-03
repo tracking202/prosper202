@@ -14,6 +14,9 @@ import (
 var attributionCmd = &cobra.Command{
 	Use:   "attribution",
 	Short: "Manage attribution models, snapshots, and exports",
+	Long: "Manage attribution models for multi-touch conversion tracking.\n\n" +
+		"Subgroups: model, snapshot, export.\n" +
+		"Model types: first_touch, last_touch, linear, time_decay, position_based, algorithmic.",
 }
 
 // --- Model subcommands ---
@@ -65,6 +68,11 @@ var attrModelGetCmd = &cobra.Command{
 var attrModelCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create an attribution model",
+	Long: "Create an attribution model. Required: --model_name and --model_type.\n\n" +
+		"Types: first_touch, last_touch, linear, time_decay, position_based, algorithmic.\n" +
+		"Optional: --weighting_config (JSON), --is_active, --is_default.",
+	Example: "  p202 attribution model create --model_name 'Last Touch' --model_type last_touch --json\n" +
+		"  p202 attribution model create --model_name 'Custom' --model_type position_based --weighting_config '{\"first\":0.4,\"last\":0.4,\"middle\":0.2}' --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -224,6 +232,11 @@ var attrExportListCmd = &cobra.Command{
 var attrExportScheduleCmd = &cobra.Command{
 	Use:   "schedule <model_id>",
 	Short: "Schedule an attribution export",
+	Long: "Schedule an export of attribution data for a model.\n\n" +
+		"Specify scope (global, campaign, landing_page), time window, format (csv, json),\n" +
+		"and optional webhook URL for delivery.",
+	Example: "  p202 attribution export schedule 1 --scope_type global --format csv --json\n" +
+		"  p202 attribution export schedule 1 --scope_type campaign --scope_id 5 --format json --webhook_url https://webhook.example.com --json",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -284,4 +297,14 @@ func init() {
 
 	attributionCmd.AddCommand(attrModelCmd, attrSnapshotCmd, attrExportCmd)
 	rootCmd.AddCommand(attributionCmd)
+
+	modelFields := []string{"model_id", "model_name", "model_type", "weighting_config", "is_active", "is_default"}
+	registerMeta("attribution model list", commandMeta{Examples: []string{"p202 attribution model list --json", "p202 attribution model list --type last_touch --json"}, OutputFields: modelFields, Related: []string{"attribution model get", "attribution model create"}})
+	registerMeta("attribution model get", commandMeta{Examples: []string{"p202 attribution model get 1 --json"}, OutputFields: modelFields, Related: []string{"attribution model list", "attribution snapshot list"}})
+	registerMeta("attribution model create", commandMeta{Examples: []string{"p202 attribution model create --model_name 'Last Touch' --model_type last_touch --json"}, OutputFields: modelFields, Related: []string{"attribution model list"}})
+	registerMeta("attribution model update", commandMeta{Examples: []string{"p202 attribution model update 1 --model_name 'Renamed' --json"}, OutputFields: modelFields, Related: []string{"attribution model get"}})
+	registerMeta("attribution model delete", commandMeta{Examples: []string{"p202 attribution model delete 1 --force"}, Related: []string{"attribution model list"}})
+	registerMeta("attribution snapshot list", commandMeta{Examples: []string{"p202 attribution snapshot list 1 --json"}, OutputFields: []string{"snapshot_id", "scope_type", "created_at"}, Related: []string{"attribution model get", "attribution export list"}})
+	registerMeta("attribution export list", commandMeta{Examples: []string{"p202 attribution export list 1 --json"}, OutputFields: []string{"export_id", "status", "format", "created_at"}, Related: []string{"attribution export schedule"}})
+	registerMeta("attribution export schedule", commandMeta{Examples: []string{"p202 attribution export schedule 1 --scope_type global --format csv --json"}, OutputFields: []string{"export_id", "status"}, Related: []string{"attribution export list"}})
 }

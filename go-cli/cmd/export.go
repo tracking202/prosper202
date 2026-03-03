@@ -27,6 +27,13 @@ var portableEntities = map[string]string{
 var exportCmd = &cobra.Command{
 	Use:   "export <entity|all>",
 	Short: "Export entities to JSON",
+	Long: "Export entity configurations to JSON for backup or migration.\n\n" +
+		"Entities: campaigns, aff-networks, ppc-networks, ppc-accounts, rotators, trackers,\n" +
+		"landing-pages, text-ads. Use 'all' to export everything.\n" +
+		"Use --output to write to a file instead of stdout.",
+	Example: "  p202 export all --output backup.json\n" +
+		"  p202 export campaigns --json\n" +
+		"  p202 export all > backup.json",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -261,4 +268,10 @@ func rowDedupeKey(endpoint string, row map[string]interface{}) string {
 func init() {
 	exportCmd.Flags().StringP("output", "o", "", "Output file path")
 	rootCmd.AddCommand(exportCmd)
+
+	registerMeta("export", commandMeta{
+		Examples:     []string{"p202 export all --output backup.json", "p202 export campaigns --json"},
+		OutputFields: []string{"entity", "data"},
+		Related:      []string{"import"},
+	})
 }

@@ -15,6 +15,9 @@ import (
 var configAddProfileCmd = &cobra.Command{
 	Use:   "add-profile <name>",
 	Short: "Create a named profile",
+	Long: "Create a named profile for connecting to a different Prosper202 instance.\n\n" +
+		"Required: --url and --key. The first profile added becomes the active profile.",
+	Example: "  p202 config add-profile prod --url https://prod.example.com --key PROD_API_KEY",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := normalizeProfileName(args[0])
@@ -62,8 +65,10 @@ var configAddProfileCmd = &cobra.Command{
 }
 
 var configRemoveProfileCmd = &cobra.Command{
-	Use:   "remove-profile <name>",
-	Short: "Remove a named profile",
+	Use:     "remove-profile <name>",
+	Short:   "Remove a named profile",
+	Long:    "Remove a named profile. Cannot remove the active profile — switch first with 'config use'.",
+	Example: "  p202 config remove-profile old-staging --force",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := normalizeProfileName(args[0])
@@ -108,8 +113,10 @@ var configRemoveProfileCmd = &cobra.Command{
 }
 
 var configUseProfileCmd = &cobra.Command{
-	Use:   "use <name>",
-	Short: "Set the active profile",
+	Use:     "use <name>",
+	Short:   "Set the active profile",
+	Long:    "Set the active profile. All commands will use this profile's URL and API key by default.",
+	Example: "  p202 config use prod",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := normalizeProfileName(args[0])
@@ -140,6 +147,9 @@ var configUseProfileCmd = &cobra.Command{
 var configListProfilesCmd = &cobra.Command{
 	Use:   "list-profiles",
 	Short: "List all configured profiles",
+	Long: "List all configured profiles showing name, URL, masked API key, active status, and tags.\n" +
+		"Use --tag to filter by tag.",
+	Example: "  p202 config list-profiles --json\n  p202 config list-profiles --tag production --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := configpkg.Load()
 		if err != nil {
@@ -179,8 +189,10 @@ var configListProfilesCmd = &cobra.Command{
 }
 
 var configRenameProfileCmd = &cobra.Command{
-	Use:   "rename-profile <old> <new>",
-	Short: "Rename a profile",
+	Use:     "rename-profile <old> <new>",
+	Short:   "Rename a profile",
+	Long:    "Rename a profile. If it was the active profile, the active pointer updates too.",
+	Example: "  p202 config rename-profile old-name new-name",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		oldName, err := normalizeProfileName(args[0])
@@ -266,4 +278,26 @@ func init() {
 		configListProfilesCmd,
 		configRenameProfileCmd,
 	)
+
+	registerMeta("config add-profile", commandMeta{
+		Examples: []string{"p202 config add-profile prod --url https://prod.example.com --key PROD_KEY"},
+		Related:  []string{"config list-profiles", "config use"},
+	})
+	registerMeta("config remove-profile", commandMeta{
+		Examples: []string{"p202 config remove-profile old-staging --force"},
+		Related:  []string{"config list-profiles"},
+	})
+	registerMeta("config use", commandMeta{
+		Examples: []string{"p202 config use prod"},
+		Related:  []string{"config list-profiles", "config add-profile"},
+	})
+	registerMeta("config list-profiles", commandMeta{
+		Examples:     []string{"p202 config list-profiles --json", "p202 config list-profiles --tag production --json"},
+		OutputFields: []string{"name", "url", "api_key", "active", "tags"},
+		Related:      []string{"config add-profile", "config use"},
+	})
+	registerMeta("config rename-profile", commandMeta{
+		Examples: []string{"p202 config rename-profile old-name new-name"},
+		Related:  []string{"config list-profiles"},
+	})
 }

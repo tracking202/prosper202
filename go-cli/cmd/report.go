@@ -9,6 +9,12 @@ import (
 var reportCmd = &cobra.Command{
 	Use:   "report",
 	Short: "Generate performance reports — summary, breakdown by dimension, time series, and day/week parting",
+	Long: "Generate performance reports for Prosper202 tracking data.\n\n" +
+		"Subcommands: summary, breakdown, timeseries, daypart, weekpart.\n" +
+		"All support --json output and common filters: --period, --time_from, --time_to,\n" +
+		"--aff_campaign_id, --ppc_account_id, --aff_network_id, etc.\n\n" +
+		"Period values: today, yesterday, last7, last30, last90.\n" +
+		"Sort values: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate.",
 }
 
 // collectReportParams gathers the shared filter flags used across report subcommands.
@@ -40,6 +46,13 @@ func addReportFilters(cmd *cobra.Command) {
 var reportSummaryCmd = &cobra.Command{
 	Use:   "summary",
 	Short: "Get aggregate totals — clicks, conversions, revenue, cost, profit, ROI for a period",
+	Long: "Get aggregate totals across all campaigns for a time period.\n\n" +
+		"Returns: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate.\n" +
+		"Supports multi-profile aggregation via --profiles or --all-profiles.",
+	Example: "  p202 report summary --period last7 --json\n" +
+		"  p202 report summary --time_from 1704067200 --time_to 1704153600 --json\n" +
+		"  p202 report summary --period today --aff_campaign_id 5 --json\n" +
+		"  p202 report summary --period last7 --all-profiles --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profiles, err := resolveMultiProfiles(cmd)
 		if err != nil {
@@ -72,6 +85,14 @@ var reportSummaryCmd = &cobra.Command{
 var reportBreakdownCmd = &cobra.Command{
 	Use:   "breakdown",
 	Short: "Get stats broken down by a dimension (campaign, traffic source, country, landing page, etc.)",
+	Long: "Get performance stats broken down by a dimension.\n\n" +
+		"Breakdown values: campaign, aff_network, ppc_account, ppc_network, landing_page,\n" +
+		"keyword, country, city, browser, platform, device, isp, text_ad.\n\n" +
+		"Each row includes: the dimension value plus total_clicks, total_leads, total_income,\n" +
+		"total_cost, total_net, roi, epc, conv_rate.",
+	Example: "  p202 report breakdown --breakdown campaign --period last7 --json\n" +
+		"  p202 report breakdown --breakdown country --sort total_net --sort_dir DESC --limit 20 --json\n" +
+		"  p202 report breakdown --breakdown landing_page --aff_campaign_id 5 --period last30 --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -95,6 +116,11 @@ var reportBreakdownCmd = &cobra.Command{
 var reportTimeseriesCmd = &cobra.Command{
 	Use:   "timeseries",
 	Short: "Get stats over time — daily/hourly buckets of clicks, conversions, revenue, etc.",
+	Long: "Get stats over time in daily or hourly buckets.\n\n" +
+		"Use --interval to set granularity (day or hour). Each bucket includes\n" +
+		"total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate.",
+	Example: "  p202 report timeseries --period last7 --json\n" +
+		"  p202 report timeseries --period last30 --interval hour --aff_campaign_id 5 --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -116,6 +142,11 @@ var reportTimeseriesCmd = &cobra.Command{
 var reportWeekpartCmd = &cobra.Command{
 	Use:   "weekpart",
 	Short: "Get stats grouped by day of week (Mon-Sun) to find best-performing days",
+	Long: "Get stats grouped by day of week to identify which days perform best.\n\n" +
+		"Returns 7 rows (Monday through Sunday), each with total_clicks, total_leads,\n" +
+		"total_income, total_cost, total_net, roi, epc, conv_rate.",
+	Example: "  p202 report weekpart --period last30 --json\n" +
+		"  p202 report weekpart --period last90 --aff_campaign_id 5 --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -139,6 +170,11 @@ var reportWeekpartCmd = &cobra.Command{
 var reportDaypartCmd = &cobra.Command{
 	Use:   "daypart",
 	Short: "Get stats grouped by hour of day (0-23) to find best-performing hours",
+	Long: "Get stats grouped by hour of day to identify which hours perform best.\n\n" +
+		"Returns 24 rows (0-23), each with total_clicks, total_leads, total_income,\n" +
+		"total_cost, total_net, roi, epc, conv_rate.",
+	Example: "  p202 report daypart --period last30 --json\n" +
+		"  p202 report daypart --period last90 --aff_campaign_id 5 --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -183,4 +219,31 @@ func init() {
 
 	reportCmd.AddCommand(reportSummaryCmd, reportBreakdownCmd, reportTimeseriesCmd, reportDaypartCmd, reportWeekpartCmd)
 	rootCmd.AddCommand(reportCmd)
+
+	reportFields := []string{"total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"}
+	registerMeta("report summary", commandMeta{
+		Examples:     []string{"p202 report summary --period last7 --json", "p202 report summary --period today --aff_campaign_id 5 --json", "p202 report summary --period last7 --all-profiles --json"},
+		OutputFields: reportFields,
+		Related:      []string{"report breakdown", "report timeseries", "dashboard"},
+	})
+	registerMeta("report breakdown", commandMeta{
+		Examples:     []string{"p202 report breakdown --breakdown campaign --period last7 --json", "p202 report breakdown --breakdown country --sort total_net --sort_dir DESC --limit 20 --json"},
+		OutputFields: append([]string{"dimension"}, reportFields...),
+		Related:      []string{"report summary", "report timeseries", "analytics"},
+	})
+	registerMeta("report timeseries", commandMeta{
+		Examples:     []string{"p202 report timeseries --period last7 --json", "p202 report timeseries --period last30 --interval hour --aff_campaign_id 5 --json"},
+		OutputFields: append([]string{"date", "hour"}, reportFields...),
+		Related:      []string{"report summary", "report daypart"},
+	})
+	registerMeta("report daypart", commandMeta{
+		Examples:     []string{"p202 report daypart --period last30 --json", "p202 report daypart --period last90 --aff_campaign_id 5 --json"},
+		OutputFields: append([]string{"hour_of_day"}, reportFields...),
+		Related:      []string{"report weekpart", "report timeseries"},
+	})
+	registerMeta("report weekpart", commandMeta{
+		Examples:     []string{"p202 report weekpart --period last30 --json", "p202 report weekpart --period last90 --aff_campaign_id 5 --json"},
+		OutputFields: append([]string{"day_of_week"}, reportFields...),
+		Related:      []string{"report daypart", "report timeseries"},
+	})
 }

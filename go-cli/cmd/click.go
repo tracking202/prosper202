@@ -12,11 +12,19 @@ import (
 var clickCmd = &cobra.Command{
 	Use:   "click",
 	Short: "View tracked clicks (inbound visitor events from traffic sources)",
+	Long: "View tracked clicks — inbound visitor events from traffic sources.\n\n" +
+		"Subcommands: list, get. Clicks are read-only (created automatically by the tracking pixel).",
 }
 
 var clickListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List tracked clicks with optional filters by campaign, time range, or bot status",
+	Long: "List tracked clicks with optional filters.\n\n" +
+		"Filter by campaign, PPC account, landing page, time range, and bot status.\n" +
+		"Use --all to fetch every click across all pages (caution: can be very large).",
+	Example: "  p202 click list --period today --json\n" +
+		"  p202 click list --aff_campaign_id 5 --period last7 --limit 100 --json\n" +
+		"  p202 click list --all --period yesterday --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -83,6 +91,8 @@ var clickListCmd = &cobra.Command{
 var clickGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a click by ID",
+	Long:    "Retrieve full details of a single click event by its numeric ID.",
+	Example: "  p202 click get 12345 --json",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -113,4 +123,16 @@ func init() {
 
 	clickCmd.AddCommand(clickListCmd, clickGetCmd)
 	rootCmd.AddCommand(clickCmd)
+
+	clickFields := []string{"click_id", "click_time", "aff_campaign_id", "ppc_account_id", "landing_page_id", "ip_address", "country", "browser", "platform", "device", "is_bot"}
+	registerMeta("click list", commandMeta{
+		Examples:     []string{"p202 click list --period today --json", "p202 click list --aff_campaign_id 5 --period last7 --limit 100 --json"},
+		OutputFields: clickFields,
+		Related:      []string{"click get", "conversion list"},
+	})
+	registerMeta("click get", commandMeta{
+		Examples:     []string{"p202 click get 12345 --json"},
+		OutputFields: clickFields,
+		Related:      []string{"click list", "conversion create"},
+	})
 }

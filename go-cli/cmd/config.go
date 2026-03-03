@@ -16,11 +16,15 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage CLI configuration",
+	Long: "Manage CLI configuration — instance URL, API key, profiles, defaults, and tags.\n\n" +
+		"Configuration is stored in ~/.p202/config.json. Use profiles to manage multiple instances.",
 }
 
 var configSetURLCmd = &cobra.Command{
-	Use:   "set-url <url>",
-	Short: "Set the Prosper202 instance URL",
+	Use:     "set-url <url>",
+	Short:   "Set the Prosper202 instance URL",
+	Long:    "Set the base URL for the Prosper202 instance. This is the URL of your Prosper202 installation (without /api/v3).",
+	Example: "  p202 config set-url https://prosper.example.com",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
@@ -45,8 +49,10 @@ var configSetURLCmd = &cobra.Command{
 }
 
 var configSetKeyCmd = &cobra.Command{
-	Use:   "set-key <api-key>",
-	Short: "Set the API key",
+	Use:     "set-key <api-key>",
+	Short:   "Set the API key",
+	Long:    "Set the API key for authenticating with the Prosper202 instance.",
+	Example: "  p202 config set-key YOUR_API_KEY_HERE",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
@@ -73,6 +79,9 @@ var configSetKeyCmd = &cobra.Command{
 var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current configuration",
+	Long: "Display the current CLI configuration including URL, API key (masked),\n" +
+		"active profile, all profiles, and configured defaults.",
+	Example: "  p202 config show\n  p202 config show --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
@@ -113,8 +122,10 @@ var configShowCmd = &cobra.Command{
 }
 
 var configTestCmd = &cobra.Command{
-	Use:   "test",
-	Short: "Test connection to the Prosper202 instance",
+	Use:     "test",
+	Short:   "Test connection to the Prosper202 instance",
+	Long:    "Test that the configured URL and API key can successfully connect to the Prosper202 instance.",
+	Example: "  p202 config test\n  p202 config test --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -135,6 +146,12 @@ var configTestCmd = &cobra.Command{
 var configSetDefaultCmd = &cobra.Command{
 	Use:   "set-default <key> <value>",
 	Short: "Set a default value for supported command flags",
+	Long: "Set a persistent default value for a command flag.\n\n" +
+		"Supported keys: report.period, report.breakdown, report.sort, report.sort_dir,\n" +
+		"report.limit, report.aff_campaign_id, report.ppc_account_id, crud.aff_campaign_id, etc.",
+	Example: "  p202 config set-default report.period last7\n" +
+		"  p202 config set-default report.breakdown campaign\n" +
+		"  p202 config set-default crud.aff_campaign_id 5",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := strings.TrimSpace(args[0])
@@ -164,8 +181,10 @@ var configSetDefaultCmd = &cobra.Command{
 }
 
 var configGetDefaultCmd = &cobra.Command{
-	Use:   "get-default [key]",
-	Short: "Get one default value or list all defaults",
+	Use:     "get-default [key]",
+	Short:   "Get one default value or list all defaults",
+	Long:    "Get a single configured default value by key, or list all defaults if no key is given.",
+	Example: "  p202 config get-default report.period\n  p202 config get-default",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
@@ -209,8 +228,10 @@ var configGetDefaultCmd = &cobra.Command{
 }
 
 var configUnsetDefaultCmd = &cobra.Command{
-	Use:   "unset-default <key>",
-	Short: "Remove a configured default value",
+	Use:     "unset-default <key>",
+	Short:   "Remove a configured default value",
+	Long:    "Remove a previously configured default value for a command flag.",
+	Example: "  p202 config unset-default report.period",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := strings.TrimSpace(args[0])
@@ -241,6 +262,36 @@ func init() {
 	configCmd.AddCommand(configSetURLCmd, configSetKeyCmd, configShowCmd, configTestCmd)
 	configCmd.AddCommand(configSetDefaultCmd, configGetDefaultCmd, configUnsetDefaultCmd)
 	rootCmd.AddCommand(configCmd)
+
+	registerMeta("config set-url", commandMeta{
+		Examples: []string{"p202 config set-url https://prosper.example.com"},
+		Related:  []string{"config set-key", "config test"},
+	})
+	registerMeta("config set-key", commandMeta{
+		Examples: []string{"p202 config set-key YOUR_API_KEY"},
+		Related:  []string{"config set-url", "config test"},
+	})
+	registerMeta("config show", commandMeta{
+		Examples:     []string{"p202 config show", "p202 config show --json"},
+		OutputFields: []string{"url", "api_key", "active_profile", "profiles", "defaults"},
+		Related:      []string{"config test", "config list-profiles"},
+	})
+	registerMeta("config test", commandMeta{
+		Examples: []string{"p202 config test", "p202 config test --json"},
+		Related:  []string{"config show", "system health"},
+	})
+	registerMeta("config set-default", commandMeta{
+		Examples: []string{"p202 config set-default report.period last7", "p202 config set-default crud.aff_campaign_id 5"},
+		Related:  []string{"config get-default", "config unset-default"},
+	})
+	registerMeta("config get-default", commandMeta{
+		Examples: []string{"p202 config get-default report.period", "p202 config get-default"},
+		Related:  []string{"config set-default", "config unset-default"},
+	})
+	registerMeta("config unset-default", commandMeta{
+		Examples: []string{"p202 config unset-default report.period"},
+		Related:  []string{"config set-default", "config get-default"},
+	})
 }
 
 func normalizeBaseURL(raw string) (string, error) {

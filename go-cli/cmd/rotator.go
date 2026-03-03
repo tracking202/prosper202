@@ -16,11 +16,16 @@ var rotatorCmd = &cobra.Command{
 	Use:     "rotator",
 	Aliases: []string{"redirector"},
 	Short:   "Manage redirectors (rotators and rules)",
+	Long: "Manage redirectors/rotators for rule-based traffic splitting.\n\n" +
+		"Rotators route traffic based on rules (country, device, etc.) to different URLs.\n" +
+		"Subcommands: list, get, create, update, delete, rule-create, rule-delete, rule-update.",
 }
 
 var rotatorListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all redirectors/rotators",
+	Use:     "list",
+	Short:   "List all redirectors/rotators",
+	Long:    "List all rotators with their IDs, names, and default targets.",
+	Example: "  p202 rotator list --json\n  p202 rotator list --all --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -60,8 +65,10 @@ var rotatorListCmd = &cobra.Command{
 }
 
 var rotatorGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get a redirector/rotator and its routing rules by ID",
+	Use:     "get <id>",
+	Short:   "Get a redirector/rotator and its routing rules by ID",
+	Long:    "Get a rotator by ID including all its rules, criteria, and redirect targets.",
+	Example: "  p202 rotator get 1 --json",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -80,6 +87,10 @@ var rotatorGetCmd = &cobra.Command{
 var rotatorCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new redirector/rotator for rule-based traffic splitting",
+	Long: "Create a new rotator. Required: --name.\n\n" +
+		"Optionally set default URL, campaign, or landing page for traffic that doesn't match any rules.",
+	Example: "  p202 rotator create --name 'Geo Rotator' --json\n" +
+		"  p202 rotator create --name 'Geo Rotator' --default_url 'https://fallback.com' --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -206,6 +217,10 @@ var rotatorDeleteCmd = &cobra.Command{
 var rotatorRuleCreateCmd = &cobra.Command{
 	Use:   "rule-create <rotator_id>",
 	Short: "Add a routing rule to a redirector/rotator (criteria + redirect targets)",
+	Long: "Add a routing rule to a rotator. Required: --rule_name.\n\n" +
+		"Rules contain criteria (matching conditions) and redirects (weighted targets).\n" +
+		"Pass criteria and redirects as JSON arrays via --criteria_json and --redirects_json.",
+	Example: `  p202 rotator rule-create 1 --rule_name 'US Traffic' --criteria_json '[{"type":"country","statement":"is","value":"US"}]' --redirects_json '[{"redirect_url":"https://us.example.com","weight":"100","name":"US"}]' --json`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -399,4 +414,14 @@ func init() {
 	rotatorCmd.AddCommand(rotatorListCmd, rotatorGetCmd, rotatorCreateCmd, rotatorUpdateCmd, rotatorDeleteCmd)
 	rotatorCmd.AddCommand(rotatorRuleCreateCmd, rotatorRuleDeleteCmd, rotatorRuleUpdateCmd)
 	rootCmd.AddCommand(rotatorCmd)
+
+	rotatorFields := []string{"id", "public_id", "name", "default_url", "default_campaign", "default_lp", "rules"}
+	registerMeta("rotator list", commandMeta{Examples: []string{"p202 rotator list --json"}, OutputFields: rotatorFields, Related: []string{"rotator get", "rotator create"}})
+	registerMeta("rotator get", commandMeta{Examples: []string{"p202 rotator get 1 --json"}, OutputFields: rotatorFields, Related: []string{"rotator list", "rotator rule-create"}})
+	registerMeta("rotator create", commandMeta{Examples: []string{"p202 rotator create --name 'Geo Rotator' --json"}, OutputFields: rotatorFields, Related: []string{"rotator rule-create", "rotator list"}})
+	registerMeta("rotator update", commandMeta{Examples: []string{"p202 rotator update 1 --name 'Updated Name' --json"}, OutputFields: rotatorFields, Related: []string{"rotator get"}})
+	registerMeta("rotator delete", commandMeta{Examples: []string{"p202 rotator delete 1 --force"}, Related: []string{"rotator list"}})
+	registerMeta("rotator rule-create", commandMeta{Examples: []string{`p202 rotator rule-create 1 --rule_name 'US Traffic' --criteria_json '[{"type":"country","statement":"is","value":"US"}]' --json`}, OutputFields: []string{"rule_id", "rule_name", "splittest", "criteria", "redirects"}, Related: []string{"rotator get", "rotator rule-delete"}})
+	registerMeta("rotator rule-delete", commandMeta{Examples: []string{"p202 rotator rule-delete 1 2 --force"}, Related: []string{"rotator get", "rotator rule-create"}})
+	registerMeta("rotator rule-update", commandMeta{Examples: []string{"p202 rotator rule-update 1 2 --rule_name 'New Name' --json"}, OutputFields: []string{"rule_id", "rule_name", "splittest", "status", "criteria", "redirects"}, Related: []string{"rotator get"}})
 }

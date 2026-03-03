@@ -16,11 +16,19 @@ import (
 var conversionCmd = &cobra.Command{
 	Use:   "conversion",
 	Short: "Manage conversions (revenue events recorded via postback or pixel)",
+	Long: "Manage conversions — revenue events recorded via postback or pixel.\n\n" +
+		"Subcommands: list, get, create, delete.\n" +
+		"Conversions are typically created automatically via postback, but can be logged manually.",
 }
 
 var conversionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List conversions",
+	Long: "List conversions with optional filters by campaign, time range, or payout.\n\n" +
+		"Use --all to fetch every conversion across all pages.",
+	Example: "  p202 conversion list --period today --json\n" +
+		"  p202 conversion list --aff_campaign_id 5 --period last7 --json\n" +
+		"  p202 conversion list --all --period last30 --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -66,8 +74,10 @@ var conversionListCmd = &cobra.Command{
 }
 
 var conversionGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get a conversion by ID",
+	Use:     "get <id>",
+	Short:   "Get a conversion by ID",
+	Long:    "Retrieve full details of a single conversion by its numeric ID.",
+	Example: "  p202 conversion get 456 --json",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -86,6 +96,10 @@ var conversionGetCmd = &cobra.Command{
 var conversionCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a conversion",
+	Long: "Manually log a conversion for a specific click.\n\n" +
+		"Required: --click_id. Optionally override the payout amount and provide a transaction ID for dedup.",
+	Example: "  p202 conversion create --click_id 12345 --json\n" +
+		"  p202 conversion create --click_id 12345 --payout 4.50 --transaction_id TXN-001 --json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -125,6 +139,10 @@ var conversionCreateCmd = &cobra.Command{
 var conversionDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a conversion",
+	Long: "Delete a single conversion by ID, or bulk-delete with --ids.\n\n" +
+		"Prompts for confirmation unless --force is passed.",
+	Example: "  p202 conversion delete 456 --force\n" +
+		"  p202 conversion delete --ids 1,2,3 --force",
 	Args: func(cmd *cobra.Command, args []string) error {
 		idsFlag, _ := cmd.Flags().GetString("ids")
 		if strings.TrimSpace(idsFlag) != "" {
@@ -213,4 +231,26 @@ func init() {
 
 	conversionCmd.AddCommand(conversionListCmd, conversionGetCmd, conversionCreateCmd, conversionDeleteCmd)
 	rootCmd.AddCommand(conversionCmd)
+
+	convFields := []string{"conversion_id", "click_id", "payout", "transaction_id", "conversion_time", "aff_campaign_id"}
+	registerMeta("conversion list", commandMeta{
+		Examples:     []string{"p202 conversion list --period today --json", "p202 conversion list --aff_campaign_id 5 --period last7 --json"},
+		OutputFields: convFields,
+		Related:      []string{"conversion get", "conversion create", "click list"},
+	})
+	registerMeta("conversion get", commandMeta{
+		Examples:     []string{"p202 conversion get 456 --json"},
+		OutputFields: convFields,
+		Related:      []string{"conversion list", "click get"},
+	})
+	registerMeta("conversion create", commandMeta{
+		Examples:     []string{"p202 conversion create --click_id 12345 --json", "p202 conversion create --click_id 12345 --payout 4.50 --transaction_id TXN-001 --json"},
+		OutputFields: convFields,
+		Related:      []string{"click list", "conversion list"},
+	})
+	registerMeta("conversion delete", commandMeta{
+		Examples:     []string{"p202 conversion delete 456 --force", "p202 conversion delete --ids 1,2,3 --force"},
+		OutputFields: []string{},
+		Related:      []string{"conversion list"},
+	})
 }

@@ -31,6 +31,12 @@ var execProfileRunner = defaultExecProfileRunner
 var execCmd = &cobra.Command{
 	Use:                "exec [flags] -- <subcommand...>",
 	Short:              "Run a subcommand across multiple profiles",
+	Long: "Run any p202 subcommand across multiple profiles in parallel.\n\n" +
+		"Results from each profile are collected and displayed together.\n" +
+		"Use --all-profiles, --profiles, or --group to select target profiles.",
+	Example: "  p202 exec --all-profiles -- report summary --period today\n" +
+		"  p202 exec --profiles prod,staging -- system health\n" +
+		"  p202 exec --group production -- campaign list --json",
 	DisableFlagParsing: false,
 	Args:               cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -192,4 +198,10 @@ func init() {
 	execCmd.Flags().Int("concurrency", 5, "Number of concurrent profile executions")
 	addMultiProfileFlags(execCmd)
 	rootCmd.AddCommand(execCmd)
+
+	registerMeta("exec", commandMeta{
+		Examples:     []string{"p202 exec --all-profiles -- report summary --period today", "p202 exec --profiles prod,staging -- system health"},
+		OutputFields: []string{"results", "errors"},
+		Related:      []string{"config list-profiles"},
+	})
 }
