@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 class CapabilitiesController
 {
     private const string CLICKSERVER_VALIDATE_URL = 'https://my.tracking202.com/api/v2/validate-customers-key';
+    private const int SHELL_CACHE_TTL_SECONDS = 300; // 5 minutes
 
     public function __construct(
         private readonly \mysqli $db,
@@ -129,6 +130,9 @@ class CapabilitiesController
      * Determine shell access by validating the user's ClickServer API key
      * against my.tracking202.com. Returns false if the user has no key or
      * the key is invalid. On network failure, denies access (fail-closed).
+     *
+     * Results are cached per-key for 5 minutes in the system temp directory
+     * to avoid hitting my.tracking202.com on every capabilities request.
      */
     private function shellAccess(): bool
     {
@@ -141,7 +145,14 @@ class CapabilitiesController
             return false;
         }
 
-        return $this->validateClickServerKey($customerKey);
+        $cached = $this->readShellCache($customerKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $valid = $this->validateClickServerKey($customerKey);
+        $this->writeShellCache($customerKey, $valid);
+        return $valid;
     }
 
     private function loadClickServerKey(): string
@@ -166,6 +177,35 @@ class CapabilitiesController
         $stmt->close();
 
         return trim((string)($row['p202_customer_api_key'] ?? ''));
+    }
+
+    private function shellCachePath(string $key): string
+    {
+        return sys_get_temp_dir() . '/p202_shell_' . hash('sha256', $key) . '.cache';
+    }
+
+    private function readShellCache(string $key): ?bool
+    {
+        $path = $this->shellCachePath($key);
+        if (!is_file($path)) {
+            return null;
+        }
+        $mtime = filemtime($path);
+        if ($mtime === false || (time() - $mtime) > self::SHELL_CACHE_TTL_SECONDS) {
+            @unlink($path);
+            return null;
+        }
+        $content = @file_get_contents($path);
+        if ($content === false) {
+            return null;
+        }
+        return $content === '1';
+    }
+
+    private function writeShellCache(string $key, bool $valid): void
+    {
+        $path = $this->shellCachePath($key);
+        @file_put_contents($path, $valid ? '1' : '0');
     }
 
     private function validateClickServerKey(string $key): bool
