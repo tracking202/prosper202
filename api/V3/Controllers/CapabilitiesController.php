@@ -131,7 +131,7 @@ class CapabilitiesController
      * against my.tracking202.com. Returns false if the user has no key or
      * the key is invalid. On network failure, denies access (fail-closed).
      *
-     * Results are cached per-key for 5 minutes in the system temp directory
+     * Results are cached per-key for 8 hours in the system temp directory
      * to avoid hitting my.tracking202.com on every capabilities request.
      */
     private function shellAccess(): bool
@@ -150,9 +150,13 @@ class CapabilitiesController
             return $cached;
         }
 
-        $valid = $this->validateClickServerKey($customerKey);
-        $this->writeShellCache($customerKey, $valid);
-        return $valid;
+        $result = $this->validateClickServerKey($customerKey);
+        // null = network failure; don't cache transient errors (fail-closed
+        // for this request but don't lock the user out for the full TTL).
+        if ($result !== null) {
+            $this->writeShellCache($customerKey, $result);
+        }
+        return $result === true;
     }
 
     private function loadClickServerKey(): string
@@ -208,11 +212,16 @@ class CapabilitiesController
         @file_put_contents($path, $valid ? '1' : '0');
     }
 
-    private function validateClickServerKey(string $key): bool
+    /**
+     * Validate a ClickServer key against my.tracking202.com.
+     *
+     * @return bool|null true = valid, false = invalid, null = network failure
+     */
+    private function validateClickServerKey(string $key): ?bool
     {
         $ch = curl_init();
         if ($ch === false) {
-            return false;
+            return null;
         }
 
         curl_setopt($ch, CURLOPT_URL, self::CLICKSERVER_VALIDATE_URL);
@@ -221,7 +230,6 @@ class CapabilitiesController
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(['key' => $key]));
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        // Verify SSL in production; matches the security posture of the API.
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 
         $response = curl_exec($ch);
@@ -229,7 +237,7 @@ class CapabilitiesController
         curl_close($ch);
 
         if ($failed) {
-            return false;
+            return null; // Network failure — don't cache this result
         }
 
         $data = json_decode((string)$response, true);

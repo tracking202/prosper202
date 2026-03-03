@@ -424,6 +424,7 @@ func executeShellCommand(line string) ([]byte, error) {
 	// Read captured output
 	w.Close()
 	captured, _ := io.ReadAll(r)
+	r.Close()
 	os.Stdout = oldStdout
 
 	if cmdErr != nil {

@@ -84,7 +84,7 @@ func TestStateCount(t *testing.T) {
 func TestStateFormatVarsList(t *testing.T) {
 	s := NewState()
 	result := s.FormatVarsList()
-	if result != "No variables stored." {
+	if result != "No variables stored.\n" {
 		t.Errorf("expected empty message, got %q", result)
 	}
 

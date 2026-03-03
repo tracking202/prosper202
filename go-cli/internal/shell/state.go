@@ -78,7 +78,7 @@ func (s *State) FormatVarsList() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if len(s.vars) == 0 {
-		return "No variables stored."
+		return "No variables stored.\n"
 	}
 	var b strings.Builder
 	names := make([]string, 0, len(s.vars))
