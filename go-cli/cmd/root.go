@@ -22,7 +22,9 @@ var rootCmd = &cobra.Command{
 	Use:           "p202",
 	Short:         "Prosper202 CLI",
 	Long: "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
-		"Designed for both human operators and AI agents.",  // alias list appended dynamically in Execute()
+		"Designed for both human operators and AI agents.\n\n" +
+		"Agent flags: --agent-mode, --dry-run, --fields, --id-only, --max-field-length.\n" +
+		"Run 'p202 help agent-schema' for a complete machine-readable manifest.",  // alias list appended dynamically in Execute()
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

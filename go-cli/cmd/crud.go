@@ -265,7 +265,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		Short:   fmt.Sprintf("Manage %s", entity.Plural),
 		Long: fmt.Sprintf("Manage %s.\n\n"+
 			"Subcommands: list, get, create, update, delete.\n"+
-			"All subcommands support --json for machine-readable output and --csv for spreadsheet export.", entity.Plural),
+			"All subcommands support --json for machine-readable output, --csv for spreadsheet export,\n"+
+			"--fields to filter output columns, --id-only to extract just the primary key,\n"+
+			"and --dry-run to preview mutations without executing them.", entity.Plural),
 	}
 
 	allFieldNames := crudFieldNames(entity.Fields, false)

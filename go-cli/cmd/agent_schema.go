@@ -30,6 +30,11 @@ The manifest includes:
   - Output field hints so agents know what to parse
   - Related commands for workflow chaining
   - Pre-built multi-step workflows (e.g. setting up tracking from scratch)
+  - allowed_values for enum-like flags (breakdown, sort, period, etc.)
+  - mutating flag marking commands that modify state (supports --dry-run)
+  - user_content_fields marking untrusted user-controlled fields per entity
+  - exit_codes mapping (0-7) for programmatic error handling
+  - agent_mode section describing --agent-mode safety features
 
 Pipe through jq or python3 -m json.tool for pretty-printing.`,
 	Example: `  p202 help agent-schema
