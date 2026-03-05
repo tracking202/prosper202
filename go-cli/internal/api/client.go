@@ -349,6 +349,8 @@ func categoryForHTTPStatus(status int) string {
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return "auth"
+	case status == http.StatusNotFound:
+		return "not_found"
 	case status >= 500:
 		return "server"
 	case status >= 400:

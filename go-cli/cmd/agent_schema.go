@@ -54,6 +54,29 @@ func buildAgentSchema() map[string]interface{} {
 		"global_flags": extractGlobalFlags(),
 		"commands":     extractAllCommands(rootCmd, ""),
 		"workflows":    buildWorkflows(),
+		"exit_codes": map[string]interface{}{
+			"0": "Success",
+			"1": "Validation error (bad input, missing flags)",
+			"2": "Authentication or authorization failure",
+			"3": "Network error (connection timeout, DNS failure)",
+			"4": "Server error (API returned 5xx)",
+			"5": "Partial failure (bulk operation with some failures)",
+			"6": "Resource not found (404)",
+			"7": "Blocked by --agent-mode restrictions",
+		},
+		"agent_mode": map[string]interface{}{
+			"description": "Pass --agent-mode for AI agent use. It enables: JSON output by default, secret redaction, audit logging, and non-interactive mode (requires --force for destructive operations).",
+			"blocked_commands": []string{
+				"config set-url",
+				"config set-key",
+			},
+			"safety_features": []string{
+				"Secrets redacted in all output",
+				"Mutations logged to ~/.p202/agent_audit.log",
+				"Confirmation prompts require --force (no interactive stdin)",
+				"JSON output enabled by default",
+			},
+		},
 	}
 	return schema
 }
@@ -137,7 +160,7 @@ func extractCommand(cmd *cobra.Command, path string) map[string]interface{} {
 		entry["aliases"] = cmd.Aliases
 	}
 
-	// Agent metadata (examples, output_fields, related)
+	// Agent metadata (examples, output_fields, related, allowed_values, mutating)
 	if meta, ok := agentMeta[path]; ok {
 		if len(meta.Examples) > 0 {
 			entry["examples"] = meta.Examples
@@ -147,6 +170,20 @@ func extractCommand(cmd *cobra.Command, path string) map[string]interface{} {
 		}
 		if len(meta.Related) > 0 {
 			entry["related"] = meta.Related
+		}
+		if len(meta.AllowedValues) > 0 {
+			entry["allowed_values"] = meta.AllowedValues
+		}
+		if meta.Mutating {
+			entry["mutating"] = true
+		}
+	}
+
+	// Mark user_content_fields for the entity if applicable
+	cmdParts := strings.Fields(path)
+	if len(cmdParts) > 0 {
+		if fields, ok := userContentFieldsByEntity[cmdParts[0]]; ok {
+			entry["user_content_fields"] = fields
 		}
 	}
 
@@ -186,7 +223,12 @@ func extractFlags(cmd *cobra.Command) map[string]interface{} {
 			return
 		}
 		// Skip global flags that are inherited
-		if f.Name == "json" || f.Name == "csv" || f.Name == "profile" || f.Name == "group" {
+		globalFlags := map[string]bool{
+			"json": true, "csv": true, "profile": true, "group": true,
+			"agent-mode": true, "fields": true, "max-field-length": true,
+			"id-only": true, "dry-run": true,
+		}
+		if globalFlags[f.Name] {
 			return
 		}
 		entry := map[string]interface{}{

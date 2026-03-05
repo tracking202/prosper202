@@ -221,29 +221,56 @@ func init() {
 	rootCmd.AddCommand(reportCmd)
 
 	reportFields := []string{"total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"}
+	periodValues := []string{"today", "yesterday", "last7", "last30", "last90"}
+	breakdownValues := []string{"campaign", "aff_network", "ppc_account", "ppc_network", "landing_page", "keyword", "country", "city", "browser", "platform", "device", "isp", "text_ad"}
+	sortDirValues := []string{"ASC", "DESC"}
+
 	registerMeta("report summary", commandMeta{
 		Examples:     []string{"p202 report summary --period last7 --json", "p202 report summary --period today --aff_campaign_id 5 --json", "p202 report summary --period last7 --all-profiles --json"},
 		OutputFields: reportFields,
 		Related:      []string{"report breakdown", "report timeseries", "dashboard"},
+		AllowedValues: map[string][]string{
+			"period": periodValues,
+		},
 	})
 	registerMeta("report breakdown", commandMeta{
 		Examples:     []string{"p202 report breakdown --breakdown campaign --period last7 --json", "p202 report breakdown --breakdown country --sort total_net --sort_dir DESC --limit 20 --json"},
 		OutputFields: append([]string{"dimension"}, reportFields...),
 		Related:      []string{"report summary", "report timeseries", "analytics"},
+		AllowedValues: map[string][]string{
+			"breakdown": breakdownValues,
+			"sort":      reportFields,
+			"sort_dir":  sortDirValues,
+			"period":    periodValues,
+		},
 	})
 	registerMeta("report timeseries", commandMeta{
 		Examples:     []string{"p202 report timeseries --period last7 --json", "p202 report timeseries --period last30 --interval hour --aff_campaign_id 5 --json"},
 		OutputFields: append([]string{"date", "hour"}, reportFields...),
 		Related:      []string{"report summary", "report daypart"},
+		AllowedValues: map[string][]string{
+			"interval": {"hour", "day", "week", "month"},
+			"period":   periodValues,
+		},
 	})
 	registerMeta("report daypart", commandMeta{
 		Examples:     []string{"p202 report daypart --period last30 --json", "p202 report daypart --period last90 --aff_campaign_id 5 --json"},
 		OutputFields: append([]string{"hour_of_day"}, reportFields...),
 		Related:      []string{"report weekpart", "report timeseries"},
+		AllowedValues: map[string][]string{
+			"sort":     append([]string{"hour_of_day"}, reportFields...),
+			"sort_dir": sortDirValues,
+			"period":   periodValues,
+		},
 	})
 	registerMeta("report weekpart", commandMeta{
 		Examples:     []string{"p202 report weekpart --period last30 --json", "p202 report weekpart --period last90 --aff_campaign_id 5 --json"},
 		OutputFields: append([]string{"day_of_week"}, reportFields...),
 		Related:      []string{"report daypart", "report timeseries"},
+		AllowedValues: map[string][]string{
+			"sort":     append([]string{"day_of_week"}, reportFields...),
+			"sort_dir": sortDirValues,
+			"period":   periodValues,
+		},
 	})
 }

@@ -27,6 +27,9 @@ var configSetURLCmd = &cobra.Command{
 	Example: "  p202 config set-url https://prosper.example.com",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := checkAgentModeRestrictions("config set-url", true); err != nil {
+			return err
+		}
 		cfg, err := config.Load()
 		if err != nil {
 			return err
@@ -55,6 +58,9 @@ var configSetKeyCmd = &cobra.Command{
 	Example: "  p202 config set-key YOUR_API_KEY_HERE",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := checkAgentModeRestrictions("config set-key", true); err != nil {
+			return err
+		}
 		cfg, err := config.Load()
 		if err != nil {
 			return err

@@ -333,7 +333,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 						"offset": 0,
 					},
 				})
-				render(encoded)
+				renderForEntity(encoded, entity.Name)
 				return nil
 			}
 
@@ -367,7 +367,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 				data, _ = json.Marshal(resp)
 			}
-			render(data)
+			renderForEntity(data, entity.Name)
 			return nil
 		},
 	}
@@ -403,7 +403,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			render(data)
+			renderForEntity(data, entity.Name)
 			return nil
 		},
 	}
@@ -420,10 +420,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("create", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
+
 			body := map[string]string{}
 			for _, f := range entity.Fields {
 				if v := getStringFlagOrDefault(cmd, "crud", f.Name); v != "" {
@@ -435,11 +432,22 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					return fmt.Errorf("required flag --%s is missing", f.Name)
 				}
 			}
+
+			if dryRun {
+				render(dryRunResponse(entity.Name+" create", body))
+				return nil
+			}
+
+			c, err := api.NewFromConfig()
+			if err != nil {
+				return err
+			}
 			data, err := c.Post(entity.Endpoint, body)
 			if err != nil {
 				return err
 			}
-			render(data)
+			auditLog(entity.Name+" create", fmt.Sprintf("%v", body), "OK")
+			renderForEntity(data, entity.Name)
 			return nil
 		},
 	}
@@ -458,10 +466,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("update", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
+
 			body := map[string]string{}
 			for _, f := range entity.Fields {
 				if v, _ := cmd.Flags().GetString(f.Name); v != "" {
@@ -471,11 +476,22 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if len(body) == 0 {
 				return fmt.Errorf("no fields specified; pass at least one flag to update")
 			}
+
+			if dryRun {
+				render(dryRunResponse(entity.Name+" update "+args[0], body))
+				return nil
+			}
+
+			c, err := api.NewFromConfig()
+			if err != nil {
+				return err
+			}
 			data, err := c.Put(entity.Endpoint+"/"+args[0], body)
 			if err != nil {
 				return err
 			}
-			render(data)
+			auditLog(entity.Name+" update", args[0]+" "+fmt.Sprintf("%v", body), "OK")
+			renderForEntity(data, entity.Name)
 			return nil
 		},
 	}
@@ -501,10 +517,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("delete", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
+
 			idsFlag, _ := cmd.Flags().GetString("ids")
 			if strings.TrimSpace(idsFlag) != "" {
 				idList, parseErr := parseIDList(idsFlag)
@@ -515,18 +528,23 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					return fmt.Errorf("--ids requires at least one ID")
 				}
 
-				force, _ := cmd.Flags().GetBool("force")
-				if !force {
-					fmt.Printf("Delete %d %s? [y/N] ", len(idList), entity.Plural)
-					var answer string
-					fmt.Scanln(&answer)
-					answer = strings.ToLower(strings.TrimSpace(answer))
-					if answer != "y" && answer != "yes" {
-						fmt.Println("Cancelled.")
-						return nil
-					}
+				if dryRun {
+					render(dryRunResponse(entity.Name+" bulk-delete", map[string]interface{}{"ids": idList}))
+					return nil
 				}
 
+				force, _ := cmd.Flags().GetBool("force")
+				if err := confirmOrFail(fmt.Sprintf("Delete %d %s? [y/N] ", len(idList), entity.Plural), force); err != nil {
+					if err == errCancelled {
+						return nil
+					}
+					return err
+				}
+
+				c, err := api.NewFromConfig()
+				if err != nil {
+					return err
+				}
 				deleted := 0
 				failed := 0
 				for _, id := range idList {
@@ -537,6 +555,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					}
 					deleted++
 				}
+				auditLog(entity.Name+" bulk-delete", strings.Join(idList, ","), fmt.Sprintf("deleted=%d failed=%d", deleted, failed))
 				output.Success("Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
 				if failed > 0 {
 					return partialFailureError("failed to delete %d %s", failed, entity.Plural)
@@ -544,19 +563,26 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				return nil
 			}
 
+			if dryRun {
+				render(dryRunResponse(entity.Name+" delete "+args[0], nil))
+				return nil
+			}
+
 			force, _ := cmd.Flags().GetBool("force")
-			if !force {
-				fmt.Printf("Delete %s %s? [y/N] ", entity.Name, args[0])
-				var answer string
-				fmt.Scanln(&answer)
-				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-					fmt.Println("Cancelled.")
+			if err := confirmOrFail(fmt.Sprintf("Delete %s %s? [y/N] ", entity.Name, args[0]), force); err != nil {
+				if err == errCancelled {
 					return nil
 				}
+				return err
+			}
+			c, err := api.NewFromConfig()
+			if err != nil {
+				return err
 			}
 			if err := c.Delete(entity.Endpoint + "/" + args[0]); err != nil {
 				return err
 			}
+			auditLog(entity.Name+" delete", args[0], "OK")
 			output.Success("%s %s deleted.", capitalize(entity.Name), args[0])
 			return nil
 		},
@@ -726,16 +752,19 @@ func init() {
 			Examples:     []string{buildCrudCreateExample(e.Name, e.Fields)},
 			OutputFields: allNames,
 			Related:      []string{e.Name + " list", e.Name + " get"},
+			Mutating:     true,
 		})
 		registerMeta(e.Name+" update", commandMeta{
 			Examples:     []string{fmt.Sprintf("p202 %s update 42 --%s '<new value>' --json", e.Name, allNames[0])},
 			OutputFields: allNames,
 			Related:      []string{e.Name + " get"},
+			Mutating:     true,
 		})
 		registerMeta(e.Name+" delete", commandMeta{
 			Examples:     []string{"p202 " + e.Name + " delete 42 --force", "p202 " + e.Name + " delete --ids 1,2,3 --force"},
 			OutputFields: []string{},
 			Related:      []string{e.Name + " list"},
+			Mutating:     true,
 		})
 	}
 

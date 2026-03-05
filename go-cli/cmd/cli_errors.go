@@ -14,6 +14,8 @@ const (
 	ExitNetwork        = 3 // connection timeout, DNS failure
 	ExitServer         = 4 // API returned 5xx
 	ExitPartialFailure = 5 // bulk operation with some successes and some failures
+	ExitNotFound       = 6 // resource not found (404)
+	ExitAgentBlocked   = 7 // operation blocked by --agent-mode restrictions
 )
 
 // CLIError is a structured error for CLI-level failures.
@@ -86,6 +88,12 @@ func exitCodeForError(err error) int {
 		return ExitServer
 	case "partial_failure":
 		return ExitPartialFailure
+	case "not_found":
+		return ExitNotFound
+	case "agent_blocked":
+		return ExitAgentBlocked
+	case "cancelled":
+		return ExitOK
 	default:
 		return ExitValidation
 	}

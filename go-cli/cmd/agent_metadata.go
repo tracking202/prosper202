@@ -6,6 +6,10 @@ type commandMeta struct {
 	Examples     []string
 	OutputFields []string
 	Related      []string
+	// AllowedValues maps flag names to their valid values for enum-like flags.
+	AllowedValues map[string][]string
+	// Mutating indicates this command modifies state (supports --dry-run).
+	Mutating bool
 }
 
 // agentMeta maps fully-qualified command paths (e.g. "campaign list") to their metadata.

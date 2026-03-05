@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -28,6 +30,10 @@ var rootCmd = &cobra.Command{
 		if jsonOutput && csvOutput {
 			return fmt.Errorf("--json and --csv cannot be used together")
 		}
+		// Agent-mode implies --json
+		if agentMode && !jsonOutput && !csvOutput {
+			jsonOutput = true
+		}
 		return nil
 	},
 }
@@ -49,13 +55,65 @@ func Execute() {
 	rootCmd.Long = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
 		"Designed for both human operators and AI agents." + buildAliasHelp()
 	if err := rootCmd.Execute(); err != nil {
-		if category := api.ErrorCategory(err); category != "" {
+		if jsonOutput || agentMode {
+			fmt.Fprintln(os.Stdout, formatStructuredError(err))
+		} else if category := api.ErrorCategory(err); category != "" {
 			fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", category, err)
 		} else {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
 		os.Exit(exitCodeForError(err))
 	}
+}
+
+// formatStructuredError converts any error into a structured JSON error.
+func formatStructuredError(err error) string {
+	errObj := map[string]interface{}{
+		"error": true,
+	}
+
+	code := "UNKNOWN_ERROR"
+	category := "unknown"
+
+	if cliErr, ok := err.(*CLIError); ok {
+		category = cliErr.Category
+		errObj["message"] = cliErr.Message
+		code = strings.ToUpper(strings.ReplaceAll(category, " ", "_")) + "_ERROR"
+	} else {
+		errObj["message"] = err.Error()
+	}
+
+	// Check for API errors
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		category = apiErr.CategoryName()
+		code = strings.ToUpper(strings.ReplaceAll(category, " ", "_")) + "_ERROR"
+		errObj["message"] = apiErr.Message
+		if len(apiErr.FieldErrors) > 0 {
+			errObj["field_errors"] = apiErr.FieldErrors
+		}
+		errObj["http_status"] = apiErr.Status
+	}
+
+	// Check for request errors (network, etc.)
+	var reqErr *api.RequestError
+	if errors.As(err, &reqErr) {
+		category = reqErr.Kind
+		code = strings.ToUpper(category) + "_ERROR"
+	}
+
+	errObj["code"] = code
+	errObj["category"] = category
+	errObj["exit_code"] = exitCodeForError(err)
+
+	// Generate fix suggestions
+	fix := suggestFix(err)
+	if fix != "" {
+		errObj["fix"] = fix
+	}
+
+	data, _ := json.MarshalIndent(errObj, "", "  ")
+	return string(data)
 }
 
 func SetVersion(version string) {
@@ -67,4 +125,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&csvOutput, "csv", false, "Output as CSV instead of tables")
 	rootCmd.PersistentFlags().StringVar(&profileName, "profile", "", "Use a named configuration profile")
 	rootCmd.PersistentFlags().StringVar(&groupName, "group", "", "Use a tag group of profiles for multi-profile commands")
+	rootCmd.PersistentFlags().BoolVar(&agentMode, "agent-mode", false, "Restrict mutations, redact secrets, enable audit logging (for AI agent use)")
+	rootCmd.PersistentFlags().StringVar(&fieldsFilter, "fields", "", "Comma-separated list of fields to include in output")
+	rootCmd.PersistentFlags().IntVar(&maxFieldLength, "max-field-length", 0, "Truncate string fields longer than this (0 = no limit)")
+	rootCmd.PersistentFlags().BoolVar(&idOnly, "id-only", false, "Output only the primary key value (for command chaining)")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Preview mutations without executing them")
 }

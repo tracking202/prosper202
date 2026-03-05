@@ -187,5 +187,11 @@ func init() {
 		},
 		OutputFields: []string{"dimension", "total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"},
 		Related:      []string{"report breakdown", "report summary"},
+		AllowedValues: map[string][]string{
+			"group-by": {"campaign", "aff_network", "ppc_account", "ppc_network", "landing_page", "lp", "keyword", "country", "city", "browser", "platform", "device", "isp", "text_ad"},
+			"sort":     {"clicks", "conversions", "revenue", "profit", "roi", "epc", "conv_rate", "cost"},
+			"sort-dir": {"ASC", "DESC"},
+			"period":   {"today", "yesterday", "last7", "last30", "last90"},
+		},
 	})
 }
