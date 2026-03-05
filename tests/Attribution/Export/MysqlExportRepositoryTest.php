@@ -97,6 +97,7 @@ final class FakeMysqli extends \mysqli
         // Skip parent constructor to avoid real connections.
     }
 
+    #[\ReturnTypeWillChange]
     public function prepare(string $query): FakeStatement
     {
         return new FakeStatement($this, $query);
@@ -141,6 +142,11 @@ final class FakeStatement
 
         if (str_starts_with($sql, 'INSERT INTO 202_attribution_exports')) {
             $this->performInsert();
+            return true;
+        }
+
+        if (str_starts_with($sql, 'UPDATE 202_attribution_exports SET status') && str_contains($sql, 'last_attempted_at')) {
+            $this->performClaimUpdate();
             return true;
         }
 
@@ -217,6 +223,29 @@ final class FakeStatement
 
         $this->connection->jobs[$row['export_id']] = $row;
         $this->insert_id = $row['export_id'];
+        $this->affected_rows = 1;
+    }
+
+    private function performClaimUpdate(): void
+    {
+        $values = $this->bound;
+        $exportId = (int) ($values[3] ?? 0);
+        $requiredStatus = (string) ($values[4] ?? '');
+
+        if (!isset($this->connection->jobs[$exportId])) {
+            $this->affected_rows = 0;
+            return;
+        }
+
+        $row =& $this->connection->jobs[$exportId];
+        if ($row['status'] !== $requiredStatus) {
+            $this->affected_rows = 0;
+            return;
+        }
+
+        $row['status'] = $values[0];
+        $row['last_attempted_at'] = $values[1];
+        $row['updated_at'] = $values[2];
         $this->affected_rows = 1;
     }
 
