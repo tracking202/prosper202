@@ -814,6 +814,7 @@ func init() {
 			Examples:     []string{"p202 campaign clone 42 --json", "p202 campaign clone 42 --name 'Q2 Offer Copy'"},
 			OutputFields: crudFieldNames(campaignEntity.Fields, false),
 			Related:      []string{"campaign get", "campaign list"},
+			Mutating:     true,
 		})
 	}
 
@@ -1033,6 +1034,7 @@ func init() {
 			Examples:     []string{"p202 tracker create-with-url --aff_campaign_id 5 --ppc_account_id 3 --json"},
 			OutputFields: []string{"tracker", "tracking_url"},
 			Related:      []string{"tracker get-url", "tracker list", "campaign list"},
+			Mutating:     true,
 		})
 		registerMeta("tracker bulk-urls", commandMeta{
 			Examples:     []string{"p202 tracker bulk-urls --json", "p202 tracker bulk-urls --aff_campaign_id 5 --concurrency 10 --json"},

@@ -150,5 +150,9 @@ func init() {
 		Examples:     []string{"p202 import campaigns backup.json --json", "p202 import campaigns backup.json --dry-run --json"},
 		OutputFields: []string{"entity", "total", "imported", "failed", "dry_run", "errors"},
 		Related:      []string{"export"},
+		Mutating:     true,
+		AllowedValues: map[string][]string{
+			"entity": {"campaigns", "aff-networks", "ppc-networks", "ppc-accounts", "trackers", "landing-pages", "text-ads", "rotators"},
+		},
 	})
 }

@@ -792,6 +792,7 @@ func init() {
 		Examples:     []string{"p202 sync all --from prod --to staging --dry-run --json", "p202 sync campaigns --from prod --to staging --json"},
 		OutputFields: []string{"source", "target", "dry_run", "force_update", "incremental", "results"},
 		Related:      []string{"sync status", "re-sync", "diff"},
+		Mutating:     true,
 	})
 	registerMeta("sync status", commandMeta{
 		Examples:     []string{"p202 sync status --from prod --to staging --json"},
@@ -807,5 +808,6 @@ func init() {
 		Examples:     []string{"p202 re-sync --from prod --to staging --json"},
 		OutputFields: []string{"source", "target", "dry_run", "incremental", "results"},
 		Related:      []string{"sync", "sync status"},
+		Mutating:     true,
 	})
 }

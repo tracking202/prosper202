@@ -247,10 +247,12 @@ func init() {
 		Examples:     []string{"p202 conversion create --click_id 12345 --json", "p202 conversion create --click_id 12345 --payout 4.50 --transaction_id TXN-001 --json"},
 		OutputFields: convFields,
 		Related:      []string{"click list", "conversion list"},
+		Mutating:     true,
 	})
 	registerMeta("conversion delete", commandMeta{
 		Examples:     []string{"p202 conversion delete 456 --force", "p202 conversion delete --ids 1,2,3 --force"},
 		OutputFields: []string{},
 		Related:      []string{"conversion list"},
+		Mutating:     true,
 	})
 }

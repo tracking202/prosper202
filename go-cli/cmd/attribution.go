@@ -301,10 +301,16 @@ func init() {
 	modelFields := []string{"model_id", "model_name", "model_type", "weighting_config", "is_active", "is_default"}
 	registerMeta("attribution model list", commandMeta{Examples: []string{"p202 attribution model list --json", "p202 attribution model list --type last_touch --json"}, OutputFields: modelFields, Related: []string{"attribution model get", "attribution model create"}})
 	registerMeta("attribution model get", commandMeta{Examples: []string{"p202 attribution model get 1 --json"}, OutputFields: modelFields, Related: []string{"attribution model list", "attribution snapshot list"}})
-	registerMeta("attribution model create", commandMeta{Examples: []string{"p202 attribution model create --model_name 'Last Touch' --model_type last_touch --json"}, OutputFields: modelFields, Related: []string{"attribution model list"}})
-	registerMeta("attribution model update", commandMeta{Examples: []string{"p202 attribution model update 1 --model_name 'Renamed' --json"}, OutputFields: modelFields, Related: []string{"attribution model get"}})
-	registerMeta("attribution model delete", commandMeta{Examples: []string{"p202 attribution model delete 1 --force"}, Related: []string{"attribution model list"}})
+	registerMeta("attribution model create", commandMeta{
+		Examples: []string{"p202 attribution model create --model_name 'Last Touch' --model_type last_touch --json"}, OutputFields: modelFields, Related: []string{"attribution model list"}, Mutating: true,
+		AllowedValues: map[string][]string{"model_type": {"first_touch", "last_touch", "linear", "time_decay", "position_based", "algorithmic"}},
+	})
+	registerMeta("attribution model update", commandMeta{Examples: []string{"p202 attribution model update 1 --model_name 'Renamed' --json"}, OutputFields: modelFields, Related: []string{"attribution model get"}, Mutating: true})
+	registerMeta("attribution model delete", commandMeta{Examples: []string{"p202 attribution model delete 1 --force"}, Related: []string{"attribution model list"}, Mutating: true})
 	registerMeta("attribution snapshot list", commandMeta{Examples: []string{"p202 attribution snapshot list 1 --json"}, OutputFields: []string{"snapshot_id", "scope_type", "created_at"}, Related: []string{"attribution model get", "attribution export list"}})
 	registerMeta("attribution export list", commandMeta{Examples: []string{"p202 attribution export list 1 --json"}, OutputFields: []string{"export_id", "status", "format", "created_at"}, Related: []string{"attribution export schedule"}})
-	registerMeta("attribution export schedule", commandMeta{Examples: []string{"p202 attribution export schedule 1 --scope_type global --format csv --json"}, OutputFields: []string{"export_id", "status"}, Related: []string{"attribution export list"}})
+	registerMeta("attribution export schedule", commandMeta{
+		Examples: []string{"p202 attribution export schedule 1 --scope_type global --format csv --json"}, OutputFields: []string{"export_id", "status"}, Related: []string{"attribution export list"}, Mutating: true,
+		AllowedValues: map[string][]string{"scope_type": {"global", "campaign", "network"}, "format": {"csv", "json"}},
+	})
 }

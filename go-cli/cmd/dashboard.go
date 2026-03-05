@@ -66,5 +66,8 @@ func init() {
 		Examples:     []string{"p202 dashboard --period today --json", "p202 dashboard --period last7 --all-profiles --json"},
 		OutputFields: []string{"total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"},
 		Related:      []string{"report summary", "report breakdown"},
+		AllowedValues: map[string][]string{
+			"period": {"today", "yesterday", "last7", "last30", "last90"},
+		},
 	})
 }

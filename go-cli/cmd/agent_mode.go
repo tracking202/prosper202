@@ -255,6 +255,9 @@ var userContentFieldsByEntity = map[string][]string{
 	"text-ad":      {"text_ad_name", "text_ad_headline", "text_ad_description", "text_ad_display_url"},
 	"rotator":      {"name", "description"},
 	"user":         {"user_name", "user_email"},
+	"click":        {"keyword", "referrer", "click_ip", "click_user_agent"},
+	"conversion":   {"transaction_id"},
+	"attribution":  {"model_name"},
 }
 
 // injectUserContentMeta adds _meta.user_content_fields to JSON output.

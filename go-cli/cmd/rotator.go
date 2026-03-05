@@ -418,10 +418,10 @@ func init() {
 	rotatorFields := []string{"id", "public_id", "name", "default_url", "default_campaign", "default_lp", "rules"}
 	registerMeta("rotator list", commandMeta{Examples: []string{"p202 rotator list --json"}, OutputFields: rotatorFields, Related: []string{"rotator get", "rotator create"}})
 	registerMeta("rotator get", commandMeta{Examples: []string{"p202 rotator get 1 --json"}, OutputFields: rotatorFields, Related: []string{"rotator list", "rotator rule-create"}})
-	registerMeta("rotator create", commandMeta{Examples: []string{"p202 rotator create --name 'Geo Rotator' --json"}, OutputFields: rotatorFields, Related: []string{"rotator rule-create", "rotator list"}})
-	registerMeta("rotator update", commandMeta{Examples: []string{"p202 rotator update 1 --name 'Updated Name' --json"}, OutputFields: rotatorFields, Related: []string{"rotator get"}})
-	registerMeta("rotator delete", commandMeta{Examples: []string{"p202 rotator delete 1 --force"}, Related: []string{"rotator list"}})
-	registerMeta("rotator rule-create", commandMeta{Examples: []string{`p202 rotator rule-create 1 --rule_name 'US Traffic' --criteria_json '[{"type":"country","statement":"is","value":"US"}]' --json`}, OutputFields: []string{"rule_id", "rule_name", "splittest", "criteria", "redirects"}, Related: []string{"rotator get", "rotator rule-delete"}})
-	registerMeta("rotator rule-delete", commandMeta{Examples: []string{"p202 rotator rule-delete 1 2 --force"}, Related: []string{"rotator get", "rotator rule-create"}})
-	registerMeta("rotator rule-update", commandMeta{Examples: []string{"p202 rotator rule-update 1 2 --rule_name 'New Name' --json"}, OutputFields: []string{"rule_id", "rule_name", "splittest", "status", "criteria", "redirects"}, Related: []string{"rotator get"}})
+	registerMeta("rotator create", commandMeta{Examples: []string{"p202 rotator create --name 'Geo Rotator' --json"}, OutputFields: rotatorFields, Related: []string{"rotator rule-create", "rotator list"}, Mutating: true})
+	registerMeta("rotator update", commandMeta{Examples: []string{"p202 rotator update 1 --name 'Updated Name' --json"}, OutputFields: rotatorFields, Related: []string{"rotator get"}, Mutating: true})
+	registerMeta("rotator delete", commandMeta{Examples: []string{"p202 rotator delete 1 --force"}, Related: []string{"rotator list"}, Mutating: true})
+	registerMeta("rotator rule-create", commandMeta{Examples: []string{`p202 rotator rule-create 1 --rule_name 'US Traffic' --criteria_json '[{"type":"country","statement":"is","value":"US"}]' --json`}, OutputFields: []string{"rule_id", "rule_name", "splittest", "criteria", "redirects"}, Related: []string{"rotator get", "rotator rule-delete"}, Mutating: true})
+	registerMeta("rotator rule-delete", commandMeta{Examples: []string{"p202 rotator rule-delete 1 2 --force"}, Related: []string{"rotator get", "rotator rule-create"}, Mutating: true})
+	registerMeta("rotator rule-update", commandMeta{Examples: []string{"p202 rotator rule-update 1 2 --rule_name 'New Name' --json"}, OutputFields: []string{"rule_id", "rule_name", "splittest", "status", "criteria", "redirects"}, Related: []string{"rotator get"}, Mutating: true})
 }
