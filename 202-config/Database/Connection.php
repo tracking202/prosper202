@@ -116,7 +116,7 @@ final class Connection
      */
     public function execute(mysqli_stmt $stmt): void
     {
-        if (!$stmt->execute()) {
+        if (!mysqli_stmt_execute($stmt)) {
             try {
                 $error = $stmt->error;
             } catch (\Error) {

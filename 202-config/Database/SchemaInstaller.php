@@ -27,8 +27,9 @@ final class SchemaInstaller
     /** @var array<string> */
     private array $errors = [];
 
-    public function __construct(private readonly mysqli $connection)
+    public function __construct(mysqli $connection)
     {
+        unset($connection);
     }
 
     /**
