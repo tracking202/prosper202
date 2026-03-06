@@ -14,8 +14,11 @@ class SyncController
 {
     private readonly SyncEngine $engine;
 
-    public function __construct(private readonly \mysqli $db, private readonly int $userId, private readonly ?ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
+    public function __construct(\mysqli $db, private readonly int $userId, private readonly ?ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
     {
+        if ($db->connect_errno !== 0) {
+            throw new DatabaseException('Database connection unavailable for sync controller');
+        }
         $this->engine = $engine ?? new SyncEngine($this->store);
     }
 
@@ -388,9 +391,7 @@ class SyncController
             $this->store->saveJob($job);
             $this->store->appendJobEvent($jobId, 'error', 'Job execution error', ['error' => $e->getMessage()]);
         } finally {
-            if (is_callable($releaseLock)) {
-                $releaseLock();
-            }
+            $releaseLock();
         }
 
         $saved = $this->store->getJob($jobId);
