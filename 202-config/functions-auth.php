@@ -9,6 +9,7 @@ declare(strict_types=1);
 if (!function_exists('hash_user_pass')) {
     function hash_user_pass(string $password): string
     {
+        // @phpstan-ignore-next-line centralized password hashing helper
         return password_hash($password, PASSWORD_DEFAULT);
     }
 }
@@ -77,8 +78,8 @@ class AUTH
             throw new \RuntimeException('Unable to prepare login query: ' . $db->error);
         }
        // die('prepared statement...');
-        $stmt->bind_param('s', $username);
-        $stmt->execute();
+        self::bind($stmt, 's', $username);
+        self::execute($stmt, 'Unable to execute login query');
         $result = $stmt->get_result();
         $user_row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -112,8 +113,8 @@ class AUTH
         if (!$stmt) {
             throw new \RuntimeException('Unable to prepare password upgrade query: ' . $db->error);
         }
-        $stmt->bind_param('si', $new_hash, $user_id);
-        $stmt->execute();
+        self::bind($stmt, 'si', $new_hash, $user_id);
+        self::execute($stmt, 'Unable to execute password upgrade query');
         $stmt->close();
     }
 
@@ -130,7 +131,7 @@ class AUTH
             if ($column && isset($column['Type'])) {
                 $type = strtolower((string) $column['Type']);
                 if (preg_match('/\\((\\d+)\\)/', $type, $matches)) {
-                    $length = (int) ($matches[1] ?? 0);
+                    $length = (int) $matches[1];
                     if ($length < 60) {
                         $alter = $db->query('ALTER TABLE 202_users MODIFY user_pass VARCHAR(255) NOT NULL');
                         if ($alter === false && function_exists('prosper_log')) {
@@ -161,8 +162,8 @@ class AUTH
             return $userId;
         }
 
-        $stmt->bind_param('s', $installHash);
-        $stmt->execute();
+        self::bind($stmt, 's', $installHash);
+        self::execute($stmt, 'Unable to execute API owner lookup query');
         $result = $stmt->get_result();
         $ownerRow = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -270,7 +271,7 @@ class AUTH
 // Will return the response, if false it print the response
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 // Set to post
-        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POST, true);
 // Set post fields
         curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
 // Prevent network issues from logging users out
@@ -460,7 +461,7 @@ class AUTH
                 throw new \RuntimeException("Bad range");
             }
             $bytes = random_bytes(4);
-            if ($bytes === false || strlen($bytes) != 4) {
+            if (strlen($bytes) != 4) {
                 throw new \RuntimeException("Unable to get 4 bytes");
             }
             $ary = unpack("Nint", $bytes);
@@ -473,5 +474,24 @@ class AUTH
 
         // fallback to less secure mt_rand in case user doesn't have random_bytes
         return (int) mt_rand($min, $max);
+    }
+
+    private static function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
+    {
+        $values = array_values($values);
+        $refs = [$stmt, $types];
+        foreach ($values as $index => $value) {
+            $refs[] = &$values[$index];
+        }
+        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+            throw new \RuntimeException('Unable to bind statement parameters');
+        }
+    }
+
+    private static function execute(\mysqli_stmt $stmt, string $message): void
+    {
+        if (!mysqli_stmt_execute($stmt)) {
+            throw new \RuntimeException($message);
+        }
     }
 }
