@@ -85,7 +85,7 @@ abstract class Middleware
      * this middleware so that it may optionally be called
      * when appropriate.
      *
-     * @param \Slim|\Slim\Middleware
+     * @param \Slim\Slim|\Slim\Middleware $nextMiddleware
      */
     final public function setNextMiddleware($nextMiddleware)
     {

@@ -159,11 +159,11 @@ class Util
 
     /**
      * Serialize Response cookies into raw HTTP header
-     * @param  \Slim\Http\Headers $headers The Response headers
+     * @param  array|\ArrayAccess $headers The Response headers
      * @param  \Slim\Http\Cookies $cookies The Response cookies
      * @param  array              $config  The Slim app settings
      */
-    public static function serializeCookies(\Slim\Http\Headers &$headers, \Slim\Http\Cookies $cookies, array $config)
+    public static function serializeCookies(&$headers, \Slim\Http\Cookies $cookies, array $config)
     {
         if ($config['cookies.encrypt']) {
             foreach ($cookies as $name => $settings) {
@@ -242,7 +242,7 @@ class Util
             $value = explode('|', $value);
             if (count($value) === 3 && ((int) $value[0] === 0 || (int) $value[0] > time())) {
                 $key = hash_hmac('sha1', $value[0], $secret);
-                $iv = self::getIv($value[0], $secret);
+                $iv = self::getIv((int) $value[0], $secret);
                 $data = self::decrypt(
                     base64_decode($value[1]),
                     $key,
@@ -274,9 +274,9 @@ class Util
      * first argument; this method directly modifies this object instead of
      * returning a value.
      *
-     * @param  array  $header
-     * @param  string $name
-     * @param  string $value
+     * @param  array|\ArrayAccess $header
+     * @param  string             $name
+     * @param  array|string       $value
      */
     public static function setCookieHeader(&$header, $name, $value)
     {
@@ -335,9 +335,9 @@ class Util
      * first argument; this method directly modifies this object instead of
      * returning a value.
      *
-     * @param  array  $header
-     * @param  string $name
-     * @param  array  $value
+     * @param  array|\ArrayAccess $header
+     * @param  string             $name
+     * @param  array              $value
      */
     public static function deleteCookieHeader(&$header, $name, $value = [])
     {
@@ -373,7 +373,7 @@ class Util
      * This method will parse the HTTP request's `Cookie` header
      * and extract cookies into an associative array.
      *
-     * @param  string
+     * @param  string $header
      * @return array
      */
     public static function parseCookieHeader($header)

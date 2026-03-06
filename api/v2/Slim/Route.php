@@ -316,7 +316,7 @@ class Route
 
     /**
      * Get middleware
-     * @return array[Callable]
+     * @return array<int, callable>
      */
     public function getMiddleware()
     {
@@ -333,7 +333,7 @@ class Route
      * with `$this->middleware`.  Each middleware is checked for is_callable()
      * and an InvalidArgumentException is thrown immediately if it isn't.
      *
-     * @param  Callable|array[Callable]
+     * @param  callable|array<int, callable> $middleware
      * @return \Slim\Route
      * @throws \InvalidArgumentException If argument is not callable or not an array of callables.
      */

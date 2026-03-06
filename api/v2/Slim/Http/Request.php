@@ -84,7 +84,7 @@ class Request
     public function __construct(\Slim\Environment $env)
     {
         $this->env = $env;
-        $this->headers = new \Slim\Http\Headers(\Slim\Http\Headers::extract($env));
+        $this->headers = new \Slim\Http\Headers(\Slim\Http\Headers::extract(iterator_to_array($env)));
         $this->cookies = new \Slim\Helper\Set(\Slim\Http\Util::parseCookieHeader($env['HTTP_COOKIE']));
     }
 
@@ -326,7 +326,7 @@ class Request
             return $this->cookies->get($key);
         }
 
-        return $this->cookies;
+        return $this->cookies->all();
         // if (!isset($this->env['slim.request.cookie_hash'])) {
         //     $cookieHeader = isset($this->env['COOKIE']) ? $this->env['COOKIE'] : '';
         //     $this->env['slim.request.cookie_hash'] = Util::parseCookieHeader($cookieHeader);
