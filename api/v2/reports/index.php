@@ -7,9 +7,16 @@ include_once($_SERVER['DOCUMENT_ROOT'] . '/api/v1/functions.php');
 header('Content-Type: application/json');
 $data = [];
 
-if ($_SERVER['REQUEST_METHOD'] == "GET") {
-			$data = getAuth($db, $_GET);
-			runReports($db, $variables, $key_row['user_id'], $user_row['user_timezone']);
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    if (!isset($db)) {
+        $data = ['msg' => 'Database connection is unavailable', 'error' => true, 'status' => 500];
+    } else {
+        $data = getAuth($db, $_GET);
+        $variables = (isset($variables) && is_array($variables)) ? $variables : [];
+        $key_row = (isset($key_row) && is_array($key_row)) ? $key_row : ['user_id' => 0];
+        $user_row = (isset($user_row) && is_array($user_row)) ? $user_row : ['user_timezone' => 'UTC'];
+        runReports($db, $variables, (int) $key_row['user_id'], (string) $user_row['user_timezone']);
+    }
 
 } else {
 	$data = ['msg' => 'Not allowed request method', 'error' => true, 'status' => 405];

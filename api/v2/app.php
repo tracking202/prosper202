@@ -246,7 +246,7 @@ function authorize_attribution_request(array $params, string $permission): array
     }
 
     $dbInstance = \DB::getInstance();
-    $connection = $dbInstance?->getConnection();
+    $connection = $dbInstance->getConnection();
     if (!$connection instanceof \mysqli) {
         return [
             'status' => 500,
@@ -268,8 +268,8 @@ function authorize_attribution_request(array $params, string $permission): array
         ];
     }
 
-    $stmt->bind_param('s', $apiKey);
-    $stmt->execute();
+    mysqli_stmt_bind_param($stmt, 's', $apiKey);
+    mysqli_stmt_execute($stmt);
     $result = $stmt->get_result();
     $row = $result ? $result->fetch_assoc() : null;
     $stmt->close();
