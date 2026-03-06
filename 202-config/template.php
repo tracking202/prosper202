@@ -59,7 +59,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 
 	$options = [];
 
-	if ($legacyArgs !== []) {
+		if ($legacyArgs !== []) {
 		$firstArg = $legacyArgs[0] ?? null;
 		if (is_array($firstArg)) {
 			$options = $firstArg;
@@ -67,28 +67,28 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			$options['meta_description'] = $firstArg;
 		}
 
-		if (isset($legacyArgs[1]) && $legacyArgs[1] !== null) {
-			$options['meta_keywords'] = $legacyArgs[1];
-		}
+			if (isset($legacyArgs[1])) {
+				$options['meta_keywords'] = $legacyArgs[1];
+			}
 
-		if (isset($legacyArgs[2]) && $legacyArgs[2] !== null) {
-			// Historically this slot was occasionally used for extra head markup.
-			$options['extra_head'] = ($options['extra_head'] ?? '') . (string) $legacyArgs[2];
-		}
+			if (isset($legacyArgs[2])) {
+				// Historically this slot was occasionally used for extra head markup.
+				$options['extra_head'] = ($options['extra_head'] ?? '') . (string) $legacyArgs[2];
+			}
 
-		if (isset($legacyArgs[3]) && $legacyArgs[3] !== null) {
-			$options['body_class'] = $legacyArgs[3];
-		}
+			if (isset($legacyArgs[3])) {
+				$options['body_class'] = $legacyArgs[3];
+			}
 
 		// Allow fifth & sixth positional arguments for completeness (e.g. body id/style)
-		if (isset($legacyArgs[4]) && $legacyArgs[4] !== null) {
-			$options['body_id'] = $legacyArgs[4];
-		}
+			if (isset($legacyArgs[4])) {
+				$options['body_id'] = $legacyArgs[4];
+			}
 
-		if (isset($legacyArgs[5]) && $legacyArgs[5] !== null) {
-			$options['body_style'] = $legacyArgs[5];
+			if (isset($legacyArgs[5])) {
+				$options['body_style'] = $legacyArgs[5];
+			}
 		}
-	}
 
 	if (isset($options['meta_description'])) {
 		$metaDescription = (string) $options['meta_description'];
@@ -122,12 +122,12 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		}
 	}
 
-	if (isset($options['body_style'])) {
-		$bodyStyle = (string) $options['body_style'];
-	}
+		if (isset($options['body_style'])) {
+			$bodyStyle = (string) $options['body_style'];
+		}
 
-	$bodyAttributes[] = 'style="' . htmlspecialchars($bodyStyle, ENT_QUOTES, 'UTF-8') . '"';
-	$bodyAttributeString = $bodyAttributes ? ' ' . implode(' ', $bodyAttributes) : '';
+		$bodyAttributes[] = 'style="' . htmlspecialchars($bodyStyle, ENT_QUOTES, 'UTF-8') . '"';
+		$bodyAttributeString = ' ' . implode(' ', $bodyAttributes);
 ?>
 
 	<!DOCTYPE html>
@@ -428,7 +428,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 
 											$highlighted = false;
 
-											$answer = false;
+											$answer = $question['answer'] ?? '';
 
 											if ($question['highlighted']) {
 												$highlighted = true;

@@ -10,13 +10,7 @@ if (!isset($_SESSION['user_timezone'])) {
 if (!class_exists('DataEngine')) {
     class DataEngine
     {
-        private $total_clicks = '';
-
-        private $mysql = [];
-
         private static $db;
-        private static $found_rows;
-        private $forDownload = 0;
 
         function __construct()
         {
@@ -82,7 +76,7 @@ if (!class_exists('DataEngine')) {
                 unset($mysql);
 
                 // Check if click_row1 exists and click_id is not null before processing
-                if ($click_row1 && isset($click_row1['click_id']) && $click_row1['click_id'] !== null) {
+                if ($click_row1 && isset($click_row1['click_id'])) {
                     $mysql['click_id'] = $db->real_escape_string((string)$click_row1['click_id']);
                     $click_id = $mysql['click_id'];
                 } else {
@@ -222,9 +216,17 @@ cost=values(cost),
 rotator_id=values(rotator_id),
 rule_id=values(rule_id),
 rule_redirect_id=values(rule_redirect_id),
-aff_campaign_id=values(aff_campaign_id),
+            aff_campaign_id=values(aff_campaign_id),
 aff_network_id=values(aff_network_id)";
             $result = $db->query($dsql);
+        }
+
+        /**
+         * Compatibility shim for endpoints that call the full DataEngine API.
+         */
+        public function getSummary($start, $end, $params, $user_id = 1, $upgrade = false, $new = false)
+        {
+            return '';
         }
     }
 } // End class_exists check

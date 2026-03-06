@@ -15,10 +15,10 @@ declare(strict_types=1);
 class XmlToArray
 {
 
-    /** 
-     * Default Constructor 
-     * @param $xml = xml data 
-     * @return none 
+    /**
+     * Default constructor.
+     *
+     * @param mixed $xml XML data
      */
 
     // PHP4-style constructor replaced with __construct for PHP 7+
@@ -68,7 +68,6 @@ class XmlToArray
 
                 case 'close':
                     return $child;
-                    break;
             }
         }
         return $child;
@@ -80,7 +79,6 @@ class XmlToArray
      * This is adds the contents of the return xml into the array for easier processing. 
      * 
      * @access    public 
-     * @param    string    $data this is the string of the xml data 
      * @return    Array 
      */
     function createArray()
