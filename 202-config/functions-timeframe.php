@@ -1,7 +1,7 @@
 <?php
 
 if (!function_exists('grab_timeframe')) {
-    function grab_timeframe($time)
+    function grab_timeframe($time = null)
     {
         switch ($time) {
             case 'today':

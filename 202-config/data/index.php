@@ -7,6 +7,7 @@ include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/class-dataengine.php');
 
 $de = new DataEngine();
 //$data=($de->setDirtyHour(1));
+$type = $_GET['type'] ?? 1;
 
 if($_GET['r']){ 
 
@@ -22,7 +23,7 @@ define("ONEHOUR",3599);
 for ($i=$start;$i<$end;$i+=ONEHOUR)
 {
     $newEnd=$i+ONEHOUR;
-    echo $i."-".$newEnd. $de->getSummary($i,$newEnd,'',$type)."<br>";
+    echo $i . "-" . $newEnd . $de->getSummary($i, $newEnd, '', $type) . "<br>";
     flush();
   $i++;
 }

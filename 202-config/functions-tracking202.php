@@ -1013,7 +1013,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 
 function display_calendar2(...$args) { return display_calendar(...$args); }
 
-function grab_timeframe(): array
+function grab_timeframe($unused = null): array
 {
     $auth = new AUTH();
     $auth->set_timezone($_SESSION['user_timezone']);
