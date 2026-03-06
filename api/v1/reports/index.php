@@ -7,8 +7,12 @@ include_once(substr(__DIR__, 0,-15) . '/api/v1/functions.php');
 header('Content-Type: application/json');
 $data = [];
 
-if ($_SERVER['REQUEST_METHOD'] == "GET") {
-	$data = getStats($db, $_GET);
+if ($_SERVER['REQUEST_METHOD'] === "GET") {
+    if (!isset($db)) {
+        $data = ['msg' => 'Database connection is unavailable', 'error' => true, 'status' => 500];
+    } else {
+        $data = getStats($db, $_GET);
+    }
 } else {
 	$data = ['msg' => 'Not allowed request method', 'error' => true, 'status' => 405];
 }
