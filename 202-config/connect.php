@@ -91,7 +91,7 @@ $str = (string)($_SERVER['REQUEST_URI'] ?? '');
 preg_match_all($re, $str, $matches, PREG_SET_ORDER, 0);
 
 // Fix for PHP 8 - Check if $matches array exists and has expected structure before accessing it
-if (!empty($matches) && isset($matches[0]) && isset($matches[0][0])) {
+if (!empty($matches)) {
     $navigation = $matches[0][0];
     $navigation = '/' . $navigation;
 } else {
@@ -102,7 +102,7 @@ if (!empty($matches) && isset($matches[0]) && isset($matches[0][0])) {
 $navigation = explode('/', $navigation);
 foreach ($navigation as $key => $row) {
     $split_chars = preg_split('/\?{1}/', $navigation[$key], -1, PREG_SPLIT_OFFSET_CAPTURE);
-    if (!empty($split_chars) && isset($split_chars[0]) && isset($split_chars[0][0])) {
+    if (!empty($split_chars)) {
         $navigation[$key] = $split_chars[0][0];
     }
 }
@@ -167,6 +167,7 @@ include_once(CONFIG_PATH . '/functions-empty.php');
 $whatCache = false;
 $memcacheInstalled = false;
 $memcacheWorking = false;
+$mchost = $mchost ?? '127.0.0.1';
 
 // try to connect to memcache server
 if (extension_loaded('memcache') && class_exists('Memcache')) {
@@ -199,11 +200,9 @@ function setCache($key, $value, $exp = null)
     switch ($whatCache) {
         case 'memcache':
             return $memcache->set($key, $value, false, $exp);
-            break;
 
         case 'memcached':
             return $memcache->set($key, $value, $exp);
-            break;
     }
 }
 
@@ -223,15 +222,6 @@ function inet6_aton($ip)
 
 try {
     $database = DB::getInstance();
-
-    // Check if getInstance() returned null (connection failed)
-    if ($database === null) {
-        // Throw an exception to be caught by the catch block below
-        // Retrieve the last error if possible, otherwise use a generic message
-        $last_error = error_get_last();
-        $error_message = $last_error ? $last_error['message'] : 'Unknown connection error during DB initialization.';
-        throw new Exception("Database connection failed during initialization: " . $error_message);
-    }
 
     $db = $database->getConnection();
 
