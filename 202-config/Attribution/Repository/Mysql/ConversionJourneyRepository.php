@@ -283,14 +283,18 @@ SQL;
         if (isset($GLOBALS['memcache']) && $GLOBALS['memcache'] instanceof \Memcache) {
             /** @var \Memcache $memcache */
             $memcache = $GLOBALS['memcache'];
-            $memcache->delete($cacheKey);
+            if (method_exists($memcache, 'delete')) {
+                $memcache->delete($cacheKey);
+            }
             return;
         }
 
         if (isset($GLOBALS['memcache']) && $GLOBALS['memcache'] instanceof \Memcached) {
             /** @var \Memcached $memcache */
             $memcache = $GLOBALS['memcache'];
-            $memcache->delete($cacheKey);
+            if (method_exists($memcache, 'delete')) {
+                $memcache->delete($cacheKey);
+            }
         }
     }
 

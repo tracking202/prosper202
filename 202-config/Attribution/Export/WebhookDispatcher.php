@@ -166,7 +166,7 @@ final class WebhookDispatcher
         $response = file_get_contents($url, false, $context);
         $error = $response === false ? error_get_last()['message'] ?? 'Unknown stream error.' : null;
         $statusCode = null;
-        if (isset($http_response_header) && is_array($http_response_header)) {
+        if (!empty($http_response_header)) {
             foreach ($http_response_header as $line) {
                 if (preg_match('#HTTP/\S+\s+(\d{3})#', $line, $matches)) {
                     $statusCode = (int) $matches[1];

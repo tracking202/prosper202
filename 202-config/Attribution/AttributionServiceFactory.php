@@ -115,8 +115,8 @@ final class AttributionServiceFactory
     private static function buildConnection(): ?Connection
     {
         $db = \DB::getInstance();
-        $writeConnection = $db?->getConnection();
-        $readConnection = $db?->getConnectionro();
+        $writeConnection = $db->getConnection();
+        $readConnection = $db->getConnectionro();
 
         if (!$writeConnection instanceof \mysqli) {
             return null;

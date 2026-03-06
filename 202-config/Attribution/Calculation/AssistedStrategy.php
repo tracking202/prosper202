@@ -46,7 +46,7 @@ final class AssistedStrategy implements AttributionStrategyInterface
             $journey = $conversion->getJourney();
             $journeyCount = count($journey);
             $assistCount = $journeyCount > 1 ? $journeyCount - 1 : 1;
-            $creditShare = $assistCount > 0 ? 1.0 / $assistCount : 1.0;
+            $creditShare = 1.0 / $assistCount;
 
             $attributedClicks = 0;
             $attributedRevenue = 0.0;
