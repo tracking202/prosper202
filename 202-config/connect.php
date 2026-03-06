@@ -13,8 +13,18 @@ require_once(__DIR__ . '/version.php');
 ini_set('session.gc_maxlifetime', '50000');
 ini_set('session.cookie_lifetime', '0'); // session cookie — expires when browser closes
 
-// Start the session at the beginning to avoid undefined $_SESSION variable
-session_start();
+// Start the session at the beginning to avoid undefined $_SESSION variable.
+// For AJAX requests, use read_and_close to release the session file lock immediately.
+// PHP's file-based sessions use exclusive locks, so parallel AJAX requests become
+// serialized if the lock is held. Session data is still readable in $_SESSION after close.
+// Full page loads keep the session open for writes (session_time heartbeat, token init, etc).
+$_is_ajax = !empty($_SERVER['HTTP_X_REQUESTED_WITH'])
+    && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
+if ($_is_ajax) {
+    session_start(['read_and_close' => true]);
+} else {
+    session_start();
+}
 
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
@@ -231,7 +241,6 @@ try {
         $error = $db ? $db->connect_error : 'DB object is null';
         throw new Exception("MySQL Connection Error ({$errno}): {$error}");
     }
-
     // Initialize $dbro as well
     $dbro = $database->getConnectionro();
     if ($dbro === null || $dbro->connect_error) {
@@ -284,7 +293,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
         //disable mysql sessions because they are slow
         //$sess = new SessionManager();
-        if (session_status() !== PHP_SESSION_ACTIVE) {
+        if (session_status() !== PHP_SESSION_ACTIVE && !$_is_ajax) {
             session_start();
         }
     }

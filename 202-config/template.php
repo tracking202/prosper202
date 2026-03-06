@@ -467,8 +467,12 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<?php } //for publisher check
 		?>
 		<script type="text/javascript">
-			$(document).ready(function() {
-				navigator.sendBeacon("//<?php echo getTrackingDomain() . get_absolute_url(); ?>202-cronjobs/");
+			$(window).on('load', function() {
+				window.setTimeout(function() {
+					if (navigator.sendBeacon) {
+						navigator.sendBeacon("//<?php echo getTrackingDomain() . get_absolute_url(); ?>202-cronjobs/");
+					}
+				}, 3000);
 			});
 		</script>
 	</body>

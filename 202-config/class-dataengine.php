@@ -28,6 +28,11 @@ class DataEngine
         return self::$db !== null;
     }
 
+    public function hasDatabaseConnection(): bool
+    {
+        return $this->isDatabaseConnected();
+    }
+
     /**
      * Get database connection or fallback to global $db
      * @return mysqli|null
@@ -94,6 +99,24 @@ class DataEngine
     function foundRows()
     {
         return self::$found_rows;
+    }
+
+    /**
+     * Count distinct values for pagination without SQL_CALC_FOUND_ROWS.
+     * Runs a simple COUNT(DISTINCT ...) on 202_dataengine — no lookup JOINs,
+     * no aggregates — so it can use covering indexes.
+     */
+    private function countGroups(string $fkColumn, string $from, string $to, array $filters): int
+    {
+        $countSql = "SELECT COUNT(DISTINCT 2st." . $fkColumn . ") AS cnt FROM 202_dataengine AS 2st "
+            . $filters['join']
+            . $this->mysql['user_id_query']
+            . " AND click_time >= " . $from
+            . " AND click_time <= " . $to
+            . $filters['filter'];
+        $result = _mysqli_query($countSql);
+        $row = $result ? $result->fetch_assoc() : null;
+        return (int) ($row['cnt'] ?? 0);
     }
 
     function getReportData($reportType, $clickFrom, $clickTo, $cpv): mixed
@@ -924,26 +947,25 @@ SUM(2st.cost)/sum(clicks) AS cpc,
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT SQL_CALC_FOUND_ROWS `keyword`,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT `keyword`,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
-(SUM(income) / sum(leads)) AS payout, 
+(SUM(income) / sum(leads)) AS payout,
 SUM(2st.income) AS income,
 SUM(2st.income)/sum(clicks) as epc,
 SUM(2st.cost) AS cost,
 SUM(2st.cost)/sum(clicks) AS cpc,
 (SUM(2st.income)-SUM(2st.cost)) AS net,
-((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100 ) as roi FROM 202_dataengine as 2st LEFT JOIN 202_keywords as 2k on (2st.keyword_id= 2k.keyword_id)             
+((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100 ) as roi FROM 202_dataengine as 2st LEFT JOIN 202_keywords as 2k on (2st.keyword_id= 2k.keyword_id)
             " . $this->mysql['user_id_query'] . " AND click_time >= " . $mysql['from'] . " AND click_time <= " . $mysql['to'] . $click_filtered['filter'] . " group by keyword" . $this->sortOrder() . $click_filtered['limit'];
 
-        $click_result = _mysqli_query($click_sql); // ($click_sql);
+        $click_result = _mysqli_query($click_sql);
 
         $i = 0;
         $totals = ['clicks' => 0, 'click_out' => 0, 'ctr' => 0, 'cost' => 0, 'cpc' => 0, 'leads' => 0, 'su_ratio' => 0, 'payout' => 0, 'income' => 0, 'epc' => 0, 'net' => 0, 'roi' => 0];
         while ($click_row = $click_result->fetch_assoc()) {
             $i++;
-            // print_r($click_row);
             $data[] = $this->htmlFormat($click_row, $cpv);
             $totals['clicks'] += $click_row['clicks'];
             $totals['click_out'] += $click_row['click_out'];
@@ -957,14 +979,10 @@ SUM(2st.cost)/sum(clicks) AS cpc,
             $totals['epc'] = @round($totals['income'] / $totals['clicks'], 5);
             $totals['net'] = $totals['income'] - $totals['cost'];
             $totals['roi'] = ($totals['cost'] == '0') ? 0 : @round($totals['net'] / $totals['cost'] * 100);
-            // print_r($click_row);
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the number of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('keyword_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -977,7 +995,7 @@ SUM(2st.cost)/sum(clicks) AS cpc,
 
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT SQL_CALC_FOUND_ROWS `text_ad_name`,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT `text_ad_name`,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1014,10 +1032,7 @@ LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id)
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the number of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('text_ad_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1030,7 +1045,7 @@ LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id)
 
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS site_domain_host as referer_name,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  site_domain_host as referer_name,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1068,10 +1083,7 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the number of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('click_referer_site_url_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1100,7 +1112,7 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS IFNULL(" . $inet6_ntoa . "(2i6.ip_address),2i.ip_address) as ip_address,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  IFNULL(" . $inet6_ntoa . "(2i6.ip_address),2i.ip_address) as ip_address,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1136,10 +1148,7 @@ LEFT JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_genera
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('ip_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1151,7 +1160,7 @@ LEFT JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_genera
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS country_name,country_code,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  country_name,country_code,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1188,10 +1197,7 @@ LEFT JOIN 202_locations_country on (2st.country_id = 202_locations_country.count
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('country_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1203,7 +1209,7 @@ LEFT JOIN 202_locations_country on (2st.country_id = 202_locations_country.count
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS region_name,country_code,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  region_name,country_code,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1241,10 +1247,7 @@ LEFT JOIN 202_locations_country on (202_locations_region.main_country_id = 202_l
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('region_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1256,7 +1259,7 @@ LEFT JOIN 202_locations_country on (202_locations_region.main_country_id = 202_l
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS city_name,country_code,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  city_name,country_code,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1294,10 +1297,7 @@ LEFT JOIN 202_locations_country on (202_locations_city.main_country_id = 202_loc
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('city_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1309,7 +1309,7 @@ LEFT JOIN 202_locations_country on (202_locations_city.main_country_id = 202_loc
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS isp_name,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  isp_name,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1346,10 +1346,7 @@ LEFT JOIN 202_locations_isp on (2st.isp_id = 202_locations_isp.isp_id)
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('isp_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1361,7 +1358,7 @@ LEFT JOIN 202_locations_isp on (2st.isp_id = 202_locations_isp.isp_id)
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS landing_page_nickname,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  landing_page_nickname,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1398,10 +1395,7 @@ LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('landing_page_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1413,7 +1407,7 @@ LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS device_name,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  device_name,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1450,10 +1444,7 @@ LEFT JOIN 202_device_models on (2st.device_id = 202_device_models.device_id)
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('device_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }
@@ -1465,7 +1456,7 @@ LEFT JOIN 202_device_models on (2st.device_id = 202_device_models.device_id)
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS browser_name,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  browser_name,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1502,10 +1493,8 @@ LEFT JOIN 202_browsers on (2st.browser_id = 202_browsers.browser_id)
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('browser_id', $mysql['from'], $mysql['to'], $click_filtered);
+
         return $data;
     }
 
@@ -1516,7 +1505,7 @@ LEFT JOIN 202_browsers on (2st.browser_id = 202_browsers.browser_id)
         $up = new UserPrefs();
         $click_filtered = $this->getFilters();
         $click_sql = "
-SELECT  SQL_CALC_FOUND_ROWS platform_name,sum(clicks) as clicks, sum(click_out) as click_out,
+SELECT  platform_name,sum(clicks) as clicks, sum(click_out) as click_out,
 	    (clicks/click_out)*100 as ctr,
 	    SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
@@ -1553,10 +1542,7 @@ LEFT JOIN 202_platforms on (2st.platform_id = 202_platforms.platform_id)
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        $count_sql = "select FOUND_ROWS() as found_rows"; // query to get the nymber of results
-        $count_result = _mysqli_query($count_sql);
-        $count_row = $count_result->fetch_assoc();
-        self::$found_rows = ($count_row['found_rows']);
+        self::$found_rows = $this->countGroups('platform_id', $mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }

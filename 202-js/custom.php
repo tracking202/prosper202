@@ -26,15 +26,27 @@ $(document).ready(function() {
 
 	var select_id = 0;
 
-	//P202 update check
-	$.ajax({
-		url: "<?php echo get_absolute_url();?>202-account/ajax/check-for-update.php",
-	})
-	.done(function() {
-		$.get("<?php echo get_absolute_url();?>202-account/ajax/update-needed.php", function(data) {
-		  	$("#update_needed").html(data);
+	// Defer the non-critical update banner request so it does not compete with the page's primary AJAX.
+	var loadUpdateBanner = function() {
+		$.ajax({
+			url: "<?php echo get_absolute_url();?>202-account/ajax/check-for-update.php",
+		})
+		.done(function() {
+			$.get("<?php echo get_absolute_url();?>202-account/ajax/update-needed.php", function(data) {
+			  	$("#update_needed").html(data);
+			});
 		});
-	});
+	};
+
+	if ($("#update_needed").length) {
+		if ("requestIdleCallback" in window) {
+			window.requestIdleCallback(loadUpdateBanner, {
+				timeout: 2000
+			});
+		} else {
+			window.setTimeout(loadUpdateBanner, 1500);
+		}
+	}
 
 	$(":radio[name=autocron]").on("change.radiocheck", function () {
 		var autocron = $(this).val();
@@ -1601,5 +1613,4 @@ function autocomplete_names(selector, type){
 	$(".tt-hint").css('top', '5px');
 	$(".tt-input").css('top', '5px');
 }
-
 

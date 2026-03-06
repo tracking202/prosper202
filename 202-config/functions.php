@@ -441,7 +441,7 @@ function info_top(): void
 	function check_premium_update()
 	{
 		global $version;
-		$json = @getData('https://my.tracking202.com/api/v2/premium-p202/version');
+		$json = @getData('https://my.tracking202.com/api/v2/premium-p202/version', 5, 3);
 		$array = json_decode((string) $json, true);
 		if ((version_compare($version, $array['version']) == '-1')) {
 			if (!is_writable(__DIR__ . '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
@@ -641,8 +641,8 @@ function info_top(): void
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($ch, CURLOPT_POST, true);
-		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-		curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+		curl_setopt($ch, CURLOPT_TIMEOUT, 5);
 		$result = curl_exec($ch);
 		curl_close($ch);
 
