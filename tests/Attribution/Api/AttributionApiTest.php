@@ -119,6 +119,42 @@ final class AttributionApiTest extends TestCase
         $this->assertCount(1, $this->exportRepository->jobs);
     }
 
+    public function testCreateModelIgnoresBodyUserIdOverride(): void
+    {
+        [$status, $payload] = $this->performPost('/attribution/models', [
+            'user_id' => 999,
+            'name' => 'Body Override Attempt',
+            'type' => ModelType::LAST_TOUCH->value,
+        ]);
+
+        $this->assertSame(201, $status);
+
+        $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertFalse($decoded['error']);
+        $this->assertSame(1, $decoded['data']['user_id']);
+    }
+
+    public function testScheduleExportIgnoresBodyUserIdOverride(): void
+    {
+        $now = time();
+        [$status, $payload] = $this->performPost('/attribution/models/1/exports', [
+            'user_id' => 999,
+            'scope' => ScopeType::GLOBAL->value,
+            'start_hour' => $now - 3600,
+            'end_hour' => $now,
+            'format' => 'csv',
+        ]);
+
+        $this->assertSame(201, $status);
+
+        $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertFalse($decoded['error']);
+        $this->assertNotEmpty($decoded['data']);
+
+        $job = array_values($this->exportRepository->jobs)[0];
+        $this->assertSame(1, $job->userId);
+    }
+
     /**
      * @param array<string, scalar> $query
      * @return array{int,string}
