@@ -181,7 +181,11 @@ class ServerStateStore
             return null;
         }
         $job = $this->readJsonFile($path, []);
-        return empty($job) ? null : $job;
+        if (!is_array($job) || empty($job)) {
+            return null;
+        }
+
+        return $job;
     }
 
     public function saveJob(array $job): void
@@ -370,6 +374,9 @@ class ServerStateStore
                 continue;
             }
             $job = $this->readJsonFile($path, []);
+            if (!is_array($job)) {
+                continue;
+            }
             if (empty($job['job_id'])) {
                 continue;
             }

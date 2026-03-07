@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Prosper202\Database;
@@ -22,6 +23,7 @@ use Prosper202\Database\Exceptions\SchemaInstallException;
  */
 final class SchemaInstaller
 {
+    private mysqli $connection;
     /** @var array<string> */
     private array $createdTables = [];
     /** @var array<string> */
@@ -29,7 +31,7 @@ final class SchemaInstaller
 
     public function __construct(mysqli $connection)
     {
-        unset($connection);
+        $this->connection = $connection;
     }
 
     /**
@@ -165,7 +167,7 @@ final class SchemaInstaller
      */
     private function executeStatement(string $sql, ?string $tableName = null): bool
     {
-        $result = _mysqli_query($sql);
+        $result = _mysqli_query($this->connection, $sql);
 
         if ($result !== false && $tableName !== null) {
             $this->createdTables[] = $tableName;
@@ -180,7 +182,7 @@ final class SchemaInstaller
     private function disableStrictMode(): void
     {
         $sql = "SET session sql_mode= ''";
-        _mysqli_query($sql);
+        _mysqli_query($this->connection, $sql);
     }
 
     /**
@@ -190,7 +192,7 @@ final class SchemaInstaller
     {
         // Set collation for IPv6 table
         $sql = "ALTER TABLE `202_ips_v6` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
-        _mysqli_query($sql);
+        _mysqli_query($this->connection, $sql);
     }
 
     /**
