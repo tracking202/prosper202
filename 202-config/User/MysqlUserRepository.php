@@ -46,7 +46,7 @@ final class MysqlUserRepository implements UserRepositoryInterface
 
     public function create(array $data): int
     {
-        $hashedPass = password_hash($data['password'], PASSWORD_BCRYPT);
+        $hashedPass = hash_user_pass($data['password']);
         $now = time();
 
         return $this->conn->transaction(function () use ($data, $hashedPass, $now): int {
@@ -91,7 +91,7 @@ final class MysqlUserRepository implements UserRepositoryInterface
 
         if (array_key_exists('user_pass', $data) && $data['user_pass'] !== '') {
             $sets[] = 'user_pass = ?';
-            $values[] = password_hash((string) $data['user_pass'], PASSWORD_BCRYPT);
+            $values[] = hash_user_pass((string) $data['user_pass']);
             $types .= 's';
         }
 

@@ -63,7 +63,7 @@ class Slim
     public $container;
 
     /**
-     * @var array[\Slim]
+     * @var \Slim\Slim[]
      */
     protected static $apps = [];
 
@@ -360,7 +360,7 @@ class Slim
      */
     public function getMode()
     {
-        return $this->mode;
+        return (string) $this->container['mode'];
     }
 
     /**
@@ -392,7 +392,7 @@ class Slim
      */
     public function getLog()
     {
-        return $this->log;
+        return $this->container['log'];
     }
 
     /********************************************************************************
@@ -426,14 +426,14 @@ class Slim
      *
      * Slim::get('/foo'[, middleware, middleware, ...], callable);
      *
-     * @param   array (See notes above)
+     * @param   array $args
      * @return  \Slim\Route
      */
     protected function mapRoute($args)
     {
         $pattern = array_shift($args);
         $callable = array_pop($args);
-        $route = new \Slim\Route($pattern, $callable, $this->settings['routes.case_sensitive']);
+        $route = new \Slim\Route($pattern, $callable, $this->container['settings']['routes.case_sensitive']);
         $this->router->map($route);
         if (count($args) > 0) {
             $route->setMiddleware($args);
@@ -712,17 +712,18 @@ class Slim
     public function view($viewClass = null)
     {
         if (!is_null($viewClass)) {
-            $existingData = is_null($this->view) ? [] : $this->view->getData();
+            $view = $this->container['view'];
+            $existingData = is_null($view) ? [] : $view->getData();
             if ($viewClass instanceOf \Slim\View) {
-                $this->view = $viewClass;
+                $this->container['view'] = $viewClass;
             } else {
-                $this->view = new $viewClass();
+                $this->container['view'] = new $viewClass();
             }
-            $this->view->appendData($existingData);
-            $this->view->setTemplatesDirectory($this->config('templates.path'));
+            $this->container['view']->appendData($existingData);
+            $this->container['view']->setTemplatesDirectory($this->config('templates.path'));
         }
 
-        return $this->view;
+        return $this->container['view'];
     }
 
     /********************************************************************************
@@ -746,8 +747,8 @@ class Slim
         if (!is_null($status)) {
             $this->response->status($status);
         }
-        $this->view->appendData($data);
-        $this->view->display($template);
+        $this->container['view']->appendData($data);
+        $this->container['view']->display($template);
     }
 
     /********************************************************************************
@@ -1238,7 +1239,7 @@ class Slim
      * This method prepends new middleware to the application middleware stack.
      * The argument must be an instance that subclasses Slim_Middleware.
      *
-     * @param \Slim\Middleware
+     * @param \Slim\Middleware $newMiddleware
      */
     public function add(\Slim\Middleware $newMiddleware)
     {
@@ -1279,7 +1280,7 @@ class Slim
         [$status, $headers, $body] = $this->response->finalize();
 
         // Serialize cookies (with optional encryption)
-        \Slim\Http\Util::serializeCookies($headers, $this->response->cookies, $this->settings);
+        \Slim\Http\Util::serializeCookies($headers, $this->response->cookies, $this->container['settings']);
 
         //Send headers
         if (headers_sent() === false) {
@@ -1375,10 +1376,10 @@ class Slim
      * @return bool
      * @throws \ErrorException
      */
-    public static function handleErrors($errno, $errstr = '', $errfile = '', $errline = '')
+    public static function handleErrors($errno, $errstr = '', $errfile = '', $errline = 0): bool
     {
         if (!($errno & error_reporting())) {
-            return;
+            return false;
         }
 
         throw new \ErrorException($errstr, $errno, 0, $errfile, $errline);

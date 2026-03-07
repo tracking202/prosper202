@@ -65,6 +65,8 @@ class UPGRADE
 
         $partition_start = time();
         $partition_end = strtotime('+3 years', $partition_start);
+        $mysql_partitioning_fail = 0;
+        $p_count = 0;
 
         $sql = "SELECT PLUGIN_NAME as Name, PLUGIN_STATUS as Status FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_TYPE='STORAGE ENGINE' AND PLUGIN_NAME='partition' AND PLUGIN_STATUS='ACTIVE'";
         $result = _mysqli_query($sql);
@@ -1363,6 +1365,7 @@ class UPGRADE
 
             $de = new DataEngine();
             if (method_exists($de, 'setRowsForOldClickUpgrade')) {
+                // Legacy DataEngine variants may expose this method.
                 $de->setRowsForOldClickUpgrade($time_from);
             }
 
@@ -1714,7 +1717,7 @@ class UPGRADE
 
             $de = new DataEngine();
             if (method_exists($de, 'getSummary')) {
-                $de->getSummary($time_from, $time_to, $snippet, 1, true, false);
+                $de->getSummary($time_from);
             }
 
             $sql = "CREATE TABLE `202_rotator_rules_redirects` (
@@ -1734,6 +1737,7 @@ class UPGRADE
             $result = _mysqli_query($sql);
             if ($result->num_rows > 0) {
                 while ($row = $result->fetch_assoc()) {
+                    $redirect_name = '';
                     if ($row['redirect_url'] != null) {
                         $redirect_name = "URL: <a href=" . $row['redirect_url'] . ">link</a>";
                     } else if ($row['redirect_campaign'] != null) {
@@ -2945,7 +2949,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.57') {
 
             $database = DB::getInstance();
-            $connection = $database?->getConnection();
+            $connection = $database->getConnection();
 
             if ($connection instanceof \mysqli) {
                 $connection->begin_transaction();

@@ -72,7 +72,7 @@ class MethodOverride extends \Slim\Middleware
      * modifies the environment settings so downstream middleware and/or the Slim
      * application will treat the request with the desired HTTP method.
      *
-     * @return array[status, header, body]
+     * @return void
      */
     public function call()
     {

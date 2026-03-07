@@ -29,8 +29,8 @@ final class MysqlTrackerRepository implements TrackerRepositoryInterface
                        aff_campaign_url_5,
                        aff_campaign_payout,
                        aff_campaign_cloaking,
-                       2cv.ppc_variable_ids,
-                       2cv.parameters,
+                       cv2.ppc_variable_ids,
+                       cv2.parameters,
                        user_timezone,
                        user_keyword_searched_or_bidded,
                        user_pref_referer_data,
@@ -45,7 +45,7 @@ final class MysqlTrackerRepository implements TrackerRepositoryInterface
                                   GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids,
                                   GROUP_CONCAT(parameter) AS parameters
                            FROM 202_ppc_network_variables
-                           GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+                           GROUP BY ppc_network_id) AS cv2 USING (ppc_network_id)
                 WHERE tracker_id_public = ?";
 
         $stmt = $this->conn->prepareRead($sql);

@@ -5,12 +5,10 @@ declare(strict_types=1);
 namespace Prosper202\Attribution\Repository\Mysql;
 
 use mysqli;
-use mysqli_stmt;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
 use Prosper202\Attribution\Touchpoint;
 use Prosper202\Database\Connection;
 use RuntimeException;
-use Throwable;
 
 final readonly class MysqlTouchpointRepository implements TouchpointRepositoryInterface
 {
@@ -32,16 +30,13 @@ final readonly class MysqlTouchpointRepository implements TouchpointRepositoryIn
     {
         $sql = 'SELECT * FROM 202_attribution_touchpoints WHERE snapshot_id = ? ORDER BY position ASC, touchpoint_id ASC';
         $stmt = $this->conn->prepareRead($sql);
-        $stmt->bind_param('i', $snapshotId);
-        $this->conn->execute($stmt);
-        $result = $stmt->get_result();
+        $this->conn->bind($stmt, 'i', [$snapshotId]);
+        $rows = $this->conn->fetchAll($stmt);
+
         $touchpoints = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $touchpoints[] = Touchpoint::fromDatabaseRow($row);
-            }
+        foreach ($rows as $row) {
+            $touchpoints[] = Touchpoint::fromDatabaseRow($row);
         }
-        $stmt->close();
 
         return $touchpoints;
     }
@@ -73,16 +68,7 @@ final readonly class MysqlTouchpointRepository implements TouchpointRepositoryIn
                 $weight = (float) $touchpoint->weight;
                 $createdAt = (int) $touchpoint->createdAt;
 
-                $stmt->bind_param(
-                    'iiiiddi',
-                    $snapshotId,
-                    $conversionId,
-                    $clickId,
-                    $position,
-                    $credit,
-                    $weight,
-                    $createdAt
-                );
+                $this->conn->bind($stmt, 'iiiiddi', [$snapshotId, $conversionId, $clickId, $position, $credit, $weight, $createdAt]);
                 $this->conn->execute($stmt);
             }
 
@@ -94,8 +80,7 @@ final readonly class MysqlTouchpointRepository implements TouchpointRepositoryIn
     {
         $sql = 'DELETE FROM 202_attribution_touchpoints WHERE snapshot_id = ?';
         $stmt = $this->conn->prepareWrite($sql);
-        $stmt->bind_param('i', $snapshotId);
-        $this->conn->execute($stmt);
-        $stmt->close();
+        $this->conn->bind($stmt, 'i', [$snapshotId]);
+        $this->conn->executeUpdate($stmt);
     }
 }

@@ -265,7 +265,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the report_type
-	 * @param boolean
 	 */
 	function setReportType($arg0)
 	{
@@ -305,7 +304,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the account_user_list
-	 * @param array
 	 */
 	function setAccountUserList($arg0)
 	{
@@ -338,7 +336,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the advertiser_list
-	 * @param array
 	 */
 	function setAdvertiserList($arg0)
 	{
@@ -371,7 +368,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the publisher_list
-	 * @param array
 	 */
 	function setPublisherList($arg0)
 	{
@@ -468,7 +464,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the domain_list
-	 * @param array
 	 */
 	function setDomainList($arg0)
 	{
@@ -496,7 +491,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the show_advertiser_scrub
-	 * @param boolean
 	 */
 	function setShowAdvertiserScrub($arg0)
 	{
@@ -517,7 +511,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the show_scrub
-	 * @param boolean
 	 */
 	function setShowScrub($arg0)
 	{
@@ -538,7 +531,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the show_adjustments
-	 * @param boolean
 	 */
 	function setShowAdjustments($arg0)
 	{
@@ -559,7 +551,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the display_type
-	 * @param int
 	 */
 	public function setDisplayType($arg0)
 	{
@@ -589,7 +580,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the display_total_position
-	 * @param int
 	 */
 	public function setDisplayTotalPosition($arg0)
 	{
@@ -610,7 +600,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the display_check
-	 * @param array
 	 */
 	function setDisplayCheck($arg0)
 	{
@@ -619,7 +608,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the display_check
-	 * @param integer
 	 */
 	function addDisplayCheck($arg0, $key = 0)
 	{
@@ -634,7 +622,6 @@ class ReportBasicForm
 
 	/**
 	 * Returns if the detail_check is selected
-	 * @param integer
 	 */
 	function isDisplayCheckSelected($key)
 	{
@@ -697,7 +684,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the display
-	 * @param array
 	 */
 	function setDisplay($arg0)
 	{
@@ -706,7 +692,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the display
-	 * @param integer
 	 */
 	function addDisplay($arg0, $key = 0)
 	{
@@ -760,7 +745,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the display_order
-	 * @param array
 	 */
 	function setDisplayOrder($arg0)
 	{
@@ -769,7 +753,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the display_order
-	 * @param integer
 	 */
 	function addDisplayOrder($arg0, $key = 0)
 	{
@@ -799,7 +782,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the filter_display
-	 * @param array
 	 */
 	function setFilterDisplay($arg0)
 	{
@@ -820,7 +802,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the details_check
-	 * @param array
 	 */
 	function setDetailsCheck($arg0)
 	{
@@ -829,7 +810,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the details_check
-	 * @param integer
 	 */
 	function addDetailsCheck($arg0, $key = 0)
 	{
@@ -847,7 +827,6 @@ class ReportBasicForm
 
 	/**
 	 * Returns if the detail_check is selected
-	 * @param integer
 	 */
 	function isDetailsCheckSelected($key)
 	{
@@ -874,7 +853,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the details
-	 * @param array
 	 */
 	function setDetails($arg0)
 	{
@@ -883,7 +861,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the details
-	 * @param integer
 	 */
 	function addDetails($arg0, $key = 0)
 	{
@@ -954,7 +931,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the details_sort
-	 * @param array
 	 */
 	function setDetailsSort($arg0)
 	{
@@ -963,7 +939,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the details_sort
-	 * @param integer
 	 */
 	function addDetailsSort($arg0, $key)
 	{
@@ -1014,7 +989,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the detail_columns_sort
-	 * @param array
 	 */
 	function setDetailColumnsSort($arg0)
 	{
@@ -1023,7 +997,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the detail_columns_sort
-	 * @param integer
 	 */
 	function addDetailColumnsSort($arg0, $key)
 	{
@@ -1127,7 +1100,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the detail_interval
-	 * @param array
 	 */
 	function setDetailInterval($arg0)
 	{
@@ -1178,7 +1150,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the detail_columns
-	 * @param array
 	 */
 	public function setDetailColumns($arg0)
 	{
@@ -1187,7 +1158,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the detail_columns
-	 * @param integer
 	 */
 	public function addDetailColumns($arg0, $key = null)
 	{
@@ -1251,7 +1221,6 @@ class ReportBasicForm
 
 	/**
 	 * Returns the details_in_columns
-	 * @param boolean
 	 */
 	public function setDetailsInColumns($arg0)
 	{
@@ -1273,7 +1242,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the detail_group
-	 * @param int
 	 */
 	public function setDetailGroup($arg0)
 	{
@@ -1303,7 +1271,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the filter_detail_level
-	 * @param array
 	 */
 	public function setFilterDetailLevel($arg0)
 	{
@@ -1312,8 +1279,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the filter_detail_level
-	 * @param mixed
-	 * @param mixed
 	 */
 	public function addFilterDetailLevel($arg0, $key = null)
 	{
@@ -1328,7 +1293,6 @@ class ReportBasicForm
 
 	/**
 	 * Returns a list of filter keys by detail level
-	 * @param int
 	 * @return array
 	 */
 	public function getFilterKeysByDetailLevel($detail_level_id)
@@ -1345,7 +1309,6 @@ class ReportBasicForm
 
 	/**
 	 * Returns a list of filter keys by detail and display level
-	 * @param int
 	 * @return array
 	 */
 	public function getFilterKeysByDetailAndDisplayLevel($detail_level_id, $display_level_id)
@@ -1378,7 +1341,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the filter_display_level
-	 * @param array
 	 */
 	public function setFilterDisplayLevel($arg0)
 	{
@@ -1387,8 +1349,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the filter_display_level
-	 * @param mixed
-	 * @param mixed
 	 */
 	public function addFilterDisplayLevel($arg0, $key = null)
 	{
@@ -1418,8 +1378,6 @@ class ReportBasicForm
 
 	/**
 	 * Returns a filter display level by index key
-	 * @param mixed
-	 * @param mixed
 	 */
 	public function getFilterDisplayLevelByKey($key)
 	{
@@ -1444,7 +1402,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the filter_operation
-	 * @param array
 	 */
 	public function setFilterOperation($arg0)
 	{
@@ -1453,8 +1410,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the filter_operation
-	 * @param mixed
-	 * @param mixed
 	 */
 	public function addFilterOperation($arg0, $key = null)
 	{
@@ -1484,8 +1439,6 @@ class ReportBasicForm
 
 	/**
 	 * Returns a filter operation by index key
-	 * @param mixed
-	 * @param mixed
 	 */
 	public function getFilterOperationByKey($key)
 	{
@@ -1510,7 +1463,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the filter_value
-	 * @param array
 	 */
 	public function setFilterValue($arg0)
 	{
@@ -1519,8 +1471,6 @@ class ReportBasicForm
 
 	/**
 	 * Adds to the filter_value
-	 * @param mixed
-	 * @param mixed
 	 */
 	public function addFilteValue($arg0, $key = null)
 	{
@@ -1535,8 +1485,6 @@ class ReportBasicForm
 
 	/**
 	 * Returns a filter value by index key
-	 * @param mixed
-	 * @param mixed
 	 */
 	public function getFilterValueByKey($key)
 	{
@@ -1561,7 +1509,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets $hide_report_parameters
-	 * @param int
 	 */
 	function setHideReportParameters($arg0)
 	{
@@ -1582,7 +1529,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets $drill_down
-	 * @param int
 	 */
 	function setDrillDown($arg0)
 	{
@@ -1603,7 +1549,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the additional_options_toggle
-	 * @param array
 	 */
 	function setAdditionalOptionsToggle($arg0)
 	{
@@ -1626,7 +1571,6 @@ class ReportBasicForm
 	/**
 	 * Sets the calculate_dates.
 	 *
-	 * @param boolean
 	 */
 	public function setCalculateDates($arg0)
 	{
@@ -1647,7 +1591,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the show_title_id
-	 * @param boolean
 	 */
 	function setShowTitleId($arg0)
 	{
@@ -1668,7 +1611,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the rollup_sub_tables
-	 * @param boolean
 	 */
 	function setRollupSubTables($arg0)
 	{
@@ -1702,7 +1644,6 @@ class ReportBasicForm
 	/**
 	 * Sets the submit_report.
 	 *
-	 * @param boolean
 	 */
 	public function setSubmitReport($arg0)
 	{
@@ -1723,7 +1664,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the base_date_option.
-	 * @param int
 	 */
 	public function setBaseDateOption($arg0)
 	{
@@ -2139,7 +2079,6 @@ class ReportBasicForm
 
 	/**
 	 * Translates the filter operation to a display symbol
-	 * @param int
 	 * @return string
 	 */
 	public function translateFilterOperationToDisplay($filter_operation)
@@ -2163,8 +2102,6 @@ class ReportBasicForm
 
 	/**
 	 * Perform a filter check based on the $filter_key and $test_value
-	 * @param mixed
-	 * @param int
 	 * @return boolean
 	 */
 	public function performFilterCheck($test_value, $parent_value, $filter_key)
@@ -2219,7 +2156,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the end_time
-	 * @param string
 	 */
 	function setStartTime($arg0)
 	{
@@ -2249,7 +2185,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets the end_time
-	 * @param string
 	 */
 	function setEndTime($arg0)
 	{
@@ -2258,7 +2193,6 @@ class ReportBasicForm
 
 	/**
 	 * Sets account currency
-	 * @param string
 	 */
 	function setAccountCurrency($arg0)
 	{
@@ -2680,7 +2614,7 @@ class ReportBasicForm
 
 	/**
 	 * Returns the html body of the report
-	 * @return $report_string
+	 * @return mixed
 	 */
 	public function getReportHtml($title)
 	{
@@ -2800,7 +2734,7 @@ class ReportBasicForm
 
 	/**
 	 * Returns the html row of the report row form
-	 * @return $report_string
+	 * @return mixed
 	 */
 	private function getReportRowHtml($data, $forced_class = false, $build_class = false, $parent_last = false)
 	{
@@ -2818,7 +2752,9 @@ class ReportBasicForm
 			foreach ($data->getChildArrayBySort() as $child_key => $child_data) {
 				$child_class = $forced_class ?: self::getNextCssRowClass($child_key == 0);
 				if ($this->getRollupSubTables()) {
-					$build_class = 'rollup_sub_row_' . $data->getDetailId() . '_' . $data->getId();
+					$detailId = (is_object($data) && method_exists($data, 'getDetailId')) ? $data->getDetailId() : 0;
+					$rowId = (is_object($data) && method_exists($data, 'getId')) ? $data->getId() : 0;
+					$build_class = 'rollup_sub_row_' . $detailId . '_' . $rowId;
 					$child_class .=  ' ' . $build_class . '_close';
 				}
 				$report_row .= $this->getReportRowHtml($child_data, $child_class, $build_class);
@@ -2901,7 +2837,7 @@ class ReportBasicForm
 
 	/**
 	 * Returns the html body of the report
-	 * @return $report_string
+	 * @return mixed
 	 */
 	public function getPrintReportHtml($title)
 	{
@@ -2994,7 +2930,7 @@ class ReportBasicForm
 
 	/**
 	 * Returns the html row of the report row form
-	 * @return $report_string
+	 * @return mixed
 	 */
 	public function getPrintReportRowHtml($data, $forced_class = false, $parent_last = false)
 	{

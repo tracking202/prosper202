@@ -26,6 +26,11 @@ function getStats($db, $variables): mixed {
 function runReports($db, $vars, $user, $timezone): array {
 
 	date_default_timezone_set($timezone);
+	$c1 = null;
+	$c2 = null;
+	$c3 = null;
+	$c4 = null;
+	$cid = null;
 
 	$report_types = ['keywords','wtkeywords', 'text_ads', 'referers', 'ips', 'countries', 'cities', 'carriers', 'landing_pages', 'get_data_for_wp', 'wp_create_lp', 'wp_update_lp']; //report types
 
@@ -50,7 +55,7 @@ function runReports($db, $vars, $user, $timezone): array {
 			
 			if(!validateDate($vars['date_from']) || !validateDate($vars['date_to'])){
 				$data = ['msg' => 'Wrong date format', 'error' => true, 'status' => 404];
-				$json = json_encode($data, true);
+				$json = json_encode($data, JSON_UNESCAPED_SLASHES);
 				print_r(pretty_json($json));
 				die();
 			}
@@ -144,6 +149,7 @@ function getDataForWP($db, $user): array {
 
 function wpCreateLp($db, $user): array {
 	if (isset($_GET['page_type']) && isset($_GET['page_title']) && isset($_GET['page_url'])) {
+		$insert_id = 0;
 		$title = $_GET['page_title'];
 		if (strlen((string) $title) > 45) {
 			$title = substr($_GET['page_title'], 0, 41);
@@ -185,6 +191,10 @@ function wpCreateLp($db, $user): array {
 				$result = $db->query($sql);
 				$insert_id = $db->insert_id;
 			}
+		}
+
+		if ($insert_id <= 0) {
+			return ['error' => '1'];
 		}
 
 		$landing_page_id_public = random_int(1,9) . $insert_id . random_int(1,9);
@@ -258,6 +268,18 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 	];
 
 	$data = [];
+	$total_clicks = 0;
+	$total_click_throughs = 0;
+	$total_ctr_ratio = 0;
+	$total_cost = 0.0;
+	$total_avg_cpc = 0.0;
+	$total_leads = 0;
+	$total_su_ratio = 0.0;
+	$total_payout = 0.0;
+	$total_income = 0.0;
+	$total_epc = 0.0;
+	$total_net = 0.0;
+	$total_roi = 0.0;
 
 	$mysql['user_id'] = $db->real_escape_string($user);
 	$select_id = $db->real_escape_string($id);
@@ -285,8 +307,8 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 									 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2lp.landing_page_id = 2c.landing_page_id)";
 				} else {
 					//If any other report type
-if($type='wtkeywords')
-$report_sql .= " LEFT OUTER JOIN 202_keywords AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+	if($type == 'wtkeywords')
+	$report_sql .= " LEFT OUTER JOIN 202_keywords AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
 else
 					$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
 				}
@@ -346,10 +368,10 @@ else
 							LEFT OUTER JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id)
 							LEFT OUTER JOIN 202_site_domains AS 2l ON (2l.site_domain_id = 2su.site_domain_id)";
 					   } else {
-					   		if($type=='wtkeywords')
-$report_sql .= " LEFT OUTER JOIN 202_keywords AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
-else
-$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+				   		if($type == 'wtkeywords')
+$click_sql .= " LEFT OUTER JOIN 202_keywords AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+	else
+$click_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
 					   }
 
 					   //If any of C1-C4 variables are set
@@ -427,7 +449,7 @@ $report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca
 					$total_leads += $leads;
 
 				//signup ratio
-					$su_ratio - 0;
+					$su_ratio = 0;
 					$su_ratio = @round($leads/$clicks*100,2);
 
 					$total_su_ratio = @round($total_leads/$total_clicks*100,2);
@@ -446,7 +468,7 @@ $report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca
 					$epc = 0;
 					$epc = @round($income/$clicks,2);
 
-					$total_epc = @@round($total_income/$total_clicks,2);
+					$total_epc = @round($total_income/$total_clicks,2);
 
 				//net income
 					$net = 0;
@@ -543,7 +565,7 @@ function getCampaignID($db, $campaign, $user): bool {
 	if($key_result->num_rows > 0) {
 		return true;
 	} else {
-		$json = json_encode(['msg' => 'Campaign not found', 'error' => true, 'status' => 404], true);
+		$json = json_encode(['msg' => 'Campaign not found', 'error' => true, 'status' => 404], JSON_UNESCAPED_SLASHES);
 		print_r(pretty_json($json));
 		die();
 	}

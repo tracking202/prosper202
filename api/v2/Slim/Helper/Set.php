@@ -161,7 +161,7 @@ class Set implements \ArrayAccess, \Countable, \IteratorAggregate
 
     public function __unset($key)
     {
-        return $this->remove($key);
+        $this->remove($key);
     }
 
     /**
@@ -217,7 +217,7 @@ class Set implements \ArrayAccess, \Countable, \IteratorAggregate
     /**
      * Ensure a value or object will remain globally unique
      * @param  string  $key   The value or object name
-     * @param  Closure        The closure that defines the object
+     * @param  \Closure $value The closure that defines the object
      * @return mixed
      */
     public function singleton($key, $value)
@@ -234,11 +234,19 @@ class Set implements \ArrayAccess, \Countable, \IteratorAggregate
     }
 
     /**
-     * Protect closure from being directly invoked
-     * @param  Closure $callable A closure to keep from being invoked and evaluated
-     * @return Closure
+     * Set a closure value without evaluating it on retrieval.
      */
-    public function protect(\Closure $callable)
+    public function keep($key, \Closure $value): void
+    {
+        $this->set($key, $this->protect($value));
+    }
+
+    /**
+     * Protect closure from being directly invoked
+     * @param  \Closure $callable A closure to keep from being invoked and evaluated
+     * @return \Closure
+     */
+    public function protect(\Closure $callable): \Closure
     {
         return fn() => $callable;
     }

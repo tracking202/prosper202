@@ -42,11 +42,8 @@ class AttributionController
         $types .= 'i';
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('List query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'List query failed');
         $result = $stmt->get_result();
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -60,11 +57,8 @@ class AttributionController
     public function getModel(int $id): array
     {
         $stmt = $this->prepare('SELECT model_id, user_id, model_name, model_slug, model_type, weighting_config, is_active, is_default, created_at, updated_at FROM 202_attribution_models WHERE model_id = ? AND user_id = ? LIMIT 1');
-        $stmt->bind_param('ii', $id, $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Query failed');
-        }
+        $this->bind($stmt, 'ii', $id, $this->userId);
+        $this->execute($stmt, 'Query failed');
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -96,11 +90,8 @@ class AttributionController
         $now = time();
 
         $stmt = $this->prepare('INSERT INTO 202_attribution_models (user_id, model_name, model_slug, model_type, weighting_config, is_active, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        $stmt->bind_param('issssiiii', $this->userId, $name, $slug, $type, $config, $isActive, $isDefault, $now, $now);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Create failed');
-        }
+        $this->bind($stmt, 'issssiiii', $this->userId, $name, $slug, $type, $config, $isActive, $isDefault, $now, $now);
+        $this->execute($stmt, 'Create failed');
         $id = $stmt->insert_id;
         $stmt->close();
 
@@ -149,11 +140,8 @@ class AttributionController
         $types .= 'i';
 
         $stmt = $this->prepare('UPDATE 202_attribution_models SET ' . implode(', ', $sets) . ' WHERE model_id = ? AND user_id = ?');
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Update failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Update failed');
         $stmt->close();
 
         return $this->getModel($id);
@@ -166,23 +154,23 @@ class AttributionController
         $this->db->begin_transaction();
         try {
             $stmt = $this->prepare('DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?)');
-            $stmt->bind_param('ii', $id, $this->userId);
-            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete touchpoints failed'); }
+            $this->bind($stmt, 'ii', $id, $this->userId);
+            $this->execute($stmt, 'Delete touchpoints failed');
             $stmt->close();
 
             $stmt = $this->prepare('DELETE FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?');
-            $stmt->bind_param('ii', $id, $this->userId);
-            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete snapshots failed'); }
+            $this->bind($stmt, 'ii', $id, $this->userId);
+            $this->execute($stmt, 'Delete snapshots failed');
             $stmt->close();
 
             $stmt = $this->prepare('DELETE FROM 202_attribution_exports WHERE model_id = ? AND user_id = ?');
-            $stmt->bind_param('ii', $id, $this->userId);
-            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete exports failed'); }
+            $this->bind($stmt, 'ii', $id, $this->userId);
+            $this->execute($stmt, 'Delete exports failed');
             $stmt->close();
 
             $stmt = $this->prepare('DELETE FROM 202_attribution_models WHERE model_id = ? AND user_id = ?');
-            $stmt->bind_param('ii', $id, $this->userId);
-            if (!$stmt->execute()) { $stmt->close(); throw new DatabaseException('Delete model failed'); }
+            $this->bind($stmt, 'ii', $id, $this->userId);
+            $this->execute($stmt, 'Delete model failed');
             $stmt->close();
 
             $this->db->commit();
@@ -220,11 +208,8 @@ class AttributionController
         $binds[] = $offset;
         $types .= 'i';
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Snapshots query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Snapshots query failed');
         $result = $stmt->get_result();
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -242,11 +227,8 @@ class AttributionController
         $this->getModel($modelId);
 
         $stmt = $this->prepare('SELECT export_id, user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, started_at, completed_at, file_path, webhook_url, created_at, updated_at FROM 202_attribution_exports WHERE model_id = ? AND user_id = ? ORDER BY export_id DESC');
-        $stmt->bind_param('ii', $modelId, $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Exports query failed');
-        }
+        $this->bind($stmt, 'ii', $modelId, $this->userId);
+        $this->execute($stmt, 'Exports query failed');
         $result = $stmt->get_result();
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -271,22 +253,16 @@ class AttributionController
         $status = 'queued';
 
         $stmt = $this->prepare('INSERT INTO 202_attribution_exports (user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        $stmt->bind_param('iisiiissiiis',
+        $this->bind($stmt, 'iisiiissiiis',
             $this->userId, $modelId, $scopeType, $scopeId, $startHour, $endHour, $format, $status, $now, $now, $now, $webhookUrl
         );
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Export schedule failed');
-        }
+        $this->execute($stmt, 'Export schedule failed');
         $exportId = $stmt->insert_id;
         $stmt->close();
 
         $stmt = $this->prepare('SELECT export_id, user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url FROM 202_attribution_exports WHERE export_id = ?');
-        $stmt->bind_param('i', $exportId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Query failed');
-        }
+        $this->bind($stmt, 'i', $exportId);
+        $this->execute($stmt, 'Query failed');
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -300,5 +276,27 @@ class AttributionController
             throw new DatabaseException('Prepare failed');
         }
         return $stmt;
+    }
+
+    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
+    {
+        $values = array_values($values);
+        $refs = [$stmt, $types];
+        foreach ($values as $index => $value) {
+            $refs[] = &$values[$index];
+        }
+
+        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+            $stmt->close();
+            throw new DatabaseException('Bind failed');
+        }
+    }
+
+    private function execute(\mysqli_stmt $stmt, string $message): void
+    {
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            throw new DatabaseException($message);
+        }
     }
 }
