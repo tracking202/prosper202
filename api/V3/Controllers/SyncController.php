@@ -14,8 +14,11 @@ class SyncController
 {
     private readonly SyncEngine $engine;
 
-    public function __construct(private readonly \mysqli $db, private readonly int $userId, private readonly ?ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
+    public function __construct(\mysqli $db, private readonly int $userId, private readonly ?ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
     {
+        if ($db->connect_errno !== 0) {
+            throw new DatabaseException('Database connection unavailable for sync controller');
+        }
         $this->engine = $engine ?? new SyncEngine($this->store);
     }
 

@@ -3,6 +3,9 @@ declare(strict_types=1);
 //include mysql settings
 include_once(__DIR__ . '/connect.php');
 include_once(__DIR__ . '/functions-install.php');
+if (!isset($db) || !($db instanceof mysqli)) {
+	_die('Database connection unavailable.');
+}
 
 // Initialize the success variable to false by default
 $success = false;
@@ -58,20 +61,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['user_pass'] = '<div class="error">You must type in your desired password</div>';
 	}
 
-	// Check if password verification field is empty
-	if (!isset($_POST['verify_user_pass']) || empty($_POST['verify_user_pass'])) {
-		$error['user_pass'] = isset($error['user_pass']) ? $error['user_pass'] . '<div class="error">You must verify your password</div>' : '<div class="error">You must verify your password</div>';
-	}
+		// Check if password verification field is empty
+		if (!isset($_POST['verify_user_pass']) || empty($_POST['verify_user_pass'])) {
+			$error['user_pass'] .= '<div class="error">You must verify your password</div>';
+		}
 
-	// Check password length only if password was provided
-	if (isset($_POST['user_pass']) && !empty($_POST['user_pass']) && (strlen((string) $_POST['user_pass']) < 6 || strlen((string) $_POST['user_pass']) > 35)) {
-		$error['user_pass'] = isset($error['user_pass']) ? $error['user_pass'] . '<div class="error">Your password must be at least 6 characters long</div>' : '<div class="error">Your password must be at least 6 characters long</div>';
-	}
+		// Check password length only if password was provided
+		if (isset($_POST['user_pass']) && !empty($_POST['user_pass']) && (strlen((string) $_POST['user_pass']) < 6 || strlen((string) $_POST['user_pass']) > 35)) {
+			$error['user_pass'] .= '<div class="error">Your password must be at least 6 characters long</div>';
+		}
 
-	// Check if passwords match only if both were provided
-	if (isset($_POST['user_pass']) && isset($_POST['verify_user_pass']) && $_POST['user_pass'] != $_POST['verify_user_pass']) {
-		$error['user_pass'] = isset($error['user_pass']) ? $error['user_pass'] . '<div class="error">Your passwords did not match, please try again</div>' : '<div class="error">Your passwords did not match, please try again</div>';
-	}
+		// Check if passwords match only if both were provided
+		if (isset($_POST['user_pass']) && isset($_POST['verify_user_pass']) && $_POST['user_pass'] != $_POST['verify_user_pass']) {
+			$error['user_pass'] .= '<div class="error">Your passwords did not match, please try again</div>';
+		}
 
 	//if no error occurred, let's create the user account
 	if (empty($error['user_email']) && empty($error['user_name']) && empty($error['user_pass'])) {
@@ -140,9 +143,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 
 			// Add null check before accessing array offset on line 120
-			if (isset($mysql['user_timezone']) && isset($hash)) {
-				registerDailyEmail('07', $mysql['user_timezone'], $hash);
-			}
+				if (isset($mysql['user_timezone'])) {
+					registerDailyEmail('07', $mysql['user_timezone'], $hash);
+				}
 
 			// create partitions after everything else is setup
 			$installer->install_database_partitions();

@@ -18,7 +18,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT country_id FROM 202_locations_country WHERE country_code = ?'
         );
-        $stmt->bind_param('s', $code);
+        $this->conn->bind($stmt, 's', [$code]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -28,7 +28,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_locations_country SET country_code = ?, country_name = ?'
         );
-        $stmt->bind_param('ss', $code, $name);
+        $this->conn->bind($stmt, 'ss', [$code, $name]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -38,7 +38,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT city_id FROM 202_locations_city WHERE city_name = ? AND main_country_id = ?'
         );
-        $stmt->bind_param('si', $name, $countryId);
+        $this->conn->bind($stmt, 'si', [$name, $countryId]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -48,7 +48,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_locations_city SET city_name = ?, main_country_id = ?'
         );
-        $stmt->bind_param('si', $name, $countryId);
+        $this->conn->bind($stmt, 'si', [$name, $countryId]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -58,7 +58,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT region_id FROM 202_locations_region WHERE region_name = ? AND main_country_id = ?'
         );
-        $stmt->bind_param('si', $name, $countryId);
+        $this->conn->bind($stmt, 'si', [$name, $countryId]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -68,7 +68,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_locations_region SET region_name = ?, main_country_id = ?'
         );
-        $stmt->bind_param('si', $name, $countryId);
+        $this->conn->bind($stmt, 'si', [$name, $countryId]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -78,7 +78,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT isp_id FROM 202_locations_isp WHERE isp_name = ?'
         );
-        $stmt->bind_param('s', $name);
+        $this->conn->bind($stmt, 's', [$name]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -88,7 +88,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_locations_isp SET isp_name = ?'
         );
-        $stmt->bind_param('s', $name);
+        $this->conn->bind($stmt, 's', [$name]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -109,12 +109,12 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
                 . 'INNER JOIN 202_ips ON (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) '
                 . 'WHERE 202_ips_v6.ip_address = ? ORDER BY 202_ips.ip_id DESC LIMIT 1'
             );
-            $stmt->bind_param('s', $encoded);
+            $this->conn->bind($stmt, 's', [$encoded]);
         } else {
             $stmt = $this->conn->prepareRead(
                 'SELECT ip_id FROM 202_ips WHERE ip_address = ?'
             );
-            $stmt->bind_param('s', $address);
+            $this->conn->bind($stmt, 's', [$address]);
         }
 
         $row = $this->conn->fetchOne($stmt);
@@ -137,7 +137,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host = ?'
         );
-        $stmt->bind_param('s', $host);
+        $this->conn->bind($stmt, 's', [$host]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -147,7 +147,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_site_domains SET site_domain_host = ?'
         );
-        $stmt->bind_param('s', $host);
+        $this->conn->bind($stmt, 's', [$host]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -163,7 +163,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT site_url_id FROM 202_site_urls WHERE site_domain_id = ? AND site_url_address = ? LIMIT 1'
         );
-        $stmt->bind_param('is', $domainId, $url);
+        $this->conn->bind($stmt, 'is', [$domainId, $url]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -173,7 +173,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_site_urls SET site_domain_id = ?, site_url_address = ?'
         );
-        $stmt->bind_param('is', $domainId, $url);
+        $this->conn->bind($stmt, 'is', [$domainId, $url]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -189,14 +189,14 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
             $stmt = $this->conn->prepareWrite(
                 'INSERT INTO 202_ips_v6 SET ip_address = ?'
             );
-            $stmt->bind_param('s', $encoded);
+            $this->conn->bind($stmt, 's', [$encoded]);
             $ipv6Id = $this->conn->executeInsert($stmt);
 
             $ipv6IdStr = (string) $ipv6Id;
             $stmt = $this->conn->prepareWrite(
                 'INSERT INTO 202_ips SET ip_address = ?'
             );
-            $stmt->bind_param('s', $ipv6IdStr);
+            $this->conn->bind($stmt, 's', [$ipv6IdStr]);
 
             return $this->conn->executeInsert($stmt);
         }
@@ -204,7 +204,7 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_ips SET ip_address = ?'
         );
-        $stmt->bind_param('s', $address);
+        $this->conn->bind($stmt, 's', [$address]);
 
         return $this->conn->executeInsert($stmt);
     }

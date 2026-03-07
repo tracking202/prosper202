@@ -32,6 +32,11 @@ final class Bootstrap
 
         require_once $configFile;
 
+        $authHelpers = $root . '/202-config/functions-auth.php';
+        if (file_exists($authHelpers)) {
+            require_once $authHelpers;
+        }
+
         $autoload = $root . '/vendor/autoload.php';
         if (file_exists($autoload)) {
             require_once $autoload;

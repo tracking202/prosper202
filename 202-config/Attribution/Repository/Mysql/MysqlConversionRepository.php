@@ -57,16 +57,8 @@ SQL;
         $stmt = $this->conn->prepareRead($sql);
 
         $lastId = $afterConversionId ?? 0;
-        $stmt->bind_param('iiiii', $userId, $startTime, $endTime, $lastId, $limit);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $conversionRows = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $conversionRows[] = $row;
-            }
-        }
-        $stmt->close();
+        $this->conn->bind($stmt, 'iiiii', [$userId, $startTime, $endTime, $lastId, $limit]);
+        $conversionRows = $this->conn->fetchAll($stmt);
 
         $conversionIds = array_map(
             static fn (array $row): int => (int) $row['conv_id'],

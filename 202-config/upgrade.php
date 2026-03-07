@@ -8,6 +8,18 @@ include_once(__DIR__ . '/connect.php');
 include_once(__DIR__ . '/class-dataengine.php');
 include_once(__DIR__ . '/functions-upgrade.php');
 
+$version = defined('PROSPER202_VERSION') ? PROSPER202_VERSION : PROSPER202::prosper202_version();
+if (!isset($db) || !($db instanceof mysqli)) {
+	_die('Database connection unavailable.');
+}
+$partition_support = 0;
+$partitionSql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS LIMIT 1";
+$partitionRow = memcache_mysql_fetch_assoc($partitionSql);
+if (is_array($partitionRow) && (int)($partitionRow['partition_support'] ?? 0) > 0) {
+	$partition_support = 1;
+}
+$memcacheInstalled = isset($memcacheInstalled) ? (bool)$memcacheInstalled : false;
+
 //check to see if this is already installed, if so don't do anything
 if (upgrade_needed() == false) {
 	header('location: ' . get_absolute_url() . '202-login.php');
@@ -85,38 +97,38 @@ if (!empty($version_error)) {
 			<tbody>
 				<tr>
 					<td>PHP >= 8.3</td>
-					<td><span class="label label-<?php if ($version_error['phpversion']) {
-														echo "important";
-													} else {
-														echo "primary";
-													} ?>" style="font-size: 100%;"><?php echo phpversion(); ?></span></td>
-				</tr>
-				<tr>
-					<td>MySQL >= 5.6</td>
-					<td><span class="label label-<?php if ($version_error['mysqlversion']) {
-														echo "important";
-													} else {
-														echo "primary";
-													} ?>" style="font-size: 100%;"><?php echo $html['mysqlversion']; ?></span></td>
-				</tr>
-				<tr>
-					<td>CURL</td>
-					<td><span class="label label-<?php if ($version_error['curl']) {
-														echo "important";
-													} else {
-														echo "primary";
-													} ?>" style="font-size: 100%;"><?php if ($version_error['curl']) echo $version_error['curl'];
-																					else echo "Installed"; ?></span></td>
-				</tr>
-				<tr>
-					<td>xml_parser_create()</td>
-					<td><span class="label label-<?php if ($version_error['xml_parser_create']) {
-														echo "important";
-													} else {
-														echo "primary";
-													} ?>" style="font-size: 100%;"><?php if ($version_error['xml_parser_create']) echo $version_error['xml_parser_create'];
-																					else echo "Installed"; ?></span></td>
-				</tr>
+					<td><span class="label label-<?php if (!empty($version_error['phpversion'])) {
+															echo "important";
+														} else {
+															echo "primary";
+														} ?>" style="font-size: 100%;"><?php echo phpversion(); ?></span></td>
+					</tr>
+					<tr>
+						<td>MySQL >= 5.6</td>
+						<td><span class="label label-<?php if (!empty($version_error['mysqlversion'])) {
+															echo "important";
+														} else {
+															echo "primary";
+														} ?>" style="font-size: 100%;"><?php echo $html['mysqlversion']; ?></span></td>
+					</tr>
+					<tr>
+						<td>CURL</td>
+						<td><span class="label label-<?php if (!empty($version_error['curl'])) {
+															echo "important";
+														} else {
+															echo "primary";
+														} ?>" style="font-size: 100%;"><?php if (!empty($version_error['curl'])) echo $version_error['curl'];
+																						else echo "Installed"; ?></span></td>
+					</tr>
+					<tr>
+						<td>xml_parser_create()</td>
+						<td><span class="label label-<?php if (!empty($version_error['xml_parser_create'])) {
+															echo "important";
+														} else {
+															echo "primary";
+														} ?>" style="font-size: 100%;"><?php if (!empty($version_error['xml_parser_create'])) echo $version_error['xml_parser_create'];
+																						else echo "Installed"; ?></span></td>
+					</tr>
 				<tr>
 					<td>MySQL Partitioning</td>
 					<td><span class="label label-<?php if ($partition_support == 0) {
@@ -184,7 +196,8 @@ if (!empty($version_error)) {
 
 
 
-	if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+		$time_from = '';
+		if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		// Initialize upgrade result variables
 		$error = false;
@@ -254,8 +267,7 @@ if (!empty($version_error)) {
 					<small>Changelogs:</small>
 					<div class="panel-group" id="changelog_accordion" style="margin-top:10px;">
 						<?php $change_logs = changelog();
-
-						if (isset($change_logs) && $change_logs != '') {
+						if (!empty($change_logs)) {
 							foreach ($change_logs as $logs) {
 								if (version_compare(PROSPER202::prosper202_version(), $logs['version'], '<')) { ?>
 									<div class="panel panel-default">

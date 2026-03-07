@@ -99,6 +99,8 @@ final readonly class ExportJob
      */
     public function toDatabaseRow(): array
     {
+        $webhookHeaders = $this->webhook !== null ? $this->webhook->headers : [];
+
         return [
             'export_id' => $this->exportId,
             'user_id' => $this->userId,
@@ -112,7 +114,7 @@ final readonly class ExportJob
             'options' => $this->encodeOptions(),
             'webhook_url' => $this->webhook?->url,
             'webhook_secret' => $this->webhook?->secret,
-            'webhook_headers' => $this->encodeHeaders($this->webhook?->headers ?? []),
+            'webhook_headers' => $this->encodeHeaders($webhookHeaders),
             'file_path' => $this->filePath,
             'rows_exported' => $this->rowsExported,
             'queued_at' => $this->queuedAt,

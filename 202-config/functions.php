@@ -64,15 +64,6 @@ function _die($message): never
  * @param \mysqli|string $db_or_sql Database connection or SQL query
  * @param string|null $sql SQL query (if first param is db connection)
  * @return \mysqli_result|bool
- *
- * @overload
- * @param string $sql
- * @return \mysqli_result|bool
- *
- * @overload
- * @param \mysqli $db
- * @param string $sql
- * @return \mysqli_result|bool
  */
 function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
 {
@@ -352,12 +343,12 @@ function info_top(): void
 						$versionCount = count($decimals);
 						$lastDecimal = substr($latest_version, strrpos($latest_version, '.') + 1);
 
-						// Calculate version
-						if ($lastDecimal == '0') {
-							$calcVersion = $decimals[0] . '.' . ($decimals[1] - 1) . '.9';
-						} else {
-							$calcVersion = $decimals[0] . '.' . $decimals[1] . '.' . ($lastDecimal - 1);
-						}
+							// Calculate version
+							if ($lastDecimal == '0') {
+								$calcVersion = $decimals[0] . '.' . ((int)$decimals[1] - 1) . '.9';
+							} else {
+								$calcVersion = $decimals[0] . '.' . $decimals[1] . '.' . ((int)$lastDecimal - 1);
+							}
 
 						if ($calcVersion == $version) {
 							//Auto upgrade without user confirmation
@@ -384,7 +375,7 @@ function info_top(): void
 													}
 												} else {
 													$contents = $zip->getFromIndex($i);
-													$file_ext = array_pop(explode(".", $thisFileName));
+														$file_ext = pathinfo($thisFileName, PATHINFO_EXTENSION);
 
 													if ($updateThis = @fopen(substr(__DIR__, 0, -10) . '/' . $thisFileName, 'wb')) {
 														fwrite($updateThis, $contents);
@@ -396,10 +387,11 @@ function info_top(): void
 												}
 											}
 
-											$zip->close();
+												$zip->close();
+												$FilesUpdated = true;
+											}
 										}
-									}
-								} else {
+									} else {
 									$FilesUpdated = false;
 									$log .= "Failed to download update file. ";
 								}
@@ -449,8 +441,11 @@ function info_top(): void
 	function check_premium_update()
 	{
 		global $version;
-		$json = @getData('https://my.tracking202.com/api/v2/premium-p202/version');
+		$json = @getData('https://my.tracking202.com/api/v2/premium-p202/version', 5, 3);
 		$array = json_decode((string) $json, true);
+		if (!is_array($array) || !isset($array['version'])) {
+			return 0;
+		}
 		if ((version_compare($version, $array['version']) == '-1')) {
 			if (!is_writable(__DIR__ . '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
 				$_SESSION['auto_upgraded_not_possible'] = true;
@@ -552,7 +547,7 @@ function info_top(): void
 		if ($hour == 0 and $minutes == 0) {
 			$sign = ' ';
 		}
-		return $sign . str_pad($hour, 2, '0', STR_PAD_LEFT) . ':' . str_pad($minutes, 2, '0');
+		return $sign . str_pad((string)$hour, 2, '0', STR_PAD_LEFT) . ':' . str_pad((string)$minutes, 2, '0');
 	}
 
 	function getCurlValue($filename, $contentType, $postname)
@@ -595,7 +590,7 @@ function info_top(): void
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/delete-ad/' . $user . '/' . $key);
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_POST, 1);
+		curl_setopt($ch, CURLOPT_POST, true);
 		curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
 		$results = curl_exec($ch);
 		curl_close($ch);
@@ -648,9 +643,9 @@ function info_top(): void
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/ads/wallpapers/extern');
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_POST, 1);
-		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-		curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_POST, true);
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+		curl_setopt($ch, CURLOPT_TIMEOUT, 5);
 		$result = curl_exec($ch);
 		curl_close($ch);
 

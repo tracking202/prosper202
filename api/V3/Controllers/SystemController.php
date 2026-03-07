@@ -74,11 +74,8 @@ class SystemController
             $stmt = $this->prepare(
                 "SELECT TABLE_ROWS as cnt FROM information_schema.TABLES WHERE table_schema = ? AND table_name = ?"
             );
-            $stmt->bind_param('ss', $dbName, $table);
-            if (!$stmt->execute()) {
-                $stmt->close();
-                throw new DatabaseException('Stats query failed');
-            }
+            $this->bind($stmt, 'ss', $dbName, $table);
+            $this->execute($stmt, 'Stats query failed');
             $result = $stmt->get_result();
             if ($result === false) {
                 $stmt->close();
@@ -135,11 +132,8 @@ class SystemController
             'SELECT mysql_error_id, mysql_error_time, mysql_error_text AS mysql_error_message, mysql_error_sql '
             . 'FROM 202_mysql_errors ORDER BY mysql_error_id DESC LIMIT ?'
         );
-        $stmt->bind_param('i', $limit);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Errors query failed');
-        }
+        $this->bind($stmt, 'i', $limit);
+        $this->execute($stmt, 'Errors query failed');
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
@@ -259,6 +253,27 @@ class SystemController
             throw new DatabaseException('Prepare failed');
         }
         return $stmt;
+    }
+
+    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
+    {
+        $values = array_values($values);
+        $refs = [$stmt, $types];
+        foreach ($values as $index => $value) {
+            $refs[] = &$values[$index];
+        }
+        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+            $stmt->close();
+            throw new DatabaseException('Bind failed');
+        }
+    }
+
+    private function execute(\mysqli_stmt $stmt, string $message): void
+    {
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            throw new DatabaseException($message);
+        }
     }
 
     private function intEnv(string $name, int $default): int

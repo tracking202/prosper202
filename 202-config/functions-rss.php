@@ -33,8 +33,10 @@ class MagpieRSS
 	public $inimage 			= false;
 	public $current_field		= '';
 	public $current_namespace	= false;
-
-	//var $ERROR = "";
+	public $ERROR = '';
+	public $etag = '';
+	public $last_modified = '';
+	public $from_cache = 0;
 
 	public $_CONTENT_CONSTRUCTS = ['content', 'summary', 'info', 'title', 'tagline', 'copyright'];
 
@@ -154,16 +156,13 @@ class MagpieRSS
 		}
 
 		// if inside an Atom content construct (e.g. content or summary) field treat tags as text
-		elseif ($this->feed_type == ATOM and $this->incontent) {
-			// if tags are inlined, then flatten
-			$attrs_str = implode(
-				' ',
-				array_map(
-					map_attrs(...),
-					array_keys($attrs),
-					array_values($attrs)
-				)
-			);
+			elseif ($this->feed_type == ATOM and $this->incontent) {
+				// if tags are inlined, then flatten
+				$attrsParts = [];
+				foreach ($attrs as $attrKey => $attrVal) {
+					$attrsParts[] = $this->map_attrs($attrKey, $attrVal);
+				}
+				$attrs_str = implode(' ', $attrsParts);
 
 			$this->append_content("<$element $attrs_str>");
 
@@ -358,17 +357,17 @@ class MagpieRSS
 
 	function error($errormsg, $lvl = E_USER_WARNING)
 	{
-		// append PHP's error message if available
-		$lastError = error_get_last();
-		if ($lastError !== null) {
-			$errormsg .= ' (' . $lastError['message'] . ')';
+			// append PHP's error message if available
+			$lastError = error_get_last();
+			if ($lastError !== null) {
+				$errormsg .= ' (' . $lastError['message'] . ')';
+			}
+			if (magpie_debug_level() > 0) {
+				trigger_error($errormsg, $lvl);
+			} else {
+				error_log($errormsg, 0);
+			}
 		}
-		if (MAGPIE_DEBUG) {
-			trigger_error($errormsg, $lvl);
-		} else {
-			error_log($errormsg, 0);
-		}
-	}
 }
 require_once(__DIR__ . '/class-snoopy.php');
 
@@ -384,7 +383,7 @@ if (!function_exists('fetch_rss')) :
 		}
 
 		// if cache is disabled
-		if (!MAGPIE_CACHE_ON) {
+			if (!magpie_cache_enabled()) {
 			// fetch file, and parse it
 			$resp = _fetch_remote_file($url);
 			if (is_success($resp->status)) {
@@ -404,9 +403,9 @@ if (!function_exists('fetch_rss')) :
 
 			$cache = new RSSCache(MAGPIE_CACHE_DIR, MAGPIE_CACHE_AGE);
 
-			if (MAGPIE_DEBUG and $cache->ERROR) {
-				debug($cache->ERROR, E_USER_WARNING);
-			}
+				if (magpie_debug_level() > 0 && $cache->ERROR) {
+					debug($cache->ERROR, E_USER_WARNING);
+				}
 
 
 			$cache_status 	 = 0;		// response of check_cache
@@ -424,9 +423,9 @@ if (!function_exists('fetch_rss')) :
 				$rss = $cache->get($url);
 				if (isset($rss) and $rss) {
 					$rss->from_cache = 1;
-					if (MAGPIE_DEBUG > 1) {
-						debug("MagpieRSS: Cache HIT", E_USER_NOTICE);
-					}
+						if (magpie_debug_level() > 1) {
+							debug("MagpieRSS: Cache HIT", E_USER_NOTICE);
+						}
 					return $rss;
 				}
 			}
@@ -447,18 +446,18 @@ if (!function_exists('fetch_rss')) :
 			if (isset($resp) and $resp) {
 				if ($resp->status == '304') {
 					// we have the most current copy
-					if (MAGPIE_DEBUG > 1) {
-						debug("Got 304 for $url");
-					}
+						if (magpie_debug_level() > 1) {
+							debug("Got 304 for $url");
+						}
 					// reset cache on 304 (at minutillo insistent prodding)
 					$cache->set($url, $rss);
 					return $rss;
 				} elseif (is_success($resp->status)) {
 					$rss = _response_to_rss($resp);
 					if ($rss) {
-						if (MAGPIE_DEBUG > 1) {
-							debug("Fetch successful");
-						}
+							if (magpie_debug_level() > 1) {
+								debug("Fetch successful");
+							}
 						// add object to cache
 						$cache->set($url, $rss);
 						return $rss;
@@ -482,9 +481,9 @@ if (!function_exists('fetch_rss')) :
 
 			// attempt to return cached object
 			if ($rss) {
-				if (MAGPIE_DEBUG) {
-					debug("Returning STALE object for $url");
-				}
+					if (magpie_debug_level() > 0) {
+						debug("Returning STALE object for $url");
+					}
 				return $rss;
 			}
 
@@ -502,7 +501,6 @@ function _fetch_remote_file($url, $headers = "")
 	$client = new Snoopy();
 	$client->agent = MAGPIE_USER_AGENT;
 	$client->read_timeout = MAGPIE_FETCH_TIME_OUT;
-	$client->use_gzip = MAGPIE_USE_GZIP;
 	if (is_array($headers)) {
 		$client->rawheaders = $headers;
 	}
@@ -516,7 +514,7 @@ function _response_to_rss($resp)
 	$rss = new MagpieRSS($resp->results);
 
 	// if RSS parsed successfully
-	if ($rss and !$rss->ERROR) {
+	if ($rss->ERROR === '') {
 
 		// find Etag, and Last-Modified
 		foreach ($resp->headers as $h) {
@@ -542,10 +540,8 @@ function _response_to_rss($resp)
 	else {
 		$errormsg = "Failed to parse RSS file.";
 
-		if ($rss) {
 			$errormsg .= " (" . $rss->ERROR . ")";
-		}
-		// error($errormsg);
+			// error($errormsg);
 
 		return false;
 	} // end if ($rss and !$rss->error)
@@ -587,11 +583,11 @@ function init()
 	if (!defined('MAGPIE_USER_AGENT')) {
 		$ua = $_SERVER['HTTP_HOST']; //'WordPress/' . $GLOBALS['wp_version'];
 
-		if (MAGPIE_CACHE_ON) {
-			$ua .= ')';
-		} else {
-			$ua .= '; No cache)';
-		}
+			if (magpie_cache_enabled()) {
+				$ua .= ')';
+			} else {
+				$ua .= '; No cache)';
+			}
 
 		define('MAGPIE_USER_AGENT', $ua);
 	}
@@ -769,17 +765,37 @@ class RSSCache
 			$errormsg .= ' (' . $lastError['message'] . ')';
 		}
 		$this->ERROR = $errormsg;
-		if (MAGPIE_DEBUG) {
-			trigger_error($errormsg, $lvl);
-		} else {
-			error_log($errormsg, 0);
+			if (magpie_debug_level() > 0) {
+				trigger_error($errormsg, $lvl);
+			} else {
+				error_log($errormsg, 0);
+			}
+		}
+		function debug($debugmsg, $lvl = E_USER_NOTICE)
+		{
+			if (magpie_debug_level() > 0) {
+				$this->error("MagpieRSS [debug] $debugmsg", $lvl);
+			}
 		}
 	}
-	function debug($debugmsg, $lvl = E_USER_NOTICE)
+
+if (!function_exists('magpie_cache_enabled')) {
+	function magpie_cache_enabled(): bool
 	{
-		if (MAGPIE_DEBUG) {
-			$this->error("MagpieRSS [debug] $debugmsg", $lvl);
+		if (!defined('MAGPIE_CACHE_ON')) {
+			return true;
 		}
+		return (int) constant('MAGPIE_CACHE_ON') === 1;
+	}
+}
+
+if (!function_exists('magpie_debug_level')) {
+	function magpie_debug_level(): int
+	{
+		if (!defined('MAGPIE_DEBUG')) {
+			return 0;
+		}
+		return (int) constant('MAGPIE_DEBUG');
 	}
 }
 
@@ -790,13 +806,13 @@ if (!function_exists('parse_w3cdtf')) :
 		# regex to match wc3dtf
 		$pat = "/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(:(\d{2}))?(?:([-+])(\d{2}):?(\d{2})|(Z))?/";
 
-		if (preg_match($pat, (string) $date_str, $match)) {
+			if (preg_match($pat, (string) $date_str, $match)) {
 			[$year, $month, $day, $hours, $minutes, $seconds] =
 				[$match[1], $match[2], $match[3], $match[4], $match[5], $match[7]];			# calc epoch for current date assuming GMT
 			$epoch = gmmktime((int)$hours, (int)$minutes, (int)$seconds, (int)$month, (int)$day, (int)$year);
 
 			$offset = 0;
-			if ($match[11] == 'Z') {
+				if (($match[11] ?? '') === 'Z') {
 				# zulu time, aka GMT
 			} else {
 				[$tz_mod, $tz_hour, $tz_min] =

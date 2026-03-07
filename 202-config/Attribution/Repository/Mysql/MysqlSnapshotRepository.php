@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Prosper202\Attribution\Repository\Mysql;
 
 use mysqli;
-use mysqli_stmt;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Snapshot;
@@ -108,8 +107,7 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
             if ($scopeId === null) {
                 $sql = 'INSERT INTO 202_attribution_snapshots (model_id, user_id, scope_type, scope_id, date_hour, lookback_start, lookback_end, attributed_clicks, attributed_conversions, attributed_revenue, attributed_cost, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)';
                 $stmt = $this->conn->prepareWrite($sql);
-                $stmt->bind_param(
-                    'iisiiiiiddi',
+                $this->conn->bind($stmt, 'iisiiiiiddi', [
                     $modelId,
                     $userId,
                     $scopeType,
@@ -120,13 +118,12 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
                     $attributedConversions,
                     $attributedRevenue,
                     $attributedCost,
-                    $createdAt
-                );
+                    $createdAt,
+                ]);
             } else {
                 $sql = 'INSERT INTO 202_attribution_snapshots (model_id, user_id, scope_type, scope_id, date_hour, lookback_start, lookback_end, attributed_clicks, attributed_conversions, attributed_revenue, attributed_cost, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
                 $stmt = $this->conn->prepareWrite($sql);
-                $stmt->bind_param(
-                    'iisiiiiiiddi',
+                $this->conn->bind($stmt, 'iisiiiiiiddi', [
                     $modelId,
                     $userId,
                     $scopeType,
@@ -138,8 +135,8 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
                     $attributedConversions,
                     $attributedRevenue,
                     $attributedCost,
-                    $createdAt
-                );
+                    $createdAt,
+                ]);
             }
             $insertId = $this->conn->executeInsert($stmt);
 
@@ -150,8 +147,7 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
         if ($scopeId === null) {
             $sql = 'UPDATE 202_attribution_snapshots SET model_id = ?, user_id = ?, scope_type = ?, scope_id = NULL, date_hour = ?, lookback_start = ?, lookback_end = ?, attributed_clicks = ?, attributed_conversions = ?, attributed_revenue = ?, attributed_cost = ?, created_at = ? WHERE snapshot_id = ? LIMIT 1';
             $stmt = $this->conn->prepareWrite($sql);
-            $stmt->bind_param(
-                'iisiiiiiddii',
+            $this->conn->bind($stmt, 'iisiiiiiddii', [
                 $modelId,
                 $userId,
                 $scopeType,
@@ -163,13 +159,12 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
                 $attributedRevenue,
                 $attributedCost,
                 $createdAt,
-                $snapshotId
-            );
+                $snapshotId,
+            ]);
         } else {
             $sql = 'UPDATE 202_attribution_snapshots SET model_id = ?, user_id = ?, scope_type = ?, scope_id = ?, date_hour = ?, lookback_start = ?, lookback_end = ?, attributed_clicks = ?, attributed_conversions = ?, attributed_revenue = ?, attributed_cost = ?, created_at = ? WHERE snapshot_id = ? LIMIT 1';
             $stmt = $this->conn->prepareWrite($sql);
-            $stmt->bind_param(
-                'iisiiiiiiddii',
+            $this->conn->bind($stmt, 'iisiiiiiiddii', [
                 $modelId,
                 $userId,
                 $scopeType,
@@ -182,8 +177,8 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
                 $attributedRevenue,
                 $attributedCost,
                 $createdAt,
-                $snapshotId
-            );
+                $snapshotId,
+            ]);
         }
         $this->conn->execute($stmt);
         $stmt->close();
@@ -195,7 +190,7 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
     {
         $sql = 'DELETE FROM 202_attribution_snapshots WHERE created_at < ?';
         $stmt = $this->conn->prepareWrite($sql);
-        $stmt->bind_param('i', $timestamp);
+        $this->conn->bind($stmt, 'i', [$timestamp]);
 
         return $this->conn->executeUpdate($stmt);
     }
@@ -204,11 +199,8 @@ final readonly class MysqlSnapshotRepository implements SnapshotRepositoryInterf
     {
         $sql = 'SELECT * FROM 202_attribution_snapshots WHERE snapshot_id = ? LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);
-        $stmt->bind_param('i', $snapshotId);
-        $this->conn->execute($stmt);
-        $result = $stmt->get_result();
-        $row = $result ? $result->fetch_assoc() : null;
-        $stmt->close();
+        $this->conn->bind($stmt, 'i', [$snapshotId]);
+        $row = $this->conn->fetchOne($stmt);
 
         if (!$row) {
             throw new RuntimeException('Unable to load attribution snapshot #' . $snapshotId);

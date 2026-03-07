@@ -22,7 +22,7 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT browser_id FROM 202_browsers WHERE browser_name = ?'
         );
-        $stmt->bind_param('s', $name);
+        $this->conn->bind($stmt, 's', [$name]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -32,7 +32,7 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_browsers SET browser_name = ?'
         );
-        $stmt->bind_param('s', $name);
+        $this->conn->bind($stmt, 's', [$name]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -46,7 +46,7 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT platform_id FROM 202_platforms WHERE platform_name = ?'
         );
-        $stmt->bind_param('s', $name);
+        $this->conn->bind($stmt, 's', [$name]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -56,7 +56,7 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_platforms SET platform_name = ?'
         );
-        $stmt->bind_param('s', $name);
+        $this->conn->bind($stmt, 's', [$name]);
 
         return $this->conn->executeInsert($stmt);
     }
@@ -70,7 +70,7 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
         $stmt = $this->conn->prepareRead(
             'SELECT device_id FROM 202_devices WHERE device_name = ?'
         );
-        $stmt->bind_param('s', $name);
+        $this->conn->bind($stmt, 's', [$name]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row !== null) {
@@ -80,7 +80,7 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_devices SET device_name = ?'
         );
-        $stmt->bind_param('s', $name);
+        $this->conn->bind($stmt, 's', [$name]);
 
         return $this->conn->executeInsert($stmt);
     }

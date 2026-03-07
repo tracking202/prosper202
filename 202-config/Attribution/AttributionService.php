@@ -430,7 +430,7 @@ final readonly class AttributionService
     private function slugify(string $value): string
     {
         $slug = strtolower(trim($value));
-        $slug = preg_replace('/[^a-z0-9]+/i', '-', $slug ?? '');
+        $slug = preg_replace('/[^a-z0-9]+/i', '-', $slug);
         $slug = trim((string) $slug, '-');
         if ($slug === '') {
             $slug = 'model-' . time();
