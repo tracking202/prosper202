@@ -134,6 +134,21 @@ final class AttributionApiTest extends TestCase
         $this->assertSame(1, $decoded['data']['user_id']);
     }
 
+    public function testUpdateModelIgnoresBodyUserIdOverride(): void
+    {
+        [$status, $payload] = $this->performPatch('/attribution/models/1', [
+            'user_id' => 999,
+            'name' => 'Patched By Attacker',
+        ]);
+
+        $this->assertSame(200, $status);
+
+        $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertFalse($decoded['error']);
+        $this->assertSame(1, $decoded['data']['user_id']);
+        $this->assertSame('Patched By Attacker', $decoded['data']['name']);
+    }
+
     public function testScheduleExportIgnoresBodyUserIdOverride(): void
     {
         $now = time();
@@ -150,6 +165,7 @@ final class AttributionApiTest extends TestCase
         $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
         $this->assertFalse($decoded['error']);
         $this->assertNotEmpty($decoded['data']);
+        $this->assertCount(1, $this->exportRepository->jobs);
 
         $job = array_values($this->exportRepository->jobs)[0];
         $this->assertSame(1, $job->userId);
@@ -186,6 +202,29 @@ final class AttributionApiTest extends TestCase
     {
         Environment::mock([
             'REQUEST_METHOD' => 'POST',
+            'SCRIPT_NAME' => '/api/v2/index.php',
+            'PATH_INFO' => $path,
+            'CONTENT_TYPE' => 'application/json',
+            'slim.input' => json_encode($payload, JSON_THROW_ON_ERROR),
+        ]);
+
+        $app = create_attribution_app($this->service);
+
+        ob_start();
+        $app->run();
+        $body = (string) ob_get_clean();
+
+        return [$app->response()->getStatus(), $body];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array{int,string}
+     */
+    private function performPatch(string $path, array $payload): array
+    {
+        Environment::mock([
+            'REQUEST_METHOD' => 'PATCH',
             'SCRIPT_NAME' => '/api/v2/index.php',
             'PATH_INFO' => $path,
             'CONTENT_TYPE' => 'application/json',
