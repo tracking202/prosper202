@@ -436,6 +436,10 @@ function info_top(): void
 
 											for ($i = 0; $i < $zip->numFiles; $i++) {
 												$thisFileName = $zip->getNameIndex($i);
+												if ($thisFileName === false) {
+													$log .= 'Failed to read entry name at index ' . $i . '. ';
+													continue;
+												}
 
 												if (str_ends_with($thisFileName, '/')) {
 													$targetDirectory = resolve_update_target_path($basePath, $thisFileName, true);
@@ -461,7 +465,8 @@ function info_top(): void
 															continue;
 														}
 														$resolvedFilePath = realpath($targetFile);
-														if ($resolvedFilePath === false || strpos($resolvedFilePath, rtrim($basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0) {
+														$resolvedBase = rtrim($basePath, DIRECTORY_SEPARATOR);
+														if ($resolvedFilePath === false || ($resolvedFilePath !== $resolvedBase && strpos($resolvedFilePath, $resolvedBase . DIRECTORY_SEPARATOR) !== 0)) {
 															$log .= 'Skipped unsafe update file path: ' . $thisFileName . '. ';
 															continue;
 														}
