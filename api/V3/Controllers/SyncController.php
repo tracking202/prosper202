@@ -391,7 +391,9 @@ class SyncController
             $this->store->saveJob($job);
             $this->store->appendJobEvent($jobId, 'error', 'Job execution error', ['error' => $e->getMessage()]);
         } finally {
-            $releaseLock();
+            if (is_callable($releaseLock)) {
+                $releaseLock();
+            }
         }
 
         $saved = $this->store->getJob($jobId);

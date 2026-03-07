@@ -1716,9 +1716,8 @@ class UPGRADE
             $result = _mysqli_query($sql);
 
             $de = new DataEngine();
-            $deClass = get_class($de);
-            if (method_exists($deClass, 'getSummary')) {
-                // Legacy DataEngine variants may expose this method.
+            if (method_exists($de, 'getSummary')) {
+                $de->getSummary($time_from);
             }
 
             $sql = "CREATE TABLE `202_rotator_rules_redirects` (
