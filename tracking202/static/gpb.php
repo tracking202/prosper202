@@ -214,7 +214,7 @@ if($mysql['ppc_account_id']){
         	foreach($pixel_urls as $pixel_url){
 			  if(!empty($pixel_url)) {
 			    $pixel_url=replaceTokens($pixel_url,$tokens);
-			    getUrl($pixel_url, 'GET', 10, [], [], 'Mozilla/5.0 Postback202-Bot v1.8', 5);
+			    getUrl($pixel_url, 'GET', 10, [], [], P202_POSTBACK_USER_AGENT, 5);
 			  }
 			}
 			header('HTTP/1.1 202 Accepted', true, 202);

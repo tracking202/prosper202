@@ -737,9 +737,8 @@ class PLATFORMS
 
         if ($ua_string != '') {
             $detect->setUserAgent($ua_string);
-            $ua = $detect->getUserAgent();
-        } else
-            $ua = $detect->getUserAgent();
+        }
+        $ua = $detect->getUserAgent();
 
         // If Cache working
         if ($memcacheWorking) {
@@ -779,9 +778,6 @@ class PLATFORMS
         $parser = Parser::create();
         $userAgent = $detect->getUserAgent() ?: '';
         $result = $parser->parse($userAgent);
-
-        // Initialize type to default desktop
-        $type = "1";
 
         // Initialize type with default value
         $type = "1"; // Default to Desktop
