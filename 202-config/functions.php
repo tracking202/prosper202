@@ -124,23 +124,22 @@ if (!function_exists('array_any')) {
 
 function is_installed(): bool
 {
-	// Skip the check if we're accessing the installer or API key setup
-	if (
-		str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php') ||
-		str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')
-	) {
+	// Skip the check only for API key setup
+	if (str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')) {
 		return false;
 	}
 
 	$database = DB::getInstance();
 	$db = $database->getConnection();
 
-	//if a user account already exists, this application is installed 
+	//if a user account already exists, this application is installed
 	try {
-		$user_sql = "SELECT COUNT(*) FROM 202_users";
+		$user_sql = "SELECT COUNT(*) AS cnt FROM 202_users";
 		$user_result = $db->query($user_sql);
 		if ($user_result) {
-			return true;
+			$row = $user_result->fetch_assoc();
+			$user_result->free();
+			return ((int) $row['cnt']) > 0;
 		}
 	} catch (mysqli_sql_exception) {
 		// Table doesn't exist yet, return false
