@@ -309,6 +309,12 @@ function info_top(): void
 			return false;
 		}
 
+		// Directory entries from ZIP archives end with '/' — trim before segment validation
+		$normalizedEntry = rtrim($normalizedEntry, '/');
+		if ($normalizedEntry === '') {
+			return false;
+		}
+
 		$segments = explode('/', $normalizedEntry);
 		foreach ($segments as $segment) {
 			if ($segment === '' || $segment === '.' || $segment === '..') {
@@ -323,8 +329,15 @@ function info_top(): void
 			return false;
 		}
 
+		$resolvedBasePath = rtrim($basePath, DIRECTORY_SEPARATOR);
 		$resolvedDirectory = realpath($targetDirectory);
-		if ($resolvedDirectory === false || strpos($resolvedDirectory, $basePath) !== 0) {
+		if (
+			$resolvedDirectory === false
+			|| (
+				$resolvedDirectory !== $resolvedBasePath
+				&& strpos($resolvedDirectory, $resolvedBasePath . DIRECTORY_SEPARATOR) !== 0
+			)
+		) {
 			return false;
 		}
 
@@ -386,6 +399,7 @@ function info_top(): void
 							|| ($parsedLink['host'] ?? '') !== 'my.tracking202.com'
 						) {
 							$log .= 'Auto update rejected due to untrusted update source. ';
+							$_SESSION['upgrade_error_log'] = $log;
 							return true;
 						}
 
@@ -430,10 +444,27 @@ function info_top(): void
 													}
 												} else {
 													$contents = $zip->getFromIndex($i);
+													if ($contents === false) {
+														$log .= 'Failed to read update file contents: ' . $thisFileName . '. ';
+														continue;
+													}
 													$targetFile = resolve_update_target_path($basePath, $thisFileName);
 													if ($targetFile === false) {
 														$log .= 'Skipped invalid update file path: ' . $thisFileName . '. ';
 														continue;
+													}
+
+													// Prevent writing through symlinks or outside the base path
+													if (file_exists($targetFile)) {
+														if (is_link($targetFile)) {
+															$log .= 'Skipped symlink during update: ' . $thisFileName . '. ';
+															continue;
+														}
+														$resolvedFilePath = realpath($targetFile);
+														if ($resolvedFilePath === false || strpos($resolvedFilePath, rtrim($basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0) {
+															$log .= 'Skipped unsafe update file path: ' . $thisFileName . '. ';
+															continue;
+														}
 													}
 
 													if ($updateThis = @fopen($targetFile, 'wb')) {
