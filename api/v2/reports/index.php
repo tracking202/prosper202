@@ -2,14 +2,21 @@
 declare(strict_types=1);
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config.php'); 
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');
-include_once($_SERVER['DOCUMENT_ROOT'] . '/api/v1/functions.php');
+include_once($_SERVER['DOCUMENT_ROOT'] . '/api/v2/functions.php');
 
 header('Content-Type: application/json');
 $data = [];
 
-if ($_SERVER['REQUEST_METHOD'] == "GET") {
-			$data = getAuth($db, $_GET);
-			runReports($db, $variables, $key_row['user_id'], $user_row['user_timezone']);
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    if (!isset($db)) {
+        $data = ['msg' => 'Database connection is unavailable', 'error' => true, 'status' => 500];
+    } else {
+        $data = getAuth($db, $_GET);
+        if (($data['msg'] ?? '') === 'Authorized') {
+            $timezone = (string) ($data['user_timezone'] ?? 'UTC');
+            $data = runReports($db, $_GET, (int) ($data['user_id'] ?? 0), $timezone);
+        }
+    }
 
 } else {
 	$data = ['msg' => 'Not allowed request method', 'error' => true, 'status' => 405];

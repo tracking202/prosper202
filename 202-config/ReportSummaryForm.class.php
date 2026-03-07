@@ -32,7 +32,7 @@ class ReportSummaryForm extends ReportBasicForm
 	protected $report_data;
 	/**
 	 * Used to throw tabindexes on elements
-	 * @var unknown_type
+	 * @var array<int, int>
 	 */
 	private $tabIndexArray = [];
 	protected $start_time;
@@ -77,7 +77,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 	/**
 	 * Returns the start time used for report filtering
-	 * @return string
+	 * @return int
 	 */
 	#[\Override]
     function getStartTime()
@@ -90,7 +90,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 	/**
 	 * Returns the end time used for report filtering
-	 * @return string
+	 * @return int
 	 */
 	#[\Override]
     function getEndTime()
@@ -243,7 +243,6 @@ class ReportSummaryForm extends ReportBasicForm
 
 	/**
 	 * Sets the report_data
-	 * @param RevenueReportGroupForm
 	 */
 	function setReportData($arg0)
 	{
@@ -1706,7 +1705,7 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getPpcNetworkId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -1716,7 +1715,7 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getPpcNetworkName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -1726,7 +1725,7 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -1739,7 +1738,7 @@ class ReportSummaryPpcNetworkForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -1760,7 +1759,7 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getPpcAccountId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -1770,7 +1769,7 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getPpcAccountName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -1780,7 +1779,7 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -1793,7 +1792,7 @@ class ReportSummaryPpcAccountForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -1814,7 +1813,7 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getAffiliateNetworkId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -1824,7 +1823,7 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getAffiliateNetworkName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -1834,7 +1833,7 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -1847,7 +1846,7 @@ class ReportSummaryAffiliateNetworkForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -1868,7 +1867,7 @@ class ReportSummaryLandingPageForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getLandingPageId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -1878,7 +1877,7 @@ class ReportSummaryLandingPageForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getLandingPageName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -1888,7 +1887,7 @@ class ReportSummaryLandingPageForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -1901,7 +1900,7 @@ class ReportSummaryLandingPageForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -1922,7 +1921,7 @@ class ReportSummaryKeywordForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getKeywordId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -1932,7 +1931,7 @@ class ReportSummaryKeywordForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getKeywordName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -1942,7 +1941,7 @@ class ReportSummaryKeywordForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -1955,7 +1954,7 @@ class ReportSummaryKeywordForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -1976,7 +1975,7 @@ class ReportSummaryTextAdForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getTextAdId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -1986,7 +1985,7 @@ class ReportSummaryTextAdForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getTextAdName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -1996,7 +1995,7 @@ class ReportSummaryTextAdForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2009,7 +2008,7 @@ class ReportSummaryTextAdForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2030,7 +2029,7 @@ class ReportSummaryRefererForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getRefererId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2040,7 +2039,7 @@ class ReportSummaryRefererForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getRefererName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2050,7 +2049,7 @@ class ReportSummaryRefererForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2063,7 +2062,7 @@ class ReportSummaryRefererForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2084,7 +2083,7 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getRedirectId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2094,7 +2093,7 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getRedirectName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2104,7 +2103,7 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2117,7 +2116,7 @@ class ReportSummaryRedirectForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2138,7 +2137,7 @@ class ReportSummaryCountryForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getCountryId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2148,7 +2147,7 @@ class ReportSummaryCountryForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getCountryName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2158,7 +2157,7 @@ class ReportSummaryCountryForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2171,7 +2170,7 @@ class ReportSummaryCountryForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2193,7 +2192,7 @@ class ReportSummaryRegionForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getCountryId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2203,7 +2202,7 @@ class ReportSummaryRegionForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getCountryName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2213,7 +2212,7 @@ class ReportSummaryRegionForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2226,7 +2225,7 @@ class ReportSummaryRegionForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2248,7 +2247,7 @@ class ReportSummaryCityForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getCityId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2258,7 +2257,7 @@ class ReportSummaryCityForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getCityName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2268,7 +2267,7 @@ class ReportSummaryCityForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2281,7 +2280,7 @@ class ReportSummaryCityForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2303,7 +2302,7 @@ class ReportSummaryIspForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2313,7 +2312,7 @@ class ReportSummaryIspForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2323,7 +2322,7 @@ class ReportSummaryIspForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2336,7 +2335,7 @@ class ReportSummaryIspForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2358,7 +2357,7 @@ class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2368,7 +2367,7 @@ class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2378,7 +2377,7 @@ class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2391,7 +2390,7 @@ class ReportSummaryDeviceNameForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2412,7 +2411,7 @@ class ReportSummaryDeviceTypeForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2422,7 +2421,7 @@ class ReportSummaryDeviceTypeForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2432,7 +2431,7 @@ class ReportSummaryDeviceTypeForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2445,7 +2444,7 @@ class ReportSummaryDeviceTypeForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2466,7 +2465,7 @@ class ReportSummaryBrowserForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2476,7 +2475,7 @@ class ReportSummaryBrowserForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2486,7 +2485,7 @@ class ReportSummaryBrowserForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2499,7 +2498,7 @@ class ReportSummaryBrowserForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2520,7 +2519,7 @@ class ReportSummaryPlatformForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2530,7 +2529,7 @@ class ReportSummaryPlatformForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIspName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2540,7 +2539,7 @@ class ReportSummaryPlatformForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2553,7 +2552,7 @@ class ReportSummaryPlatformForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2575,7 +2574,7 @@ class ReportSummaryIpForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIpId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2585,7 +2584,7 @@ class ReportSummaryIpForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIpName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2595,7 +2594,7 @@ class ReportSummaryIpForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2608,7 +2607,7 @@ class ReportSummaryIpForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2629,7 +2628,7 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getAffiliateCampaignId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2639,7 +2638,7 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getAffiliateCampaignName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2649,7 +2648,7 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2662,7 +2661,7 @@ class ReportSummaryCampaignForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2682,7 +2681,7 @@ class ReportSummaryUtmCampaignForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2692,7 +2691,7 @@ class ReportSummaryUtmCampaignForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2702,7 +2701,7 @@ class ReportSummaryUtmCampaignForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2715,7 +2714,7 @@ class ReportSummaryUtmCampaignForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2735,7 +2734,7 @@ class ReportSummaryUtmContentForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2745,7 +2744,7 @@ class ReportSummaryUtmContentForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2755,7 +2754,7 @@ class ReportSummaryUtmContentForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2768,7 +2767,7 @@ class ReportSummaryUtmContentForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2788,7 +2787,7 @@ class ReportSummaryUtmMediumForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2798,7 +2797,7 @@ class ReportSummaryUtmMediumForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2808,7 +2807,7 @@ class ReportSummaryUtmMediumForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2821,7 +2820,7 @@ class ReportSummaryUtmMediumForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2841,7 +2840,7 @@ class ReportSummaryUtmSourceForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2851,7 +2850,7 @@ class ReportSummaryUtmSourceForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2861,7 +2860,7 @@ class ReportSummaryUtmSourceForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2874,7 +2873,7 @@ class ReportSummaryUtmSourceForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2894,7 +2893,7 @@ class ReportSummaryUtmTermForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2904,7 +2903,7 @@ class ReportSummaryUtmTermForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2914,7 +2913,7 @@ class ReportSummaryUtmTermForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2927,7 +2926,7 @@ class ReportSummaryUtmTermForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2943,7 +2942,7 @@ class ReportSummaryCustomVarParameterForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -2953,7 +2952,7 @@ class ReportSummaryCustomVarParameterForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -2963,7 +2962,7 @@ class ReportSummaryCustomVarParameterForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -2976,7 +2975,7 @@ class ReportSummaryCustomVarParameterForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -2992,7 +2991,7 @@ class ReportSummaryCustomVarValueForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3002,7 +3001,7 @@ class ReportSummaryCustomVarValueForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3012,7 +3011,7 @@ class ReportSummaryCustomVarValueForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3025,7 +3024,7 @@ class ReportSummaryCustomVarValueForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3045,7 +3044,7 @@ class ReportSummaryC1Form extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3055,7 +3054,7 @@ class ReportSummaryC1Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC1
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3065,7 +3064,7 @@ class ReportSummaryC1Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3078,7 +3077,7 @@ class ReportSummaryC1Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3098,7 +3097,7 @@ class ReportSummaryC2Form extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC2
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3108,7 +3107,7 @@ class ReportSummaryC2Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC2
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3118,7 +3117,7 @@ class ReportSummaryC2Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3131,7 +3130,7 @@ class ReportSummaryC2Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3151,7 +3150,7 @@ class ReportSummaryC3Form extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC3
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3161,7 +3160,7 @@ class ReportSummaryC3Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC3
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3171,7 +3170,7 @@ class ReportSummaryC3Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3184,7 +3183,7 @@ class ReportSummaryC3Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3204,7 +3203,7 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3214,7 +3213,7 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3224,7 +3223,7 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3237,7 +3236,7 @@ class ReportSummaryC4Form extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3253,7 +3252,7 @@ class ReportSummaryRotatorForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3263,7 +3262,7 @@ class ReportSummaryRotatorForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3273,7 +3272,7 @@ class ReportSummaryRotatorForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3286,7 +3285,7 @@ class ReportSummaryRotatorForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3302,7 +3301,7 @@ class ReportSummaryRotatorRuleForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3312,7 +3311,7 @@ class ReportSummaryRotatorRuleForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3322,7 +3321,7 @@ class ReportSummaryRotatorRuleForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3335,7 +3334,7 @@ class ReportSummaryRotatorRuleForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3351,7 +3350,7 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3361,7 +3360,7 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3371,7 +3370,7 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3384,7 +3383,7 @@ class ReportSummaryRotatorRuleRedirectForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3400,7 +3399,7 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3410,7 +3409,7 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getC4
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3420,7 +3419,7 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3433,7 +3432,7 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3449,7 +3448,7 @@ class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 {
 	/**
 	 * Alias for getPublisherId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3459,7 +3458,7 @@ class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getPublisherIDName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3469,7 +3468,7 @@ class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3482,7 +3481,7 @@ class ReportSummaryPublishersForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getName()
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3505,7 +3504,7 @@ class ReportSummaryIntervalForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIntervalId
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getId()
@@ -3515,7 +3514,7 @@ class ReportSummaryIntervalForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias for getIntervalName
-	 * @return integer
+	 * @return mixed
 	 */
 	#[\Override]
     function getName()
@@ -3525,7 +3524,7 @@ class ReportSummaryIntervalForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getTitle()
@@ -3536,7 +3535,7 @@ class ReportSummaryIntervalForm extends ReportSummaryTotalForm
 
 	/**
 	 * Alias
-	 * @return string
+	 * @return mixed
 	 */
 	#[\Override]
     function getPrintTitle()
@@ -3667,7 +3666,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the payout
-	 * @param integer
 	 */
 	function setPayout($arg0)
 	{
@@ -3729,7 +3727,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the income
-	 * @param integer
 	 */
 	function setIncome($arg0)
 	{
@@ -3769,7 +3766,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the cost
-	 * @param integer
 	 */
 	function setCost($arg0)
 	{
@@ -3817,7 +3813,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the ppc_network_id
-	 * @param integer
 	 */
 	function setPpcNetworkId($arg0)
 	{
@@ -3838,7 +3833,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the ppc_network_name
-	 * @param string
 	 */
 	function setPpcNetworkName($arg0)
 	{
@@ -3859,7 +3853,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the ppc_account_id
-	 * @param integer
 	 */
 	function setPpcAccountId($arg0)
 	{
@@ -3880,7 +3873,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the ppc_account_name
-	 * @param string
 	 */
 	function setPpcAccountName($arg0)
 	{
@@ -3901,7 +3893,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the affiliate_network_id
-	 * @param integer
 	 */
 	function setAffiliateNetworkId($arg0)
 	{
@@ -3922,7 +3913,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the affiliate_network_name
-	 * @param string
 	 */
 	function setAffiliateNetworkName($arg0)
 	{
@@ -3943,7 +3933,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the landing_page_id
-	 * @param integer
 	 */
 	function setLandingPageId($arg0)
 	{
@@ -3964,7 +3953,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the landing_page_name
-	 * @param string
 	 */
 	function setLandingPageName($arg0)
 	{
@@ -3985,7 +3973,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the keyword_id
-	 * @param integer
 	 */
 	function setKeywordId($arg0)
 	{
@@ -4006,7 +3993,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the keyword_name
-	 * @param string
 	 */
 	function setKeywordName($arg0)
 	{
@@ -4027,7 +4013,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the text_ad_id
-	 * @param integer
 	 */
 	function setTextAdId($arg0)
 	{
@@ -4048,7 +4033,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the text_ad_name
-	 * @param string
 	 */
 	function setTextAdName($arg0)
 	{
@@ -4069,7 +4053,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the referer_id
-	 * @param integer
 	 */
 	function setRefererId($arg0)
 	{
@@ -4090,7 +4073,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the referer_name
-	 * @param string
 	 */
 	function setRefererName($arg0)
 	{
@@ -4111,7 +4093,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the redirect_id
-	 * @param integer
 	 */
 	function setRedirectId($arg0)
 	{
@@ -4132,7 +4113,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the redirect_name
-	 * @param string
 	 */
 	function setRedirectName($arg0)
 	{
@@ -4153,7 +4133,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_id
-	 * @param integer
 	 */
 	function setCountryId($arg0)
 	{
@@ -4174,7 +4153,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_name
-	 * @param string
 	 */
 	function setCountryName($arg0)
 	{
@@ -4195,7 +4173,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_id
-	 * @param integer
 	 */
 	function setRegionId($arg0)
 	{
@@ -4216,7 +4193,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_name
-	 * @param string
 	 */
 	function setRegionName($arg0)
 	{
@@ -4238,7 +4214,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the city_id
-	 * @param integer
 	 */
 	function setCityId($arg0)
 	{
@@ -4259,7 +4234,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_name
-	 * @param string
 	 */
 	function setCityName($arg0)
 	{
@@ -4281,7 +4255,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the city_id
-	 * @param integer
 	 */
 	function setIspId($arg0)
 	{
@@ -4302,7 +4275,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_name
-	 * @param string
 	 */
 	function setIspName($arg0)
 	{
@@ -4324,7 +4296,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the city_id
-	 * @param integer
 	 */
 	function setDeviceId($arg0)
 	{
@@ -4345,7 +4316,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_name
-	 * @param string
 	 */
 	function setDeviceName($arg0)
 	{
@@ -4366,7 +4336,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_name
-	 * @param string
 	 */
 	function setTypeName($arg0)
 	{
@@ -4383,7 +4352,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the city_id
-	 * @param integer
 	 */
 	function setTypeId($arg0)
 	{
@@ -4404,7 +4372,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the city_id
-	 * @param integer
 	 */
 	function setBrowserId($arg0)
 	{
@@ -4425,7 +4392,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_name
-	 * @param string
 	 */
 	function setBrowserName($arg0)
 	{
@@ -4448,7 +4414,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the platform_id
-	 * @param integer
 	 */
 	function setPlatformId($arg0)
 	{
@@ -4469,7 +4434,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the country_name
-	 * @param string
 	 */
 	function setPlatformName($arg0)
 	{
@@ -4492,7 +4456,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the ip_id
-	 * @param integer
 	 */
 	function setIpId($arg0)
 	{
@@ -4513,7 +4476,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the ip_name
-	 * @param string
 	 */
 	function setIpName($arg0)
 	{
@@ -4534,7 +4496,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the affiliate_campaign_id
-	 * @param integer
 	 */
 	function setAffiliateCampaignId($arg0)
 	{
@@ -4555,7 +4516,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the affiliate_campaign_name
-	 * @param string
 	 */
 	function setAffiliateCampaignName($arg0)
 	{
@@ -4576,7 +4536,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c1
-	 * @param string
 	 */
 	function setUtmCampaign($arg0)
 	{
@@ -4597,7 +4556,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c1
-	 * @param string
 	 */
 	function setUtmContent($arg0)
 	{
@@ -4618,7 +4576,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c1
-	 * @param string
 	 */
 	function setUtmMedium($arg0)
 	{
@@ -4639,7 +4596,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c1
-	 * @param string
 	 */
 	function setUtmSource($arg0)
 	{
@@ -4660,7 +4616,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c1
-	 * @param string
 	 */
 	function setUtmTerm($arg0)
 	{
@@ -4711,7 +4666,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c1_id
-	 * @param integer
 	 */
 	function setC1Id($arg0)
 	{
@@ -4732,7 +4686,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c1
-	 * @param string
 	 */
 	function setC1($arg0)
 	{
@@ -4753,7 +4706,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c2_id
-	 * @param integer
 	 */
 	function setC2Id($arg0)
 	{
@@ -4774,7 +4726,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c2
-	 * @param string
 	 */
 	function setC2($arg0)
 	{
@@ -4795,7 +4746,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c3
-	 * @param string
 	 */
 	function setC3($arg0)
 	{
@@ -4816,7 +4766,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c4
-	 * @param string
 	 */
 	function setC4($arg0)
 	{
@@ -4825,7 +4774,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c4
-	 * @param string
 	 */
 	function setRotatorId($arg0)
 	{
@@ -4859,7 +4807,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the c4
-	 * @param string
 	 */
 	function setRuleId($arg0)
 	{
@@ -4894,7 +4841,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Returns the Rule redirect ID
-	 * @param string
 	 */
 	function setRuleRedirectId($arg0)
 	{
@@ -5011,7 +4957,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the interval_id
-	 * @param integer
 	 */
 	function setIntervalId($arg0)
 	{
@@ -5040,13 +4985,13 @@ class ReportSummaryTotalForm
 				$start_of_week = ReportBasicForm::getWeekStart($interval_timestamp);
 				$end_of_week = ReportBasicForm::getWeekEnd($interval_timestamp);
 
-				$startDate = is_object($reportParams) ? $reportParams->getStartDate() : '';
+				$startDate = $reportParams->getStartDate();
 				$start_date_timestamp = strtotime((string)$startDate);
 				if ($start_date_timestamp !== false && $start_of_week < $start_date_timestamp) {
 					$start_of_week = $start_date_timestamp;
 				}
 
-				$endDate = is_object($reportParams) ? $reportParams->getEndDate() : '';
+				$endDate = $reportParams->getEndDate();
 				$end_date_timestamp = strtotime((string)$endDate);
 				if ($end_date_timestamp !== false && $end_of_week > $end_date_timestamp) {
 					$end_of_week = $end_date_timestamp;
@@ -5062,13 +5007,13 @@ class ReportSummaryTotalForm
 				$start_of_month = ReportBasicForm::getMonthStart($interval_time);
 				$end_of_month = ReportBasicForm::getMonthEnd($interval_time);
 
-				$startDate = is_object($reportParams) ? $reportParams->getStartDate() : '';
+				$startDate = $reportParams->getStartDate();
 				$start_date_timestamp = strtotime((string)$startDate);
 				if ($start_date_timestamp !== false && $start_of_month < $start_date_timestamp) {
 					$start_of_month = $start_date_timestamp;
 				}
 
-				$endDate = is_object($reportParams) ? $reportParams->getEndDate() : '';
+				$endDate = $reportParams->getEndDate();
 				$end_date_timestamp = strtotime((string)$endDate);
 				if ($end_date_timestamp !== false && $end_of_month > $end_date_timestamp) {
 					$end_of_month = $end_date_timestamp;
@@ -5093,7 +5038,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the interval_name
-	 * @param string
 	 */
 	function setIntervalName($arg0)
 	{
@@ -5114,7 +5058,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the detail_id
-	 * @param integer
 	 */
 	function setDetailId($arg0)
 	{
@@ -5250,7 +5193,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the child_array
-	 * @param array
 	 */
 	function setChildArray($arg0)
 	{
@@ -5280,13 +5222,9 @@ class ReportSummaryTotalForm
 						}
 					} else {
 						$entry = preg_replace_callback("/_([a-zA-Z0-9])/", fn($m) => strtoupper((string) $m[1]), (string) $key);
-						if (is_callable([$this, 'set' . ucfirst((string) $entry)])) {
-							if (is_string($value)) {
-								$this->{'set' . ucfirst((string) $entry)}(trim($value));
-							} else {
+							if (is_callable([$this, 'set' . ucfirst((string) $entry)])) {
 								$this->{'set' . ucfirst((string) $entry)}($value);
 							}
-						}
 					}
 				} else {
 
@@ -5298,12 +5236,12 @@ class ReportSummaryTotalForm
 						} else {
 							$this->{'set' . ucfirst((string) $entry)}($value);
 						}
-					} else if (is_callable($this->__set(...))) {
-						if (is_string($value)) {
-							$this->__set($entry, trim($value));
 						} else {
-							$this->__set($entry, $value);
-						}
+							if (is_string($value)) {
+								$this->__set($entry, trim($value));
+							} else {
+								$this->__set($entry, $value);
+							}
 					}
 				}
 			}
@@ -5359,7 +5297,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the clicks
-	 * @param integer
 	 */
 	function setClicks($arg0)
 	{
@@ -5400,7 +5337,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the click_out
-	 * @param integer
 	 */
 	function setClickOut($arg0)
 	{
@@ -5452,7 +5388,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the leads
-	 * @param integer
 	 */
 	function setLeads($arg0)
 	{
@@ -5466,7 +5401,7 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Returns the top parameters
-	 * @return int
+	 * @return mixed
 	 */
 	function getReportParameters()
 	{
@@ -5519,7 +5454,7 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Returns the parent_class
-	 * @return integer
+	 * @return mixed
 	 */
 	function getParentClass()
 	{
@@ -5531,7 +5466,6 @@ class ReportSummaryTotalForm
 
 	/**
 	 * Sets the parent_class
-	 * @param integer
 	 */
 	function setParentClass($arg0)
 	{
@@ -5572,7 +5506,7 @@ class ReportSummaryTotalForm
 
 	/**
 	 * abstract placeholder
-	 * @return integer
+	 * @return mixed
 	 */
 	function getId()
 	{
@@ -5581,7 +5515,7 @@ class ReportSummaryTotalForm
 
 	/**
 	 * abstract placeholder
-	 * @return integer
+	 * @return mixed
 	 */
 	function getName()
 	{

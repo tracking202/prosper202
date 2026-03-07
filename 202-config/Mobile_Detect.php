@@ -79,7 +79,7 @@ class Mobile_Detect
      * The User-Agent HTTP header is stored in here.
      * @var string
      */
-    protected $userAgent = null;
+    protected $userAgent = '';
 
     /**
      * HTTP headers in the PHP-flavor. So HTTP_USER_AGENT and SERVER_SOFTWARE.
@@ -601,6 +601,7 @@ class Mobile_Detect
         } elseif (isset($this->httpHeaders[$altHeader])) {
             return $this->httpHeaders[$altHeader];
         }
+        return null;
     }
 
     public function getMobileHeaders()
@@ -630,7 +631,7 @@ class Mobile_Detect
             return $this->userAgent = $userAgent;
         } else {
 
-            $this->userAgent = null;
+            $this->userAgent = '';
 
             foreach ($this->getUaHttpHeaders() as $altHeader) {
                 if (!empty($this->httpHeaders[$altHeader])) { // @todo: should use getHttpHeader(), but it would be slow. (Serban)
@@ -827,7 +828,7 @@ class Mobile_Detect
     /**
      * Magic overloading method.
      *
-     * @method boolean is[...]()
+     * @method bool isSomething()
      * @param  string                 $name
      * @param  array                  $arguments
      * @return mixed
@@ -957,7 +958,7 @@ class Mobile_Detect
     public function is($key, $userAgent = null, $httpHeaders = null)
     {
         // Set the UA and HTTP headers only if needed (eg. batch mode).
-        if ($httpHeaders) {
+        if (is_array($httpHeaders)) {
             $this->setHttpHeaders($httpHeaders);
         }
 
@@ -1041,7 +1042,7 @@ class Mobile_Detect
     public function version($propertyName, $type = self::VERSION_TYPE_STRING)
     {
         if (empty($propertyName)) {
-            return false;
+            return $type == self::VERSION_TYPE_FLOAT ? 0.0 : '';
         }
 
         //set the $type to the default if we don't recognize the type
@@ -1076,7 +1077,7 @@ class Mobile_Detect
             }
         }
 
-        return false;
+        return $type == self::VERSION_TYPE_FLOAT ? 0.0 : '';
     }
 
     /**

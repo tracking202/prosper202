@@ -232,6 +232,20 @@ final class UserRepositoryTest extends TestCase
         self::assertCount(1, $repo->listApiKeys($u2));
     }
 
+    public function testListApiKeysHasExpectedColumns(): void
+    {
+        $repo = $this->makeRepo();
+        $userId = $this->createTestUser($repo);
+        $repo->createApiKey($userId, 'key');
+
+        $keys = $repo->listApiKeys($userId);
+        self::assertCount(1, $keys);
+        self::assertArrayHasKey('api_key', $keys[0]);
+        self::assertArrayHasKey('user_id', $keys[0]);
+        self::assertArrayHasKey('created_at', $keys[0]);
+        self::assertArrayNotHasKey('api_key_id', $keys[0]);
+    }
+
     // --- Preferences ---
 
     public function testUpdateAndGetPreferences(): void

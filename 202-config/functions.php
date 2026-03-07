@@ -64,15 +64,6 @@ function _die($message): never
  * @param \mysqli|string $db_or_sql Database connection or SQL query
  * @param string|null $sql SQL query (if first param is db connection)
  * @return \mysqli_result|bool
- *
- * @overload
- * @param string $sql
- * @return \mysqli_result|bool
- *
- * @overload
- * @param \mysqli $db
- * @param string $sql
- * @return \mysqli_result|bool
  */
 function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
 {
@@ -133,23 +124,22 @@ if (!function_exists('array_any')) {
 
 function is_installed(): bool
 {
-	// Skip the check if we're accessing the installer or API key setup
-	if (
-		str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php') ||
-		str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')
-	) {
+	// Skip the check only for API key setup
+	if (str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')) {
 		return false;
 	}
 
 	$database = DB::getInstance();
 	$db = $database->getConnection();
 
-	//if a user account already exists, this application is installed 
+	//if a user account already exists, this application is installed
 	try {
-		$user_sql = "SELECT COUNT(*) FROM 202_users";
+		$user_sql = "SELECT COUNT(*) AS cnt FROM 202_users";
 		$user_result = $db->query($user_sql);
 		if ($user_result) {
-			return true;
+			$row = $user_result->fetch_assoc();
+			$user_result->free();
+			return ((int) $row['cnt']) > 0;
 		}
 	} catch (mysqli_sql_exception) {
 		// Table doesn't exist yet, return false
@@ -407,12 +397,12 @@ function info_top(): void
 						$versionCount = count($decimals);
 						$lastDecimal = substr($latest_version, strrpos($latest_version, '.') + 1);
 
-						// Calculate version
-						if ($lastDecimal == '0') {
-							$calcVersion = $decimals[0] . '.' . ($decimals[1] - 1) . '.9';
-						} else {
-							$calcVersion = $decimals[0] . '.' . $decimals[1] . '.' . ($lastDecimal - 1);
-						}
+							// Calculate version
+							if ($lastDecimal == '0') {
+								$calcVersion = $decimals[0] . '.' . ((int)$decimals[1] - 1) . '.9';
+							} else {
+								$calcVersion = $decimals[0] . '.' . $decimals[1] . '.' . ((int)$lastDecimal - 1);
+							}
 
 						if ($calcVersion == $version) {
 							//Auto upgrade without user confirmation
@@ -452,6 +442,7 @@ function info_top(): void
 														$log .= 'Failed to read update file contents: ' . $thisFileName . '. ';
 														continue;
 													}
+													$file_ext = pathinfo($thisFileName, PATHINFO_EXTENSION);
 													$targetFile = resolve_update_target_path($basePath, $thisFileName);
 													if ($targetFile === false) {
 														$log .= 'Skipped invalid update file path: ' . $thisFileName . '. ';
@@ -482,10 +473,11 @@ function info_top(): void
 												}
 											}
 
-											$zip->close();
+												$zip->close();
+												$FilesUpdated = true;
+											}
 										}
-									}
-								} else {
+									} else {
 									$FilesUpdated = false;
 									$log .= "Failed to download update file. ";
 								}
@@ -535,8 +527,11 @@ function info_top(): void
 	function check_premium_update()
 	{
 		global $version;
-		$json = @getData('https://my.tracking202.com/api/v2/premium-p202/version');
+		$json = @getData('https://my.tracking202.com/api/v2/premium-p202/version', 5, 3);
 		$array = json_decode((string) $json, true);
+		if (!is_array($array) || !isset($array['version'])) {
+			return 0;
+		}
 		if ((version_compare($version, $array['version']) == '-1')) {
 			if (!is_writable(__DIR__ . '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
 				$_SESSION['auto_upgraded_not_possible'] = true;
@@ -638,7 +633,7 @@ function info_top(): void
 		if ($hour == 0 and $minutes == 0) {
 			$sign = ' ';
 		}
-		return $sign . str_pad($hour, 2, '0', STR_PAD_LEFT) . ':' . str_pad($minutes, 2, '0');
+		return $sign . str_pad((string)$hour, 2, '0', STR_PAD_LEFT) . ':' . str_pad((string)$minutes, 2, '0');
 	}
 
 	function getCurlValue($filename, $contentType, $postname)
@@ -681,7 +676,7 @@ function info_top(): void
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/delete-ad/' . $user . '/' . $key);
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_POST, 1);
+		curl_setopt($ch, CURLOPT_POST, true);
 		curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
 		$results = curl_exec($ch);
 		curl_close($ch);
@@ -734,9 +729,9 @@ function info_top(): void
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/ads/wallpapers/extern');
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_POST, 1);
-		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-		curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_POST, true);
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+		curl_setopt($ch, CURLOPT_TIMEOUT, 5);
 		$result = curl_exec($ch);
 		curl_close($ch);
 

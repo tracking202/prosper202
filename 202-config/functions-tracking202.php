@@ -157,8 +157,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $skip_publisher_check = $options['skip_publisher_check'] ?? false;
     $hide_publisher_sections = !$skip_publisher_check && !empty($_SESSION['publisher']);
 
-    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string((string) $_SESSION['user_id']) : 0;
-    $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
+    $userId = (int) ($_SESSION['user_id'] ?? 0);
+    $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $userId;
     $user_result = _mysqli_query($user_sql);
     $user_row = $user_result->fetch_assoc() ?? [];
 
@@ -207,6 +207,41 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $html['user_pref_device_id'] = htmlentities((string) ($user_row['user_pref_device_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $html['user_pref_browser_id'] = htmlentities((string) ($user_row['user_pref_browser_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $html['user_pref_platform_id'] = htmlentities((string) ($user_row['user_pref_platform_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+    // --- SSR: Pre-render small/bounded filter dropdowns to eliminate AJAX round-trips ---
+    // PPC Networks (user-scoped, bounded)
+    $ssr_ppc_network_options = '';
+    if (!$hide_publisher_sections) {
+        $ppc_net_sql = "SELECT ppc_network_id, ppc_network_name FROM 202_ppc_networks WHERE user_id=" . $userId . " AND ppc_network_deleted='0' ORDER BY ppc_network_name ASC";
+        $ppc_net_result = $db->query($ppc_net_sql);
+        if ($ppc_net_result) {
+            while ($row = $ppc_net_result->fetch_assoc()) {
+                $val = htmlentities((string) ($row['ppc_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+                $name = htmlentities((string) ($row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+                $sel = ($html['user_pref_ppc_network_id'] === $val) ? ' selected' : '';
+                $ssr_ppc_network_options .= sprintf('<option%s value="%s">%s</option>', $sel, $val, $name);
+            }
+        }
+    }
+
+    // Aff Networks (user-scoped, bounded)
+    $ssr_aff_network_options = '';
+    if (!$hide_publisher_sections) {
+        $aff_net_sql = "SELECT aff_network_id, aff_network_name FROM 202_aff_networks WHERE user_id=" . $userId . " AND aff_network_deleted='0' ORDER BY aff_network_name ASC";
+        $aff_net_result = $db->query($aff_net_sql);
+        if ($aff_net_result) {
+            while ($row = $aff_net_result->fetch_assoc()) {
+                $val = htmlentities((string) ($row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+                $name = htmlentities((string) ($row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+                $sel = ($html['user_pref_aff_network_id'] === $val) ? ' selected' : '';
+                $ssr_aff_network_options .= sprintf('<option%s value="%s">%s</option>', $sel, $val, $name);
+            }
+        }
+    }
+
+    // display_calendar() renders the report refine UI, which expects the
+    // plural token so landing_pages.php includes both simple and advanced LPs.
+    $ssr_method_lp_value = 'landingpages';
 ?>
 
     <div class="row" style="margin-bottom: 15px;">
@@ -306,10 +341,13 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                             <label>Traffic Source/Account: </label>
 
                                             <div class="form-group">
-                                                <img id="ppc_network_id_div_loading" class="loading"
-                                                    style="display: none;"
-                                                    src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                <div style="margin-left: 2px;" id="ppc_network_id_div"></div>
+                                                <div style="margin-left: 2px;" id="ppc_network_id_div">
+                                                    <select class="form-control input-sm" name="ppc_network_id" id="ppc_network_id" onchange="load_ppc_account_id(this.value, 0);">
+                                                        <option value=""> -- </option>
+                                                        <option value="16777215" <?php if ($html['user_pref_ppc_network_id'] === '16777215') echo 'selected=""'; ?>>[No PPC Network]</option>
+                                                        <?php echo $ssr_ppc_network_options; ?>
+                                                    </select>
+                                                </div>
                                             </div>
 
                                             <div class="form-group">
@@ -340,10 +378,12 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                         <div class="col-xs-6">
                                             <label>Category/Campaign: </label>
                                             <div class="form-group">
-                                                <img id="aff_network_id_div_loading" class="loading"
-                                                    style="display: none;"
-                                                    src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                <div id="aff_network_id_div"></div>
+                                                <div id="aff_network_id_div">
+                                                    <select class="form-control input-sm" name="aff_network_id" id="aff_network_id" onchange="load_aff_campaign_id($(this).val(), 0); load_landing_page(this.value); load_text_ad_id(this.value);">
+                                                        <option value="0"> -- </option>
+                                                        <?php echo $ssr_aff_network_options; ?>
+                                                    </select>
+                                                </div>
                                             </div>
 
                                             <div class="form-group">
@@ -448,10 +488,13 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                             <div class="col-xs-6">
                                                 <label>Method of Promotion: </label>
                                                 <div class="form-group">
-                                                    <img id="method_of_promotion_div_loading" class="loading"
-                                                        style="display: none;"
-                                                        src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                    <div id="method_of_promotion_div" style="margin-left: 9px;"></div>
+                                                    <div id="method_of_promotion_div" style="margin-left: 9px;">
+                                                        <select class="form-control input-sm" name="method_of_promotion" id="method_of_promotion" onchange="tempLoadMethodOfPromotion(this);">
+                                                            <option value="0"> -- </option>
+                                                            <option <?php if ($html['user_pref_method_of_promotion'] === 'directlink') echo 'selected=""'; ?> value="directlink">Direct Linking</option>
+                                                            <option <?php if ($html['user_pref_method_of_promotion'] === 'landingpage' || $html['user_pref_method_of_promotion'] === 'landingpages') echo 'selected=""'; ?> value="<?php echo $ssr_method_lp_value; ?>">Landing Page</option>
+                                                        </select>
+                                                    </div>
                                                 </div>
                                             </div>
                                         <?php } //end publisher check
@@ -976,12 +1019,17 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 
         /* SHOW FIELDS */
 
-        load_ppc_network_id('<?php echo $html['user_pref_ppc_network_id']; ?>');
+        // ppc_network, aff_network, method_of_promotion are now server-rendered.
+        // Initialize select2 on the SSR'd dropdowns.
+        $("#ppc_network_id").select2();
+        $("#aff_network_id").select2();
+        $("#method_of_promotion").select2();
+
+        // Cascading filters: still load via AJAX when user has saved preferences
         <?php if ($html['user_pref_ppc_account_id'] != '') { ?>
             load_ppc_account_id('<?php echo $html['user_pref_ppc_network_id']; ?>', '<?php echo $html['user_pref_ppc_account_id']; ?>');
         <?php } ?>
 
-        load_aff_network_id('<?php echo $html['user_pref_aff_network_id']; ?>');
         <?php if ($html['user_pref_aff_campaign_id'] != '') { ?>
             load_aff_campaign_id('<?php echo $html['user_pref_aff_network_id']; ?>', '<?php echo $html['user_pref_aff_campaign_id']; ?>');
         <?php } ?>
@@ -990,9 +1038,6 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
             load_text_ad_id('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_text_ad_id']; ?>');
             load_ad_preview('<?php echo $html['user_pref_text_ad_id']; ?>');
         <?php } ?>
-
-        //pass in 'refine' to the function to flag that we are on the refine pages
-        load_method_of_promotion('<?php echo $html['user_pref_method_of_promotion']; ?>', 'refine');
 
         <?php if ($html['user_pref_landing_page_id'] != '') { ?>
             load_landing_page('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_landing_page_id']; ?>', '<?php echo $html['user_pref_method_of_promotion']; ?>s');
@@ -1013,7 +1058,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 
 function display_calendar2(...$args) { return display_calendar(...$args); }
 
-function grab_timeframe(): array
+function grab_timeframe($unused = null): array
 {
     $auth = new AUTH();
     $auth->set_timezone($_SESSION['user_timezone']);
@@ -1202,7 +1247,6 @@ function query(
     }
 
     $count_sql = "SELECT count(*) AS count FROM 202_dataengine AS 2c ";
-    $theWheres = '';
 
     // do extra joins if advance selector is enabled
     if ($pref_adv == true) {
@@ -1217,9 +1261,6 @@ function query(
             if (! preg_match('/202_ppc_networks/', (string) $command)) {
                 $command .= " LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id) ";
             }
-
-            $theWheres .= " LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id) ";
-            $theWheres .= " LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id) ";
         }
 
         // if Category lookup with no individual  campaign lookup do this
@@ -1232,9 +1273,6 @@ function query(
             if (! preg_match('/202_aff_networks/', (string) $command)) {
                 $command .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id) ";
             }
-
-            $theWheres .= " LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id) ";
-            $theWheres .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id) ";
         }
 
         // if domain lookup
@@ -1251,13 +1289,7 @@ function query(
             if (! preg_match('/202_site_domains/', (string) $command)) {
                 $command .= " LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id) ";
             }
-            $count_sql .= " LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) ";
-            $count_sql .= " LEFT JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id = 2su.site_url_id) ";
-            // $count_sql .= " LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id) ";
-
-            $theWheres .= " LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) ";
-            $theWheres .= " LEFT JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id = 2su.site_url_id) ";
-            // $theWheres .= " LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id) ";
+            // Count query: no JOINs needed — use subquery (see count_where below)
         }
 
         // if there is a keyword lookup, and we have not joined the 202 keywords table. do so now
@@ -1265,7 +1297,7 @@ function query(
             if (! preg_match('/202_keywords/', (string) $command)) {
                 $command .= " LEFT JOIN 202_keywords AS 2k ON (2ca.keyword_id = 2k.keyword_id) ";
             }
-            $count_sql .= " LEFT JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id) ";
+            // Count query: no JOIN needed — use subquery (see count_where below)
         }
 
         // if there is a ip lookup, and we have not joined the 202 ip table. do so now
@@ -1273,7 +1305,7 @@ function query(
             if (! preg_match('/202_ips/', (string) $command)) {
                 $command .= " LEFT JOIN 202_ips AS 2i ON (2ca.ip_id = 2i.ip_id) ";
             }
-            $count_sql .= " LEFT JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id) ";
+            // Count query: no JOIN needed — use subquery (see count_where below)
         }
 
         // if there is a country lookup, and we have not joined the 202 country table. do so now
@@ -1296,8 +1328,7 @@ function query(
             if (! preg_match('/202_device_models/', (string) $command)) {
                 $command .= " LEFT JOIN 202_device_models AS 2d ON (2ca.device_id = 2d.device_id) ";
             }
-
-            $count_sql .= " LEFT JOIN 202_device_models AS 2d ON (2c.device_id = 2d.device_id) ";
+            // Count query: no JOIN needed — use subquery (see count_where below)
         }
 
         // if there is a browser lookup, and we have not joined the 202 browser table. do so now
@@ -1348,10 +1379,10 @@ function query(
             $mysql['user_pref_ppc_network_id'] = $db->real_escape_string($user_row['user_pref_ppc_network_id']);
             if ($user_row['user_pref_ppc_network_id'] == '16777215') {
                 $click_sql .= "  AND      2pn.ppc_network_id IS NULL";
-                $count_where .= "  AND      ppc_network_id IS NULL";
+                $count_where .= "  AND      NOT EXISTS (SELECT 1 FROM 202_ppc_accounts AS 2pa2 WHERE 2pa2.ppc_account_id = 2c.ppc_account_id AND 2pa2.ppc_network_id IS NOT NULL)";
             } else {
                 $click_sql .= "  AND      2pn.ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "'";
-                $count_where .= "  AND      ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "'";
+                $count_where .= "  AND      2c.ppc_account_id IN (SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "')";
             }
         }
 
@@ -1415,28 +1446,27 @@ function query(
         if ($user_row['user_pref_referer']) {
             $mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
             $click_sql .= " AND 2sd.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%'";
-            $count_where .= " AND 2su.site_url_id in (select site_url_id from 202_site_urls where site_url_address like '%" . $mysql['user_pref_referer'] . "%')";
-            // $count_where .= " AND 2su.site_url_id in (SELECT distinct 2de.click_referer_site_url_id FROM 202_dataengine as 2de LEFT JOIN 202_site_urls ON (2de.click_referer_site_url_id = site_url_id) WHERE site_url_address LIKE '%".$mysql['user_pref_referer']."%')";
+            $count_where .= " AND EXISTS (SELECT 1 FROM 202_clicks_site AS 2cs2 JOIN 202_site_urls AS 2su2 ON (2cs2.click_referer_site_url_id = 2su2.site_url_id) JOIN 202_site_domains AS 2sd2 ON (2su2.site_domain_id = 2sd2.site_domain_id) WHERE 2cs2.click_id = 2c.click_id AND 2sd2.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%')";
         }
 
         if ($user_row['user_pref_keyword']) {
             $mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
             $click_sql .= " AND 2k.keyword_id in (SELECT keyword_id from 202_keywords where keyword LIKE CONVERT( _utf8 '%" . $mysql['user_pref_keyword'] . "%' USING utf8 )
 							COLLATE utf8_general_ci) ";
-            $count_where .= " AND 2k.keyword_id in (SELECT keyword_id from 202_keywords where keyword LIKE CONVERT( _utf8 '%" . $mysql['user_pref_keyword'] . "%' USING utf8 )
+            $count_where .= " AND 2c.keyword_id IN (SELECT keyword_id FROM 202_keywords WHERE keyword LIKE CONVERT( _utf8 '%" . $mysql['user_pref_keyword'] . "%' USING utf8 )
 							COLLATE utf8_general_ci) ";
         }
 
         if ($user_row['user_pref_ip']) {
             $mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
             $click_sql .= " AND 2i.ip_address LIKE '%" . $mysql['user_pref_ip'] . "%'";
-            $count_where .= " AND 2i.ip_address LIKE '%" . $mysql['user_pref_ip'] . "%'";
+            $count_where .= " AND 2c.ip_id IN (SELECT ip_id FROM 202_ips WHERE ip_address LIKE '%" . $mysql['user_pref_ip'] . "%')";
         }
 
         if ($user_row['user_pref_device_id']) {
             $mysql['user_pref_device_id'] = $db->real_escape_string($user_row['user_pref_device_id']);
             $click_sql .= " AND      2d.device_type=" . $mysql['user_pref_device_id'];
-            $count_where .= " AND      2d.device_type=" . $mysql['user_pref_device_id'];
+            $count_where .= " AND      2c.device_id IN (SELECT device_id FROM 202_device_models WHERE device_type=" . $mysql['user_pref_device_id'] . ")";
         }
 
         if ($user_row['user_pref_browser_id']) {
@@ -2948,6 +2978,8 @@ function getSurveyData($install_hash)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/survey/' . $install_hash);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     // Execute
     $result = curl_exec($ch);
     // close connection
@@ -3462,22 +3494,34 @@ function getFacebookCampaignsAndAdSets($api_key)
     return $result;
 }
 
-function getData($url)
+function getData($url, int $timeout = 60, int $connectTimeout = 5)
 {
+    $timeout = max(1, $timeout);
+    $connectTimeout = max(1, min($timeout, $connectTimeout));
+
     if (function_exists('curl_version')) {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
         $result = curl_exec($ch);
         curl_close($ch);
         return $result;
     } else {
         if (ini_get('allow_url_fopen')) {
-            return file_get_contents($url);
+            $context = stream_context_create([
+                'http' => [
+                    'timeout' => $timeout,
+                ],
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                ],
+            ]);
+            return @file_get_contents($url, false, $context);
         } else {
             return false;
         }
@@ -3629,8 +3673,8 @@ function getSetDashEmail($key)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     $result = curl_exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);

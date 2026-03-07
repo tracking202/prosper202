@@ -27,7 +27,7 @@ final class SnapshotExporter
 
         $timestamp = time();
         // Use exportId if available, otherwise use a hash of userId, modelId, and timestamp
-        if (property_exists($job, 'exportId') && !empty($job->exportId)) {
+        if (!empty($job->exportId)) {
             $fileBase = sprintf('attribution-export-%s-%d', $job->exportId, $timestamp);
         } else {
             $hash = sha1($job->userId . '-' . $job->modelId . '-' . $timestamp);

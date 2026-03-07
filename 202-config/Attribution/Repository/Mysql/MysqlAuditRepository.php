@@ -32,8 +32,7 @@ final readonly class MysqlAuditRepository implements AuditRepositoryInterface
         $payload = $metadata === [] ? null : json_encode($metadata, JSON_THROW_ON_ERROR);
         $createdAt = time();
         $modelParam = $modelId;
-        $stmt->bind_param('iissi', $userId, $modelParam, $action, $payload, $createdAt);
-        $this->conn->execute($stmt);
-        $stmt->close();
+        $this->conn->bind($stmt, 'iissi', [$userId, $modelParam, $action, $payload, $createdAt]);
+        $this->conn->executeInsert($stmt);
     }
 }
