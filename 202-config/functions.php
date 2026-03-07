@@ -124,23 +124,22 @@ if (!function_exists('array_any')) {
 
 function is_installed(): bool
 {
-	// Skip the check if we're accessing the installer or API key setup
-	if (
-		str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php') ||
-		str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')
-	) {
+	// Skip the check only for API key setup
+	if (str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')) {
 		return false;
 	}
 
 	$database = DB::getInstance();
 	$db = $database->getConnection();
 
-	//if a user account already exists, this application is installed 
+	//if a user account already exists, this application is installed
 	try {
-		$user_sql = "SELECT COUNT(*) FROM 202_users";
+		$user_sql = "SELECT COUNT(*) AS cnt FROM 202_users";
 		$user_result = $db->query($user_sql);
 		if ($user_result) {
-			return true;
+			$row = $user_result->fetch_assoc();
+			$user_result->free();
+			return ((int) $row['cnt']) > 0;
 		}
 	} catch (mysqli_sql_exception) {
 		// Table doesn't exist yet, return false
@@ -287,6 +286,50 @@ function info_top(): void
 		}
 	}
 
+	function resolve_update_target_path(string $basePath, string $entryName, bool $isDirectory = false)
+	{
+		$normalizedEntry = str_replace('\\', '/', $entryName);
+		$normalizedEntry = ltrim($normalizedEntry, '/');
+
+		if ($normalizedEntry === '' || str_contains($normalizedEntry, "\0")) {
+			return false;
+		}
+
+		// Directory entries from ZIP archives end with '/' — trim before segment validation
+		$normalizedEntry = rtrim($normalizedEntry, '/');
+		if ($normalizedEntry === '') {
+			return false;
+		}
+
+		$segments = explode('/', $normalizedEntry);
+		foreach ($segments as $segment) {
+			if ($segment === '' || $segment === '.' || $segment === '..') {
+				return false;
+			}
+		}
+
+		$targetPath = $basePath . '/' . $normalizedEntry;
+		$targetDirectory = $isDirectory ? $targetPath : dirname($targetPath);
+
+		if (!is_dir($targetDirectory) && !@mkdir($targetDirectory, 0755, true)) {
+			return false;
+		}
+
+		$resolvedBasePath = rtrim($basePath, DIRECTORY_SEPARATOR);
+		$resolvedDirectory = realpath($targetDirectory);
+		if (
+			$resolvedDirectory === false
+			|| (
+				$resolvedDirectory !== $resolvedBasePath
+				&& strpos($resolvedDirectory, $resolvedBasePath . DIRECTORY_SEPARATOR) !== 0
+			)
+		) {
+			return false;
+		}
+
+		return $targetPath;
+	}
+
 
 	function update_needed()
 	{
@@ -335,6 +378,17 @@ function info_top(): void
 					}
 
 					if ($autoupgrade == 'true' && $link !== null) {
+						$parsedLink = parse_url($link);
+						if (
+							!is_array($parsedLink)
+							|| ($parsedLink['scheme'] ?? '') !== 'https'
+							|| ($parsedLink['host'] ?? '') !== 'my.tracking202.com'
+						) {
+							$log .= 'Auto update rejected due to untrusted update source. ';
+							$_SESSION['upgrade_error_log'] = $log;
+							return true;
+						}
+
 						$decimals = explode('.', $latest_version);
 						$versionCount = count($decimals);
 						$lastDecimal = substr($latest_version, strrpos($latest_version, '.') + 1);
@@ -359,23 +413,55 @@ function info_top(): void
 										$zipResult = $zip->open(__DIR__ . '/temp/prosper202_' . $latest_version . '.zip');
 
 										if ($zipResult === TRUE) {
+											$basePath = realpath(dirname(__DIR__));
+											if ($basePath === false) {
+												$log .= 'Unable to resolve update destination path. ';
+												$zip->close();
+												return true;
+											}
 
 											for ($i = 0; $i < $zip->numFiles; $i++) {
 												$thisFileName = $zip->getNameIndex($i);
+												if ($thisFileName === false) {
+													$log .= 'Failed to read entry name at index ' . $i . '. ';
+													continue;
+												}
 
 												if (str_ends_with($thisFileName, '/')) {
-													if (is_dir(substr(__DIR__, 0, -10) . '/' . $thisFileName)) {
-														// Directory already exists
-													} else {
-														@mkdir(substr(__DIR__, 0, -10) . '/' . $thisFileName, 0755, true);
+													$targetDirectory = resolve_update_target_path($basePath, $thisFileName, true);
+													if ($targetDirectory === false) {
+														$log .= 'Skipped invalid update directory path: ' . $thisFileName . '. ';
 													}
 												} else {
 													$contents = $zip->getFromIndex($i);
-														$file_ext = pathinfo($thisFileName, PATHINFO_EXTENSION);
+													if ($contents === false) {
+														$log .= 'Failed to read update file contents: ' . $thisFileName . '. ';
+														continue;
+													}
+													$file_ext = pathinfo($thisFileName, PATHINFO_EXTENSION);
+													$targetFile = resolve_update_target_path($basePath, $thisFileName);
+													if ($targetFile === false) {
+														$log .= 'Skipped invalid update file path: ' . $thisFileName . '. ';
+														continue;
+													}
 
-													if ($updateThis = @fopen(substr(__DIR__, 0, -10) . '/' . $thisFileName, 'wb')) {
+													// Prevent writing through symlinks or outside the base path
+													if (file_exists($targetFile)) {
+														if (is_link($targetFile)) {
+															$log .= 'Skipped symlink during update: ' . $thisFileName . '. ';
+															continue;
+														}
+														$resolvedFilePath = realpath($targetFile);
+														$resolvedBase = rtrim($basePath, DIRECTORY_SEPARATOR);
+														if ($resolvedFilePath === false || ($resolvedFilePath !== $resolvedBase && strpos($resolvedFilePath, $resolvedBase . DIRECTORY_SEPARATOR) !== 0)) {
+															$log .= 'Skipped unsafe update file path: ' . $thisFileName . '. ';
+															continue;
+														}
+													}
+
+													if ($updateThis = @fopen($targetFile, 'wb')) {
 														fwrite($updateThis, $contents);
-														fclose($updateThis);
+							                            	fclose($updateThis);
 														unset($contents);
 													} else {
 														$log .= "Can't update file:" . $thisFileName . "! Operation aborted";
