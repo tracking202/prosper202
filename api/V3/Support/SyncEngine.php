@@ -1009,12 +1009,12 @@ class SyncEngine
         }
 
         usort($normalized, function (array $left, array $right): int {
-            $a = $this->scalarString($left['rule_name'] ?? null)
-                . '|' . $this->scalarString($left['status'] ?? null)
-                . '|' . $this->scalarString($left['splittest'] ?? null);
-            $b = $this->scalarString($right['rule_name'] ?? null)
-                . '|' . $this->scalarString($right['status'] ?? null)
-                . '|' . $this->scalarString($right['splittest'] ?? null);
+            $a = $this->scalarString($left['rule_name'])
+                . '|' . $this->scalarString($left['status'])
+                . '|' . $this->scalarString($left['splittest']);
+            $b = $this->scalarString($right['rule_name'])
+                . '|' . $this->scalarString($right['status'])
+                . '|' . $this->scalarString($right['splittest']);
             return $a <=> $b;
         });
 
@@ -1040,12 +1040,12 @@ class SyncEngine
         }
 
         usort($normalized, function (array $left, array $right): int {
-            $a = $this->scalarString($left['type'] ?? null)
-                . '|' . $this->scalarString($left['statement'] ?? null)
-                . '|' . $this->scalarString($left['value'] ?? null);
-            $b = $this->scalarString($right['type'] ?? null)
-                . '|' . $this->scalarString($right['statement'] ?? null)
-                . '|' . $this->scalarString($right['value'] ?? null);
+            $a = $this->scalarString($left['type'])
+                . '|' . $this->scalarString($left['statement'])
+                . '|' . $this->scalarString($left['value']);
+            $b = $this->scalarString($right['type'])
+                . '|' . $this->scalarString($right['statement'])
+                . '|' . $this->scalarString($right['value']);
             return $a <=> $b;
         });
 
@@ -1073,12 +1073,12 @@ class SyncEngine
         }
 
         usort($normalized, function (array $left, array $right): int {
-            $a = $this->scalarString($left['name'] ?? null)
-                . '|' . $this->scalarString($left['weight'] ?? null)
-                . '|' . $this->scalarString($left['redirect_url'] ?? null);
-            $b = $this->scalarString($right['name'] ?? null)
-                . '|' . $this->scalarString($right['weight'] ?? null)
-                . '|' . $this->scalarString($right['redirect_url'] ?? null);
+            $a = $this->scalarString($left['name'])
+                . '|' . $this->scalarString($left['weight'])
+                . '|' . $this->scalarString($left['redirect_url']);
+            $b = $this->scalarString($right['name'])
+                . '|' . $this->scalarString($right['weight'])
+                . '|' . $this->scalarString($right['redirect_url']);
             return $a <=> $b;
         });
 

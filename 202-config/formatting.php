@@ -334,13 +334,13 @@ function human_time_diff($from, $to = '')
 			$mins = 1;
 		}
 		$since = sprintf(_ngettext('%s min', '%s mins', $mins), $mins);
-	} else if (($diff <= 86400) && ($diff > 3600)) {
+	} else if ($diff <= 86400) {
 		$hours = round($diff / 3600);
 		if ($hours <= 1) {
 			$hour = 1;
 		}
 		$since = sprintf(_ngettext('%s hour', '%s hours', $hours), $hours);
-	} elseif ($diff >= 86400) {
+	} else {
 		$days = round($diff / 86400);
 		if ($days <= 1) {
 			$days = 1;

@@ -150,6 +150,40 @@ final class RotatorRepositoryTest extends TestCase
         self::assertEmpty($repo->redirects);
     }
 
+    public function testDeleteWithWrongUserThrows(): void
+    {
+        $repo = $this->makeRepo();
+        $rotatorId = $repo->create(1, ['name' => 'Rotator']);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('not owned by user');
+        $repo->delete($rotatorId, 999);
+    }
+
+    public function testDeleteWithWrongUserLeavesChildrenIntact(): void
+    {
+        $repo = $this->makeRepo();
+        $rotatorId = $repo->create(1, ['name' => 'Rotator']);
+        $repo->createRule($rotatorId, [
+            'rule_name' => 'Rule 1',
+            'criteria' => [['type' => 'country', 'statement' => 'is', 'value' => 'US']],
+            'redirects' => [['redirect_url' => 'https://a.com', 'weight' => 100]],
+        ]);
+
+        try {
+            $repo->delete($rotatorId, 999);
+            $this->fail('Expected RuntimeException was not thrown');
+        } catch (RuntimeException $e) {
+            self::assertStringContainsString('not owned by user', $e->getMessage());
+        }
+
+        $found = $repo->findById($rotatorId, 1);
+        self::assertNotNull($found);
+        self::assertCount(1, $found['rules']);
+        self::assertNotEmpty($repo->criteria);
+        self::assertNotEmpty($repo->redirects);
+    }
+
     // --- Rule Management ---
 
     public function testCreateRuleWithCriteriaAndRedirects(): void

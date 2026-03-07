@@ -267,7 +267,7 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
      * of [status, headers, body]. This array is passed to outer middleware
      * if available or directly to the Slim run method.
      *
-     * @return array[int status, array headers, string body]
+     * @return array{0:int,1:\Slim\Http\Headers,2:string}
      */
     public function finalize()
     {
@@ -490,7 +490,7 @@ class Response implements \ArrayAccess, \Countable, \IteratorAggregate
      * This returns the contained `\Slim\Http\Headers` instance which
      * is itself iterable.
      *
-     * @return \Slim\Http\Headers
+     * @return \Traversable
      */
     public function getIterator(): \Traversable
     {

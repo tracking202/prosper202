@@ -128,9 +128,9 @@ final class InMemoryReportRepository implements ReportRepositoryInterface
         }
 
         $result = [];
-        foreach ($groups as $hour => $groupRows) {
-            $agg = $this->aggregate($groupRows);
-            $agg['hour_of_day'] = $hour;
+        for ($h = 0; $h < 24; $h++) {
+            $agg = isset($groups[$h]) ? $this->aggregate($groups[$h]) : $this->aggregate([]);
+            $agg['hour_of_day'] = $h;
             $result[] = $agg;
         }
 
@@ -152,9 +152,9 @@ final class InMemoryReportRepository implements ReportRepositoryInterface
         }
 
         $result = [];
-        foreach ($groups as $day => $groupRows) {
-            $agg = $this->aggregate($groupRows);
-            $agg['day_of_week'] = $day;
+        for ($d = 0; $d < 7; $d++) {
+            $agg = isset($groups[$d]) ? $this->aggregate($groups[$d]) : $this->aggregate([]);
+            $agg['day_of_week'] = $d;
             $result[] = $agg;
         }
 

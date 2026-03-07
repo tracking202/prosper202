@@ -84,7 +84,7 @@ class Request
     public function __construct(\Slim\Environment $env)
     {
         $this->env = $env;
-        $this->headers = new \Slim\Http\Headers(\Slim\Http\Headers::extract($env));
+        $this->headers = new \Slim\Http\Headers(\Slim\Http\Headers::extract(iterator_to_array($env)));
         $this->cookies = new \Slim\Helper\Set(\Slim\Http\Util::parseCookieHeader($env['HTTP_COOKIE']));
     }
 
@@ -318,7 +318,7 @@ class Request
      * the value of a array key if requested; if the array key does not exist, NULL is returned.
      *
      * @param  string            $key
-     * @return array|string|null
+     * @return \Slim\Helper\Set|string|null
      */
     public function cookies($key = null)
     {

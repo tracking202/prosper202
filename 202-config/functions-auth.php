@@ -9,6 +9,7 @@ declare(strict_types=1);
 if (!function_exists('hash_user_pass')) {
     function hash_user_pass(string $password): string
     {
+        // @phpstan-ignore-next-line centralized password hashing helper
         return password_hash($password, PASSWORD_DEFAULT);
     }
 }
@@ -52,12 +53,41 @@ class AUTH
     public const LOGOUT_DAYS = 14;
     private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted != 1 AND u.user_active = 1 LIMIT 1';
     private static bool $passwordColumnChecked = false;
+    private static bool $sessionHeartbeatRefreshed = false;
+
+    private static function updateSession(array $values, bool $regenerateId = false): void
+    {
+        $writer = static function () use ($values, $regenerateId): void {
+            if ($regenerateId && session_status() === PHP_SESSION_ACTIVE) {
+                session_regenerate_id(true);
+            }
+
+            foreach ($values as $key => $value) {
+                $_SESSION[$key] = $value;
+            }
+        };
+
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+            return;
+        }
+
+        $writer();
+    }
+
+    private static function writeSessionValue(string $key, $value): void
+    {
+        self::updateSession([$key => $value]);
+    }
 
     public static function logged_in()
     {
         $session_time_passed = isset($_SESSION['session_time']) ? time() - $_SESSION['session_time'] : PHP_INT_MAX;
         if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and ($_SESSION['session_fingerprint'] == md5('session_fingerprint' . session_id())) and ($session_time_passed < 50000)) {
-            $_SESSION['session_time'] = time();
+            if (!self::$sessionHeartbeatRefreshed) {
+                self::writeSessionValue('session_time', time());
+                self::$sessionHeartbeatRefreshed = true;
+            }
             return true;
         } else {
             return false;
@@ -77,8 +107,8 @@ class AUTH
             throw new \RuntimeException('Unable to prepare login query: ' . $db->error);
         }
        // die('prepared statement...');
-        $stmt->bind_param('s', $username);
-        $stmt->execute();
+        self::bind($stmt, 's', $username);
+        self::execute($stmt, 'Unable to execute login query');
         $result = $stmt->get_result();
         $user_row = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -112,8 +142,8 @@ class AUTH
         if (!$stmt) {
             throw new \RuntimeException('Unable to prepare password upgrade query: ' . $db->error);
         }
-        $stmt->bind_param('si', $new_hash, $user_id);
-        $stmt->execute();
+        self::bind($stmt, 'si', $new_hash, $user_id);
+        self::execute($stmt, 'Unable to execute password upgrade query');
         $stmt->close();
     }
 
@@ -130,7 +160,7 @@ class AUTH
             if ($column && isset($column['Type'])) {
                 $type = strtolower((string) $column['Type']);
                 if (preg_match('/\\((\\d+)\\)/', $type, $matches)) {
-                    $length = (int) ($matches[1] ?? 0);
+                    $length = (int) $matches[1];
                     if ($length < 60) {
                         $alter = $db->query('ALTER TABLE 202_users MODIFY user_pass VARCHAR(255) NOT NULL');
                         if ($alter === false && function_exists('prosper_log')) {
@@ -161,8 +191,8 @@ class AUTH
             return $userId;
         }
 
-        $stmt->bind_param('s', $installHash);
-        $stmt->execute();
+        self::bind($stmt, 's', $installHash);
+        self::execute($stmt, 'Unable to execute API owner lookup query');
         $result = $stmt->get_result();
         $ownerRow = $result ? $result->fetch_assoc() : null;
         $stmt->close();
@@ -192,31 +222,43 @@ class AUTH
 
     public static function begin_user_session(array $user_row): void
     {
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_regenerate_id(true);
+        $writer = static function () use ($user_row): void {
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_regenerate_id(true);
+            }
+
+            $_SESSION['session_fingerprint'] = md5('session_fingerprint' . session_id());
+            $_SESSION['session_time'] = time();
+            $_SESSION['user_name'] = $user_row['user_name'];
+            $_SESSION['user_id'] = (int) $user_row['user_id'];
+            $_SESSION['user_own_id'] = (int) $user_row['user_id'];
+            $_SESSION['user_api_key'] = $user_row['user_api_key'] ?? null;
+            $_SESSION['user_stats202_app_key'] = $user_row['user_stats202_app_key'] ?? null;
+            $_SESSION['user_timezone'] = $user_row['user_timezone'] ?? 'UTC';
+            $_SESSION['user_mods_lb'] = $user_row['user_mods_lb'] ?? 0;
+            $_SESSION['account_owner_id'] = self::determineAccountOwnerId($user_row);
+        };
+
+        if (function_exists('withWritableSession')) {
+            withWritableSession($writer);
+        } else {
+            $writer();
         }
 
-        $_SESSION['session_fingerprint'] = md5('session_fingerprint' . session_id());
-        $_SESSION['session_time'] = time();
-        $_SESSION['user_name'] = $user_row['user_name'];
-        $_SESSION['user_id'] = (int) $user_row['user_id'];
-        $_SESSION['user_own_id'] = (int) $user_row['user_id'];
-        $_SESSION['user_api_key'] = $user_row['user_api_key'] ?? null;
-        $_SESSION['user_stats202_app_key'] = $user_row['user_stats202_app_key'] ?? null;
-        $_SESSION['user_timezone'] = $user_row['user_timezone'] ?? 'UTC';
-        $_SESSION['user_mods_lb'] = $user_row['user_mods_lb'] ?? 0;
-        $_SESSION['account_owner_id'] = self::determineAccountOwnerId($user_row);
+        self::$sessionHeartbeatRefreshed = true;
     }
 
     public static function require_user($auth_type = '')
     {
-        if (AUTH::logged_in() == false) {
+        $loggedIn = AUTH::logged_in();
+        if ($loggedIn == false) {
             AUTH::remember_me_on_logged_out();
+            $loggedIn = AUTH::logged_in();
         }
 
-        if (AUTH::logged_in() == false) {
+        if ($loggedIn == false) {
             if ($auth_type == "toolbar") {
-                $_SESSION['toolbar'] = 'true';
+                self::writeSessionValue('toolbar', 'true');
             }
 
             die(include_once(realpath(__DIR__ . '/../') . '/202-access-denied.php'));
@@ -270,7 +312,7 @@ class AUTH
 // Will return the response, if false it print the response
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 // Set to post
-        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POST, true);
 // Set post fields
         curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
 // Prevent network issues from logging users out
@@ -291,10 +333,10 @@ class AUTH
         if (is_array($api_validate) && ($api_validate['msg'] ?? '') === "Key valid") {
         //update the api key
             $user_sql = "	UPDATE 	202_users
-						SET		p202_customer_api_key='" . $user_api_key . "'
-						WHERE 	user_id='" . $_SESSION['user_id'] . "'";
+							SET		p202_customer_api_key='" . $user_api_key . "'
+							WHERE 	user_id='" . $_SESSION['user_id'] . "'";
             _mysqli_query($user_sql);
-            $_SESSION['valid_key'] = true;
+            self::writeSessionValue('valid_key', true);
             return true;
         } else {
             return false;
@@ -348,7 +390,7 @@ class AUTH
                 $user_row = $user_result->fetch_assoc();
                 if ($user_row) {
                     self::begin_user_session($user_row);
-                    $_SESSION['user_cirrus_link'] = $user_row['user_api_key'] ?? null;
+                    self::writeSessionValue('user_cirrus_link', $user_row['user_api_key'] ?? null);
                     return true;
                 }
             }
@@ -460,7 +502,7 @@ class AUTH
                 throw new \RuntimeException("Bad range");
             }
             $bytes = random_bytes(4);
-            if ($bytes === false || strlen($bytes) != 4) {
+            if (strlen($bytes) != 4) {
                 throw new \RuntimeException("Unable to get 4 bytes");
             }
             $ary = unpack("Nint", $bytes);
@@ -473,5 +515,24 @@ class AUTH
 
         // fallback to less secure mt_rand in case user doesn't have random_bytes
         return (int) mt_rand($min, $max);
+    }
+
+    private static function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
+    {
+        $values = array_values($values);
+        $refs = [$stmt, $types];
+        foreach ($values as $index => $value) {
+            $refs[] = &$values[$index];
+        }
+        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+            throw new \RuntimeException('Unable to bind statement parameters');
+        }
+    }
+
+    private static function execute(\mysqli_stmt $stmt, string $message): void
+    {
+        if (!mysqli_stmt_execute($stmt)) {
+            throw new \RuntimeException($message);
+        }
     }
 }

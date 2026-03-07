@@ -88,9 +88,10 @@ final class ConnectionTest extends TestCase
         $expected = ['id' => 1, 'name' => 'test'];
         $result = $this->createMock(mysqli_result::class);
         $result->method('fetch_assoc')->willReturn($expected);
+        $result->expects($this->once())->method('free');
 
         $stmt = $this->createMock(mysqli_stmt::class);
-        $stmt->method('execute')->willReturn(true);
+        $stmt->expects($this->once())->method('execute')->willReturn(true);
         $stmt->method('get_result')->willReturn($result);
         $stmt->expects($this->once())->method('close');
 
@@ -143,7 +144,7 @@ final class ConnectionTest extends TestCase
         $result->expects($this->once())->method('free');
 
         $stmt = $this->createMock(mysqli_stmt::class);
-        $stmt->method('execute')->willReturn(true);
+        $stmt->expects($this->once())->method('execute')->willReturn(true);
         $stmt->method('get_result')->willReturn($result);
         $stmt->expects($this->once())->method('close');
 
@@ -275,6 +276,42 @@ final class ConnectionTest extends TestCase
         $this->assertTrue(true);
     }
 
+    public function testBindRejectsTypesValuesMismatch(): void
+    {
+        $stmt = $this->createMock(mysqli_stmt::class);
+        $stmt->expects($this->never())->method('bind_param');
+
+        $conn = new Connection($this->createFakeMysqli());
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('does not match value count');
+        $conn->bind($stmt, 'ii', [1]);
+    }
+
+    public function testBindRejectsEmptyTypesWithValues(): void
+    {
+        $stmt = $this->createMock(mysqli_stmt::class);
+        $stmt->expects($this->never())->method('bind_param');
+
+        $conn = new Connection($this->createFakeMysqli());
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('does not match value count');
+        $conn->bind($stmt, '', [1]);
+    }
+
+    public function testBindNullableIntAsI(): void
+    {
+        $stmt = new BindCapturingStmt();
+
+        $conn = new Connection($this->createFakeMysqli());
+        $conn->bind($stmt, 'i', [null]);
+
+        $this->assertSame('i', $stmt->capturedTypes);
+        $this->assertCount(1, $stmt->capturedValues);
+        $this->assertNull($stmt->capturedValues[0]);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────
 
     private function createFakeMysqli(
@@ -347,6 +384,32 @@ class FakeMysqli extends mysqli
 
     public function close(): true
     {
+        return true;
+    }
+}
+
+final class BindCapturingStmt extends mysqli_stmt
+{
+    public string $capturedTypes = '';
+
+    /**
+     * @var list<mixed>
+     */
+    public array $capturedValues = [];
+
+    public function __construct()
+    {
+        // Skip parent constructor — no real connection.
+    }
+
+    public function bind_param(string $types, mixed &...$vars): bool
+    {
+        $this->capturedTypes = $types;
+        $this->capturedValues = [];
+        foreach ($vars as &$var) {
+            $this->capturedValues[] = $var;
+        }
+
         return true;
     }
 }

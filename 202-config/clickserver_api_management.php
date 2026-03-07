@@ -30,14 +30,13 @@ function clickserver_api_domain_act_deact($key, $csid, $method){
 	} else {
 		$success = $data['isDeactivationSuccess'];
 	}
-		if ($data['isValidKey'] != 'true' || $success != 'true') {
-			return false;
-			die();
-		}
+			if ($data['isValidKey'] != 'true' || $success != 'true') {
+				curl_close($ch);
+				return false;
+			}
 
-	return true;
-
-	curl_close($ch);
+		curl_close($ch);
+		return true;
 }
 
 function clickserver_api_domain_list($key){
@@ -55,9 +54,8 @@ function clickserver_api_domain_list($key){
 
 	$data = json_decode($result, true);
 
-	return $data;
-
 	curl_close($ch);
+	return $data;
 }
 
 function clickserver_api_license($key){
@@ -75,9 +73,8 @@ function clickserver_api_license($key){
 
 	$data = json_decode($result, true);
 
-	return $data;
-
 	curl_close($ch);
+	return $data;
 }
 
 ?>

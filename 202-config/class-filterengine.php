@@ -2,20 +2,8 @@
 declare(strict_types=1);
 class FilterEngine
 {
-
-    private $mysql = [];
-
-    private static $db;
-
     function __construct()
     {
-        try {
-            $database = DB::getInstance();
-            self::$db = $database->getConnection();
-        } catch (Exception) {
-            self::$db = false;
-        }
-        $this->mysql['user_id'] = self::$db->real_escape_string((string)$_SESSION['user_id']);
         // make sure mysql uses the timezone choses by the user
     }
 
@@ -59,6 +47,8 @@ class FilterEngine
         
         if ($result)
             $row = $result->fetch_assoc();
+        else
+            $row = [];
         
         $value = '';
         
@@ -105,13 +95,11 @@ class FilterEngine
                     return true;
                 else
                     return false;
-                break;
             case ">":
                 if ($val > self::getFilter('filter_value', $filter_id))
                     return true;
                 else
                     return false;
-                break;
             case "=":
                
                 if ($val == (self::getFilter('filter_value', $filter_id))){
@@ -119,27 +107,23 @@ class FilterEngine
                     return true;}
                 else
                     return false;
-                break;
             
             case ">=":
                 if ($val >= self::getFilter('filter_value', $filter_id))
                     return true;
                 else
                     return false;
-                break;
             case "<=":
                 if ($val <= self::getFilter('filter_value', $filter_id))
                     return true;
                 else
                     return false;
-                break;
             case "!=":
                 if ($val != self::getFilter('filter_value', $filter_id)){
                     echo  self::getFilter('filter_value', $filter_id);
                     return true;}
                 else
                     return false;
-                break;
         }
 
     }

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Prosper202\Attribution\Repository\Mysql;
 
 use mysqli;
-use mysqli_result;
 use Prosper202\Attribution\Repository\JourneyMaintenanceRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Database\Connection;
@@ -205,21 +204,16 @@ SQL;
         $stmt = $this->conn->prepareRead($sql);
 
         $limit = self::MAX_TOUCHES;
-        $stmt->bind_param('iiiii', $userId, $campaignId, $lookbackStart, $conversionTime, $limit);
-        $this->conn->execute($stmt);
+        $this->conn->bind($stmt, 'iiiii', [$userId, $campaignId, $lookbackStart, $conversionTime, $limit]);
+        $rows = $this->conn->fetchAll($stmt);
 
         $journey = [];
-        $result = $stmt->get_result();
-        if ($result instanceof mysqli_result) {
-            while ($row = $result->fetch_assoc()) {
-                $journey[(int) $row['click_id']] = [
-                    'click_id' => (int) $row['click_id'],
-                    'click_time' => (int) $row['click_time'],
-                ];
-            }
-            $result->free();
+        foreach ($rows as $row) {
+            $journey[(int) $row['click_id']] = [
+                'click_id' => (int) $row['click_id'],
+                'click_time' => (int) $row['click_time'],
+            ];
         }
-        $stmt->close();
 
         if (!isset($journey[$primaryClickId])) {
             $journey[$primaryClickId] = [
@@ -263,7 +257,7 @@ SQL;
         foreach ($journey as $position => $touch) {
             $clickId = $touch['click_id'];
             $clickTime = $touch['click_time'];
-            $stmt->bind_param('iiiii', $conversionId, $clickId, $clickTime, $position, $createdAt);
+            $this->conn->bind($stmt, 'iiiii', [$conversionId, $clickId, $clickTime, $position, $createdAt]);
             $this->conn->execute($stmt);
         }
 
@@ -273,9 +267,8 @@ SQL;
     private function deleteExistingJourney(int $conversionId): void
     {
         $stmt = $this->conn->prepareWrite('DELETE FROM 202_conversion_touchpoints WHERE conv_id = ?');
-        $stmt->bind_param('i', $conversionId);
-        $this->conn->execute($stmt);
-        $stmt->close();
+        $this->conn->bind($stmt, 'i', [$conversionId]);
+        $this->conn->executeUpdate($stmt);
     }
 
     private function purgeJourneyCache(int $conversionId): void
@@ -290,14 +283,18 @@ SQL;
         if (isset($GLOBALS['memcache']) && $GLOBALS['memcache'] instanceof \Memcache) {
             /** @var \Memcache $memcache */
             $memcache = $GLOBALS['memcache'];
-            $memcache->delete($cacheKey);
+            if (method_exists($memcache, 'delete')) {
+                $memcache->delete($cacheKey);
+            }
             return;
         }
 
         if (isset($GLOBALS['memcache']) && $GLOBALS['memcache'] instanceof \Memcached) {
             /** @var \Memcached $memcache */
             $memcache = $GLOBALS['memcache'];
-            $memcache->delete($cacheKey);
+            if (method_exists($memcache, 'delete')) {
+                $memcache->delete($cacheKey);
+            }
         }
     }
 
@@ -346,24 +343,18 @@ SQL;
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $params);
-        $this->conn->execute($stmt);
-        $result = $stmt->get_result();
+        $rawRows = $this->conn->fetchAll($stmt);
 
         $rows = [];
-        if ($result instanceof mysqli_result) {
-            while ($row = $result->fetch_assoc()) {
-                $rows[] = [
-                    'conv_id' => (int) $row['conv_id'],
-                    'click_id' => (int) $row['click_id'],
-                    'campaign_id' => (int) $row['campaign_id'],
-                    'conv_time' => (int) $row['conv_time'],
-                    'click_time' => (int) $row['click_time'],
-                ];
-            }
-            $result->free();
+        foreach ($rawRows as $row) {
+            $rows[] = [
+                'conv_id' => (int) $row['conv_id'],
+                'click_id' => (int) $row['click_id'],
+                'campaign_id' => (int) $row['campaign_id'],
+                'conv_time' => (int) $row['conv_time'],
+                'click_time' => (int) $row['click_time'],
+            ];
         }
-
-        $stmt->close();
 
         return $rows;
     }
