@@ -300,6 +300,37 @@ function info_top(): void
 		}
 	}
 
+	function resolve_update_target_path(string $basePath, string $entryName, bool $isDirectory = false)
+	{
+		$normalizedEntry = str_replace('\\', '/', $entryName);
+		$normalizedEntry = ltrim($normalizedEntry, '/');
+
+		if ($normalizedEntry === '' || str_contains($normalizedEntry, "\0")) {
+			return false;
+		}
+
+		$segments = explode('/', $normalizedEntry);
+		foreach ($segments as $segment) {
+			if ($segment === '' || $segment === '.' || $segment === '..') {
+				return false;
+			}
+		}
+
+		$targetPath = $basePath . '/' . $normalizedEntry;
+		$targetDirectory = $isDirectory ? $targetPath : dirname($targetPath);
+
+		if (!is_dir($targetDirectory) && !@mkdir($targetDirectory, 0755, true)) {
+			return false;
+		}
+
+		$resolvedDirectory = realpath($targetDirectory);
+		if ($resolvedDirectory === false || strpos($resolvedDirectory, $basePath) !== 0) {
+			return false;
+		}
+
+		return $targetPath;
+	}
+
 
 	function update_needed()
 	{
@@ -348,6 +379,16 @@ function info_top(): void
 					}
 
 					if ($autoupgrade == 'true' && $link !== null) {
+						$parsedLink = parse_url($link);
+						if (
+							!is_array($parsedLink)
+							|| ($parsedLink['scheme'] ?? '') !== 'https'
+							|| ($parsedLink['host'] ?? '') !== 'my.tracking202.com'
+						) {
+							$log .= 'Auto update rejected due to untrusted update source. ';
+							return true;
+						}
+
 						$decimals = explode('.', $latest_version);
 						$versionCount = count($decimals);
 						$lastDecimal = substr($latest_version, strrpos($latest_version, '.') + 1);
@@ -372,23 +413,32 @@ function info_top(): void
 										$zipResult = $zip->open(__DIR__ . '/temp/prosper202_' . $latest_version . '.zip');
 
 										if ($zipResult === TRUE) {
+											$basePath = realpath(dirname(__DIR__));
+											if ($basePath === false) {
+												$log .= 'Unable to resolve update destination path. ';
+												$zip->close();
+												return true;
+											}
 
 											for ($i = 0; $i < $zip->numFiles; $i++) {
 												$thisFileName = $zip->getNameIndex($i);
 
 												if (str_ends_with($thisFileName, '/')) {
-													if (is_dir(substr(__DIR__, 0, -10) . '/' . $thisFileName)) {
-														// Directory already exists
-													} else {
-														@mkdir(substr(__DIR__, 0, -10) . '/' . $thisFileName, 0755, true);
+													$targetDirectory = resolve_update_target_path($basePath, $thisFileName, true);
+													if ($targetDirectory === false) {
+														$log .= 'Skipped invalid update directory path: ' . $thisFileName . '. ';
 													}
 												} else {
 													$contents = $zip->getFromIndex($i);
-													$file_ext = array_pop(explode(".", $thisFileName));
+													$targetFile = resolve_update_target_path($basePath, $thisFileName);
+													if ($targetFile === false) {
+														$log .= 'Skipped invalid update file path: ' . $thisFileName . '. ';
+														continue;
+													}
 
-													if ($updateThis = @fopen(substr(__DIR__, 0, -10) . '/' . $thisFileName, 'wb')) {
+													if ($updateThis = @fopen($targetFile, 'wb')) {
 														fwrite($updateThis, $contents);
-														fclose($updateThis);
+							                            	fclose($updateThis);
 														unset($contents);
 													} else {
 														$log .= "Can't update file:" . $thisFileName . "! Operation aborted";
