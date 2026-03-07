@@ -187,8 +187,7 @@ class Snoopy
 				} else {
 					return false;
 				}
-				return true;
-				break;
+					return true;
 			case "https":
 				if (!$this->curl_path)
 					return false;
@@ -233,16 +232,13 @@ class Snoopy
 							break;
 					}
 				}
-				return true;
-				break;
+					return true;
 			default:
 				// not a valid protocol
 				$this->error	=	'Invalid protocol "' . $URI_PARTS["scheme"] . '"\n';
-				return false;
-				break;
+					return false;
 		}
-		return true;
-	}
+		}
 
 	/*======================================================================*\
 	Function:	submit
@@ -321,8 +317,7 @@ class Snoopy
 				} else {
 					return false;
 				}
-				return true;
-				break;
+					return true;
 			case "https":
 				if (!$this->curl_path)
 					return false;
@@ -373,17 +368,14 @@ class Snoopy
 							break;
 					}
 				}
-				return true;
-				break;
+					return true;
 
 			default:
 				// not a valid protocol
 				$this->error	=	'Invalid protocol "' . $URI_PARTS["scheme"] . '"\n';
-				return false;
-				break;
+					return false;
 		}
-		return true;
-	}
+		}
 
 	/*======================================================================*\
 	Function:	fetchlinks
@@ -557,7 +549,8 @@ class Snoopy
 						'isx", (string) $document, $links);
 
 
-		// catenate the non-empty matches from the conditional subpattern
+			// catenate the non-empty matches from the conditional subpattern
+			$match = [];
 
 		foreach ($links[2] as $val) {
 			if (!empty($val))

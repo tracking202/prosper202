@@ -14,6 +14,7 @@ if (is_installed() == true) {
 }
 
 $html['user_api'] = isset($_GET['customers_api_key']) ? htmlentities((string) $_GET['customers_api_key'], ENT_QUOTES, 'UTF-8') : '';
+$error = ['user_email' => false];
 
 info_top(); ?>
 <div class="main col-xs-7 install">
@@ -32,7 +33,7 @@ info_top(); ?>
 	<?php } ?>
 	<br><br>
 	<form method=post action="" id="getapikey" class="form-horizontal" role="form">
-		<div class="form-group <?php if ($error['user_email']) echo "has-error"; ?>">
+			<div class="form-group">
 			<label for="user_api" class="col-xs-4 control-label"><strong>Prosper202 API Key:</strong><br> <small></label>
 			<div class="col-xs-8">
 				<input type="text" class="form-control input-sm" style="color:black;" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" placeholder="Click Button To Get Your API Key" readonly>

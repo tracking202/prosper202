@@ -61,7 +61,7 @@ final class CachedDecoratorTest extends TestCase
         self::assertSame($id1, $id2);
     }
 
-    public function testCacheKeyMatchesLegacyCountry(): void
+    public function testCacheKeyMatchesCountry(): void
     {
         $store = [];
         $setKeys = [];
@@ -84,7 +84,7 @@ final class CachedDecoratorTest extends TestCase
         self::assertSame($expectedKey, $setKeys[0]);
     }
 
-    public function testCacheKeyMatchesLegacyUtm(): void
+    public function testCacheKeyMatchesUtm(): void
     {
         $setKeys = [];
         $store = [];
@@ -103,11 +103,11 @@ final class CachedDecoratorTest extends TestCase
 
         $cached->findOrCreateUtm('google', 'utm_source');
 
-        $expectedKey = md5('utm_source' . '_id' . 'google' . 'fakehash');
+        $expectedKey = md5('utm-' . 'utm_source' . '|' . 'google' . 'fakehash');
         self::assertSame($expectedKey, $setKeys[0]);
     }
 
-    public function testCacheKeyMatchesLegacyVariable(): void
+    public function testCacheKeyMatchesVariable(): void
     {
         $setKeys = [];
         $store = [];
@@ -126,11 +126,11 @@ final class CachedDecoratorTest extends TestCase
 
         $cached->findOrCreateVariable('my-value', 42);
 
-        $expectedKey = md5('42' . 'my-value' . 'fakehash');
+        $expectedKey = md5('variable-id' . '42' . '|' . 'my-value' . 'fakehash');
         self::assertSame($expectedKey, $setKeys[0]);
     }
 
-    public function testCacheKeyMatchesLegacyCustomVar(): void
+    public function testCacheKeyMatchesCustomVar(): void
     {
         $setKeys = [];
         $store = [];
@@ -149,7 +149,7 @@ final class CachedDecoratorTest extends TestCase
 
         $cached->findOrCreateCustomVar('sub_id', 'abc123');
 
-        $expectedKey = md5('sub_id' . '-id' . 'abc123' . 'fakehash');
+        $expectedKey = md5('customvar-' . 'sub_id' . '|' . 'abc123' . 'fakehash');
         self::assertSame($expectedKey, $setKeys[0]);
     }
 

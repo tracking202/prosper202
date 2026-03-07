@@ -26,9 +26,6 @@ final class ConnectionFactory
         }
 
         $database = \DB::getInstance();
-        if ($database === null) {
-            throw new \RuntimeException('Database not initialized. Ensure 202-config.php has been loaded.');
-        }
 
         $write = $database->getConnection();
         if (!$write instanceof \mysqli) {

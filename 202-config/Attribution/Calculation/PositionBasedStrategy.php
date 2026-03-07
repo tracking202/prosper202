@@ -160,11 +160,9 @@ final class PositionBasedStrategy implements AttributionStrategyInterface
         $credits[$count - 1] = $lastWeight;
 
         $middleCount = $count - 2;
-        if ($middleCount > 0) {
-            $share = $middleCount > 0 ? $middleWeight / $middleCount : 0.0;
-            for ($i = 1; $i < $count - 1; $i++) {
-                $credits[$i] = $share;
-            }
+        $share = $middleWeight / $middleCount;
+        for ($i = 1; $i < $count - 1; $i++) {
+            $credits[$i] = $share;
         }
 
         $sum = array_sum($credits);

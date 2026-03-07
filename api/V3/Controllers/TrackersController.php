@@ -60,11 +60,8 @@ class TrackersController extends Controller
     private function getBaseUrl(): string
     {
         $stmt = $this->prepare('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = ? LIMIT 1');
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new \Api\V3\Exception\DatabaseException('Failed to query tracking domain');
-        }
+        $this->bind($stmt, 'i', $this->userId);
+        $this->execute($stmt, 'Failed to query tracking domain');
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 

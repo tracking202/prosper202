@@ -107,7 +107,7 @@ class View
     /**
      * Set view data value as Closure with key
      * @param string $key
-     * @param mixed $value
+     * @param \Closure $value
      */
     public function keep($key, \Closure $value)
     {
