@@ -246,7 +246,7 @@ function authorize_attribution_request(array $params, string $permission): array
     }
 
     $dbInstance = \DB::getInstance();
-    $connection = $dbInstance->getConnection();
+    $connection = $dbInstance?->getConnection();
     if (!$connection instanceof \mysqli) {
         return [
             'status' => 500,
