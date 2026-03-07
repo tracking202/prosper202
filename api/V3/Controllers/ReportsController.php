@@ -106,11 +106,8 @@ class ReportsController
             $whereClause";
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Summary query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Summary query failed');
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -173,11 +170,8 @@ class ReportsController
         $types .= 'i';
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Breakdown query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Breakdown query failed');
         $result = $stmt->get_result();
 
         $rows = [];
@@ -240,11 +234,8 @@ class ReportsController
             LIMIT 2000";
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Timeseries query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Timeseries query failed');
         $result = $stmt->get_result();
 
         $rows = [];
@@ -305,11 +296,8 @@ class ReportsController
         $stmt = $this->prepare($sql);
         $daypartBinds = array_merge([$timezone], $binds);
         $daypartTypes = 's' . $types;
-        $stmt->bind_param($daypartTypes, ...$daypartBinds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Daypart query failed');
-        }
+        $this->bind($stmt, $daypartTypes, ...$daypartBinds);
+        $this->execute($stmt, 'Daypart query failed');
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
@@ -389,11 +377,8 @@ class ReportsController
         $stmt = $this->prepare($sql);
         $weekpartBinds = array_merge([$timezone], $binds);
         $weekpartTypes = 's' . $types;
-        $stmt->bind_param($weekpartTypes, ...$weekpartBinds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Weekpart query failed');
-        }
+        $this->bind($stmt, $weekpartTypes, ...$weekpartBinds);
+        $this->execute($stmt, 'Weekpart query failed');
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
@@ -480,11 +465,8 @@ class ReportsController
     private function resolveUserTimezone(): string
     {
         $stmt = $this->prepare('SELECT user_timezone FROM 202_users WHERE user_id = ? LIMIT 1');
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Failed to resolve timezone');
-        }
+        $this->bind($stmt, 'i', $this->userId);
+        $this->execute($stmt, 'Failed to resolve timezone');
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
@@ -543,5 +525,26 @@ class ReportsController
 
             return ((int)$a[$keyName]) <=> ((int)$b[$keyName]);
         });
+    }
+
+    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
+    {
+        $values = array_values($values);
+        $refs = [$stmt, $types];
+        foreach ($values as $index => $value) {
+            $refs[] = &$values[$index];
+        }
+        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+            $stmt->close();
+            throw new DatabaseException('Bind failed');
+        }
+    }
+
+    private function execute(\mysqli_stmt $stmt, string $message): void
+    {
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            throw new DatabaseException($message);
+        }
     }
 }

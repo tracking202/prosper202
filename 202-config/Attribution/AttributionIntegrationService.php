@@ -205,11 +205,11 @@ class AttributionIntegrationService
         }
         
         // Safe to delete
-        $success = $this->modelRepository->delete($modelId);
-        
-        return [
-            'success' => $success,
-            'error' => $success ? null : 'Failed to delete model'
-        ];
+        try {
+            $this->modelRepository->delete($modelId, $userId);
+            return ['success' => true, 'error' => null];
+        } catch (\Throwable) {
+            return ['success' => false, 'error' => 'Failed to delete model'];
+        }
     }
 }

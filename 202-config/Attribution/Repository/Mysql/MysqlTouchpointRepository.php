@@ -5,34 +5,38 @@ declare(strict_types=1);
 namespace Prosper202\Attribution\Repository\Mysql;
 
 use mysqli;
-use mysqli_stmt;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
 use Prosper202\Attribution\Touchpoint;
+use Prosper202\Database\Connection;
 use RuntimeException;
-use Throwable;
 
 final readonly class MysqlTouchpointRepository implements TouchpointRepositoryInterface
 {
-    public function __construct(
-        private mysqli $writeConnection,
-        private ?mysqli $readConnection = null
-    ) {
+    private Connection $conn;
+
+    /**
+     * @param Connection|mysqli $connection Connection instance or legacy mysqli for backwards compatibility
+     */
+    public function __construct(Connection|mysqli $connection, ?mysqli $readConnection = null)
+    {
+        if ($connection instanceof Connection) {
+            $this->conn = $connection;
+        } else {
+            $this->conn = new Connection($connection, $readConnection);
+        }
     }
 
     public function findBySnapshot(int $snapshotId): array
     {
         $sql = 'SELECT * FROM 202_attribution_touchpoints WHERE snapshot_id = ? ORDER BY position ASC, touchpoint_id ASC';
-        $stmt = $this->prepareRead($sql);
-        $stmt->bind_param('i', $snapshotId);
-        $stmt->execute();
-        $result = $stmt->get_result();
+        $stmt = $this->conn->prepareRead($sql);
+        $this->conn->bind($stmt, 'i', [$snapshotId]);
+        $rows = $this->conn->fetchAll($stmt);
+
         $touchpoints = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $touchpoints[] = Touchpoint::fromDatabaseRow($row);
-            }
+        foreach ($rows as $row) {
+            $touchpoints[] = Touchpoint::fromDatabaseRow($row);
         }
-        $stmt->close();
 
         return $touchpoints;
     }
@@ -43,12 +47,9 @@ final readonly class MysqlTouchpointRepository implements TouchpointRepositoryIn
             return;
         }
 
-        $conn = $this->writeConnection;
-        $conn->begin_transaction();
-
-        try {
+        $this->conn->transaction(function () use ($touchpoints): void {
             $sql = 'INSERT INTO 202_attribution_touchpoints (snapshot_id, conv_id, click_id, position, credit, weight, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)';
-            $stmt = $this->prepareWrite($sql);
+            $stmt = $this->conn->prepareWrite($sql);
 
             foreach ($touchpoints as $touchpoint) {
                 if (!$touchpoint instanceof Touchpoint) {
@@ -67,56 +68,19 @@ final readonly class MysqlTouchpointRepository implements TouchpointRepositoryIn
                 $weight = (float) $touchpoint->weight;
                 $createdAt = (int) $touchpoint->createdAt;
 
-                $stmt->bind_param(
-                    'iiiiddi',
-                    $snapshotId,
-                    $conversionId,
-                    $clickId,
-                    $position,
-                    $credit,
-                    $weight,
-                    $createdAt
-                );
-                $stmt->execute();
+                $this->conn->bind($stmt, 'iiiiddi', [$snapshotId, $conversionId, $clickId, $position, $credit, $weight, $createdAt]);
+                $this->conn->execute($stmt);
             }
 
             $stmt->close();
-            $conn->commit();
-        } catch (Throwable $exception) {
-            $conn->rollback();
-            if (isset($stmt) && $stmt instanceof mysqli_stmt) {
-                $stmt->close();
-            }
-            throw $exception;
-        }
+        });
     }
 
     public function deleteBySnapshot(int $snapshotId): void
     {
         $sql = 'DELETE FROM 202_attribution_touchpoints WHERE snapshot_id = ?';
-        $stmt = $this->prepareWrite($sql);
-        $stmt->bind_param('i', $snapshotId);
-        $stmt->execute();
-        $stmt->close();
-    }
-
-    private function prepareRead(string $sql): mysqli_stmt
-    {
-        return $this->prepare($this->readConnection ?? $this->writeConnection, $sql);
-    }
-
-    private function prepareWrite(string $sql): mysqli_stmt
-    {
-        return $this->prepare($this->writeConnection, $sql);
-    }
-
-    private function prepare(mysqli $connection, string $sql): mysqli_stmt
-    {
-        $statement = $connection->prepare($sql);
-        if ($statement === false) {
-            throw new RuntimeException('Failed to prepare MySQL statement: ' . $connection->error);
-        }
-
-        return $statement;
+        $stmt = $this->conn->prepareWrite($sql);
+        $this->conn->bind($stmt, 'i', [$snapshotId]);
+        $this->conn->executeUpdate($stmt);
     }
 }

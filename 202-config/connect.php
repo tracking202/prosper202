@@ -13,8 +13,47 @@ require_once(__DIR__ . '/version.php');
 ini_set('session.gc_maxlifetime', '50000');
 ini_set('session.cookie_lifetime', '0'); // session cookie — expires when browser closes
 
-// Start the session at the beginning to avoid undefined $_SESSION variable
-session_start();
+// Start the session at the beginning to avoid undefined $_SESSION variable.
+// AJAX detection depends on clients sending X-Requested-With. jQuery does this
+// automatically; fetch() and sendBeacon() do not unless the caller adds it.
+// For AJAX requests, use read_and_close to release the session file lock immediately.
+// PHP's file-based sessions use exclusive locks, so parallel AJAX requests become
+// serialized if the lock is held. Session data is still readable in $_SESSION after close.
+$_is_ajax = !empty($_SERVER['HTTP_X_REQUESTED_WITH'])
+    && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
+if ($_is_ajax) {
+    session_start(['read_and_close' => true]);
+} else {
+    session_start();
+}
+
+if (!function_exists('withWritableSession')) {
+    /**
+     * Reopen a read-only session just long enough to persist writes, then
+     * release the session lock again for the rest of the request.
+     */
+    function withWritableSession(callable $callback): void
+    {
+        $openedHere = false;
+
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            if (headers_sent()) {
+                error_log('withWritableSession: headers already sent; session writes may not persist');
+                $callback();
+                return;
+            }
+
+            session_start();
+            $openedHere = true;
+        }
+
+        $callback();
+
+        if ($openedHere && session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+    }
+}
 
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
@@ -91,7 +130,7 @@ $str = (string)($_SERVER['REQUEST_URI'] ?? '');
 preg_match_all($re, $str, $matches, PREG_SET_ORDER, 0);
 
 // Fix for PHP 8 - Check if $matches array exists and has expected structure before accessing it
-if (!empty($matches) && isset($matches[0]) && isset($matches[0][0])) {
+if (!empty($matches)) {
     $navigation = $matches[0][0];
     $navigation = '/' . $navigation;
 } else {
@@ -102,7 +141,7 @@ if (!empty($matches) && isset($matches[0]) && isset($matches[0][0])) {
 $navigation = explode('/', $navigation);
 foreach ($navigation as $key => $row) {
     $split_chars = preg_split('/\?{1}/', $navigation[$key], -1, PREG_SPLIT_OFFSET_CAPTURE);
-    if (!empty($split_chars) && isset($split_chars[0]) && isset($split_chars[0][0])) {
+    if (!empty($split_chars)) {
         $navigation[$key] = $split_chars[0][0];
     }
 }
@@ -164,6 +203,7 @@ include_once(CONFIG_PATH . '/functions-empty.php');
 $whatCache = false;
 $memcacheInstalled = false;
 $memcacheWorking = false;
+$mchost = $mchost ?? '127.0.0.1';
 
 // try to connect to memcache server
 if (extension_loaded('memcache') && class_exists('Memcache')) {
@@ -196,11 +236,9 @@ function setCache($key, $value, $exp = null)
     switch ($whatCache) {
         case 'memcache':
             return $memcache->set($key, $value, false, $exp);
-            break;
 
         case 'memcached':
             return $memcache->set($key, $value, $exp);
-            break;
     }
 }
 
@@ -221,15 +259,6 @@ function inet6_aton($ip)
 try {
     $database = DB::getInstance();
 
-    // Check if getInstance() returned null (connection failed)
-    if ($database === null) {
-        // Throw an exception to be caught by the catch block below
-        // Retrieve the last error if possible, otherwise use a generic message
-        $last_error = error_get_last();
-        $error_message = $last_error ? $last_error['message'] : 'Unknown connection error during DB initialization.';
-        throw new Exception("Database connection failed during initialization: " . $error_message);
-    }
-
     $db = $database->getConnection();
 
     // Check for connection errors on the mysqli object itself (redundant if constructor throws, but safe)
@@ -238,7 +267,6 @@ try {
         $error = $db ? $db->connect_error : 'DB object is null';
         throw new Exception("MySQL Connection Error ({$errno}): {$error}");
     }
-
     // Initialize $dbro as well
     $dbro = $database->getConnectionro();
     if ($dbro === null || $dbro->connect_error) {
@@ -291,7 +319,7 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
         //disable mysql sessions because they are slow
         //$sess = new SessionManager();
-        if (session_status() !== PHP_SESSION_ACTIVE) {
+        if (session_status() !== PHP_SESSION_ACTIVE && !$_is_ajax) {
             session_start();
         }
     }
@@ -302,7 +330,11 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
 //set token to prevent CSRF attacks
 if (!isset($_SESSION['token'])) {
-    $_SESSION['token'] = md5(uniqid((string)random_int(0, mt_getrandmax()), TRUE));
+    withWritableSession(static function (): void {
+        if (!isset($_SESSION['token'])) {
+            $_SESSION['token'] = md5(uniqid((string) random_int(0, mt_getrandmax()), true));
+        }
+    });
 }
 
 
@@ -353,11 +385,9 @@ if (!isset($_SESSION['ipv6']) || !$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
     $result = $db->query($sql);
 
-    if ($result) {
-        $_SESSION['ipv6'] = "ipv6";
-    } else {
-        $_SESSION['ipv6'] = '';
-    }
+    withWritableSession(static function () use ($result): void {
+        $_SESSION['ipv6'] = $result ? 'ipv6' : '';
+    });
 }
 
 if (isset($_SESSION['ipv6']) && $_SESSION['ipv6'] != '') {

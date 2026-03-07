@@ -33,7 +33,7 @@ if (file_exists('../202-config.php')) {
 			continue;
 		}
 		$matches = [];
-		if (preg_match($re, $line, $matches) && isset($matches[1])) {
+			if (preg_match($re, $line, $matches)) {
 			switch ($matches[1]) {
 			case '$dbname':
 				$odbname = $matches[2];
@@ -246,6 +246,5 @@ switch ($step) {
 		fclose($handle);
 		chmod(substr(__DIR__, 0, -10) . '/202-config.php', 0666);
 
-		_die("<p>All right sparky! You've made it through this part of the installation. Prosper202 can now communicate with your database. If you are ready, go ahead and <a class='btn btn-xs btn-p202' href=\"install.php\">run the install!</a></p>");
-		break;
-}
+			_die("<p>All right sparky! You've made it through this part of the installation. Prosper202 can now communicate with your database. If you are ready, go ahead and <a class='btn btn-xs btn-p202' href=\"install.php\">run the install!</a></p>");
+	}

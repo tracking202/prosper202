@@ -43,11 +43,8 @@ class ConversionsController
 
         $countSql = "SELECT COUNT(*) as total FROM 202_conversion_logs cl $whereClause";
         $stmt = $this->prepare($countSql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Count query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Count query failed');
         $total = (int)$stmt->get_result()->fetch_assoc()['total'];
         $stmt->close();
 
@@ -65,11 +62,8 @@ class ConversionsController
         $types .= 'i';
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('List query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'List query failed');
         $result = $stmt->get_result();
 
         $rows = [];
@@ -94,11 +88,8 @@ class ConversionsController
             WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0 LIMIT 1";
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param('ii', $id, $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Query failed');
-        }
+        $this->bind($stmt, 'ii', $id, $this->userId);
+        $this->execute($stmt, 'Query failed');
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -116,11 +107,8 @@ class ConversionsController
         }
 
         $stmt = $this->prepare('SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
-        $stmt->bind_param('ii', $clickId, $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Query failed');
-        }
+        $this->bind($stmt, 'ii', $clickId, $this->userId);
+        $this->execute($stmt, 'Query failed');
         $click = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -140,20 +128,15 @@ class ConversionsController
                 (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0)";
             $stmt = $this->prepare($sql);
-            $stmt->bind_param('isidiii', $clickId, $transactionId, $campaignId, $payout, $this->userId, $clickTime, $convTime);
+            $this->bind($stmt, 'isidiii', $clickId, $transactionId, $campaignId, $payout, $this->userId, $clickTime, $convTime);
 
-            if (!$stmt->execute()) {
-                throw new DatabaseException('Failed to create conversion');
-            }
+            $this->execute($stmt, 'Failed to create conversion');
             $convId = $stmt->insert_id;
             $stmt->close();
 
             $stmt = $this->prepare('UPDATE 202_clicks SET click_lead = 1, click_payout = ? WHERE click_id = ? AND user_id = ?');
-            $stmt->bind_param('dii', $payout, $clickId, $this->userId);
-            if (!$stmt->execute()) {
-                $stmt->close();
-                throw new DatabaseException('Failed to update click');
-            }
+            $this->bind($stmt, 'dii', $payout, $clickId, $this->userId);
+            $this->execute($stmt, 'Failed to update click');
             $stmt->close();
 
             $this->db->commit();
@@ -169,11 +152,8 @@ class ConversionsController
     {
         $this->get($id);
         $stmt = $this->prepare('UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ?');
-        $stmt->bind_param('ii', $id, $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Delete failed');
-        }
+        $this->bind($stmt, 'ii', $id, $this->userId);
+        $this->execute($stmt, 'Delete failed');
         $stmt->close();
     }
 
@@ -184,5 +164,26 @@ class ConversionsController
             throw new DatabaseException('Prepare failed');
         }
         return $stmt;
+    }
+
+    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
+    {
+        $values = array_values($values);
+        $refs = [$stmt, $types];
+        foreach ($values as $index => $value) {
+            $refs[] = &$values[$index];
+        }
+        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+            $stmt->close();
+            throw new DatabaseException('Bind failed');
+        }
+    }
+
+    private function execute(\mysqli_stmt $stmt, string $message): void
+    {
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            throw new DatabaseException($message);
+        }
     }
 }

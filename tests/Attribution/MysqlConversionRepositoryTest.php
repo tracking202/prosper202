@@ -92,7 +92,7 @@ final class FakeMysqli extends \mysqli
     }
 }
 
-final class FakeMysqliStatement
+final class FakeMysqliStatement extends \mysqli_stmt
 {
     /** @var array<int, array<string, mixed>> */
     private array $rows;
@@ -104,16 +104,17 @@ final class FakeMysqliStatement
      */
     public function __construct(array $rows)
     {
+        // Skip parent constructor — no real connection needed for in-memory test double
         $this->rows = $rows;
     }
 
-    public function bind_param(string $types, &...$vars): bool
+    public function bind_param(string $types, mixed &...$vars): bool
     {
         $this->params = &$vars;
         return true;
     }
 
-    public function execute(): bool
+    public function execute(?array $params = null): bool
     {
         $userId = (int) ($this->params[0] ?? 0);
         $start = (int) ($this->params[1] ?? 0);
@@ -145,15 +146,17 @@ final class FakeMysqliStatement
         return true;
     }
 
+    #[\ReturnTypeWillChange]
     public function get_result(): ?FakeMysqliResult
     {
         return $this->result;
     }
 
-    public function close(): void
+    public function close(): true
     {
         $this->params = [];
         $this->result = null;
+        return true;
     }
 }
 

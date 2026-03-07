@@ -166,7 +166,7 @@ if (!isset($_SESSION['privacy'])) {
 				 FROM   	`202_users_pref`
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
-    $privacy = memcache_mysql_fetch_assoc($db, $user_sql);
+    $privacy = memcache_mysql_fetch_assoc($user_sql);
     if (isset($privacy['user_pref_privacy'])) {
         $_SESSION['privacy'] = $privacy['user_pref_privacy'];
     } else {
@@ -2526,11 +2526,11 @@ function record_mysql_error($dbOrSql, $sql = null): never
 
 
     $ipForError = $ip_address ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? ''));
-    $ip_id = INDEXES::get_ip_id($db, $ipForError);
+    $ip_id = INDEXES::get_ip_id($ipForError);
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
     $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-    $site_id = INDEXES::get_site_url_id($db, $site_url);
+    $site_id = INDEXES::get_site_url_id($site_url);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 
     $mysql['user_id'] = $db->real_escape_string(strip_tags((string) $_SESSION['user_id']));
@@ -3193,7 +3193,7 @@ function insertClicksVariable($mysql, $tracker_row)
             $variable = $db->real_escape_string($_GET[$value]);
             if (isset($variable) && $variable != '') {
                 $variable = str_replace('%20', ' ', $variable);
-                $variable_id = INDEXES::get_variable_id($db, $variable, $ppc_variable_ids[$key]);
+                $variable_id = INDEXES::get_variable_id($variable, $ppc_variable_ids[$key]);
                 $custom_var_ids[] = $variable_id;
             }
         }
@@ -3208,7 +3208,7 @@ function insertClicksVariable($mysql, $tracker_row)
     if ($total_vars > 0) {
 
         $variables = implode(",", $custom_var_ids);
-        $variable_set_id = INDEXES::get_variable_set_id($db, $variables);
+        $variable_set_id = INDEXES::get_variable_set_id($variables);
 
         $mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);
 
@@ -3471,7 +3471,7 @@ function getUTMParams(&$mysql)
     $utm_source = $db->real_escape_string($_GET['utm_source']);
     if (isset($utm_source) && $utm_source != '') {
         $utm_source = str_replace('%20', ' ', $utm_source);
-        $utm_source_id = INDEXES::get_utm_id($db, $utm_source, 'utm_source');
+        $utm_source_id = INDEXES::get_utm_id($utm_source, 'utm_source');
     } else {
         $utm_source_id = 0;
     }
@@ -3482,7 +3482,7 @@ function getUTMParams(&$mysql)
     $utm_medium = $db->real_escape_string($_GET['utm_medium']);
     if (isset($utm_medium) && $utm_medium != '') {
         $utm_medium = str_replace('%20', ' ', $utm_medium);
-        $utm_medium_id = INDEXES::get_utm_id($db, $utm_medium, 'utm_medium');
+        $utm_medium_id = INDEXES::get_utm_id($utm_medium, 'utm_medium');
     } else {
         $utm_medium_id = 0;
     }
@@ -3493,7 +3493,7 @@ function getUTMParams(&$mysql)
     $utm_campaign = $db->real_escape_string($_GET['utm_campaign']);
     if (isset($utm_campaign) && $utm_campaign != '') {
         $utm_campaign = str_replace('%20', ' ', $utm_campaign);
-        $utm_campaign_id = INDEXES::get_utm_id($db, $utm_campaign, 'utm_campaign');
+        $utm_campaign_id = INDEXES::get_utm_id($utm_campaign, 'utm_campaign');
     } else {
         $utm_campaign_id = 0;
     }
@@ -3504,7 +3504,7 @@ function getUTMParams(&$mysql)
     $utm_term = $db->real_escape_string($_GET['utm_term']);
     if (isset($utm_term) && $utm_term != '') {
         $utm_term = str_replace('%20', ' ', $utm_term);
-        $utm_term_id = INDEXES::get_utm_id($db, $utm_term, 'utm_term');
+        $utm_term_id = INDEXES::get_utm_id($utm_term, 'utm_term');
     } else {
         $utm_term_id = 0;
     }
@@ -3515,7 +3515,7 @@ function getUTMParams(&$mysql)
     $utm_content = $db->real_escape_string($_GET['utm_content']);
     if (isset($utm_content) && $utm_content != '') {
         $utm_content = str_replace('%20', ' ', $utm_content);
-        $utm_content_id = INDEXES::get_utm_id($db, $utm_content, 'utm_content');
+        $utm_content_id = INDEXES::get_utm_id($utm_content, 'utm_content');
     } else {
         $utm_content_id = 0;
     }
@@ -3546,7 +3546,7 @@ function getCVars(&$mysql)
 
         if (isset($custom_val) && $custom_val != '') { //if there's a value get an id
             $custom_val = str_replace(' ', '+', $custom_val);
-            $custom_id = INDEXES::get_custom_var_id($db, $custom, $custom_val); //get the id
+            $custom_id = INDEXES::get_custom_var_id($custom, $custom_val); //get the id
             $mysql[$custom . '_id'] = $db->real_escape_string($custom_id); //save it
             $mysql[$custom] = $db->real_escape_string($custom_val); //save it
         } else {
@@ -3630,7 +3630,7 @@ function getKeyword(&$mysql)
     }
 
     $keyword = str_replace('%20', ' ', $keyword);
-    $keyword_id = INDEXES::get_keyword_id($db, $keyword);
+    $keyword_id = INDEXES::get_keyword_id($keyword);
     $mysql['keyword_id'] = $db->real_escape_string($keyword_id);
     $mysql['keyword'] = $db->real_escape_string($keyword);
 }
@@ -3649,12 +3649,12 @@ function getReferer(&$mysql)
     if ($mysql['user_pref_referer_data'] == 't202ref') {
         if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
             $mysql['t202ref'] = $db->real_escape_string($_GET['t202ref']);
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_GET['t202ref']);
+            $click_referer_site_url_id = INDEXES::get_site_url_id($_GET['t202ref']);
         } else { //if not found revert to what we usually do
             if (isset($referer_query['url'])) {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+                $click_referer_site_url_id = INDEXES::get_site_url_id($referer_query['url']);
             } else {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER'] ?? '');
+                $click_referer_site_url_id = INDEXES::get_site_url_id($_SERVER['HTTP_REFERER'] ?? '');
             }
         }
     } else { //user wants the real referer first
@@ -3662,9 +3662,9 @@ function getReferer(&$mysql)
         // now lets get variables for clicks site
         // so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
         if (isset($referer_query['url'])) {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+            $click_referer_site_url_id = INDEXES::get_site_url_id($referer_query['url']);
         } else {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER'] ?? '');
+            $click_referer_site_url_id = INDEXES::get_site_url_id($_SERVER['HTTP_REFERER'] ?? '');
         }
     }
 

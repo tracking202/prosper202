@@ -6,6 +6,7 @@ include_once(__DIR__ . '/connect.php');
 // Initialize variables
 $version_error = [];
 $memcacheInstalled = (extension_loaded('memcache') || extension_loaded('memcached'));
+$db = $db ?? null;
 
 //check to see if this is already installed, if so don't do anything
 if (is_installed() == true) {
@@ -14,7 +15,7 @@ if (is_installed() == true) {
 }
 
     // Get Database version
-	$mysqlversion = $db->server_info;
+		$mysqlversion = $db ? $db->server_info : '';
 	if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
 	    // Support For MariaDB
 	    $mysqlversion = $match[1];
@@ -48,7 +49,7 @@ if (is_installed() == true) {
 
 	// Check if partitioning is supported by querying INFORMATION_SCHEMA.PARTITIONS
 	$sql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS LIMIT 1";
-	$result = $db->query($sql);
+	$result = $db ? $db->query($sql) : false;
 	
 	if ($result && $result->num_rows > 0) {
 	    $partition_support = 1;

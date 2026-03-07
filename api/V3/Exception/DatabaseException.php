@@ -15,6 +15,7 @@ class DatabaseException extends HttpException
     public function __construct(string $internalDetail, ?\Throwable $previous = null)
     {
         // Never expose DB details to the client.
-        parent::__construct('Internal server error', 500, $previous);
+        $wrappedPrevious = $previous ?? ($internalDetail !== '' ? new \RuntimeException($internalDetail) : null);
+        parent::__construct('Internal server error', 500, $wrappedPrevious);
     }
 }
