@@ -5,40 +5,8 @@ use Prosper202\Attribution\AttributionServiceFactory;
 use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
-include_once(substr(__DIR__, 0,-19) . '/202-config/class-snoopy.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
-
-/**
- * @return int|null
- */
-function resolveAdvertiserId(\mysqli $db, int $campaignId)
-{
-    if ($campaignId <= 0) {
-        return null;
-    }
-
-    $stmt = $db->prepare('SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1');
-    if ($stmt === false) {
-        return null;
-    }
-
-    $stmt->bind_param('i', $campaignId);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $row = $result ? $result->fetch_assoc() : null;
-    if ($result) {
-        $result->free();
-    }
-    $stmt->close();
-
-    if (!is_array($row)) {
-        return null;
-    }
-
-    $advertiserId = (int) ($row['aff_network_id'] ?? 0);
-
-    return $advertiserId > 0 ? $advertiserId : null;
-}
+include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
 
 $settingsService = AttributionServiceFactory::createSettingsService();
 
@@ -92,11 +60,7 @@ if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
 }
 
 if(!$mysql['click_id']){
-    header('HTTP/1.1 404 Not Found', true, 404);
-	header('Content-Type: application/json');
-	$response = ['error' => true, 'code' => 404, 'msg' => 'SubID not found'];
-	print_r(json_encode($response));
-	die();
+    p202RespondJsonError(404, 'SubID not found');
 }
 
 $site_urls=" LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id=2cs.click_id)
@@ -147,11 +111,7 @@ LIMIT 1";
 $cvar_sql_result = $db->query($cvar_sql);
 $cvar_sql_row = $cvar_sql_result ? $cvar_sql_result->fetch_assoc() : null;
 if (!$cvar_sql_row) {
-    header('HTTP/1.1 404 Not Found', true, 404);
-    header('Content-Type: application/json');
-    $response = ['error' => true, 'code' => 404, 'msg' => 'Click data not found'];
-    print_r(json_encode($response));
-    die();
+    p202RespondJsonError(404, 'Click data not found');
 }
 $mysql['t202kw'] = $db->real_escape_string((string) ($cvar_sql_row['keyword'] ?? ''));
 $mysql['c1'] = $db->real_escape_string((string) ($cvar_sql_row['c1'] ?? ''));
@@ -166,7 +126,7 @@ $mysql['utm_term'] = $db->real_escape_string((string) ($cvar_sql_row['utm_term']
 $mysql['utm_content'] = $db->real_escape_string((string) ($cvar_sql_row['utm_content'] ?? ''));
 $mysql['click_user_id'] = $db->real_escape_string((string) ($cvar_sql_row['user_id'] ?? ''));
 $mysql['campaign_id'] = $db->real_escape_string((string) ($cvar_sql_row['aff_campaign_id'] ?? ''));
-$advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
+$advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
 $mysql['payout'] = $db->real_escape_string((string) ($cvar_sql_row['click_payout'] ?? '0'));
 $mysql['cpc'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpc'] ?? '0'));
 $mysql['click_cpa'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpa'] ?? ''));
@@ -229,45 +189,38 @@ if($mysql['ppc_account_id']){
 		   
 			switch ($mysql['pixel_type_id']) {
 				case 1:
-					
 					foreach($pixel_urls as $pixel_url){
-					  if(isset($pixel_url))
+					  if(!empty($pixel_url)) {
 					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    echo "<img src='{$pixel_url}' height='0' width='0' style='display:none' />\n";  
+					    echo "<img src='{$pixel_url}' height='0' width='0' style='display:none' />\n";
+					  }
 					}
-				
+
 					break;
 				case 2:
-				  
 			        foreach($pixel_urls as $pixel_url){
-					  if(isset($pixel_url))
+					  if(!empty($pixel_url)) {
 					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    echo "<iframe src='{$pixel_url}' height='0' width='0'></iframe>\n";  
+					    echo "<iframe src='{$pixel_url}' height='0' width='0'></iframe>\n";
+					  }
 					}
-				
+
 					break;
 				case 3:
-				  
 			        foreach($pixel_urls as $pixel_url){
-					  if(isset($pixel_url))
+					  if(!empty($pixel_url)) {
 					   $pixel_url=replaceTokens($pixel_url,$tokens);
 					   echo "<script async src='{$pixel_url}'></script>\n";
+					  }
 					}
 			
 					break;
 				case 4:
-					$snoopy = new Snoopy;
-					$snoopy->agent="Mozilla/5.0 Postback202-Bot v1.8";
-					
 		        	foreach($pixel_urls as $pixel_url){
-					  if(isset($pixel_url))
+					  if(!empty($pixel_url)) {
 					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    $snoopy->fetchtext($pixel_url);
-					    //header('HTTP/1.1 202 Accepted', true, 202);
-					    //header('Content-Type: application/json');
-					    //$response = array('error' => false, 'code' => 202, 'msg' => 'Postback successful');
-					    //print_r(json_encode($response));
-					    //echo $pixel_url;
+					    getUrl($pixel_url, 'GET', 10, [], [], P202_POSTBACK_USER_AGENT, 5);
+					  }
 					}
 					break;
 
@@ -292,50 +245,17 @@ if (is_numeric($mysql['click_id'])) {
 	$mysql['ip'] = $db->real_escape_string($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
 	$mysql['user_agent'] = $db->real_escape_string($_SERVER['HTTP_USER_AGENT'] ?? '');
 	
-	if ($mysql['click_cpa']) {
-		$sql_set = "click_cpc='".$mysql['click_cpa']."', click_lead='1', click_filtered='0'";
-	} else {
-		$sql_set = "click_lead='1', click_filtered='0'";
-	}
-
-	if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
-		$mysql['use_pixel_payout'] = 1;
-		$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
-	}
-
-	$click_sql = "
-		UPDATE
-			202_clicks
-		SET
-			".$sql_set."
-	";
-	if ($mysql['use_pixel_payout']==1) {
-		$click_sql .= "
-			, click_payout='".$mysql['click_payout']."'
-		";
-	}
-	$click_sql .= "
-		WHERE
-			click_id='".$mysql['click_id']."'
-	";
-	$db->query($click_sql);
-
-	$click_sql = "
-		UPDATE
-			202_clicks_spy
-		SET
-			".$sql_set."
-	";
-	if ($mysql['use_pixel_payout']==1) {
-		$click_sql .= "
-			, click_payout='".$mysql['click_payout']."'
-		";
-	}
-	$click_sql .= "
-		WHERE
-			click_id='".$mysql['click_id']."'
-	";
-	$db->query($click_sql);
+		if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
+			$mysql['use_pixel_payout'] = 1;
+			$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
+		}
+		p202ApplyConversionUpdate(
+			$db,
+			(string) $mysql['click_id'],
+			(string) $mysql['click_cpa'],
+			$mysql['use_pixel_payout'] == 1,
+			(string) ($mysql['click_payout'] ?? '')
+		);
 
 	// Get click_payout for conversion log
 	$click_payout_for_log = $mysql['click_payout'] ?? $mysql['payout'] ?? '0';
@@ -380,10 +300,6 @@ if (is_numeric($mysql['click_id'])) {
                         }
                 }
         }
-
-	//set dirty hour
-	$de = new DataEngine();
-	$data=($de->setDirtyHour($mysql['click_id']));
 
 	// Rebuild attribution snapshots so the attribution page reflects changes immediately
 	try {

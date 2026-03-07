@@ -139,4 +139,10 @@ cd go-cli && make test
 
 ## License
 
-GPL-2.0-or-later
+Business Source License 1.1 (BUSL-1.1) — see [LICENSE](LICENSE) for the full text.
+
+- **Licensor:** Blue Terra LLC
+- **Licensed Work:** Prosper202
+- **Additional Use Grant:** You may use the Licensed Work for any purpose, including production use, except you may not offer it as a hosted or managed service to third parties.
+- **Change Date:** 2031-02-22
+- **Change License:** GPL-2.0-or-later

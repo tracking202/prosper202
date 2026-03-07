@@ -3,7 +3,6 @@
 declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/functions-upgrade.php');
-include_once(str_repeat("../", 1) . '202-config/functions-rss.php');
 include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
 
 AUTH::require_user();
@@ -30,28 +29,34 @@ function get_safe_upgrade_path(string $basePath, string $zipEntryName)
 	return rtrim($basePath, '/') . '/' . implode('/', $parts);
 }
 
-$rss = fetch_rss('https://my.tracking202.com/clickserver/currentversion/paid/');
-if (isset($rss->items) && 0 != count($rss->items)) {
+$update_needed = false;
+$latest_version = $version;
+$download_link = '';
+$download_link_is_valid = false;
 
-	$rss->items = array_slice($rss->items, 0, 1);
-	foreach ($rss->items as $item) {
-		$latest_version = $item['title'];
+$rss_xml = getUrl('https://my.tracking202.com/clickserver/currentversion/paid/', 'GET', 10);
+if ($rss_xml === '') {
+	$rss_xml = null;
+}
+
+if ($rss_xml !== null) {
+	$rss_feed = @simplexml_load_string($rss_xml);
+	if ($rss_feed !== false && isset($rss_feed->channel->item)) {
+		$item = $rss_feed->channel->item[0];
+		$latest_version = (string) $item->title;
 		if (!preg_match('/^\d+\.\d+\.\d+(\.\d+)?$/', $latest_version)) {
 			$update_needed = false;
-			break;
-		}
-		$download_link = $item['link'];
-		$parsed_download_link = parse_url($download_link);
-		$download_link_is_valid =
-			is_array($parsed_download_link)
-			&& isset($parsed_download_link['scheme'], $parsed_download_link['host'])
-			&& strtolower($parsed_download_link['scheme']) === 'https'
-			&& strtolower($parsed_download_link['host']) === 'my.tracking202.com';
-		//if current version, is older than the latest version, return true for an update is now needed.
-		if (version_compare($version, $latest_version) == '-1') {
-			$update_needed = true;
 		} else {
-			$update_needed = false;
+			$download_link = (string) $item->link;
+			$parsed_download_link = parse_url($download_link);
+			$download_link_is_valid =
+				is_array($parsed_download_link)
+				&& isset($parsed_download_link['scheme'], $parsed_download_link['host'])
+				&& strtolower($parsed_download_link['scheme']) === 'https'
+				&& strtolower($parsed_download_link['host']) === 'my.tracking202.com';
+			if (version_compare($version, $latest_version) < 0) {
+				$update_needed = true;
+			}
 		}
 	}
 }

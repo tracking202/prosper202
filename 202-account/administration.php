@@ -95,14 +95,14 @@ if (isset($_POST['autocron'])) {
 if (isset($_POST['maxmind'])) {
 
 	if ($_POST['maxmind'] == "true") {
-		if (file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIPISP.dat')) {
+		if (file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIP2-ISP.mmdb') || file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIPISP.dat')) {
 			$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
 			$sql = "UPDATE 202_users_pref SET maxmind_isp='1' WHERE user_id='" . $mysql['user_id'] . "'";
 			$result = _mysqli_query($sql);
 			if ($slack)
 				$slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Activated']);
 		} else {
-			echo "ISP Database file doesn't exist. Make sure (GeoIPISP.dat file) is in /202-config/geo/ folder.";
+			echo "ISP Database file doesn't exist. Upload GeoIP2-ISP.mmdb (or legacy GeoIPISP.dat) to /202-config/geo/ folder.";
 		}
 	}
 
@@ -464,7 +464,7 @@ function CronJobLastExecution($datetime, $full = false)
 	<div class="col-xs-12">
 		<h6>MaxMind ISP/Carrier Lookup</h6>
 		<span class="infotext"><span><a href="http://click202.com/tracking202/redirect/dl.php?t202id=9159015&t202kw=p202setup" target="_blank"><img src="<?php echo get_absolute_url(); ?>202-img/maxmind_logo-202.png"></a></span><br>To turn on ISP/Carrier lookup feature, you need
-			to <strong><a href="http://click202.com/tracking202/redirect/dl.php?t202id=9159015&t202kw=p202setup" target="_blank">buy MaxMind ISP database</a></strong> and upload (GeoIPISP.dat file) to <code><?php echo getTrackingDomain() . get_absolute_url() . '202-config/geo/'; ?></code>
+			to <strong><a href="http://click202.com/tracking202/redirect/dl.php?t202id=9159015&t202kw=p202setup" target="_blank">buy MaxMind ISP database</a></strong> and upload (GeoIP2-ISP.mmdb or legacy GeoIPISP.dat) to <code><?php echo getTrackingDomain() . get_absolute_url() . '202-config/geo/'; ?></code>
 			folder.<br />(Settings will take place after 5 minutes in live
 			traffic)
 		</span>

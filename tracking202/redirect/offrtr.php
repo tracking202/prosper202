@@ -122,7 +122,7 @@ $GeoData = getGeoData($ip_address);
 $parser = Parser::create();
 
 //Device type
-$detect = new Mobile_Detect;
+$detect = new DeviceDetect();
 $ua = $detect->getUserAgent();
 $result = $parser->parse($ua);
 

@@ -1,6 +1,6 @@
 ## Overview
 
-Welcome to the Prosper202 codebase. This repository contains the source code for Prosper202, an open-source PPC conversion tracking software. The project is structured to facilitate efficient tracking of online advertising campaigns, attribution, conversion data, split testing, and more.
+Welcome to the Prosper202 codebase. This repository contains the source code for Prosper202, a self-hosted PPC conversion tracking platform licensed under the Business Source License 1.1 (BUSL-1.1). The project is structured to facilitate efficient tracking of online advertising campaigns, attribution, conversion data, split testing, and more.
 
 **Directory Structure:**
 

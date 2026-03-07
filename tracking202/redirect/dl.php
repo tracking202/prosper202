@@ -20,6 +20,77 @@ $trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 // it ensures that the script continues execution regardless of client disconnection.
 ignore_user_abort(true);
 
+function renderErrorPage(int $code, string $title, string $message, string $accentColor, string $svgIcon): void
+{
+	http_response_code($code);
+	die('<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .error-card {
+            background: white;
+            border-radius: 16px;
+            padding: 48px;
+            max-width: 480px;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+        }
+        .error-icon {
+            width: 80px;
+            height: 80px;
+            background: #f3f4f6;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+        .error-icon svg {
+            width: 40px;
+            height: 40px;
+            color: ' . htmlspecialchars($accentColor, ENT_QUOTES, 'UTF-8') . ';
+        }
+        h1 { color: #1f2937; font-size: 24px; margin-bottom: 12px; }
+        p { color: #6b7280; font-size: 16px; line-height: 1.6; }
+        .error-code {
+            display: inline-block;
+            background: #f3f4f6;
+            color: #6b7280;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-top: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-card">
+        <div class="error-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                ' . $svgIcon . '
+            </svg>
+        </div>
+        <h1>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h1>
+        <p>' . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . '</p>
+        <span class="error-code">Error ' . $code . '</span>
+    </div>
+</body>
+</html>');
+}
+
 $usedCachedRedirect = false;
 if (!$db) $usedCachedRedirect = true;
 
@@ -110,69 +181,13 @@ if ($usedCachedRedirect == true) {
 		}
 	}
 
-	http_response_code(503);
-	die('<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Service Temporarily Unavailable</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .error-card {
-            background: white;
-            border-radius: 16px;
-            padding: 48px;
-            max-width: 480px;
-            text-align: center;
-            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
-        }
-        .error-icon {
-            width: 80px;
-            height: 80px;
-            background: #fef3c7;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 24px;
-        }
-        .error-icon svg { width: 40px; height: 40px; color: #d97706; }
-        h1 { color: #1f2937; font-size: 24px; margin-bottom: 12px; }
-        p { color: #6b7280; font-size: 16px; line-height: 1.6; }
-        .error-code {
-            display: inline-block;
-            background: #f3f4f6;
-            color: #6b7280;
-            padding: 4px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            margin-top: 24px;
-        }
-    </style>
-</head>
-<body>
-    <div class="error-card">
-        <div class="error-icon">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
-            </svg>
-        </div>
-        <h1>Service Temporarily Unavailable</h1>
-        <p>We are experiencing technical difficulties. Please try again in a few moments.</p>
-        <span class="error-code">Error 503</span>
-    </div>
-</body>
-</html>');
+	renderErrorPage(
+		503,
+		'Service Temporarily Unavailable',
+		'We are experiencing technical difficulties. Please try again in a few moments.',
+		'#d97706',
+		'<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>'
+	);
 }
 
 //grab tracker data
@@ -211,69 +226,13 @@ $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
 // Check if tracker exists BEFORE using its data
 if (!$tracker_row) {
-	http_response_code(404);
-	die('<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tracking Link Not Found</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .error-card {
-            background: white;
-            border-radius: 16px;
-            padding: 48px;
-            max-width: 480px;
-            text-align: center;
-            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
-        }
-        .error-icon {
-            width: 80px;
-            height: 80px;
-            background: #fee2e2;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 24px;
-        }
-        .error-icon svg { width: 40px; height: 40px; color: #dc2626; }
-        h1 { color: #1f2937; font-size: 24px; margin-bottom: 12px; }
-        p { color: #6b7280; font-size: 16px; line-height: 1.6; }
-        .error-code {
-            display: inline-block;
-            background: #f3f4f6;
-            color: #6b7280;
-            padding: 4px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            margin-top: 24px;
-        }
-    </style>
-</head>
-<body>
-    <div class="error-card">
-        <div class="error-icon">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-            </svg>
-        </div>
-        <h1>Tracking Link Not Found</h1>
-        <p>The tracking link you requested does not exist or has been removed. Please check the URL and try again.</p>
-        <span class="error-code">Error 404</span>
-    </div>
-</body>
-</html>');
+	renderErrorPage(
+		404,
+		'Tracking Link Not Found',
+		'The tracking link you requested does not exist or has been removed. Please check the URL and try again.',
+		'#dc2626',
+		'<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>'
+	);
 }
 
 if ($memcacheWorking) {
@@ -472,9 +431,9 @@ if (isset($utm_content) && $utm_content != '') {
 $mysql['utm_content_id'] = $db->real_escape_string((string)$utm_content_id);
 
 
-// Initialize Mobile_Detect if not already done
+// Initialize DeviceDetect if not already done
 if (!isset($detect)) {
-	$detect = new Mobile_Detect();
+	$detect = new DeviceDetect();
 }
 
 $device_id = PLATFORMS::get_device_info($db, $detect, $_GET['ua'] ?? '');
@@ -632,6 +591,19 @@ if ($cloaking_on === true) {
 } else {
 	$redirectLocation = setPrePopVars($urlvars, $redirect_site_url, false);
 }
+
+// Never send an empty Location header — Safari retries the same URL in a loop,
+// generating dozens of duplicate clicks per single page load.
+if ($redirectLocation === null || $redirectLocation === '') {
+	renderErrorPage(
+		502,
+		'Redirect Error',
+		'This tracking link has no destination URL configured. Please check your campaign settings.',
+		'#dc2626',
+		'<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>'
+	);
+}
+
 header('Location: ' . $redirectLocation);
 if (function_exists('fastcgi_finish_request')) {
 	fastcgi_finish_request();

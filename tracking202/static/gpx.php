@@ -15,38 +15,7 @@ echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==
 
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
-
-/**
- * @return int|null
- */
-function resolveAdvertiserId(\mysqli $db, int $campaignId)
-{
-    if ($campaignId <= 0) {
-        return null;
-    }
-
-    $stmt = $db->prepare('SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1');
-    if ($stmt === false) {
-        return null;
-    }
-
-    $stmt->bind_param('i', $campaignId);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $row = $result ? $result->fetch_assoc() : null;
-    if ($result) {
-        $result->free();
-    }
-    $stmt->close();
-
-    if (!is_array($row)) {
-        return null;
-    }
-
-    $advertiserId = (int) ($row['aff_network_id'] ?? 0);
-
-    return $advertiserId > 0 ? $advertiserId : null;
-}
+include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
 
 $settingsService = AttributionServiceFactory::createSettingsService();
 
@@ -113,7 +82,7 @@ if (is_numeric($mysql['click_id'])) {
 
                 $mysql['campaign_id'] = $db->real_escape_string((string) ($cpa_row['aff_campaign_id'] ?? ''));
                 $mysql['click_user_id'] = $db->real_escape_string((string) ($cpa_row['user_id'] ?? ''));
-                $advertiserId = resolveAdvertiserId($db, (int) $mysql['campaign_id']);
+                $advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
                 $mysql['click_time'] = $db->real_escape_string((string) ($cpa_row['click_time'] ?? '0'));
 
 		$conv_time = time();
@@ -127,50 +96,17 @@ if (is_numeric($mysql['click_id'])) {
 		
 		$mysql['click_cpa'] = $db->real_escape_string((string) ($cpa_row['click_cpa'] ?? ''));
 	
-		if ($mysql['click_cpa']) {
-			$sql_set = "click_cpc='".$mysql['click_cpa']."', click_lead='1', click_filtered='0'";
-		} else {
-			$sql_set = "click_lead='1', click_filtered='0'";
-		}
-
-		if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
-			$mysql['use_pixel_payout'] = 1;
-			$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
-		}
-
-		$click_sql = "
-			UPDATE
-				202_clicks
-			SET
-				".$sql_set."
-		";
-		if ($mysql['use_pixel_payout']==1) {
-			$click_sql .= "
-				, click_payout='".$mysql['click_payout']."'
-			";
-		}
-		$click_sql .= "
-			WHERE
-				click_id='".$mysql['click_id']."'
-		";
-		$db->query($click_sql);
-
-		$click_sql = "
-			UPDATE
-				202_clicks_spy
-			SET
-				".$sql_set."
-		";
-		if ($mysql['use_pixel_payout']==1) {
-			$click_sql .= "
-				, click_payout='".$mysql['click_payout']."'
-			";
-		}
-		$click_sql .= "
-			WHERE
-				click_id='".$mysql['click_id']."'
-		";
-		$db->query($click_sql);
+			if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
+				$mysql['use_pixel_payout'] = 1;
+				$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
+			}
+			p202ApplyConversionUpdate(
+				$db,
+				(string) $mysql['click_id'],
+				(string) $mysql['click_cpa'],
+				$mysql['use_pixel_payout'] == 1,
+				(string) ($mysql['click_payout'] ?? '')
+			);
 
 		// Get click_payout for conversion log
 		$click_payout_for_log = $mysql['click_payout'] ?? '0';
@@ -223,11 +159,7 @@ if (is_numeric($mysql['click_id'])) {
                         }
                 }
 
-		//set dirty hour
-		$de = new DataEngine();
-		$data=($de->setDirtyHour($mysql['click_id']));
-
-		// Rebuild attribution snapshots so the attribution page reflects changes immediately
+			// Rebuild attribution snapshots so the attribution page reflects changes immediately
 		try {
 			$jobRunner = AttributionServiceFactory::createJobRunner();
 			$userId = (int) $mysql['click_user_id'];
@@ -239,5 +171,4 @@ if (is_numeric($mysql['click_id'])) {
 		}
 	}
 }
-
 

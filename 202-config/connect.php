@@ -187,11 +187,8 @@ include_once(CONFIG_PATH . '/functions-auth.php');
 include_once(CONFIG_PATH . '/class-filterengine.php');
 
 include_once(CONFIG_PATH . '/functions-tracking202api.php');
-include_once(CONFIG_PATH . '/functions-rss.php');
 include_once(CONFIG_PATH . '/l10n.php');
 include_once(CONFIG_PATH . '/formatting.php');
-include_once(CONFIG_PATH . '/class-curl.php');
-include_once(CONFIG_PATH . '/class-xmltoarray.php');
 include_once(CONFIG_PATH . '/Role.class.php');
 include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');

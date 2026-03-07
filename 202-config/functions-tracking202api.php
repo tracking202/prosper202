@@ -1,29 +1,32 @@
 <?php
 
 declare(strict_types=1);
-function getUrl($url, $requestType = 'GET', $timeout = 30, $postArray = [])
+function getUrl($url, $requestType = 'GET', $timeout = 30, $postArray = [], $headers = [], $userAgent = '', $connectTimeout = 5)
 {
-
-	$curl = new curl();
-	$curl->setopt(CURLOPT_URL, $url);
-	$curl->setopt(CURLOPT_RETURNTRANSFER, true);
-	$curl->setopt(CURLOPT_TIMEOUT, $timeout);
+	$ch = curl_init();
+	curl_setopt($ch, CURLOPT_URL, $url);
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+	curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+	curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
 
 	if ($requestType == "POST") {
-
-		$postString = "";
-		foreach ($postArray as $postField => $postValue) {
-			$postString .= $postField . '=' . $postValue . '&';
-		}
-		$postString = rtrim($postString, '&');
-
-		$curl->setopt(CURLOPT_POST, true);
-		$curl->setopt(CURLOPT_POSTFIELDS, $postString);
+		$postString = http_build_query($postArray);
+		curl_setopt($ch, CURLOPT_POST, true);
+		curl_setopt($ch, CURLOPT_POSTFIELDS, $postString);
 	}
 
-	$result = $curl->exec();
-	$curl->close();
-	return $result;
+	if (!empty($headers)) {
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+	}
+
+	if ($userAgent !== '') {
+		curl_setopt($ch, CURLOPT_USERAGENT, $userAgent);
+	}
+
+	$result = curl_exec($ch);
+	curl_close($ch);
+	return $result === false ? '' : $result;
 }
 
 function checkForApiErrors($array)
@@ -43,9 +46,11 @@ function checkForApiErrors($array)
 
 function convertXmlIntoArray($xml)
 {
-	$xmlToArray = new XmlToArray($xml);
-	$arr = $xmlToArray->createArray();
-	return $arr;
+	$element = @simplexml_load_string((string) $xml);
+	if ($element === false) {
+		return [];
+	}
+	return json_decode(json_encode($element), true);
 }
 
 if (!function_exists('http_build_query')) {

@@ -282,7 +282,7 @@ $ip_id = $locationRepo->findOrCreateIp($ip);
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
 //$device_id = PLATFORMS::get_device_info($db);
-$detect = new Mobile_Detect;
+$detect = new DeviceDetect();
 $device_id = PLATFORMS::get_device_info($db, $detect, $_GET['ua']);
 $mysql['platform_id'] = $db->real_escape_string((string) $device_id['platform']);
 $mysql['browser_id'] = $db->real_escape_string((string) $device_id['browser']);
