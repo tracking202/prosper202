@@ -221,7 +221,7 @@ try {
     ]);
 
     // ── Server-side sync orchestration (admin + write scope) ───────
-    $router->group('/sync', function (Router $r) use ($crud, &$queryParams, &$payload) {
+    $router->group('/sync', function (Router $r) use ($crud, &$payload) {
         $cls = \Api\V3\Controllers\SyncController::class;
         $r->post('/jobs', fn() => ['_status' => 202] + $crud($cls)->createJob($payload));
         $r->post('/worker/run', fn() => $crud($cls)->runWorker($payload));
@@ -300,8 +300,8 @@ try {
     });
 
     // ── Users (admin-gated writes, self-or-admin for reads) ──────────
-    $router->group('/users', function (Router $r) use ($db, $userId, $auth, &$payload) {
-        $make = fn() => new \Api\V3\Controllers\UsersController($db, $userId);
+    $router->group('/users', function (Router $r) use ($db, $auth, &$payload) {
+        $make = fn() => new \Api\V3\Controllers\UsersController($db);
 
         $r->get('/roles', fn() => $make()->listRoles());
 
@@ -365,7 +365,7 @@ try {
     });
 
     // ── System (admin only; /health is handled above without auth) ─────
-    $router->group('/system', function (Router $r) use ($db, $auth, &$queryParams) {
+    $router->group('/system', function (Router $r) use ($db, &$queryParams) {
         $make = fn() => new \Api\V3\Controllers\SystemController($db);
 
         $r->get('/version',    fn() => $make()->version());

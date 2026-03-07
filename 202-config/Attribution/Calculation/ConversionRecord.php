@@ -33,10 +33,7 @@ final readonly class ConversionRecord
      */
     public function getJourney(): array
     {
-        $journey = array_values(array_filter(
-            $this->journey,
-            static fn (mixed $touch): bool => $touch instanceof ConversionTouchpoint
-        ));
+        $journey = array_values($this->journey);
 
         $hasPrimary = false;
         foreach ($journey as $touch) {

@@ -40,60 +40,8 @@ if (!defined('LANGDIR')) {
 if (!defined('PLUGINDIR')) {
     define('PLUGINDIR', '');
 }
-if (!defined('MAGPIE_CACHE_ON')) {
-    define('MAGPIE_CACHE_ON', false);
-}
-if (!defined('MAGPIE_CACHE_DIR')) {
-    define('MAGPIE_CACHE_DIR', '');
-}
-if (!defined('MAGPIE_CACHE_AGE')) {
-    define('MAGPIE_CACHE_AGE', 0);
-}
-if (!defined('MAGPIE_DEBUG')) {
-    define('MAGPIE_DEBUG', false);
-}
-if (!defined('MAGPIE_FETCH_TIME_OUT')) {
-    define('MAGPIE_FETCH_TIME_OUT', 10);
-}
-if (!defined('MAGPIE_USE_GZIP')) {
-    define('MAGPIE_USE_GZIP', false);
-}
-
-if (!function_exists('debug')) {
-    function debug(...$args): void
-    {
-    }
-}
-
-if (!function_exists('map_attrs')) {
-    function map_attrs($attributes): array
-    {
-        return [];
-    }
-}
-
 if (!function_exists('get_template_directory')) {
     function get_template_directory(): string
-    {
-        return '';
-    }
-}
-
-if (!function_exists('geoip_open')) {
-    function geoip_open($filename, $flags = null)
-    {
-        return null;
-    }
-}
-
-if (!function_exists('geoip_close')) {
-    function geoip_close($gi): void
-    {
-    }
-}
-
-if (!function_exists('geoip_org_by_addr')) {
-    function geoip_org_by_addr($gi, string $ip): string
     {
         return '';
     }

@@ -5,20 +5,26 @@ declare(strict_types=1);
 namespace Prosper202\Attribution\Repository\Mysql;
 
 use mysqli;
-use mysqli_stmt;
 use Prosper202\Attribution\Repository\SettingsRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Settings\Setting;
+use Prosper202\Database\Connection;
 use RuntimeException;
 
 final class MysqlSettingRepository implements SettingsRepositoryInterface
 {
-    use MysqliStatementBinder;
+    private readonly Connection $conn;
 
-    public function __construct(
-        private readonly mysqli $writeConnection,
-        private readonly ?mysqli $readConnection = null
-    ) {
+    /**
+     * @param Connection|mysqli $connection Connection instance or legacy mysqli for backwards compatibility
+     */
+    public function __construct(Connection|mysqli $connection, ?mysqli $readConnection = null)
+    {
+        if ($connection instanceof Connection) {
+            $this->conn = $connection;
+        } else {
+            $this->conn = new Connection($connection, $readConnection);
+        }
     }
 
     public function findByScope(int $userId, ScopeType $scopeType, ?int $scopeId): ?Setting
@@ -63,23 +69,16 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
         }
 
         $sql = 'SELECT * FROM 202_attribution_settings WHERE user_id = ? AND (' . implode(' OR ', $parts) . ')';
-        $stmt = $this->prepareRead($sql);
-        $this->bindStatement($stmt, $types, $params);
-        $stmt->execute();
-        $result = $stmt->get_result();
+        $stmt = $this->conn->prepareRead($sql);
+        $this->conn->bind($stmt, $types, $params);
+        $rows = $this->conn->fetchAll($stmt);
 
         $settings = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $setting = Setting::fromDatabaseRow($row);
-                $key = $this->buildScopeKey($setting->scopeType, $setting->scopeId);
-                $settings[$key] = $setting;
-            }
-
-            $result->free();
+        foreach ($rows as $row) {
+            $setting = Setting::fromDatabaseRow($row);
+            $key = $this->buildScopeKey($setting->scopeType, $setting->scopeId);
+            $settings[$key] = $setting;
         }
-
-        $stmt->close();
 
         return $settings;
     }
@@ -94,111 +93,120 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
         $settingId = $row['setting_id'];
 
         if ($settingId === null) {
-            $sql = 'INSERT INTO 202_attribution_settings (user_id, scope_type, scope_id, model_id, multi_touch_enabled, multi_touch_enabled_at, multi_touch_disabled_at, effective_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-            $stmt = $this->prepareWrite($sql);
+            // Build dynamic INSERT to handle nullable columns with SQL NULL
+            $columns = ['user_id', 'scope_type', 'model_id', 'multi_touch_enabled', 'effective_at', 'created_at'];
+            $placeholders = ['?', '?', '?', '?', '?', '?'];
+            $types = 'isiiii';
+            $params = [(int) $row['user_id'], (string) $row['scope_type'], (int) $row['model_id'], $enabled, (int) $row['effective_at'], (int) $row['created_at']];
 
-            $userId = (int) $row['user_id'];
-            $scopeType = (string) $row['scope_type'];
-            $modelId = (int) $row['model_id'];
-            $effectiveAt = (int) $row['effective_at'];
-            $createdAt = (int) $row['created_at'];
-            $updatedAt = (int) $row['updated_at'];
+            // scope_id — nullable int
+            if ($scopeId !== null) {
+                $columns[] = 'scope_id';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $params[] = $scopeId;
+            } else {
+                $columns[] = 'scope_id';
+                $placeholders[] = 'NULL';
+            }
 
-            $stmt->bind_param(
-                'isiiiiiiii',
-                $userId,
-                $scopeType,
-                $scopeId,
-                $modelId,
-                $enabled,
-                $enabledAt,
-                $disabledAt,
-                $effectiveAt,
-                $createdAt,
-                $updatedAt
-            );
+            // multi_touch_enabled_at — nullable int
+            if ($enabledAt !== null) {
+                $columns[] = 'multi_touch_enabled_at';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $params[] = $enabledAt;
+            } else {
+                $columns[] = 'multi_touch_enabled_at';
+                $placeholders[] = 'NULL';
+            }
 
-            $stmt->execute();
-            $insertId = $stmt->insert_id ?: $this->writeConnection->insert_id;
-            $stmt->close();
+            // multi_touch_disabled_at — nullable int
+            if ($disabledAt !== null) {
+                $columns[] = 'multi_touch_disabled_at';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $params[] = $disabledAt;
+            } else {
+                $columns[] = 'multi_touch_disabled_at';
+                $placeholders[] = 'NULL';
+            }
 
-            return $this->requireById((int) $insertId);
+            $columns[] = 'updated_at';
+            $placeholders[] = '?';
+            $params[] = (int) $row['updated_at'];
+            $types .= 'i';
+
+            $sql = 'INSERT INTO 202_attribution_settings (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+            $stmt = $this->conn->prepareWrite($sql);
+            $this->conn->bind($stmt, $types, $params);
+
+            $insertId = $this->conn->executeInsert($stmt);
+
+            return $this->requireById($insertId);
         }
 
-        $sql = 'UPDATE 202_attribution_settings SET model_id = ?, multi_touch_enabled = ?, multi_touch_enabled_at = ?, multi_touch_disabled_at = ?, effective_at = ?, updated_at = ? WHERE setting_id = ? LIMIT 1';
-        $stmt = $this->prepareWrite($sql);
+        // Build dynamic UPDATE to handle nullable columns with SQL NULL
+        $sets = ['model_id = ?', 'multi_touch_enabled = ?'];
+        $types = 'ii';
+        $params = [(int) $row['model_id'], $enabled];
 
-        $modelId = (int) $row['model_id'];
-        $effectiveAt = (int) $row['effective_at'];
-        $updatedAt = (int) $row['updated_at'];
-        $settingIdInt = (int) $settingId;
+        if ($enabledAt !== null) {
+            $sets[] = 'multi_touch_enabled_at = ?';
+            $types .= 'i';
+            $params[] = $enabledAt;
+        } else {
+            $sets[] = 'multi_touch_enabled_at = NULL';
+        }
 
-        $stmt->bind_param(
-            'iiiiiii',
-            $modelId,
-            $enabled,
-            $enabledAt,
-            $disabledAt,
-            $effectiveAt,
-            $updatedAt,
-            $settingIdInt
-        );
-        $stmt->execute();
+        if ($disabledAt !== null) {
+            $sets[] = 'multi_touch_disabled_at = ?';
+            $types .= 'i';
+            $params[] = $disabledAt;
+        } else {
+            $sets[] = 'multi_touch_disabled_at = NULL';
+        }
+
+        $sets[] = 'effective_at = ?';
+        $sets[] = 'updated_at = ?';
+        $types .= 'ii';
+        $params[] = (int) $row['effective_at'];
+        $params[] = (int) $row['updated_at'];
+
+        $params[] = (int) $settingId;
+        $types .= 'i';
+
+        $sql = 'UPDATE 202_attribution_settings SET ' . implode(', ', $sets) . ' WHERE setting_id = ? LIMIT 1';
+        $stmt = $this->conn->prepareWrite($sql);
+        $this->conn->bind($stmt, $types, $params);
+
+        $this->conn->execute($stmt);
         $stmt->close();
 
-        return $this->requireById($settingIdInt);
+        return $this->requireById((int) $settingId);
     }
 
     public function findDisabledSettings(): array
     {
         $sql = 'SELECT * FROM 202_attribution_settings WHERE multi_touch_enabled = 0';
-        $stmt = $this->prepareRead($sql);
-        $stmt->execute();
-        $result = $stmt->get_result();
+        $stmt = $this->conn->prepareRead($sql);
+        $rows = $this->conn->fetchAll($stmt);
 
         $settings = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $settings[] = Setting::fromDatabaseRow($row);
-            }
-            $result->free();
+        foreach ($rows as $row) {
+            $settings[] = Setting::fromDatabaseRow($row);
         }
-
-        $stmt->close();
 
         return $settings;
     }
 
-    private function prepareRead(string $sql): mysqli_stmt
-    {
-        return $this->prepare($this->readConnection ?? $this->writeConnection, $sql);
-    }
-
-    private function prepareWrite(string $sql): mysqli_stmt
-    {
-        return $this->prepare($this->writeConnection, $sql);
-    }
-
-    private function prepare(mysqli $connection, string $sql): mysqli_stmt
-    {
-        $statement = $connection->prepare($sql);
-        if ($statement === false) {
-            throw new RuntimeException('Failed to prepare MySQL statement: ' . $connection->error);
-        }
-
-        return $statement;
-    }
-
     private function requireById(int $settingId): Setting
     {
-        $stmt = $this->prepareRead('SELECT * FROM 202_attribution_settings WHERE setting_id = ? LIMIT 1');
-        $stmt->bind_param('i', $settingId);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $row = $result ? $result->fetch_assoc() : null;
-        $stmt->close();
+        $stmt = $this->conn->prepareRead('SELECT * FROM 202_attribution_settings WHERE setting_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$settingId]);
+        $row = $this->conn->fetchOne($stmt);
 
-        if (!$row) {
+        if ($row === null) {
             throw new RuntimeException('Unable to load attribution setting #' . $settingId);
         }
 
@@ -208,21 +216,5 @@ final class MysqlSettingRepository implements SettingsRepositoryInterface
     private function buildScopeKey(ScopeType $scopeType, ?int $scopeId): string
     {
         return sprintf('%s:%s', $scopeType->value, $scopeId === null ? 'null' : $scopeId);
-    }
-
-    /**
-     * @param array<int, mixed> $values
-     */
-    private function bind(mysqli_stmt $statement, string $types, array $values): void
-    {
-        $refs = [];
-        foreach ($values as $index => $value) {
-            $refs[$index] = &$values[$index];
-        }
-        $params = array_merge([$types], $refs);
-
-        if (!call_user_func_array($statement->bind_param(...), $params)) {
-            throw new RuntimeException('Failed to bind MySQL parameters.');
-        }
     }
 }

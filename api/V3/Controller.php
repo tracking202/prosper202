@@ -237,11 +237,8 @@ abstract class Controller
         $total = 0;
         if ($types) {
             $stmt = $this->prepare($countSql);
-            $stmt->bind_param($types, ...$binds);
-            if (!$stmt->execute()) {
-                $stmt->close();
-                throw new DatabaseException('Count query failed');
-            }
+            $this->bind($stmt, $types, ...$binds);
+            $this->execute($stmt, 'Count query failed');
             $total = (int)$stmt->get_result()->fetch_assoc()['total'];
             $stmt->close();
         } else {
@@ -259,11 +256,8 @@ abstract class Controller
         $types .= 'i';
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('List query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'List query failed');
         $result = $stmt->get_result();
 
         $rows = [];
@@ -311,11 +305,8 @@ abstract class Controller
         $whereClause = 'WHERE ' . implode(' AND ', $where);
         $sql = "SELECT $selectExpr FROM {$this->tableName()} $whereClause LIMIT 1";
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Query failed');
-        }
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Query failed');
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
@@ -380,12 +371,9 @@ abstract class Controller
         );
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
+        $this->bind($stmt, $types, ...$binds);
 
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Insert failed');
-        }
+        $this->execute($stmt, 'Insert failed');
 
         $insertId = $stmt->insert_id;
         $stmt->close();
@@ -443,12 +431,9 @@ abstract class Controller
         );
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
+        $this->bind($stmt, $types, ...$binds);
 
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Update failed');
-        }
+        $this->execute($stmt, 'Update failed');
         $stmt->close();
 
         $updated = $this->get($id);
@@ -487,12 +472,9 @@ abstract class Controller
         }
 
         $stmt = $this->prepare($sql);
-        $stmt->bind_param($types, ...$binds);
+        $this->bind($stmt, $types, ...$binds);
 
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException('Delete failed');
-        }
+        $this->execute($stmt, 'Delete failed');
         $stmt->close();
 
         $this->recordChange('delete', (array)$existing['data']);
@@ -690,8 +672,8 @@ abstract class Controller
         if (!$stmt) {
             return false;
         }
-        $stmt->bind_param('s', $column);
-        if (!$stmt->execute()) {
+        $this->bind($stmt, 's', $column);
+        if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
             return false;
         }
@@ -748,5 +730,26 @@ abstract class Controller
             throw new DatabaseException("Prepare failed");
         }
         return $stmt;
+    }
+
+    protected function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
+    {
+        $values = array_values($values);
+        $refs = [$stmt, $types];
+        foreach ($values as $index => $value) {
+            $refs[] = &$values[$index];
+        }
+        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+            $stmt->close();
+            throw new DatabaseException('Bind failed');
+        }
+    }
+
+    protected function execute(\mysqli_stmt $stmt, string $message): void
+    {
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            throw new DatabaseException($message);
+        }
     }
 }

@@ -50,8 +50,8 @@ final readonly class Auth
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
         }
-        $stmt->bind_param('s', $apiKey);
-        if (!$stmt->execute()) {
+        self::bind($stmt, 's', $apiKey);
+        if (!self::execute($stmt)) {
             $stmt->close();
             throw new AuthException('Authentication unavailable', 500);
         }
@@ -84,8 +84,8 @@ final readonly class Auth
             throw new AuthException('Authorization unavailable', 500);
         }
 
-        $stmt->bind_param('i', $userId);
-        if (!$stmt->execute()) {
+        self::bind($stmt, 'i', $userId);
+        if (!self::execute($stmt)) {
             $stmt->close();
             throw new AuthException('Authorization unavailable', 500);
         }
@@ -167,7 +167,7 @@ final readonly class Auth
         if (!$stmt) {
             return false;
         }
-        if (!$stmt->execute()) {
+        if (!self::execute($stmt)) {
             $stmt->close();
             return false;
         }
@@ -213,5 +213,22 @@ final readonly class Auth
             $scopes[] = '*';
         }
         return array_values(array_unique($scopes));
+    }
+
+    private static function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
+    {
+        $values = array_values($values);
+        $refs = [$stmt, $types];
+        foreach ($values as $index => $value) {
+            $refs[] = &$values[$index];
+        }
+        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+            throw new AuthException('Authentication unavailable', 500);
+        }
+    }
+
+    private static function execute(\mysqli_stmt $stmt): bool
+    {
+        return mysqli_stmt_execute($stmt);
     }
 }

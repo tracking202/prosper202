@@ -396,13 +396,14 @@ template_top('User Management'); ?>
 					<div class="form-group" style="margin-bottom: 0px;">
 						<label for="user_active" class="col-xs-4 control-label" style="text-align: left;">Active:</label>
 						<div class="col-xs-5">
-							<div class="bootstrap-switch-square">
-								<input type="checkbox" name="user_active" <?php if ($editing == true) {
-																				if (isset($html['user_active']) && $html['user_active'] == true) echo 'checked="true"';
+							<label class="css-toggle">
+								<input type="checkbox" name="user_active" id="user_active" <?php if ($editing == true) {
+																				if (isset($html['user_active']) && $html['user_active'] == true) echo 'checked';
 																			} else {
-																				echo 'checked="true"';
-																			} ?> data-toggle="switch" id="custom-switch-03" data-on-text="<span class='fui-check'></span>" data-off-text="<span class='fui-cross'></span>" />
-							</div>
+																				echo 'checked';
+																			} ?> />
+								<span class="css-toggle-slider"></span>
+							</label>
 						</div>
 					</div>
 
@@ -479,9 +480,4 @@ template_top('User Management'); ?>
 	</div>
 </div>
 
-<script type="text/javascript">
-	(function($) {
-		$('[data-toggle="switch"]').bootstrapSwitch();
-	}(jQuery));
-</script>
 <?php template_bottom();

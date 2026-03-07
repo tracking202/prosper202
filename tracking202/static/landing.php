@@ -56,7 +56,7 @@ $strProtocol = 'http';
 		$parser = Parser::create();
 		
 		//Device type
-		$detect = new Mobile_Detect;
+		$detect = new DeviceDetect();
 		$ua = $detect->getUserAgent();
 		$result = $parser->parse($ua);
 		
@@ -315,7 +315,7 @@ function t202Data() {
 		$parser = Parser::create();
 		
 		//Device type
-		$detect = new Mobile_Detect;
+		$detect = new DeviceDetect();
 		$ua = $detect->getUserAgent();
 		$result = $parser->parse($ua);
 		

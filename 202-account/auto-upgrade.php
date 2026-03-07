@@ -3,25 +3,60 @@
 declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/functions-upgrade.php');
-include_once(str_repeat("../", 1) . '202-config/functions-rss.php');
 include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
 
 AUTH::require_user();
 
 ini_set('memory_limit', '-1');
 
-$rss = fetch_rss('https://my.tracking202.com/clickserver/currentversion/paid/');
-if (isset($rss->items) && 0 != count($rss->items)) {
+function get_safe_upgrade_path(string $basePath, string $zipEntryName)
+{
+	$entry = str_replace('\\', '/', $zipEntryName);
+	$entry = ltrim($entry, '/');
+	$entry = rtrim($entry, '/');
 
-	$rss->items = array_slice($rss->items, 0, 1);
-	foreach ($rss->items as $item) {
-		$latest_version = $item['title'];
-		$download_link = $item['link'];
-		//if current version, is older than the latest version, return true for an update is now needed.
-		if (version_compare($version, $latest_version) == '-1') {
-			$update_needed = true;
-		} else {
+	if ($entry === '' || str_contains($entry, "\0")) {
+		return false;
+	}
+
+	$parts = explode('/', $entry);
+	foreach ($parts as $part) {
+		if ($part === '' || $part === '.' || $part === '..') {
+			return false;
+		}
+	}
+
+	return rtrim($basePath, '/') . '/' . implode('/', $parts);
+}
+
+$update_needed = false;
+$latest_version = $version;
+$download_link = '';
+$download_link_is_valid = false;
+
+$rss_xml = getUrl('https://my.tracking202.com/clickserver/currentversion/paid/', 'GET', 10);
+if ($rss_xml === '') {
+	$rss_xml = null;
+}
+
+if ($rss_xml !== null) {
+	$rss_feed = @simplexml_load_string($rss_xml);
+	if ($rss_feed !== false && isset($rss_feed->channel->item)) {
+		$item = $rss_feed->channel->item[0];
+		$latest_version = (string) $item->title;
+		if (!preg_match('/^\d+\.\d+\.\d+(\.\d+)?$/', $latest_version)) {
 			$update_needed = false;
+		} else {
+			$download_link = (string) $item->link;
+			$parsed_download_link = parse_url($download_link);
+			$download_link_is_valid =
+				is_array($parsed_download_link)
+				&& isset($parsed_download_link['scheme'], $parsed_download_link['host'])
+				&& strtolower($parsed_download_link['scheme']) === 'https'
+				&& strtolower($parsed_download_link['host']) === 'my.tracking202.com';
+			if (version_compare($version, $latest_version) < 0) {
+				$update_needed = true;
+			}
 		}
 	}
 }
@@ -52,72 +87,92 @@ if (($_POST['start_upgrade'] == '1') == false) {
 	}
 
 	if (!$error) {
+		$FilesUpdated = null;
+		if (empty($download_link_is_valid) || $download_link_is_valid !== true) {
+			$log .= "Invalid upgrade package URL. Operation aborted.\n";
+			$FilesUpdated = false;
+		}
 
-		$GetUpdate = @getData($download_link);
-		$log = "Downloading new update...\n";
+		if ($FilesUpdated !== false) {
+			$GetUpdate = @getData($download_link);
+			$log = "Downloading new update...\n";
 
-		if ($GetUpdate) {
+			if ($GetUpdate) {
 
-			if (temp_exists()) {
-				$log .= "Created /202-config/temp/ directory.\n";
-				$downloadUpdate = @file_put_contents(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
-				if ($downloadUpdate) {
-					$log .= "Update downloaded and saved!\n";
+				if (temp_exists()) {
+					$log .= "Created /202-config/temp/ directory.\n";
+					$downloadUpdate = @file_put_contents(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip', $GetUpdate);
+					if ($downloadUpdate) {
+						$log .= "Update downloaded and saved!\n";
 
-					$zip = @zip_open(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
+						$zip = @zip_open(substr(__DIR__, 0, -12) . '/202-config/temp/prosper202_' . $latest_version . '.zip');
 
-					if ($zip) {
-						$log .= "\nUpdate process started...\n";
-						$log .= "\n-------------------------------------------------------------------------------------\n";
+						if ($zip) {
+							$log .= "\nUpdate process started...\n";
+							$log .= "\n-------------------------------------------------------------------------------------\n";
+							$basePath = rtrim(substr(__DIR__, 0, -12), '/');
 
-						while ($zip_entry = @zip_read($zip)) {
-							$thisFileName = zip_entry_name($zip_entry);
+							while ($zip_entry = @zip_read($zip)) {
+								$thisFileName = zip_entry_name($zip_entry);
+								$safePath = get_safe_upgrade_path($basePath, $thisFileName);
 
-							if (str_ends_with($thisFileName, '/')) {
-								if (is_dir(substr(__DIR__, 0, -12) . '/' . $thisFileName)) {
-									$log .= "Directory: /" . $thisFileName . "......updated\n";
-								} else {
-									if (@mkdir(substr(__DIR__, 0, -12) . '/' . $thisFileName, 0755, true)) {
-										$log .= "Directory: /" . $thisFileName . "......created\n";
+								if ($safePath === false) {
+									$log .= "Skipped unsafe path in archive: " . $thisFileName . "\n";
+									continue;
+								}
+
+								if (str_ends_with($thisFileName, '/')) {
+									if (is_dir($safePath)) {
+										$log .= "Directory: /" . $thisFileName . "......updated\n";
 									} else {
-										$log .= "Can't create /" . $thisFileName . " directory! Operation aborted";
+										if (@mkdir($safePath, 0755, true)) {
+											$log .= "Directory: /" . $thisFileName . "......created\n";
+										} else {
+											$log .= "Can't create /" . $thisFileName . " directory - skipping\n";
+											continue;
+										}
+									}
+								} else {
+									$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
+
+									if (file_exists($safePath)) {
+										$status = "updated";
+									} else {
+										$status = "created";
+									}
+
+									$targetDir = dirname($safePath);
+									if (!is_dir($targetDir) && !@mkdir($targetDir, 0755, true)) {
+										$log .= "Can't create directory for file: " . $thisFileName . " - skipping this file\n";
+										continue;
+									}
+
+									if ($updateThis = @fopen($safePath, 'wb')) {
+										fwrite($updateThis, $contents);
+										fclose($updateThis);
+										unset($contents);
+
+										$log .= "File: " . $thisFileName . "......" . $status . "\n";
+									} else {
+										$log .= "Can't update file:" . $thisFileName . "! Operation aborted";
 									}
 								}
-							} else {
-								$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
-								$file_ext = array_pop(explode(".", $thisFileName));
-
-								if (file_exists(substr(__DIR__, 0, -12) . '/' . $thisFileName)) {
-									$status = "updated";
-								} else {
-									$status = "created";
-								}
-
-								if ($updateThis = @fopen(substr(__DIR__, 0, -12) . '/' . $thisFileName, 'wb')) {
-									fwrite($updateThis, $contents);
-									fclose($updateThis);
-									unset($contents);
-
-									$log .= "File: " . $thisFileName . "......" . $status . "\n";
-								} else {
-									$log .= "Can't update file:" . $thisFileName . "! Operation aborted";
-								}
+								$FilesUpdated = true;
 							}
-							$FilesUpdated = true;
+							@zip_close($zip);
 						}
-						@zip_close($zip);
+					} else {
+						$log .= "Can't save new update! Operation aborted. Make sure PHP has write permissions!";
+						$FilesUpdated = false;
 					}
 				} else {
-					$log .= "Can't save new update! Operation aborted. Make sure PHP has write permissions!";
+					$log .= "Can't create /202-config/temp/ directory! Operation aborted.";
 					$FilesUpdated = false;
 				}
 			} else {
-				$log .= "Can't create /202-config/temp/ directory! Operation aborted.";
+				$log .= "Can't download new update from link: " . $download_link . " \nOperation aborted.";
 				$FilesUpdated = false;
 			}
-		} else {
-			$log .= "Can't download new update from link: " . $download_link . " \nOperation aborted.";
-			$FilesUpdated = false;
 		}
 
 		if ($FilesUpdated == true) {
@@ -200,7 +255,7 @@ if ($update_needed == true) {
 
 		<?php if ($_POST['start_upgrade'] == '1') { ?>
 			<br>
-			<textarea rows="8" class="form-control install_logs"><?php echo $log; ?></textarea>
+			<textarea rows="8" class="form-control install_logs"><?php echo htmlspecialchars($log, ENT_QUOTES, 'UTF-8'); ?></textarea>
 		<?php }
 
 		if ($upgrade_done != true) { ?>

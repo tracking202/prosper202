@@ -46,6 +46,9 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
             }
 
             $payload = array_merge($params, decode_json_body($request));
+            if ($auth !== null) {
+                $payload['user_id'] = $auth;
+            }
             $result = $controller->createModel($payload);
             return respond_json($response, $result['payload'], $result['status']);
         })->add(attribution_authorization_middleware('manage_attribution_models'));
@@ -80,6 +83,9 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
             }
 
             $payload = array_merge($params, decode_json_body($request));
+            if ($auth !== null) {
+                $payload['user_id'] = $auth;
+            }
             $result = $controller->scheduleExport((int) $args['modelId'], $payload);
             return respond_json($response, $result['payload'], $result['status']);
         })->add(attribution_authorization_middleware('manage_attribution_models'));
@@ -92,6 +98,9 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
             }
 
             $payload = array_merge($params, decode_json_body($request));
+            if ($auth !== null) {
+                $payload['user_id'] = $auth;
+            }
             $result = $controller->updateModel((int) $args['modelId'], $payload);
             return respond_json($response, $result['payload'], $result['status']);
         })->add(attribution_authorization_middleware('manage_attribution_models'));
@@ -268,8 +277,8 @@ function authorize_attribution_request(array $params, string $permission): array
         ];
     }
 
-    $stmt->bind_param('s', $apiKey);
-    $stmt->execute();
+    mysqli_stmt_bind_param($stmt, 's', $apiKey);
+    mysqli_stmt_execute($stmt);
     $result = $stmt->get_result();
     $row = $result ? $result->fetch_assoc() : null;
     $stmt->close();

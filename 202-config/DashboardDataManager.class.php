@@ -102,7 +102,7 @@ class DashboardDataManager
      */
     private function storeContent(string $contentType, array $data): bool
     {
-        if (self::$db === null || !is_array($data)) {
+        if (self::$db === null) {
             return false;
         }
 

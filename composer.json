@@ -2,7 +2,7 @@
   "name": "prosper202/prosper202",
   "description": "Prosper202 ClickServer - Self-hosted tracking platform",
   "type": "project",
-  "license": "GPL-2.0-or-later",
+  "license": "BUSL-1.1",
   "require": {
     "php": ">=8.3",
     "slim/slim": "^3.12",

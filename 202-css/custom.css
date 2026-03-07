@@ -1594,3 +1594,46 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
 .attribution-page .touchpoint-mix li.touchpoint-empty::marker {
     content: none;
 }
+
+.css-toggle {
+    position: relative;
+    display: inline-block;
+    width: 52px;
+    height: 28px;
+    margin-bottom: 0;
+    cursor: pointer;
+}
+.css-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.css-toggle-slider {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #bdc3c7;
+    border-radius: 28px;
+    transition: background-color 0.2s;
+}
+.css-toggle-slider::before {
+    content: "";
+    position: absolute;
+    height: 22px;
+    width: 22px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s;
+}
+.css-toggle input:checked + .css-toggle-slider {
+    background-color: #1abc9c;
+}
+.css-toggle input:checked + .css-toggle-slider::before {
+    transform: translateX(24px);
+}
+.css-toggle input:focus-visible + .css-toggle-slider {
+    outline: 2px solid #2c3e50;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(41, 128, 185, 0.4);
+}
