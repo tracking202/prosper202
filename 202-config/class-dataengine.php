@@ -23,14 +23,9 @@ class DataEngine
      * Check if database connection is available
      * @return bool
      */
-    private function isDatabaseConnected(): bool
+    public function isDatabaseConnected(): bool
     {
         return self::$db !== null;
-    }
-
-    public function hasDatabaseConnection(): bool
-    {
-        return $this->isDatabaseConnected();
     }
 
     /**
@@ -101,6 +96,21 @@ class DataEngine
         return self::$found_rows;
     }
 
+    private function runCountQuery(string $countSql): int
+    {
+        $result = _mysqli_query($countSql);
+        if (!$result) {
+            $error = self::$db instanceof mysqli
+                ? self::$db->error
+                : (($GLOBALS['db'] ?? null) instanceof mysqli ? $GLOBALS['db']->error : 'unknown');
+            error_log('DataEngine count query failed: ' . $error);
+            return 0;
+        }
+
+        $row = $result->fetch_assoc();
+        return (int) ($row['cnt'] ?? 0);
+    }
+
     /**
      * Count distinct values for pagination without SQL_CALC_FOUND_ROWS.
      * Runs a simple COUNT(DISTINCT ...) on 202_dataengine — no lookup JOINs,
@@ -108,15 +118,40 @@ class DataEngine
      */
     private function countGroups(string $fkColumn, string $from, string $to, array $filters): int
     {
+        if (!isset($filters['join'], $filters['filter'])) {
+            return 0;
+        }
+
         $countSql = "SELECT COUNT(DISTINCT 2st." . $fkColumn . ") AS cnt FROM 202_dataengine AS 2st "
-            . $filters['join']
+            . ($filters['join'] ?? '')
             . $this->mysql['user_id_query']
             . " AND click_time >= " . $from
             . " AND click_time <= " . $to
-            . $filters['filter'];
-        $result = _mysqli_query($countSql);
-        $row = $result ? $result->fetch_assoc() : null;
-        return (int) ($row['cnt'] ?? 0);
+            . ($filters['filter'] ?? '');
+
+        return $this->runCountQuery($countSql);
+    }
+
+    private function countRefererGroups(string $from, string $to, array $filters): int
+    {
+        if (!isset($filters['join'], $filters['filter'])) {
+            return 0;
+        }
+
+        $countSql = "SELECT COUNT(*) AS cnt FROM (
+                SELECT 2sd.site_domain_host
+                FROM 202_dataengine AS 2st "
+            . ($filters['join'] ?? '')
+            . " LEFT JOIN 202_site_urls AS 2su ON (2st.click_referer_site_url_id = 2su.site_url_id)
+                LEFT JOIN 202_site_domains AS 2sd ON (2sd.site_domain_id = 2su.site_domain_id)"
+            . $this->mysql['user_id_query']
+            . " AND click_time >= " . $from
+            . " AND click_time <= " . $to
+            . ($filters['filter'] ?? '')
+            . " GROUP BY 2sd.site_domain_host
+            ) AS referer_groups";
+
+        return $this->runCountQuery($countSql);
     }
 
     function getReportData($reportType, $clickFrom, $clickTo, $cpv): mixed
@@ -1083,7 +1118,7 @@ LEFT JOIN 202_site_urls on (2st.click_referer_site_url_id = 202_site_urls.site_u
         }
         $data[] = $this->htmlFormat($totals, $cpv, 'total');
 
-        self::$found_rows = $this->countGroups('click_referer_site_url_id', $mysql['from'], $mysql['to'], $click_filtered);
+        self::$found_rows = $this->countRefererGroups($mysql['from'], $mysql['to'], $click_filtered);
 
         return $data;
     }

@@ -32,9 +32,16 @@ $(document).ready(function() {
 			url: "<?php echo get_absolute_url();?>202-account/ajax/check-for-update.php",
 		})
 		.done(function() {
-			$.get("<?php echo get_absolute_url();?>202-account/ajax/update-needed.php", function(data) {
-			  	$("#update_needed").html(data);
-			});
+			$.get("<?php echo get_absolute_url();?>202-account/ajax/update-needed.php")
+				.done(function(data) {
+					$("#update_needed").html(data);
+				})
+				.fail(function() {
+					// Non-critical banner; ignore fetch failures.
+				});
+		})
+		.fail(function() {
+			// Non-critical banner; ignore fetch failures.
 		});
 	};
 
@@ -1613,4 +1620,3 @@ function autocomplete_names(selector, type){
 	$(".tt-hint").css('top', '5px');
 	$(".tt-input").css('top', '5px');
 }
-

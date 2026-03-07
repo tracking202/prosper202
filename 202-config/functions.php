@@ -443,6 +443,9 @@ function info_top(): void
 		global $version;
 		$json = @getData('https://my.tracking202.com/api/v2/premium-p202/version', 5, 3);
 		$array = json_decode((string) $json, true);
+		if (!is_array($array) || !isset($array['version'])) {
+			return 0;
+		}
 		if ((version_compare($version, $array['version']) == '-1')) {
 			if (!is_writable(__DIR__ . '/') || !function_exists('zip_open') || !function_exists('zip_read') || !function_exists('zip_entry_name') || !function_exists('zip_close')) {
 				$_SESSION['auto_upgraded_not_possible'] = true;

@@ -25,8 +25,13 @@ try {
     // Create lock file
     touch($lockFile);
 
-include_once(__DIR__ . '/../202-config/connect.php');
-include_once(__DIR__ . '/../202-config/class-dataengine.php');
+	include_once(__DIR__ . '/../202-config/connect.php');
+	include_once(__DIR__ . '/../202-config/class-dataengine.php');
+
+    // Cron does not need to hold the user's session lock while it runs.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
 
 /**
  * Helper to reuse the application singleton DB connection inside cron.
@@ -304,7 +309,7 @@ function RunSecondsCronjob()
             // Process DataEngine tasks
             try {
                 $de = new DataEngine();
-                if ($de->hasDatabaseConnection()) {
+                if ($de->isDatabaseConnected()) {
                     $de->processDirtyHours();
                     $de->processClickUpgrade();
                 }

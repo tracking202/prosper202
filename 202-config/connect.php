@@ -14,16 +14,45 @@ ini_set('session.gc_maxlifetime', '50000');
 ini_set('session.cookie_lifetime', '0'); // session cookie — expires when browser closes
 
 // Start the session at the beginning to avoid undefined $_SESSION variable.
+// AJAX detection depends on clients sending X-Requested-With. jQuery does this
+// automatically; fetch() and sendBeacon() do not unless the caller adds it.
 // For AJAX requests, use read_and_close to release the session file lock immediately.
 // PHP's file-based sessions use exclusive locks, so parallel AJAX requests become
 // serialized if the lock is held. Session data is still readable in $_SESSION after close.
-// Full page loads keep the session open for writes (session_time heartbeat, token init, etc).
 $_is_ajax = !empty($_SERVER['HTTP_X_REQUESTED_WITH'])
     && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
 if ($_is_ajax) {
     session_start(['read_and_close' => true]);
 } else {
     session_start();
+}
+
+if (!function_exists('withWritableSession')) {
+    /**
+     * Reopen a read-only session just long enough to persist writes, then
+     * release the session lock again for the rest of the request.
+     */
+    function withWritableSession(callable $callback): void
+    {
+        $openedHere = false;
+
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            if (headers_sent()) {
+                error_log('withWritableSession: headers already sent; session writes may not persist');
+                $callback();
+                return;
+            }
+
+            session_start();
+            $openedHere = true;
+        }
+
+        $callback();
+
+        if ($openedHere && session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+    }
 }
 
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
@@ -304,7 +333,11 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
 
 //set token to prevent CSRF attacks
 if (!isset($_SESSION['token'])) {
-    $_SESSION['token'] = md5(uniqid((string)random_int(0, mt_getrandmax()), TRUE));
+    withWritableSession(static function (): void {
+        if (!isset($_SESSION['token'])) {
+            $_SESSION['token'] = md5(uniqid((string) random_int(0, mt_getrandmax()), true));
+        }
+    });
 }
 
 
@@ -355,11 +388,9 @@ if (!isset($_SESSION['ipv6']) || !$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
     $result = $db->query($sql);
 
-    if ($result) {
-        $_SESSION['ipv6'] = "ipv6";
-    } else {
-        $_SESSION['ipv6'] = '';
-    }
+    withWritableSession(static function () use ($result): void {
+        $_SESSION['ipv6'] = $result ? 'ipv6' : '';
+    });
 }
 
 if (isset($_SESSION['ipv6']) && $_SESSION['ipv6'] != '') {

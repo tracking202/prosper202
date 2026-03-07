@@ -157,8 +157,8 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $skip_publisher_check = $options['skip_publisher_check'] ?? false;
     $hide_publisher_sections = !$skip_publisher_check && !empty($_SESSION['publisher']);
 
-    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string((string) $_SESSION['user_id']) : 0;
-    $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
+    $userId = (int) ($_SESSION['user_id'] ?? 0);
+    $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $userId;
     $user_result = _mysqli_query($user_sql);
     $user_row = $user_result->fetch_assoc() ?? [];
 
@@ -212,14 +212,14 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     // PPC Networks (user-scoped, bounded)
     $ssr_ppc_network_options = '';
     if (!$hide_publisher_sections) {
-        $ppc_net_sql = "SELECT ppc_network_id, ppc_network_name FROM 202_ppc_networks WHERE user_id='" . $mysql['user_id'] . "' AND ppc_network_deleted='0' ORDER BY ppc_network_name ASC";
+        $ppc_net_sql = "SELECT ppc_network_id, ppc_network_name FROM 202_ppc_networks WHERE user_id=" . $userId . " AND ppc_network_deleted='0' ORDER BY ppc_network_name ASC";
         $ppc_net_result = $db->query($ppc_net_sql);
         if ($ppc_net_result) {
             while ($row = $ppc_net_result->fetch_assoc()) {
                 $val = htmlentities((string) ($row['ppc_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
                 $name = htmlentities((string) ($row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-                $sel = ($html['user_pref_ppc_network_id'] === $val) ? 'selected=""' : '';
-                $ssr_ppc_network_options .= sprintf('<option %s value="%s">%s</option>', $sel, $val, $name);
+                $sel = ($html['user_pref_ppc_network_id'] === $val) ? ' selected' : '';
+                $ssr_ppc_network_options .= sprintf('<option%s value="%s">%s</option>', $sel, $val, $name);
             }
         }
     }
@@ -227,20 +227,20 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     // Aff Networks (user-scoped, bounded)
     $ssr_aff_network_options = '';
     if (!$hide_publisher_sections) {
-        $aff_net_sql = "SELECT aff_network_id, aff_network_name FROM 202_aff_networks WHERE user_id='" . $mysql['user_id'] . "' AND aff_network_deleted='0' ORDER BY aff_network_name ASC";
+        $aff_net_sql = "SELECT aff_network_id, aff_network_name FROM 202_aff_networks WHERE user_id=" . $userId . " AND aff_network_deleted='0' ORDER BY aff_network_name ASC";
         $aff_net_result = $db->query($aff_net_sql);
         if ($aff_net_result) {
             while ($row = $aff_net_result->fetch_assoc()) {
                 $val = htmlentities((string) ($row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
                 $name = htmlentities((string) ($row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-                $sel = ($html['user_pref_aff_network_id'] === $val) ? 'selected=""' : '';
-                $ssr_aff_network_options .= sprintf('<option %s value="%s">%s</option>', $sel, $val, $name);
+                $sel = ($html['user_pref_aff_network_id'] === $val) ? ' selected' : '';
+                $ssr_aff_network_options .= sprintf('<option%s value="%s">%s</option>', $sel, $val, $name);
             }
         }
     }
 
-    // Method of promotion (static 3-option dropdown)
-    // In display_calendar context the JS always passes 'refine', so use 'landingpages'
+    // display_calendar() renders the report refine UI, which expects the
+    // plural token so landing_pages.php includes both simple and advanced LPs.
     $ssr_method_lp_value = 'landingpages';
 ?>
 
@@ -1379,7 +1379,7 @@ function query(
             $mysql['user_pref_ppc_network_id'] = $db->real_escape_string($user_row['user_pref_ppc_network_id']);
             if ($user_row['user_pref_ppc_network_id'] == '16777215') {
                 $click_sql .= "  AND      2pn.ppc_network_id IS NULL";
-                $count_where .= "  AND      2c.ppc_account_id NOT IN (SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_network_id IS NOT NULL)";
+                $count_where .= "  AND      NOT EXISTS (SELECT 1 FROM 202_ppc_accounts AS 2pa2 WHERE 2pa2.ppc_account_id = 2c.ppc_account_id AND 2pa2.ppc_network_id IS NOT NULL)";
             } else {
                 $click_sql .= "  AND      2pn.ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "'";
                 $count_where .= "  AND      2c.ppc_account_id IN (SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "')";
@@ -1446,8 +1446,7 @@ function query(
         if ($user_row['user_pref_referer']) {
             $mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
             $click_sql .= " AND 2sd.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%'";
-            // Align count query with row query: both filter on site_domain_host
-            $count_where .= " AND 2c.click_id IN (SELECT 2cs2.click_id FROM 202_clicks_site AS 2cs2 JOIN 202_site_urls AS 2su2 ON (2cs2.click_referer_site_url_id = 2su2.site_url_id) JOIN 202_site_domains AS 2sd2 ON (2su2.site_domain_id = 2sd2.site_domain_id) WHERE 2sd2.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%')";
+            $count_where .= " AND EXISTS (SELECT 1 FROM 202_clicks_site AS 2cs2 JOIN 202_site_urls AS 2su2 ON (2cs2.click_referer_site_url_id = 2su2.site_url_id) JOIN 202_site_domains AS 2sd2 ON (2su2.site_domain_id = 2sd2.site_domain_id) WHERE 2cs2.click_id = 2c.click_id AND 2sd2.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%')";
         }
 
         if ($user_row['user_pref_keyword']) {
