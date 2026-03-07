@@ -133,11 +133,8 @@ if (!function_exists('array_any')) {
 
 function is_installed(): bool
 {
-	// Skip the check if we're accessing the installer or API key setup
-	if (
-		str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php') ||
-		str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')
-	) {
+	// Skip the check only for API key setup
+	if (str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')) {
 		return false;
 	}
 
