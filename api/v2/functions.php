@@ -16,8 +16,13 @@ function getAuth($db, $variables): mixed {
 					WHERE  	`user_id`='".$mysql['user_id']."'";
 		$user_result = _mysqli_query($db, $user_sql);
 		$user_row = $user_result->fetch_assoc();
-		showCategories($db, $variables, $mysql['user_id']);
-		return ['msg' => 'Authorized', 'error' => false, 'status' => 202];
+		return [
+			'msg' => 'Authorized',
+			'error' => false,
+			'status' => 202,
+			'user_id' => (int) $key_row['user_id'],
+			'user_timezone' => (string) (($user_row['user_timezone'] ?? 'UTC')),
+		];
 		//return array('msg' => 'Authorized', 'error' => false, 'status' => 202);
 	} else {
 		return ['msg' => 'Unauthorized', 'error' => true, 'status' => 401];

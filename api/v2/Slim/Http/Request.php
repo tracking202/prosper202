@@ -318,7 +318,7 @@ class Request
      * the value of a array key if requested; if the array key does not exist, NULL is returned.
      *
      * @param  string            $key
-     * @return array|string|null
+     * @return \Slim\Helper\Set|string|null
      */
     public function cookies($key = null)
     {
@@ -326,7 +326,7 @@ class Request
             return $this->cookies->get($key);
         }
 
-        return $this->cookies->all();
+        return $this->cookies;
         // if (!isset($this->env['slim.request.cookie_hash'])) {
         //     $cookieHeader = isset($this->env['COOKIE']) ? $this->env['COOKIE'] : '';
         //     $this->env['slim.request.cookie_hash'] = Util::parseCookieHeader($cookieHeader);

@@ -13,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     } else {
         $data = getAuth($db, $_GET);
         if ($data['msg'] == "Authorized") {
-            showCategories($db, $_GET);
+            showCategories($db, $_GET, (int) ($data['user_id'] ?? 0));
             die();
         }
     }

@@ -1364,9 +1364,9 @@ class UPGRADE
             $result = _mysqli_query($sql);
 
             $de = new DataEngine();
-            $deClass = get_class($de);
-            if (method_exists($deClass, 'setRowsForOldClickUpgrade')) {
+            if (method_exists($de, 'setRowsForOldClickUpgrade')) {
                 // Legacy DataEngine variants may expose this method.
+                $de->setRowsForOldClickUpgrade($time_from);
             }
 
             $sql = "UPDATE 202_version SET version='1.9.3'";
