@@ -14,6 +14,7 @@ function get_safe_upgrade_path(string $basePath, string $zipEntryName)
 {
 	$entry = str_replace('\\', '/', $zipEntryName);
 	$entry = ltrim($entry, '/');
+	$entry = rtrim($entry, '/');
 
 	if ($entry === '' || str_contains($entry, "\0")) {
 		return false;
@@ -35,6 +36,10 @@ if (isset($rss->items) && 0 != count($rss->items)) {
 	$rss->items = array_slice($rss->items, 0, 1);
 	foreach ($rss->items as $item) {
 		$latest_version = $item['title'];
+		if (!preg_match('/^\d+\.\d+\.\d+(\.\d+)?$/', $latest_version)) {
+			$update_needed = false;
+			break;
+		}
 		$download_link = $item['link'];
 		$parsed_download_link = parse_url($download_link);
 		$download_link_is_valid =
@@ -43,7 +48,7 @@ if (isset($rss->items) && 0 != count($rss->items)) {
 			&& strtolower($parsed_download_link['scheme']) === 'https'
 			&& strtolower($parsed_download_link['host']) === 'my.tracking202.com';
 		//if current version, is older than the latest version, return true for an update is now needed.
-		if (version_compare($version, $latest_version) == '-1' && $download_link_is_valid) {
+		if (version_compare($version, $latest_version) == '-1') {
 			$update_needed = true;
 		} else {
 			$update_needed = false;
@@ -77,6 +82,7 @@ if (($_POST['start_upgrade'] == '1') == false) {
 	}
 
 	if (!$error) {
+		$FilesUpdated = null;
 		if (empty($download_link_is_valid) || $download_link_is_valid !== true) {
 			$log .= "Invalid upgrade package URL. Operation aborted.\n";
 			$FilesUpdated = false;
@@ -117,12 +123,12 @@ if (($_POST['start_upgrade'] == '1') == false) {
 										if (@mkdir($safePath, 0755, true)) {
 											$log .= "Directory: /" . $thisFileName . "......created\n";
 										} else {
-											$log .= "Can't create /" . $thisFileName . " directory! Operation aborted";
+											$log .= "Can't create /" . $thisFileName . " directory - skipping\n";
+											continue;
 										}
 									}
 								} else {
 									$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
-									$file_ext = array_pop(explode(".", $thisFileName));
 
 									if (file_exists($safePath)) {
 										$status = "updated";
@@ -132,7 +138,7 @@ if (($_POST['start_upgrade'] == '1') == false) {
 
 									$targetDir = dirname($safePath);
 									if (!is_dir($targetDir) && !@mkdir($targetDir, 0755, true)) {
-										$log .= "Can't create directory for file:" . $thisFileName . "! Operation aborted";
+										$log .= "Can't create directory for file: " . $thisFileName . " - skipping this file\n";
 										continue;
 									}
 
@@ -244,7 +250,7 @@ if ($update_needed == true) {
 
 		<?php if ($_POST['start_upgrade'] == '1') { ?>
 			<br>
-			<textarea rows="8" class="form-control install_logs"><?php echo $log; ?></textarea>
+			<textarea rows="8" class="form-control install_logs"><?php echo htmlspecialchars($log, ENT_QUOTES, 'UTF-8'); ?></textarea>
 		<?php }
 
 		if ($upgrade_done != true) { ?>
