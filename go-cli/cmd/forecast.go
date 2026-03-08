@@ -59,7 +59,9 @@ Examples:
   p202 forecast --metric clicks --history last90 --method linear
   p202 forecast --metric profit --horizon 14 --method auto --seasonal
   p202 forecast --metric conv_rate --history last30 --interval week --horizon 4
-  p202 forecast --metric revenue --aff_campaign_id 5 --horizon 7`,
+  p202 forecast --metric revenue --aff_campaign_id 5 --horizon 7
+  p202 forecast --metric revenue --events --horizon 14
+  p202 forecast --metric clicks --events --event-tag us-holidays`,
 	Aliases: []string{"predict"},
 	RunE:    runForecast,
 }
@@ -120,6 +122,8 @@ func runForecast(cmd *cobra.Command, args []string) error {
 
 	smaWindow, _ := cmd.Flags().GetInt("window")
 	seasonal, _ := cmd.Flags().GetBool("seasonal")
+	useEvents, _ := cmd.Flags().GetBool("events")
+	eventTag, _ := cmd.Flags().GetString("event-tag")
 	confidence, _ := cmd.Flags().GetFloat64("confidence")
 	if confidence <= 0 || confidence >= 1 {
 		confidence = 0.95
@@ -173,14 +177,64 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Run the forecast.
+	// ── Event-aware forecasting pipeline ──────────────────────────────
+	var allEvents []forecast.Event
+	var learnedImpacts map[string]forecast.LearnedImpact
+	var futureEvents []forecast.Event
+
+	if useEvents || eventTag != "" {
+		// Fetch all forecast events from the API.
+		eventsData, evErr := c.Get("forecast-events", map[string]string{"limit": "500"})
+		if evErr != nil {
+			return fmt.Errorf("fetching forecast events: %w", evErr)
+		}
+		allEvents, err = parseForecastEvents(eventsData)
+		if err != nil {
+			return fmt.Errorf("parsing forecast events: %w", err)
+		}
+
+		// Filter by tag if specified.
+		if eventTag != "" {
+			allEvents = filterEventsByTag(allEvents, eventTag)
+		}
+
+		if len(allEvents) > 0 {
+			// Separate past events (in training range) from future events (in forecast range).
+			trainStart := series[0].T
+			trainEnd := series[len(series)-1].T
+			pastEvents := forecast.PastEvents(allEvents, trainStart, trainEnd)
+
+			// Determine forecast horizon dates.
+			forecastStart := trainEnd.AddDate(0, 0, 1)
+			forecastEnd := forecastEndDate(trainEnd, interval, horizon)
+			futureEvents = forecast.FutureEvents(allEvents, forecastStart, forecastEnd)
+
+			// Learn impacts from historical event data.
+			if len(pastEvents) > 0 {
+				learnedImpacts = forecast.LearnEventImpacts(series, pastEvents, cfg)
+
+				// Mask event days from training data for clean baseline fitting.
+				series = forecast.MaskEventDays(series, pastEvents)
+				if len(series) < 3 {
+					return validationError("after masking event days, only %d data points remain — need at least 3", len(series))
+				}
+			}
+		}
+	}
+
+	// Run the baseline forecast on clean data.
 	result, err := forecast.Run(series, cfg)
 	if err != nil {
 		return fmt.Errorf("forecast failed: %w", err)
 	}
 
+	// Apply event adjustments to predictions.
+	if len(futureEvents) > 0 {
+		result.Predictions = forecast.ApplyEventAdjustments(result.Predictions, futureEvents, learnedImpacts)
+	}
+
 	// Render output.
-	output := buildForecastOutput(result, metric, seasonal)
+	output := buildForecastOutput(result, metric, seasonal, useEvents || eventTag != "", futureEvents)
 	render(output)
 	return nil
 }
@@ -351,7 +405,7 @@ func parseWeekpartWeights(data []byte, metric string) forecast.SeasonalWeights {
 }
 
 // buildForecastOutput constructs the JSON output for rendering.
-func buildForecastOutput(result *forecast.Result, metric string, seasonal bool) []byte {
+func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, eventsActive bool, futureEvents []forecast.Event) []byte {
 	predictions := make([]map[string]interface{}, len(result.Predictions))
 	for i, p := range result.Predictions {
 		row := map[string]interface{}{
@@ -385,10 +439,24 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool) 
 		"trend_per_period": roundTo(result.Trend, 4),
 		"trend_pct":        roundTo(result.TrendPct, 2),
 		"seasonal":         seasonal,
+		"events_active":    eventsActive,
 	}
 	if result.MAE > 0 {
 		meta["mae"] = roundTo(result.MAE, 2)
 		meta["rmse"] = roundTo(result.RMSE, 2)
+	}
+
+	if eventsActive && len(futureEvents) > 0 {
+		names := make([]string, 0, len(futureEvents))
+		seen := map[string]bool{}
+		for _, e := range futureEvents {
+			if !seen[e.Name] {
+				names = append(names, e.Name)
+				seen[e.Name] = true
+			}
+		}
+		sort.Strings(names)
+		meta["events_in_horizon"] = names
 	}
 
 	output := map[string]interface{}{
@@ -433,6 +501,160 @@ func forecastMetricList() string {
 	return strings.Join(keys, ", ")
 }
 
+// parseForecastEvents parses the API response from GET /forecast-events into Event structs.
+func parseForecastEvents(data []byte) ([]forecast.Event, error) {
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return nil, fmt.Errorf("invalid forecast events response: %w", err)
+	}
+
+	rawItems, ok := parsed["data"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("forecast events response missing data array")
+	}
+
+	events := make([]forecast.Event, 0, len(rawItems))
+	for _, raw := range rawItems {
+		obj, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		name, _ := obj["event_name"].(string)
+		if name == "" {
+			continue
+		}
+
+		dateStr, _ := obj["event_date"].(string)
+		eventDate, err := parseEventDate(dateStr)
+		if err != nil {
+			continue
+		}
+
+		e := forecast.Event{
+			Name:       name,
+			Date:       eventDate,
+			Recurrence: stringField(obj, "recurrence"),
+			ImpactType: stringField(obj, "impact_type"),
+			Tags:       stringField(obj, "tags"),
+		}
+
+		if idVal, ok := obj["event_id"]; ok {
+			if id, ok := toUnixTimestamp(idVal); ok {
+				e.ID = int(id)
+			}
+		}
+
+		if endStr, _ := obj["end_date"].(string); endStr != "" {
+			if endDate, err := parseEventDate(endStr); err == nil {
+				e.EndDate = endDate
+			}
+		}
+
+		if v, ok := obj["expected_impact_pct"]; ok {
+			switch val := v.(type) {
+			case float64:
+				e.ExpectedImpactPct = val
+			case string:
+				if f, err := strconv.ParseFloat(val, 64); err == nil {
+					e.ExpectedImpactPct = f
+				}
+			}
+		}
+
+		if v, ok := obj["lead_days"]; ok {
+			switch val := v.(type) {
+			case float64:
+				e.LeadDays = int(val)
+			case string:
+				if i, err := strconv.Atoi(val); err == nil {
+					e.LeadDays = i
+				}
+			}
+		}
+
+		if v, ok := obj["lag_days"]; ok {
+			switch val := v.(type) {
+			case float64:
+				e.LagDays = int(val)
+			case string:
+				if i, err := strconv.Atoi(val); err == nil {
+					e.LagDays = i
+				}
+			}
+		}
+
+		events = append(events, e)
+	}
+
+	return events, nil
+}
+
+// parseEventDate parses date strings from the API in common formats.
+func parseEventDate(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0000-00-00" || s == "0000-00-00 00:00:00" {
+		return time.Time{}, fmt.Errorf("empty date")
+	}
+	for _, layout := range []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unparseable date: %s", s)
+}
+
+// stringField extracts a string value from a map, returning "" if missing.
+func stringField(obj map[string]interface{}, key string) string {
+	v, _ := obj[key].(string)
+	return v
+}
+
+// filterEventsByTag keeps only events whose tags field contains at least one
+// of the comma-separated tags in the filter string. Matching is case-insensitive.
+func filterEventsByTag(events []forecast.Event, tagFilter string) []forecast.Event {
+	wantTags := map[string]bool{}
+	for _, t := range strings.Split(tagFilter, ",") {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t != "" {
+			wantTags[t] = true
+		}
+	}
+	if len(wantTags) == 0 {
+		return events
+	}
+
+	var filtered []forecast.Event
+	for _, e := range events {
+		for _, t := range strings.Split(e.Tags, ",") {
+			t = strings.ToLower(strings.TrimSpace(t))
+			if wantTags[t] {
+				filtered = append(filtered, e)
+				break
+			}
+		}
+	}
+	return filtered
+}
+
+// forecastEndDate computes the last date of the forecast horizon.
+func forecastEndDate(lastTraining time.Time, interval string, horizon int) time.Time {
+	switch interval {
+	case "hour":
+		return lastTraining.Add(time.Duration(horizon) * time.Hour)
+	case "week":
+		return lastTraining.AddDate(0, 0, horizon*7)
+	case "month":
+		return lastTraining.AddDate(0, horizon, 0)
+	default: // day
+		return lastTraining.AddDate(0, 0, horizon)
+	}
+}
+
 func init() {
 	forecastCmd.Flags().StringP("metric", "m", "", "Metric to forecast (clicks, revenue, profit, roi, epc, conv_rate, cost, conversions, cpa)")
 	forecastCmd.Flags().String("method", "auto", "Forecasting method: auto, linear, sma, wma, holtwinters")
@@ -442,6 +664,8 @@ func init() {
 	forecastCmd.Flags().Int("window", 0, "SMA/WMA window size (0 = auto-select)")
 	forecastCmd.Flags().Bool("seasonal", false, "Apply day-of-week seasonal adjustment from weekpart data")
 	forecastCmd.Flags().Float64("confidence", 0.95, "Confidence level for prediction bounds (0.80, 0.90, 0.95, 0.99)")
+	forecastCmd.Flags().Bool("events", false, "Enable event-aware forecasting using stored forecast events")
+	forecastCmd.Flags().String("event-tag", "", "Filter forecast events by tag (comma-separated, e.g. us-holidays,promos)")
 
 	// Entity filters — same as report commands for consistency.
 	forecastCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")

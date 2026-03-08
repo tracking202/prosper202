@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func makeTimeseriesResponse(n int, metric string) string {
@@ -476,6 +477,214 @@ func TestParseTimeseriesMissingMetric(t *testing.T) {
 	_, err := parseTimeseries([]byte(response), "total_income")
 	if err == nil {
 		t.Fatal("expected error when metric is missing from buckets")
+	}
+}
+
+func makeForecastEventsResponse() string {
+	events := []map[string]interface{}{
+		{
+			"event_id":            1,
+			"event_name":          "Black Friday",
+			"event_date":          "2024-01-15",
+			"end_date":            "2024-01-15",
+			"recurrence":          "yearly",
+			"impact_type":         "positive",
+			"expected_impact_pct": 50.0,
+			"lead_days":           2,
+			"lag_days":            1,
+			"tags":                "shopping,us-holidays",
+		},
+		{
+			"event_id":            2,
+			"event_name":          "Maintenance Window",
+			"event_date":          "2024-01-20",
+			"end_date":            "2024-01-20",
+			"recurrence":          "none",
+			"impact_type":         "negative",
+			"expected_impact_pct": -30.0,
+			"lead_days":           0,
+			"lag_days":            0,
+			"tags":                "internal",
+		},
+	}
+	data, _ := json.Marshal(map[string]interface{}{"data": events})
+	return string(data)
+}
+
+func TestForecastWithEventsFetchesEventsEndpoint(t *testing.T) {
+	requestPaths := []string{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPaths = append(requestPaths, r.URL.Path)
+		w.WriteHeader(200)
+
+		if strings.HasSuffix(r.URL.Path, "/forecast-events") {
+			w.Write([]byte(makeForecastEventsResponse()))
+		} else {
+			w.Write([]byte(makeTimeseriesResponse(30, "total_income")))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=revenue", "--events", "--json")
+	if err != nil {
+		t.Fatalf("forecast with --events error: %v", err)
+	}
+
+	// Should have called forecast-events endpoint.
+	foundEvents := false
+	for _, p := range requestPaths {
+		if strings.HasSuffix(p, "/forecast-events") {
+			foundEvents = true
+		}
+	}
+	if !foundEvents {
+		t.Error("expected call to forecast-events when --events is set")
+	}
+
+	// Meta should show events_active=true.
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["events_active"] != true {
+		t.Errorf("meta.events_active = %v, want true", meta["events_active"])
+	}
+}
+
+func TestForecastEventTagFiltersFetchesEvents(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		if strings.HasSuffix(r.URL.Path, "/forecast-events") {
+			w.Write([]byte(makeForecastEventsResponse()))
+		} else {
+			w.Write([]byte(makeTimeseriesResponse(30, "total_income")))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=revenue", "--event-tag=shopping", "--json")
+	if err != nil {
+		t.Fatalf("forecast with --event-tag error: %v", err)
+	}
+}
+
+func TestForecastWithoutEventsFlagDoesNotFetchEvents(t *testing.T) {
+	requestPaths := []string{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPaths = append(requestPaths, r.URL.Path)
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(30, "total_income")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=revenue", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+
+	for _, p := range requestPaths {
+		if strings.HasSuffix(p, "/forecast-events") {
+			t.Error("should not call forecast-events when --events is not set")
+		}
+	}
+}
+
+func TestParseForecastEvents(t *testing.T) {
+	data := []byte(makeForecastEventsResponse())
+	events, err := parseForecastEvents(data)
+	if err != nil {
+		t.Fatalf("parseForecastEvents error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].Name != "Black Friday" {
+		t.Errorf("event[0].Name = %q, want Black Friday", events[0].Name)
+	}
+	if events[0].LeadDays != 2 {
+		t.Errorf("event[0].LeadDays = %d, want 2", events[0].LeadDays)
+	}
+	if events[0].ExpectedImpactPct != 50.0 {
+		t.Errorf("event[0].ExpectedImpactPct = %f, want 50.0", events[0].ExpectedImpactPct)
+	}
+	if events[0].Tags != "shopping,us-holidays" {
+		t.Errorf("event[0].Tags = %q, want shopping,us-holidays", events[0].Tags)
+	}
+}
+
+func TestParseForecastEventsInvalidJSON(t *testing.T) {
+	_, err := parseForecastEvents([]byte(`not json`))
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestFilterEventsByTag(t *testing.T) {
+	data := []byte(makeForecastEventsResponse())
+	events, _ := parseForecastEvents(data)
+
+	// Filter for "shopping" — should get Black Friday only.
+	filtered := filterEventsByTag(events, "shopping")
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 event for tag 'shopping', got %d", len(filtered))
+	}
+	if filtered[0].Name != "Black Friday" {
+		t.Errorf("filtered[0].Name = %q, want Black Friday", filtered[0].Name)
+	}
+
+	// Filter for "internal" — should get Maintenance Window only.
+	filtered = filterEventsByTag(events, "internal")
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 event for tag 'internal', got %d", len(filtered))
+	}
+	if filtered[0].Name != "Maintenance Window" {
+		t.Errorf("filtered[0].Name = %q, want Maintenance Window", filtered[0].Name)
+	}
+
+	// Filter for "nonexistent" — should get 0.
+	filtered = filterEventsByTag(events, "nonexistent")
+	if len(filtered) != 0 {
+		t.Errorf("expected 0 events for tag 'nonexistent', got %d", len(filtered))
+	}
+
+	// Multi-tag filter — should get both.
+	filtered = filterEventsByTag(events, "shopping,internal")
+	if len(filtered) != 2 {
+		t.Errorf("expected 2 events for tags 'shopping,internal', got %d", len(filtered))
+	}
+}
+
+func TestForecastEndDate(t *testing.T) {
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	dayEnd := forecastEndDate(base, "day", 7)
+	if dayEnd != base.AddDate(0, 0, 7) {
+		t.Errorf("day: got %v, want %v", dayEnd, base.AddDate(0, 0, 7))
+	}
+
+	weekEnd := forecastEndDate(base, "week", 4)
+	if weekEnd != base.AddDate(0, 0, 28) {
+		t.Errorf("week: got %v, want %v", weekEnd, base.AddDate(0, 0, 28))
+	}
+
+	monthEnd := forecastEndDate(base, "month", 3)
+	if monthEnd != base.AddDate(0, 3, 0) {
+		t.Errorf("month: got %v, want %v", monthEnd, base.AddDate(0, 3, 0))
 	}
 }
 
