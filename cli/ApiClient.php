@@ -19,10 +19,10 @@ class ApiClient
         $key = $config->getApiKey();
 
         if ($url === '') {
-            throw new \RuntimeException("No URL configured. Run: p202 config:set-url <url>");
+            throw new \RuntimeException("No URL configured. Run: agent-cli config:set-url <url>");
         }
         if ($key === '') {
-            throw new \RuntimeException("No API key configured. Run: p202 config:set-key <key>");
+            throw new \RuntimeException("No API key configured. Run: agent-cli config:set-key <key>");
         }
 
         return new self($url, $key, (int)$config->get('timeout', 30));
@@ -83,7 +83,7 @@ class ApiClient
                 'Authorization: Bearer ' . $this->apiKey,
                 'Content-Type: application/json',
                 'Accept: application/json',
-                'User-Agent: p202-cli/1.0',
+                'User-Agent: agent-cli/1.0',
             ],
             CURLOPT_CUSTOMREQUEST => $method,
         ]);

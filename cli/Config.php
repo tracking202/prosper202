@@ -13,7 +13,7 @@ class Config
     public function __construct()
     {
         $home = getenv('HOME') ?: getenv('USERPROFILE') ?: '/tmp';
-        $this->configDir = $home . '/.p202';
+        $this->configDir = $home . '/.agent-cli';
         $this->configFile = $this->configDir . '/config.json';
         $this->load();
     }

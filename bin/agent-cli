@@ -4,15 +4,15 @@
 declare(strict_types=1);
 
 /**
- * p202 - Prosper202 CLI Client
+ * agent-cli - Prosper202 Agent CLI
  *
  * A local CLI tool for managing a remote Prosper202 installation.
  * Designed for both human operators and AI agents.
  *
  * Quick start:
- *   p202 config:set-url https://your-prosper202.com
- *   p202 config:set-key your-api-key-here
- *   p202 campaign:list
+ *   agent-cli config:set-url https://your-prosper202.com
+ *   agent-cli config:set-key your-api-key-here
+ *   agent-cli campaign:list
  *
  * All commands support --json for machine-readable output.
  */

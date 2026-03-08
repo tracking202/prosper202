@@ -20,7 +20,7 @@
       "P202Cli\\": "cli/"
     }
   },
-  "bin": ["bin/p202"],
+  "bin": ["bin/agent-cli"],
   "autoload-dev": {
     "psr-4": {
       "Tests\\": "tests/"
