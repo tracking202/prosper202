@@ -1,6 +1,27 @@
 # Prosper202 ClickServer
 
-Self-hosted affiliate marketing tracking platform for PPC affiliate marketers. Provides click tracking, conversion monitoring, landing page management, traffic analysis, and campaign performance reporting with ROI tracking.
+Self-hosted campaign tracking and marketing analytics platform. Track clicks, conversions, and revenue across any traffic source with full data ownership — your data stays on your servers.
+
+Since 2007, Prosper202 has helped marketers take control of their tracking with an open, self-hosted platform that works with any traffic source, any offer, and any network.
+
+## Key Features
+
+- **Self-Hosted & Full Source Code** — Run Prosper202 100% on your own servers for ultimate control of your proprietary data and marketing methods. Customize the full source code to meet your needs.
+- **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields.
+- **12+ Report Types** — Keywords, geo, device, browser, OS, referrer, ISP, landing page, and custom dimension reports. Track profit and loss, conversion metrics, EPC per keyword, per text ad, per referrer, and more.
+- **Multi-Touch Attribution** — Five attribution models including last-touch, time-decay, position-based, and algorithmic.
+- **Split Testing** — Run unlimited weighted split tests to discover your best marketing message and offer. Pause non-converting tests and automatically send all traffic to the winner.
+- **Smart Redirector & Traffic Rules** — Rule-based traffic distribution with weighted rotation, geo-targeting, and device filtering.
+- **BlazerCache Technology** — Fast redirects that continue working even if the database goes down, preventing lost revenue.
+- **Fraud Prevention** — Sentinel Traffic Quality Enforcer (T.Q.E.) redirects potentially fraudulent traffic away from your landing pages.
+- **Landing Page Personalization** — Dynamically display ISP, device, postal code, geo location, keyword, UTM variables, browser, OS, and more on your landing pages.
+- **Device Detection** — Automatically detect device types and models for full insights into mobile-targeted campaigns.
+- **Multi-Currency & Timezone** — Automatically convert payouts into your local currency and display reports in your local timezone.
+- **Google Ads Integration** — Offline conversion tracking with one-click CSV export. UTM parameters and GCLID values are automatically captured.
+- **WordPress Integration** — Two-way communication between WordPress and Prosper202, instantly setting up posts and pages as landing pages.
+- **Deep Linking** — Boost conversion rates by deep linking directly into apps, reducing friction for users.
+- **Team Access** — Full role-based authentication with no limit on users and no per-seat costs.
+- **API & CLI Tools** — Full REST API and CLI tools designed for both human developers and AI agents. Automate campaign management, pull reports, and integrate with your existing tools. CLI-first design works seamlessly with AI coding agents like Claude Code, Codex, and OpenClaw.
 
 ## Requirements
 
