@@ -1,6 +1,6 @@
 # Advanced Attribution Engine
 
-This guide walks through enabling and operating the new Advanced Attribution Engine. It covers prerequisites, configuration, job scheduling, reporting, and troubleshooting so teams can roll the feature out with confidence.
+This guide walks you through enabling and operating the Advanced Attribution Engine. It covers prerequisites, configuration, job scheduling, reporting, and troubleshooting.
 
 ## 1. Prerequisites
 - Prosper202 version 1.9.56 or higher (installers/upgraders include the attribution schema and cron job).
@@ -69,21 +69,21 @@ All endpoints require Bearer token authentication. See the full [Attribution API
 
 ### CLI Access
 
-Attribution models can also be managed via the CLI:
+Attribution models can also be managed via the Go CLI:
 
 ```bash
-./cli/prosper202 attribution:model:list --type time_decay
-./cli/prosper202 attribution:model:create --model_name "Time Decay 7d" --model_type time_decay
-./cli/prosper202 attribution:snapshot:list 1 --scope_type campaign
-./cli/prosper202 attribution:export:schedule 1 --format csv
+p202 attribution model list --type time_decay
+p202 attribution model create --model_name "Time Decay 7d" --model_type time_decay
+p202 attribution snapshot list 1 --scope_type campaign
+p202 attribution export schedule 1 --format csv
 ```
 
-See the full [CLI Attribution reference](../cli/06-cli-attribution.md) for all commands and options.
+See the [Go CLI reference](../cli/10-go-cli.md) for all commands and options.
 
 ## 6. Reporting & Sandbox
 - Rebuild jobs populate `202_attribution_snapshots` with hourly aggregates that can be plotted alongside existing charts.
 - Touchpoint-level credits are written to `202_attribution_touchpoints` for post-hoc analysis and exports.
-- The sandbox comparison (coming soon in the UI) reads from the same tables, allowing marketers to compare multiple models and promote winners.
+- The sandbox comparison (coming soon in the UI) reads from the same tables, allowing you to compare multiple models and promote winners.
 
 ## 7. Exports & Integrations
 
@@ -110,5 +110,5 @@ See the dedicated [Advanced Attribution Troubleshooting Guide](./15-advanced-att
 
 ## 10. Next Steps
 - Review [Advanced Attribution Scaling](./16-advanced-attribution-scaling.md) before rolling out to large datasets.
-- Use the [Attribution API](../api/13-attribution.md) or [CLI](../cli/06-cli-attribution.md) to manage models programmatically.
+- Use the [Attribution API](../api/13-attribution.md) or [Go CLI](../cli/10-go-cli.md) to manage models programmatically.
 - Schedule regular exports with webhook notifications to integrate attribution data into external BI tools.

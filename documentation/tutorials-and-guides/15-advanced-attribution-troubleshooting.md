@@ -61,7 +61,6 @@ Use this reference when the Advanced Attribution Engine does not behave as expec
 - Consider isolating attribution tables into their own database instance for high-volume installs.
 
 ## 8. Support
-- Share `202_attribution_audit` entries and cron logs when escalating to support.
-- Provide details about model configurations and cron schedules to accelerate triage.
+If you require assistance, please subscribe to one of our [support plans](http://join.tracking202.com). When reaching out, please share your `202_attribution_audit` entries and cron logs to help us troubleshoot faster.
 
 For a full walkthrough, see [14-Advanced Attribution Engine](./14-advanced-attribution-engine.md).

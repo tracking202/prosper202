@@ -22,7 +22,7 @@ All report endpoints accept these filters:
 | `time_to` | integer | Unix timestamp end |
 | `period` | string | Shortcut: `today`, `yesterday`, `last7`, `last30`, `last90` |
 | `aff_campaign_id` | integer | Filter by campaign |
-| `aff_network_id` | integer | Filter by affiliate network |
+| `aff_network_id` | integer | Filter by network |
 | `ppc_account_id` | integer | Filter by PPC account |
 | `ppc_network_id` | integer | Filter by PPC network |
 | `landing_page_id` | integer | Filter by landing page |
@@ -64,7 +64,7 @@ All report endpoints return these aggregate metrics:
 | Metric | Type | Description |
 | ------ | ---- | ----------- |
 | `total_clicks` | integer | Total click count |
-| `total_click_throughs` | integer | Clicks that reached the offer |
+| `total_click_throughs` | integer | Clicks that reached the destination |
 | `total_leads` | integer | Conversion count |
 | `total_income` | float | Total revenue |
 | `total_cost` | float | Total ad spend |

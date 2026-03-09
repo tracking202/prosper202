@@ -18,7 +18,7 @@ All endpoints (except `/system/health`, `/versions`, and `/capabilities`) requir
 Authorization: Bearer <api_key>
 ```
 
-API keys are managed through **My Account > Personal Settings** in the Prosper202 UI, or programmatically via the `/users/{id}/api-keys` endpoints (see [User Management](01-user-management.md)).
+API keys are managed through **My Account > Personal Settings** in the Prosper202 UI, or programmatically via the `/users/{id}/api-keys` endpoints (see [Users](14-users.md)).
 
 Create a separate API key for each integration so you can revoke access individually.
 
@@ -112,7 +112,7 @@ Empty response body.
 | Resource | Endpoints | Documentation |
 | -------- | --------- | ------------- |
 | Campaigns | CRUD + bulk-upsert | [Campaigns](02-campaigns.md) |
-| Affiliate Networks | CRUD + bulk-upsert | [Affiliate Networks](03-affiliate-networks.md) |
+| Networks | CRUD + bulk-upsert | [Networks](03-affiliate-networks.md) |
 | PPC Networks | CRUD + bulk-upsert | [PPC Networks](04-ppc-networks.md) |
 | PPC Accounts | CRUD + bulk-upsert | [PPC Accounts](05-ppc-accounts.md) |
 | Trackers | CRUD + bulk-upsert + URL generation | [Trackers](06-trackers.md) |

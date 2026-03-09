@@ -30,7 +30,7 @@
 
 - [API Overview & Authentication](api/00-api-integrations.md)
 - [Campaigns](api/02-campaigns.md)
-- [Affiliate Networks](api/03-affiliate-networks.md)
+- [Networks](api/03-affiliate-networks.md)
 - [PPC Networks](api/04-ppc-networks.md)
 - [PPC Accounts](api/05-ppc-accounts.md)
 - [Trackers](api/06-trackers.md)

@@ -1,6 +1,6 @@
 # Advanced Attribution Engine Rollout Checklist
 
-This guide tracks the remaining work to deliver the Advanced Attribution Engine as a production-ready feature. The list is organised so teams can work top-to-bottom, updating the checkboxes as milestones are completed.
+This guide tracks the remaining work to deliver the Advanced Attribution Engine as a production-ready feature. Work through the list top-to-bottom, updating the checkboxes as milestones are completed.
 
 ## Quick Overview
 - **What’s shipped already:** database schema, PHP domain layer (strategies, repositories, job runner), CLI rebuild script, initial PHPUnit coverage, API surface scaffolding.

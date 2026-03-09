@@ -1,6 +1,6 @@
 # Text Ads API
 
-Manage text ad creatives for tracking ad copy performance.
+Manage text ad creatives for tracking copy performance.
 
 ## Endpoints
 

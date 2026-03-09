@@ -1,6 +1,6 @@
 # Landing Pages API
 
-Manage landing pages used between the traffic source and the offer.
+Manage landing pages used between the traffic source and the destination.
 
 ## Endpoints
 
@@ -29,8 +29,8 @@ curl -X POST https://your-domain.com/api/v3/landing-pages \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "landing_page_url": "https://lp.example.com/offer-a",
+    "landing_page_url": "https://lp.example.com/page-a",
     "aff_campaign_id": 5,
-    "landing_page_nickname": "Offer A - Version 1"
+    "landing_page_nickname": "Page A - Version 1"
   }'
 ```

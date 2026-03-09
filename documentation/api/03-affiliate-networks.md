@@ -1,12 +1,12 @@
-# Affiliate Networks API
+# Networks API
 
-Manage affiliate networks.
+Manage networks.
 
 ## Endpoints
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| `GET` | `/aff-networks` | List affiliate networks (paginated) |
+| `GET` | `/aff-networks` | List networks (paginated) |
 | `GET` | `/aff-networks/{id}` | Get a single network |
 | `POST` | `/aff-networks` | Create a network |
 | `PUT` | `/aff-networks/{id}` | Update a network |
