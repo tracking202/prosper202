@@ -26,6 +26,39 @@
 - [Transactions ID](setting-up-prosper202-pro/999-transactions-id.md)
 - [Prosper202 Release Cycle](setting-up-prosper202-pro/999-prosper202-release-cycle.md)
 
+### REST API v3
+
+- [API Overview & Authentication](api/00-api-integrations.md)
+- [Campaigns](api/02-campaigns.md)
+- [Affiliate Networks](api/03-affiliate-networks.md)
+- [PPC Networks](api/04-ppc-networks.md)
+- [PPC Accounts](api/05-ppc-accounts.md)
+- [Trackers](api/06-trackers.md)
+- [Landing Pages](api/07-landing-pages.md)
+- [Text Ads](api/08-text-ads.md)
+- [Clicks](api/09-clicks.md)
+- [Conversions](api/10-conversions.md)
+- [Reports](api/11-reports.md)
+- [Rotators](api/12-rotators.md)
+- [Attribution](api/13-attribution.md)
+- [Users](api/14-users.md)
+- [System](api/15-system.md)
+- [Sync](api/16-sync.md)
+- [Capabilities](api/17-capabilities.md)
+- [Legacy API (v1)](api/99-legacy-api.md)
+
+### CLI Reference
+
+- [CLI Overview & Setup](cli/00-cli-overview.md)
+- [Configuration Commands](cli/01-cli-config.md)
+- [Click Commands](cli/02-cli-clicks.md)
+- [Conversion Commands](cli/03-cli-conversions.md)
+- [Report Commands](cli/04-cli-reports.md)
+- [Rotator Commands](cli/05-cli-rotators.md)
+- [Attribution Commands](cli/06-cli-attribution.md)
+- [User Commands](cli/07-cli-users.md)
+- [System Commands](cli/08-cli-system.md)
+
 ### Tutorials and Guides
 
 - [Setup Tutorial](tutorials-and-guides/00-tutorial.md)
@@ -42,15 +75,19 @@
 - [Frequently Asked Questions (FAQ)](tutorials-and-guides/11-frequently-asked-questions-faq.md)
 - [Older Versions](tutorials-and-guides/12-older-versions.md)
 - [SubIDs](tutorials-and-guides/13-subids.md)
+- [Advanced Attribution Engine](tutorials-and-guides/14-advanced-attribution-engine.md)
+- [Advanced Attribution Troubleshooting](tutorials-and-guides/15-advanced-attribution-troubleshooting.md)
+- [Advanced Attribution Scaling](tutorials-and-guides/16-advanced-attribution-scaling.md)
 - [PPC Tokens](tutorials-and-guides/999-ppc-tokens.md)
 - [Prosper202 Tokens](tutorials-and-guides/999-prosper202-tokens.md)
 - [Dynamic CPC Bids](tutorials-and-guides/999-dynamic-cpc-bids.md)
 
-### API
+### Features
 
-- [Prosper202 ClickServer API](api/00-api-integrations.md)
+- [Advanced Attribution Engine Rollout](features/advanced-attribution-engine.md)
+- [Multi-Touch Journeys](features/multi-touch-journeys.md)
 
-### Partnering With US
+### Partnering With Us
 
 - [Prosper202 Partner Program](partnering-with-us/00-prosper202-partner-program.md)
 - [Web Hosting Services](partnering-with-us/01-web-hosting-services.md)
