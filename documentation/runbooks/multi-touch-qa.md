@@ -19,8 +19,8 @@ This runbook covers operational validation for the multi-touch attribution stack
 
 1. Attribute models expose `is_active` and `is_default` toggles in `202_attribution_models`; ensure only one default per user/scope by reviewing `202_attribution_settings` mappings.【F:202-config/functions-install.php†L237-L301】
 2. Use the attribution API to flip toggles without direct SQL:
-   - `PATCH /api/v2/attribution/models/{modelId}` to update `is_active`, weighting config, or naming.
-   - `POST /api/v2/attribution/models` to spin up test models; mark defaults via `is_default` in the payload.【F:documentation/api/00-api-integrations.md†L27-L32】
+   - `PUT /api/v3/attribution/models/{modelId}` to update `is_active`, weighting config, or naming.
+   - `POST /api/v3/attribution/models` to spin up test models; mark defaults via `is_default` in the payload.【F:documentation/api/00-api-integrations.md†L27-L32】
 3. After toggling, re-run the rebuild cron for the affected window so hourly snapshots and credits reflect the change (see Section 5). Monitor `202_attribution_audit` for the recorded action and actor metadata.【F:202-config/functions-install.php†L304-L314】
 
 ## 3. Journey Validation
@@ -66,7 +66,7 @@ This runbook covers operational validation for the multi-touch attribution stack
 
 ## 6. Rollback & Incident Response
 
-1. **Immediate mitigation:** disable problematic models via API `PATCH /api/v2/attribution/models/{modelId}` with `{"is_active": false}` or flip the default to a safe model by setting `is_default` accordingly. These endpoints respect permissions and provide quick reversions without database access.【F:documentation/api/00-api-integrations.md†L27-L32】
+1. **Immediate mitigation:** disable problematic models via API `PUT /api/v3/attribution/models/{modelId}` with `{"is_active": false}` or flip the default to a safe model by setting `is_default` accordingly. These endpoints respect permissions and provide quick reversions without database access.【F:documentation/api/00-api-integrations.md†L27-L32】
 2. **Data restoration:** if journeys were polluted, delete affected `conv_id` rows from `202_conversion_touchpoints` and re-run the backfill script for the impacted window/user. Monitor STDOUT progress and STDERR error summaries.【F:202-config/Attribution/Repository/Mysql/ConversionJourneyRepository.php†L30-L210】【F:202-cronjobs/backfill-conversion-journeys.php†L18-L118】
 3. **Snapshot rollback:** reprocess clean data by invoking the rebuild cron with the last known good timeframe (e.g., `php 202-cronjobs/attribution-rebuild.php --start=<good_start> --end=<good_end>`). The script guards against duplicate windows via `202_cronjobs` and logs completion status.【F:202-cronjobs/attribution-rebuild.php†L1-L78】
 4. **Audit & escalation:** review `202_attribution_audit` entries for changes to models/settings and attach both CLI logs to your incident report. Escalate to the Attribution Working Group if discrepancies persist after reruns.【F:202-config/functions-install.php†L304-L314】【F:documentation/tutorials-and-guides/14-advanced-attribution-engine.md†L40-L91】

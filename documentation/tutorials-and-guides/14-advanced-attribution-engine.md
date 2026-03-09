@@ -1,6 +1,6 @@
 # Advanced Attribution Engine
 
-This guide walks through enabling and operating the new Advanced Attribution Engine. It covers prerequisites, configuration, job scheduling, reporting, and troubleshooting so teams can roll the feature out with confidence.
+This guide walks you through enabling and operating the Advanced Attribution Engine. It covers prerequisites, configuration, job scheduling, reporting, and troubleshooting.
 
 ## 1. Prerequisites
 - Prosper202 version 1.9.56 or higher (installers/upgraders include the attribution schema and cron job).
@@ -50,22 +50,48 @@ Successful runs insert/update `202_cronjob_logs.id = 2`. Errors are surfaced in 
 
 Validation logic rejects invalid weighting payloads. Use PHPUnit suite `tests/Attribution/ModelDefinitionValidationTest.php` if extending rules.
 
-## 5. API Endpoints (Preview)
-New REST endpoints are exposed under `/api/v2/attribution`:
-- `GET /attribution/models` – list available models (supports `type` filter, requires `manage_attribution_models` or `view_attribution_reports`).
-- `GET /attribution/models/{modelId}/snapshots` – retrieve hourly snapshots for a model.
-- `GET /attribution/sandbox` – run side-by-side comparisons across selected models.
+## 5. API Endpoints
 
-All endpoints require authentication and will enforce role permissions once UI wiring is complete. Refer to **documentation/api/00-api-integrations.md** for payload details.
+Full REST endpoints are available under `/api/v3/attribution`:
+
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| `GET` | `/attribution/models` | List models (supports `type` filter) |
+| `GET` | `/attribution/models/{id}` | Get a single model |
+| `POST` | `/attribution/models` | Create a model |
+| `PUT` | `/attribution/models/{id}` | Update a model |
+| `DELETE` | `/attribution/models/{id}` | Delete model and all related data |
+| `GET` | `/attribution/models/{id}/snapshots` | List hourly snapshots |
+| `GET` | `/attribution/models/{id}/exports` | List scheduled exports |
+| `POST` | `/attribution/models/{id}/exports` | Schedule an export (CSV or JSON) |
+
+All endpoints require Bearer token authentication. See the full [Attribution API reference](../api/13-attribution.md) for request/response details.
+
+### CLI Access
+
+Attribution models can also be managed via the Go CLI:
+
+```bash
+p202 attribution model list --type time_decay
+p202 attribution model create --model_name "Time Decay 7d" --model_type time_decay
+p202 attribution snapshot list 1 --scope_type campaign
+p202 attribution export schedule 1 --format csv
+```
+
+See the [Go CLI reference](../cli/10-go-cli.md) for all commands and options.
 
 ## 6. Reporting & Sandbox
 - Rebuild jobs populate `202_attribution_snapshots` with hourly aggregates that can be plotted alongside existing charts.
 - Touchpoint-level credits are written to `202_attribution_touchpoints` for post-hoc analysis and exports.
-- The sandbox comparison (coming soon in the UI) reads from the same tables, allowing marketers to compare multiple models and promote winners.
+- The sandbox comparison (coming soon in the UI) reads from the same tables, allowing you to compare multiple models and promote winners.
 
-## 7. Exports & Integrations (Planned)
-- CSV/XLS exports are scheduled for a follow-up release; placeholders exist in the export queue tables.
-- Webhooks will allow conversion events to fan out with model-specific credit.
+## 7. Exports & Integrations
+
+Attribution data can be exported via the API or CLI:
+
+- **CSV and JSON exports** are available through the `/attribution/models/{id}/exports` endpoint or the `attribution:export:schedule` CLI command.
+- **Webhook notifications**: provide a `webhook_url` when scheduling an export to receive a callback when the export completes.
+- Export scopes: `global`, `campaign`, or `landing_page` with configurable time ranges.
 
 ## 8. Troubleshooting
 See the dedicated [Advanced Attribution Troubleshooting Guide](./15-advanced-attribution-troubleshooting.md) for step-by-step diagnosis. Common issues include:
@@ -83,9 +109,6 @@ See the dedicated [Advanced Attribution Troubleshooting Guide](./15-advanced-att
 - Inspect `error_log` or system logs for entries tagged `attribution_job` to review batches processed, time window, and summary metrics each time the rebuild cron executes.
 
 ## 10. Next Steps
-- Wire the administration UI to manage models directly.
-- Add CSV/webhook integrations once model adoption is confirmed.
-- Document sandbox workflows in product tutorials when the UI ships.
 - Review [Advanced Attribution Scaling](./16-advanced-attribution-scaling.md) before rolling out to large datasets.
-
-For questions or escalation, contact the Attribution Working Group on Slack (`#prosper202-attribution`).
+- Use the [Attribution API](../api/13-attribution.md) or [Go CLI](../cli/10-go-cli.md) to manage models programmatically.
+- Schedule regular exports with webhook notifications to integrate attribution data into external BI tools.
