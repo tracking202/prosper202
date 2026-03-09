@@ -49,15 +49,6 @@
 
 ### CLI Reference
 
-- [CLI Overview & Setup](cli/00-cli-overview.md)
-- [Configuration Commands](cli/01-cli-config.md)
-- [Click Commands](cli/02-cli-clicks.md)
-- [Conversion Commands](cli/03-cli-conversions.md)
-- [Report Commands](cli/04-cli-reports.md)
-- [Rotator Commands](cli/05-cli-rotators.md)
-- [Attribution Commands](cli/06-cli-attribution.md)
-- [User Commands](cli/07-cli-users.md)
-- [System Commands](cli/08-cli-system.md)
 - [Go CLI (p202)](cli/10-go-cli.md) — cross-platform binary with multi-profile, sync, and diff
 
 ### Tutorials and Guides
