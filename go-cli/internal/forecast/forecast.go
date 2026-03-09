@@ -388,7 +388,9 @@ func selectBestMethod(s Series, cfg Config) Method {
 
 	for _, m := range candidates {
 		_, rmse := backtest(s, cfg, m)
-		if rmse < bestRMSE {
+		// RMSE=0 means backtest couldn't run (too few points for holdout),
+		// not a perfect fit. Skip these candidates.
+		if rmse > 0 && rmse < bestRMSE {
 			bestRMSE = rmse
 			best = m
 		}
@@ -405,6 +407,9 @@ func applySeasonalWeights(preds []Prediction, weights SeasonalWeights) []Predict
 			preds[i].Value *= w
 			preds[i].LowerBound *= w
 			preds[i].UpperBound *= w
+			if preds[i].LowerBound > preds[i].UpperBound {
+				preds[i].LowerBound, preds[i].UpperBound = preds[i].UpperBound, preds[i].LowerBound
+			}
 		}
 	}
 	return preds

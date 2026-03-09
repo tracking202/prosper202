@@ -425,3 +425,18 @@ func TestValidIntervals(t *testing.T) {
 		t.Errorf("expected 4 valid intervals, got %d", len(intervals))
 	}
 }
+
+func TestSelectBestMethod_SkipsZeroRMSE(t *testing.T) {
+	// With a very short series, backtest returns RMSE=0 for all methods
+	// because it can't form a holdout. selectBestMethod should still
+	// return a valid method (default MethodLinear) without treating 0 as perfect.
+	s := makeSeries(5, func(i int) float64 { return float64(i * 10) })
+	method := selectBestMethod(s, Config{})
+	if method == "" {
+		t.Error("selectBestMethod returned empty method")
+	}
+	// Should default to MethodLinear when no candidate has valid RMSE.
+	if method != MethodLinear {
+		t.Errorf("expected default MethodLinear, got %q", method)
+	}
+}

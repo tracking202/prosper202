@@ -180,9 +180,12 @@ func LearnEventImpacts(series Series, events []Event, cfg Config) map[string]Lea
 			hintMultiplier = 1.0 + userHint/100.0
 		}
 
-		impact.Lead = blendZone("lead", leadRatios, hintMultiplier, hasHint)
+		// The user hint describes core impact only. Lead and lag zones use
+		// a neutral prior (1.0) — ramp-up and decay patterns must be learned
+		// from data, not assumed from the core hint.
+		impact.Lead = blendZone("lead", leadRatios, 1.0, false)
 		impact.Core = blendZone("core", coreRatios, hintMultiplier, hasHint)
-		impact.Lag = blendZone("lag", lagRatios, hintMultiplier, hasHint)
+		impact.Lag = blendZone("lag", lagRatios, 1.0, false)
 
 		impacts[name] = impact
 	}
@@ -236,6 +239,12 @@ func ApplyEventAdjustments(predictions []Prediction, events []Event, impacts map
 			adjusted[i].Value *= adj.Multiplier
 			adjusted[i].LowerBound *= adj.Multiplier
 			adjusted[i].UpperBound *= adj.Multiplier
+			// Multiplicative adjustment can invert bounds when the multiplier
+			// is negative (e.g., learned from negative-profit actuals).
+			// Guarantee Lower ≤ Upper.
+			if adjusted[i].LowerBound > adjusted[i].UpperBound {
+				adjusted[i].LowerBound, adjusted[i].UpperBound = adjusted[i].UpperBound, adjusted[i].LowerBound
+			}
 		}
 	}
 
@@ -276,17 +285,18 @@ func buildBaselinePredictions(clean, full Series, cfg Config) map[string]float64
 		return nil
 	}
 
-	// Use linear regression as the baseline model — it's the most robust
-	// for counterfactual estimation because it captures trend.
+	// Fit OLS regression in calendar-time space (days since first clean point).
+	// Using calendar time instead of sequential indices ensures correct
+	// counterfactual predictions around gaps created by event masking.
+	cleanStart := truncateToDay(clean[0].T)
 	n := float64(len(clean))
 	sumX := 0.0
 	sumY := 0.0
 	sumXY := 0.0
 	sumXX := 0.0
 
-	// Map clean series to sequential indices.
-	for i, p := range clean {
-		x := float64(i)
+	for _, p := range clean {
+		x := truncateToDay(p.T).Sub(cleanStart).Hours() / 24.0
 		sumX += x
 		sumY += p.V
 		sumXY += x * p.V
@@ -303,27 +313,16 @@ func buildBaselinePredictions(clean, full Series, cfg Config) map[string]float64
 		intercept = (sumY - slope*sumX) / n
 	}
 
-	// For each day in the full series, compute what the baseline would predict.
-	// Map calendar days to the clean series's sequential index space.
+	// Predict for every day in the full series using the same calendar-time
+	// x-axis. No index-to-calendar interpolation needed.
 	preds := map[string]float64{}
-
-	cleanStart := clean[0].T
-	cleanEnd := clean[len(clean)-1].T
-	totalCleanDays := cleanEnd.Sub(cleanStart).Hours() / 24.0
-	if totalCleanDays < 1 {
-		totalCleanDays = 1
-	}
 
 	for _, p := range full {
 		day := truncateToDay(p.T)
 		key := day.Format("2006-01-02")
-		// Interpolate this day's position in the clean series index space.
-		elapsed := day.Sub(cleanStart).Hours() / 24.0
-		x := (elapsed / totalCleanDays) * float64(len(clean)-1)
+		x := day.Sub(cleanStart).Hours() / 24.0
 		pred := intercept + slope*x
-		// Non-positive baselines are skipped by collectZoneRatios (baseline > 0),
-		// so we store them as-is rather than flooring to intercept, which would
-		// corrupt ratios for downward-trending series.
+		// Non-positive baselines are skipped by collectZoneRatios (baseline > 0).
 		preds[key] = pred
 	}
 

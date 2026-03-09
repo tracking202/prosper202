@@ -477,3 +477,91 @@ func TestApplyEventAdjustments_HintFallbackNoLearnedImpact(t *testing.T) {
 		t.Errorf("hint fallback value = %.2f, want 150", adjusted[0].Value)
 	}
 }
+
+func TestLearnEventImpacts_HintDoesNotBleedIntoLeadLag(t *testing.T) {
+	// Flat baseline 100. Event with lead/lag days and a user hint.
+	// The hint should only affect core zone, not lead/lag.
+	base := date(2025, 1, 1)
+	series := make(Series, 60)
+	for i := 0; i < 60; i++ {
+		series[i] = Point{T: base.AddDate(0, 0, i), V: 100.0}
+	}
+
+	events := []Event{
+		{
+			Name:              "Hinted Event",
+			Date:              date(2025, 2, 15), // day 45, outside series won't have data
+			LeadDays:          3,
+			LagDays:           3,
+			ExpectedImpactPct: 200.0, // 3x multiplier
+		},
+	}
+
+	impacts := LearnEventImpacts(series, events, Config{})
+	impact := impacts["Hinted Event"]
+
+	// Lead and lag should use neutral prior (1.0), not the core hint (3.0).
+	if impact.Lead.Multiplier > 1.5 {
+		t.Errorf("lead multiplier = %.2f, should not inherit core hint (expected ~1.0)", impact.Lead.Multiplier)
+	}
+	if impact.Lag.Multiplier > 1.5 {
+		t.Errorf("lag multiplier = %.2f, should not inherit core hint (expected ~1.0)", impact.Lag.Multiplier)
+	}
+}
+
+func TestApplyEventAdjustments_BoundsSwapOnNegativeMultiplier(t *testing.T) {
+	// When multiplier is applied to negative predictions, bounds can invert.
+	preds := []Prediction{
+		{T: date(2025, 3, 1), Value: -100, LowerBound: -120, UpperBound: -80},
+	}
+	events := []Event{
+		{Name: "Sale", Date: date(2025, 3, 1), LeadDays: 0, LagDays: 0},
+	}
+	impacts := map[string]LearnedImpact{
+		"Sale": {
+			Core: ZoneImpact{Zone: "core", Multiplier: 2.0},
+			Lead: ZoneImpact{Zone: "lead", Multiplier: 1.0},
+			Lag:  ZoneImpact{Zone: "lag", Multiplier: 1.0},
+		},
+	}
+
+	adjusted := ApplyEventAdjustments(preds, events, impacts)
+
+	// After multiplying negative values by 2.0: Value=-200, Lower=-240, Upper=-160.
+	// Bounds should be reordered: Lower=-240, Upper=-160.
+	if adjusted[0].LowerBound > adjusted[0].UpperBound {
+		t.Errorf("bounds not reordered: lower=%.2f > upper=%.2f",
+			adjusted[0].LowerBound, adjusted[0].UpperBound)
+	}
+}
+
+func TestBuildBaselinePredictions_CalendarTimeRegression(t *testing.T) {
+	// Create clean data with a known trend, but with a gap in the middle
+	// (simulating masked event days). Calendar-time regression should
+	// interpolate correctly across the gap.
+	base := date(2025, 1, 1)
+
+	// y = 100 + 10*day, but skip days 10-12 (event masked).
+	var clean Series
+	var full Series
+	for i := 0; i < 30; i++ {
+		p := Point{T: base.AddDate(0, 0, i), V: 100.0 + 10.0*float64(i)}
+		full = append(full, p)
+		if i < 10 || i > 12 {
+			clean = append(clean, p)
+		}
+	}
+
+	preds := buildBaselinePredictions(clean, full, Config{})
+
+	// Day 11 (index 11) should predict ~100 + 10*11 = 210.
+	key := date(2025, 1, 12).Format("2006-01-02") // day index 11
+	pred, ok := preds[key]
+	if !ok {
+		t.Fatal("missing prediction for masked day")
+	}
+	expected := 100.0 + 10.0*11.0
+	if math.Abs(pred-expected) > 1.0 {
+		t.Errorf("calendar-time baseline for day 11 = %.2f, want ~%.2f", pred, expected)
+	}
+}
