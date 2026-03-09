@@ -27,7 +27,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 
 - PHP 8.3+
 - MySQL 8.0+
-- Apache with mod_rewrite
+- Nginx with PHP-FPM
 - Composer
 - Go 1.22+ (optional, for the Go CLI)
 
@@ -74,9 +74,44 @@ Dependencies are automatically installed on container startup.
    # Edit 202-config.php with your database credentials
    ```
 
-3. Configure your web server to point to the project root.
+3. Configure nginx to point to the project root. Example site configuration:
+   ```nginx
+   server {
+       listen 80;
+       server_name your-domain.com;
+       root /path/to/prosper202;
+       index index.php index.html;
 
-4. Access the application in your browser.
+       location / {
+           try_files $uri $uri/ /index.php?$query_string;
+       }
+
+       location /api/v3/ {
+           try_files $uri $uri/ /api/v3/index.php?$query_string;
+       }
+
+       location /api/v2/ {
+           try_files $uri $uri/ /api/v2/index.php?$query_string;
+       }
+
+       location ~ \.php$ {
+           fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+           fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+           include fastcgi_params;
+       }
+
+       location ~ /\. {
+           deny all;
+       }
+   }
+   ```
+
+4. Reload nginx:
+   ```bash
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+5. Access the application in your browser.
 
 ## API v3
 
