@@ -58,6 +58,8 @@
 - [Attribution Commands](cli/06-cli-attribution.md)
 - [User Commands](cli/07-cli-users.md)
 - [System Commands](cli/08-cli-system.md)
+- [CRUD Entity Commands](cli/09-cli-crud-entities.md) (campaigns, networks, trackers, landing pages, text ads)
+- [Go CLI (p202)](cli/10-go-cli.md) — cross-platform binary with multi-profile, sync, and diff
 
 ### Tutorials and Guides
 
