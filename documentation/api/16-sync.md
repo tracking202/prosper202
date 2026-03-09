@@ -39,6 +39,18 @@ All sync endpoints require admin role and the appropriate sync scope (`sync:read
 
 ## Create Sync Job
 
+Pass an `Idempotency-Key` header to prevent duplicate job creation on retries.
+
+```bash
+curl -X POST https://your-domain.com/api/v3/sync/jobs \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: sync-campaigns-2024-03-08" \
+  -d '...'
+```
+
+### Request Body
+
 ```json
 {
   "source": {
@@ -52,8 +64,7 @@ All sync endpoints require admin role and the appropriate sync scope (`sync:read
   "entity": "campaigns",
   "collision_mode": "warn",
   "prune": false,
-  "max_attempts": 3,
-  "idempotency_key": "sync-campaigns-2024-03-08"
+  "max_attempts": 3
 }
 ```
 
@@ -67,7 +78,6 @@ All sync endpoints require admin role and the appropriate sync scope (`sync:read
 | `collision_mode` | string | No | How to handle conflicts: `warn` or `manual` |
 | `prune` | boolean | No | Delete target entities not present in source |
 | `max_attempts` | integer | No | Retry limit for failed items |
-| `idempotency_key` | string | No | Prevent duplicate job creation |
 
 ## Job Statuses
 
@@ -87,6 +97,7 @@ All sync endpoints require admin role and the appropriate sync scope (`sync:read
 curl -X POST https://your-domain.com/api/v3/sync/jobs \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: sync-campaigns-2024-03-08" \
   -d '{
     "source": { "url": "https://prod.example.com", "api_key": "prod_key" },
     "target": { "url": "https://staging.example.com", "api_key": "staging_key" },

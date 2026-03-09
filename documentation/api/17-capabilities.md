@@ -1,6 +1,6 @@
 # Capabilities API
 
-Discovery endpoints for API version and feature detection. No authentication required.
+API version and feature detection. Requires Bearer token authentication.
 
 ## Endpoints
 

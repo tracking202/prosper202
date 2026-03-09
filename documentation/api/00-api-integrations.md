@@ -12,7 +12,7 @@ https://[[your-Prosper202-domain]]/api/v3/
 
 ## Authentication
 
-All endpoints (except `/system/health`, `/versions`, and `/capabilities`) require a Bearer token:
+All endpoints (except `/system/health` and `/versions`) require a Bearer token:
 
 ```
 Authorization: Bearer <api_key>
@@ -133,10 +133,6 @@ Empty response body.
 ### GET /versions
 
 Returns supported API versions.
-
-### GET /capabilities
-
-Returns feature matrix including entity support, sync features, limits, and server info.
 
 ### GET /system/health
 

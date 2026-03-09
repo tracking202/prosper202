@@ -63,7 +63,7 @@ This guide tracks the remaining work to deliver the Advanced Attribution Engine 
 
 ## Attribution Dashboard & Export Workflow
 - **Accessing the dashboard:** Navigate to **Account ▸ Attribution** to open `202-account/attribution.php`. Model filters, date range selectors, KPI cards, and chart regions pull data from `/api/v3/attribution/metrics` and `/api/v3/attribution/models` via `202-js/attribution.js`.
-- **Using the sandbox:** Select comparison models in the sandbox panel to trigger `/api/v3/attribution/sandbox`. The UI surfaces placeholder insights until the computation engine backfills live metrics; promote actions dispatch `PATCH /api/v3/attribution/models/:id`.
+- **Using the sandbox:** Select comparison models in the sandbox panel. The UI surfaces placeholder insights until the computation engine backfills live metrics; promote actions update the model via `PUT /api/v3/attribution/models/{id}`.
 - **Scheduling exports:** Use the export drawer on the dashboard to request CSV/XLS snapshots. Requests call `/api/v3/attribution/models/:modelId/exports`, enqueueing jobs in `202_attribution_exports` and generating download tokens served through `202-account/attribution-export.php`.
 - **Processing pipeline:** The cron worker `202-cronjobs/attribution-export.php` claims pending jobs, streams snapshot data through `SnapshotExporter`, and issues optional webhooks using `WebhookDispatcher`. Export files are processed using chunked encoding to minimize memory usage, with a 10MB size limit for webhook dispatch. Logs appear in cron output, and job status updates render in the dashboard export history list.
 
