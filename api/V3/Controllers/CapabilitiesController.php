@@ -6,8 +6,13 @@ namespace Api\V3\Controllers;
 
 class CapabilitiesController
 {
-    public function __construct(private readonly \mysqli $db)
-    {
+    private const string CLICKSERVER_VALIDATE_URL = 'https://my.tracking202.com/api/v2/validate-customers-key';
+    private const int SHELL_CACHE_TTL_SECONDS = 28800; // 8 hours
+
+    public function __construct(
+        private readonly \mysqli $db,
+        private readonly ?int $userId = null,
+    ) {
     }
 
     public function versions(): array
@@ -44,6 +49,7 @@ class CapabilitiesController
                         'bulk_upsert_per_minute' => 60,
                     ],
                 ],
+                'shell' => $this->shellAccess(),
                 'server' => [
                     'build' => $this->resolveBuildVersion(),
                     'commit' => defined('P202_GIT_COMMIT') ? (string)P202_GIT_COMMIT : 'unknown',
@@ -118,5 +124,123 @@ class CapabilitiesController
             }
         }
         return 500;
+    }
+
+    /**
+     * Determine shell access by validating the user's ClickServer API key
+     * against my.tracking202.com. Returns false if the user has no key or
+     * the key is invalid. On network failure, denies access (fail-closed).
+     *
+     * Results are cached per-key for 8 hours in the system temp directory
+     * to avoid hitting my.tracking202.com on every capabilities request.
+     */
+    private function shellAccess(): bool
+    {
+        if ($this->userId === null) {
+            return false;
+        }
+
+        $customerKey = $this->loadClickServerKey();
+        if ($customerKey === '') {
+            return false;
+        }
+
+        $cached = $this->readShellCache($customerKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $result = $this->validateClickServerKey($customerKey);
+        // null = network failure; don't cache transient errors (fail-closed
+        // for this request but don't lock the user out for the full TTL).
+        if ($result !== null) {
+            $this->writeShellCache($customerKey, $result);
+        }
+        return $result === true;
+    }
+
+    private function loadClickServerKey(): string
+    {
+        $stmt = $this->db->prepare(
+            'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
+        );
+        if (!$stmt) {
+            return '';
+        }
+        $stmt->bind_param('i', $this->userId);
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            return '';
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            return '';
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        return trim((string)($row['p202_customer_api_key'] ?? ''));
+    }
+
+    private function shellCachePath(string $key): string
+    {
+        return sys_get_temp_dir() . '/p202_shell_' . hash('sha256', $key) . '.cache';
+    }
+
+    private function readShellCache(string $key): ?bool
+    {
+        $path = $this->shellCachePath($key);
+        if (!is_file($path)) {
+            return null;
+        }
+        $mtime = filemtime($path);
+        if ($mtime === false || (time() - $mtime) > self::SHELL_CACHE_TTL_SECONDS) {
+            @unlink($path);
+            return null;
+        }
+        $content = @file_get_contents($path);
+        if ($content === false) {
+            return null;
+        }
+        return $content === '1';
+    }
+
+    private function writeShellCache(string $key, bool $valid): void
+    {
+        $path = $this->shellCachePath($key);
+        @file_put_contents($path, $valid ? '1' : '0');
+    }
+
+    /**
+     * Validate a ClickServer key against my.tracking202.com.
+     *
+     * @return bool|null true = valid, false = invalid, null = network failure
+     */
+    private function validateClickServerKey(string $key): ?bool
+    {
+        $ch = curl_init();
+        if ($ch === false) {
+            return null;
+        }
+
+        curl_setopt($ch, CURLOPT_URL, self::CLICKSERVER_VALIDATE_URL);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(['key' => $key]));
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+
+        $response = curl_exec($ch);
+        $failed = curl_errno($ch) || $response === false;
+        curl_close($ch);
+
+        if ($failed) {
+            return null; // Network failure — don't cache this result
+        }
+
+        $data = json_decode((string)$response, true);
+        return is_array($data) && ($data['msg'] ?? '') === 'Key valid';
     }
 }

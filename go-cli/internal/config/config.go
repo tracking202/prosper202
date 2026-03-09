@@ -260,6 +260,11 @@ func ResetActiveOverride() {
 	SetActiveOverride("")
 }
 
+// GetActiveOverride returns the current profile override, if any.
+func GetActiveOverride() string {
+	return getProfileOverride()
+}
+
 func getProfileOverride() string {
 	overrideMu.RLock()
 	defer overrideMu.RUnlock()

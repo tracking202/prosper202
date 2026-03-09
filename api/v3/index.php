@@ -205,7 +205,7 @@ try {
     });
 
     // ── API capabilities ────────────────────────────────────────────
-    $router->get('/capabilities', fn() => (new \Api\V3\Controllers\CapabilitiesController($db))->capabilities());
+    $router->get('/capabilities', fn() => (new \Api\V3\Controllers\CapabilitiesController($db, $userId))->capabilities());
 
     // ── Server-side sync planning (admin + read scope) ─────────────
     $router->group('/sync', function (Router $r) use ($crud, &$queryParams, &$payload) {
