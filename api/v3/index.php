@@ -162,7 +162,8 @@ try {
         'ppc-accounts'  => \Api\V3\Controllers\PpcAccountsController::class,
         'trackers'      => \Api\V3\Controllers\TrackersController::class,
         'landing-pages' => \Api\V3\Controllers\LandingPagesController::class,
-        'text-ads'      => \Api\V3\Controllers\TextAdsController::class,
+        'text-ads'          => \Api\V3\Controllers\TextAdsController::class,
+        'forecast-events'   => \Api\V3\Controllers\ForecastEventsController::class,
     ];
 
     foreach ($crudMap as $resource => $class) {

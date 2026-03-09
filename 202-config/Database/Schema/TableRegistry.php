@@ -136,6 +136,9 @@ final class TableRegistry
     public const string SITE_DOMAINS = '202_site_domains';
     public const string SITE_URLS = '202_site_urls';
 
+    // Forecast tables
+    public const string FORECAST_EVENTS = '202_forecast_events';
+
     // Data engine tables
     public const string DATAENGINE = '202_dataengine';
     public const string DATAENGINE_JOB = '202_dataengine_job';
