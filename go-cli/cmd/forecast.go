@@ -234,7 +234,10 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	}
 
 	// Render output.
-	output := buildForecastOutput(result, metric, seasonal, useEvents || eventTag != "", futureEvents)
+	output, err := buildForecastOutput(result, metric, seasonal, useEvents || eventTag != "", futureEvents)
+	if err != nil {
+		return err
+	}
 	render(output)
 	return nil
 }
@@ -405,7 +408,7 @@ func parseWeekpartWeights(data []byte, metric string) forecast.SeasonalWeights {
 }
 
 // buildForecastOutput constructs the JSON output for rendering.
-func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, eventsActive bool, futureEvents []forecast.Event) []byte {
+func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, eventsActive bool, futureEvents []forecast.Event) ([]byte, error) {
 	predictions := make([]map[string]interface{}, len(result.Predictions))
 	for i, p := range result.Predictions {
 		row := map[string]interface{}{
@@ -464,8 +467,11 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, 
 		"meta": meta,
 	}
 
-	payload, _ := json.Marshal(output)
-	return payload
+	payload, err := json.Marshal(output)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling forecast output: %w", err)
+	}
+	return payload, nil
 }
 
 // formatPredictionTime formats a time for display based on the forecast interval.

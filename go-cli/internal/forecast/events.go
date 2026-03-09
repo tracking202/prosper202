@@ -307,10 +307,6 @@ func buildBaselinePredictions(clean, full Series, cfg Config) map[string]float64
 	// Map calendar days to the clean series's sequential index space.
 	preds := map[string]float64{}
 
-	if len(clean) == 0 {
-		return preds
-	}
-
 	cleanStart := clean[0].T
 	cleanEnd := clean[len(clean)-1].T
 	totalCleanDays := cleanEnd.Sub(cleanStart).Hours() / 24.0
@@ -325,9 +321,9 @@ func buildBaselinePredictions(clean, full Series, cfg Config) map[string]float64
 		elapsed := day.Sub(cleanStart).Hours() / 24.0
 		x := (elapsed / totalCleanDays) * float64(len(clean)-1)
 		pred := intercept + slope*x
-		if pred <= 0 {
-			pred = intercept // floor at intercept
-		}
+		// Non-positive baselines are skipped by collectZoneRatios (baseline > 0),
+		// so we store them as-is rather than flooring to intercept, which would
+		// corrupt ratios for downward-trending series.
 		preds[key] = pred
 	}
 
