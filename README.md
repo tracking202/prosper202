@@ -113,6 +113,30 @@ Dependencies are automatically installed on container startup.
 
 5. Access the application in your browser.
 
+#### Apache Alternative
+
+If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled with `AllowOverride All` so the `.htaccess` files in `api/v2/` and `api/v3/` can handle routing. Example virtual host:
+
+```apache
+<VirtualHost *:80>
+    ServerName your-domain.com
+    DocumentRoot /path/to/prosper202
+
+    <Directory /path/to/prosper202>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>
+```
+
+Enable the required module and reload:
+
+```bash
+sudo a2enmod rewrite
+sudo systemctl reload apache2
+```
+
 ## API v3
 
 REST API under `/api/v3/` with bearer token authentication. Covers all Prosper202 entities: campaigns, networks, traffic sources, trackers, landing pages, text ads, clicks, conversions, rotators, attribution models, users, and system operations.
