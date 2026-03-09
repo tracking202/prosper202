@@ -27,7 +27,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 
 - PHP 8.3+
 - MySQL 8.0+
-- Nginx with PHP-FPM
+- Web server: **Nginx with PHP-FPM (recommended for manual installs)** or **Apache** (as used in the official Docker image)
 - Composer
 - Go 1.22+ (optional, for the Go CLI)
 
@@ -95,7 +95,7 @@ Dependencies are automatically installed on container startup.
        }
 
        location ~ \.php$ {
-           fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+           fastcgi_pass unix:/path/to/php-fpm.sock; # or fastcgi_pass 127.0.0.1:9000; adjust to your PHP-FPM setup
            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
            include fastcgi_params;
        }
