@@ -3801,4 +3801,53 @@ function getSecureStatus(): bool
 
     return $secure;
 }
+
+/**
+ * Generate the inbound JavaScript loader snippet for landing page tracking.
+ *
+ * @param string $landing_page_id_public The public landing page ID
+ * @return string The complete <script> tag for embedding on landing pages
+ */
+function generateTrackingLoaderSnippet(string $landing_page_id_public): string
+{
+    return '<script>
+	(function(d, s) {
+		var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
+			if (d.getElementById(id)) {return;}
+			var if202 = d.createElement("script");if202.src = url;if202.async = true;if202.id = id;
+			upxf.parentNode.insertBefore(if202, upxf);
+		};
+		load("//' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/landing.php?lpip=' . $landing_page_id_public . '", "upxif");
+	}(document, "script"));
+	</script>';
+}
+
+/**
+ * Render the Dynamic Content Segment help text shown on landing page code setup pages.
+ */
+function renderDynamicContentSegmentHelp(): void
+{
+    print('<br/><strong><small>Dynamic Content Segment</strong></small><br/>
+		   <span class="infotext">Currently Dynamic Content Segments can dynamically display the following information on your landing pages:
+		   <ul style="font-size: 12px;">
+		   	<li>Visitor\'s Country - <strong>t202Country</strong></li>
+			<li>Visitor\'s Country Code - <strong>t202CountryCode</strong></li>
+			<li>Visitor\'s Region/State - <strong>t202Region</strong></li>
+			<li>Visitor\'s City - <strong>t202City</strong></li>
+			<li>Visitor\'s Postal/Zip Code - <strong>t202Postal</strong></li>
+			<li>Visitor\'s Browser - <strong>t202Browser</strong></li>
+			<li>Visitor\'s Operating System - <strong>t202OS</strong></li>
+			<li>Visitor\'s Device Type - <strong>t202Device</strong></li>
+			<li>Visitor\'s ISP - <strong>t202ISP</strong></li>
+			<li>Value passed in t202kw - <strong>t202kw</strong></li>
+			<li>Value passed in C1-C4 - <strong>t202c1, t202c2, t202c3, t202c4</strong></li>
+			<li>Value passed in utm_source - <strong>t202utm_source</strong></li>
+			<li>Value passed in utm_medium - <strong>t202utm_medium</strong></li>
+			<li>Value passed in utm_term - <strong>t202utm_term</strong></li>
+			<li>Value passed in utm_content - <strong>t202utm_content</strong></li>
+			<li>Value passed in utm_campaign - <strong>t202utm_campaign</strong></li>
+		   </ul>
+		   So how easy is it to display the visitor\'s country on your landing page? Here\'s the html for it:<br/>
+		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
+}
 ?>

@@ -173,29 +173,17 @@ function t202Init(vars) {
 }
 
 function t202Data() {
-	var t202ServerData = <?php echo json_encode($t202ServerData, JSON_UNESCAPED_UNICODE); ?>;
-
-	var t202DataObj = {
-		t202Country: t202ServerData.t202Country,
-		t202CountryCode: t202ServerData.t202CountryCode,
-		t202Region: t202ServerData.t202Region,
-		t202City: t202ServerData.t202City,
-		t202Postal: t202ServerData.t202Postal,
-		t202Browser: t202ServerData.t202Browser,
-		t202OS: t202ServerData.t202OS,
-		t202Device: t202ServerData.t202Device,
-		t202ISP: t202ServerData.t202ISP,
-		t202kw: t202GetVar('t202kw'),
-		t202c1: t202GetVar('c1'),
-		t202c2: t202GetVar('c2'),
-		t202c3: t202GetVar('c3'),
-		t202c4: t202GetVar('c4'),
-		t202utm_source: t202GetVar('utm_source'),
-		t202utm_medium: t202GetVar('utm_medium'),
-		t202utm_term: t202GetVar('utm_term'),
-		t202utm_content: t202GetVar('utm_content'),
-		t202utm_campaign: t202GetVar('utm_campaign')
-	};
+	var t202DataObj = <?php echo json_encode($t202ServerData, JSON_UNESCAPED_UNICODE); ?>;
+	t202DataObj.t202kw = t202GetVar('t202kw');
+	t202DataObj.t202c1 = t202GetVar('c1');
+	t202DataObj.t202c2 = t202GetVar('c2');
+	t202DataObj.t202c3 = t202GetVar('c3');
+	t202DataObj.t202c4 = t202GetVar('c4');
+	t202DataObj.t202utm_source = t202GetVar('utm_source');
+	t202DataObj.t202utm_medium = t202GetVar('utm_medium');
+	t202DataObj.t202utm_term = t202GetVar('utm_term');
+	t202DataObj.t202utm_content = t202GetVar('utm_content');
+	t202DataObj.t202utm_campaign = t202GetVar('utm_campaign');
 
 	var t202Elements = ['t202Country','t202CountryCode','t202Region','t202City','t202Postal','t202Browser','t202OS','t202Device','t202ISP','t202kw','t202c1','t202c2','t202c3','t202c4','t202utm_source','t202utm_medium','t202utm_term','t202utm_content','t202utm_campaign'];
 
