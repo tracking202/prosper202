@@ -64,6 +64,26 @@ $t202ClientParamMap = [
     'utm_campaign' => 't202utm_campaign',
 ];
 
+// Resolve custom variables server-side to eliminate an extra HTTP round-trip.
+// The loader snippet now forwards t202id from the landing page URL.
+$t202CustomVars = [];
+$t202id = $_GET['t202id'] ?? '';
+if ($t202id !== '') {
+    $mysql_t202id = $db->real_escape_string((string)$t202id);
+    $cv_sql = "SELECT 2cv.parameters
+        FROM 202_trackers
+        LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
+        LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+        WHERE tracker_id_public = '".$mysql_t202id."'";
+    $cv_result = $db->query($cv_sql);
+    if ($cv_result && $cv_result->num_rows > 0) {
+        $cv_row = $cv_result->fetch_assoc();
+        if (!empty($cv_row['parameters'])) {
+            $t202CustomVars = explode(',', $cv_row['parameters']);
+        }
+    }
+}
+
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
 $lpip = htmlentities((string) ($_GET['lpip'] ?? ''));
 ?>
@@ -114,114 +134,93 @@ window.createCookie = createCookie;
 window.readCookie = readCookie;
 window.eraseCookie = eraseCookie;
 
-function t202Init(vars) {
-	var t202kw;
-	if (readCookie('t202forcedkw')) {
-		t202kw = readCookie('t202forcedkw');
-	} else {
-		t202kw = t202GetVar('t202kw');
-	}
+// Read URL params once — shared between tracking init and dynamic content
+var t202kw = readCookie('t202forcedkw') || t202GetVar('t202kw');
+var c1 = t202GetVar('c1');
+var c2 = t202GetVar('c2');
+var c3 = t202GetVar('c3');
+var c4 = t202GetVar('c4');
+var utm_source = t202GetVar('utm_source');
+var utm_medium = t202GetVar('utm_medium');
+var utm_term = t202GetVar('utm_term');
+var utm_content = t202GetVar('utm_content');
+var utm_campaign = t202GetVar('utm_campaign');
 
+// --- Tracking beacon ---
+(function() {
 	var lpip = '<?php echo $lpip; ?>';
 	var t202id = t202GetVar('t202id');
 	var t202ref = t202GetVar('t202ref');
-	var OVRAW = t202GetVar('OVRAW');
-	var OVKEY = t202GetVar('OVKEY');
-	var OVMTC = t202GetVar('OVMTC');
-	var c1 = t202GetVar('c1');
-	var c2 = t202GetVar('c2');
-	var c3 = t202GetVar('c3');
-	var c4 = t202GetVar('c4');
 	var t202b = t202GetVar('t202b');
-	var gclid = t202GetVar('gclid');
-	var target_passthrough = t202GetVar('target_passthrough');
-	var keyword = t202GetVar('keyword');
 	var referer = document.referrer;
-	var utm_source = t202GetVar('utm_source');
-	var utm_medium = t202GetVar('utm_medium');
-	var utm_term = t202GetVar('utm_term');
-	var utm_content = t202GetVar('utm_content');
-	var utm_campaign = t202GetVar('utm_campaign');
 	var resolution = screen.width + 'x' + screen.height;
-	var language = navigator.language || navigator.browserLanguage || '';
-	language = language.substr(0, 2);
+	var language = (navigator.language || navigator.browserLanguage || '').substr(0, 2);
 
-	var custom_vars = [];
-	for (var i = 0; i < vars.length; i++) {
-		custom_vars.push(t202GetVar(vars[i]));
+	// Custom variables resolved server-side — no extra HTTP request needed
+	var customVarNames = <?php echo json_encode($t202CustomVars); ?>;
+	var customVarValues = [];
+	for (var i = 0; i < customVarNames.length; i++) {
+		customVarValues.push(t202GetVar(customVarNames[i]));
 	}
 
-	var rurl = "<?php echo $baseUrl; ?>tracking202/static/record.php?lpip=" + t202Enc(lpip)
-		+ "&t202id=" + t202Enc(t202id)
-		+ "&t202kw=" + t202kw
-		+ "&t202ref=" + t202Enc(t202ref)
-		+ "&OVRAW=" + t202Enc(OVRAW)
-		+ "&OVKEY=" + t202Enc(OVKEY)
-		+ "&OVMTC=" + t202Enc(OVMTC)
-		+ "&c1=" + t202Enc(c1)
-		+ "&c2=" + t202Enc(c2)
-		+ "&c3=" + t202Enc(c3)
-		+ "&c4=" + t202Enc(c4)
-		+ "&t202b=" + t202Enc(t202b)
-		+ "&gclid=" + t202Enc(gclid)
-		+ "&target_passthrough=" + t202Enc(target_passthrough)
-		+ "&keyword=" + t202Enc(keyword)
-		+ "&utm_source=" + t202Enc(utm_source)
-		+ "&utm_medium=" + t202Enc(utm_medium)
-		+ "&utm_term=" + t202Enc(utm_term)
-		+ "&utm_content=" + t202Enc(utm_content)
-		+ "&utm_campaign=" + t202Enc(utm_campaign)
-		+ "&referer=" + t202Enc(referer)
-		+ "&resolution=" + t202Enc(resolution)
-		+ "&language=" + t202Enc(language);
-
-	for (var i = 0; i < vars.length; i++) {
-		rurl = rurl + "&" + vars[i] + "=" + t202Enc(custom_vars[i]);
+	// Build tracking URL using array join (faster than 20+ string concatenations)
+	var parts = [
+		"<?php echo $baseUrl; ?>tracking202/static/record.php?lpip=" + t202Enc(lpip),
+		"t202id=" + t202Enc(t202id),
+		"t202kw=" + t202kw,
+		"t202ref=" + t202Enc(t202ref),
+		"OVRAW=" + t202Enc(t202GetVar('OVRAW')),
+		"OVKEY=" + t202Enc(t202GetVar('OVKEY')),
+		"OVMTC=" + t202Enc(t202GetVar('OVMTC')),
+		"c1=" + t202Enc(c1),
+		"c2=" + t202Enc(c2),
+		"c3=" + t202Enc(c3),
+		"c4=" + t202Enc(c4),
+		"t202b=" + t202Enc(t202b),
+		"gclid=" + t202Enc(t202GetVar('gclid')),
+		"target_passthrough=" + t202Enc(t202GetVar('target_passthrough')),
+		"keyword=" + t202Enc(t202GetVar('keyword')),
+		"utm_source=" + t202Enc(utm_source),
+		"utm_medium=" + t202Enc(utm_medium),
+		"utm_term=" + t202Enc(utm_term),
+		"utm_content=" + t202Enc(utm_content),
+		"utm_campaign=" + t202Enc(utm_campaign),
+		"referer=" + t202Enc(referer),
+		"resolution=" + t202Enc(resolution),
+		"language=" + t202Enc(language)
+	];
+	for (var i = 0; i < customVarNames.length; i++) {
+		parts.push(customVarNames[i] + "=" + t202Enc(customVarValues[i]));
 	}
 
 	// Inject record.php as script — its response calls createCookie() to set tracking cookies
 	var js202a = document.createElement("script");
-	js202a.src = rurl;
+	js202a.src = parts.join("&");
 	js202a.async = true;
 	js202a.id = "recjs";
 	(document.head || document.getElementsByTagName("script")[0].parentNode).appendChild(js202a);
-}
+})();
 
-function t202Data() {
-	// Server-side geo/UA data (safely encoded via json_encode)
+// --- Dynamic content replacement ---
+(function() {
+	// Build data object: server-side geo/UA + client-side URL params (read once above)
 	var t202DataObj = <?php echo json_encode($t202ServerData, JSON_UNESCAPED_UNICODE); ?>;
-
-	// Client-side URL parameter values — mapping driven by PHP to stay in sync
 	var clientParamMap = <?php echo json_encode($t202ClientParamMap); ?>;
+	var clientValues = {t202kw: t202kw, c1: c1, c2: c2, c3: c3, c4: c4, utm_source: utm_source, utm_medium: utm_medium, utm_term: utm_term, utm_content: utm_content, utm_campaign: utm_campaign};
 	for (var urlParam in clientParamMap) {
 		if (clientParamMap.hasOwnProperty(urlParam)) {
-			t202DataObj[clientParamMap[urlParam]] = t202GetVar(urlParam);
+			t202DataObj[clientParamMap[urlParam]] = clientValues[urlParam];
 		}
 	}
 
-	// Replace DOM elements — derive list from t202DataObj keys so they can't drift apart
-	Object.keys(t202DataObj).forEach(function(key) {
-		var elements = document.getElementsByName(key);
-		for (var i = 0; i < elements.length; i++) {
-			// Use textContent instead of innerHTML to prevent XSS from URL parameters
-			elements[i].textContent = t202DataObj[key] || elements[i].getAttribute('t202Default') || '';
-		}
-	});
-}
-
-// Fetch custom variables then initialize tracking and dynamic content
-var get_custom_vars_url = '<?php echo $baseUrl; ?>tracking202/static/get_custom_vars.php?t202id=' + t202GetVar('t202id');
-
-fetch(get_custom_vars_url)
-	.then(function(response) { return response.json(); })
-	.then(function(custom_variables) {
-		t202Init(custom_variables);
-		t202Data();
-	})
-	.catch(function() {
-		// If custom vars fetch fails, init with empty array so tracking still fires
-		t202Init([]);
-		t202Data();
-	});
+	// Single DOM query instead of 19 separate getElementsByName calls
+	var selector = Object.keys(t202DataObj).map(function(k) { return '[name="' + k + '"]'; }).join(',');
+	var matchedElements = document.querySelectorAll(selector);
+	for (var i = 0; i < matchedElements.length; i++) {
+		var el = matchedElements[i];
+		var name = el.getAttribute('name');
+		el.textContent = t202DataObj[name] || el.getAttribute('t202Default') || '';
+	}
+})();
 
 })();

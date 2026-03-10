@@ -3812,12 +3812,13 @@ function generateTrackingLoaderSnippet(string $landing_page_id_public): string
 {
     return '<script>
 	(function(d, s) {
-		var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
+		var upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
 			if (d.getElementById(id)) {return;}
 			var if202 = d.createElement("script");if202.src = url;if202.async = true;if202.id = id;
 			upxf.parentNode.insertBefore(if202, upxf);
 		};
-		load("//' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/landing.php?lpip=' . $landing_page_id_public . '", "upxif");
+		var t = new URLSearchParams(window.location.search).get("t202id") || "";
+		load("//' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/landing.php?lpip=' . $landing_page_id_public . '&t202id=" + encodeURIComponent(t), "upxif");
 	}(document, "script"));
 	</script>';
 }
