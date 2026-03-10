@@ -3823,30 +3823,54 @@ function generateTrackingLoaderSnippet(string $landing_page_id_public): string
 }
 
 /**
+ * Return the list of dynamic content segment definitions.
+ * Each entry maps a t202 element name to its human-readable description.
+ * This is the single source of truth used by both the help text renderer
+ * and the tracking script's t202Data() function.
+ *
+ * @return array<string, string> Element name => description
+ */
+function getDynamicContentSegments(): array
+{
+    return [
+        't202Country'      => "Visitor's Country",
+        't202CountryCode'  => "Visitor's Country Code",
+        't202Region'       => "Visitor's Region/State",
+        't202City'         => "Visitor's City",
+        't202Postal'       => "Visitor's Postal/Zip Code",
+        't202Browser'      => "Visitor's Browser",
+        't202OS'           => "Visitor's Operating System",
+        't202Device'       => "Visitor's Device Type",
+        't202ISP'          => "Visitor's ISP",
+        't202kw'           => 'Value passed in t202kw',
+        't202c1'           => 'Value passed in C1',
+        't202c2'           => 'Value passed in C2',
+        't202c3'           => 'Value passed in C3',
+        't202c4'           => 'Value passed in C4',
+        't202utm_source'   => 'Value passed in utm_source',
+        't202utm_medium'   => 'Value passed in utm_medium',
+        't202utm_term'     => 'Value passed in utm_term',
+        't202utm_content'  => 'Value passed in utm_content',
+        't202utm_campaign' => 'Value passed in utm_campaign',
+    ];
+}
+
+/**
  * Render the Dynamic Content Segment help text shown on landing page code setup pages.
+ * Generated from getDynamicContentSegments() so the help text stays in sync
+ * with the actual elements supported by the tracking script.
  */
 function renderDynamicContentSegmentHelp(): void
 {
+    $segments = getDynamicContentSegments();
+    $listItems = '';
+    foreach ($segments as $name => $description) {
+        $listItems .= '<li>' . htmlspecialchars($description) . ' - <strong>' . htmlspecialchars($name) . '</strong></li>';
+    }
+
     print('<br/><strong><small>Dynamic Content Segment</strong></small><br/>
 		   <span class="infotext">Currently Dynamic Content Segments can dynamically display the following information on your landing pages:
-		   <ul style="font-size: 12px;">
-		   	<li>Visitor\'s Country - <strong>t202Country</strong></li>
-			<li>Visitor\'s Country Code - <strong>t202CountryCode</strong></li>
-			<li>Visitor\'s Region/State - <strong>t202Region</strong></li>
-			<li>Visitor\'s City - <strong>t202City</strong></li>
-			<li>Visitor\'s Postal/Zip Code - <strong>t202Postal</strong></li>
-			<li>Visitor\'s Browser - <strong>t202Browser</strong></li>
-			<li>Visitor\'s Operating System - <strong>t202OS</strong></li>
-			<li>Visitor\'s Device Type - <strong>t202Device</strong></li>
-			<li>Visitor\'s ISP - <strong>t202ISP</strong></li>
-			<li>Value passed in t202kw - <strong>t202kw</strong></li>
-			<li>Value passed in C1-C4 - <strong>t202c1, t202c2, t202c3, t202c4</strong></li>
-			<li>Value passed in utm_source - <strong>t202utm_source</strong></li>
-			<li>Value passed in utm_medium - <strong>t202utm_medium</strong></li>
-			<li>Value passed in utm_term - <strong>t202utm_term</strong></li>
-			<li>Value passed in utm_content - <strong>t202utm_content</strong></li>
-			<li>Value passed in utm_campaign - <strong>t202utm_campaign</strong></li>
-		   </ul>
+		   <ul style="font-size: 12px;">' . $listItems . '</ul>
 		   So how easy is it to display the visitor\'s country on your landing page? Here\'s the html for it:<br/>
 		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
 }

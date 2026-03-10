@@ -49,6 +49,21 @@ $t202ServerData = [
     't202ISP' => $data['isp'],
 ];
 
+// Mapping of URL parameter names to their t202DataObj keys for client-side values.
+// Server-side keys (geo/UA) are already in $t202ServerData above.
+$t202ClientParamMap = [
+    't202kw' => 't202kw',
+    'c1' => 't202c1',
+    'c2' => 't202c2',
+    'c3' => 't202c3',
+    'c4' => 't202c4',
+    'utm_source' => 't202utm_source',
+    'utm_medium' => 't202utm_medium',
+    'utm_term' => 't202utm_term',
+    'utm_content' => 't202utm_content',
+    'utm_campaign' => 't202utm_campaign',
+];
+
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
 $lpip = htmlentities((string) ($_GET['lpip'] ?? ''));
 ?>
@@ -173,32 +188,23 @@ function t202Init(vars) {
 }
 
 function t202Data() {
+	// Server-side geo/UA data (safely encoded via json_encode)
 	var t202DataObj = <?php echo json_encode($t202ServerData, JSON_UNESCAPED_UNICODE); ?>;
-	t202DataObj.t202kw = t202GetVar('t202kw');
-	t202DataObj.t202c1 = t202GetVar('c1');
-	t202DataObj.t202c2 = t202GetVar('c2');
-	t202DataObj.t202c3 = t202GetVar('c3');
-	t202DataObj.t202c4 = t202GetVar('c4');
-	t202DataObj.t202utm_source = t202GetVar('utm_source');
-	t202DataObj.t202utm_medium = t202GetVar('utm_medium');
-	t202DataObj.t202utm_term = t202GetVar('utm_term');
-	t202DataObj.t202utm_content = t202GetVar('utm_content');
-	t202DataObj.t202utm_campaign = t202GetVar('utm_campaign');
 
-	var t202Elements = ['t202Country','t202CountryCode','t202Region','t202City','t202Postal','t202Browser','t202OS','t202Device','t202ISP','t202kw','t202c1','t202c2','t202c3','t202c4','t202utm_source','t202utm_medium','t202utm_term','t202utm_content','t202utm_campaign'];
+	// Client-side URL parameter values — mapping driven by PHP to stay in sync
+	var clientParamMap = <?php echo json_encode($t202ClientParamMap); ?>;
+	for (var urlParam in clientParamMap) {
+		if (clientParamMap.hasOwnProperty(urlParam)) {
+			t202DataObj[clientParamMap[urlParam]] = t202GetVar(urlParam);
+		}
+	}
 
-	t202Elements.forEach(function(element) {
-		var elements = document.getElementsByName(element);
-		if (elements.length !== 0) {
-			if (t202DataObj[element]) {
-				for (var i = 0; i < elements.length; ++i) {
-					elements[i].innerHTML = t202DataObj[element];
-				}
-			} else {
-				for (var i = 0; i < elements.length; ++i) {
-					elements[i].innerHTML = elements[i].getAttribute('t202Default');
-				}
-			}
+	// Replace DOM elements — derive list from t202DataObj keys so they can't drift apart
+	Object.keys(t202DataObj).forEach(function(key) {
+		var elements = document.getElementsByName(key);
+		for (var i = 0; i < elements.length; i++) {
+			// Use textContent instead of innerHTML to prevent XSS from URL parameters
+			elements[i].textContent = t202DataObj[key] || elements[i].getAttribute('t202Default') || '';
 		}
 	});
 }
