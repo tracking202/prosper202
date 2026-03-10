@@ -63,17 +63,17 @@ $error = [];
 
 	if ($_POST['method_of_promotion'] == 'landingpage') {
 
-	$affiliate_link = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/go.php?lpip=' . $landing_page_row['landing_page_id_public'];
+	$affiliate_link = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/go.php?lpip=' . $landing_page_row['landing_page_id_public'];
 	$html['affiliate_link'] = htmlentities($affiliate_link);
 
 	$javascript_code = '<script>
 	(function(d, s) {
 		var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
 			if (d.getElementById(id)) {return;}
-			if202 = d.createElement("script");if202.src = url;if202.async = true;if202.id = id;
+			var if202 = d.createElement("script");if202.src = url;if202.async = true;if202.id = id;
 			upxf.parentNode.insertBefore(if202, upxf);
 		};
-		load("http://' . getTrackingDomain() . get_absolute_url().'tracking202/static/landing.php?lpip=' . $landing_page_row['landing_page_id_public'] .'", "upxif");
+		load("//' . getTrackingDomain() . get_absolute_url().'tracking202/static/landing.php?lpip=' . $landing_page_row['landing_page_id_public'] .'", "upxif");
 	}(document, "script"));
 	</script>';
 	
@@ -88,7 +88,7 @@ $error = [];
             </span><br/>
             <textarea class="form-control" rows="1" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['affiliate_link']);
 	
-	$affiliate_link = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'];
+	$affiliate_link = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'];
 	$html['affiliate_link'] = htmlentities($affiliate_link);
 	
 	$outbound_php = '<?php
@@ -140,7 +140,7 @@ $error = [];
 if (readCookie(\'tracking202outbound\') != \'\') {
 	window.location=readCookie(\'tracking202outbound\');
 } else {
-	window.location=\'http://'. getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'] .'\';
+	window.location=\'//'. getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'] .'\';
 }
 	
 function readCookie(name) {
