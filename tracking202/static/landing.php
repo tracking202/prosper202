@@ -65,9 +65,11 @@ $t202ClientParamMap = [
 ];
 
 // Resolve custom variables server-side to eliminate an extra HTTP round-trip.
-// The loader snippet now forwards t202id from the landing page URL.
+// Try t202id first; fall back to lpip → tracker lookup for pages without t202id.
 $t202CustomVars = [];
 $t202id = $_GET['t202id'] ?? '';
+$lpip = $_GET['lpip'] ?? '';
+$cv_sql = '';
 if ($t202id !== '') {
     $mysql_t202id = $db->real_escape_string((string)$t202id);
     $cv_sql = "SELECT 2cv.parameters
@@ -75,6 +77,17 @@ if ($t202id !== '') {
         LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
         LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
         WHERE tracker_id_public = '".$mysql_t202id."'";
+} elseif ($lpip !== '') {
+    $mysql_lpip = $db->real_escape_string((string)$lpip);
+    $cv_sql = "SELECT 2cv.parameters
+        FROM 202_landing_pages AS lp
+        JOIN 202_trackers AS tr ON tr.aff_campaign_id = lp.aff_campaign_id
+        LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
+        LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+        WHERE lp.landing_page_id_public = '".$mysql_lpip."'
+        LIMIT 1";
+}
+if ($cv_sql !== '') {
     $cv_result = $db->query($cv_sql);
     if ($cv_result && $cv_result->num_rows > 0) {
         $cv_row = $cv_result->fetch_assoc();

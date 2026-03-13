@@ -278,7 +278,7 @@ if (isset($utm_content) && $utm_content != '') {
 }
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
-$ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 $ip_id = $locationRepo->findOrCreateIp($ip);
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
@@ -326,7 +326,7 @@ $mysql['click_referer_site_url_id'] = $db->real_escape_string((string) $click_re
 
 
 //see if this click should be filtered
-$ip_address = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+$ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 $user_id = $tracker_row['user_id'];
 
 //GEO Lookup

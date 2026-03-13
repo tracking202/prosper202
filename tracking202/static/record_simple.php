@@ -33,13 +33,8 @@ $_GET += [
 $landing_page_id_public = $_GET['lpip'] ?? '';
 $mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
 
-// Cache schema check to avoid SHOW COLUMNS on every request
-static $mod_row_cached = null;
-if ($mod_row_cached === null) {
-	$mod_sql = "SHOW COLUMNS FROM 202_landing_pages like  'leave_behind_page_url'";
-	$mod_row_cached = memcache_mysql_fetch_assoc($db, $mod_sql);
-}
-$mod_row = $mod_row_cached;
+$mod_sql = "SHOW COLUMNS FROM 202_landing_pages like  'leave_behind_page_url'";
+$mod_row = memcache_mysql_fetch_assoc($db, $mod_sql);
 
 $tracker_sql = "SELECT 202_landing_pages.user_id,
 						202_landing_pages.landing_page_id,";
@@ -292,7 +287,7 @@ if (isset($utm_content) && $utm_content != '') {
 }
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
-$ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 $ip_id = $locationRepo->findOrCreateIp($ip);
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
@@ -343,7 +338,7 @@ $mysql['click_referer_site_url_id'] = $db->real_escape_string((string) $click_re
 
 
 //see if this click should be filtered
-$ip_address = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+$ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 $user_id = $tracker_row['user_id'];
 
 //GEO Lookup

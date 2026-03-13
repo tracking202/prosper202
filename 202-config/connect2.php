@@ -149,9 +149,15 @@ if ($memcacheWorking) {
     $_SESSION['privacy'] = getCache(md5('user_pref_privacy_' . $tid . systemHash()));
 }
 
-//exit strict mode - only if db connection is available
+//set sql mode - only if db connection is available
 if ($db) {
-    $user_sql = "SET session sql_mode= 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'";
+    // Use strict mode when P202_SQL_STRICT is defined and truthy in config;
+    // defaults to permissive mode for backward compatibility with existing installs.
+    if (defined('P202_SQL_STRICT') && P202_SQL_STRICT) {
+        $user_sql = "SET session sql_mode= 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'";
+    } else {
+        $user_sql = "SET session sql_mode= ''";
+    }
     try {
         $user_results = $db->query($user_sql);
     } catch (Exception $e) {
@@ -682,7 +688,7 @@ function setClickIdCookie($click_id, $campaign_id = 0)
         $path = '/';
         $domain = $_SERVER['HTTP_HOST'];
         $secure = TRUE;
-        $httponly = TRUE;
+        $httponly = FALSE; // JS createCookie()/readCookie() must access these cookies
 
         //legacy cookies
 
@@ -2405,7 +2411,7 @@ function setPCIdCookie($click_id_public)
         $path = '/';
         $domain = $_SERVER['HTTP_HOST'];
         $secure = TRUE;
-        $httponly = TRUE;
+        $httponly = FALSE; // JS createCookie() sets this cookie in record_adv.php
 
         //legacy cookies
         setcookie('tracking202pci-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
@@ -2423,7 +2429,7 @@ function setOutboundCookie($outbound_site_url)
         $path = '/';
         $domain = $_SERVER['HTTP_HOST'];
         $secure = TRUE;
-        $httponly = TRUE;
+        $httponly = FALSE; // JS createCookie() sets this cookie in record_simple.php
 
         //legacy cookies
         setcookie('tracking202outbound-legacy', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
