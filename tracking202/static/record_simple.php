@@ -123,11 +123,12 @@ $mysql['text_ad_id'] = $db->real_escape_string((string) ($tracker_row['text_ad_i
 /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
 //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
 $referer_url_parsed = @parse_url((string) $_GET['referer']);
-$referer_url_query = $referer_url_parsed['query'];
+$referer_url_query = $referer_url_parsed['query'] ?? '';
 
 @parse_str($referer_url_query, $referer_query);
 
-switch ($user_row['user_keyword_searched_or_bidded']) {
+$keyword = '';
+switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 
 	case "bidded":
 		#try to get the bidded keyword first
@@ -144,7 +145,7 @@ switch ($user_row['user_keyword_searched_or_bidded']) {
 
 	case "searched":
 		#try to get the searched keyword
-		if ($referer_query['q']) {
+		if (!empty($referer_query['q'])) {
 			$keyword = $db->real_escape_string($referer_query['q']);
 		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
 			$keyword = $db->real_escape_string((string)$_GET['OVRAW']);
@@ -186,12 +187,12 @@ if (str_starts_with((string) $keyword, 't202var_')) {
 	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
 	if (isset($_GET[$t202var])) {
-		$keyword = $_GET[$t202var];
+		$keyword = $db->real_escape_string((string) $_GET[$t202var]);
 	}
 }
 
 $keyword = str_replace('%20', ' ', $keyword);
-$keyword = mb_convert_encoding($keyword, 'ISO-8859-1');
+$keyword = mb_convert_encoding($keyword, 'UTF-8', 'auto');
 $keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = $db->real_escape_string((string) $keyword_id);
 
@@ -286,7 +287,7 @@ if (isset($utm_content) && $utm_content != '') {
 }
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
-$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
+$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 $ip_id = $locationRepo->findOrCreateIp($ip);
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
@@ -310,7 +311,7 @@ $mysql['click_out'] = 0;
 
 // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
 $_referer_site_url = '';
-if ($user_row['user_pref_referer_data'] == 't202ref') {
+if (($user_row['user_pref_referer_data'] ?? '') == 't202ref') {
 	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
 		$mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
 		$_referer_site_url = (string) $_GET['t202ref'];
@@ -450,25 +451,16 @@ $today_year = (int) date('Y', time());
 $click_time = mktime(12, 0, 0, $today_month, $today_day, $today_year);
 $mysql['click_time'] = $db->real_escape_string((string) $click_time);
 
-//check to make sure this click_summary doesn't already exist
-$check_sql = "SELECT  *
-				  FROM    202_summary_overview
-				  WHERE   user_id='" . $mysql['user_id'] . "'
-				  AND     aff_campaign_id='" . $mysql['aff_campaign_id'] . "'
-				  AND     ppc_account_id='" . $mysql['ppc_account_id'] . "'
-				  AND     click_time='" . $mysql['click_time'] . "'";
-$check_result = $db->query($check_sql) or record_mysql_error($db, $check_sql);
-$check_count = $check_result->num_rows;
-
-//if this click summary hasn't been recorded do this now
-if ($check_count == 0) {
-
-	$insert_sql = "INSERT INTO 202_summary_overview
-					   	SET         user_id='" . $mysql['user_id'] . "',
-								   aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-								   ppc_account_id='" . $mysql['ppc_account_id'] . "',
-								   click_time='" . $mysql['click_time'] . "'";
-	$insert_result = $db->query($insert_sql);
+//ensure this click_summary exists — atomic upsert avoids race condition
+$insert_sql = "INSERT INTO 202_summary_overview
+				   	SET         user_id='" . $mysql['user_id'] . "',
+							   aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
+							   ppc_account_id='" . $mysql['ppc_account_id'] . "',
+							   click_time='" . $mysql['click_time'] . "'
+				ON DUPLICATE KEY UPDATE click_time=click_time";
+$insert_result = $db->query($insert_sql);
+if (!$insert_result) {
+	record_mysql_error($db, $insert_sql);
 }
 #}
 
@@ -486,15 +478,18 @@ $data = ($de->setDirtyHour($mysql['click_id']));
 
 if (isset($_COOKIE['p202_ipx'])) {
 	$mysql['p202_ipx'] = $db->real_escape_string((string) $_COOKIE['p202_ipx']);
-	$db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'");
+	$ipx_result = $db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'");
+	if (!$ipx_result) { record_mysql_error($db, 'UPDATE 202_clicks_impressions (p202_ipx)'); }
 } else {
-	$db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE click_id IS NULL AND landing_page_id = '" . $mysql['landing_page_id'] . "' ORDER BY impression_id DESC LIMIT 1");
+	$ipx_result = $db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE click_id IS NULL AND landing_page_id = '" . $mysql['landing_page_id'] . "' ORDER BY impression_id DESC LIMIT 1");
+	if (!$ipx_result) { record_mysql_error($db, 'UPDATE 202_clicks_impressions (fallback)'); }
 }
 
+header('Content-Type: application/javascript; charset=UTF-8');
 ?>
 
-<?php if ($tracker_row['leave_behind_page_url']) { ?>
-	var lb_url ='<?php echo $tracker_row['leave_behind_page_url']; ?>';
+<?php if (!empty($tracker_row['leave_behind_page_url'])) { ?>
+	var lb_url =<?php echo json_encode($tracker_row['leave_behind_page_url']); ?>;
 	function leavebehind202() {
 	this.target="_blank";
 	setTimeout('window.location.href =lb_url', 200);
@@ -508,10 +503,10 @@ if (isset($_COOKIE['p202_ipx'])) {
 ?>
 (function () {
 
-var subid ='<?php echo $click_id; ?>';
+var subid =<?php echo json_encode((string) $click_id); ?>;
 createCookie('tracking202subid',subid,0);
 
-var outbound = '<?php echo $outbound_site_url; ?>';
+var outbound = <?php echo json_encode((string) $outbound_site_url); ?>;
 createCookie('tracking202outbound',outbound,0);
 
 }());

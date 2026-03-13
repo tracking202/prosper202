@@ -63,19 +63,10 @@ $error = [];
 
 	if ($_POST['method_of_promotion'] == 'landingpage') {
 
-	$affiliate_link = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/go.php?lpip=' . $landing_page_row['landing_page_id_public'];
+	$affiliate_link = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/go.php?lpip=' . $landing_page_row['landing_page_id_public'];
 	$html['affiliate_link'] = htmlentities($affiliate_link);
 
-	$javascript_code = '<script>
-	(function(d, s) {
-		var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
-			if (d.getElementById(id)) {return;}
-			if202 = d.createElement("script");if202.src = url;if202.async = true;if202.id = id;
-			upxf.parentNode.insertBefore(if202, upxf);
-		};
-		load("http://' . getTrackingDomain() . get_absolute_url().'tracking202/static/landing.php?lpip=' . $landing_page_row['landing_page_id_public'] .'", "upxif");
-	}(document, "script"));
-	</script>';
+	$javascript_code = generateTrackingLoaderSnippet($landing_page_row['landing_page_id_public']);
 	
 	$html['javascript_code'] = htmlentities($javascript_code);
 	printf('<br></br><small><strong>Inbound Javascript Landing Page Code:</strong></small><br/>
@@ -88,7 +79,7 @@ $error = [];
             </span><br/>
             <textarea class="form-control" rows="1" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['affiliate_link']);
 	
-	$affiliate_link = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'];
+	$affiliate_link = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'];
 	$html['affiliate_link'] = htmlentities($affiliate_link);
 	
 	$outbound_php = '<?php
@@ -140,7 +131,7 @@ $error = [];
 if (readCookie(\'tracking202outbound\') != \'\') {
 	window.location=readCookie(\'tracking202outbound\');
 } else {
-	window.location=\'http://'. getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'] .'\';
+	window.location=\'//'. getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'] .'\';
 }
 	
 function readCookie(name) {
@@ -170,28 +161,7 @@ function urldecode(url) {
 			 other javascript tags to fire before processing the javascript redirect.</span><br></br>
              <textarea class="form-control" rows="12" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['outbound_javascript']);
 
-	print('<br/><strong><small>Dynamic Content Segment</strong></small><br/>
-		   <span class="infotext">Currently Dynamic Content Segments can dynamically display the following information on your landing pages:
-		   <ul style="font-size: 12px;">
-		   	<li>Visitor\'s Country - <strong>t202Country</strong></li>
-			<li>Visitor\'s Country Code - <strong>t202CountryCode</strong></li>
-			<li>Visitor\'s Region/State - <strong>t202Region</strong></li>
-			<li>Visitor\'s City - <strong>t202City</strong></li>
-			<li>Visitor\'s Postal/Zip Code - <strong>t202Postal</strong></li>
-			<li>Visitor\'s Browser - <strong>t202Browser</strong></li>
-			<li>Visitor\'s Operating System - <strong>t202OS</strong></li>
-			<li>Visitor\'s Device Type - <strong>t202Device</strong></li>
-			<li>Visitor\'s ISP - <strong>t202ISP</strong></li>
-			<li>Value passed in t202kw - <strong>t202kw</strong></li>
-			<li>Value passed in C1-C4 - <strong>t202c1, t202c2, t202c3, t202c4</strong></li>
-			<li>Value passed in utm_source - <strong>t202utm_source</strong></li>
-			<li>Value passed in utm_medium - <strong>t202utm_medium</strong></li>
-			<li>Value passed in utm_term - <strong>t202utm_term</strong></li>
-			<li>Value passed in utm_content - <strong>t202utm_content</strong></li>
-			<li>Value passed in utm_campaign - <strong>t202utm_campaign</strong></li>
-		   </ul>
-		   So how easy is it to display the visitor\'s country on your landing page? Here\'s the html for it:<br/>
-		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
+	renderDynamicContentSegmentHelp();
 
-} 
+}
   ?>
