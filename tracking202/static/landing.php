@@ -98,7 +98,7 @@ if ($cv_sql !== '') {
 }
 
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
-$lpip = htmlentities((string) ($_GET['lpip'] ?? ''));
+$lpip_js = json_encode((string) ($_GET['lpip'] ?? ''));
 ?>
 
 (function() {
@@ -161,7 +161,7 @@ var utm_campaign = t202GetVar('utm_campaign');
 
 // --- Tracking beacon ---
 (function() {
-	var lpip = '<?php echo $lpip; ?>';
+	var lpip = <?php echo $lpip_js; ?>;
 	var t202id = t202GetVar('t202id');
 	var t202ref = t202GetVar('t202ref');
 	var t202b = t202GetVar('t202b');
@@ -232,7 +232,8 @@ var utm_campaign = t202GetVar('utm_campaign');
 	for (var i = 0; i < matchedElements.length; i++) {
 		var el = matchedElements[i];
 		var name = el.getAttribute('name');
-		el.textContent = t202DataObj[name] || el.getAttribute('t202Default') || '';
+		var val = t202DataObj[name];
+		el.textContent = (val !== undefined && val !== null && val !== '') ? val : (el.getAttribute('t202Default') || '');
 	}
 })();
 
