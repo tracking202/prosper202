@@ -13,7 +13,7 @@ $strProtocol = 'http';
 }
 
 // Process geo/UA data once (previously duplicated in both _.t202Data and t202Data)
-$data = getGeoData($_SERVER['HTTP_X_FORWARDED_FOR']);
+$data = getGeoData($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
 if($data['country']==='Unknown country')
     $data['country']='';
 if($data['country_code']==='non')
@@ -30,7 +30,7 @@ $detect = new DeviceDetect();
 $ua = $detect->getUserAgent();
 $result = $parser->parse($ua);
 
-$IspData = getIspData($_SERVER['HTTP_X_FORWARDED_FOR']);
+$IspData = getIspData($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
 if($IspData==="Unknown ISP/Carrier")
     $data['isp']='';
 else
@@ -154,7 +154,7 @@ var utm_campaign = t202GetVar('utm_campaign');
 	var t202b = t202GetVar('t202b');
 	var referer = document.referrer;
 	var resolution = screen.width + 'x' + screen.height;
-	var language = (navigator.language || navigator.browserLanguage || '').substr(0, 2);
+	var language = (navigator.language || '').substring(0, 2);
 
 	// Custom variables resolved server-side — no extra HTTP request needed
 	var customVarNames = <?php echo json_encode($t202CustomVars); ?>;
