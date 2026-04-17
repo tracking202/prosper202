@@ -75,7 +75,11 @@ if (!function_exists('p202ApplyConversionUpdate')) {
         }
         $updateClicksSql .= "\n\t\tWHERE\n\t\t\t" . $where;
         if (!$db->query($updateClicksSql)) {
-            error_log('p202ApplyConversionUpdate: failed to update 202_clicks: ' . $db->error);
+            try {
+                error_log('p202ApplyConversionUpdate: failed to update 202_clicks: ' . $db->error);
+            } catch (\Error $e) {
+                error_log('p202ApplyConversionUpdate: failed to update 202_clicks (error inaccessible)');
+            }
         }
 
         $updateSpySql = "\n\t\tUPDATE\n\t\t\t202_clicks_spy\n\t\tSET\n\t\t\t" . $sqlSet;
@@ -84,7 +88,11 @@ if (!function_exists('p202ApplyConversionUpdate')) {
         }
         $updateSpySql .= "\n\t\tWHERE\n\t\t\t" . $where;
         if (!$db->query($updateSpySql)) {
-            error_log('p202ApplyConversionUpdate: failed to update 202_clicks_spy: ' . $db->error);
+            try {
+                error_log('p202ApplyConversionUpdate: failed to update 202_clicks_spy: ' . $db->error);
+            } catch (\Error $e) {
+                error_log('p202ApplyConversionUpdate: failed to update 202_clicks_spy (error inaccessible)');
+            }
         }
 
         $de = new DataEngine();

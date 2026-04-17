@@ -120,7 +120,11 @@ function RunDailyCronjob()
         $check_result = $db->query($check_sql);
 
         if ($check_result === false) {
-            error_log("RunDailyCronjob: Query failed - " . $db->error);
+            try {
+                error_log("RunDailyCronjob: Query failed - " . $db->error);
+            } catch (\Error $e) {
+                error_log("RunDailyCronjob: Query failed (error inaccessible)");
+            }
             return false;
         }
 
@@ -197,7 +201,11 @@ function RunHourlyCronJob()
         $check_result = $db->query($check_sql);
 
         if ($check_result === false) {
-            error_log("RunHourlyCronJob: Query failed - " . $db->error);
+            try {
+                error_log("RunHourlyCronJob: Query failed - " . $db->error);
+            } catch (\Error $e) {
+                error_log("RunHourlyCronJob: Query failed (error inaccessible)");
+            }
             return false;
         }
 
@@ -264,7 +272,11 @@ function RunSecondsCronjob()
         $check_result = $db->query($check_sql);
 
         if ($check_result === false) {
-            error_log("RunSecondsCronjob: Query failed - " . $db->error);
+            try {
+                error_log("RunSecondsCronjob: Query failed - " . $db->error);
+            } catch (\Error $e) {
+                error_log("RunSecondsCronjob: Query failed (error inaccessible)");
+            }
             return false;
         }
 
@@ -293,7 +305,11 @@ function RunSecondsCronjob()
                     $update_result = $db->query($update_sql);
 
                     if ($update_result === false) {
-                        error_log("Delayed SQL failed: " . $update_sql . " - Error: " . $db->error);
+                        try {
+                            error_log("Delayed SQL failed: " . $update_sql . " - Error: " . $db->error);
+                        } catch (\Error $e) {
+                            error_log("Delayed SQL failed: " . $update_sql . " (error inaccessible)");
+                        }
                     }
                 }
             }
@@ -345,7 +361,11 @@ function AutoOptimizeDatabase()
 
         if (!$result) {
             echo "Error querying user preferences for auto optimization<br>";
-            error_log("AutoOptimizeDatabase: Query failed - " . $db->error);
+            try {
+                error_log("AutoOptimizeDatabase: Query failed - " . $db->error);
+            } catch (\Error $e) {
+                error_log("AutoOptimizeDatabase: Query failed (error inaccessible)");
+            }
             return;
         }
 
@@ -380,7 +400,11 @@ function AutoOptimizeDatabase()
                         $result = $db->query($delete_sql);
 
                         if ($result === false) {
-                            error_log("AutoOptimizeDatabase: Failed to delete from $table - " . $db->error);
+                            try {
+                                error_log("AutoOptimizeDatabase: Failed to delete from $table - " . $db->error);
+                            } catch (\Error $e) {
+                                error_log("AutoOptimizeDatabase: Failed to delete from $table (error inaccessible)");
+                            }
                         }
                     }
                 }
@@ -414,7 +438,11 @@ function ClearOldClicks()
 
         if (!$result) {
             echo "Error querying user preferences<br>";
-            error_log("ClearOldClicks: Query failed - " . $db->error);
+            try {
+                error_log("ClearOldClicks: Query failed - " . $db->error);
+            } catch (\Error $e) {
+                error_log("ClearOldClicks: Query failed (error inaccessible)");
+            }
             return;
         }
 
@@ -432,7 +460,11 @@ function ClearOldClicks()
                     $result = $db->query($click_sql);
 
                     if ($result === false) {
-                        error_log("ClearOldClicks: Failed to delete from $table - " . $db->error);
+                        try {
+                            error_log("ClearOldClicks: Failed to delete from $table - " . $db->error);
+                        } catch (\Error $e) {
+                            error_log("ClearOldClicks: Failed to delete from $table (error inaccessible)");
+                        }
                     }
                 }
             }

@@ -261,10 +261,18 @@ class INDEXES
                 if ($ip_result_ref) {
                     $ip_id = $db->insert_id; // This is the final ip_id from 202_ips
                 } else {
-                    error_log("Failed to insert IPv6 reference into 202_ips: " . $db->error);
+                    try {
+                        error_log("Failed to insert IPv6 reference into 202_ips: " . $db->error);
+                    } catch (\Error $e) {
+                        error_log("Failed to insert IPv6 reference into 202_ips (error inaccessible)");
+                    }
                 }
             } else {
-                error_log("Failed to insert IPv6 address into 202_ips_v6: " . $db->error);
+                try {
+                    error_log("Failed to insert IPv6 address into 202_ips_v6: " . $db->error);
+                } catch (\Error $e) {
+                    error_log("Failed to insert IPv6 address into 202_ips_v6 (error inaccessible)");
+                }
             }
             return $ip_id;
         } else { // IPv4
@@ -274,7 +282,11 @@ class INDEXES
             if ($ip_result) {
                 $ip_id = $db->insert_id;
             } else {
-                error_log("Failed to insert IPv4 address into 202_ips: " . $db->error);
+                try {
+                    error_log("Failed to insert IPv4 address into 202_ips: " . $db->error);
+                } catch (\Error $e) {
+                    error_log("Failed to insert IPv4 address into 202_ips (error inaccessible)");
+                }
             }
             return $ip_id;
         }

@@ -71,16 +71,16 @@ if(isset($mysql['202vars'])&&$mysql['202vars']!=''){
 
 <html>
 	<head>
-		<title><?php echo $html['aff_campaign_name']; ?></title>
+		<title><?php echo htmlspecialchars((string) $html['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); ?></title>
 		<meta name="robots" content="noindex">
-		<meta name="referrer" content="<?php echo $referrer; ?>">
-		<meta http-equiv="refresh" content="0; url=<?php echo $redirect_site_url; ?>">
+		<meta name="referrer" content="<?php echo htmlspecialchars((string) $referrer, ENT_QUOTES, 'UTF-8'); ?>">
+		<meta http-equiv="refresh" content="0; url=<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">
 	</head>
 	<body>
 	
-		<form name="form1" id="form1" method="get" action="<?php echo $action_site_url; ?>">
-			<input type="hidden" name="q" value="<?php echo $redirect_site_url; ?>"/>
-			<input type="hidden" name="r" value="<?php echo $referrer; ?>"/>
+		<form name="form1" id="form1" method="get" action="<?php echo htmlspecialchars((string) $action_site_url, ENT_QUOTES, 'UTF-8'); ?>">
+			<input type="hidden" name="q" value="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>"/>
+			<input type="hidden" name="r" value="<?php echo htmlspecialchars((string) $referrer, ENT_QUOTES, 'UTF-8'); ?>"/>
 		</form>
 		<script type="text/javascript">
 			document.form1.submit();
@@ -88,8 +88,8 @@ if(isset($mysql['202vars'])&&$mysql['202vars']!=''){
 		
 		
 		<div style="padding: 30px; text-align: center;">
-			You are being automatically redirected to <?php echo $html['aff_campaign_name']; ?>.<br/><br/>
-			Page Stuck? <a href="<?php echo $redirect_site_url; ?>">Click Here</a>.
+			You are being automatically redirected to <?php echo htmlspecialchars((string) $html['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); ?>.<br/><br/>
+			Page Stuck? <a href="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">Click Here</a>.
 		</div>
 	</body> 
 </html> 
