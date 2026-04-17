@@ -1,12 +1,33 @@
 # Prosper202 ClickServer
 
-Self-hosted affiliate marketing tracking platform for PPC affiliate marketers. Provides click tracking, conversion monitoring, landing page management, traffic analysis, and campaign performance reporting with ROI tracking.
+Self-hosted campaign tracking and marketing analytics platform. Track clicks, conversions, and revenue across any traffic source with full data ownership — your data stays on your servers.
+
+Since 2007, Prosper202 has helped marketers take control of their tracking with an open, self-hosted platform that works with any traffic source, any offer, and any network.
+
+## Key Features
+
+- **Self-Hosted & Full Source Code** — Run Prosper202 100% on your own servers for ultimate control of your proprietary data and marketing methods. Customize the full source code to meet your needs.
+- **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields.
+- **12+ Report Types** — Keywords, geo, device, browser, OS, referrer, ISP, landing page, and custom dimension reports. Track profit and loss, conversion metrics, EPC per keyword, per text ad, per referrer, and more.
+- **Multi-Touch Attribution** — Five attribution models including last-touch, time-decay, position-based, and algorithmic.
+- **Split Testing** — Run unlimited weighted split tests to discover your best marketing message and offer. Pause non-converting tests and automatically send all traffic to the winner.
+- **Smart Redirector & Traffic Rules** — Rule-based traffic distribution with weighted rotation, geo-targeting, and device filtering.
+- **BlazerCache Technology** — Fast redirects that continue working even if the database goes down, preventing lost revenue.
+- **Fraud Prevention** — Sentinel Traffic Quality Enforcer (T.Q.E.) redirects potentially fraudulent traffic away from your landing pages.
+- **Landing Page Personalization** — Dynamically display ISP, device, postal code, geo location, keyword, UTM variables, browser, OS, and more on your landing pages.
+- **Device Detection** — Automatically detect device types and models for full insights into mobile-targeted campaigns.
+- **Multi-Currency & Timezone** — Automatically convert payouts into your local currency and display reports in your local timezone.
+- **Google Ads Integration** — Offline conversion tracking with one-click CSV export. UTM parameters and GCLID values are automatically captured.
+- **WordPress Integration** — Two-way communication between WordPress and Prosper202, instantly setting up posts and pages as landing pages.
+- **Deep Linking** — Boost conversion rates by deep linking directly into apps, reducing friction for users.
+- **Team Access** — Full role-based authentication with no limit on users and no per-seat costs.
+- **API & CLI Tools** — Full REST API and CLI tools designed for both human developers and AI agents. Automate campaign management, pull reports, and integrate with your existing tools. CLI-first design works seamlessly with AI coding agents like Claude Code, Codex, and OpenClaw.
 
 ## Requirements
 
 - PHP 8.3+
 - MySQL 8.0+
-- Apache with mod_rewrite
+- Web server: **Nginx with PHP-FPM (recommended for manual installs)** or **Apache** (as used in the official Docker image)
 - Composer
 - Go 1.22+ (optional, for the Go CLI)
 
@@ -53,9 +74,44 @@ Dependencies are automatically installed on container startup.
    # Edit 202-config.php with your database credentials
    ```
 
-3. Configure your web server to point to the project root.
+3. Configure nginx to point to the project root. Example site configuration:
+   ```nginx
+   server {
+       listen 80;
+       server_name your-domain.com;
+       root /path/to/prosper202;
+       index index.php index.html;
 
-4. Access the application in your browser.
+       location / {
+           try_files $uri $uri/ /index.php?$query_string;
+       }
+
+       location /api/v3/ {
+           try_files $uri $uri/ /api/v3/index.php?$query_string;
+       }
+
+       location /api/v2/ {
+           try_files $uri $uri/ /api/v2/index.php?$query_string;
+       }
+
+       location ~ \.php$ {
+           fastcgi_pass unix:/path/to/php-fpm.sock; # or fastcgi_pass 127.0.0.1:9000; adjust to your PHP-FPM setup
+           fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+           include fastcgi_params;
+       }
+
+       location ~ /\. {
+           deny all;
+       }
+   }
+   ```
+
+4. Reload nginx:
+   ```bash
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+5. Access the application in your browser.
 
 ## API v3
 

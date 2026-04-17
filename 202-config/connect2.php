@@ -18,7 +18,7 @@ if ($_SERVER['SERVER_NAME'] == '_') {
 DEFINE('ROOT_PATH', substr(__DIR__, 0, -10));
 DEFINE('CONFIG_PATH', __DIR__);
 //@ini_set('register_globals', 0);
-@ini_set('display_errors', 'On');
+@ini_set('display_errors', 'Off');
 @ini_set('error_reporting', 6135);
 
 mysqli_report(MYSQLI_REPORT_STRICT);
@@ -149,9 +149,15 @@ if ($memcacheWorking) {
     $_SESSION['privacy'] = getCache(md5('user_pref_privacy_' . $tid . systemHash()));
 }
 
-//exit strict mode - only if db connection is available
+//set sql mode - only if db connection is available
 if ($db) {
-    $user_sql = "SET session sql_mode= ''";
+    // Use strict mode when P202_SQL_STRICT is defined and truthy in config;
+    // defaults to permissive mode for backward compatibility with existing installs.
+    if (defined('P202_SQL_STRICT') && P202_SQL_STRICT) {
+        $user_sql = "SET session sql_mode= 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'";
+    } else {
+        $user_sql = "SET session sql_mode= ''";
+    }
     try {
         $user_results = $db->query($user_sql);
     } catch (Exception $e) {
@@ -235,7 +241,7 @@ function _die($message, ...$legacyArgs): never
 // this funciton delays an SQL statement, puts in in a mysql table, to be cron jobbed out every 5 minutes
 function delay_sql($db, $delayed_sql): void
 {
-    $mysql['delayed_sql'] = str_replace("'", "''", $delayed_sql);
+    $mysql['delayed_sql'] = $db->real_escape_string($delayed_sql);
     $mysql['delayed_time'] = time();
 
     $delayed_sql = "INSERT INTO  202_delayed_sqls 
@@ -421,28 +427,16 @@ function rotateTrackerUrl($db, $tracker_row)
 
     $count = count($urls);
 
+    // Atomic upsert to avoid TOCTOU race condition on concurrent requests
+    $mysql['count'] = $db->real_escape_string((string) $count);
+    $sql5 = "INSERT INTO 202_rotations SET aff_campaign_id='" . $mysql['aff_campaign_id'] . "', rotation_num=0
+             ON DUPLICATE KEY UPDATE rotation_num = IF(rotation_num >= " . ((int)$count - 1) . ", 0, rotation_num + 1)";
+    _mysqli_query($db, $sql5);
+    // Read back the current value
     $sql5 = "SELECT rotation_num FROM 202_rotations WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
     $result5 = _mysqli_query($db, $sql5);
     $row5 = $result5->fetch_assoc();
-    if ($row5) {
-
-        $old_num = $row5['rotation_num'];
-        if ($old_num >= ($count - 1))
-            $num = 0;
-        else
-            $num = $old_num + 1;
-
-        $mysql['num'] = $db->real_escape_string($num);
-        $sql5 = " UPDATE 202_rotations SET rotation_num='" . $mysql['num'] . "' WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
-        $result5 = _mysqli_query($db, $sql5);
-    } else {
-        // insert the rotation
-        $num = 0;
-        $mysql['num'] = $db->real_escape_string($num);
-        $sql5 = " INSERT INTO 202_rotations SET aff_campaign_id='" . $mysql['aff_campaign_id'] . "',  rotation_num='" . $mysql['num'] . "' ";
-        $result5 = _mysqli_query($db, $sql5);
-        $rotation_num = 0;
-    }
+    $num = $row5 ? (int) $row5['rotation_num'] : 0;
 
     $url = $urls[$num];
     return $url;
@@ -694,7 +688,7 @@ function setClickIdCookie($click_id, $campaign_id = 0)
         $path = '/';
         $domain = $_SERVER['HTTP_HOST'];
         $secure = TRUE;
-        $httponly = FALSE;
+        $httponly = FALSE; // JS createCookie()/readCookie() must access these cookies
 
         //legacy cookies
 
@@ -715,7 +709,7 @@ function setClickIdCookieForLp($click_id_public, $lp_public_id)
         $path = '/';
         $domain = $_SERVER['HTTP_HOST'];
         $secure = TRUE;
-        $httponly = FALSE;
+        $httponly = TRUE;
 
 
         //legacy cookies
@@ -2078,12 +2072,18 @@ function memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1, $min
 
     if ($memcacheWorking == false) {
         $result = _mysqli_query($connection, $sql);
+        if ($result === false) {
+            return false;
+        }
         $row = $result->fetch_assoc();
         return $row;
     } else {
 
         if ($allowCaching == 0) {
             $result = _mysqli_query($connection, $sql);
+            if ($result === false) {
+                return false;
+            }
             $row = $result->fetch_assoc();
             return $row;
         } else {
@@ -2093,6 +2093,9 @@ function memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1, $min
             if ($getCache === false) {
                 // cache this data
                 $result = _mysqli_query($connection, $sql);
+                if ($result === false) {
+                    return false;
+                }
                 $fetchArray = $result->fetch_assoc();
                 $setCache = setCache(md5($sql . systemHash()), serialize($fetchArray), 60 * $minutes);
 
@@ -2102,8 +2105,8 @@ function memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1, $min
                 return $fetchArray;
             } else {
 
-                // Data Cached
-                return unserialize($getCache);
+                // Data Cached — restrict to arrays only, no object instantiation
+                return unserialize($getCache, ['allowed_classes' => false]);
             }
         }
     }
@@ -2141,6 +2144,9 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
     if ($memcacheWorking == false) {
         $row = [];
         $result = _mysqli_query($connection, $sql); // ($sql);
+        if ($result === false) {
+            return [];
+        }
         while ($fetch = $result->fetch_assoc()) {
             $row[] = $fetch;
         }
@@ -2150,6 +2156,9 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
         if ($allowCaching == 0) {
             $row = [];
             $result = _mysqli_query($connection, $sql); // ($sql);
+            if ($result === false) {
+                return [];
+            }
             while ($fetch = $result->fetch_assoc()) {
                 $row[] = $fetch;
             }
@@ -2161,6 +2170,9 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
                 // if data is NOT cache, cache this data
                 $row = [];
                 $result = _mysqli_query($connection, $sql); // ($sql);
+                if ($result === false) {
+                    return [];
+                }
                 while ($fetch = $result->fetch_assoc()) {
                     $row[] = $fetch;
                 }
@@ -2170,8 +2182,8 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
 
                 return $row;
             } else {
-                // if data is cached, returned the cache data Data Cached
-                return unserialize($getCache);
+                // if data is cached, returned the cache data Data Cached — restrict to arrays only
+                return unserialize($getCache, ['allowed_classes' => false]);
             }
         }
     }
@@ -2291,7 +2303,7 @@ function getGeoData($ip)
         $record = '';
         $country = '';
         $country_code = '';
-        $is_european_union = '';
+        $is_european_union = false;
         $continent = '';
         $city = '';
         $region = '';
@@ -2399,7 +2411,7 @@ function setPCIdCookie($click_id_public)
         $path = '/';
         $domain = $_SERVER['HTTP_HOST'];
         $secure = TRUE;
-        $httponly = FALSE;
+        $httponly = FALSE; // JS createCookie() sets this cookie in record_adv.php
 
         //legacy cookies
         setcookie('tracking202pci-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
@@ -2417,7 +2429,7 @@ function setOutboundCookie($outbound_site_url)
         $path = '/';
         $domain = $_SERVER['HTTP_HOST'];
         $secure = TRUE;
-        $httponly = FALSE;
+        $httponly = FALSE; // JS createCookie() sets this cookie in record_simple.php
 
         //legacy cookies
         setcookie('tracking202outbound-legacy', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
@@ -2614,7 +2626,9 @@ function getTrackingDomain(): string
 {
     global $db;
 
-    $tracking_domain = $_SERVER['SERVER_NAME'];
+    $raw_server_name = $_SERVER['SERVER_NAME'] ?? '';
+    // Sanitize to prevent host header injection — allow only valid hostname characters
+    $tracking_domain = preg_replace('/[^a-zA-Z0-9.\-:]/', '', $raw_server_name);
 
     // Add port if non-standard (not 80/443)
     $port = $_SERVER['SERVER_PORT'] ?? 80;
@@ -2641,15 +2655,13 @@ function getTrackingDomain(): string
 function updateLpClickDataForRotator($redirect_id, $click_id, $rotator_id, $rule_id)
 {
     global $db;
-    $click_sql = "
-        REPLACE INTO
-            202_clicks_rotator
-        SET
-            click_id='" . $click_id . "',
-            rotator_id='" . $rotator_id . "',
-            rule_id='" . $rule_id . "',
-            rule_redirect_id = '" . $redirect_id . "'";
-    $db->query($click_sql);
+    $stmt = $db->prepare("REPLACE INTO 202_clicks_rotator SET click_id=?, rotator_id=?, rule_id=?, rule_redirect_id=?");
+    $stmt->bind_param('iiii', $click_id, $rotator_id, $rule_id, $redirect_id);
+    if (!$stmt->execute()) {
+        $stmt->close();
+        throw new \RuntimeException('Failed to update rotator click data: ' . $db->error);
+    }
+    $stmt->close();
 }
 
 function parseUaForRotatorCriteria($detect, $parser, $ua)
@@ -2801,13 +2813,17 @@ function ipAddress($ip_address)
         }
     } else {
         $ip->type = 'invalid';
+        $ip->address = '0.0.0.0';
     }
 
     if (!trackingEnabled()) {
         $ip = maskIpAddress($ip);
     }
 
-    $ip->address = @inet_ntop(inet_pton($ip->address)); //format ip addess in standard form
+    $formatted = @inet_ntop(@inet_pton($ip->address));
+    if ($formatted !== false) {
+        $ip->address = $formatted; //format ip address in standard form
+    }
     return $ip;
 }
 
@@ -2838,7 +2854,13 @@ function inet6_aton($ip)
     return @inet_pton($ip);
 }
 
-function sanitizeIn($data) {}
+function sanitizeIn($data) {
+    global $db;
+    if (!is_string($data)) {
+        return '';
+    }
+    return $db->real_escape_string($data);
+}
 
 function getTrackerDetail(&$mysql)
 {

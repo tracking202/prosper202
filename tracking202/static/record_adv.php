@@ -115,11 +115,12 @@ $mysql['text_ad_id'] = $db->real_escape_string((string) ($tracker_row['text_ad_i
 /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
 //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
 $referer_url_parsed = @parse_url((string) $_GET['referer']);
-$referer_url_query = $referer_url_parsed['query'];
+$referer_url_query = $referer_url_parsed['query'] ?? '';
 
 @parse_str($referer_url_query, $referer_query);
 
-switch ($user_row['user_keyword_searched_or_bidded']) {
+$keyword = '';
+switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 
 	case "bidded":
 		#try to get the bidded keyword first
@@ -135,7 +136,7 @@ switch ($user_row['user_keyword_searched_or_bidded']) {
 		break;
 	case "searched":
 		#try to get the searched keyword
-		if ($referer_query['q']) {
+		if (!empty($referer_query['q'])) {
 			$keyword = $db->real_escape_string($referer_query['q']);
 		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
 			$keyword = $db->real_escape_string((string)$_GET['OVRAW']);
@@ -177,7 +178,7 @@ if (str_starts_with((string) $keyword, 't202var_')) {
 	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
 	if (isset($_GET[$t202var])) {
-		$keyword = $_GET[$t202var];
+		$keyword = $db->real_escape_string((string) $_GET[$t202var]);
 	}
 }
 
@@ -277,7 +278,7 @@ if (isset($utm_content) && $utm_content != '') {
 }
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
-$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
+$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 $ip_id = $locationRepo->findOrCreateIp($ip);
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
@@ -288,6 +289,7 @@ $mysql['platform_id'] = $db->real_escape_string((string) $device_id['platform'])
 $mysql['browser_id'] = $db->real_escape_string((string) $device_id['browser']);
 $mysql['device_id'] = $db->real_escape_string((string) $device_id['device']);
 
+$mysql['click_bot'] = '0';
 if ($device_id['type'] == '4') {
 	$mysql['click_bot'] = '1';
 }
@@ -297,12 +299,12 @@ $mysql['click_out'] = 0;
 
 // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
 $_referer_site_url = '';
-if ($user_row['user_pref_referer_data'] == 't202ref') {
+if (($user_row['user_pref_referer_data'] ?? '') == 't202ref') {
 	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
 		$mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
 		$_referer_site_url = (string) $_GET['t202ref'];
 	} else { //if not found revert to what we usually do
-		if ($referer_query['url']) {
+		if (!empty($referer_query['url'])) {
 			$_referer_site_url = (string) $referer_query['url'];
 		} else {
 			$_referer_site_url = (string) ($_GET['referer'] ?? '');
@@ -312,7 +314,7 @@ if ($user_row['user_pref_referer_data'] == 't202ref') {
 
 	// now lets get variables for clicks site
 	// so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-	if ($referer_query['url']) {
+	if (!empty($referer_query['url'])) {
 		$_referer_site_url = (string) $referer_query['url'];
 	} else {
 		$_referer_site_url = (string) ($_GET['referer'] ?? '');
@@ -418,20 +420,25 @@ $data = ($de->setDirtyHour($mysql['click_id']));
 
 if (isset($_COOKIE['p202_ipx'])) {
 	$mysql['p202_ipx'] = $db->real_escape_string((string) $_COOKIE['p202_ipx']);
-	$db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'");
+	$ipx_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'";
+	$ipx_result = $db->query($ipx_sql);
+	if (!$ipx_result) { record_mysql_error($db, $ipx_sql); }
 } else {
-	$db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE click_id IS NULL AND landing_page_id = '" . $mysql['landing_page_id'] . "' ORDER BY impression_id DESC LIMIT 1");
+	$ipx_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE click_id IS NULL AND landing_page_id = '" . $mysql['landing_page_id'] . "' ORDER BY impression_id DESC LIMIT 1";
+	$ipx_result = $db->query($ipx_sql);
+	if (!$ipx_result) { record_mysql_error($db, $ipx_sql); }
 }
 
+header('Content-Type: application/javascript; charset=UTF-8');
 ?>
 
 
 function t202initB() {
 
-var subid ='<?php echo $click_id; ?>';
+var subid =<?php echo json_encode((string) $click_id); ?>;
 createCookie('tracking202subid',subid,0);
 
-var pci = '<?php echo $click_id_public; ?>';
+var pci = <?php echo json_encode((string) $click_id_public); ?>;
 createCookie('tracking202pci',pci,0);
 
 }

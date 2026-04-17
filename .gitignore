@@ -29,7 +29,6 @@ build/staging-config.php
 
 # Development and documentation
 /docs/
-/tests/
 phpstan-errors.txt
 task-plan-*
 multi-touch-qa-runbook.md
