@@ -39,19 +39,10 @@ class ForecastEventsController extends Controller
     }
 
     #[\Override]
-    protected function beforeUpdate(int|string $id, array $payload): void
+    protected function beforeUpdate(int|string $id, array $payload): array
     {
-        // Touch updated_at on every update, scoped to the current user.
-        $stmt = $this->prepare(
-            sprintf(
-                'UPDATE %s SET updated_at = ? WHERE %s = ? AND %s = ?',
-                $this->tableName(),
-                $this->primaryKey(),
-                $this->userIdColumn()
-            )
-        );
-        $this->bind($stmt, 'iii', time(), (int)$id, $this->userId);
-        $this->execute($stmt, 'Failed to update timestamp');
-        $stmt->close();
+        return [
+            'updated_at' => ['type' => 'i', 'value' => time()],
+        ];
     }
 }

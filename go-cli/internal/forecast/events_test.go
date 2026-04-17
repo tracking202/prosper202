@@ -395,6 +395,66 @@ func TestPastEvents(t *testing.T) {
 	}
 }
 
+func TestFutureEvents_YearlyRecurrence(t *testing.T) {
+	// Event stored as 2025, recurrence=yearly. Forecasting 2026 → must expand.
+	events := []Event{
+		{Name: "New Year", Date: date(2025, 1, 1), Recurrence: "yearly", LeadDays: 1, LagDays: 1},
+	}
+	future := FutureEvents(events, date(2026, 1, 1), date(2026, 3, 31))
+	if len(future) != 1 {
+		t.Fatalf("expected 1 expanded yearly event, got %d", len(future))
+	}
+	if !future[0].Date.Equal(date(2026, 1, 1)) {
+		t.Errorf("expected date 2026-01-01, got %s", future[0].Date.Format("2006-01-02"))
+	}
+}
+
+func TestFutureEvents_MonthlyRecurrence(t *testing.T) {
+	// Event stored as 2025-01, recurrence=monthly. Forecasting March → must expand.
+	events := []Event{
+		{Name: "Monthly Promo", Date: date(2025, 1, 15), Recurrence: "monthly"},
+	}
+	future := FutureEvents(events, date(2025, 3, 1), date(2025, 3, 31))
+	if len(future) != 1 {
+		t.Fatalf("expected 1 expanded monthly event, got %d", len(future))
+	}
+	if !future[0].Date.Equal(date(2025, 3, 15)) {
+		t.Errorf("expected date 2025-03-15, got %s", future[0].Date.Format("2006-01-02"))
+	}
+}
+
+func TestPastEvents_YearlyRecurrence(t *testing.T) {
+	// Event stored as 2025, recurrence=yearly. Training on 2023 data → must expand.
+	events := []Event{
+		{Name: "Holiday", Date: date(2025, 12, 25), Recurrence: "yearly"},
+	}
+	past := PastEvents(events, date(2023, 1, 1), date(2023, 12, 31))
+	if len(past) != 1 {
+		t.Fatalf("expected 1 expanded yearly event in past, got %d", len(past))
+	}
+	if !past[0].Date.Equal(date(2023, 12, 25)) {
+		t.Errorf("expected date 2023-12-25, got %s", past[0].Date.Format("2006-01-02"))
+	}
+}
+
+func TestApplyZoneMultiplier_RecordsNameWhenMultiplierIsOne(t *testing.T) {
+	adjustments := map[string]EventAdjustment{}
+	from := date(2025, 3, 1)
+	to := date(2025, 3, 1)
+	applyZoneMultiplier(adjustments, from, to, 1.0, "NeutralEvent")
+
+	adj, ok := adjustments["2025-03-01"]
+	if !ok {
+		t.Fatal("expected adjustment entry even for multiplier=1.0")
+	}
+	if adj.Multiplier != 1.0 {
+		t.Errorf("multiplier = %.2f, want 1.0", adj.Multiplier)
+	}
+	if len(adj.EventNames) == 0 || adj.EventNames[0] != "NeutralEvent" {
+		t.Errorf("event name not recorded for multiplier=1.0, got %v", adj.EventNames)
+	}
+}
+
 func TestTruncateToDay(t *testing.T) {
 	input := time.Date(2025, 3, 15, 14, 30, 45, 123, time.UTC)
 	expected := time.Date(2025, 3, 15, 0, 0, 0, 0, time.UTC)

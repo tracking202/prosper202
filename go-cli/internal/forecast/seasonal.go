@@ -8,12 +8,15 @@ import (
 
 // BuildWeekdayWeights constructs SeasonalWeights from day-of-week report data.
 //
-// The input is a slice of maps, each expected to have:
-//   - "day_of_week" (string): "Monday", "Tuesday", etc.
-//   - a metric key (string): the numeric value for that day
+// The input is a slice of maps. Each row is expected to have a day identifier
+// and a metric value. Day is resolved in order of preference:
+//   - "day_name" (string): "Monday", "Tuesday", etc.  — weekpart API primary field
+//   - "day_of_week" (string): same day name format
+//   - "day_of_week" (numeric 0–6): 0=Sunday … 6=Saturday — weekpart API index
 //
 // Weights are computed as (day_value / overall_mean). A day with exactly
 // average performance gets weight 1.0. A day with 20% more gets 1.2.
+// Zero-value days are included and receive weight 0.0.
 //
 // Returns nil if no valid data is found.
 func BuildWeekdayWeights(rows []map[string]interface{}, metric string) SeasonalWeights {
@@ -32,18 +35,15 @@ func BuildWeekdayWeights(rows []map[string]interface{}, metric string) SeasonalW
 	count := 0
 
 	for _, row := range rows {
-		dayStr, ok := row["day_of_week"].(string)
+		dow, ok := resolveDayOfWeek(row, dayNames)
 		if !ok {
 			continue
 		}
-		dow, ok := dayNames[dayStr]
-		if !ok {
+		rawVal, exists := row[metric]
+		if !exists {
 			continue
 		}
-		val := extractFloat(row[metric])
-		if val == 0 {
-			continue
-		}
+		val := extractFloat(rawVal)
 		dayValues[dow] = val
 		total += val
 		count++
@@ -64,6 +64,31 @@ func BuildWeekdayWeights(rows []map[string]interface{}, metric string) SeasonalW
 	}
 
 	return weights
+}
+
+// resolveDayOfWeek extracts the day of week from a weekpart API row.
+// It tries day_name (string), then day_of_week (string), then
+// day_of_week as a numeric index (0=Sunday…6=Saturday).
+func resolveDayOfWeek(row map[string]interface{}, dayNames map[string]time.Weekday) (time.Weekday, bool) {
+	if nameStr, ok := row["day_name"].(string); ok {
+		if dow, ok := dayNames[nameStr]; ok {
+			return dow, true
+		}
+	}
+	if dayStr, ok := row["day_of_week"].(string); ok {
+		if dow, ok := dayNames[dayStr]; ok {
+			return dow, true
+		}
+		return 0, false
+	}
+	// Numeric index path: only when day_of_week exists and is not a string.
+	if raw, exists := row["day_of_week"]; exists {
+		idx := int(extractFloat(raw))
+		if idx >= 0 && idx <= 6 {
+			return time.Weekday(idx), true
+		}
+	}
+	return 0, false
 }
 
 // extractFloat tries to pull a float64 from an interface{} value,

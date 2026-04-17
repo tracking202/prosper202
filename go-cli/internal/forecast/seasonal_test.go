@@ -105,6 +105,68 @@ func TestBuildWeekdayWeights_InvalidDayName(t *testing.T) {
 	}
 }
 
+func TestBuildWeekdayWeights_NumericDayOfWeek(t *testing.T) {
+	// Weekpart API returns numeric day_of_week (0=Sunday..6=Saturday).
+	rows := []map[string]interface{}{
+		{"day_of_week": float64(1), "total_income": 120.0}, // Monday
+		{"day_of_week": float64(5), "total_income": 80.0},  // Friday
+	}
+	weights := BuildWeekdayWeights(rows, "total_income")
+	if weights == nil {
+		t.Fatal("expected non-nil weights with numeric day_of_week")
+	}
+	if len(weights) != 2 {
+		t.Errorf("expected 2 weights, got %d", len(weights))
+	}
+	// Mean = (120+80)/2 = 100.
+	if math.Abs(weights[time.Monday]-1.2) > 0.001 {
+		t.Errorf("Monday weight = %.3f, want 1.2", weights[time.Monday])
+	}
+	if math.Abs(weights[time.Friday]-0.8) > 0.001 {
+		t.Errorf("Friday weight = %.3f, want 0.8", weights[time.Friday])
+	}
+}
+
+func TestBuildWeekdayWeights_DayNameField(t *testing.T) {
+	// Weekpart API returns day_name alongside numeric day_of_week.
+	rows := []map[string]interface{}{
+		{"day_of_week": float64(1), "day_name": "Monday", "total_income": 150.0},
+		{"day_of_week": float64(3), "day_name": "Wednesday", "total_income": 50.0},
+	}
+	weights := BuildWeekdayWeights(rows, "total_income")
+	if weights == nil {
+		t.Fatal("expected non-nil weights with day_name field")
+	}
+	// Mean = (150+50)/2 = 100. Monday=1.5, Wednesday=0.5.
+	if math.Abs(weights[time.Monday]-1.5) > 0.001 {
+		t.Errorf("Monday weight = %.3f, want 1.5", weights[time.Monday])
+	}
+	if math.Abs(weights[time.Wednesday]-0.5) > 0.001 {
+		t.Errorf("Wednesday weight = %.3f, want 0.5", weights[time.Wednesday])
+	}
+}
+
+func TestBuildWeekdayWeights_ZeroValueDayIncluded(t *testing.T) {
+	// A day with zero traffic should receive weight 0.0, not be silently skipped.
+	rows := []map[string]interface{}{
+		{"day_of_week": "Monday", "total_income": 200.0},
+		{"day_of_week": "Sunday", "total_income": 0.0}, // legitimate zero-traffic day
+	}
+	weights := BuildWeekdayWeights(rows, "total_income")
+	if weights == nil {
+		t.Fatal("expected non-nil weights")
+	}
+	if len(weights) != 2 {
+		t.Errorf("expected 2 weights (zero-value day must be included), got %d", len(weights))
+	}
+	if _, ok := weights[time.Sunday]; !ok {
+		t.Error("Sunday (zero-value day) missing from weights")
+	}
+	if weights[time.Sunday] != 0.0 {
+		t.Errorf("Sunday weight = %.3f, want 0.0", weights[time.Sunday])
+	}
+}
+
 func TestExtractFloat(t *testing.T) {
 	tests := []struct {
 		input    interface{}

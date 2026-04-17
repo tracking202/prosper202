@@ -31,7 +31,15 @@ try {
     $statements = array_filter(
         array_map(trim(...), explode(';', $sql)),
         function ($stmt) {
-            return !empty($stmt) && !preg_match('/^\s*--/', (string) $stmt);
+            if (empty($stmt)) {
+                return false;
+            }
+            // Only skip chunks that are pure comments — strip all comment lines
+            // and check whether any actual SQL remains. Chunks that START with a
+            // comment but also contain SQL (e.g. the CREATE TABLE block) must
+            // not be dropped.
+            $withoutComments = preg_replace('/^\s*--[^\n]*/m', '', $stmt);
+            return trim($withoutComments) !== '';
         }
     );
 

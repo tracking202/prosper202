@@ -165,8 +165,13 @@ abstract class Controller
     {
     }
 
-    protected function beforeUpdate(int|string $id, array $payload): void
+    /**
+     * Called before UPDATE.  Return extra columns to include in the UPDATE SET.
+     * @return array<string, array{type: string, value: mixed}>
+     */
+    protected function beforeUpdate(int|string $id, array $payload): array
     {
+        return [];
     }
 
     protected function beforeDelete(int|string $id): void
@@ -391,7 +396,7 @@ abstract class Controller
         $currentData = (array)$current['data'];
         $this->assertIfMatchSatisfied($currentData);
         $clean = $this->validatePayload($payload);
-        $this->beforeUpdate($id, $clean);
+        $extras = $this->beforeUpdate($id, $clean);
 
         $sets = [];
         $binds = [];
@@ -407,6 +412,12 @@ abstract class Controller
                 $binds[] = $clean[$col];
                 $types .= $def['type'];
             }
+        }
+
+        foreach ($extras as $col => $info) {
+            $sets[] = "$col = ?";
+            $binds[] = $info['value'];
+            $types .= $info['type'];
         }
 
         if (empty($sets)) {

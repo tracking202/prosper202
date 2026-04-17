@@ -252,30 +252,116 @@ func ApplyEventAdjustments(predictions []Prediction, events []Event, impacts map
 }
 
 // FutureEvents filters events to those whose influence window overlaps with
-// the forecast horizon [start, end].
+// the forecast horizon [start, end], expanding recurring events as needed.
 func FutureEvents(events []Event, start, end time.Time) []Event {
 	var future []Event
 	for _, e := range events {
-		w := e.Window()
-		// Window overlaps if it doesn't end before start and doesn't start after end.
-		if !w.End.Before(start) && !w.Start.After(end) {
-			future = append(future, e)
+		for _, occ := range expandRecurring(e, start, end) {
+			w := occ.Window()
+			if !w.End.Before(start) && !w.Start.After(end) {
+				future = append(future, occ)
+			}
 		}
 	}
 	return future
 }
 
 // PastEvents filters events to those whose core date falls within the
-// training data time range [start, end].
+// training data time range [start, end], expanding recurring events as needed.
 func PastEvents(events []Event, start, end time.Time) []Event {
 	var past []Event
 	for _, e := range events {
-		day := truncateToDay(e.Date)
-		if !day.Before(start) && !day.After(end) {
-			past = append(past, e)
+		for _, occ := range expandRecurring(e, start, end) {
+			day := truncateToDay(occ.Date)
+			if !day.Before(start) && !day.After(end) {
+				past = append(past, occ)
+			}
 		}
 	}
 	return past
+}
+
+// expandRecurring returns all instances of e whose windows could overlap [start, end].
+// For "none", "custom", and unknown recurrences, returns just the original event.
+// For "yearly" and "monthly", generates all instances within the range.
+func expandRecurring(e Event, start, end time.Time) []Event {
+	if e.Recurrence == "" || e.Recurrence == "none" || e.Recurrence == "custom" {
+		return []Event{e}
+	}
+
+	// Step backward from the stored date to find the earliest instance
+	// whose window could still overlap [start, end].
+	cur := e
+	for i := 0; i < 500; i++ {
+		prev := retreatEvent(cur, e.Recurrence)
+		if prev.Date.Equal(cur.Date) {
+			break // unknown recurrence type — no progress
+		}
+		if prev.Window().End.Before(start) {
+			break // stepped too far back
+		}
+		cur = prev
+	}
+
+	// Collect all instances whose windows overlap [start, end].
+	var instances []Event
+	for i := 0; i < 500; i++ {
+		w := cur.Window()
+		if w.Start.After(end) {
+			break
+		}
+		if !w.End.Before(start) {
+			instances = append(instances, cur)
+		}
+		next := advanceEvent(cur, e.Recurrence)
+		if next.Date.Equal(cur.Date) {
+			break // no progress
+		}
+		cur = next
+	}
+
+	if len(instances) == 0 {
+		return []Event{e}
+	}
+	return instances
+}
+
+// advanceEvent returns a copy of e with Date (and EndDate, if set) advanced
+// by one recurrence period.
+func advanceEvent(e Event, recurrence string) Event {
+	result := e
+	switch recurrence {
+	case "yearly":
+		result.Date = e.Date.AddDate(1, 0, 0)
+		if !e.EndDate.IsZero() {
+			result.EndDate = e.EndDate.AddDate(1, 0, 0)
+		}
+	case "monthly":
+		result.Date = e.Date.AddDate(0, 1, 0)
+		if !e.EndDate.IsZero() {
+			result.EndDate = e.EndDate.AddDate(0, 1, 0)
+		}
+	}
+	return result
+}
+
+// retreatEvent returns a copy of e with Date (and EndDate, if set) retreated
+// by one recurrence period.
+func retreatEvent(e Event, recurrence string) Event {
+	result := e
+	switch recurrence {
+	case "yearly":
+		result.Date = e.Date.AddDate(-1, 0, 0)
+		if !e.EndDate.IsZero() {
+			result.EndDate = e.EndDate.AddDate(-1, 0, 0)
+		}
+	case "monthly":
+		result.Date = e.Date.AddDate(0, -1, 0)
+		if !e.EndDate.IsZero() {
+			result.EndDate = e.EndDate.AddDate(0, -1, 0)
+		}
+	}
+	return result
 }
 
 // buildBaselinePredictions creates a day-indexed map of what the baseline model
@@ -380,8 +466,10 @@ func blendZone(zone string, ratios []float64, hintMultiplier float64, hasHint bo
 
 // applyZoneMultiplier sets the multiplier for all days in [from, to],
 // combining multiplicatively with any existing adjustments.
+// The event name is always recorded, even when multiplier == 1.0, to
+// preserve complete event attribution metadata.
 func applyZoneMultiplier(adjustments map[string]EventAdjustment, from, to time.Time, multiplier float64, eventName string) {
-	if from.After(to) || multiplier == 1.0 {
+	if from.After(to) {
 		return
 	}
 
@@ -396,7 +484,11 @@ func applyZoneMultiplier(adjustments map[string]EventAdjustment, from, to time.T
 			}
 		}
 		// Multiplicative combination of overlapping event effects.
-		adj.Multiplier *= multiplier
+		// Skip the multiply when multiplier is exactly 1.0 to avoid
+		// floating-point drift, but always record the event name.
+		if multiplier != 1.0 {
+			adj.Multiplier *= multiplier
+		}
 		adj.EventNames = append(adj.EventNames, eventName)
 		adjustments[key] = adj
 		day = day.AddDate(0, 0, 1)

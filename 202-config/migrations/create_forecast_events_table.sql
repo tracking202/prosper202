@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS `202_forecast_events` (
   KEY `user_recurrence` (`user_id`, `recurrence`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Calendar events for forecast adjustment (holidays, promos, anomalies)';
 
--- Seed US federal holidays for 2024-2027 as default events.
+-- Seed US federal holidays for 2025-2027 as default events.
 -- Users can delete these or add their own. Recurring yearly holidays use
 -- recurrence='yearly'. Variable-date holidays (Thanksgiving, MLK Day, etc.)
 -- use recurrence='custom' with each occurrence stored as its own row.
