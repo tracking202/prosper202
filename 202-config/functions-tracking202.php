@@ -3801,4 +3801,78 @@ function getSecureStatus(): bool
 
     return $secure;
 }
+
+/**
+ * Generate the inbound JavaScript loader snippet for landing page tracking.
+ *
+ * @param string $landing_page_id_public The public landing page ID
+ * @return string The complete <script> tag for embedding on landing pages
+ */
+function generateTrackingLoaderSnippet(string $landing_page_id_public): string
+{
+    return '<script>
+	(function(d, s) {
+		var upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
+			if (d.getElementById(id)) {return;}
+			var if202 = d.createElement("script");if202.src = url;if202.async = true;if202.id = id;
+			upxf.parentNode.insertBefore(if202, upxf);
+		};
+		var t = new URLSearchParams(window.location.search).get("t202id") || "";
+		load("//' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/landing.php?lpip=' . $landing_page_id_public . '&t202id=" + encodeURIComponent(t), "upxif");
+	}(document, "script"));
+	</script>';
+}
+
+/**
+ * Return the list of dynamic content segment definitions.
+ * Each entry maps a t202 element name to its human-readable description.
+ * This is the single source of truth used by both the help text renderer
+ * and the tracking script's t202Data() function.
+ *
+ * @return array<string, string> Element name => description
+ */
+function getDynamicContentSegments(): array
+{
+    return [
+        't202Country'      => "Visitor's Country",
+        't202CountryCode'  => "Visitor's Country Code",
+        't202Region'       => "Visitor's Region/State",
+        't202City'         => "Visitor's City",
+        't202Postal'       => "Visitor's Postal/Zip Code",
+        't202Browser'      => "Visitor's Browser",
+        't202OS'           => "Visitor's Operating System",
+        't202Device'       => "Visitor's Device Type",
+        't202ISP'          => "Visitor's ISP",
+        't202kw'           => 'Value passed in t202kw',
+        't202c1'           => 'Value passed in C1',
+        't202c2'           => 'Value passed in C2',
+        't202c3'           => 'Value passed in C3',
+        't202c4'           => 'Value passed in C4',
+        't202utm_source'   => 'Value passed in utm_source',
+        't202utm_medium'   => 'Value passed in utm_medium',
+        't202utm_term'     => 'Value passed in utm_term',
+        't202utm_content'  => 'Value passed in utm_content',
+        't202utm_campaign' => 'Value passed in utm_campaign',
+    ];
+}
+
+/**
+ * Render the Dynamic Content Segment help text shown on landing page code setup pages.
+ * Generated from getDynamicContentSegments() so the help text stays in sync
+ * with the actual elements supported by the tracking script.
+ */
+function renderDynamicContentSegmentHelp(): void
+{
+    $segments = getDynamicContentSegments();
+    $listItems = '';
+    foreach ($segments as $name => $description) {
+        $listItems .= '<li>' . htmlspecialchars($description) . ' - <strong>' . htmlspecialchars($name) . '</strong></li>';
+    }
+
+    print('<br/><strong><small>Dynamic Content Segment</strong></small><br/>
+		   <span class="infotext">Currently Dynamic Content Segments can dynamically display the following information on your landing pages:
+		   <ul style="font-size: 12px;">' . $listItems . '</ul>
+		   So how easy is it to display the visitor\'s country on your landing page? Here\'s the html for it:<br/>
+		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
+}
 ?>
