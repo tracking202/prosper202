@@ -13,6 +13,8 @@ Stop guessing which campaigns actually drive revenue. Prosper202 now tracks ever
 - **Attribution dashboard** — A dedicated view with KPI cards for Revenue, Conversions, Clicks, and ROI, filterable by campaign or landing page.
 - **Snapshot exports** — Export attribution data as CSV or Excel on demand, with optional webhook callbacks so your downstream systems stay in sync.
 - **Anomaly detection** — Automatically flags unusual attribution patterns so you catch issues before they cost you money.
+- **Background rebuilds and backfills** — Regenerate conversion journeys and attribution snapshots over any historical range without blocking your tracking.
+- **Automatic journey purging** — A cron job cleans up disabled attribution journeys so your database stays lean.
 
 ---
 
@@ -31,9 +33,16 @@ A purpose-built command-line tool with 20+ commands:
 - **`p202 report:timeseries`** — Hourly or daily performance trends.
 - **`p202 report:daypart` / `report:weekpart`** — Find your highest-converting hours and days.
 - **`p202 attribution:model`** — Full CRUD for attribution models.
-- **`p202 sync:*`** — Multi-profile synchronization across installations.
+- **`p202 analytics`** — Friendly shorthand for breakdowns with `--group-by` dimensions and `--sort` metrics.
+- **`p202 export` / `p202 import`** — Full JSON backup and restore of campaigns, rules, and settings across installations, with dry-run mode and error recovery.
+- **`p202 sync:*`** — Multi-server synchronization with diff previews, selective syncs, re-sync of failed items, and full audit history.
 
-Output in JSON, CSV, or human-readable tables. Manage multiple Prosper202 instances with named profiles.
+### CLI power features
+
+- **Named profiles with tags** — Manage multiple installations (e.g., `env:prod`, `env:staging`) from one machine, with automatic migration from legacy configs.
+- **Reusable defaults** — Save frequently-used flags (date ranges, filters, entity IDs) per profile to eliminate repetitive typing.
+- **Structured telemetry** — Set `P202_METRICS=1` to emit JSON performance metrics per operation for observability pipelines.
+- **Flexible output** — JSON, CSV, or human-readable tables on any command.
 
 ---
 
@@ -49,6 +58,18 @@ The result: monitor your campaigns in real time without taxing your server or yo
 
 ---
 
+## Automation & Background Jobs
+
+A new generation of cron jobs keeps Prosper202 running smoothly without manual intervention.
+
+- **Attribution export worker** — Pending export jobs process automatically in the background, with webhook delivery and retry logic.
+- **Data engine job processor** — Long-running analytics and reporting computations run as tracked background jobs.
+- **Daily summary email** — Opt-in performance digest delivered to your inbox every morning.
+- **Affiliate network sync (DNI)** — Scheduled background sync with third-party affiliate networks.
+- **Cron health endpoint** — An authenticated `/202-cronjobs/health.php` endpoint lets you monitor job execution from your own uptime tools.
+
+---
+
 ## Centralized Dashboard
 
 Your Prosper202 homepage now pulls in curated content — alerts, community posts, upcoming meetups, and sponsor highlights — from the Tracking202 network.
@@ -56,6 +77,18 @@ Your Prosper202 homepage now pulls in curated content — alerts, community post
 - **Local caching** — Content syncs in the background and serves from your local database, so page loads stay fast.
 - **Automatic synchronization** — A cron job keeps your dashboard fresh without manual intervention.
 - **Resilient fetching** — Exponential-backoff retries and graceful fallbacks mean your dashboard never breaks when the upstream API is slow.
+
+---
+
+## Data Portability & Multi-Server Sync
+
+Move configurations between staging, production, and backup installations with confidence.
+
+- **Full JSON export/import** — Back up or clone an installation's campaigns, rules, and settings with one command.
+- **Dry-run previews** — See exactly what will change before committing any sync.
+- **Diff across servers** — Compare configurations between instances side-by-side.
+- **Async job queue** — Long-running sync operations run server-side with full audit logging and retry for failed items.
+- **Webhook callbacks** — External systems get notified when exports and syncs complete.
 
 ---
 
@@ -67,6 +100,7 @@ Multiple layers of security improvements protect your data and your installation
 - **Installer lockdown** — The installer is disabled after setup to prevent privilege escalation on shared hosting.
 - **Secure auto-update pipeline** — Package downloads and extractions are validated to prevent tampering.
 - **API input hardening** — Attribution endpoints block `user_id` override attempts from JSON payloads.
+- **Static analysis guardrails** — Custom PHPStan rules catch unchecked database calls, insecure password handling, and silent JSON failures before they ship.
 
 ---
 
@@ -81,6 +115,8 @@ The entire codebase has been modernized for PHP 8.0–8.3 with Rector, including
 - **MySQL repository layer** — Database access is now organized through a clean repository pattern with type-safe prepared statements.
 - **Centralized version management** — One source of truth for version info across the app.
 - **Intercom removed** — No more third-party tracking scripts on your installation.
-- **Comprehensive test coverage** — PHPUnit tests for core components.
+- **Comprehensive PHPUnit test suite** — Unit and integration tests for attribution, API, and core tracking components.
+- **Continuous integration** — GitHub Actions workflows run tests and static analysis on every change.
 - **Modular installer** — The setup flow has been rewritten for zero-friction onboarding.
 - **Nginx + Apache support** — Deploy on whichever web server you prefer.
+- **Business Source License 1.1** — Updated from GPL-2.0 to BSL 1.1.
