@@ -8,7 +8,7 @@ $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
-$user_results = $db->query($user_sql);
+$user_results = $db->query($user_sql) or record_mysql_error($user_sql);
 $user_row = $user_results->fetch_assoc();
 
 if (!empty($user_row['url'])) 
@@ -17,6 +17,7 @@ if (!empty($user_row['url']))
 // Initialize variables
 $error = [];
 $success = false;
+$campaign_slack = '';
 
 //make sure a landing page is selected
 	if (empty($_POST['landing_page_id'])) { $error['landing_page_id'] = '<div class="error"><small><span class="fui-alert"></span>You have not selected a landing page to use.</small></div>';  }	

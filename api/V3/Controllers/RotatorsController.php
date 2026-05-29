@@ -406,6 +406,7 @@ class RotatorsController
 
     private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
+        // @phpstan-ignore-next-line -- this IS the ref-safe wrapper; no Connection in scope
         if (!$stmt->bind_param($types, ...$values)) {
             $stmt->close();
             throw new DatabaseException('Bind failed');
@@ -414,6 +415,7 @@ class RotatorsController
 
     private function execute(\mysqli_stmt $stmt, string $message): void
     {
+        // @phpstan-ignore-next-line -- this IS the checked-execution wrapper; no Connection in scope
         if (!$stmt->execute()) {
             $stmt->close();
             throw new DatabaseException($message);

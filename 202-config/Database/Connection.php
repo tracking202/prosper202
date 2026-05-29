@@ -123,6 +123,7 @@ final class Connection
      */
     public function execute(object $stmt): void
     {
+        // @phpstan-ignore-next-line -- this IS the centralized execute wrapper; self-routing would recurse
         if (!$stmt->execute()) {
             try {
                 $error = $stmt->error;

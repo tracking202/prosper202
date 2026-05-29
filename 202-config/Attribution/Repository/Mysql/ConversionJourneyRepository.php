@@ -15,7 +15,7 @@ use RuntimeException;
  */
 final class ConversionJourneyRepository implements JourneyMaintenanceRepositoryInterface
 {
-    public const DEFAULT_LOOKBACK_WINDOW = 30 * 24 * 60 * 60; // 30 days
+    public const int DEFAULT_LOOKBACK_WINDOW = 30 * 24 * 60 * 60; // 30 days
     public const int MAX_TOUCHES = 25;
 
     private Connection $conn;

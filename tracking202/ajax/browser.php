@@ -18,7 +18,7 @@ AUTH::require_user();
             $html['browser_name'] = htmlentities((string)($browser_row['browser_name'] ?? ''), ENT_QUOTES, 'UTF-8');
             $html['browser_id'] = htmlentities((string)($browser_row['browser_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
-            if ($_POST['browser_id'] == $browser_row['browser_id']) {
+            if (isset($_POST['browser_id']) && $_POST['browser_id'] == $browser_row['browser_id']) {
                 $selected = 'selected=""';   
             } else {
                 $selected = '';  

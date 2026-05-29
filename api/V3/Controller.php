@@ -673,6 +673,7 @@ abstract class Controller
             return false;
         }
         $this->bind($stmt, 's', $column);
+        // @phpstan-ignore-next-line mysqli_stmt::execute checked here; graceful fallback (returns false) on schema probe, must not throw via Connection::execute
         if (!$stmt->execute()) {
             $stmt->close();
             return false;
@@ -734,6 +735,7 @@ abstract class Controller
 
     protected function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
+        // @phpstan-ignore-next-line this IS the ref-safe bind wrapper (analog of Connection::bind); no $this->conn exists, cannot self-route
         if (!$stmt->bind_param($types, ...$values)) {
             $stmt->close();
             throw new DatabaseException('Bind failed');
@@ -742,6 +744,7 @@ abstract class Controller
 
     protected function execute(\mysqli_stmt $stmt, string $message): void
     {
+        // @phpstan-ignore-next-line this IS the checked-execute wrapper (analog of Connection::execute); no $this->conn exists, cannot self-route
         if (!$stmt->execute()) {
             $stmt->close();
             throw new DatabaseException($message);

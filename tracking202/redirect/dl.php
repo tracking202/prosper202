@@ -261,7 +261,7 @@ $mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string)($tracker_row[
 if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
 	$_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
 	if (is_numeric($_GET['t202b'])) {
-		$bid = number_format($_GET['t202b'], 5, '.', '');
+		$bid = number_format((float)$_GET['t202b'], 5, '.', '');
 		$mysql['click_cpc'] = $db->real_escape_string((string)$bid);
 	} else {
 		$mysql['click_cpc'] = $db->real_escape_string((string)($tracker_row['click_cpc'] ?? ''));
@@ -286,6 +286,7 @@ if (!empty($_SERVER['HTTP_REFERER'])) {
 	@parse_str($referer_url_query, $referer_query);
 }
 
+$keyword = '';
 switch ($tracker_row['user_keyword_searched_or_bidded']) {
 
 	case "bidded":

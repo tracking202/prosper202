@@ -318,6 +318,7 @@ class UsersController
 
     private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
+        // @phpstan-ignore-next-line prosper202.directStmtCall -- local checked bind wrapper
         if (!$stmt->bind_param($types, ...$values)) {
             $stmt->close();
             throw new DatabaseException('Bind failed');
@@ -326,6 +327,7 @@ class UsersController
 
     private function execute(\mysqli_stmt $stmt, string $message): void
     {
+        // @phpstan-ignore-next-line prosper202.directStmtCall -- local checked execute wrapper
         if (!$stmt->execute()) {
             $stmt->close();
             throw new DatabaseException($message);

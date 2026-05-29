@@ -29,6 +29,7 @@ if (isset($_COOKIE['user_api'])) {
 	$html['user_api'] = htmlentities((string) $_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
 } else {
 	header("Location: " . get_absolute_url() . "202-config/get_apikey.php");
+	exit;
 }
 
 //check to see if this is already installed, if so don't do anything

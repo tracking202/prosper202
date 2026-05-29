@@ -529,6 +529,7 @@ class ReportsController
 
     private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
+        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized ref-safe bind wrapper (no Connection instance; routing through $this->conn would self-recurse)
         if (!$stmt->bind_param($types, ...$values)) {
             $stmt->close();
             throw new DatabaseException('Bind failed');
@@ -537,6 +538,7 @@ class ReportsController
 
     private function execute(\mysqli_stmt $stmt, string $message): void
     {
+        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized checked-execute wrapper (no Connection instance; routing through $this->conn would self-recurse)
         if (!$stmt->execute()) {
             $stmt->close();
             throw new DatabaseException($message);

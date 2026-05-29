@@ -25,12 +25,13 @@ AUTH::require_user();
 			<select class="form-control input-sm" id="text_ad_id" name="text_ad_id" onchange="load_ad_preview(this.value);">					
 			<option value="0"> -- </option> <?php
 		
+				$posted_text_ad_id = $_POST['text_ad_id'] ?? '';
 				while ($text_ad_row = $text_ad_result->fetch_array(MYSQLI_ASSOC)) {
-		
+
 					$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 					$html['text_ad_name'] = htmlentities((string)($text_ad_row['text_ad_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		
-					if ($_POST['text_ad_id'] == $text_ad_row['text_ad_id']) {
+
+					if ((string)$posted_text_ad_id === (string)$text_ad_row['text_ad_id']) {
                         $selected = 'selected=""';   
                     } else {
                         $selected = '';  

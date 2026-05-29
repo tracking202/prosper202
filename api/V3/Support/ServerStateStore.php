@@ -181,7 +181,7 @@ class ServerStateStore
             return null;
         }
         $job = $this->readJsonFile($path, []);
-        if (!is_array($job) || empty($job)) {
+        if (empty($job)) {
             return null;
         }
 
@@ -374,9 +374,6 @@ class ServerStateStore
                 continue;
             }
             $job = $this->readJsonFile($path, []);
-            if (!is_array($job)) {
-                continue;
-            }
             if (empty($job['job_id'])) {
                 continue;
             }

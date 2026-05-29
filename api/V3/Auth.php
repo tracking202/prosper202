@@ -217,6 +217,7 @@ final readonly class Auth
 
     private static function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
+        // @phpstan-ignore-next-line Auth is its own checked bind/execute wrapper; no Connection in scope
         if (!$stmt->bind_param($types, ...$values)) {
             throw new AuthException('Authentication unavailable', 500);
         }
@@ -224,6 +225,7 @@ final readonly class Auth
 
     private static function execute(\mysqli_stmt $stmt): bool
     {
+        // @phpstan-ignore-next-line Auth is its own checked bind/execute wrapper; no Connection in scope
         return $stmt->execute();
     }
 }

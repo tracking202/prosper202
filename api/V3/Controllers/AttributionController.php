@@ -280,6 +280,7 @@ class AttributionController
 
     private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
+        // @phpstan-ignore-next-line this IS the ref-safe bind wrapper (analog of Connection::bind); class has no $this->conn, cannot self-route
         if (!$stmt->bind_param($types, ...$values)) {
             $stmt->close();
             throw new DatabaseException('Bind failed');
@@ -288,6 +289,7 @@ class AttributionController
 
     private function execute(\mysqli_stmt $stmt, string $message): void
     {
+        // @phpstan-ignore-next-line this IS the checked-execute wrapper (analog of Connection::execute); class has no $this->conn, cannot self-route
         if (!$stmt->execute()) {
             $stmt->close();
             throw new DatabaseException($message);

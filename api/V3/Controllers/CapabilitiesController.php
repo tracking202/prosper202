@@ -93,6 +93,7 @@ class CapabilitiesController
             return 'unknown';
         }
 
+        // @phpstan-ignore-next-line capability probe; execute is return-checked with graceful 'unknown' fallback, no Connection in scope
         if (!$stmt->execute()) {
             $stmt->close();
             return 'unknown';

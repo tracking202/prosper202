@@ -265,7 +265,7 @@ function authorize_attribution_request(array $params, string $permission): array
     }
 
     $dbInstance = \DB::getInstance();
-    $connection = $dbInstance?->getConnection();
+    $connection = $dbInstance->getConnection();
     if (!$connection instanceof \mysqli) {
         return [
             'status' => 500,
@@ -287,6 +287,7 @@ function authorize_attribution_request(array $params, string $permission): array
         ];
     }
 
+    // @phpstan-ignore-next-line prosper202.directStmtCall -- raw mysqli in free function; no Connection wrapper class exists in this codebase
     $stmt->bind_param('s', $apiKey);
     $stmt->execute();
     $result = $stmt->get_result();

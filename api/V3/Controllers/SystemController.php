@@ -257,6 +257,7 @@ class SystemController
 
     private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
+        // @phpstan-ignore-next-line -- local ref-safe wrapper
         if (!$stmt->bind_param($types, ...$values)) {
             $stmt->close();
             throw new DatabaseException('Bind failed');
@@ -265,6 +266,7 @@ class SystemController
 
     private function execute(\mysqli_stmt $stmt, string $message): void
     {
+        // @phpstan-ignore-next-line -- local checked-execution wrapper
         if (!$stmt->execute()) {
             $stmt->close();
             throw new DatabaseException($message);
