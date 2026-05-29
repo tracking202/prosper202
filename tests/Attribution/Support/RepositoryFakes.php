@@ -9,9 +9,10 @@ use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
-use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
-use Prosper202\Attribution\ExportJob;
-use Prosper202\Attribution\ExportStatus;
+use Prosper202\Attribution\Export\ExportFormat;
+use Prosper202\Attribution\Export\ExportJob;
+use Prosper202\Attribution\Export\ExportStatus;
+use Prosper202\Attribution\Repository\ExportRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Snapshot;
 use Prosper202\Attribution\Touchpoint;
@@ -36,7 +37,7 @@ final class InMemoryModelRepository implements ModelRepositoryInterface
                 name: 'Test Position Model',
                 slug: 'test-position-model',
                 type: ModelType::POSITION_BASED,
-                weightingConfig: ['first' => 0.3, 'last' => 0.4],
+                weightingConfig: ['first_touch_weight' => 0.3, 'last_touch_weight' => 0.4],
                 isActive: true,
                 isDefault: true,
                 createdAt: $now,
@@ -300,7 +301,16 @@ final class InMemoryTouchpointRepository implements TouchpointRepositoryInterfac
     }
 }
 
-final class InMemoryExportRepository implements ExportJobRepositoryInterface
+/**
+ * In-memory fake for {@see ExportRepositoryInterface}, backed by the mutable
+ * Prosper202\Attribution\Export\ExportJob value object that ExportProcessor
+ * operates on. Job objects are stored by reference so that in-place mutations
+ * performed by the processor (markCompleted/markFailed) are reflected once the
+ * processor calls update(), mirroring the behaviour of MysqlExportRepository.
+ *
+ * Used exclusively by ExportProcessorTest.
+ */
+final class InMemoryExportRepository implements ExportRepositoryInterface
 {
     /**
      * @var array<int, ExportJob>
@@ -309,7 +319,7 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
 
     private int $nextId = 1;
 
-    /** @var callable|null */
+    /** @var callable():int|null */
     private $clock;
 
     /**
@@ -322,179 +332,79 @@ final class InMemoryExportRepository implements ExportJobRepositoryInterface
 
     public function create(ExportJob $job): ExportJob
     {
-        $id = $this->nextId++;
-        $created = new ExportJob(
-            exportId: $id,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: $job->status,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt
-        );
-        $this->jobs[$id] = $created;
+        $job->exportId = $this->nextId++;
+        $this->jobs[$job->exportId] = $job;
 
-        return clone $created;
+        return $job;
     }
 
-    public function findById(int $jobId): ?ExportJob
+    public function update(ExportJob $job): ExportJob
     {
-        return isset($this->jobs[$jobId]) ? clone $this->jobs[$jobId] : null;
+        if ($job->exportId === null) {
+            return $job;
+        }
+
+        $this->jobs[$job->exportId] = $job;
+
+        return $job;
+    }
+
+    public function findById(int $exportId): ?ExportJob
+    {
+        return $this->jobs[$exportId] ?? null;
     }
 
     /**
      * @return ExportJob[]
      */
-    public function findPending(int $limit = 10): array
+    public function findForUser(int $userId, ?int $modelId = null, int $limit = 25): array
     {
+        $limit = max(1, $limit);
+
+        $filtered = array_filter(
+            $this->jobs,
+            static function (ExportJob $job) use ($userId, $modelId): bool {
+                if ($job->userId !== $userId) {
+                    return false;
+                }
+
+                return $modelId === null || $job->modelId === $modelId;
+            }
+        );
+
+        usort($filtered, static fn (ExportJob $a, ExportJob $b): int => $b->createdAt <=> $a->createdAt);
+
+        return array_slice(array_values($filtered), 0, $limit);
+    }
+
+    /**
+     * Claims a batch of pending jobs and marks them as processing, returning the
+     * stored job instances so subsequent mutations and update() calls persist.
+     *
+     * @return ExportJob[]
+     */
+    public function claimPending(int $limit = 10): array
+    {
+        $limit = max(1, $limit);
+
         $pending = array_filter(
             $this->jobs,
             static fn (ExportJob $job): bool => $job->status === ExportStatus::PENDING
         );
 
-        usort($pending, static fn (ExportJob $a, ExportJob $b): int => ($a->createdAt ?? 0) <=> ($b->createdAt ?? 0));
-        $batch = array_slice($pending, 0, max(1, $limit));
+        usort($pending, static fn (ExportJob $a, ExportJob $b): int => $a->createdAt <=> $b->createdAt);
+        $batch = array_slice($pending, 0, $limit);
 
-        return array_map(static fn (ExportJob $job): ExportJob => clone $job, $batch);
-    }
-
-    public function markProcessing(int $jobId, int $timestamp): void
-    {
-        if (!isset($this->jobs[$jobId])) {
-            return;
+        $now = $this->now();
+        foreach ($batch as $job) {
+            $job->markProcessing($now);
         }
 
-        $job = $this->jobs[$jobId];
-        $this->jobs[$jobId] = new ExportJob(
-            exportId: $job->exportId,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: ExportStatus::PROCESSING,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt,
-            processedAt: $timestamp
-        );
-    }
-
-    public function markCompleted(int $jobId, string $filePath, int $rowsExported, int $timestamp): void
-    {
-        if (!isset($this->jobs[$jobId])) {
-            return;
-        }
-
-        $job = $this->jobs[$jobId];
-        $this->jobs[$jobId] = new ExportJob(
-            exportId: $job->exportId,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: ExportStatus::COMPLETED,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt,
-            processedAt: $job->processedAt,
-            completedAt: $timestamp,
-            filePath: $filePath,
-            rowsExported: $rowsExported
-        );
-    }
-
-    public function markFailed(int $jobId, string $error, int $timestamp): void
-    {
-        if (!isset($this->jobs[$jobId])) {
-            return;
-        }
-
-        $job = $this->jobs[$jobId];
-        $this->jobs[$jobId] = new ExportJob(
-            exportId: $job->exportId,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: ExportStatus::FAILED,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt,
-            processedAt: $job->processedAt,
-            failedAt: $timestamp,
-            errorMessage: $error
-        );
-    }
-
-    public function recordWebhookAttempt(int $jobId, int $timestamp, ?int $statusCode, ?string $responseBody): void
-    {
-        if (!isset($this->jobs[$jobId])) {
-            return;
-        }
-
-        $job = $this->jobs[$jobId];
-        $this->jobs[$jobId] = new ExportJob(
-            exportId: $job->exportId,
-            userId: $job->userId,
-            modelId: $job->modelId,
-            scopeType: $job->scopeType,
-            scopeId: $job->scopeId,
-            startHour: $job->startHour,
-            endHour: $job->endHour,
-            format: $job->format,
-            status: $job->status,
-            webhook: $job->webhook,
-            createdAt: $job->createdAt,
-            processedAt: $job->processedAt,
-            completedAt: $job->completedAt,
-            failedAt: $job->failedAt,
-            filePath: $job->filePath,
-            rowsExported: $job->rowsExported,
-            errorMessage: $job->errorMessage,
-            webhookAttemptedAt: $timestamp,
-            webhookStatusCode: $statusCode,
-            webhookResponseBody: $responseBody
-        );
-    }
-
-    /**
-     * @return ExportJob[]
-     */
-    public function listRecentForModel(int $userId, int $modelId, int $limit = 20): array
-    {
-        $filtered = array_filter(
-            $this->jobs,
-            static function (ExportJob $job) use ($userId, $modelId): bool {
-                return $job->userId === $userId && $job->modelId === $modelId;
-            }
-        );
-
-        usort($filtered, static fn (ExportJob $a, ExportJob $b): int => ($b->createdAt ?? 0) <=> ($a->createdAt ?? 0));
-        $slice = array_slice($filtered, 0, max(1, $limit));
-
-        return array_map(static fn (ExportJob $job): ExportJob => clone $job, $slice);
-    }
-
-    /**
-     * @return array<int, ExportJob>
-     */
-    public function all(): array
-    {
-        return array_map(static fn (ExportJob $job): ExportJob => clone $job, $this->jobs);
+        return $batch;
     }
 
     private function now(): int
     {
-        return $this->clock ? ($this->clock)() : time();
+        return $this->clock !== null ? ($this->clock)() : time();
     }
 }
