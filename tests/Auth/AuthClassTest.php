@@ -38,7 +38,6 @@ final class AuthClassTest extends TestCase
         // that calls logged_in() leaves the flag set and suppresses the refresh
         // in later tests within the same process.
         $reflection = new \ReflectionProperty(AUTH::class, 'sessionHeartbeatRefreshed');
-        $reflection->setAccessible(true);
         $reflection->setValue(null, false);
     }
 
