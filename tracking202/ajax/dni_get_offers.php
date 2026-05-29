@@ -18,7 +18,7 @@ if (isset($_GET['dni']) && isset($_GET['all_offers'])) {
 		$dni = $results->fetch_assoc();
 		
 		$sort_by = ['column' => '', 'by' => ''];
-		if (!empty($sort)) {
+		if (!empty($sort) && is_array($sort)) {
 			foreach ($sort as $key => $value) {
 				if ($sort[$key] == 0) {
 					$sort_by['by'] = 'ASC';
@@ -49,7 +49,7 @@ if (isset($_GET['dni']) && isset($_GET['all_offers'])) {
 		}
 
 		$filter_by = [];
-		if (!empty($filter)) {
+		if (!empty($filter) && is_array($filter)) {
 
 			foreach ($filter as $key => $value) {
 				if ($key == 0) {
@@ -116,5 +116,3 @@ if (isset($_GET['dni']) && isset($_GET['offer_id']) && isset($_GET['setup_offer'
 		echo json_encode($data);
 	}
 }
-
-?>

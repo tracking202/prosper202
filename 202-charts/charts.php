@@ -131,4 +131,3 @@ function SendChartData( $chart=[] ){
 	return $xml;
 }
 //====================================
-?>

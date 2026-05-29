@@ -32,5 +32,3 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		echo '<span class="fui-alert"></span> An unexpected error occurred. Try again!';
 	}
 }
-
-?>

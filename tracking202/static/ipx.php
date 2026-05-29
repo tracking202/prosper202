@@ -36,5 +36,3 @@ $ipx_id = $db->insert_id;
 
 setcookie("p202_ipx", (string) $ipx_id, ['expires' => $time + (10 * 365 * 24 * 60 * 60), 'path' => '/', 'domain' => (string) $_SERVER['SERVER_NAME']]);
 echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
-
-?>
