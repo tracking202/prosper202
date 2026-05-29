@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 function getAuth($db, $variables): mixed {
-	$mysql['api_key'] = $db->real_escape_string($variables['apikey']);
+	$mysql['api_key'] = $db->real_escape_string((string) ($variables['apikey'] ?? ''));
 	$key_sql = "SELECT 	*
 				FROM   	`202_api_keys` 
 				WHERE  	`api_key`='".$mysql['api_key']."'";
@@ -48,7 +48,7 @@ function listCategories($db,$user): void {
     $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
     $aff_network_result = $db->query($aff_network_sql) or die();
   //  echo $aff_network_sql;
-    while ($aff_network_row = $aff_network_result->fetch_array(MYSQL_ASSOC)) {
+    while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
     
         $html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
         $html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -122,9 +122,6 @@ function runReports($db, $vars, $user, $timezone): array {
 
 			case 'countries':
 				return reportQuery($db, "locations_country", "country_id", "country_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-
-			case 'cities':
-				return reportQuery($db, "locations_city", "city_id", "city_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
 
 			case 'cities':
 				return reportQuery($db, "locations_city", "city_id", "city_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
@@ -224,7 +221,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 				
 				//If landing pages report type
 				if($type == "landing_pages"){ $report_sql .= " GROUP BY 2c.landing_page_id"; } else { $report_sql .= " GROUP BY 2l.$select_id"; }
-	$report_result = $db->query($report_sql);
+	$report_result = _mysqli_query($db, $report_sql);
 	$rows = $report_result->num_rows;
 	if ($rows > 0) {
 
@@ -286,7 +283,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					   		$click_sql .= "AND 2ca.".$select_id."='".$report_row[$select_id]."'";
 					   }		
 
-			$click_result = $db->query($click_sql);
+			$click_result = _mysqli_query($db, $click_sql);
 			$click_row = $click_result->fetch_assoc();
 				$country_code = '';
 
@@ -343,7 +340,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					$epc = 0;
 					$epc = @round($income/$clicks,2);
 
-					$total_epc = @@round($total_income/$total_clicks,2);
+					$total_epc = $total_clicks > 0 ? round($total_income/$total_clicks,2) : 0;
 
 				//net income
 					$net = 0;
@@ -541,6 +538,4 @@ function dollar_format($amount, $cpv = false): string {
 	}
 	
 	return $new_amount;
-} 
-
-?>
+}

@@ -12,7 +12,10 @@ declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/functions-auth.php');
 
-session_start();
+// connect.php already starts the session on the non-AJAX path; guard against a duplicate start.
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
 
 // Check if user is authenticated
 if (!AUTH::logged_in()) {
@@ -28,7 +31,7 @@ if (!AUTH::logged_in()) {
 header('Content-Type: application/json');
 
 try {
-    $db = getDatabaseConnection();
+    $db = DB::getInstance()->getConnection();
     
     // Get last cron execution time
     $log_sql = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";

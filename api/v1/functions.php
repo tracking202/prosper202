@@ -6,15 +6,21 @@ function getStats($db, $variables): mixed {
 				FROM   	`202_api_keys` 
 				WHERE  	`api_key`='".$mysql['api_key']."'";
 	$key_result = _mysqli_query($db, $key_sql);
+	if ($key_result === false) {
+		return ['msg' => 'Database error', 'error' => true, 'status' => 500];
+	}
 	$key_row = $key_result->fetch_assoc();
 
 	if($key_result->num_rows > 0) {
 
 		$mysql['user_id'] = $db->real_escape_string($key_row['user_id']);
 		$user_sql = "SELECT 	`user_timezone`
-					FROM   	`202_users` 
+					FROM   	`202_users`
 					WHERE  	`user_id`='".$mysql['user_id']."'";
 		$user_result = _mysqli_query($db, $user_sql);
+		if ($user_result === false) {
+			return ['msg' => 'Database error', 'error' => true, 'status' => 500];
+		}
 		$user_row = $user_result->fetch_assoc();
 
 		return runReports($db, $variables, $key_row['user_id'], $user_row['user_timezone']);
@@ -87,9 +93,6 @@ function runReports($db, $vars, $user, $timezone): array {
 
 			case 'countries':
 				return reportQuery($db, "locations_country", "country_id", "country_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
-
-			case 'cities':
-				return reportQuery($db, "locations_city", "city_id", "city_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
 
 			case 'cities':
 				return reportQuery($db, "locations_city", "city_id", "city_name", $user, $date_from, $date_to, $cid, $c1, $c2, $c3, $c4);
@@ -347,6 +350,9 @@ else
 				if($type == "landing_pages"){ $report_sql .= " GROUP BY 2c.landing_page_id"; } else { $report_sql .= " GROUP BY 2l.$select_id"; }
 
 	$report_result = $db->query($report_sql);
+	if ($report_result === false) {
+		return ['msg' => 'Database error', 'error' => true, 'status' => 500];
+	}
 	$rows = $report_result->num_rows;
 	if ($rows > 0) {
 
@@ -412,6 +418,9 @@ $click_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.
 					   }		
 
 			$click_result = $db->query($click_sql);
+			if ($click_result === false) {
+				return ['msg' => 'Database error', 'error' => true, 'status' => 500];
+			}
 			$click_row = $click_result->fetch_assoc();
 				$country_code = '';
 
@@ -667,6 +676,4 @@ function dollar_format($amount, $cpv = false): string {
 	}
 	
 	return $new_amount;
-} 
-
-?>
+}
