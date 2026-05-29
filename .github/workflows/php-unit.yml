@@ -84,13 +84,26 @@ jobs:
             phpunit_status=0
             echo "::warning::Skipping PHPUnit because dependency installation failed." >&2
           else
-            vendor/bin/phpunit --configuration phpunit.ci.xml --verbose --exclude-group integration --no-coverage
-            phpunit_status=$?
+            vendor/bin/phpunit --configuration phpunit.ci.xml --verbose --exclude-group integration --no-coverage 2>&1 | tee phpunit_output.txt
+            phpunit_status=${PIPESTATUS[0]}
+
+            # Guard against a "false green": a collection-time die()/exit(0) — e.g. a test
+            # that bootstraps the DB at load time and the connection fails — aborts PHPUnit
+            # before any test runs, yet can exit 0. Require a real run summary with a sane
+            # test count so an aborted/empty run is treated as a failure, not a pass.
+            test_count=$(grep -oE 'Tests: [0-9]+' phpunit_output.txt | tail -1 | grep -oE '[0-9]+')
+            min_tests=600
+
             if [ "${phpunit_status}" -ne 0 ]; then
               phpunit_state="failed"
               overall="failed"
               final_status=1
               echo "::error::PHPUnit reported failures (exit ${phpunit_status})." >&2
+            elif [ -z "${test_count}" ] || [ "${test_count}" -lt "${min_tests}" ]; then
+              phpunit_state="failed"
+              overall="failed"
+              final_status=1
+              echo "::error::PHPUnit exited 0 but ran only '${test_count:-0}' tests (expected >= ${min_tests}). This usually means the suite aborted during collection (a load-time die()/exit) and would otherwise be a false green." >&2
             else
               phpunit_state="passed"
             fi
