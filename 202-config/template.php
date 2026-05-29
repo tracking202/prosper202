@@ -214,6 +214,29 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<script src="https://dp5k1x6z3k332.cloudfront.net/select2.min.js"></script>
 		<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/custom.php"></script>
 		<script>
+			/* Attach the session token to same-origin POST requests so server-side
+			   token checks succeed without modifying every individual caller. */
+			(function () {
+				var token = <?php echo json_encode($_SESSION['token'] ?? ''); ?>;
+				if (!token || !window.jQuery) { return; }
+				jQuery.ajaxPrefilter(function (options) {
+					if ((options.type || options.method || 'GET').toUpperCase() !== 'POST') { return; }
+					if (options.crossDomain) { return; }
+					var d = options.data;
+					if (window.FormData && d instanceof FormData) { return; }
+					if (typeof d === 'string') {
+						if (d.charAt(0) === '{' || d.charAt(0) === '[') { return; }
+						if (/(^|&)token=/.test(d)) { return; }
+						options.data = d + (d.length ? '&' : '') + 'token=' + encodeURIComponent(token);
+					} else if (d && typeof d === 'object') {
+						if (typeof d.token === 'undefined') { d.token = token; }
+					} else {
+						options.data = { token: token };
+					}
+				});
+			})();
+		</script>
+		<script>
 			var eventMethod = window.addEventListener ? "addEventListener" : "attachEvent";
 			var eventer = window[eventMethod];
 			var messageEvent = eventMethod == "attachEvent" ? "onmessage" : "message";

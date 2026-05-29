@@ -13,7 +13,8 @@ try {
 		if ($results && $results->num_rows > 0) {
 			$row = $results->fetch_assoc();
 
-			if ($row['install_hash'] != $_GET['hash']) {
+			// validate install_hash with constant-time comparison
+			if (!hash_equals((string)$row['install_hash'], (string)($_GET['hash'] ?? ''))) {
 				die("Unautorized!");
 			}
 

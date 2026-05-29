@@ -9,6 +9,11 @@ AUTH::require_user();
 
 ini_set('memory_limit', '-1');
 
+// Initialize state used by the upgrade flow and rendering below.
+$log = '';
+$error = false;
+$upgrade_done = false;
+
 function get_safe_upgrade_path(string $basePath, string $zipEntryName)
 {
 	$entry = str_replace('\\', '/', $zipEntryName);
@@ -62,11 +67,17 @@ if ($rss_xml !== null) {
 }
 
 
-if (($_POST['start_upgrade'] == '1') == false) {
+if (($_POST['start_upgrade'] ?? '') === '1') {
 
-	if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
+	// validate token
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		$log .= "You must use our forms to submit data.\n";
+		$error = true;
+	}
 
-		$date = DateTime::createFromFormat('d-m-Y', $_POST['date_from']);
+	if (!$error && version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
+
+		$date = DateTime::createFromFormat('d-m-Y', $_POST['date_from'] ?? '');
 		if (!$date) {
 			$log .= "Select date for Data Engine!\n";
 			$error = true;
@@ -253,7 +264,7 @@ if ($update_needed == true) {
 			</div>
 		</div>
 
-		<?php if ($_POST['start_upgrade'] == '1') { ?>
+		<?php if (($_POST['start_upgrade'] ?? '') === '1') { ?>
 			<br>
 			<textarea rows="8" class="form-control install_logs"><?php echo htmlspecialchars($log, ENT_QUOTES, 'UTF-8'); ?></textarea>
 		<?php }
@@ -262,6 +273,7 @@ if ($update_needed == true) {
 			<br>
 			<form method="post" action="" class="form-inline">
 				<input type="hidden" name="start_upgrade" value="1" />
+				<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" />
 				<?php if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) { ?>
 					<div class="form-group">
 						<label for="date_from">Choose a date from which to process clicks for new Data Engine:</label>

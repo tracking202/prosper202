@@ -33,6 +33,10 @@ if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
 if (isset($_POST['add_rest_api_key'])) {
+	// validate token
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		die();
+	}
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$mysql['rest_api_key'] = $db->real_escape_string((string)$_POST['rest_api_key']);
 	$key_sql = "INSERT INTO 202_api_keys SET user_id='" . $mysql['user_id'] . "', api_key = '" . $mysql['rest_api_key'] . "', created_at='" . time() . "'";
@@ -44,9 +48,14 @@ if (isset($_POST['add_rest_api_key'])) {
 }
 
 if (isset($_POST['remove_rest_api_key'])) {
+	// validate token
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		die();
+	}
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$mysql['rest_api_key'] = $db->real_escape_string((string)$_POST['rest_api_key']);
-	$key_sql = "DELETE FROM 202_api_keys WHERE api_key='" . $mysql['rest_api_key'] . "'";
+	// scope to owner
+	$key_sql = "DELETE FROM 202_api_keys WHERE api_key='" . $mysql['rest_api_key'] . "' AND user_id='" . $mysql['user_id'] . "'";
 	$key_result = $db->query($key_sql);
 
 	if ($slack)
@@ -131,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$originalUserEmail = $currentUserEmail;
 		$emailUpdated = false;
 
-		if ($_POST['token'] != $_SESSION['token']) {
+		if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 			$error['token'] = 'You must use our forms to submit data.';
 		}
 		if (check_email_address($submittedEmail) == false) {
@@ -288,8 +297,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						$from_type = 'Show Blank Referer';
 					}
 
-					if ($_POST['user_referer'] == 'origin') {
-						$tom_type = 'Show Prosper202 Domain';
+					if ($_POST['cloak_referer'] == 'origin') {
+						$to_type = 'Show Prosper202 Domain';
 					} else {
 						$to_type = 'Show Blank Referer';
 					}
@@ -334,7 +343,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency'] == '1') {
 
-	if ($_POST['token'] != $_SESSION['token']) {
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		$error['token'] = 'You must use our forms to submit data.';
 	}
 	$mysql['account_currency'] = $db->real_escape_string((string)$_POST['account_currency']);
@@ -352,20 +361,24 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 	}
 
 	if ($user_row['user_account_currency'] != $_POST['account_currency']) {
-		$sql = "SELECT aff_campaign_id, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout FROM 202_aff_campaigns WHERE aff_campaign_deleted = 0";
+		// scope to the acting user's own campaigns
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+		$sql = "SELECT aff_campaign_id, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout FROM 202_aff_campaigns WHERE aff_campaign_deleted = 0 AND user_id = '" . $mysql['user_id'] . "'";
 		$result = $db->query($sql);
 		if ($result->num_rows > 0) {
 			while ($row = $result->fetch_assoc()) {
 
+				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$row['aff_campaign_id']);
+
 				if ($row['aff_campaign_foreign_payout'] == '0.00') {
 					$payout = getForeignPayout($_POST['account_currency'], $row['aff_campaign_currency'], $row['aff_campaign_payout']);
-					$db->query("UPDATE 202_aff_campaigns SET aff_campaign_foreign_payout = '" . $row['aff_campaign_payout'] . "', aff_campaign_payout = '" . $payout['exchange_payout'] . "'");
+					$db->query("UPDATE 202_aff_campaigns SET aff_campaign_foreign_payout = '" . $row['aff_campaign_payout'] . "', aff_campaign_payout = '" . $payout['exchange_payout'] . "' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
 				} else {
 					if ($_POST['account_currency'] == $row['aff_campaign_currency']) {
-						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $row['aff_campaign_foreign_payout'] . "', aff_campaign_foreign_payout = '0.00'");
+						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $row['aff_campaign_foreign_payout'] . "', aff_campaign_foreign_payout = '0.00' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
 					} else {
 						$payout = getForeignPayout($_POST['account_currency'], $row['aff_campaign_currency'], $row['aff_campaign_foreign_payout']);
-						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $payout['exchange_payout'] . "'");
+						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $payout['exchange_payout'] . "' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
 					}
 				}
 			}
@@ -377,7 +390,7 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 
 if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_api_key'] == '1') {
 
-	if ($_POST['token'] != $_SESSION['token']) {
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		$error['token'] = 'You must use our forms to submit data.';
 	}
 
@@ -410,7 +423,7 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 
 if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1') {
 
-	if ($_POST['token'] != $_SESSION['token']) {
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		$error['token'] = 'You must use our forms to submit data.';
 	}
 
@@ -466,7 +479,7 @@ if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats2
 }
 
 if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_customer_api_key'] == '1') {
-	if ($_POST['token'] != $_SESSION['token']) {
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		$error['token'] = 'You must use our forms to submit data.';
 	}
 	$mysql['p202_customer_api_key'] = $db->real_escape_string((string)$_POST['p202_customer_api_key']);
@@ -484,7 +497,7 @@ if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_custom
 if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 
 	//check token, and new user_pass
-	if ($_POST['token'] != $_SESSION['token']) {
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		$error['token'] = 'You must use our forms to submit data.';
 	}
 	if ($_POST['new_user_pass'] == '') {

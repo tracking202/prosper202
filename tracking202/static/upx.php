@@ -30,11 +30,11 @@ if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
 } else { // no subid found get from cookie or fingerprint
        
     // see if it has the cookie in the campaign id, then the general match, then do whatever we can to grab SOMETHING to tie this lead to
-    if (isset($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && $_COOKIE['tracking202subid_a_' . $mysql['cid']] && $mysql['cid'] != '0') {
-        $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid_a_' . $mysql['cid']]);
+    if (isset($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && is_numeric($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && $mysql['cid'] != '0') {
+        $mysql['click_id'] = $db->real_escape_string((string) $_COOKIE['tracking202subid_a_' . $mysql['cid']]);
     } else
-        if (isset($_COOKIE['tracking202subid']) && $_COOKIE['tracking202subid']) {
-            $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
+        if (isset($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])) {
+            $mysql['click_id'] = $db->real_escape_string((string) $_COOKIE['tracking202subid']);
         } else {
             // ok grab the last click from this ip_id
             $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
@@ -62,6 +62,9 @@ if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
 if(!$mysql['click_id']){
     p202RespondJsonError(404, 'SubID not found');
 }
+
+// integer click_id for safe SQL interpolation
+$clickId = (int) $mysql['click_id'];
 
 $site_urls=" LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id=2cs.click_id)
                      LEFT JOIN `202_site_urls` AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id) ";
@@ -105,7 +108,7 @@ LEFT JOIN `202_utm_content` AS 2uco USING (`utm_content_id`)
 LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`)
 LEFT JOIN `202_cpa_trackers` AS 2cpa USING (`click_id`)
 LEFT JOIN `202_trackers` AS 2trc ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public`)".$site_urls."
-WHERE 2c.`click_id` = {$mysql['click_id']}
+WHERE 2c.`click_id` = {$clickId}
 LIMIT 1";
 
 $cvar_sql_result = $db->query($cvar_sql);
@@ -162,8 +165,8 @@ $tokens = [
 ];
 
 $account_id_sql="SELECT 202_clicks.ppc_account_id
-				 FROM 202_clicks 
-				 WHERE click_id={$mysql['click_id']}";
+				 FROM 202_clicks
+				 WHERE click_id={$clickId}";
 
 $account_id_result = $db->query($account_id_sql);
 $account_id_row = $account_id_result ? $account_id_result->fetch_assoc() : null;
@@ -174,7 +177,7 @@ if($mysql['ppc_account_id']){
 	//"SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels LEFT JOIN 202_clicks ON 202_clicks.ppc_account_id=202_ppc_account_pixels.ppc_account_id WHERE 202_ppc_account_pixels.ppc_account_id=".$mysql['ppc_account_id'];
     
 	$pixel_result = $db->query($pixel_sql);
-	if ($pixel_result->num_rows > 0) {
+	if ($pixel_result && $pixel_result->num_rows > 0) {
 		while ($pixel_result_row = $pixel_result->fetch_assoc()) {
 			//$pixel_result_row = memcache_mysql_fetch_assoc($pixel_sql);
 			$mysql['pixel_type_id'] = $db->real_escape_string($pixel_result_row['pixel_type_id']);
@@ -272,8 +275,11 @@ if (is_numeric($mysql['click_id'])) {
 					ip = '".$mysql['ip']."',
 					pixel_type = '3',
 					user_agent = '".$mysql['user_agent']."'";
-        $db->query($log_sql);
-        $conversionId = (int) $db->insert_id;
+        $logResult = $db->query($log_sql);
+        if (!$logResult) {
+            error_log('Failed to insert conversion log: ' . $db->error);
+        }
+        $conversionId = $logResult ? (int) $db->insert_id : 0;
 
         if ($conversionId > 0) {
                 $scope = [

@@ -48,6 +48,11 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		$error['token'] = '<div class="error">Invalid or expired form token. Please reload the page and try again.</div>';
+	}
+
 	$aff_network_id = trim((string) $_POST['aff_network_id']);
 	if (empty($aff_network_id)) {
 		$error['aff_network_id'] = '<div class="error">Select a category.</div>';
@@ -232,6 +237,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 if (isset($_GET['delete_aff_campaign_id'])) {
 
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php');
+		die();
+	}
+
 	if ($userObj->hasPermission("remove_campaign")) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_GET['delete_aff_campaign_id']);
@@ -242,7 +253,7 @@ if (isset($_GET['delete_aff_campaign_id'])) {
 								`aff_campaign_time`='" . ($mysql['aff_campaign_time'] ?? time()) . "'
 						WHERE   `user_id`='" . $mysql['user_id'] . "'
 						AND     `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'";
-		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_result)) {
+		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_sql)) {
 			$delete_success = true;
 		}
 	} else {
@@ -360,6 +371,7 @@ template_top('Affiliate Campaigns Setup');
 		<form method="post" class="form-horizontal" action="<?php if ($delete_success == true) {
 																echo $_SERVER['REDIRECT_URL'] ?? '';
 															} ?>" role="form" style="margin:15px 0px;">
+			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
 			<input name="aff_campaign_id" type="hidden" value="<?php echo $html['aff_campaign_id'] ?? ''; ?>" />
 			<input name="dni_id" type="hidden" value="" />
 			<input name="dni_offer_id" type="hidden" value="" />
@@ -453,31 +465,31 @@ template_top('Affiliate Campaigns Setup');
 
 			<?php if ($rotateUrlCampaignsResults->num_rows > 0) { ?>
 				<div id="rotateUrls" <?php if ($html['aff_campaign_rotate'] == 0) echo 'style="display:none;"'; ?>>
-					<div id="rotateUrl2" class="form-group <?php if ($error['aff_campaign_url_2']) echo "has-error"; ?>" style="margin-bottom: 0px;">
+					<div id="rotateUrl2" class="form-group <?php if (isset($error['aff_campaign_url_2'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label class="col-xs-4 control-label" for="aff_campaign_url_2" style="text-align: left;">Rotate Url #2:</label>
 						<div class="col-xs-6">
-							<input type="text" class="form-control input-sm" id="aff_campaign_url_2" name="aff_campaign_url_2" value="<?php echo $html['aff_campaign_url_2']; ?>">
+							<input type="text" class="form-control input-sm" id="aff_campaign_url_2" name="aff_campaign_url_2" value="<?php echo $html['aff_campaign_url_2'] ?? ''; ?>">
 						</div>
 					</div>
 
-					<div id="rotateUrl3" class="form-group <?php if ($error['aff_campaign_url_3']) echo "has-error"; ?>" style="margin-bottom: 0px;">
+					<div id="rotateUrl3" class="form-group <?php if (isset($error['aff_campaign_url_3'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label class="col-xs-4 control-label" for="aff_campaign_url_3" style="text-align: left;">Rotate Url #3:</label>
 						<div class="col-xs-6">
-							<input type="text" class="form-control input-sm" id="aff_campaign_url_3" name="aff_campaign_url_3" value="<?php echo $html['aff_campaign_url_3']; ?>">
+							<input type="text" class="form-control input-sm" id="aff_campaign_url_3" name="aff_campaign_url_3" value="<?php echo $html['aff_campaign_url_3'] ?? ''; ?>">
 						</div>
 					</div>
 
-					<div id="rotateUrl4" class="form-group <?php if ($error['aff_campaign_url_4']) echo "has-error"; ?>" style="margin-bottom: 0px;">
+					<div id="rotateUrl4" class="form-group <?php if (isset($error['aff_campaign_url_4'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label class="col-xs-4 control-label" for="aff_campaign_url_4" style="text-align: left;">Rotate Url #4:</label>
 						<div class="col-xs-6">
-							<input type="text" class="form-control input-sm" id="aff_campaign_url_4" name="aff_campaign_url_4" value="<?php echo $html['aff_campaign_url_4']; ?>">
+							<input type="text" class="form-control input-sm" id="aff_campaign_url_4" name="aff_campaign_url_4" value="<?php echo $html['aff_campaign_url_4'] ?? ''; ?>">
 						</div>
 					</div>
 
-					<div id="rotateUrl5" class="form-group <?php if ($error['aff_campaign_url_5']) echo "has-error"; ?>" style="margin-bottom: 0px;">
+					<div id="rotateUrl5" class="form-group <?php if (isset($error['aff_campaign_url_5'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label class="col-xs-4 control-label" for="aff_campaign_url_2" style="text-align: left;">Rotate Url #5:</label>
 						<div class="col-xs-6">
-							<input type="text" class="form-control input-sm" id="aff_campaign_url_5" name="aff_campaign_url_5" value="<?php echo $html['aff_campaign_url_5']; ?>">
+							<input type="text" class="form-control input-sm" id="aff_campaign_url_5" name="aff_campaign_url_5" value="<?php echo $html['aff_campaign_url_5'] ?? ''; ?>">
 						</div>
 					</div>
 				</div>
@@ -575,7 +587,7 @@ template_top('Affiliate Campaigns Setup');
 																		$html['aff_campaign_rotate'] = htmlentities((string)($aff_campaign_row['aff_campaign_rotate'] ?? ''), ENT_QUOTES, 'UTF-8');
 																		$rotateIcon = $html['aff_campaign_rotate'] ? '<span class="glyphicon glyphicon-repeat" style="font-size: 11px; margin-right: 4px; color: #6b7280;"></span>' : '';
 																		$removeLink = $userObj->hasPermission("remove_campaign")
-																			? ' <a href="?delete_aff_campaign_id=' . $html['aff_campaign_id'] . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Campaign?\');">remove</a>'
+																			? ' <a href="?delete_aff_campaign_id=' . $html['aff_campaign_id'] . '&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Campaign?\');">remove</a>'
 																			: '';
 
 																		printf('<li>%s<span class="filter_campaign_name">%s</span> <span class="list-meta">$%s</span> <a href="%s" target="_new" class="list-action">link</a> <a href="?edit_aff_campaign_id=%s" class="list-action">edit</a> <a href="?copy_aff_campaign_id=%s" class="list-action">copy</a>%s</li>',
@@ -661,13 +673,15 @@ template_top('Affiliate Campaigns Setup');
 } ?>
 <script type="text/javascript">
 	$(document).ready(function() {
-		<?php if ($getDlDniRow && isset($getDlDniRow['id'])) { ?>
+		<?php if ($getDlDniRow && isset($getDlDniRow['id'])) {
+			// Offer ids are numeric; cast to constrain to an integer before output.
+			$dlOfferId = (int)($_GET['dl_offer_id'] ?? 0); ?>
 			$('#dniSearchOffersModal').modal('show');
 			dni = <?php echo $getDlDniRow['id']; ?>;
 
-			tablesorterPagerOptions.ajaxUrl = "<?php echo get_absolute_url(); ?>tracking202/ajax/dni_get_offers.php?all_offers&dni=" + dni + "&offset=0&limit=25&column&filter[0]=<?php echo $_GET['dl_offer_id']; ?>";
+			tablesorterPagerOptions.ajaxUrl = "<?php echo get_absolute_url(); ?>tracking202/ajax/dni_get_offers.php?all_offers&dni=" + dni + "&offset=0&limit=25&column&filter[0]=<?php echo $dlOfferId; ?>";
 			tablesorterOptions.triggerToggle = true;
-			tablesorterOptions.toggleId = <?php echo $_GET['dl_offer_id']; ?>;
+			tablesorterOptions.toggleId = <?php echo $dlOfferId; ?>;
 			var $table1 = $('table.tablesorter').tablesorter(tablesorterOptions).tablesorterPager(tablesorterPagerOptions);
 		<?php } ?>
 		var campaignOptions = {

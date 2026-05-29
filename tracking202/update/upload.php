@@ -33,10 +33,21 @@ $case = isset($_GET['case']) ? (int)$_GET['case'] : 0;
 switch ($case) {
 
 	case 1:
-		
+
 		#else it worked ok, save the csv to file, and then ask them what fields are what
-		$file = $upload_dir . $_GET['file'];
-		if (!file_exists($file)) {
+		// scope filename to a basename inside the reports dir
+		$name = basename((string)($_GET['file'] ?? ''));
+		if ($name === '' || $name !== ($_GET['file'] ?? '')) {
+			template_top('Upload Revenue Reports');
+			about_revenue_upload();
+			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import<br/>or you have already successfully uploaded it.</small></div>';
+			template_bottom();
+			die();
+		}
+		$file = $upload_dir . $name;
+		$real_file = realpath($file);
+		$real_dir  = realpath($upload_dir);
+		if (!file_exists($file) || $real_file === false || $real_dir === false || !str_starts_with($real_file, $real_dir . DIRECTORY_SEPARATOR)) {
 			template_top('Upload Revenue Reports'); 
 			about_revenue_upload();
 			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import<br/>or you have already successfully uploaded it.</small></div>';
@@ -51,7 +62,7 @@ switch ($case) {
 					<div class="col-xs-12">
 						<form enctype="application/x-www-form-urlencoded" action="'.get_absolute_url().'tracking202/update/upload.php" method="get">';
 					echo '<input type="hidden" name="case" value="2"/>';
-					echo '<input type="hidden" name="file" value="'.$_GET['file'].'"/>';
+					echo '<input type="hidden" name="file" value="'.htmlspecialchars($name, ENT_QUOTES).'"/>';
 				echo '<table class="table table-bordered" id="stats-table">';
 				echo '<tr>';
 					echo '<th>Column Name</th>';
@@ -83,20 +94,31 @@ switch ($case) {
 		 
 	case 2:
 		
-		if ( (!is_numeric($_GET['click_id'])) or (!is_numeric($_GET['click_payout'])) ) { 
-			
-			$file = $_GET['file'];
-			template_top('Upload Revenue Reports'); 
+		// scope filename to a basename inside the reports dir
+		$name = basename((string)($_GET['file'] ?? ''));
+		if ($name === '' || $name !== ($_GET['file'] ?? '')) {
+			template_top('Upload Revenue Reports');
 			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>You forgot to check the subid and the commission column, <a href="'.get_absolute_url().'tracking202/update/upload.php?case=1&file='.$file.'">please try again</a></small></div>';
+			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import or you have already successfully uploaded it.</small></div>';
 			template_bottom();
 			die();
-			
 		}
-		
-		$file = $upload_dir . $_GET['file'];
-		if (!file_exists($file)) {
-			template_top('Upload Revenue Reports'); 
+
+		if ( (!is_numeric($_GET['click_id'])) or (!is_numeric($_GET['click_payout'])) ) {
+
+			template_top('Upload Revenue Reports');
+			about_revenue_upload();
+			echo '<div class="error"><small><span class="fui-alert"></span>You forgot to check the subid and the commission column, <a href="'.get_absolute_url().'tracking202/update/upload.php?case=1&file='.rawurlencode($name).'">please try again</a></small></div>';
+			template_bottom();
+			die();
+
+		}
+
+		$file = $upload_dir . $name;
+		$real_file = realpath($file);
+		$real_dir  = realpath($upload_dir);
+		if (!file_exists($file) || $real_file === false || $real_dir === false || !str_starts_with($real_file, $real_dir . DIRECTORY_SEPARATOR)) {
+			template_top('Upload Revenue Reports');
 			about_revenue_upload();
 			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import or you have already successfully uploaded it.</small></div>';
 			template_bottom();
@@ -148,7 +170,10 @@ switch ($case) {
 		}
 		
 		#update is now complete, delete the .csv
-		unlink ($file);
+		// only remove a file confirmed inside the reports dir
+		if ($real_file !== false && str_starts_with($real_file, $real_dir . DIRECTORY_SEPARATOR)) {
+			unlink($real_file);
+		}
 
 		
 		template_top('Upload Revenue Reports'); 

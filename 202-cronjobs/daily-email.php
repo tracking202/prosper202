@@ -11,11 +11,11 @@ try {
 	$result = $db->query($hash);
 	$row = $result->fetch_assoc();
 
-	if (!isset($_GET['hash']) || $row['install_hash'] != $_GET['hash']) {
+	if (!isset($_GET['hash']) || !hash_equals((string)$row['install_hash'], (string)$_GET['hash'])) {
 		die("Unauthorized!");
 	}
 
-	$db = getDatabaseConnection();
+	// $db (singleton mysqli) is already established by connect.php and used above.
 
 	$user_sql = 'SELECT user_email, user_daily_email FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_id = 1';
 	$user_result = $db->query($user_sql);

@@ -519,6 +519,7 @@ class AUTH
 
     private static function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
+        // @phpstan-ignore-next-line -- AUTH::bind() is this class's own checked binding wrapper (no Database\Connection instance is in scope; static context). Return value is checked and throws on failure.
         if (!$stmt->bind_param($types, ...$values)) {
             throw new \RuntimeException('Unable to bind statement parameters');
         }
@@ -526,6 +527,7 @@ class AUTH
 
     private static function execute(\mysqli_stmt $stmt, string $message): void
     {
+        // @phpstan-ignore-next-line -- AUTH::execute() is this class's own checked-execution wrapper (no Database\Connection instance is in scope; static context). Return value is checked and throws on failure.
         if (!$stmt->execute()) {
             throw new \RuntimeException($message);
         }

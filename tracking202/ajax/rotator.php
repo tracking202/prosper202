@@ -136,6 +136,11 @@ if (isset($_GET['autocomplete']) && isset($_GET['type']) && isset($_GET['query']
 
 if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST['data'])) {
 
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		die("ERROR");
+	}
+
 	$defaults_added = false;
 	$defaults_changed = false;
 
@@ -550,16 +555,18 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 				}
 			}
 
-			$redirects_ids = implode(', ', $redirects_ids);
+			// Sentinel 0 keeps the IN list valid when nothing was inserted/updated (ids are >= 1, so all orphans match).
+			$redirects_ids = $redirects_ids === [] ? '0' : implode(', ', $redirects_ids);
 			$delete_redirects_sql = "DELETE FROM 202_rotator_rules_redirects WHERE id NOT IN (".$redirects_ids.") AND rule_id = '".$rule_id."'";
-			$delete_redirects_result = $db->query($delete_redirects_sql);
+			$delete_redirects_result = $db->query($delete_redirects_sql) or record_mysql_error($delete_redirects_sql);
 
 		}
 	}
 
-	$criteria_id = implode(', ', $criteria_id);
-	$rules_id = implode(', ', $rules_id);
-	
+	// Sentinel 0 keeps the IN list valid when nothing was inserted/updated (ids are >= 1, so all orphans match).
+	$criteria_id = $criteria_id === [] ? '0' : implode(', ', $criteria_id);
+	$rules_id = $rules_id === [] ? '0' : implode(', ', $rules_id);
+
 	if ($slack && $rotator_row) {
 		$sql = "SELECT rule_name FROM 202_rotator_rules WHERE id NOT IN (".$rules_id.") AND rotator_id='".$rotator_id."'";
 		$result = $db->query($sql);
@@ -571,7 +578,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	}
 
 	$sql = "DELETE FROM `202_rotator_rules` WHERE `id` NOT IN (".$rules_id.") AND rotator_id='".$rotator_id."'";
-	$result = $db->query($sql);
+	$result = $db->query($sql) or record_mysql_error($sql);
 
 	if ($slack && isset($rotator_row['name'])) {
 		$sql = "SELECT 2rc.id, 2rc.type, 2rc.statement, 2rc.value, 2rl.rule_name
@@ -591,7 +598,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 
 
 	$sql = "DELETE FROM `202_rotator_rules_criteria` WHERE `id` NOT IN (".$criteria_id.") AND rotator_id='".$rotator_id."'";
-	$result = $db->query($sql);
+	$result = $db->query($sql) or record_mysql_error($sql);
 
 	if ($criteria_result == true) {
 		echo "DONE";

@@ -25,9 +25,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		$mysql['user_id'] = $db->real_escape_string((string) $user_row['user_id']);
 
-		//generate random key
-		$user_pass_key = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-		$user_pass_key = substr(str_shuffle($user_pass_key), 0, 40) . time();
+		//generate random key (CSPRNG; expiry tracked separately via user_pass_time)
+		$user_pass_key = bin2hex(random_bytes(32));
 		$mysql['user_pass_key'] = $db->real_escape_string($user_pass_key);
 
 		//set the user pass time
@@ -42,21 +41,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 
 		//now email the user the script to reset their email
-		$to = $_POST['user_email'];
-		$subject = "[Propser202 on " . $_SERVER['SERVER_NAME'] . "] Password Reset";
+		//normalize recipient: strip CR/LF and require a valid address before use in headers/mail()
+		$to = str_replace(["\r", "\n"], '', (string) $_POST['user_email']);
+		if (filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
+			$to = '';
+		}
+		$server_name = str_replace(["\r", "\n"], '', (string) ($_SERVER['SERVER_NAME'] ?? ''));
+		$subject = "[Propser202 on " . $server_name . "] Password Reset";
 
 		$message = "
 <p>Someone has asked to reset the password for the following site and username.</p>
 
-<p><a href=\"http://" . $_SERVER['SERVER_NAME'] . "\">http://" . $_SERVER['SERVER_NAME'] . "</a></p>
+<p><a href=\"http://" . $server_name . "\">http://" . $server_name . "</a></p>
 
-<p>Username: " . $_POST['user_name'] . "</p>
+<p>Username: " . htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8') . "</p>
 
 <p>To reset your password visit the following address, otherwise just ignore this email and nothing will happen.</p>
 
-<p><a href=\"http://" . $_SERVER['SERVER_NAME'] . "/202-pass-reset.php?key=$user_pass_key\">http://" . $_SERVER['SERVER_NAME'] . get_absolute_url() . "202-pass-reset.php?key=$user_pass_key</a></p>";
+<p><a href=\"http://" . $server_name . "/202-pass-reset.php?key=$user_pass_key\">http://" . $server_name . get_absolute_url() . "202-pass-reset.php?key=$user_pass_key</a></p>";
 
-		$from = "propser202@" . $_SERVER['SERVER_NAME'];
+		$from = "propser202@" . $server_name;
 
 		$header = "From: Propser202<" . $from . "> \r\n";
 		$header .= "Reply-To: " . $from . " \r\n";
@@ -65,7 +69,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$header .= "Content-Transfer-Encoding: 8bit \r\n";
 		$header .= "MIME-Version: 1.0 \r\n";
 
-		mail((string) $to, $subject, $message, $header);
+		if ($to !== '') {
+			mail((string) $to, $subject, $message, $header);
+		}
 
 		$success = true;
 	}

@@ -97,9 +97,9 @@ if ($usedCachedRedirect == true) {
             }
             
             $urlvars = getPrePopVars($urlvarslist);
-            
-            $new_url = setPrePopVars($urlvars, $redirect_site_url, false);
-       
+
+            $new_url = setPrePopVars($urlvars, $new_url, false);
+
             header('location: ' . $new_url);
             die();
         }
@@ -152,14 +152,14 @@ if ($vars[1] == '' && $pci == '') {
 <title><?php echo $html['aff_campaign_name']; ?></title>
 <meta name="robots" content="noindex">
 <meta http-equiv="refresh"
-	content="1; url=<?php echo $redirect_site_url; ?>">
+	content="1; url=<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">
 </head>
 <body>
 
 	<form name="form1" id="form1" method="get"
 		action="/tracking202/redirect/cl2.php">
 		<input type="hidden" name="q"
-			value="<?php echo $redirect_site_url; ?>" />
+			value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 	</form>
 	<script type="text/javascript">
 					document.form1.submit();
@@ -167,7 +167,7 @@ if ($vars[1] == '' && $pci == '') {
 
 	<div style="padding: 30px; text-align: center;">
 					You are being automatically redirected to <?php echo $html['aff_campaign_name']; ?>.<br />
-		<br /> Page Stuck? <a href="<?php echo $redirect_site_url; ?>">Click
+		<br /> Page Stuck? <a href="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">Click
 			Here</a>.
 	</div>
 </body>
@@ -358,7 +358,7 @@ if ($check_count == 0) {
 								   landing_page_id='" . $mysql['landing_page_id'] . "',
 								   aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
 								   click_time='" . $mysql['click_time'] . "'";
-    $insert_result = $db->query($insert_sql);
+    $insert_result = $db->query($insert_sql) or record_mysql_error($db);
 }
 // }
 
@@ -384,14 +384,14 @@ if ($cloaking_on == true) {
 <title><?php echo $html['aff_campaign_name']; ?></title>
 <meta name="robots" content="noindex">
 <meta http-equiv="refresh"
-	content="1; url=<?php echo $redirect_site_url; ?>">
+	content="1; url=<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">
 </head>
 <body>
 
 	<form name="form1" id="form1" method="get"
 		action="/tracking202/redirect/cl2.php">
 		<input type="hidden" name="q"
-			value="<?php echo $redirect_site_url; ?>" />
+			value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 	</form>
 	<script type="text/javascript">
 			document.form1.submit();
@@ -399,7 +399,7 @@ if ($cloaking_on == true) {
 
 	<div style="padding: 30px; text-align: center;">
 			You are being automatically redirected to <?php echo $html['aff_campaign_name']; ?>.<br />
-		<br /> Page Stuck? <a href="<?php echo $redirect_site_url; ?>">Click
+		<br /> Page Stuck? <a href="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">Click
 			Here</a>.
 	</div>
 </body>
