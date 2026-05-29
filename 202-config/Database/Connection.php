@@ -112,11 +112,18 @@ final class Connection
      * must check the return value. By centralising the check here, no
      * repository can accidentally forget.
      *
+     * Calls the OOP $stmt->execute() (not procedural mysqli_stmt_execute) so
+     * test doubles can intercept it; the procedural function reaches into the
+     * native statement handle and fails on fakes/mocks. Param type is relaxed
+     * to object for the same reason bind()/prepare() are (see class note);
+     * PHPStan enforces mysqli_stmt via the annotation.
+     *
+     * @param mysqli_stmt $stmt
      * @throws RuntimeException if execute returns false
      */
-    public function execute(mysqli_stmt $stmt): void
+    public function execute(object $stmt): void
     {
-        if (!mysqli_stmt_execute($stmt)) {
+        if (!$stmt->execute()) {
             try {
                 $error = $stmt->error;
             } catch (\Error) {
@@ -132,9 +139,10 @@ final class Connection
     /**
      * Execute a statement, fetch a single row, and close the statement.
      *
+     * @param mysqli_stmt $stmt
      * @return array<string, mixed>|null
      */
-    public function fetchOne(mysqli_stmt $stmt): ?array
+    public function fetchOne(object $stmt): ?array
     {
         $this->execute($stmt);
         $result = $stmt->get_result();
@@ -150,9 +158,10 @@ final class Connection
     /**
      * Execute a statement, fetch all rows, and close the statement.
      *
+     * @param mysqli_stmt $stmt
      * @return list<array<string, mixed>>
      */
-    public function fetchAll(mysqli_stmt $stmt): array
+    public function fetchAll(object $stmt): array
     {
         $this->execute($stmt);
         $result = $stmt->get_result();
@@ -174,9 +183,10 @@ final class Connection
      * Falls back to the connection-level insert_id if the statement
      * does not report one (behaviour varies by mysqli driver version).
      *
+     * @param mysqli_stmt $stmt
      * @throws RuntimeException if execute fails
      */
-    public function executeInsert(mysqli_stmt $stmt): int
+    public function executeInsert(object $stmt): int
     {
         $this->execute($stmt);
 
@@ -202,9 +212,10 @@ final class Connection
     /**
      * Execute an UPDATE/DELETE statement, return affected rows, and close.
      *
+     * @param mysqli_stmt $stmt
      * @throws RuntimeException if execute fails
      */
-    public function executeUpdate(mysqli_stmt $stmt): int
+    public function executeUpdate(object $stmt): int
     {
         $this->execute($stmt);
 

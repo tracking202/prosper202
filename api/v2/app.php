@@ -8,7 +8,17 @@ use Prosper202\Attribution\AttributionServiceFactory;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
-require_once __DIR__ . '/../../202-config/connect.php';
+// connect.php boots the full application (DB connections, session, ~20 includes) and
+// hard-exits when no database is reachable. In CLI test mode the attribution routes run
+// against injected in-memory services and the CLI auth override (see
+// override_attribution_authorization()), so the database bootstrap is neither needed nor
+// available. Skip it only under that explicit, CLI-only opt-in — never in production (web SAPI).
+$attributionTestMode = PHP_SAPI === 'cli'
+    && defined('PROSPER_ATTRIBUTION_TEST_MODE')
+    && PROSPER_ATTRIBUTION_TEST_MODE === true;
+if (!$attributionTestMode) {
+    require_once __DIR__ . '/../../202-config/connect.php';
+}
 require_once __DIR__ . '/../../vendor/autoload.php';
 
 const ATTRIBUTION_AUTH_OVERRIDE_KEY = '__prosper_attribution_auth_override';
@@ -277,8 +287,8 @@ function authorize_attribution_request(array $params, string $permission): array
         ];
     }
 
-    mysqli_stmt_bind_param($stmt, 's', $apiKey);
-    mysqli_stmt_execute($stmt);
+    $stmt->bind_param('s', $apiKey);
+    $stmt->execute();
     $result = $stmt->get_result();
     $row = $result ? $result->fetch_assoc() : null;
     $stmt->close();

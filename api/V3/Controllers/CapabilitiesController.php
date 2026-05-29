@@ -93,7 +93,7 @@ class CapabilitiesController
             return 'unknown';
         }
 
-        if (!mysqli_stmt_execute($stmt)) {
+        if (!$stmt->execute()) {
             $stmt->close();
             return 'unknown';
         }

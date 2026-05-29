@@ -217,18 +217,13 @@ final readonly class Auth
 
     private static function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
-        $values = array_values($values);
-        $refs = [$stmt, $types];
-        foreach ($values as $index => $value) {
-            $refs[] = &$values[$index];
-        }
-        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+        if (!$stmt->bind_param($types, ...$values)) {
             throw new AuthException('Authentication unavailable', 500);
         }
     }
 
     private static function execute(\mysqli_stmt $stmt): bool
     {
-        return mysqli_stmt_execute($stmt);
+        return $stmt->execute();
     }
 }

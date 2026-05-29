@@ -529,12 +529,7 @@ class ReportsController
 
     private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
-        $values = array_values($values);
-        $refs = [$stmt, $types];
-        foreach ($values as $index => $value) {
-            $refs[] = &$values[$index];
-        }
-        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+        if (!$stmt->bind_param($types, ...$values)) {
             $stmt->close();
             throw new DatabaseException('Bind failed');
         }
@@ -542,7 +537,7 @@ class ReportsController
 
     private function execute(\mysqli_stmt $stmt, string $message): void
     {
-        if (!mysqli_stmt_execute($stmt)) {
+        if (!$stmt->execute()) {
             $stmt->close();
             throw new DatabaseException($message);
         }
