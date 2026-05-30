@@ -10,4 +10,3 @@ if (isset($_POST['delay']) && $_POST['delay'] == true) {
  	$_SESSION['show_update_check'] = false;
 	session_write_close();
 }
-?>

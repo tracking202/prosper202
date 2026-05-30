@@ -94,5 +94,3 @@ AUTH::require_user();
 		ReportBasicForm::echoCell("no data for this selected date range");
 		ReportBasicForm::echoRow();
 	}
-
-?>

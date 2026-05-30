@@ -19,4 +19,3 @@ if (isset($_GET['updateStatus'])) {
 	$sql = "UPDATE 202_dni_networks SET processed = '1' WHERE id = '".$mysql['dni']."'";
 	$db->query($sql);
 }
-?>

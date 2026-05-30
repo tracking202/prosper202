@@ -197,7 +197,7 @@ if (isset($mysql['ppc_account_id']) && $mysql['ppc_account_id']) {
 }
 
 $sql .= $mysql['method_of_promotion'] ?? '';
-$sql .= " AND click_time >=' " . $mysql['from'] . "' AND click_time <= '" . $mysql['to'] . "'";
+$sql .= " AND click_time >= '" . $mysql['from'] . "' AND click_time <= '" . $mysql['to'] . "'";
 $result = $db->query($sql) or record_mysql_error($sql);
 $clicks_updated = $db->affected_rows;
 
@@ -238,6 +238,6 @@ if (isset($mysql['ppc_network_id']) && $mysql['ppc_network_id']) {
 	$dirty_hours_sql .= ", ppc_network_id = '" . $mysql['ppc_network_id'] . "'";
 }
 
-$db->query($dirty_hours_sql);
+$db->query($dirty_hours_sql) or record_mysql_error($dirty_hours_sql);
 
 echo '<p style="text-align: center; font-weight: bold;">' . $clicks_updated . ' clicks updated.</p>';

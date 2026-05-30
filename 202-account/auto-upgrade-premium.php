@@ -29,7 +29,7 @@ if (version_compare($version, $latest_version) == '-1') {
 	$update_needed = false;
 }
 
-if ($_POST['start_upgrade'] == '1') {
+if (($_POST['start_upgrade'] ?? '') === '1') {
 
 	$GetUpdate = @getData('https://my.tracking202.com/api/v2/premium-p202/download/' . $user_row['install_hash'] . '/' . $user_row['p202_customer_api_key']);
 	$installlog = "Downloading new update...\n";
@@ -54,42 +54,67 @@ if ($_POST['start_upgrade'] == '1') {
 					$installlog .= "\nUpdate process started...\n";
 					$installlog .= "\n-------------------------------------------------------------------------------------\n";
 
-					while ($zip_entry = @zip_read($zip)) {
-						$thisFileName = zip_entry_name($zip_entry);
+					// Resolve the install root once; every entry must stay inside it.
+					$basePath = realpath(substr(__DIR__, 0, -12));
+					if ($basePath === false) {
+						$installlog .= "Unable to resolve update destination path. Operation aborted.";
+						$FilesUpdated = false;
+						@zip_close($zip);
+					} else {
+						while ($zip_entry = @zip_read($zip)) {
+							$thisFileName = zip_entry_name($zip_entry);
 
-						if (str_ends_with($thisFileName, '/')) {
-							if (is_dir(substr(__DIR__, 0, -12) . '/' . $thisFileName)) {
-								$installlog .= "Directory: /" . $thisFileName . "......updated\n";
-							} else {
-								if (@mkdir(substr(__DIR__, 0, -12) . '/' . $thisFileName, 0755, true)) {
-									$installlog .= "Directory: /" . $thisFileName . "......created\n";
+							if (str_ends_with($thisFileName, '/')) {
+								// Validate and confine the directory path before creating it.
+								$targetDirectory = resolve_update_target_path($basePath, $thisFileName, true);
+								if ($targetDirectory === false) {
+									$installlog .= "Skipped invalid update directory path: /" . $thisFileName . "\n";
+								} elseif (is_dir($targetDirectory)) {
+									$installlog .= "Directory: /" . $thisFileName . "......updated\n";
 								} else {
-									$installlog .= "Can't create /" . $thisFileName . " directory! Operation aborted";
+									$installlog .= "Directory: /" . $thisFileName . "......created\n";
+								}
+							} else {
+								$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
+
+								// Validate and confine the file path before writing it.
+								$targetFile = resolve_update_target_path($basePath, $thisFileName);
+								if ($targetFile === false) {
+									$installlog .= "Skipped invalid update file path: /" . $thisFileName . "\n";
+									continue;
+								}
+
+								// Never write through a symlink or to a resolved path outside the base.
+								if (file_exists($targetFile)) {
+									$status = "updated";
+									if (is_link($targetFile)) {
+										$installlog .= "Skipped symlink during update: /" . $thisFileName . "\n";
+										continue;
+									}
+									$resolvedFilePath = realpath($targetFile);
+									$resolvedBase = rtrim($basePath, DIRECTORY_SEPARATOR);
+									if ($resolvedFilePath === false || ($resolvedFilePath !== $resolvedBase && strpos($resolvedFilePath, $resolvedBase . DIRECTORY_SEPARATOR) !== 0)) {
+										$installlog .= "Skipped unsafe update file path: /" . $thisFileName . "\n";
+										continue;
+									}
+								} else {
+									$status = "created";
+								}
+
+								if ($updateThis = @fopen($targetFile, 'wb')) {
+									fwrite($updateThis, $contents);
+									fclose($updateThis);
+									unset($contents);
+
+									$installlog .= "File: " . $thisFileName . "......" . $status . "\n";
+								} else {
+									$installlog .= "Can't update file:" . $thisFileName . "! Operation aborted";
 								}
 							}
-						} else {
-							$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
-							$file_ext = array_pop(explode(".", $thisFileName));
-
-							if (file_exists(substr(__DIR__, 0, -12) . '/' . $thisFileName)) {
-								$status = "updated";
-							} else {
-								$status = "created";
-							}
-
-							if ($updateThis = @fopen(substr(__DIR__, 0, -12) . '/' . $thisFileName, 'wb')) {
-								fwrite($updateThis, $contents);
-								fclose($updateThis);
-								unset($contents);
-
-								$installlog .= "File: " . $thisFileName . "......" . $status . "\n";
-							} else {
-								$installlog .= "Can't update file:" . $thisFileName . "! Operation aborted";
-							}
+							$FilesUpdated = true;
 						}
-						$FilesUpdated = true;
+						@zip_close($zip);
 					}
-					@zip_close($zip);
 				}
 			} else {
 				$installlog .= "Can't save new update! Operation aborted. Make sure PHP has write permissions!";
@@ -241,7 +266,7 @@ if ($missing_api_key == true) {
 			</div>
 		</div>
 
-		<?php if ($_POST['start_upgrade'] == '1') { ?>
+		<?php if (($_POST['start_upgrade'] ?? '') === '1') { ?>
 			<br>
 			<textarea rows="8" class="form-control install_logs"><?php echo $installlog; ?></textarea>
 		<?php }

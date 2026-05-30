@@ -28,4 +28,3 @@ $json = str_replace('\\/', '/', json_encode($data));
 
 print_r(pretty_json($json));
 }
-?>

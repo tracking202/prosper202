@@ -38,7 +38,7 @@ $html['aff_campaign_name'] = htmlentities((string)($tracker_row['aff_campaign_na
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 
 // get the click id
-$mysql['click_id']=$db->real_escape_string($_COOKIE['tracking202subid']);
+$mysql['click_id']=$db->real_escape_string((string)($_COOKIE['tracking202subid'] ?? ''));
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 
@@ -57,12 +57,12 @@ if(isset($mysql['202vars'])){
 	<head>
 		<title><?php echo $html['aff_campaign_name']; ?></title>
 		<meta name="robots" content="noindex">
-		<meta http-equiv="refresh" content="1; url=<?php echo $redirect_site_url; ?>">
+		<meta http-equiv="refresh" content="1; url=<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">
 	</head>
 	<body>
 	
 		<form name="form1" id="form1" method="get" action="/tracking202/redirect/cl2.php">
-			<input type="hidden" name="q" value="<?php echo $redirect_site_url; ?>"/>
+			<input type="hidden" name="q" value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>"/>
 		</form>
 		<script type="text/javascript">
 			document.form1.submit();
@@ -71,7 +71,7 @@ if(isset($mysql['202vars'])){
 	
 		<div style="padding: 30px; text-align: center;">
 			You are being automatically redirected.<br/><br/>
-			Page Stuck? <a href="<?php echo $redirect_site_url; ?>">Click Here</a>.
+			Page Stuck? <a href="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">Click Here</a>.
 		</div>
     </body>
 </html> 

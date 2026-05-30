@@ -8,12 +8,15 @@ template_top('Prosper202 ClickServer App Store');
 
 	if ($_POST['update_clickserver_api_key'] == '1') {
 
-		if ($_POST['token'] != $_SESSION['token']) { $error['token'] = 'You must use our forms to submit data.';  }
+		// validate token
+		if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) { $error['token'] = 'You must use our forms to submit data.';  }
+
+		$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
 
 		if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
-			if (!clickserver_api_key_validate($_POST['clickserver_api_key']) && $mysql['clickserver_api_key'] !='') { $error['clickserver_api_key'] = 'This API Key appears invalid.'; }
+			if (!clickserver_api_key_validate($mysql['clickserver_api_key']) && $mysql['clickserver_api_key'] !='') { $error['clickserver_api_key'] = 'This API Key appears invalid.'; }
 
-			if (!$error || $mysql['clickserver_api_key'] =='') {
+			if (empty($error)) {
 					
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
@@ -120,8 +123,6 @@ else{
 
 			//Initiate curl
 			$ch = curl_init();
-			// Disable SSL verification
-			curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 			// Will return the response, if false it print the response
 			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 			// Set the url
@@ -145,28 +146,28 @@ if($data){
           <?php if($deal['app-status']=="popular"){ ?>
           <img src="<?php echo get_absolute_url();?>202-img/new/icons/ribbon.svg" alt="ribbon" class="tile-hot-ribbon">
           <?php }?>
-            <img src="<?php echo $deal['app-img'];?>" class="tile-image big-illustration">
-            <h3 class="tile-title"><?php echo $deal['title'];?></h3>
-            <p><?php echo $deal['app-description'];?></p>
+            <img src="<?php echo htmlspecialchars((string)($deal['app-img'] ?? ''), ENT_QUOTES);?>" class="tile-image big-illustration">
+            <h3 class="tile-title"><?php echo htmlspecialchars((string)($deal['title'] ?? ''), ENT_QUOTES);?></h3>
+            <p><?php echo htmlspecialchars((string)($deal['app-description'] ?? ''), ENT_QUOTES);?></p>
             <?php 
             if($deal['app-install']=='installed'){
             ?>
             <a class="btn btn-primary btn-large btn-block" href="">Installed <span class="fui-check"></span><br>
-            <?php echo $deal['app-price'];?>
+            <?php echo htmlspecialchars((string)($deal['app-price'] ?? ''), ENT_QUOTES);?>
             </a>
             <?php 
             }
             else if($deal['app-install']=='un-installed'){
                 ?>
                 <a class="btn btn-inverse btn-large btn-block" href="">Install Now <span class="fui-upload"></span><br>
-                <?php echo $deal['app-price'];?>
+                <?php echo htmlspecialchars((string)($deal['app-price'] ?? ''), ENT_QUOTES);?>
                 </a>
                 <?php 
             }
             else if($deal['app-install']=='coming-soon'){
                 ?>
                             <a class="btn btn-warning btn-large btn-block" href="">Coming Soon... <span class="fui-time"></span><br>
-                            <?php echo $deal['app-price'];?>
+                            <?php echo htmlspecialchars((string)($deal['app-price'] ?? ''), ENT_QUOTES);?>
                             </a>
                             <?php 
                         }

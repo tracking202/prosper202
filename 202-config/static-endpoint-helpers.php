@@ -17,8 +17,13 @@ if (!function_exists('p202ResolveAdvertiserId')) {
             return null;
         }
 
+        // @phpstan-ignore-next-line static endpoint uses raw mysqli; no Connection instance available
         $stmt->bind_param('i', $campaignId);
-        $stmt->execute();
+        // @phpstan-ignore-next-line static endpoint uses raw mysqli; no Connection instance available
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return null;
+        }
         $result = $stmt->get_result();
         $row = $result ? $result->fetch_assoc() : null;
         if ($result) {
@@ -41,7 +46,7 @@ if (!function_exists('p202RespondJsonError')) {
     {
         http_response_code($code);
         header('Content-Type: application/json');
-        print_r(json_encode(['error' => true, 'code' => $code, 'msg' => $message]));
+        echo json_encode(['error' => true, 'code' => $code, 'msg' => $message]);
         die();
     }
 }

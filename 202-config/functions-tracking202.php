@@ -47,29 +47,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
     $report_query = _mysqli_query($report_sql);
 
-    // email administration of the error
-    $to = $_SERVER['SERVER_ADMIN'];
-    $subject = 'mysql error reported - ' . $site_url;
-    $message = '<b>A mysql error has been reported</b><br/><br/>
-		
-					time: ' . date('r', time()) . '<br/>
-					server_name: ' . $_SERVER['SERVER_NAME'] . '<br/><br/>
-					
-					user_id: ' . ($_SESSION['user_id'] ?? 'N/A') . '<br/>
-					script_url: ' . $site_url . '<br/>
-					$_SERVER: ' . serialize($_SERVER) . '<br/><br/>
-					
-					. . . . . . . . <br/><br/>
-												 
-					_mysqli_query: ' . $sql . '<br/><br/>
-					 
-					mysql_error: ' . $clean['mysql_error_text'];
-    $from = $_SERVER['SERVER_ADMIN'];
-    $type = 3; // type 3 is mysql_error
-
-    // send_email($to,$subject,$message,$from,$type);
-
-    // report error to user and end page    
+    // report error to user and end page
 ?>
     <div class="warning" style="margin: 40px auto; width: 450px;">
         <div>
@@ -160,7 +138,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $userId = (int) ($_SESSION['user_id'] ?? 0);
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $userId;
     $user_result = _mysqli_query($user_sql);
-    $user_row = $user_result->fetch_assoc() ?? [];
+    $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
 
     $html['user_pref_aff_network_id'] = htmlentities((string) ($user_row['user_pref_aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $html['user_pref_aff_campaign_id'] = htmlentities((string) ($user_row['user_pref_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -1069,7 +1047,7 @@ function grab_timeframe($unused = null): array
     $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string((string) $_SESSION['user_id']) : 0;
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
-    $user_row = $user_result->fetch_assoc() ?? [];
+    $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
     $pref_time = $user_row['user_pref_time_predefined'] ?? '';
 
     $time = [
@@ -1218,7 +1196,7 @@ function query(
     $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string((string) $_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql); // ($user_sql);
-    $user_row = $user_result->fetch_assoc() ?? [];
+    $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
 
     // Apply sane defaults when optional arguments are omitted
     if ($db_table === null) {
@@ -3502,7 +3480,8 @@ function getData($url, int $timeout = 60, int $connectTimeout = 5)
     if (function_exists('curl_version')) {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
@@ -3517,8 +3496,8 @@ function getData($url, int $timeout = 60, int $connectTimeout = 5)
                     'timeout' => $timeout,
                 ],
                 'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
+                    'verify_peer' => true,
+                    'verify_peer_name' => true,
                 ],
             ]);
             return @file_get_contents($url, false, $context);
@@ -3875,4 +3854,3 @@ function renderDynamicContentSegmentHelp(): void
 		   So how easy is it to display the visitor\'s country on your landing page? Here\'s the html for it:<br/>
 		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
 }
-?>

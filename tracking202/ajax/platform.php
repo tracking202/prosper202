@@ -17,7 +17,7 @@ AUTH::require_user();
             $html['platform_name'] = htmlentities((string)($platform_row['platform_name'] ?? ''), ENT_QUOTES, 'UTF-8');
             $html['platform_id'] = htmlentities((string)($platform_row['platform_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
-            if ($_POST['platform_id'] == $platform_row['platform_id']) {
+            if (($_POST['platform_id'] ?? '') == $platform_row['platform_id']) {
                 $selected = 'selected=""';   
             } else {
                 $selected = '';  

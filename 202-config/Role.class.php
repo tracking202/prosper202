@@ -38,4 +38,3 @@ class Role
         return isset($this->permissionList[$permission]);
     }
 }
-?>

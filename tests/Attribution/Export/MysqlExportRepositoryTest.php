@@ -328,7 +328,7 @@ final class FakeStatement
     }
 }
 
-final class FakeResult
+final class FakeResult extends \mysqli_result
 {
     /**
      * @var array<int, array<string, mixed>>
@@ -341,11 +341,19 @@ final class FakeResult
      */
     public function __construct(array $rows)
     {
+        // Skip parent constructor — no real result set backs this fake.
         $this->rows = array_values($rows);
     }
 
+    #[\ReturnTypeWillChange]
     public function fetch_assoc(): ?array
     {
         return $this->rows[$this->position++] ?? null;
+    }
+
+    #[\ReturnTypeWillChange]
+    public function free(): void
+    {
+        $this->rows = [];
     }
 }

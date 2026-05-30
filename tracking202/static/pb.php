@@ -19,9 +19,9 @@ $mysql['click_id'] = $db->real_escape_string((string)$_GET['subid']);
 
 $cpa_sql = "SELECT 202_cpa_trackers.tracker_id_public, 202_trackers.click_cpa FROM 202_cpa_trackers LEFT JOIN 202_trackers USING (tracker_id_public) WHERE click_id = '".$mysql['click_id']."'";
 $cpa_result = $db->query($cpa_sql);
-$cpa_row = $cpa_result->fetch_assoc();
+$cpa_row = ($cpa_result !== false) ? $cpa_result->fetch_assoc() : null;
 
-$mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa']);
+$mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa'] ?? '');
 	
 p202ApplyConversionUpdate(
 	$db,

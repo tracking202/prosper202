@@ -23,4 +23,3 @@ unset(
 );
 
 header('location: '.$redir_url);
-?>

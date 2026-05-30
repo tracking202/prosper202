@@ -7,6 +7,7 @@ AUTH::require_user();
 
 if (!$userObj->hasPermission("add_users")) {
 	header('location: ' . get_absolute_url() . '202-account/');
+	exit;
 }
 
 // Initialize variables to prevent undefined variable warnings
@@ -51,6 +52,12 @@ $user_result2 = _mysqli_query($user_sql);
 $user_row2 = $user_result2->fetch_assoc();
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+	// validate token
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . '202-account/user-management.php');
+		exit;
+	}
+
 	$mysql['form_user_id'] = $db->real_escape_string(trim($_POST['user_id'] ?? ''));
 	$mysql['user_fname'] = $db->real_escape_string(trim($_POST['user_fname'] ?? ''));
 	if (empty($mysql['user_fname'])) {
@@ -85,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$check_user = "select user_name,user_id from 202_users where user_name='" . $mysql['user_name'] . "'";
 		$check_user_result = _mysqli_query($check_user);
 		$user_name_row = $check_user_result->fetch_array(MYSQLI_ASSOC);
-		if ($user_result->num_rows != 0 && $user_name_row['user_id'] != $mysql['form_user_id']) {
+		if ($check_user_result->num_rows != 0 && $user_name_row['user_id'] != $mysql['form_user_id']) {
 			$error['user_name'] = '<div class="error help-block">The username you entered already exists.</div>';
 		}
 	}
@@ -119,7 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['user_role'] = '<div class="error help-block">Please select user role</div>';
 	}
 
-	if ($_POST['user_active'] !== 'on')
+	if (($_POST['user_active'] ?? '') !== 'on')
 		$mysql['user_active'] = 0;
 	else
 		$mysql['user_active'] = 1;
@@ -327,6 +334,7 @@ template_top('User Management'); ?>
 				<form style="margin:15px 0px;" method="post" action="<?php if ($delete_success == true) {
 																			echo $_SERVER['REDIRECT_URL'];
 																		} ?>" class="form-horizontal" role="form">
+					<input type="hidden" name="token" value="<?php echo htmlspecialchars((string)($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 					<div class="form-group <?php if (isset($error['user_fname']) && $error['user_fname']) echo "has-error"; ?>" style="margin-bottom: 0px;">
 						<label for="ppc_network_id" class="col-xs-4 control-label" style="text-align: left;" placeholder="">First Name:</label>
 						<div class="col-xs-5">
@@ -453,7 +461,7 @@ template_top('User Management'); ?>
 								$html['user_display_name'] .= " " . htmlentities((string)($user_row['user_lname'] ?? ''), ENT_QUOTES, 'UTF-8') . " (" . $user_row['role_name'] . ")";
 							}
 						} else {
-							$html['user_display_name'] .= " " . $user_row['user_name'] . " (" . $user_row['role_name'] . ")";
+							$html['user_display_name'] = htmlentities((string)$user_row['user_name'], ENT_QUOTES, 'UTF-8') . " (" . htmlentities((string)$user_row['role_name'], ENT_QUOTES, 'UTF-8') . ")";
 						}
 
 						//$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');

@@ -29,6 +29,7 @@ $user_result = _mysqli_query($user_sql); //($user_sql);
 
 $aff_campaigns = [];
 $campaign_ids = [];
+$user_row = [];
 while ($user_row2 = $user_result->fetch_assoc()) {
 	$user_row['user_pref_show'] = $user_row2['user_pref_show'];
 	$user_row['user_cpc_or_cpv'] = $user_row2['user_cpc_or_cpv'];
@@ -42,7 +43,7 @@ while ($user_row2 = $user_result->fetch_assoc()) {
 	}
 }
 
-$user_row['user_chart_data'] = unserialize($user_row['user_chart_data']);
+$user_row['user_chart_data'] = unserialize((string)($user_row['user_chart_data'] ?? ''), ['allowed_classes' => false]);
 
 if ($user_row['user_pref_show'] == 'all') {
 	$click_filtered = '';
@@ -185,7 +186,7 @@ $dr->displayPerPPCReport('alp', $AlpPerPPC);
 											<select class="form-control input-sm" name="data_level[]">
 												<option value="0" <?php if ($user_chart_data['campaign_id'] == '0') echo 'selected'; ?>>All</option>
 												<?php foreach ($aff_campaigns as $campaign) { ?>
-													<option value="<?php echo $campaign['aff_campaign_id']; ?>" <?php if ($user_chart_data['campaign_id'] == $campaign['aff_campaign_id']) echo 'selected'; ?>><?php echo $campaign['aff_campaign_name']; ?></option>
+													<option value="<?php echo (int)$campaign['aff_campaign_id']; ?>" <?php if ($user_chart_data['campaign_id'] == $campaign['aff_campaign_id']) echo 'selected'; ?>><?php echo htmlentities((string)$campaign['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); ?></option>
 												<?php } ?>
 											</select>
 										</div>

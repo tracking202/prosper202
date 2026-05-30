@@ -8,6 +8,9 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php')
 $mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['acip']);
 $aff_campaign_sql = "SELECT user_id FROM 202_aff_campaigns WHERE aff_campaign_id_public='".$mysql['aff_campaign_id_public']."'";
 $aff_campaign_row =  memcache_mysql_fetch_assoc($aff_campaign_sql);
+
+if (!$aff_campaign_row) { die(); }
+
 $mysql['user_id'] = $db->real_escape_string($aff_campaign_row['user_id']);
 
 
@@ -43,9 +46,9 @@ if ($mysql['click_id']) {
 
 	$cpa_sql = "SELECT 202_cpa_trackers.tracker_id_public, 202_trackers.click_cpa FROM 202_cpa_trackers LEFT JOIN 202_trackers USING (tracker_id_public) WHERE click_id = '".$mysql['click_id']."'";
 	$cpa_result = $db->query($cpa_sql);
-	$cpa_row = $cpa_result->fetch_assoc();
+	$cpa_row = ($cpa_result !== false) ? $cpa_result->fetch_assoc() : null;
 
-	$mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa']);
+	$mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa'] ?? '');
 	
 		p202ApplyConversionUpdate(
 			$db,

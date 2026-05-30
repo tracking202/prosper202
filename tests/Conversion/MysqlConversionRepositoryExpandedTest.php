@@ -80,14 +80,22 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
 
     public function testCreateInsertsConversionLog(): void
     {
-        $write = new FakeMysqliConnection();
+        // mysqli/mysqli_stmt expose insert_id as a read-only virtual property on
+        // PHP 8.4+, so neither the shared FakeMysqliConnection nor its
+        // FakeMysqliStatement (both subclass the native classes) can surface a
+        // custom insert_id. Connection::executeInsert reads $stmt->insert_id, so
+        // we use a write connection whose INSERT statement is a plain object with
+        // a writable insert_id, while delegating every other prepare/transaction
+        // call to the shared fake.
+        $write = new InsertReportingFakeMysqliConnection(7);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
         );
-        $write->whenQueryContainsInsertId('INSERT INTO 202_conversion_logs', 7);
 
-        [$repo] = $this->buildRepo($write);
+        // buildRepo() type-hints FakeMysqliConnection, so wire this bespoke
+        // write double through a Connection directly.
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
         $id = $repo->create(1, ['click_id' => 10, 'transaction_id' => 'TX-1']);
 
@@ -216,5 +224,205 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
 
         self::assertSame(0, $result['total']);
         self::assertCount(0, $write->statements);
+    }
+}
+
+/**
+ * Write-connection fake whose INSERT statement reports a real insert_id.
+ *
+ * The shared {@see FakeMysqliConnection} cannot do this on PHP 8.4+: it (and its
+ * FakeMysqliStatement) subclass the native mysqli classes, whose insert_id is a
+ * read-only virtual property that cannot be assigned from anywhere (verified:
+ * direct, internal, and reflection writes all throw). FakeMysqliConnection is
+ * also `final`, so it cannot be subclassed. This standalone double returns a
+ * plain statement object (not a mysqli_stmt) for the conversion-log INSERT, whose
+ * public insert_id is freely writable; Connection accepts it because every
+ * statement parameter is relaxed to `object`.
+ */
+final class InsertReportingFakeMysqliConnection extends \mysqli
+{
+    /**
+     * @var list<InsertReportingFakeStatement>
+     */
+    public array $statements = [];
+
+    public bool $beginTransactionCalled = false;
+    public bool $commitCalled = false;
+    public bool $rollbackCalled = false;
+    public string $error = '';
+
+    /**
+     * @var array<string, list<array<string, mixed>>>
+     */
+    private array $rowsByNeedle = [];
+
+    public function __construct(private int $insertIdToReport)
+    {
+        // Skip parent constructor to avoid a real DB connection.
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     */
+    public function whenQueryContainsReturnRows(string $needle, array $rows): void
+    {
+        $this->rowsByNeedle[$needle] = $rows;
+    }
+
+    #[\ReturnTypeWillChange]
+    public function prepare(string $query): InsertReportingFakeStatement
+    {
+        $stmt = new InsertReportingFakeStatement(
+            $query,
+            $this->insertIdToReport,
+            $this->resolveRows($query),
+        );
+        $this->statements[] = $stmt;
+
+        return $stmt;
+    }
+
+    public function begin_transaction(int $flags = 0, ?string $name = null): bool
+    {
+        $this->beginTransactionCalled = true;
+
+        return true;
+    }
+
+    public function commit(int $flags = 0, ?string $name = null): bool
+    {
+        $this->commitCalled = true;
+
+        return true;
+    }
+
+    public function rollback(int $flags = 0, ?string $name = null): bool
+    {
+        $this->rollbackCalled = true;
+
+        return true;
+    }
+
+    /**
+     * @return list<InsertReportingFakeStatement>
+     */
+    public function statementsContaining(string $needle): array
+    {
+        return array_values(array_filter(
+            $this->statements,
+            static fn (InsertReportingFakeStatement $stmt): bool => str_contains($stmt->sql, $needle),
+        ));
+    }
+
+    /**
+     * @return list<array<string, mixed>>|null
+     */
+    private function resolveRows(string $query): ?array
+    {
+        foreach ($this->rowsByNeedle as $needle => $rows) {
+            if (str_contains($query, $needle)) {
+                return $rows;
+            }
+        }
+
+        return null;
+    }
+}
+
+/**
+ * Minimal statement double that is NOT a mysqli_stmt subclass, so its public
+ * insert_id property is freely writable.
+ */
+final class InsertReportingFakeStatement
+{
+    public string $boundTypes = '';
+
+    /**
+     * @var list<mixed>
+     */
+    public array $boundValues = [];
+
+    public int $insert_id = 0;
+    public int $affected_rows = 0;
+    public string $error = '';
+
+    /**
+     * @param list<array<string, mixed>>|null $rows
+     */
+    public function __construct(
+        public string $sql,
+        private int $insertIdToReport,
+        private ?array $rows,
+    ) {
+    }
+
+    public function bind_param(string $types, mixed &...$vars): bool
+    {
+        $this->boundTypes = $types;
+        $this->boundValues = [];
+        foreach ($vars as &$var) {
+            $this->boundValues[] = $var;
+        }
+
+        return true;
+    }
+
+    public function execute(?array $params = null): bool
+    {
+        if (str_contains($this->sql, 'INSERT INTO 202_conversion_logs')) {
+            $this->insert_id = $this->insertIdToReport;
+        }
+        $this->affected_rows = 1;
+
+        return true;
+    }
+
+    #[\ReturnTypeWillChange]
+    public function get_result(): \mysqli_result|false
+    {
+        if ($this->rows === null) {
+            return false;
+        }
+
+        return new InsertReportingFakeResult($this->rows);
+    }
+
+    public function close(): bool
+    {
+        return true;
+    }
+}
+
+/**
+ * Result double extending mysqli_result so Connection's `instanceof mysqli_result`
+ * guard in fetchOne()/fetchAll() reads the rows.
+ */
+final class InsertReportingFakeResult extends \mysqli_result
+{
+    /**
+     * @var list<array<string, mixed>>
+     */
+    private array $rows;
+    private int $position = 0;
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     */
+    public function __construct(array $rows)
+    {
+        // Skip parent constructor — no real result set backs this fake.
+        $this->rows = array_values($rows);
+    }
+
+    #[\ReturnTypeWillChange]
+    public function fetch_assoc(): ?array
+    {
+        return $this->rows[$this->position++] ?? null;
+    }
+
+    #[\ReturnTypeWillChange]
+    public function free(): void
+    {
+        $this->rows = [];
     }
 }

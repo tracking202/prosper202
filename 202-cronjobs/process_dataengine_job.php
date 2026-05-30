@@ -28,6 +28,7 @@ try {
             $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
             $db->query($sql);
 
+            $urls = [];
             for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i += 3599) {
                 $nextval = $i + 3599;
                 $urls[] = 'http://' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/dej.php?s=' . $i . '&e=' . $nextval;

@@ -2598,8 +2598,13 @@ aff_network_id=values(aff_network_id)";
         // Initialize user_id at the start
         $user_id = $_SESSION['user_own_id'] ?? 1;
 
-        $info_result = $result = $db->query($query) or die($db->error . '<br/><br/>' . $query);
-        
+        $info_result = $result = $db->query($query);
+        if (!$result) {
+            // Log details server-side; do not expose DB error or SQL to the response.
+            error_log('dataengine doQuery failed: ' . $db->error);
+            throw new RuntimeException('dataengine query failed');
+        }
+
         // Check if this is an INSERT/UPDATE query (returns true) or SELECT query (returns mysqli_result)
         if ($info_result === true) {
             // For INSERT/UPDATE queries, we don't need to call doSummary

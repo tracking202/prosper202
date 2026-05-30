@@ -11,11 +11,43 @@ use mysqli;
  */
 class SetupFormValidator
 {
+    /**
+     * Tables this validator may be invoked against. Identifiers passed to the
+     * ownership/existence/uniqueness helpers must be on this list so they are
+     * never interpolated from arbitrary input.
+     */
+    private const array ALLOWED_TABLES = [
+        '202_attribution_models',
+        '202_attribution_snapshots',
+        '202_attribution_touchpoints',
+        '202_attribution_settings',
+        '202_attribution_audit',
+        '202_attribution_exports',
+        '202_conversion_logs',
+        '202_conversion_touchpoints',
+    ];
+
     public function __construct(
         private readonly mysqli $db
     ) {
     }
-    
+
+    /**
+     * Confirm a table name is on the allowlist before it is used as an identifier.
+     */
+    private function assertAllowedTable(string $table): bool
+    {
+        return in_array($table, self::ALLOWED_TABLES, true);
+    }
+
+    /**
+     * Confirm a column name is a bare SQL identifier before it is used as one.
+     */
+    private function isValidIdentifier(string $identifier): bool
+    {
+        return $identifier !== '' && preg_match('/^[A-Za-z0-9_]+$/', $identifier) === 1;
+    }
+
     /**
      * Validate required field
      */
@@ -159,12 +191,15 @@ class SetupFormValidator
      */
     public function validateUserOwnership(int $userId, string $table, string $idColumn, int $recordId, string $recordName = 'record'): ValidationResult
     {
-        $tableName = $this->db->real_escape_string($table);
-        $columnName = $this->db->real_escape_string($idColumn);
+        // Identifiers cannot be parameterized; constrain them before use.
+        if (!$this->assertAllowedTable($table) || !$this->isValidIdentifier($idColumn)) {
+            return ValidationResult::failure("You are not authorized to modify this $recordName");
+        }
+
         $userIdEscaped = $this->db->real_escape_string((string)$userId);
         $recordIdEscaped = $this->db->real_escape_string((string)$recordId);
-        
-        $sql = "SELECT 1 FROM `$tableName` WHERE `user_id` = '$userIdEscaped' AND `$columnName` = '$recordIdEscaped' LIMIT 1";
+
+        $sql = "SELECT 1 FROM `$table` WHERE `user_id` = '$userIdEscaped' AND `$idColumn` = '$recordIdEscaped' LIMIT 1";
         $result = $this->db->query($sql);
         
         if (!$result || $result->num_rows === 0) {
@@ -179,11 +214,14 @@ class SetupFormValidator
      */
     public function validateRecordExists(string $table, string $idColumn, int $recordId, string $recordName = 'record'): ValidationResult
     {
-        $tableName = $this->db->real_escape_string($table);
-        $columnName = $this->db->real_escape_string($idColumn);
+        // Identifiers cannot be parameterized; constrain them before use.
+        if (!$this->assertAllowedTable($table) || !$this->isValidIdentifier($idColumn)) {
+            return ValidationResult::failure("$recordName not found");
+        }
+
         $recordIdEscaped = $this->db->real_escape_string((string)$recordId);
-        
-        $sql = "SELECT 1 FROM `$tableName` WHERE `$columnName` = '$recordIdEscaped' LIMIT 1";
+
+        $sql = "SELECT 1 FROM `$table` WHERE `$idColumn` = '$recordIdEscaped' LIMIT 1";
         $result = $this->db->query($sql);
         
         if (!$result || $result->num_rows === 0) {
@@ -198,11 +236,15 @@ class SetupFormValidator
      */
     public function validateUniqueSlug(int $userId, string $table, string $slug, ?int $excludeId = null, string $fieldName = 'slug'): ValidationResult
     {
-        $tableName = $this->db->real_escape_string($table);
+        // The table name cannot be parameterized; constrain it before use.
+        if (!$this->assertAllowedTable($table)) {
+            return ValidationResult::failure("$fieldName could not be validated");
+        }
+
         $userIdEscaped = $this->db->real_escape_string((string)$userId);
         $slugEscaped = $this->db->real_escape_string($slug);
-        
-        $sql = "SELECT 1 FROM `$tableName` WHERE `user_id` = '$userIdEscaped' AND `model_slug` = '$slugEscaped'";
+
+        $sql = "SELECT 1 FROM `$table` WHERE `user_id` = '$userIdEscaped' AND `model_slug` = '$slugEscaped'";
         
         if ($excludeId !== null) {
             $excludeIdEscaped = $this->db->real_escape_string((string)$excludeId);

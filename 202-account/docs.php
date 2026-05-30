@@ -76,6 +76,10 @@ if (!file_exists($file_path)) {
 }
 
 $markdown_content = file_get_contents($file_path);
+if ($markdown_content === false) {
+    header('HTTP/1.1 404 Not Found');
+    exit('Document file not found');
+}
 $html_content = markdownToHtml($markdown_content);
 
 $doc_titles = [

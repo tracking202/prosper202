@@ -1,7 +1,5 @@
 <?php
 
-use GuzzleHttp\json_decode;
-
 include_once(__DIR__ . '/functions-upgrade.php');
 
 // Add ipAddress function
@@ -542,7 +540,7 @@ function info_top(): void
 
 	function iphone()
 	{
-		if ($_GET['iphone']) {
+		if (!empty($_GET['iphone'])) {
 			return true;
 		}
 		if (preg_match("/iphone/i", (string) $_SERVER["HTTP_USER_AGENT"])) {

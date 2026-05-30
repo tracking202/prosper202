@@ -72,6 +72,10 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
             Bootstrap::errorResponse('Invalid JSON body', 400);
             exit;
         }
+        if ($payload !== null && !is_array($payload)) {
+            Bootstrap::errorResponse('Invalid JSON body', 400);
+            exit;
+        }
         $payload = $payload ?? [];
     }
 }

@@ -50,16 +50,20 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 		if ($editing == true) {
-			$sql = "UPDATE `202_aff_networks` SET";
+			// scope rename to the acting user's own rotator
+			$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['rotator_id'] ?? ''));
+			$sql = "UPDATE 202_rotators SET name='" . $mysql['rotator_name'] . "' WHERE id='" . $mysql['rotator_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
+			$result = $db->query($sql);
 		} else {
 			$sql = "INSERT INTO 202_rotators SET name='" . $mysql['rotator_name'] . "', user_id='" . $mysql['user_id'] . "'";
+			$result = $db->query($sql);
+			$rotator_id = $db->insert_id;
+
+			// public_id is derived from insert_id, so only generate it for the INSERT path
+			$sql = "UPDATE 202_rotators SET public_id='" . random_int(1, 9) . $rotator_id . random_int(1, 9) . "' WHERE id='" . $rotator_id . "' AND user_id='" . $mysql['user_id'] . "'";
+			$result = $db->query($sql);
 		}
 
-		$result = $db->query($sql);
-		$rotator_id = $db->insert_id;
-
-		$sql = "UPDATE 202_rotators SET public_id='" . random_int(1, 9) . $rotator_id . random_int(1, 9) . "' WHERE id='" . $rotator_id . "'";
-		$result = $db->query($sql);
 		$add_success = true;
 
 		if ($slack)

@@ -389,14 +389,14 @@ template_top('Get Trackers');  ?>
 							}
 						?>
 							<li>
-								<span class="filter_tracker_display_name"><?php echo $display_name; ?></span>
+								<span class="filter_tracker_display_name"><?php echo htmlentities((string) $display_name, ENT_QUOTES, 'UTF-8'); ?></span>
 								<span class="filter_tracker_meta">Id:<?php echo $tracker_row['tracker_id']; ?> &bullet; <?php echo date('m/d/y', (int)$tracker_row['tracker_time']); ?></span>
 								<?php if ($tracker_row['landing_page_id'] != 0) { ?>
-									<a href="<?php echo $destination_url; ?>" class="list-action" title="Open tracking link">link</a>
+									<a href="<?php echo htmlspecialchars((string) $destination_url, ENT_QUOTES, 'UTF-8'); ?>" class="list-action" title="Open tracking link">link</a>
 								<?php } else if ($tracker_row['rotator_id']) { ?>
-									<a href="http://<?php echo getTrackingDomain() . get_absolute_url(); ?>tracking202/redirect/rtr.php?t202id=<?php echo $tracker_row['tracker_id_public']; ?>&t202kw=<?php echo $vars_query; ?>" class="list-action" title="Open tracking link">link</a>
+									<a href="http://<?php echo getTrackingDomain() . get_absolute_url(); ?>tracking202/redirect/rtr.php?t202id=<?php echo htmlspecialchars((string) $tracker_row['tracker_id_public'], ENT_QUOTES, 'UTF-8'); ?>&t202kw=<?php echo htmlspecialchars((string) $vars_query, ENT_QUOTES, 'UTF-8'); ?>" class="list-action" title="Open tracking link">link</a>
 								<?php } else { ?>
-									<a href="http://<?php echo getTrackingDomain() . get_absolute_url(); ?>tracking202/redirect/dl.php?t202id=<?php echo $tracker_row['tracker_id_public']; ?>&t202kw=<?php echo $vars_query; ?>" class="list-action" title="Open tracking link">link</a>
+									<a href="http://<?php echo getTrackingDomain() . get_absolute_url(); ?>tracking202/redirect/dl.php?t202id=<?php echo htmlspecialchars((string) $tracker_row['tracker_id_public'], ENT_QUOTES, 'UTF-8'); ?>&t202kw=<?php echo htmlspecialchars((string) $vars_query, ENT_QUOTES, 'UTF-8'); ?>" class="list-action" title="Open tracking link">link</a>
 								<?php } ?>
 								<a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_trackers.php?edit_tracker_id=<?php echo $tracker_row['tracker_id_public']; ?>" class="list-action" title="Edit this tracker"><i class="fa fa-pencil-square-o"></i> edit</a>
 								<?php if ($userObj->hasPermission("remove_tracker")) { ?>

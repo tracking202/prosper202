@@ -161,10 +161,11 @@ class INDEXES
                 $isp_sql = "INSERT INTO 202_locations_isp SET isp_name='" . $mysql['isp_name'] . "'";
                 $isp_result = _mysqli_query($isp_sql);
                 $isp_id = $db->insert_id;
-
-                return $isp_id;
             }
         }
+
+        //return the isp_id
+        return $isp_id;
     }
 
     // this returns the ip_id, when a ip_address is given
@@ -213,7 +214,7 @@ class INDEXES
     // Modified to accept string IP address
     public static function insert_ip($ip_address_string)
     {
-        global $db; // Use global $db
+        $db = DB::getInstance()->getConnection();
 
         // Validate and sanitize the input IP address string
         $ip_address_string = trim((string) $ip_address_string);

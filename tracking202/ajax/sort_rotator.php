@@ -70,6 +70,13 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 				$stats_total['clicks'] = 0;
 				$stats_total['leads'] = 0;
 
+				// initialize report-wide accumulators before the loop
+				$total_clicks = 0;
+				$total_leads = 0;
+				$total_payout = 0;
+				$total_cost = 0;
+				$total_income = 0;
+
 				while ($rotator_row = $info_result->fetch_array(MYSQLI_ASSOC)) {
 					$rotator_totals_sql = "SELECT 
 											 COUNT(*) AS clicks, 
@@ -304,10 +311,19 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 						$default_stats_result = $db->query($default_stats_sql) or record_mysql_error($default_stats_sql);
 						$default_stats_row = $default_stats_result->fetch_assoc();
 
-						$default_su_ratio = @round($default_stats_row['leads'] / $default_stats_row['clicks'] * 100, 2);
-						$default_epc = @round($default_stats_row['income'] / $default_stats_row['clicks'], 2);
+						$default_su_ratio = 0;
+						if ($default_stats_row['clicks'] > 0) {
+							$default_su_ratio = @round($default_stats_row['leads'] / $default_stats_row['clicks'] * 100, 2);
+						}
+						$default_epc = 0;
+						if ($default_stats_row['clicks'] > 0) {
+							$default_epc = @round($default_stats_row['income'] / $default_stats_row['clicks'], 2);
+						}
 						$default_net = $default_stats_row['income'] - $default_stats_row['cost'];
-						$default_roi = @round(($default_net / $default_stats_row['cost'] * 100), 2);
+						$default_roi = 0;
+						if ($default_stats_row['cost'] > 0) {
+							$default_roi = @round(($default_net / $default_stats_row['cost'] * 100), 2);
+						}
 
 						$html['default_clicks'] = htmlentities(number_format($default_stats_row['clicks']), ENT_QUOTES, 'UTF-8');
 						$html['default_leads'] = htmlentities(number_format($default_stats_row['leads']), ENT_QUOTES, 'UTF-8');

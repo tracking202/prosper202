@@ -31,6 +31,14 @@ final class AuthClassTest extends TestCase
 
         // Include the auth functions
         require_once __DIR__ . '/../../202-config/functions-auth.php';
+
+        // Reset the per-request session heartbeat guard so each test behaves
+        // like a fresh request. logged_in() refreshes session_time at most once
+        // per request via this private static flag; without resetting it, a test
+        // that calls logged_in() leaves the flag set and suppresses the refresh
+        // in later tests within the same process.
+        $reflection = new \ReflectionProperty(AUTH::class, 'sessionHeartbeatRefreshed');
+        $reflection->setValue(null, false);
     }
 
     protected function tearDown(): void
@@ -55,7 +63,7 @@ final class AuthClassTest extends TestCase
     {
         $_SESSION = [
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => time(),
         ];
 
@@ -68,7 +76,7 @@ final class AuthClassTest extends TestCase
     {
         $_SESSION = [
             'user_name' => 'testuser',
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => time(),
         ];
 
@@ -109,7 +117,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => time() - 60000, // More than 50000 seconds ago
         ];
 
@@ -123,7 +131,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => time(),
         ];
 
@@ -138,7 +146,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . session_id()),
+            'session_fingerprint' => md5('session_fingerprint' . session_id()),
             'session_time' => $oldTime,
         ];
 

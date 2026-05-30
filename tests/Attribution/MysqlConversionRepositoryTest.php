@@ -160,7 +160,7 @@ final class FakeMysqliStatement extends \mysqli_stmt
     }
 }
 
-final class FakeMysqliResult
+final class FakeMysqliResult extends \mysqli_result
 {
     /** @var array<int, array<string, mixed>> */
     private array $rows;
@@ -171,9 +171,11 @@ final class FakeMysqliResult
      */
     public function __construct(array $rows)
     {
+        // Skip parent constructor — no real result set backs this fake.
         $this->rows = array_values($rows);
     }
 
+    #[\ReturnTypeWillChange]
     public function fetch_assoc(): ?array
     {
         if (!isset($this->rows[$this->position])) {
@@ -183,6 +185,7 @@ final class FakeMysqliResult
         return $this->rows[$this->position++];
     }
 
+    #[\ReturnTypeWillChange]
     public function free(): void
     {
         $this->rows = [];
