@@ -91,7 +91,15 @@ jobs:
             # that bootstraps the DB at load time and the connection fails — aborts PHPUnit
             # before any test runs, yet can exit 0. Require a real run summary with a sane
             # test count so an aborted/empty run is treated as a failure, not a pass.
-            test_count=$(grep -oE 'Tests: [0-9]+' phpunit_output.txt | tail -1 | grep -oE '[0-9]+')
+            #
+            # PHPUnit prints two different summary forms: a fully-clean run ends with
+            # "OK (N tests, M assertions)", while any failure/skip/risky/incomplete run
+            # ends with "Tests: N, Assertions: M, ...". Parse both so a green run isn't
+            # misread as zero tests.
+            test_count=$(grep -oE 'OK \(([0-9]+) test' phpunit_output.txt | tail -1 | grep -oE '[0-9]+')
+            if [ -z "${test_count}" ]; then
+              test_count=$(grep -oE 'Tests: [0-9]+' phpunit_output.txt | tail -1 | grep -oE '[0-9]+')
+            fi
             min_tests=600
 
             if [ "${phpunit_status}" -ne 0 ]; then
