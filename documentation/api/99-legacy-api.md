@@ -16,6 +16,8 @@ Pass the API key as a query parameter:
 ?apikey=YOUR_API_KEY
 ```
 
+> ⚠️ **Security:** Passing the API key in the URL query string exposes it in web-server access logs, browser history, and `Referer` headers. Anyone with access to those can impersonate you against the reporting API. For new integrations, use [API v3](00-api-integrations.md) with `Authorization: Bearer <api_key>` instead. If you must use the legacy v1 query-parameter key, treat it as highly sensitive: restrict access to logs, rotate the key immediately if it may have been exposed, and prefer server-to-server calls over embedding the key in browser-visible URLs.
+
 ## Methods
 
 The v1 API supports a single `reports` method.
@@ -25,7 +27,7 @@ The v1 API supports a single `reports` method.
 | Parameter | Required | Description |
 | --------- | -------- | ----------- |
 | `type` | Yes | Report type (see below) |
-| `apikey` | Yes | API key for authentication |
+| `apikey` | Yes | API key for authentication (sent in the URL — see the security warning above) |
 | `date_from` | No | Start date (mm/dd/yyyy, defaults to start of today) |
 | `date_to` | No | End date (mm/dd/yyyy, defaults to end of today) |
 | `cid` | No | Campaign ID filter |

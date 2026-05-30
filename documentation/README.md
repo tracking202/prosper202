@@ -51,6 +51,8 @@
 
 - [Go CLI (p202)](cli/10-go-cli.md) — cross-platform binary with multi-profile, sync, and diff
 
+A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 list` to see its commands); it does not yet have a dedicated reference page here.
+
 ### Tutorials and Guides
 
 - [Setup Tutorial](tutorials-and-guides/00-tutorial.md)

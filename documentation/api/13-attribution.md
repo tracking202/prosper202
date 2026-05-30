@@ -68,7 +68,7 @@ Manage multi-touch attribution models, view snapshots, and schedule exports.
 | `scope_id` | integer | 0 | Entity ID for the scope |
 | `start_hour` | integer | — | Start timestamp |
 | `end_hour` | integer | — | End timestamp |
-| `format` | string | `csv` | Export format: `csv` or `json` |
+| `format` | string | `csv` | Export format: `csv` or `xls` |
 | `webhook_url` | string | — | URL to notify when export completes |
 
 Export statuses: `queued`, `processing`, `completed`, `failed`.

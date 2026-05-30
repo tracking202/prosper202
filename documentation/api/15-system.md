@@ -20,15 +20,19 @@ System health checks, diagnostics, and administration.
 
 ```json
 {
-  "status": "healthy",
-  "database": "connected",
-  "timestamp": 1709942400,
-  "php_version": "8.3.x",
-  "api_version": "v3"
+  "data": {
+    "status": "healthy",
+    "timestamp": 1709942400,
+    "api_version": "v3"
+  }
 }
 ```
 
-Status values: `healthy` or `degraded`.
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `status` | string | Health status, e.g. `healthy`. |
+| `timestamp` | integer | Unix timestamp when the check ran. |
+| `api_version` | string | API version this server implements. |
 
 ## Version Info
 

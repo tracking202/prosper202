@@ -16,7 +16,7 @@ Manage users, roles, API keys, and preferences.
 
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
-| `GET` | `/users/roles` | None | List all available roles |
+| `GET` | `/users/roles` | Any Authenticated | List all available roles |
 | `POST` | `/users/{id}/roles` | Admin | Assign a role to a user |
 | `DELETE` | `/users/{id}/roles/{roleId}` | Admin | Remove a role from a user |
 

@@ -63,7 +63,7 @@ Full REST endpoints are available under `/api/v3/attribution`:
 | `DELETE` | `/attribution/models/{id}` | Delete model and all related data |
 | `GET` | `/attribution/models/{id}/snapshots` | List hourly snapshots |
 | `GET` | `/attribution/models/{id}/exports` | List scheduled exports |
-| `POST` | `/attribution/models/{id}/exports` | Schedule an export (CSV or JSON) |
+| `POST` | `/attribution/models/{id}/exports` | Schedule an export (CSV or XLS) |
 
 All endpoints require Bearer token authentication. See the full [Attribution API reference](../api/13-attribution.md) for request/response details.
 
@@ -89,7 +89,8 @@ See the [Go CLI reference](../cli/10-go-cli.md) for all commands and options.
 
 Attribution data can be exported via the API or CLI:
 
-- **CSV and JSON exports** are available through the `/attribution/models/{id}/exports` endpoint or the `attribution:export:schedule` CLI command.
+- **CSV and XLS exports** are available through the `/attribution/models/{id}/exports` endpoint or the `attribution:export:schedule` CLI command.
+  - The `attribution:export:schedule` command belongs to the PHP/Symfony Console CLI (entrypoint `bin/p202`), and is run as `bin/p202 attribution:export:schedule {id} [options]`. Note this is a different `p202` from the Go CLI binary used in the examples above.
 - **Webhook notifications**: provide a `webhook_url` when scheduling an export to receive a callback when the export completes.
 - Export scopes: `global`, `campaign`, or `landing_page` with configurable time ranges.
 

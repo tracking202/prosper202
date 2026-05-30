@@ -27,11 +27,14 @@ Create a separate API key for each integration so you can revoke access individu
 | Header | Direction | Description |
 | ------ | --------- | ----------- |
 | `Authorization: Bearer <key>` | Request | Required for authenticated endpoints. |
-| `X-P202-API-Version: v3` | Both | Optional on request; always present in response. |
+| `X-P202-API-Version` | Request | Optional version negotiation; defaults to `v3` if omitted. |
+| `X-P202-API-Version-Resolved: v3` | Response | Always present; reports the resolved API version. |
 | `Idempotency-Key: <string>` | Request | Required for bulk-upsert operations. |
 | `If-Match: <etag>` | Request | Optional optimistic concurrency on updates. |
 
 ## Standard Response Format
+
+The envelope fields below (full `pagination` metadata, and `version`/`etag` on single resources) apply to standard CRUD resources served by the generic controller. Some endpoints (for example, attribution models) return a simpler shape and may omit `cursor`/`total` pagination or the `version`/`etag` fields.
 
 ### List Response
 
@@ -140,11 +143,11 @@ Returns system health status:
 
 ```json
 {
-  "status": "healthy",
-  "database": "connected",
-  "timestamp": 1709942400,
-  "php_version": "8.3.x",
-  "api_version": "v3"
+  "data": {
+    "status": "healthy",
+    "timestamp": 1709942400,
+    "api_version": "v3"
+  }
 }
 ```
 

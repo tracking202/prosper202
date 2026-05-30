@@ -8,7 +8,7 @@ All sync endpoints require admin role and the appropriate sync scope (`sync:read
 
 | Method | Path | Scope | Description |
 | ------ | ---- | ----- | ----------- |
-| `POST` | `/sync/plan` | sync:read | Build a sync plan (returns 202) |
+| `POST` | `/sync/plan` | sync:read | Build a sync plan (returns 200) |
 | `GET` | `/sync/status` | sync:read | Current sync status between profiles |
 | `GET` | `/sync/history` | sync:read | Sync history |
 
@@ -74,7 +74,7 @@ curl -X POST https://your-domain.com/api/v3/sync/jobs \
 | `source.api_key` | string | Yes | Source instance API key |
 | `target.url` | string | Yes | Target instance base URL |
 | `target.api_key` | string | Yes | Target instance API key |
-| `entity` | string | Yes | Entity to sync (e.g., `campaigns`, `aff_networks`, `trackers`) |
+| `entity` | string | Yes | Entity to sync. One of: `aff-networks`, `ppc-networks`, `ppc-accounts`, `campaigns`, `landing-pages`, `text-ads`, `rotators`, `trackers`, or `all` |
 | `collision_mode` | string | No | How to handle conflicts: `warn` or `manual` |
 | `prune` | boolean | No | Delete target entities not present in source |
 | `max_attempts` | integer | No | Retry limit for failed items |

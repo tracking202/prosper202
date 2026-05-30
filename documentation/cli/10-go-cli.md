@@ -14,6 +14,8 @@ make all          # Cross-compile for all platforms
 
 The binary is output as `p202` (or `p202.exe` on Windows).
 
+Note that this Go binary is distinct from the PHP/Symfony Console CLI entrypoint at `bin/p202`. Because both share the name `p202`, they can collide on your `PATH`. To avoid ambiguity, invoke each by its full path (e.g. `./go-cli/p202 ...` for the Go CLI vs `./bin/p202 ...` for the PHP CLI), or rename the Go binary.
+
 ## Configuration
 
 ```bash
@@ -40,7 +42,8 @@ p202 config show
 | `p202 campaign create` | Create a campaign |
 | `p202 campaign update <id>` | Update a campaign |
 | `p202 campaign delete <id>` | Delete a campaign |
-| `p202 network list` | List networks |
+| `p202 aff-network list` | List affiliate networks (alias: `category`) |
+| `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |
 | `p202 click list` | List clicks |
 | `p202 conversion list` | List conversions |
@@ -124,7 +127,7 @@ p202 sync campaigns --from prod --to staging --force-update
 p202 re-sync --from prod --to staging
 ```
 
-Sync respects entity dependencies: networks -> accounts -> campaigns -> landing-pages -> text-ads -> rotators -> trackers.
+Sync respects entity dependencies: aff-network/ppc-network -> ppc-account -> campaign -> landing-page -> text-ad -> rotator -> tracker.
 
 ## Data Export/Import
 
