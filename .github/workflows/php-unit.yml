@@ -18,7 +18,13 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: mysqli, pdo, pdo_mysql, memcached, mbstring, curl, zip, dom, xml, gd, zlib
+          # The app uses the `memcached` (OO) extension and defines its own procedural
+          # memcache_get()/memcache_set() helpers (guarded by function_exists) with a
+          # 1-arg signature. The native `memcache` extension exports incompatible
+          # procedural functions of the same name; if the runner image ships it, those
+          # shadow our helpers and every memcache_get($key) call fails with
+          # ArgumentCountError. Disable it (`:memcache`) so CI matches production.
+          extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
 
       - name: Cache Composer downloads
         uses: actions/cache@v4
