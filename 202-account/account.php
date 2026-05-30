@@ -32,6 +32,31 @@ $username = $user_row['username'];
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
+// Account/key settings require the same permission that gates their UI; reject
+// forged requests from users who lack it (the password-change flow is excluded
+// because every user may change their own password).
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key'];
+$personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key'];
+$wantsPersonalSettingsAction = false;
+foreach ($personalSettingsPost as $personalSettingsAction) {
+	if (isset($_POST[$personalSettingsAction])) {
+		$wantsPersonalSettingsAction = true;
+		break;
+	}
+}
+if (!$wantsPersonalSettingsAction) {
+	foreach ($personalSettingsGet as $personalSettingsAction) {
+		if (!empty($_GET[$personalSettingsAction])) {
+			$wantsPersonalSettingsAction = true;
+			break;
+		}
+	}
+}
+if ($wantsPersonalSettingsAction && !$userObj->hasPermission('access_to_personal_settings')) {
+	http_response_code(403);
+	die('You do not have permission to change these settings.');
+}
+
 if (isset($_POST['add_rest_api_key'])) {
 	// validate token
 	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
