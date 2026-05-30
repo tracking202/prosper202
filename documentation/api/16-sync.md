@@ -75,7 +75,7 @@ curl -X POST https://your-domain.com/api/v3/sync/jobs \
 | `target.url` | string | Yes | Target instance base URL |
 | `target.api_key` | string | Yes | Target instance API key |
 | `entity` | string | Yes | Entity to sync. One of: `aff-networks`, `ppc-networks`, `ppc-accounts`, `campaigns`, `landing-pages`, `text-ads`, `rotators`, `trackers`, or `all` |
-| `collision_mode` | string | No | How to handle conflicts: `warn` or `manual` |
+| `collision_mode` | string | No | `warn` or `manual`. Only evaluated by `POST /sync/plan` (the plan preview); queued jobs created via `POST /sync/jobs` do not currently enforce it. |
 | `prune` | boolean | No | Delete target entities not present in source |
 | `max_attempts` | integer | No | Retry limit for failed items |
 
