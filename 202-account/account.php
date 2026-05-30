@@ -104,6 +104,10 @@ if (!empty($_GET['customers_api_key'])) {
 
 //if they want to remove their stats202 app key on file, do so
 if (!empty($_GET['remove_user_stats202_app_key'])) {
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_REQUEST['token'] ?? ''))) {
+		http_response_code(403);
+		die('Invalid token.');
+	}
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_stats202_app_key='' WHERE user_id='" . $mysql['user_id'] . "'";
 	$result = $db->query($sql);
@@ -114,6 +118,10 @@ if (!empty($_GET['remove_user_stats202_app_key'])) {
 
 //if they want to remove their user api key on file, do so
 if (!empty($_GET['remove_user_api_key'])) {
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_REQUEST['token'] ?? ''))) {
+		http_response_code(403);
+		die('Invalid token.');
+	}
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_api_key='' WHERE user_id='" . $mysql['user_id'] . "'";
 	$result = $db->query($sql);
