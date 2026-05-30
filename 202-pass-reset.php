@@ -8,11 +8,11 @@ $html = [];
 $success = false;
 
 //take password retireveal and see if it is legitimate
-$mysql['user_pass_key'] = $db->real_escape_string((string)$_GET['key']);
+$mysql['user_pass_key'] = $db->real_escape_string((string)($_GET['key'] ?? ''));
 
 $user_sql = "SELECT * FROM 202_users WHERE user_pass_key='" . $mysql['user_pass_key'] . "'";
 $user_result = _mysqli_query($user_sql, $db);
-$user_row = $user_result->fetch_assoc();
+$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
 
 if (!$user_row) {
 	$error['user_pass_key'] = '<div class="error">No key was found like that</div>';
@@ -37,17 +37,17 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 	//if ($_POST['token'] != $_SESSION['token']) { $error['token'] = '<div class="error">You must use our forms to submit data.</div';  }
 
 
-	if ($_POST['user_pass'] == '') {
+	if (($_POST['user_pass'] ?? '') == '') {
 		$error['user_pass'] = '<div class="error">You must type in your desired password</div>';
 	}
-	if ($_POST['user_pass'] == '') {
-		$error['user_pass'] .= '<div class="error">You must type verify your password</div>';
+	if (($_POST['verify_user_pass'] ?? '') == '') {
+		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">You must type verify your password</div>';
 	}
-	if ((strlen((string) $_POST['user_pass']) < 6) or (strlen((string) $_POST['user_pass']) > 15)) {
-		$error['user_pass'] .= '<div class="error">Passwords must be 6 to 15 characters long</div>';
+	if ((strlen((string) ($_POST['user_pass'] ?? '')) < 6) or (strlen((string) ($_POST['user_pass'] ?? '')) > 15)) {
+		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Passwords must be 6 to 15 characters long</div>';
 	}
-	if ($_POST['user_pass'] != $_POST['verify_user_pass']) {
-		$error['user_pass'] .= '<div class="error">Your passwords did not match, please try again</div>';
+	if (($_POST['user_pass'] ?? '') != ($_POST['verify_user_pass'] ?? '')) {
+		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Your passwords did not match, please try again</div>';
 	}
 
 	if (!$error) {
@@ -64,7 +64,11 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 						  WHERE	user_id='" . $mysql['user_id'] . "'";
 		$user_result = _mysqli_query($user_sql, $db);
 
-		$success = true;
+		if ($user_result === false) {
+			$error['user_pass'] = '<div class="error">Could not save your new password, please try again.</div>';
+		} else {
+			$success = true;
+		}
 	}
 }
 
@@ -78,7 +82,7 @@ if ($success == true) {
 	_die("<center><small>Congratulations, your password has been reset.<br/>You can now <a href=\"" . get_absolute_url() . "202-login.php\">login</a> with your new password.</small></center>");
 }
 
-if ($error['user_pass_key']) {
+if (!empty($error['user_pass_key'])) {
 
 	_die("<center><small>" . $error['user_pass_key'] . "<br/>Please use the <a href=\"" . get_absolute_url() . "202-lost-pass.php\">password retrieval tool</a> to get a new password reset key.</small></center>");
 }
@@ -95,8 +99,8 @@ if ($error['user_pass_key']) {
 			<div class="form-group">
 				<input type="text" class="form-control first" id="user_name" name="user_name" value="<?php echo $html['user_name']; ?>" disabled="disabled">
 			</div>
-			<div class="form-group <?php if ($error['user_pass']) echo "has-error"; ?>">
-				<?php if ($error['user_pass']) { ?>
+			<div class="form-group <?php if (!empty($error['user_pass'])) echo "has-error"; ?>">
+				<?php if (!empty($error['user_pass'])) { ?>
 					<div class="tooltip right in login_tooltip">
 						<div class="tooltip-arrow"></div>
 						<div class="tooltip-inner"><?php echo $error['user_pass']; ?></div>

@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$mysql['click_update_type'] = 'upload';
 	$mysql['click_update_time'] = time();
 
-	$subids = $_POST['subids'];
+	$subids = $_POST['subids'] ?? '';
 	$subids = trim((string) $subids);
 	$subids = explode("\r", $subids);
 	$subids = str_replace("\n", '', $subids);

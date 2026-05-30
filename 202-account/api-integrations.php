@@ -164,8 +164,13 @@ $cb_verified = $user_row['cb_verified'];
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	// validate token
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		$error['token'] = 'You must use our forms to submit data.';
+	}
+
 	// ClickBank Key Update
-	if (isset($_POST['change_cb_key']) && $_POST['change_cb_key'] == '1') {
+	if (!isset($error['token']) && isset($_POST['change_cb_key']) && $_POST['change_cb_key'] == '1') {
 		$config = [
 			'post_key' => 'cb_key',
 			'field_name' => 'cb_key',
@@ -177,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// Slack Webhook Update
-	if (isset($_POST['change_user_slack_incoming_webhook']) && $_POST['change_user_slack_incoming_webhook'] == '1') {
+	if (!isset($error['token']) && isset($_POST['change_user_slack_incoming_webhook']) && $_POST['change_user_slack_incoming_webhook'] == '1') {
 		$config = [
 			'post_key' => 'user_slack_incoming_webhook',
 			'field_name' => 'user_slack_incoming_webhook',
@@ -189,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// Zaxaa API Signature Update
-	if (isset($_POST['change_zaxaa_api_signature']) && $_POST['change_zaxaa_api_signature'] == '1') {
+	if (!isset($error['token']) && isset($_POST['change_zaxaa_api_signature']) && $_POST['change_zaxaa_api_signature'] == '1') {
 		$config = [
 			'post_key' => 'zaxaa_api_signature',
 			'field_name' => 'zaxaa_api_signature',
@@ -201,7 +206,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// JVZoo Secret Key Update
-	if (isset($_POST['change_jvzoo_secret_key']) && $_POST['change_jvzoo_secret_key'] == '1') {
+	if (!isset($error['token']) && isset($_POST['change_jvzoo_secret_key']) && $_POST['change_jvzoo_secret_key'] == '1') {
 		$config = [
 			'post_key' => 'jvzoo_ipn_secret_key',
 			'field_name' => 'jvzoo_ipn_secret_key',
@@ -213,7 +218,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// IPQualityScore API Key Update
-	if (isset($_POST['change_ipqs_api_key']) && $_POST['change_ipqs_api_key'] == '1') {
+	if (!isset($error['token']) && isset($_POST['change_ipqs_api_key']) && $_POST['change_ipqs_api_key'] == '1') {
 		$config = [
 			'post_key' => 'ipqs_api_key',
 			'field_name' => 'ipqs_api_key',
@@ -224,7 +229,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db);
 	}
 
-	if (isset($_POST['dni_network'])) {
+	if (!isset($error['token']) && isset($_POST['dni_network'])) {
 		if (array_search('', $_POST) !== false) {
 			$error['dni_network'] = 'Make sure all fields are selected and filled out!';
 		} else {
@@ -396,6 +401,7 @@ template_top('API Integrations');
 			</div>
 			<div class="col-xs-12">
 				<form class="form-horizontal" role="form" method="post" action="">
+					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>">
 					<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo $edit_dni_row['type'] ?? ''; ?>">
 					<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo $edit_dni_row['name'] ?? ''; ?>">
 					<?php if (isset($editing_dni_network) && $editing_dni_network) { ?>

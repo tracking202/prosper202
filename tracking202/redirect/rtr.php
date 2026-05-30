@@ -407,7 +407,9 @@ if ($referer_url_query !== '') {
     @parse_str($referer_url_query, $referer_query);
 }
 
-switch ($keyword_type) { 
+$keyword = $db->real_escape_string((string)($_GET['t202kw'] ?? ''));
+
+switch ($keyword_type) {
 
 	case "bidded":
 	      #try to get the bidded keyword first
@@ -641,6 +643,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 
 //now gather variables for the clicks record db
 //lets determine if cloaking is on
+$cloaking_on = false;
 $mysql['click_id_public'] = '';
 if ($rule['aff_campaign_cloaking'] == 1) {
 	$cloaking_on = true;
@@ -730,5 +733,3 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	} 
 
 }
-
-?>

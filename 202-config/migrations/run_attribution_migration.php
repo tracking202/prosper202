@@ -89,8 +89,9 @@ try {
         
         if ($result->num_rows >= 10) {
             $totalResult = $db->query("SELECT COUNT(*) as total FROM 202_attribution_models WHERE is_default = 1");
-            $totalRow = $totalResult->fetch_assoc();
-            echo "  ... and " . ($totalRow['total'] - 10) . " more users\n";
+            if ($totalResult && ($totalRow = $totalResult->fetch_assoc())) {
+                echo "  ... and " . ($totalRow['total'] - 10) . " more users\n";
+            }
         }
     }
     

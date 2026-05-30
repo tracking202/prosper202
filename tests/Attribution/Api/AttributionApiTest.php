@@ -8,6 +8,13 @@ namespace {
     $_SERVER['REMOTE_ADDR'] = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
     $_SERVER['REQUEST_URI'] = $_SERVER['REQUEST_URI'] ?? '/';
 
+    // Run the v2 API bootstrap in CLI test mode: routes use the injected in-memory
+    // service and the CLI auth override, so app.php skips connect.php (the DB bootstrap
+    // that hard-exits when no database is reachable). Without this, merely loading this
+    // test file aborts the entire PHPUnit run during collection.
+    if (!defined('PROSPER_ATTRIBUTION_TEST_MODE')) {
+        define('PROSPER_ATTRIBUTION_TEST_MODE', true);
+    }
     require_once __DIR__ . '/../../../api/v2/app.php';
 }
 
@@ -28,7 +35,9 @@ use Prosper202\Attribution\ExportStatus;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Snapshot;
 use Prosper202\Attribution\Touchpoint;
-use Slim\Environment;
+use Slim\Http\Body;
+use Slim\Http\Environment;
+use Slim\Http\Request;
 
 final class AttributionApiTest extends TestCase
 {
@@ -38,6 +47,12 @@ final class AttributionApiTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // This API is exercised DB-less here (in-memory repositories + the CLI auth
+        // override). Defensively clear any global $db leaked by an earlier test file
+        // so the metrics route's `global $db` supplemental-query branch stays off and
+        // the suite result is order-independent.
+        unset($GLOBALS['db']);
 
         $modelRepository = new InMemoryModelRepository();
         $snapshotRepository = new InMemorySnapshotRepository();
@@ -77,9 +92,11 @@ final class AttributionApiTest extends TestCase
 
         $data = $decoded['data'];
         $this->assertSame(3, count($data['snapshots']));
-        $this->assertSame(450.0, $data['totals']['revenue']);
-        $this->assertSame(18.0, $data['totals']['conversions']);
-        $this->assertSame(90.0, $data['totals']['clicks']);
+        // JSON serialises whole-number floats without a fraction, so json_decode
+        // yields int; compare numerically rather than by strict PHP type.
+        $this->assertEqualsWithDelta(450.0, $data['totals']['revenue'], 0.0001);
+        $this->assertEqualsWithDelta(18.0, $data['totals']['conversions'], 0.0001);
+        $this->assertEqualsWithDelta(90.0, $data['totals']['clicks'], 0.0001);
         $this->assertGreaterThan(0, count($data['touchpoint_mix']));
     }
 
@@ -178,20 +195,14 @@ final class AttributionApiTest extends TestCase
     private function performGet(string $path, array $query = []): array
     {
         $queryString = http_build_query($query);
-        Environment::mock([
+        $env = Environment::mock([
             'REQUEST_METHOD' => 'GET',
-            'SCRIPT_NAME' => '/api/v2/index.php',
+            'REQUEST_URI' => $path,
             'PATH_INFO' => $path,
             'QUERY_STRING' => $queryString,
         ]);
 
-        $app = create_attribution_app($this->service);
-
-        ob_start();
-        $app->run();
-        $body = (string) ob_get_clean();
-
-        return [$app->response()->getStatus(), $body];
+        return $this->dispatch($env, null);
     }
 
     /**
@@ -200,21 +211,14 @@ final class AttributionApiTest extends TestCase
      */
     private function performPost(string $path, array $payload): array
     {
-        Environment::mock([
+        $env = Environment::mock([
             'REQUEST_METHOD' => 'POST',
-            'SCRIPT_NAME' => '/api/v2/index.php',
+            'REQUEST_URI' => $path,
             'PATH_INFO' => $path,
             'CONTENT_TYPE' => 'application/json',
-            'slim.input' => json_encode($payload, JSON_THROW_ON_ERROR),
         ]);
 
-        $app = create_attribution_app($this->service);
-
-        ob_start();
-        $app->run();
-        $body = (string) ob_get_clean();
-
-        return [$app->response()->getStatus(), $body];
+        return $this->dispatch($env, $payload);
     }
 
     /**
@@ -223,21 +227,43 @@ final class AttributionApiTest extends TestCase
      */
     private function performPatch(string $path, array $payload): array
     {
-        Environment::mock([
+        $env = Environment::mock([
             'REQUEST_METHOD' => 'PATCH',
-            'SCRIPT_NAME' => '/api/v2/index.php',
+            'REQUEST_URI' => $path,
             'PATH_INFO' => $path,
             'CONTENT_TYPE' => 'application/json',
-            'slim.input' => json_encode($payload, JSON_THROW_ON_ERROR),
         ]);
 
+        return $this->dispatch($env, $payload);
+    }
+
+    /**
+     * Drive the Slim 3 app against a mock environment and return the PSR-7
+     * status code and body. When $payload is non-null the JSON is written to
+     * the request body stream (the routes read the raw body via
+     * decode_json_body()) and also set as the parsed body.
+     *
+     * @param array<string, mixed>|null $payload
+     * @return array{int,string}
+     */
+    private function dispatch(Environment $env, ?array $payload): array
+    {
         $app = create_attribution_app($this->service);
+        $container = $app->getContainer();
+        $container['environment'] = $env;
 
-        ob_start();
-        $app->run();
-        $body = (string) ob_get_clean();
+        $request = Request::createFromEnvironment($env);
+        if ($payload !== null) {
+            $body = new Body(fopen('php://temp', 'r+'));
+            $body->write(json_encode($payload, JSON_THROW_ON_ERROR));
+            $body->rewind();
+            $request = $request->withBody($body)->withParsedBody($payload);
+        }
+        $container['request'] = $request;
 
-        return [$app->response()->getStatus(), $body];
+        $response = $app->run(true);
+
+        return [$response->getStatusCode(), (string) $response->getBody()];
     }
 }
 
@@ -258,7 +284,7 @@ final class InMemoryModelRepository implements ModelRepositoryInterface
                 name: 'Test Position Model',
                 slug: 'test-position-model',
                 type: ModelType::POSITION_BASED,
-                weightingConfig: ['first' => 0.3, 'last' => 0.4],
+                weightingConfig: ['first_touch_weight' => 0.3, 'last_touch_weight' => 0.4],
                 isActive: true,
                 isDefault: true,
                 createdAt: $now,

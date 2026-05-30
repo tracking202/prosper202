@@ -4,6 +4,12 @@ include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
+// validate session token before any state change
+if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+	http_response_code(403);
+	die('Invalid token');
+}
+
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
@@ -242,22 +248,23 @@ $html = [];
 	if ($slack) {
 		$editTracker = !empty($_POST['edit_tracker']);
 
-		switch ($_POST['tracker_type']) {
+		$tracker_type = 'Unknown';
+		switch ($_POST['tracker_type'] ?? '') {
 			case '0':
-				if ($_POST['method_of_promotion'] == 'directlink') {
+				if (($_POST['method_of_promotion'] ?? '') == 'directlink') {
 						$tracker_type = 'Direct Link';
-				} else if ($_POST['method_of_promotion'] == 'landingpage') {
+				} else if (($_POST['method_of_promotion'] ?? '') == 'landingpage') {
 						$tracker_type = 'Simple Landing Page';
 				}
 				break;
-				
+
 			case '1':
 				$tracker_type = 'Advanced Landing Page';
 				break;
 
 			case '2':
 				$tracker_type = 'Smart Rotator';
-				break;	
+				break;
 		}
 
 		if (!$editTracker) {
@@ -398,8 +405,8 @@ $html = [];
 <small><em><u>Make sure you test out all the links to make sure they
 			work yourself before running them live.</u></em></small><?php 	
 	
-	if ($_POST['method_of_promotion'] == 'directlink') { 
-		
+	if (($_POST['method_of_promotion'] ?? '') == 'directlink') {
+
 		$destination_url = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/dl.php?t202id=' . $tracker_id_public . $tracking_variable_string;
 		$html['destination_url'] = htmlentities($destination_url, ENT_QUOTES, 'UTF-8');
 		printf('<br></br><small><strong>Destination URL:</strong></small><br/>
@@ -416,8 +423,8 @@ $html = [];
 
 	} 
 
-	if ($_POST['tracker_type'] == 2) { 
-		
+	if (($_POST['tracker_type'] ?? '') == 2) {
+
 		$destination_url = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/rtr.php?t202id=' . $tracker_id_public . $tracking_variable_string;
 		$html['destination_url'] = htmlentities($destination_url, ENT_QUOTES, 'UTF-8');
 		printf('<br></br><small><strong>Destination URL:</strong></small><br/>
@@ -434,7 +441,7 @@ $html = [];
 
 	} 
 	
-	if (($_POST['method_of_promotion'] == 'landingpage') or ($_POST['tracker_type'] == 1)) {
+	if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or (($_POST['tracker_type'] ?? '') == 1)) {
 
 		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' . 
 		                   ($parsed_url['host'] ?? '') . 

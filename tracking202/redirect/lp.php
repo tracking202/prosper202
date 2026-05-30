@@ -143,8 +143,11 @@ $mysql['landing_page_id'] = $db->real_escape_string((string) $tracker_row['landi
 $mysql['text_ad_id'] = $db->real_escape_string((string) $tracker_row['text_ad_id']);
 
 //now gather variables for the clicks record db
+//click_id is needed to build click_id_public below, so resolve it first
+$click_id = $_COOKIE['tracking202subid_a_'.$tracker_row['aff_campaign_id']] ?? '';
 //lets determine if cloaking is on
-if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking on                                                             
+$cloaking_on = false;
+if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking on
 	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
 	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1)) //if no tracker but but by default campaign has cloaking on
 ) {
@@ -152,9 +155,9 @@ if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking
 	$mysql['click_cloaking'] = 1;
 	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
 	$click_id_public = random_int(1,9) . $click_id . random_int(1,9);
-	$mysql['click_id_public'] = $db->real_escape_string($click_id_public); 
-} else { 
-	$mysql['click_cloaking'] = 0; 
+	$mysql['click_id_public'] = $db->real_escape_string($click_id_public);
+} else {
+	$mysql['click_cloaking'] = 0;
 }
 
 
@@ -166,8 +169,7 @@ if ($cloaking_on == true) {
 	
 }
 
-$redirect_site_url = rotateTrackerUrl($db, $tracker_row); 
-$click_id = $_COOKIE['tracking202subid_a_'.$tracker_row['aff_campaign_id']];
+$redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 
 $mysql['click_id'] = $db->real_escape_string($click_id);
 $mysql['click_out'] = 1;

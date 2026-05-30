@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 // Define memcache wrapper functions that were missing
 if (!function_exists('memcache_get')) {
     function memcache_get($key)

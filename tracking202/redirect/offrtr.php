@@ -19,64 +19,7 @@ include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
 $mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
 
-
-/*$usedCachedRedirect = false;
-if (! $db)
-    $usedCachedRedirect = true;
-    
-    // the mysql server is down, use the txt cached redirect
-if ($usedCachedRedirect == true) {
-    
-    $acip = $_GET['acip'];
-    
-    // if a cached key is found for this acip, redirect to that url
-    if ($memcacheWorking) {
-        $getUrl = $memcache->get(md5('ac_' . $acip . systemHash()));
-        if ($getUrl) {
-            
-            $new_url = str_replace("[[subid]]", "p202", $getUrl);
-            
-            // c1 sring replace for cached redirect
-            if (isset($_GET['c1']) && $_GET['c1'] != '') {
-                $new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
-            } else {
-                $new_url = str_replace("[[c1]]", "p202c1", $new_url);
-            }
-            
-            // c2 sring replace for cached redirect
-            if (isset($_GET['c2']) && $_GET['c2'] != '') {
-                $new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
-            } else {
-                $new_url = str_replace("[[c2]]", "p202c2", $new_url);
-            }
-            
-            // c3 sring replace for cached redirect
-            if (isset($_GET['c3']) && $_GET['c3'] != '') {
-                $new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
-            } else {
-                $new_url = str_replace("[[c3]]", "p202c3", $new_url);
-            }
-            
-            // c4 sring replace for cached redirect
-            if (isset($_GET['c4']) && $_GET['c4'] != '') {
-                $new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
-            } else {
-                $new_url = str_replace("[[c4]]", "p202c4", $new_url);
-            }
-            
-            $urlvars = getPrePopVars($urlvarslist);
-            
-            $new_url = setPrePopVars($urlvars, $redirect_site_url, false);
-       
-            header('location: ' . $new_url);
-            die();
-        }
-    }
-    
-    die("<h2>Error establishing a database connection - please contact the webhost</h2>");
-}*/
-
-$rotator_sql = "SELECT 
+$rotator_sql = "SELECT
 					   rt.id,
 					   rt.default_url,
 					   rt.default_campaign,
@@ -301,7 +244,7 @@ foreach ($rule_row as $rule) {
 
 $mysql['click_out'] = 1;
 
-$mysql['rule_redirect_id'] = $db->real_escape_string((string)$rule_redirect_row['rule_redirect_id']);
+// rule_redirect_id is resolved later (after the redirect lookup) and updated then
 $click_sql = "
 	REPLACE INTO
 		202_clicks_rotator
@@ -309,7 +252,7 @@ $click_sql = "
 		click_id='".$mysql['click_id']."',
 		rotator_id='".$mysql['rotator_id']."',
 		rule_id='".$mysql['rule_id']."',
-		rule_redirect_id = '".$mysql['rule_redirect_id']."'";
+		rule_redirect_id = '0'";
 $click_result = $db->query($click_sql) or record_mysql_error($db);
 
 if ($default == false) {
@@ -345,8 +288,21 @@ if ($default == false) {
 				LEFT JOIN 202_rotator_rules_redirects AS rur ON rur.rule_id = '".$mysql['rule_id']."'
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
-				WHERE 2c.click_id='".$mysql['click_id']."'"; 
-		$rule_redirect_row = memcache_mysql_fetch_assoc($db, $rule_redirect_sql);
+				WHERE 2c.click_id='".$mysql['click_id']."'";
+		$rule_redirect_row = memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+
+			// backfill the resolved redirect id onto the click row
+			if (is_array($rule_redirect_row) && isset($rule_redirect_row['rule_redirect_id'])) {
+				$mysql['rule_redirect_id'] = $db->real_escape_string((string)$rule_redirect_row['rule_redirect_id']);
+				$update_sql = "
+					UPDATE
+						202_clicks_rotator
+					SET
+						rule_redirect_id = '".$mysql['rule_redirect_id']."'
+					WHERE
+						click_id='".$mysql['click_id']."'";
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
+			}
 
 			if ($rule_redirect_row['redirect_campaign'] != null) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_id']);

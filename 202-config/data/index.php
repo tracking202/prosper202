@@ -5,18 +5,17 @@ set_time_limit(0);
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect.php'); 
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/class-dataengine.php');
 
+// restrict to authenticated users
+AUTH::require_user();
+
 $de = new DataEngine();
 //$data=($de->setDirtyHour(1));
-$type = $_GET['type'] ?? 1;
+$type = isset($_GET['type']) ? (int) $_GET['type'] : 1;
 
-if($_GET['r']){ 
-
-$range="0:00 -".$_GET ['r']. " days";
-$start = strtotime ( $range);
-}
-else {
-$start = strtotime ( "0:00 -1 days" );
-}
+// clamp range to a small positive number of days
+$r = max(1, min((int) ($_GET['r'] ?? 1), 30));
+$range = "0:00 -" . $r . " days";
+$start = strtotime($range);
 $end = time();
 define("ONEHOUR",3599);
 

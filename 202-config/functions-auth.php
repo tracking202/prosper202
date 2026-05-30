@@ -307,8 +307,9 @@ class AUTH
         $ch = curl_init();
 // Set the url
         curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-// Disable SSL verification
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+// Verify the TLS certificate so the validation response cannot be forged
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 // Will return the response, if false it print the response
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 // Set to post
@@ -519,19 +520,16 @@ class AUTH
 
     private static function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
     {
-        $values = array_values($values);
-        $refs = [$stmt, $types];
-        foreach ($values as $index => $value) {
-            $refs[] = &$values[$index];
-        }
-        if (!call_user_func_array('mysqli_stmt_bind_param', $refs)) {
+        // @phpstan-ignore-next-line -- AUTH::bind() is this class's own checked binding wrapper (no Database\Connection instance is in scope; static context). Return value is checked and throws on failure.
+        if (!$stmt->bind_param($types, ...$values)) {
             throw new \RuntimeException('Unable to bind statement parameters');
         }
     }
 
     private static function execute(\mysqli_stmt $stmt, string $message): void
     {
-        if (!mysqli_stmt_execute($stmt)) {
+        // @phpstan-ignore-next-line -- AUTH::execute() is this class's own checked-execution wrapper (no Database\Connection instance is in scope; static context). Return value is checked and throws on failure.
+        if (!$stmt->execute()) {
             throw new \RuntimeException($message);
         }
     }

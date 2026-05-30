@@ -158,22 +158,40 @@ final class SchemaInstaller
     private function createTablesFromDefinitions(array $definitions): void
     {
         foreach ($definitions as $definition) {
-            $this->executeStatement($definition->createStatement, $definition->tableName);
+            // executeStatement() records any failure into $this->errors; the
+            // explicit check makes the failed result propagate instead of being
+            // silently discarded. Continue so every failure is reported.
+            if (!$this->executeStatement($definition->createStatement, $definition->tableName)) {
+                continue;
+            }
         }
     }
 
     /**
      * Execute a SQL statement and track the result.
+     *
+     * Records any failure into $this->errors so it is surfaced by install()
+     * rather than silently discarded.
      */
     private function executeStatement(string $sql, ?string $tableName = null): bool
     {
-        $result = _mysqli_query($this->connection, $sql);
+        try {
+            $result = _mysqli_query($this->connection, $sql);
+        } catch (\mysqli_sql_exception $e) {
+            $this->errors[] = 'Failed to create table ' . ($tableName ?? '?') . ': ' . $e->getMessage();
+            return false;
+        }
 
-        if ($result !== false && $tableName !== null) {
+        if ($result === false) {
+            $this->errors[] = 'Failed to create table ' . ($tableName ?? '?') . ': ' . $this->connection->error;
+            return false;
+        }
+
+        if ($tableName !== null) {
             $this->createdTables[] = $tableName;
         }
 
-        return $result !== false;
+        return true;
     }
 
     /**

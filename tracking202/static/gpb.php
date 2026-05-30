@@ -7,6 +7,8 @@ header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
+// getUrl() for server-side postback pixels (not pulled in by connect2.php)
+include_once(substr(__DIR__, 0,-19) . '/202-config/functions-tracking202api.php');
 
 $settingsService = AttributionServiceFactory::createSettingsService();
 
@@ -239,8 +241,8 @@ if (is_numeric($mysql['click_id'])) {
 	$diff = $click_time_to_date->diff($conv_time_to_date);
 	$mysql['time_difference'] =  $db->real_escape_string($diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec');
 	$mysql['conv_time'] = $db->real_escape_string($conv_time);
-	$mysql['ip'] = $db->real_escape_string($_SERVER['HTTP_X_FORWARDED_FOR']);
-	$mysql['user_agent'] = $db->real_escape_string($_SERVER['HTTP_USER_AGENT']);
+	$mysql['ip'] = $db->real_escape_string($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
+	$mysql['user_agent'] = $db->real_escape_string($_SERVER['HTTP_USER_AGENT'] ?? '');
 
 			if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
 				$mysql['use_pixel_payout'] = 1;

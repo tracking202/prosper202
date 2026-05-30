@@ -51,7 +51,10 @@ final class SnapshotExporter
             throw new \RuntimeException('Unable to open export file for writing: ' . $path);
         }
 
-        fputcsv($handle, ['Date (UTC)', 'Attributed Clicks', 'Attributed Conversions', 'Attributed Revenue', 'Attributed Cost', 'ROI %', 'Profit']);
+        // Pass $escape explicitly: its default is deprecated as of PHP 8.4. '\\'
+        // preserves the historical behaviour and matches the rest of the codebase
+        // (see tracking202/update/upload.php).
+        fputcsv($handle, ['Date (UTC)', 'Attributed Clicks', 'Attributed Conversions', 'Attributed Revenue', 'Attributed Cost', 'ROI %', 'Profit'], escape: '\\');
 
         foreach ($snapshots as $snapshot) {
             $row = $this->normaliseSnapshot($snapshot);
@@ -63,7 +66,7 @@ final class SnapshotExporter
                 number_format($row['attributed_cost'], 2, '.', ''),
                 $row['roi'] !== null ? number_format($row['roi'], 2, '.', '') : '',
                 number_format($row['profit'], 2, '.', ''),
-            ]);
+            ], escape: '\\');
         }
 
         fclose($handle);

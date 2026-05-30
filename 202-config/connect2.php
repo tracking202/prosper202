@@ -627,7 +627,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
             $mysql['region'] = '';
             $mysql['city'] = '';
         }
-        $mysql['referer'] = urlencode((string) $db->real_escape_string($_SERVER['HTTP_REFERER']));
+        $mysql['referer'] = urlencode((string) $db->real_escape_string($_SERVER['HTTP_REFERER'] ?? ''));
         if ($db->real_escape_string($click_row['ppc_account_id']) == '0') {
             $mysql['ppc_account'] = '';
         } else {
@@ -2737,7 +2737,8 @@ function getData($url)
     if (function_exists('curl_version')) {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
         curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -2761,7 +2762,8 @@ function getPublisher($pubid)
 		WHERE
 			`user_public_publisher_id`='" . $pubid . "'";
 
-    $pubid_row = memcache_mysql_fetch_assoc($db);
+    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
+    $pubid_row = memcache_mysql_fetch_assoc($db, $publisher_id_sql);
     if ($pubid_row) {
         return $db->real_escape_string($pubid_row['user_id']);
     } else {
@@ -2896,7 +2898,8 @@ function getTrackerDetail(&$mysql)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
-    $tracker_row = memcache_mysql_fetch_assoc($db);
+    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
+    $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
     //set all mysql vars
     $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
@@ -2966,7 +2969,8 @@ function getTrackerDetailPT(&$mysql)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
-    $tracker_row = memcache_mysql_fetch_assoc($db);
+    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
+    $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
     //set all mysql vars
     $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);

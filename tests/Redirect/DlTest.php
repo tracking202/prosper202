@@ -47,6 +47,12 @@ final class DlTest extends TestCase
         $_GET = $this->originalGet;
         $_SERVER = $this->originalServer;
         $_COOKIE = $this->originalCookie;
+
+        // Reset the global $db mock so it does not leak into later test files.
+        // Other suites guard on `global $db` (e.g. the v2 attribution metrics
+        // route), and a leaked mock makes their behaviour order-dependent.
+        global $db;
+        $db = null;
     }
     
     private function createMockDb()

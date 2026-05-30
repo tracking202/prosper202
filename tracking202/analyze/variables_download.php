@@ -32,4 +32,3 @@ $data=($de->getReportData('variable', $mysql['from'], $mysql['to'],$cpv));
 $dr= new DisplayData();
 $dr->downloadVariables($data);
 $de->setDisplay(); //disable downloads query modification
-?>

@@ -19,7 +19,7 @@ if (isset($_POST['api_key'])) {
 		$msg = ['error' => true, 'msg' => $error['token'] . $error['p202_customer_api_key_invalid']];
 	}
 
-	echo json_encode($msg, true);
+	echo json_encode($msg);
 }
 
 if (isset($_POST['get_alert_body'])) { ?>

@@ -50,5 +50,3 @@ $click_filtered";
 
 $clicks_result = _mysqli_query($clicks_sql, $db);
 $clicks_row = $clicks_result->fetch_array(MYSQLI_ASSOC);
-
-?>

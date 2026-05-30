@@ -80,7 +80,17 @@ if ($isSpy) {
 	$query = query($command, $db_table, false, null, null, null, null, $spyLimit, $spyCount, $use_ro, $extra_where);
 } else {
 	$offset = isset($_POST['offset']) && is_numeric($_POST['offset']) ? (int)$_POST['offset'] : 0;
-	$order = isset($_POST['order']) ? $_POST['order'] : null;
+	// ORDER BY is an identifier context - map the request value through an
+	// allowlist of permitted sort expressions. Unknown values fall back to the
+	// query() default (click_time DESC); never pass raw input through.
+	$allowed_orders = [
+		'click_time DESC' => 'click_time DESC',
+		'click_time ASC'  => 'click_time ASC',
+	];
+	$requested_order = isset($_POST['order']) ? trim((string)$_POST['order']) : '';
+	$order = ($requested_order !== '' && isset($allowed_orders[$requested_order]))
+		? $allowed_orders[$requested_order]
+		: null;
 	$query = query($command, $db_table, null, null, null, $order, $offset);
 }
 

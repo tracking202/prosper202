@@ -15,6 +15,12 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	// validate CSRF token before any state change
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		http_response_code(403);
+		exit;
+	}
+
 	if (isset($_POST['chart_time_range']) && $_POST['chart_time_range']) {
 		header("Content-type: text/json");
 		$data = [];
@@ -23,12 +29,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		$mysql['chart_time_range'] = $db->real_escape_string((string)$_POST['chart_time_range']);
 
-		$sql = "UPDATE 202_charts SET chart_time_range = '" . $mysql['chart_time_range'] . "'";
-		$result = $db->query($sql);
+		// scope to owner
+		$sql = "UPDATE 202_charts SET chart_time_range = '" . $mysql['chart_time_range'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
+		$result = $db->query($sql) or record_mysql_error($sql);
 
 		$sql = "SELECT * FROM 202_charts WHERE user_id = '" . $mysql['user_id'] . "'";
-		$result = $db->query($sql);
+		$result = $db->query($sql) or record_mysql_error($sql);
 		$user_row = $result->fetch_assoc();
+
+		if (!is_array($user_row)) {
+			http_response_code(404);
+			exit;
+		}
 
 		$start = new DateTime('@' . $mysql['from']);
 		$end = new DateTime('@' . $mysql['to']);
@@ -43,7 +55,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				break;
 		}
 
-		$user_row['user_chart_data'] = unserialize($user_row['data']);
+		$user_row['user_chart_data'] = unserialize((string)$user_row['data'], ['allowed_classes' => false]);
+		if (!is_array($user_row['user_chart_data'])) {
+			$user_row['user_chart_data'] = [];
+		}
 		$rangePeriod = returnRanges($start, $end, $user_row['chart_time_range']);
 		$chart = $de->getChart($mysql['from'], $mysql['to'], $user_row['user_chart_data'], $user_row['chart_time_range'], $rangeOutputFormat, $rangePeriod);
 
@@ -68,6 +83,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['serialize'] = $db->real_escape_string($serialize);
 
 		$sql = "UPDATE 202_charts SET data = '" . $mysql['serialize'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
-		$result = $db->query($sql);
+		$result = $db->query($sql) or record_mysql_error($sql);
 	}
 }

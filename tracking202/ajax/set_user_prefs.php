@@ -46,16 +46,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 //predefined timelimit set, set the options
 if (isset($_POST['user_pref_time_predefined']) && $_POST['user_pref_time_predefined'] != '') {
 	switch($_POST['user_pref_time_predefined']) {
-		case 'today';
-		case 'yesterday';
-		case 'last7';
-        	case 'last14';
-		case 'last30';
-		case 'thismonth';
-		case 'lastmonth';
-        	case 'thisyear';
-		case 'lastyear';
-		case 'alltime';
+		case 'today':
+		case 'yesterday':
+		case 'last7':
+        	case 'last14':
+		case 'last30':
+		case 'thismonth':
+		case 'lastmonth':
+        	case 'thisyear':
+		case 'lastyear':
+		case 'alltime':
 		$clean['user_pref_time_predefined'] = $_POST['user_pref_time_predefined'];
 		break;               
     }

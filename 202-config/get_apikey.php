@@ -6,7 +6,9 @@ include_once('connect.php');
 //check to see if this is already installed, if so don't do anything
 if (is_installed() == true) {
 	if (isset($_GET['customers_api_key']) && $_GET['customers_api_key'] != '') {
-		header("Location: /202-login.php?customers_api_key=" . $_GET['customers_api_key']);
+		// encode value before placing in redirect header, then terminate
+		header('Location: /202-login.php?customers_api_key=' . rawurlencode((string) $_GET['customers_api_key']));
+		exit;
 	} else {
 		_die("<h6>Already Installed</h6>
     <small>You appear to have already installed Prosper202. To reinstall please clear your old database tables first. <a href='/202-login.php'>Login Now</a></small>");

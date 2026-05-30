@@ -33,6 +33,11 @@ if (!empty($_GET['edit_aff_network_id'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+	// validate session token before any state change
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		$error['token'] = '<div class="error">Invalid token, please reload the page and try again.</div>';
+	}
+
 	$aff_network_name = trim((string) $_POST['aff_network_name']);
 	if (empty($aff_network_name)) {
 		$error['aff_network_name'] = '<div class="error">Type in the name of your campaign\'s category.</div>';
@@ -111,6 +116,12 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and ($add_success != true)) {
 }
 
 if (isset($_GET['delete_aff_network_id'])) {
+
+	// validate session token before any state change
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php');
+		die();
+	}
 
 	if ($userObj->hasPermission("remove_campaign_category")) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -199,6 +210,7 @@ template_top('Campaign Category Setup');
 				<span class="infotext">What Campaign Categories do you want to use? Some examples include Commission Junction or Mobile etc.</span>
 
 				<form method="post" action="<?php echo $_SERVER['REDIRECT_URL'] ?? ''; ?>" class="setup-form" role="form">
+					<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 					<div class="form-group <?php if (isset($error['aff_network_name'])) echo "has-error"; ?>">
 						<label for="aff_network_name">Category Name</label>
 						<input type="text" class="form-control" id="aff_network_name" name="aff_network_name" placeholder="Enter category name..." value="<?php echo $html['aff_network_name'] ?? ''; ?>">
@@ -240,12 +252,13 @@ template_top('Campaign Category Setup');
 								$html['network_logo'] = '<img src="/202-img/favicon.gif" width=16>&nbsp;&nbsp;';
 
 							if ($userObj->hasPermission("remove_campaign_category")) {
-								printf('<li>%s<span class="filter_network_name">%s</span> <a href="?edit_aff_network_id=%s" class="list-action">edit</a> <a href="?delete_aff_network_id=%s&delete_aff_network_name=%s" class="list-action list-action-danger" onclick="return confirmSubmit(\'Are You Sure You Want To Delete This Campaign Category?\');">remove</a></li>',
+								printf('<li>%s<span class="filter_network_name">%s</span> <a href="?edit_aff_network_id=%s" class="list-action">edit</a> <a href="?delete_aff_network_id=%s&delete_aff_network_name=%s&token=%s" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Campaign Category?\');">remove</a></li>',
 									$html['network_logo'],
 									$html['aff_network_name'],
 									$html['aff_network_id'],
 									$html['aff_network_id'],
-									$html['aff_network_name']);
+									$html['aff_network_name'],
+									rawurlencode((string) ($_SESSION['token'] ?? '')));
 							} else {
 								printf('<li>%s<span class="filter_network_name">%s</span> <a href="?edit_aff_network_id=%s" class="list-action">edit</a></li>',
 									$html['network_logo'],

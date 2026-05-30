@@ -18,11 +18,12 @@ if ($_SERVER['REQUEST_METHOD'] === "GET") {
 }
 
 array_walk_recursive($data, function(&$val): void {
-    $val = mb_convert_encoding($val, 'UTF-8', 'ISO-8859-1');
+    if (is_string($val)) {
+        $val = mb_convert_encoding($val, 'UTF-8', 'ISO-8859-1');
+    }
 });
 
 
 $json = str_replace('\\/', '/', json_encode($data));
 
 print_r(pretty_json($json));
-?>

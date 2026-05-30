@@ -62,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $sql .= " WHERE ppc_variable_id = '".$mysql['id']."'";
             }
 
-            $result = $db->query($sql);
+            $result = $db->query($sql) or record_mysql_error($sql);
 
             if ($var['id'] != 'false') {
                 $vars[] = $var['id'];
@@ -72,8 +72,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
 
         $var_ids = implode(', ', $vars);
-        $sql = "UPDATE 202_ppc_network_variables SET deleted = '1' WHERE ppc_variable_id NOT IN (".$var_ids.") AND ppc_network_id = '".$mysql['ppc_network_id']."'";        
-        $result = $db->query($sql);
+        $sql = "UPDATE 202_ppc_network_variables SET deleted = '1' WHERE ppc_variable_id NOT IN (".$var_ids.") AND ppc_network_id = '".$mysql['ppc_network_id']."'";
+        $result = $db->query($sql) or record_mysql_error($sql);
 
         echo 'DONE!';
     }
@@ -82,29 +82,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
         $sql = "SELECT * FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = '0'";
-        $result = $db->query($sql); 
+        $result = $db->query($sql) or record_mysql_error($sql);
 
         if ($result->num_rows > 0) {
            $count = 0; 
            while ($row = $result->fetch_assoc()) { ?>
                 
-                <div class="row var-field-group old-variable" style="margin-bottom: 10px;" data-var-id="<?php echo $row['ppc_variable_id'];?>">
+                <div class="row var-field-group old-variable" style="margin-bottom: 10px;" data-var-id="<?php echo htmlspecialchars((string)$row['ppc_variable_id'], ENT_QUOTES, 'UTF-8');?>">
                     <div class="col-xs-4">
                         <div class="form-group">
                             <label for="name" class="sr-only">Name</label>
-                            <input type="text" class="form-control input-sm" name="name" value="<?php echo $row['name']; ?>">
+                            <input type="text" class="form-control input-sm" name="name" value="<?php echo htmlspecialchars((string)$row['name'], ENT_QUOTES, 'UTF-8'); ?>">
                         </div>
                     </div>
                     <div class="col-xs-4">
                         <div class="form-group">
                             <label for="parameter" class="sr-only">Parameter</label>
-                            <input type="text" class="form-control input-sm" name="parameter" value="<?php echo $row['parameter']; ?>">
+                            <input type="text" class="form-control input-sm" name="parameter" value="<?php echo htmlspecialchars((string)$row['parameter'], ENT_QUOTES, 'UTF-8'); ?>">
                         </div>
                     </div>
                     <div class="col-xs-4">
                         <div class="form-group">
                             <label for="placeholder" class="sr-only">Placeholder</label>
-                            <input type="text" class="form-control input-sm" name="placeholder" value="<?php echo $row['placeholder']; ?>">
+                            <input type="text" class="form-control input-sm" name="placeholder" value="<?php echo htmlspecialchars((string)$row['placeholder'], ENT_QUOTES, 'UTF-8'); ?>">
                             <span class="infotext remove_variable"><i class="fa fa-times"></i></span>
                         </div>
                     </div>
@@ -139,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['delete_vars']) && $_POST['delete_vars'] == true && isset($_POST['ppc_network_id'])) {
         $mysql['ppc_network_id'] = $db->real_escape_string((string)$_POST['ppc_network_id']);
         $sql = "DELETE FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = '0'";
-        $result = $db->query($sql); 
+        $result = $db->query($sql) or record_mysql_error($sql);
     }
 }
 ?>

@@ -55,13 +55,12 @@ template_top('ClickServer Management');
 			            <tr>
 			               	<?php
 			               	if ($user_row['clickserver_api_key']) {
-		                        $row_id = 1;        
 		                        foreach($clickservers as $clickserver){ ?>
 		                          <tr>
 		                            <td><span class="glyphicon glyphicon-link"></span><em><?php echo $clickserver['clickserver']['domain'];?></em></td>
 		                            <td><input type="checkbox" clickserverid="<?php echo $clickserver['clickserver']['domain'];?>" data-toggle='switch' <?php if($clickserver['clickserver']['status'] == 1) echo 'checked'?>></td>
 		                          </tr>
-		                	<?php $row_id++; }}?>
+		                	<?php }}?>
 			            </tr>
 			        </tbody>
 			    </table>

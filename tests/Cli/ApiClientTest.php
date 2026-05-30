@@ -18,7 +18,6 @@ class ApiClientTest extends TestCase
         // We can verify this by using reflection to inspect the private baseUrl
         $reflection = new \ReflectionClass($client);
         $prop = $reflection->getProperty('baseUrl');
-        $prop->setAccessible(true);
 
         $this->assertSame('https://example.com/api/v3', $prop->getValue($client));
     }
@@ -29,7 +28,6 @@ class ApiClientTest extends TestCase
 
         $reflection = new \ReflectionClass($client);
         $prop = $reflection->getProperty('baseUrl');
-        $prop->setAccessible(true);
 
         $this->assertSame('https://example.com/api/v3', $prop->getValue($client));
     }
@@ -40,7 +38,6 @@ class ApiClientTest extends TestCase
 
         $reflection = new \ReflectionClass($client);
         $prop = $reflection->getProperty('baseUrl');
-        $prop->setAccessible(true);
 
         $this->assertSame('https://example.com/api/v3', $prop->getValue($client));
     }
@@ -51,7 +48,6 @@ class ApiClientTest extends TestCase
 
         $reflection = new \ReflectionClass($client);
         $prop = $reflection->getProperty('apiKey');
-        $prop->setAccessible(true);
 
         $this->assertSame('my-api-key-123', $prop->getValue($client));
     }
@@ -62,7 +58,6 @@ class ApiClientTest extends TestCase
 
         $reflection = new \ReflectionClass($client);
         $prop = $reflection->getProperty('timeout');
-        $prop->setAccessible(true);
 
         $this->assertSame(30, $prop->getValue($client));
     }
@@ -73,7 +68,6 @@ class ApiClientTest extends TestCase
 
         $reflection = new \ReflectionClass($client);
         $prop = $reflection->getProperty('timeout');
-        $prop->setAccessible(true);
 
         $this->assertSame(120, $prop->getValue($client));
     }
@@ -96,15 +90,12 @@ class ApiClientTest extends TestCase
             $reflection = new \ReflectionClass($client);
 
             $baseUrl = $reflection->getProperty('baseUrl');
-            $baseUrl->setAccessible(true);
             $this->assertSame('https://tracker.example.com/api/v3', $baseUrl->getValue($client));
 
             $apiKey = $reflection->getProperty('apiKey');
-            $apiKey->setAccessible(true);
             $this->assertSame('secret-key-456', $apiKey->getValue($client));
 
             $timeout = $reflection->getProperty('timeout');
-            $timeout->setAccessible(true);
             $this->assertSame(45, $timeout->getValue($client));
         } finally {
             putenv("HOME={$origHome}");
@@ -173,7 +164,6 @@ class ApiClientTest extends TestCase
 
             $reflection = new \ReflectionClass($client);
             $timeout = $reflection->getProperty('timeout');
-            $timeout->setAccessible(true);
             $this->assertSame(30, $timeout->getValue($client));
         } finally {
             putenv("HOME={$origHome}");

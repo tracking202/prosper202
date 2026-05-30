@@ -55,8 +55,10 @@ $m = $de_minutes - ($d * 1440) - ($h * 60);
 
 if (isset($_POST['autocron'])) {
 
-	// Debug logging
-	error_log("AutoCron POST received. Value: " . var_export($_POST['autocron'], true));
+	// validate token
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		die();
+	}
 
 	if ($_POST['autocron'] == true) {
 		$endpoint = 'register';
@@ -94,6 +96,11 @@ if (isset($_POST['autocron'])) {
 
 if (isset($_POST['maxmind'])) {
 
+	// validate token
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		die();
+	}
+
 	if ($_POST['maxmind'] == "true") {
 		if (file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIP2-ISP.mmdb') || file_exists(substr(__DIR__, 0, -12) . '/202-config/geo/GeoIPISP.dat')) {
 			$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
@@ -128,6 +135,11 @@ $clicks = $click_row['clicks'];
 
 
 if (isset($_POST['database_management'])) {
+	// validate token
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		die();
+	}
+
 	$tables = explode(',', '202_clicks_advance,202_clicks_record,202_clicks_site,202_clicks_spy,202_clicks_tracking,202_clicks');
 	$click_timestamp = strtotime($_POST['database_management'] . "00:00:00 " . date('T'));
 	$clickid_sql = "SELECT click_id AS click_id FROM 202_clicks WHERE click_time <=" . $click_timestamp . " ORDER BY click_id DESC LIMIT 1";
@@ -151,6 +163,11 @@ if (isset($_POST['database_management'])) {
 }
 
 if (isset($_POST['auto_database_management'])) {
+	// validate token
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		die();
+	}
+
 	global $db;
 	$mysql['auto_database_management'] = $db->real_escape_string((string)$_POST['auto_database_management']);
 	$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
@@ -374,6 +391,7 @@ function CronJobLastExecution($datetime, $full = false)
 	<div class="col-xs-8">
 		<form method="post" id="erase_clicks_form" class="form-horizontal"
 			role="form">
+			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
 			<div class="form-group">
 				<label for="erase_clicks_date" class="col-sm-6 control-label">Delete
 					Click Data Prior to Selected Date:<br>Leave blank to reset</label>
@@ -405,6 +423,7 @@ function CronJobLastExecution($datetime, $full = false)
 	<div class="col-xs-8">
 		<form method="post" id="erase_clicks_form" class="form-horizontal"
 			role="form">
+			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
 			<div class="form-group">
 				<label for="erase_clicks_date" class="col-sm-6 control-label">Automatically Delete
 					Click Data Older Than # Of Days Specified:</label>

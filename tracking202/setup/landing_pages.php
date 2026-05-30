@@ -197,7 +197,7 @@ if (isset($_GET['delete_landing_page_id'])) {
 						WHERE   `user_id`='" . $mysql['user_id'] . "'
 						AND     `landing_page_id`='" . $mysql['landing_page_id'] . "'";
 
-		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_result)) {
+		if ($delete_result = $db->query($delete_sql)) {
 			$delete_success = true;
 			if ($slack) {
 				if (isset($_GET['delete_landing_page_type']) && $_GET['delete_landing_page_type'] == '0') {
@@ -206,6 +206,8 @@ if (isset($_GET['delete_landing_page_id'])) {
 					$slack->push('advanced_landing_page_deleted', ['name' => $_GET['delete_landing_page_name'] ?? '', 'user' => $user_row['username'] ?? '']);
 				}
 			}
+		} else {
+			record_mysql_error($delete_sql);
 		}
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php');
@@ -324,7 +326,7 @@ template_top('Landing Page Setup');  ?>
 		<span class="infotext">Here you can add different landing pages you might use with your marketing.</span>
 
 		<form method="post" action="<?php if ($delete_success == true) {
-										echo $_SERVER['REDIRECT_URL'] ?? '';
+										echo htmlspecialchars($_SERVER['REDIRECT_URL'] ?? '', ENT_QUOTES, 'UTF-8');
 									} ?>" class="form-horizontal" role="form" style="margin:15px 0px;">
 			<input name="landing_page_id" type="hidden" value="<?php echo $html['landing_page_id'] ?? ''; ?>" />
 			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">

@@ -7,11 +7,12 @@ namespace Tests\Attribution\Export;
 require_once __DIR__ . '/../Support/RepositoryFakes.php';
 
 use PHPUnit\Framework\TestCase;
-use Prosper202\Attribution\AttributionService;
+use Prosper202\Attribution\Export\ExportFormat;
+use Prosper202\Attribution\Export\ExportJob;
 use Prosper202\Attribution\Export\ExportProcessor;
+use Prosper202\Attribution\Export\ExportStatus;
 use Prosper202\Attribution\Export\SnapshotExporter;
 use Prosper202\Attribution\Export\WebhookDispatcher;
-use Prosper202\Attribution\Repository\NullAuditRepository;
 use Prosper202\Attribution\ScopeType;
 use Tests\Attribution\Support\InMemoryExportRepository;
 use Tests\Attribution\Support\InMemoryModelRepository;
@@ -23,11 +24,9 @@ final class ExportProcessorTest extends TestCase
     private InMemoryExportRepository $exportRepository;
     private InMemoryModelRepository $modelRepository;
     private InMemorySnapshotRepository $snapshotRepository;
-    private InMemoryTouchpointRepository $touchpointRepository;
     private SnapshotExporter $snapshotExporter;
     private WebhookDispatcher $webhookDispatcher;
     private ExportProcessor $processor;
-    private AttributionService $service;
     private string $exportPath;
 
     protected function setUp(): void
@@ -37,8 +36,6 @@ final class ExportProcessorTest extends TestCase
         $this->exportRepository = new InMemoryExportRepository(fn (): int => 1_700_000_100);
         $this->modelRepository = new InMemoryModelRepository();
         $this->snapshotRepository = new InMemorySnapshotRepository();
-        $this->touchpointRepository = new InMemoryTouchpointRepository();
-        $auditRepository = new NullAuditRepository();
 
         $this->exportPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'prosper202-export-tests';
         if (is_dir($this->exportPath)) {
@@ -48,14 +45,6 @@ final class ExportProcessorTest extends TestCase
         $this->snapshotExporter = new SnapshotExporter($this->exportPath);
         $this->webhookDispatcher = new WebhookDispatcher();
 
-        $this->service = new AttributionService(
-            $this->modelRepository,
-            $this->snapshotRepository,
-            $this->touchpointRepository,
-            $auditRepository,
-            $this->exportRepository
-        );
-
         $this->processor = new ExportProcessor(
             $this->exportRepository,
             $this->snapshotRepository,
@@ -63,6 +52,39 @@ final class ExportProcessorTest extends TestCase
             $this->snapshotExporter,
             $this->webhookDispatcher
         );
+    }
+
+    /**
+     * Builds and persists a pending export job via the repository, mirroring how
+     * production code enqueues work for the processor to pick up.
+     */
+    private function schedulePendingExport(int $startHour, int $endHour): ExportJob
+    {
+        $now = 1_700_000_000;
+
+        return $this->exportRepository->create(new ExportJob(
+            exportId: null,
+            userId: 1,
+            modelId: 1,
+            scopeType: ScopeType::GLOBAL,
+            scopeId: null,
+            startHour: $startHour,
+            endHour: $endHour,
+            format: ExportFormat::CSV,
+            status: ExportStatus::PENDING,
+            filePath: null,
+            downloadToken: null,
+            webhookUrl: null,
+            webhookMethod: 'POST',
+            webhookHeaders: [],
+            webhookStatusCode: null,
+            webhookResponseBody: null,
+            lastAttemptedAt: null,
+            completedAt: null,
+            errorMessage: null,
+            createdAt: $now,
+            updatedAt: $now
+        ));
     }
 
     protected function tearDown(): void
@@ -77,15 +99,7 @@ final class ExportProcessorTest extends TestCase
     public function testProcessPendingCompletesJob(): void
     {
         $now = (int) floor(time() / 3600) * 3600;
-        $this->service->scheduleSnapshotExport(
-            1,
-            1,
-            ScopeType::GLOBAL,
-            null,
-            $now - 7200,
-            $now,
-            \Prosper202\Attribution\Export\ExportFormat::CSV
-        );
+        $this->schedulePendingExport($now - 7200, $now);
 
         $results = $this->processor->processPending(5);
 
@@ -104,15 +118,7 @@ final class ExportProcessorTest extends TestCase
     public function testProcessPendingMarksJobsFailedWhenModelMissing(): void
     {
         $now = (int) floor(time() / 3600) * 3600;
-        $this->service->scheduleSnapshotExport(
-            1,
-            1,
-            ScopeType::GLOBAL,
-            null,
-            $now - 3600,
-            $now,
-            \Prosper202\Attribution\Export\ExportFormat::CSV
-        );
+        $this->schedulePendingExport($now - 3600, $now);
 
         $this->modelRepository->delete(1, 1);
 

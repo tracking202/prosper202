@@ -6,7 +6,7 @@ AUTH::require_user();
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
-	$mysql['text_ad_id'] = $db->real_escape_string((string)$_POST['text_ad_id']);
+	$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? ''));
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	
 	$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `text_ad_id`='".$mysql['text_ad_id']."' AND `user_id`='".$mysql['user_id']."'";

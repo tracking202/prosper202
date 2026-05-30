@@ -166,8 +166,19 @@ final class WebhookDispatcher
         $response = file_get_contents($url, false, $context);
         $error = $response === false ? error_get_last()['message'] ?? 'Unknown stream error.' : null;
         $statusCode = null;
-        if (!empty($http_response_header)) {
-            foreach ($http_response_header as $line) {
+
+        // Read the response headers without the magic $http_response_header variable,
+        // which is deprecated as of PHP 8.5. http_get_last_response_headers() is the
+        // replacement but only exists on PHP 8.4+, so fall back to the variable on
+        // older runtimes (where reading it is not deprecated).
+        if (function_exists('http_get_last_response_headers')) {
+            $responseHeaders = http_get_last_response_headers();
+        } else {
+            // @phpstan-ignore-next-line -- magic var may be unset if no response was received
+            $responseHeaders = $http_response_header ?? null;
+        }
+        if (!empty($responseHeaders)) {
+            foreach ($responseHeaders as $line) {
                 if (preg_match('#HTTP/\S+\s+(\d{3})#', $line, $matches)) {
                     $statusCode = (int) $matches[1];
                     break;
