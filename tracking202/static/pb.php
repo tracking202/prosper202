@@ -21,7 +21,7 @@ $cpa_sql = "SELECT 202_cpa_trackers.tracker_id_public, 202_trackers.click_cpa FR
 $cpa_result = $db->query($cpa_sql);
 $cpa_row = ($cpa_result !== false) ? $cpa_result->fetch_assoc() : null;
 
-$mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa'] ?? '0');
+$mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa'] ?? '');
 	
 p202ApplyConversionUpdate(
 	$db,
