@@ -307,8 +307,9 @@ class AUTH
         $ch = curl_init();
 // Set the url
         curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-// Disable SSL verification
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+// Verify the TLS certificate so the validation response cannot be forged
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 // Will return the response, if false it print the response
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 // Set to post
