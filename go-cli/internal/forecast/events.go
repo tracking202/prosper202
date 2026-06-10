@@ -283,41 +283,36 @@ func overlappingEvents(events []Event, start, end time.Time) []Event {
 
 // expandRecurring returns all instances of e whose windows could overlap [start, end].
 // For "none", "custom", and unknown recurrences, returns just the original event.
-// For "yearly" and "monthly", generates all instances within the range.
+// For "yearly" and "monthly", generates all instances within the range. Each
+// instance is computed from the stored date by step count (not by chained
+// stepping), so end-of-month dates clamp per occurrence without drifting.
 func expandRecurring(e Event, start, end time.Time) []Event {
-	if e.Recurrence == "" || e.Recurrence == "none" || e.Recurrence == "custom" {
+	if e.Recurrence != "yearly" && e.Recurrence != "monthly" {
 		return []Event{e}
 	}
 
 	// Step backward from the stored date to find the earliest instance
 	// whose window could still overlap [start, end].
-	cur := e
+	n := 0
 	for i := 0; i < 500; i++ {
-		prev := retreatEvent(cur, e.Recurrence)
-		if prev.Date.Equal(cur.Date) {
-			break // unknown recurrence type — no progress
-		}
-		if prev.Window().End.Before(start) {
+		if shiftEvent(e, n-1).Window().End.Before(start) {
 			break // stepped too far back
 		}
-		cur = prev
+		n--
 	}
 
 	// Collect all instances whose windows overlap [start, end].
 	var instances []Event
 	for i := 0; i < 500; i++ {
-		w := cur.Window()
+		occ := shiftEvent(e, n)
+		w := occ.Window()
 		if w.Start.After(end) {
 			break
 		}
 		if !w.End.Before(start) {
-			instances = append(instances, cur)
+			instances = append(instances, occ)
 		}
-		next := advanceEvent(cur, e.Recurrence)
-		if next.Date.Equal(cur.Date) {
-			break // no progress
-		}
-		cur = next
+		n++
 	}
 
 	if len(instances) == 0 {
@@ -326,42 +321,33 @@ func expandRecurring(e Event, start, end time.Time) []Event {
 	return instances
 }
 
-// advanceEvent returns a copy of e with Date (and EndDate, if set) advanced
-// by one recurrence period.
-func advanceEvent(e Event, recurrence string) Event {
+// shiftEvent returns a copy of e with Date (and EndDate, if set) moved by n
+// recurrence periods from the stored date, clamping to the last day of the
+// target month. Plain AddDate would normalize invalid dates into the next
+// month (Jan 31 + 1 month = Mar 3), skipping February entirely.
+func shiftEvent(e Event, n int) Event {
+	months := n
+	if e.Recurrence == "yearly" {
+		months = n * 12
+	}
 	result := e
-	switch recurrence {
-	case "yearly":
-		result.Date = e.Date.AddDate(1, 0, 0)
-		if !e.EndDate.IsZero() {
-			result.EndDate = e.EndDate.AddDate(1, 0, 0)
-		}
-	case "monthly":
-		result.Date = e.Date.AddDate(0, 1, 0)
-		if !e.EndDate.IsZero() {
-			result.EndDate = e.EndDate.AddDate(0, 1, 0)
-		}
+	result.Date = addMonthsClamped(e.Date, months)
+	if !e.EndDate.IsZero() {
+		result.EndDate = addMonthsClamped(e.EndDate, months)
 	}
 	return result
 }
 
-// retreatEvent returns a copy of e with Date (and EndDate, if set) retreated
-// by one recurrence period.
-func retreatEvent(e Event, recurrence string) Event {
-	result := e
-	switch recurrence {
-	case "yearly":
-		result.Date = e.Date.AddDate(-1, 0, 0)
-		if !e.EndDate.IsZero() {
-			result.EndDate = e.EndDate.AddDate(-1, 0, 0)
-		}
-	case "monthly":
-		result.Date = e.Date.AddDate(0, -1, 0)
-		if !e.EndDate.IsZero() {
-			result.EndDate = e.EndDate.AddDate(0, -1, 0)
-		}
+// addMonthsClamped adds n calendar months, clamping the day to the last day
+// of the target month when the original day doesn't exist there.
+func addMonthsClamped(t time.Time, n int) time.Time {
+	firstOfTarget := time.Date(t.Year(), t.Month()+time.Month(n), 1, 0, 0, 0, 0, t.Location())
+	day := t.Day()
+	if lastDay := firstOfTarget.AddDate(0, 1, -1).Day(); day > lastDay {
+		day = lastDay
 	}
-	return result
+	return time.Date(firstOfTarget.Year(), firstOfTarget.Month(), day,
+		t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
 }
 
 // buildBaselinePredictions creates a day-indexed map of what the baseline model

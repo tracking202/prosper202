@@ -660,3 +660,37 @@ func TestPastEvents_NonOverlappingExcluded(t *testing.T) {
 		t.Fatalf("expected no events selected, got %d", len(past))
 	}
 }
+
+func TestExpandRecurring_MonthlyEndOfMonthClamps(t *testing.T) {
+	// Jan 31 monthly: AddDate would normalize Feb 31 → Mar 3, skipping
+	// February. Each occurrence must clamp to the month's last day while
+	// later months return to the 31st.
+	events := []Event{
+		{Name: "EOM Promo", Date: date(2026, 1, 31), Recurrence: "monthly"},
+	}
+	future := FutureEvents(events, date(2026, 2, 1), date(2026, 4, 30))
+	if len(future) != 3 {
+		t.Fatalf("expected 3 monthly occurrences (Feb, Mar, Apr), got %d", len(future))
+	}
+	want := []time.Time{date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30)}
+	for i, w := range want {
+		if !future[i].Date.Equal(w) {
+			t.Errorf("occurrence %d = %s, want %s", i,
+				future[i].Date.Format("2006-01-02"), w.Format("2006-01-02"))
+		}
+	}
+}
+
+func TestExpandRecurring_YearlyLeapDayClamps(t *testing.T) {
+	// Feb 29 yearly must land on Feb 28 in non-leap years, not Mar 1.
+	events := []Event{
+		{Name: "Leap Event", Date: date(2024, 2, 29), Recurrence: "yearly"},
+	}
+	future := FutureEvents(events, date(2025, 1, 1), date(2025, 12, 31))
+	if len(future) != 1 {
+		t.Fatalf("expected 1 yearly occurrence, got %d", len(future))
+	}
+	if !future[0].Date.Equal(date(2025, 2, 28)) {
+		t.Errorf("occurrence = %s, want 2025-02-28", future[0].Date.Format("2006-01-02"))
+	}
+}
