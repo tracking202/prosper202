@@ -34,8 +34,13 @@ if (!empty($_GET['edit_text_ad_id'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-	
-	if ($_POST['text_ad_type'] == 0) { 
+
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		$error['token'] = '<div class="error">Invalid or expired form token. Please reload the page and try again.</div>';
+	}
+
+	if ($_POST['text_ad_type'] == 0) {
 		
 		//text ad type
 		$aff_campaign_id = trim((string)($_POST['aff_campaign_id'] ?? ''));
@@ -180,7 +185,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 }
 
-if (isset($_GET['delete_text_ad_id'])) { 
+if (isset($_GET['delete_text_ad_id'])) {
+
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/setup/text_ads.php');
+		die();
+	}
 
 	if ($userObj->hasPermission("remove_text_ad")) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -335,6 +346,7 @@ template_top('Text Ads Setup');  ?>
 		
 		<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL'] ?? ''; }?>" class="form-horizontal" role="form" style="margin:15px 0px;">
 			<input name="text_ad_id" type="hidden" value="<?php echo $html['text_ad_id'] ?? ''; ?>"/>
+			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 
 			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
 				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Text Ad For: </label>
@@ -470,7 +482,7 @@ template_top('Text Ads Setup');  ?>
 								$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 								if ($userObj->hasPermission("remove_text_ad")) {
-								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
+								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
 							} else {
 								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
 							}		
@@ -527,7 +539,7 @@ template_top('Text Ads Setup');  ?>
 										$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 										
 										if ($userObj->hasPermission("remove_text_ad")) {
-											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
+											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
 										} else {
 											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
 										}

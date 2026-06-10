@@ -47,6 +47,11 @@ while ($ppc_pixel_type_row = $ppc_pixel_type_result->fetch_assoc()) {
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		$error['token'] = 'Invalid or expired form token. Please reload the page and try again.';
+	}
+
 	if (isset($_POST['ppc_network_name'])) {
 		$ppc_network_name = trim((string) $_POST['ppc_network_name']);
 		if (empty($ppc_network_name)) {
@@ -179,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				if ($mysql['pixel_code'] != "" && $mysql['pixel_type_id'] != "") {
 
 					if ($mysql['pixel_id'] != "") {
-						$pixel_sql = "UPDATE 202_ppc_account_pixels SET pixel_code='" . $mysql['pixel_code'] . "', pixel_type_id=" . $mysql['pixel_type_id'] . " WHERE pixel_id=" . $mysql['pixel_id'] . "";
+						$pixel_sql = "UPDATE 202_ppc_account_pixels SET pixel_code='" . $mysql['pixel_code'] . "', pixel_type_id=" . $mysql['pixel_type_id'] . " WHERE pixel_id=" . $mysql['pixel_id'] . " AND ppc_account_id=" . $the_ppc_account_id;
 
 						if ($slack) {
 							if ($ppc_old_account_row['pixel_type_id'] != $value) {
@@ -238,6 +243,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 if (isset($_GET['delete_ppc_network_id'])) {
 
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
+		die();
+	}
+
 	if ($userObj->hasPermission("remove_traffic_source")) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$mysql['ppc_network_id'] = $db->real_escape_string((string)$_GET['delete_ppc_network_id']);
@@ -259,6 +270,12 @@ if (isset($_GET['delete_ppc_network_id'])) {
 }
 
 if (isset($_GET['delete_ppc_account_id'])) {
+
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
+		die();
+	}
 
 	if ($userObj->hasPermission("remove_traffic_source_account")) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -414,6 +431,7 @@ template_top('Traffic Sources'); ?>
 																		} ?></button>
 					<?php if ($network_editing == true) { ?>
 						<input type="hidden" name="ppc_network_id" value="<?php echo filter_input(INPUT_GET, 'edit_ppc_network_id', FILTER_SANITIZE_NUMBER_INT); ?>">
+						<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 						<button type="submit" class="btn btn-xs btn-danger" onclick="window.location='<?php echo get_absolute_url(); ?>tracking202/setup/ppc_accounts.php'; return false;">Cancel</button>
 					<?php } ?>
 				</form>
@@ -449,6 +467,7 @@ template_top('Traffic Sources'); ?>
 								} ?>
 							</select>
 							<input type="hidden" name="do_edit_ppc_account" value="1">
+							<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 						</div>
 					</div>
 
@@ -478,6 +497,7 @@ template_top('Traffic Sources'); ?>
 											?>
 										</select>
 										<input type="hidden" name="do_edit_ppc_account" value="1">
+										<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 										<?php if ($i > 0) { ?>
 											<span class="fui-cross" id="remove_pixel" style="position:absolute; font-size:12px; cursor:pointer; margin:0px; top: 11px; left: -5px;"></span>
 										<?php } ?>
@@ -565,7 +585,7 @@ template_top('Traffic Sources'); ?>
 										<a href="?edit_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&edit_ppc_network_name=<?php echo $url['ppc_network_name']; ?>" class="list-action">edit</a>
 										<?php if ($userObj->hasPermission("remove_traffic_source")) { ?>
 											<a href="#" class="custom variables list-action" data-id="<?php echo $url['ppc_network_id']; ?>">variables</a>
-											<a href="?delete_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&delete_ppc_network_name=<?php echo $url['ppc_network_name']; ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Traffic Source?');">remove</a>
+											<a href="?delete_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&delete_ppc_network_name=<?php echo $url['ppc_network_name']; ?>&token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Traffic Source?');">remove</a>
 										<?php } ?>
 									</div>
 								</div>
@@ -584,7 +604,7 @@ template_top('Traffic Sources'); ?>
 											<div class="account-actions">
 												<a href="?edit_ppc_account_id=<?php echo $url['ppc_account_id']; ?>" class="list-action">edit</a>
 												<?php if ($userObj->hasPermission("remove_traffic_source_account")) { ?>
-													<a href="?delete_ppc_account_id=<?php echo $url['ppc_account_id']; ?>&delete_ppc_account_name=<?php echo $url['ppc_account_name']; ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Account?');">remove</a>
+													<a href="?delete_ppc_account_id=<?php echo $url['ppc_account_id']; ?>&delete_ppc_account_name=<?php echo $url['ppc_account_name']; ?>&token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Account?');">remove</a>
 												<?php } ?>
 											</div>
 										</li>

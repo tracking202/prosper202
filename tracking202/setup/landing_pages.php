@@ -46,6 +46,11 @@ if (!empty($_GET['copy_landing_page_id'])) {
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		$error['token'] = '<div class="error">Invalid or expired form token. Please reload the page and try again.</div>';
+	}
+
 	if ((!isset($_POST['landing_page_type'])) || (($_POST['landing_page_type'] != '0') and ($_POST['landing_page_type'] != '1'))) {
 		$error['landing_page_type'] = '<div class="error">What type of landing page is this?</div>';
 	}
@@ -186,6 +191,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 if (isset($_GET['delete_landing_page_id'])) {
+
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php');
+		die();
+	}
 
 	if ($userObj->hasPermission("remove_landing_page")) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -329,6 +340,7 @@ template_top('Landing Page Setup');  ?>
 										echo htmlspecialchars($_SERVER['REDIRECT_URL'] ?? '', ENT_QUOTES, 'UTF-8');
 									} ?>" class="form-horizontal" role="form" style="margin:15px 0px;">
 			<input name="landing_page_id" type="hidden" value="<?php echo $html['landing_page_id'] ?? ''; ?>" />
+			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
 				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Landing Page Type <span class="fui-info-circle" data-toggle="tooltip" title="A Simple Landing Page is a landing page that only has one offer associated with it. Where as an Advanced Landing Page is a landing page that can run several offers on it. An example would be a retail landing page where you have outgoing links to several different products."></span></label>
 
@@ -458,7 +470,7 @@ template_top('Landing Page Setup');  ?>
 																		$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 																		if ($userObj->hasPermission("remove_landing_page")) {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a> <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
+																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a> <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
 																		} else {
 																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a></li>', $html['landing_page_nickname'], $html['landing_page_id']);
 																		}
@@ -510,7 +522,7 @@ template_top('Landing Page Setup');  ?>
 																				$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 																				if ($userObj->hasPermission("remove_landing_page")) {
-																					printf('<li><span class="filter_simple_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a> <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=0" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
+																					printf('<li><span class="filter_simple_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a> <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=0&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
 																				} else {
 																					printf('<li><span class="filter_simple_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a></li>', $html['landing_page_nickname'], $html['landing_page_id']);
 																				}
