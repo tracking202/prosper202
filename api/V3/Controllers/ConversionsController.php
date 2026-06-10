@@ -106,24 +106,43 @@ class ConversionsController
             throw new ValidationException('click_id is required', ['click_id' => 'Must be a positive integer']);
         }
 
-        $stmt = $this->prepare('SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
-        $this->bind($stmt, 'ii', $clickId, $this->userId);
-        $this->execute($stmt, 'Query failed');
-        $click = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$click) {
-            throw new NotFoundException('Click not found or not owned by user');
-        }
-
-        $payout = (float)($payload['payout'] ?? $click['click_payout'] ?? 0);
+        $payoutInput = array_key_exists('payout', $payload) ? (float)$payload['payout'] : null;
         $transactionId = (string)($payload['transaction_id'] ?? '');
         $convTime = (int)($payload['conv_time'] ?? time());
-        $campaignId = (int)$click['aff_campaign_id'];
-        $clickTime = (int)($click['click_time'] ?? 0);
 
         $this->db->begin_transaction();
         try {
+            // Lock the source click row inside the transaction so two concurrent postbacks
+            // for the same click serialize here instead of both recording a conversion
+            // (TOCTOU race). Mirrors MysqlConversionRepository::create().
+            $stmt = $this->prepare('SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE');
+            $this->bind($stmt, 'ii', $clickId, $this->userId);
+            $this->execute($stmt, 'Query failed');
+            $click = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if (!$click) {
+                throw new NotFoundException('Click not found or not owned by user');
+            }
+
+            // Idempotency: if this transaction_id was already recorded for this click,
+            // return the existing conversion instead of double-counting on a replay/retry.
+            if ($transactionId !== '') {
+                $dupStmt = $this->prepare('SELECT conv_id FROM 202_conversion_logs WHERE user_id = ? AND click_id = ? AND transaction_id = ? AND deleted = 0 LIMIT 1');
+                $this->bind($dupStmt, 'iis', $this->userId, $clickId, $transactionId);
+                $this->execute($dupStmt, 'Query failed');
+                $dup = $dupStmt->get_result()->fetch_assoc();
+                $dupStmt->close();
+                if ($dup) {
+                    $this->db->commit();
+                    return $this->get((int)$dup['conv_id']);
+                }
+            }
+
+            $payout = (float)($payoutInput ?? $click['click_payout'] ?? 0);
+            $campaignId = (int)$click['aff_campaign_id'];
+            $clickTime = (int)($click['click_time'] ?? 0);
+
             $sql = "INSERT INTO 202_conversion_logs
                 (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0)";

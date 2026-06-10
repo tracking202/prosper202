@@ -19,7 +19,7 @@ AUTH::require_user();
             $html['isp_name'] = htmlentities((string)($isp_row['isp_name'] ?? ''), ENT_QUOTES, 'UTF-8');
             $html['isp_id'] = htmlentities((string)($isp_row['isp_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
-            if ($_POST['isp_id'] == $isp_row['isp_id']) {
+            if (($_POST['isp_id'] ?? '') == $isp_row['isp_id']) {
                 $selected = 'selected=""';   
             } else {
                 $selected = '';  

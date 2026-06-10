@@ -29,28 +29,28 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
     {
         $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
-        return $this->findOrCreateSimple('202_clicks_c1', 'c1_id', 'c1', $value);
+        return $this->findOrCreateSimple('202_tracking_c1', 'c1_id', 'c1', $value);
     }
 
     public function findOrCreateC2(string $value): int
     {
         $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
-        return $this->findOrCreateSimple('202_clicks_c2', 'c2_id', 'c2', $value);
+        return $this->findOrCreateSimple('202_tracking_c2', 'c2_id', 'c2', $value);
     }
 
     public function findOrCreateC3(string $value): int
     {
         $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
-        return $this->findOrCreateSimple('202_clicks_c3', 'c3_id', 'c3', $value);
+        return $this->findOrCreateSimple('202_tracking_c3', 'c3_id', 'c3', $value);
     }
 
     public function findOrCreateC4(string $value): int
     {
         $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
-        return $this->findOrCreateSimple('202_clicks_c4', 'c4_id', 'c4', $value);
+        return $this->findOrCreateSimple('202_tracking_c4', 'c4_id', 'c4', $value);
     }
 
     public function findOrCreateVariable(string $value, int $ppcVariableId): int
@@ -91,8 +91,26 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
             'INSERT INTO 202_variable_sets SET variables = ?'
         );
         $this->conn->bind($stmt, 's', [$variables]);
+        $variableSetId = $this->conn->executeInsert($stmt);
 
-        return $this->conn->executeInsert($stmt);
+        // Populate the normalized 202_variable_sets2 mapping (one row per custom
+        // variable id in the set) that the custom-variable report joins against.
+        // Without this the new set is invisible in reports. Mirrors the legacy
+        // INDEXES::get_variable_set_id() behavior that the repository refactor dropped.
+        foreach (explode(',', $variables) as $part) {
+            $variableId = (int) trim($part);
+            if ($variableId <= 0) {
+                continue;
+            }
+            $mapStmt = $this->conn->prepareWrite(
+                'INSERT INTO 202_variable_sets2 (variable_set_id, variables) VALUES (?, ?)'
+            );
+            $this->conn->bind($mapStmt, 'is', [$variableSetId, (string) $variableId]);
+            $this->conn->execute($mapStmt);
+            $mapStmt->close();
+        }
+
+        return $variableSetId;
     }
 
     public function findOrCreateCustomVar(string $name, string $data): int

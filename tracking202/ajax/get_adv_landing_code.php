@@ -71,7 +71,7 @@ $campaign_slack = '';
 			if ($aff_campaign_id != 0) {
 			
 				$mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_id);
-				$aff_campaign_sql = "SELECT aff_campaign_id_public, aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id='".$mysql['aff_campaign_id']."'";
+				$aff_campaign_sql = "SELECT aff_campaign_id_public, aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id='".$mysql['aff_campaign_id']."' AND user_id='".$mysql['user_id']."'";
 				$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql); 
 				$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 				

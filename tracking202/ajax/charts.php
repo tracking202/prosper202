@@ -67,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$range[] = $r->format($rangeOutputFormat);
 		}
 		$data['categories'] = $range;
-		$data['title'] = "From " . date('d/m/Y', $mysql['from']) . " to " . date('d/m/Y', $mysql['to']);
+		$data['title'] = "From " . date('d/m/Y', (int) $mysql['from']) . " to " . date('d/m/Y', (int) $mysql['to']);
 
 		echo json_encode($data, JSON_NUMERIC_CHECK);
 	} else {

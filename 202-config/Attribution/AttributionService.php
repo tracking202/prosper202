@@ -103,7 +103,9 @@ final readonly class AttributionService
             static fn (AnalyticsSnapshot $a, AnalyticsSnapshot $b): int => $a->dateHour <=> $b->dateHour
         );
 
-        $totals = $this->calculateTotals($analyticsSnapshots);
+        // Totals must cover the FULL range, not just the first $limit-hour display page,
+        // or revenue/conversions/cost/ROI are understated whenever the range exceeds $limit hours.
+        $totals = $this->sumTotalsForRange($modelId, $scope, $scopeId, $startHour, $endHour, $limit);
         $mix = $this->buildTouchpointMix($snapshots);
         $anomalies = $this->detectAnomalies($analyticsSnapshots);
 
@@ -463,8 +465,15 @@ final readonly class AttributionService
      * @param AnalyticsSnapshot[] $snapshots
      * @return array<string, float|null>
      */
-    private function calculateTotals(array $snapshots): array
+    /**
+     * Sum attributed totals across the FULL range by paginating findForRange, so the
+     * overview totals are not capped to a single display page.
+     *
+     * @return array<string, float|null>
+     */
+    private function sumTotalsForRange(int $modelId, ScopeType $scope, ?int $scopeId, int $startHour, int $endHour, int $pageSize): array
     {
+        $pageSize = max(1, $pageSize);
         $totals = [
             'revenue' => 0.0,
             'conversions' => 0.0,
@@ -473,12 +482,17 @@ final readonly class AttributionService
             'roi' => null,
         ];
 
-        foreach ($snapshots as $snapshot) {
-            $totals['revenue'] += $snapshot->attributedRevenue;
-            $totals['conversions'] += $snapshot->attributedConversions;
-            $totals['clicks'] += $snapshot->attributedClicks;
-            $totals['cost'] += $snapshot->attributedCost;
-        }
+        $offset = 0;
+        do {
+            $page = $this->snapshotRepository->findForRange($modelId, $scope, $scopeId, $startHour, $endHour, $pageSize, $offset);
+            foreach ($page as $snapshot) {
+                $totals['revenue'] += $snapshot->attributedRevenue;
+                $totals['conversions'] += $snapshot->attributedConversions;
+                $totals['clicks'] += $snapshot->attributedClicks;
+                $totals['cost'] += $snapshot->attributedCost;
+            }
+            $offset += $pageSize;
+        } while (count($page) === $pageSize && $offset < 1_000_000);
 
         if ($totals['cost'] > 0.0) {
             $totals['roi'] = (($totals['revenue'] - $totals['cost']) / $totals['cost']) * 100.0;

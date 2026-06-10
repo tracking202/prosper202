@@ -337,10 +337,21 @@ abstract class Controller
             if ($def['readonly'] ?? false) {
                 continue;
             }
-            if (array_key_exists($col, $clean) && !array_key_exists($col, $extras)) {
+            if (array_key_exists($col, $extras)) {
+                continue;
+            }
+            if (array_key_exists($col, $clean)) {
                 $columns[] = $col;
                 $placeholders[] = '?';
                 $binds[] = $clean[$col];
+                $types .= $def['type'];
+            } elseif (array_key_exists('default', $def)) {
+                // NOT-NULL columns the client omitted get their declared default so the
+                // INSERT does not fail under MySQL strict mode (the V3 API connection
+                // does not disable strict mode the way the connect.php UI path does).
+                $columns[] = $col;
+                $placeholders[] = '?';
+                $binds[] = $def['default'];
                 $types .= $def['type'];
             }
         }

@@ -29,7 +29,7 @@ if (version_compare($version, $latest_version) == '-1') {
 	$update_needed = false;
 }
 
-if (($_POST['start_upgrade'] ?? '') === '1') {
+if (($_POST['start_upgrade'] ?? '') === '1' && hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
 
 	$GetUpdate = @getData('https://my.tracking202.com/api/v2/premium-p202/download/' . $user_row['install_hash'] . '/' . $user_row['p202_customer_api_key']);
 	$installlog = "Downloading new update...\n";
@@ -275,6 +275,7 @@ if ($missing_api_key == true) {
 			<br>
 			<form method="post" action="" class="form-inline">
 				<input type="hidden" name="start_upgrade" value="1" />
+				<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" />
 				<button class="btn btn-lg btn-p202 btn-block" type="submit"><?php echo $_SESSION['premium_p202_details']['order-button-text']; ?></span></button>
 			</form>
 			<br>

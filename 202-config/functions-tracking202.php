@@ -942,9 +942,11 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 
             if (element.val() == 'lastmonth') {
                 <?php
-
-                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 2629743), 1, (int) date('Y', time() - 2629743));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', time() - 2629743), getLastDayOfMonth((int) date('m', time() - 2629743), (int) date('Y', time() - 2629743)), (int) date('Y', time() - 2629743));
+                // Anchor to the last day of the previous month (first of this month minus one
+                // day) so the range is correct regardless of month length or today's date.
+                $last_month_day = mktime(0, 0, 0, (int) date('m', time()), 1, (int) date('Y', time())) - 86400;
+                $time['from'] = mktime(0, 0, 0, (int) date('m', $last_month_day), 1, (int) date('Y', $last_month_day));
+                $time['to'] = mktime(23, 59, 59, (int) date('m', $last_month_day), (int) date('d', $last_month_day), (int) date('Y', $last_month_day));
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -964,9 +966,9 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 
             if (element.val() == 'lastyear') {
                 <?php
-
-                $time['from'] = mktime(0, 0, 0, 1, 1, (int) date('Y', time() - 31556926));
-                $time['to'] = mktime(0, 0, 0, 12, getLastDayOfMonth((int) date('m', time() - 31556926), (int) date('Y', time() - 31556926)), (int) date('Y', time() - 31556926));
+                $last_year = (int) date('Y', time()) - 1;
+                $time['from'] = mktime(0, 0, 0, 1, 1, $last_year);
+                $time['to'] = mktime(23, 59, 59, 12, 31, $last_year);
                 ?>
 
                 $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
@@ -1086,8 +1088,11 @@ function grab_timeframe($unused = null): array
     }
 
     if ($pref_time == 'lastmonth') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 2629743), 1, (int)date('Y', time() - 2629743));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time() - 2629743), getLastDayOfMonth((int)date('m', time() - 2629743), (int)date('Y', time() - 2629743)), (int)date('Y', time() - 2629743));
+        // Anchor to the last day of the previous month (first of this month minus one day)
+        // so the range is correct regardless of month length or today's date.
+        $last_month_day = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time())) - 86400;
+        $time['from'] = mktime(0, 0, 0, (int)date('m', $last_month_day), 1, (int)date('Y', $last_month_day));
+        $time['to'] = mktime(23, 59, 59, (int)date('m', $last_month_day), (int)date('d', $last_month_day), (int)date('Y', $last_month_day));
     }
 
     if ($pref_time == 'thisyear') {
@@ -1096,8 +1101,9 @@ function grab_timeframe($unused = null): array
     }
 
     if ($pref_time == 'lastyear') {
-        $time['from'] = mktime(0, 0, 0, 1, 1, (int)date('Y', time() - 31556926));
-        $time['to'] = mktime(0, 0, 0, 12, getLastDayOfMonth((int)date('m', time() - 31556926), (int)date('Y', time() - 31556926)), (int)date('Y', time() - 31556926));
+        $last_year = (int)date('Y', time()) - 1;
+        $time['from'] = mktime(0, 0, 0, 1, 1, $last_year);
+        $time['to'] = mktime(23, 59, 59, 12, 31, $last_year);
     }
 
     if ($pref_time == 'alltime') {

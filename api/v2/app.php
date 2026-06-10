@@ -289,7 +289,17 @@ function authorize_attribution_request(array $params, string $permission): array
 
     // @phpstan-ignore-next-line prosper202.directStmtCall -- raw mysqli in free function; no Connection wrapper class exists in this codebase
     $stmt->bind_param('s', $apiKey);
-    $stmt->execute();
+    // @phpstan-ignore-next-line prosper202.directStmtCall -- raw mysqli in free function; no Connection wrapper class exists in this codebase
+    if (!$stmt->execute()) {
+        $stmt->close();
+        return [
+            'status' => 500,
+            'payload' => [
+                'error' => true,
+                'message' => 'Unable to validate API key.',
+            ],
+        ];
+    }
     $result = $stmt->get_result();
     $row = $result ? $result->fetch_assoc() : null;
     $stmt->close();

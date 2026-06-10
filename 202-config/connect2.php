@@ -664,9 +664,9 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
             "country_code" => $mysql['country_code'],
             "region" => $mysql['region'],
             "city" => $mysql['city'],
-            "cpc" => round($mysql['cpc'], 2),
+            "cpc" => round((float) $mysql['cpc'], 2),
             "cpc2" => $mysql['cpc'],
-            "cpa" => round($mysql['cpa'], 2),
+            "cpa" => round((float) $mysql['cpa'], 2),
             // "timestamp" => time(), don't change the time it was already set
             "payout" => $mysql['click_payout'],
             "random" => mt_rand(1000000, 9999999),
@@ -2607,7 +2607,12 @@ function getSplitTestValue(array $values)
         }
     }
 
-    $rand = @mt_rand(1, (int) $sum);
+    if ($sum < 1) {
+        // No positively-weighted entries; nothing eligible to split-test.
+        return array_key_first($values);
+    }
+
+    $rand = mt_rand(1, (int) $sum);
 
     foreach ($values as $key => $value) {
         $rand -= $value['weight'];

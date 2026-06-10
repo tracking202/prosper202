@@ -1364,8 +1364,12 @@ class UPGRADE
             $result = _mysqli_query($sql);
 
             $de = new DataEngine();
+            // DataEngine has two declarations: the full class (class-dataengine.php, loaded
+            // here) and a class_exists()-guarded slim stub (static endpoints). PHPStan resolves
+            // the symbol to the slim stub, so it flags this guard as always-false; at runtime in
+            // the upgrade path the full class is loaded and exposes setRowsForOldClickUpgrade().
+            // @phpstan-ignore function.impossibleType
             if (method_exists($de, 'setRowsForOldClickUpgrade')) {
-                // Legacy DataEngine variants may expose this method.
                 $de->setRowsForOldClickUpgrade($time_from);
             }
 
@@ -1716,8 +1720,13 @@ class UPGRADE
             $result = _mysqli_query($sql);
 
             $de = new DataEngine();
+            // PHPStan resolves DataEngine to the slim stub (see note above); the full class
+            // loaded here exposes getSummary(), which runs the dataengine rebuild for its side
+            // effects — the returned debug string is intentionally discarded.
+            // @phpstan-ignore function.alreadyNarrowedType
             if (method_exists($de, 'getSummary')) {
-                $de->getSummary($time_from);
+                // @phpstan-ignore method.resultUnused
+                $de->getSummary($time_from, $time_to, $snippet, 1, true, false);
             }
 
             $sql = "CREATE TABLE `202_rotator_rules_redirects` (

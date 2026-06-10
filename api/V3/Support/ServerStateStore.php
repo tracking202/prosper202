@@ -57,44 +57,45 @@ class ServerStateStore
     public function putIdempotent(string $scope, string $key, array $response): void
     {
         $path = $this->idempotencyPath($scope);
-        $data = $this->readJsonFile($path, ['items' => []]);
-        $data['items'][$key] = [
-            'stored_at' => time(),
-            'response' => $response,
-        ];
+        $this->mutateJsonFile($path, ['items' => []], static function (array $data) use ($key, $response): array {
+            $data['items'][$key] = [
+                'stored_at' => time(),
+                'response' => $response,
+            ];
 
-        if (count($data['items']) > self::DEFAULT_RETENTION) {
-            uasort($data['items'], static fn(array $a, array $b): int => ($a['stored_at'] ?? 0) <=> ($b['stored_at'] ?? 0));
-            $data['items'] = array_slice($data['items'], -self::DEFAULT_RETENTION, null, true);
-        }
+            if (count($data['items']) > self::DEFAULT_RETENTION) {
+                uasort($data['items'], static fn(array $a, array $b): int => ($a['stored_at'] ?? 0) <=> ($b['stored_at'] ?? 0));
+                $data['items'] = array_slice($data['items'], -self::DEFAULT_RETENTION, null, true);
+            }
 
-        $this->writeJsonFileAtomic($path, $data);
+            return $data;
+        });
     }
 
     public function recordChange(string $entity, string $operation, array $record, int $actorUserId): void
     {
         $path = $this->changesPath($entity);
-        $state = $this->readJsonFile($path, ['next_seq' => 1, 'items' => []]);
+        $this->mutateJsonFile($path, ['next_seq' => 1, 'items' => []], static function (array $state) use ($entity, $operation, $record, $actorUserId): array {
+            $seq = (int)($state['next_seq'] ?? 1);
+            $state['next_seq'] = $seq + 1;
 
-        $seq = (int)($state['next_seq'] ?? 1);
-        $state['next_seq'] = $seq + 1;
+            $state['items'][] = [
+                'seq' => $seq,
+                'entity' => $entity,
+                'operation' => $operation,
+                'changed_at' => gmdate('c'),
+                'changed_at_epoch' => time(),
+                'actor_user_id' => $actorUserId,
+                'natural_key_digest' => sha1(json_encode($record, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: ''),
+                'record' => $record,
+            ];
 
-        $state['items'][] = [
-            'seq' => $seq,
-            'entity' => $entity,
-            'operation' => $operation,
-            'changed_at' => gmdate('c'),
-            'changed_at_epoch' => time(),
-            'actor_user_id' => $actorUserId,
-            'natural_key_digest' => sha1(json_encode($record, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: ''),
-            'record' => $record,
-        ];
+            if (count($state['items']) > self::DEFAULT_RETENTION) {
+                $state['items'] = array_slice($state['items'], -self::DEFAULT_RETENTION);
+            }
 
-        if (count($state['items']) > self::DEFAULT_RETENTION) {
-            $state['items'] = array_slice($state['items'], -self::DEFAULT_RETENTION);
-        }
-
-        $this->writeJsonFileAtomic($path, $state);
+            return $state;
+        });
     }
 
     public function listChanges(string $entity, ?string $cursor, int $limit, int $cursorTtl, ?int $updatedSince = null, ?int $deletedSince = null): array
@@ -607,6 +608,37 @@ class ServerStateStore
         }
         if (!mkdir($path, 0700, true) && !is_dir($path)) {
             throw new DatabaseException('Failed to create state directory');
+        }
+    }
+
+    /**
+     * Read-modify-write a JSON state file under an exclusive lock so concurrent callers
+     * cannot lose each other's updates (the bare read-then-write pattern drops feed
+     * entries and duplicates sequence numbers under concurrency).
+     *
+     * @param array<string, mixed> $default
+     * @param callable(array<string, mixed>): array<string, mixed> $mutator
+     */
+    private function mutateJsonFile(string $path, array $default, callable $mutator): void
+    {
+        $this->ensureDir(dirname($path));
+        $lockPath = $path . '.lock';
+        $lh = fopen($lockPath, 'c+');
+        if ($lh === false) {
+            throw new DatabaseException('Unable to open state lock file');
+        }
+        if (!flock($lh, LOCK_EX)) {
+            fclose($lh);
+            throw new DatabaseException('Unable to acquire state lock');
+        }
+
+        try {
+            $data = $this->readJsonFile($path, $default);
+            $data = $mutator($data);
+            $this->writeJsonFileAtomic($path, $data);
+        } finally {
+            flock($lh, LOCK_UN);
+            fclose($lh);
         }
     }
 

@@ -10,6 +10,11 @@ include_once(str_repeat("../", 1) . '202-config/clickserver_api_management.php')
 
 AUTH::require_user();
 
+if (!$userObj->hasPermission("access_to_api_integrations")) {
+	header('location: ' . get_absolute_url() . '202-account/');
+	exit;
+}
+
 // Initialize variables to prevent undefined variable warnings
 $error = [];
 $html = [];
@@ -279,10 +284,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						$sql .= ", affiliateId = '" . $mysql['dniAffiliateId'] . "'";
 					}
 
-					$sql .= " WHERE id = '" . $mysql['editing_dni_network_id'] . "'";
+					$sql .= " WHERE id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
 
 					if ($db->query($sql)) {
-						$sql = "UPDATE 202_aff_networks SET aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['editing_dni_network_id'] . "'";
+						$sql = "UPDATE 202_aff_networks SET aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
 						$db->query($sql);
 						header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?dni_network_updated=1');
 						die();

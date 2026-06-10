@@ -77,7 +77,7 @@ try {
 		2ca.aff_campaign_name,
 		COUNT(*) AS clicks,
 		SUM(2cr.click_out) AS click_throughs,
-		(COUNT(*)/SUM(2cr.click_out))*100 AS ctr,
+		(SUM(2cr.click_out)/COUNT(*))*100 AS ctr,
 		SUM(2c.click_lead) AS leads,
 		(SUM(2c.click_lead)/COUNT(*))*100 as su_ratio,
 		SUM(2c.click_payout*2c.click_lead) AS income,

@@ -235,7 +235,7 @@ function wpUpdateLp($db, $user): array {
 					landing_page_url = '".$mysql['landing_page_url']."',
 					landing_page_type = '1',
 					user_id = '".$mysql['user_id']."'
-					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."'";
+					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."' AND user_id = '".$mysql['user_id']."'";
 			$result = $db->query($sql);
 			return ['error' => '0'];
 		} else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
@@ -252,7 +252,7 @@ function wpUpdateLp($db, $user): array {
 					landing_page_url = '".$mysql['landing_page_url']."',
 					landing_page_type = '0',
 					user_id = '".$mysql['user_id']."'
-					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."'";
+					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."' AND user_id = '".$mysql['user_id']."'";
 				$result = $db->query($sql);
 				return ['error' => '0'];
 			}

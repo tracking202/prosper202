@@ -19,4 +19,12 @@ class AffNetworksController extends Controller
             'dni_network_id'   => ['type' => 'i'],
         ];
     }
+
+    #[\Override]
+    protected function beforeCreate(array $payload): array
+    {
+        return [
+            'aff_network_time' => ['type' => 'i', 'value' => time()],
+        ];
+    }
 }

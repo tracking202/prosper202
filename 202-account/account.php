@@ -393,7 +393,10 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 		$user_result = $db->query($user_sql);
 	}
 
-	if ($user_row['user_account_currency'] != $_POST['account_currency']) {
+	// Only recompute campaign payouts when the currency change was accepted and saved
+	// above (no token/validation error); otherwise an invalid/forged request would still
+	// rewrite every campaign's payout.
+	if (!$error && $user_row['user_account_currency'] != $_POST['account_currency']) {
 		// scope to the acting user's own campaigns
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$sql = "SELECT aff_campaign_id, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout FROM 202_aff_campaigns WHERE aff_campaign_deleted = 0 AND user_id = '" . $mysql['user_id'] . "'";

@@ -40,6 +40,11 @@ if (!empty($_GET['rules_added'])) {
 
 if ($_SERVER['REQUEST_METHOD'] == "POST") {
 
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		$error['token'] = '<div class="error">Invalid or expired form token. Please reload the page and try again.</div>';
+	}
+
 	$rotator_name = trim((string) $_POST['rotator_name']);
 	if (empty($rotator_name)) {
 		$error['rotator_name'] = '<div class="error">Type in the name of your rotator!</div>';
@@ -72,6 +77,12 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 }
 
 if (isset($_GET['delete_rotator_id'])) {
+
+	// Require a valid session token for this state-changing request.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/setup/rotator.php');
+		die();
+	}
 
 	if ($userObj->hasPermission("remove_rotator")) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -163,6 +174,7 @@ template_top('Smart Redirector'); ?>
 		<span class="infotext">Give a name for your redirector.</span>
 
 		<form method="post" action="" class="form-inline" role="form" style="margin:15px 0px;">
+			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 			<div class="form-group">
 				<label class="sr-only" for="rotator_name">Smart Redirector</label>
 				<input type="text" class="form-control input-sm" id="rotator_name" name="rotator_name" placeholder="Redirector name">
@@ -193,7 +205,7 @@ template_top('Smart Redirector'); ?>
 																		$html['id'] = htmlentities((string) $row['id'], ENT_QUOTES, 'UTF-8');
 
 																		if ($userObj->hasPermission("remove_rotator")) {
-																			printf('<li><span class="filter_rotator_name">%s</span> <a href="?delete_rotator_id=%s&delete_rotator_name=%s" class="list-action list-action-danger" onclick="return confirmSubmit(\'Are you sure?\');">remove</a></li>', $html['name'], $html['id'], $html['name']);
+																			printf('<li><span class="filter_rotator_name">%s</span> <a href="?delete_rotator_id=%s&delete_rotator_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmSubmit(\'Are you sure?\');">remove</a></li>', $html['name'], $html['id'], $html['name']);
 																		} else {
 																			printf('<li><span class="filter_rotator_name">%s</span></li>', $html['name']);
 																		}

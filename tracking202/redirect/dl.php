@@ -108,70 +108,70 @@ if ($usedCachedRedirect == true) {
 
 			//c1 string replace for cached redirect
 			if (isset($_GET['c1']) && $_GET['c1'] != '') {
-				$new_url = str_replace("[[c1]]", $db->real_escape_string((string)$_GET['c1']), $new_url);
+				$new_url = str_replace("[[c1]]", rawurlencode((string)$_GET['c1']), $new_url);
 			} else {
 				$new_url = str_replace("[[c1]]", "p202c1", $new_url);
 			}
 
 			//c2 string replace for cached redirect
 			if (isset($_GET['c2']) && $_GET['c2'] != '') {
-				$new_url = str_replace("[[c2]]", $db->real_escape_string((string)$_GET['c2']), $new_url);
+				$new_url = str_replace("[[c2]]", rawurlencode((string)$_GET['c2']), $new_url);
 			} else {
 				$new_url = str_replace("[[c2]]", "p202c2", $new_url);
 			}
 
 			//c3 string replace for cached redirect
 			if (isset($_GET['c3']) && $_GET['c3'] != '') {
-				$new_url = str_replace("[[c3]]", $db->real_escape_string((string)$_GET['c3']), $new_url);
+				$new_url = str_replace("[[c3]]", rawurlencode((string)$_GET['c3']), $new_url);
 			} else {
 				$new_url = str_replace("[[c3]]", "p202c3", $new_url);
 			}
 
 			//c4 string replace for cached redirect
 			if (isset($_GET['c4']) && $_GET['c4'] != '') {
-				$new_url = str_replace("[[c4]]", $db->real_escape_string((string)$_GET['c4']), $new_url);
+				$new_url = str_replace("[[c4]]", rawurlencode((string)$_GET['c4']), $new_url);
 			} else {
 				$new_url = str_replace("[[c4]]", "p202c4", $new_url);
 			}
 
 			//gclid string replace for cached redirect
 			if (isset($_GET['gclid']) && $_GET['gclid'] != '') {
-				$new_url = str_replace("[[gclid]]", $db->real_escape_string((string)$_GET['gclid']), $new_url);
+				$new_url = str_replace("[[gclid]]", rawurlencode((string)$_GET['gclid']), $new_url);
 			} else {
 				$new_url = str_replace("[[gclid]]", "p202gclid", $new_url);
 			}
 
 			//utm_source string replace for cached redirect
 			if (isset($_GET['utm_source']) && $_GET['utm_source'] != '') {
-				$new_url = str_replace("[[utm_source]]", $db->real_escape_string((string)$_GET['utm_source']), $new_url);
+				$new_url = str_replace("[[utm_source]]", rawurlencode((string)$_GET['utm_source']), $new_url);
 			} else {
 				$new_url = str_replace("[[utm_source]]", "p202utm_source", $new_url);
 			}
 
 			//utm_medium string replace for cached redirect
 			if (isset($_GET['utm_medium']) && $_GET['utm_medium'] != '') {
-				$new_url = str_replace("[[utm_medium]]", $db->real_escape_string((string)$_GET['utm_medium']), $new_url);
+				$new_url = str_replace("[[utm_medium]]", rawurlencode((string)$_GET['utm_medium']), $new_url);
 			} else {
 				$new_url = str_replace("[[utm_medium]]", "p202utm_medium", $new_url);
 			}
 
 			//utm_campaign string replace for cached redirect
 			if (isset($_GET['utm_campaign']) && $_GET['utm_campaign'] != '') {
-				$new_url = str_replace("[[utm_campaign]]", $db->real_escape_string((string)$_GET['utm_campaign']), $new_url);
+				$new_url = str_replace("[[utm_campaign]]", rawurlencode((string)$_GET['utm_campaign']), $new_url);
 			} else {
 				$new_url = str_replace("[[utm_campaign]]", "p202utm_campaign", $new_url);
 			}
 
 			//utm_term string replace for cached redirect
 			if (isset($_GET['utm_term']) && $_GET['utm_term'] != '') {
-				$new_url = str_replace("[[utm_term]]", $db->real_escape_string((string)$_GET['utm_term']), $new_url);
+				$new_url = str_replace("[[utm_term]]", rawurlencode((string)$_GET['utm_term']), $new_url);
 			} else {
 				$new_url = str_replace("[[utm_term]]", "p202utm_term", $new_url);
 			}
 
 			//utm_content string replace for cached redirect
 			if (isset($_GET['utm_content']) && $_GET['utm_content'] != '') {
-				$new_url = str_replace("[[utm_content]]", $db->real_escape_string((string)$_GET['utm_content']), $new_url);
+				$new_url = str_replace("[[utm_content]]", rawurlencode((string)$_GET['utm_content']), $new_url);
 			} else {
 				$new_url = str_replace("[[utm_content]]", "p202utm_content", $new_url);
 			}

@@ -131,6 +131,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	else
 		$mysql['user_active'] = 1;
 
+	// Allow-list the requested role. The dropdown only offers roles 2-6; role 1
+	// (Super user) must never be assignable through this form.
+	$allowedRoles = ['2', '3', '4', '5', '6'];
+	if (!in_array($mysql['user_role'], $allowedRoles, true)) {
+		$error['user_role'] = '<div class="error help-block">Invalid user role.</div>';
+	}
+
+	// Authorization gate that MUST run before the write: only users who can manage
+	// admins may assign the Admin role or modify an existing Admin/Super-user account.
+	// (The role_id==2 check further down only guards the GET form-render path.)
+	if (!$userObj->hasPermission("add_edit_delete_admin")) {
+		if ($mysql['user_role'] === '2') {
+			$error['user_role'] = '<div class="error help-block">You are not authorized to assign the Admin role.</div>';
+		}
+		if ($editing === true) {
+			$target_role_sql = "SELECT role_id FROM 202_user_role WHERE user_id = '" . $mysql['form_user_id'] . "'";
+			$target_role_result = _mysqli_query($target_role_sql);
+			$target_role_row = $target_role_result->fetch_assoc();
+			$target_role_id = $target_role_row['role_id'] ?? null;
+			if ($mysql['form_user_id'] === '1' || $target_role_id === '1' || $target_role_id === '2') {
+				$error['user_role'] = '<div class="error help-block">You are not authorized to modify this account.</div>';
+			}
+		}
+	}
+
 	if (!$error) {
 
 		// Only hash password if it's set (for new users or when changing password)

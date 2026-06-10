@@ -3792,8 +3792,9 @@ class ReportSummaryTotalForm
 	 */
 	function getRoi()
 	{
-		if ($this->getCost() != 0) {
-			return @round((int)($this->getNet()) / (int)($this->getCost()) * 100);
+		$cost = (float) $this->getCost();
+		if ($cost != 0.0) {
+			return round((float) $this->getNet() / $cost * 100);
 		} else {
 			return 0;
 		}
@@ -4599,7 +4600,7 @@ class ReportSummaryTotalForm
 	 */
 	function setUtmSource($arg0)
 	{
-		$this->utm_source = $arg0;
+		$this->utm_source = htmlspecialchars((string) $arg0, ENT_QUOTES);
 	}
 
 	/**
