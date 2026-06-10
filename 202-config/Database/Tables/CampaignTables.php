@@ -52,10 +52,12 @@ final class CampaignTables
                 `aff_campaign_rotate` tinyint(1) NOT NULL DEFAULT '0',
                 `aff_campaign_currency` char(3) NOT NULL DEFAULT 'USD',
                 `aff_campaign_foreign_payout` decimal(8,2) NOT NULL,
+                `attribution_model_id` int(11) DEFAULT NULL,
                 PRIMARY KEY (`aff_campaign_id`),
                 KEY `aff_network_id` (`aff_network_id`),
                 KEY `aff_campaign_deleted` (`aff_campaign_deleted`),
                 KEY `user_id` (`user_id`),
+                KEY `idx_attribution_model` (`attribution_model_id`),
                 KEY `aff_campaign_name` (`aff_campaign_name`(5)),
                 KEY `aff_campaign_id_public` (`aff_campaign_id_public`),
                 KEY `aff_campaign_id` (`aff_campaign_id`,`aff_campaign_name`)
