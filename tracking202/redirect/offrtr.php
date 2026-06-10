@@ -344,7 +344,7 @@ if ($default == false) {
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-				$click_outbound_site_url_id = INDEXES::get_site_url_id($db);
+				$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				if ($cloaking_on == true) {
@@ -354,7 +354,7 @@ if ($default == false) {
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
 
-				$click_redirect_site_url_id = INDEXES::get_site_url_id($db);
+				$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 				$update_sql = "
@@ -469,7 +469,7 @@ if ($default == false) {
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
 				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-				$click_outbound_site_url_id = INDEXES::get_site_url_id($db);
+				$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				if ($cloaking_on == true) {
@@ -479,7 +479,7 @@ if ($default == false) {
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
 
-				$click_redirect_site_url_id = INDEXES::get_site_url_id($db);
+				$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 				$update_sql = "

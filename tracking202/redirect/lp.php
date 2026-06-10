@@ -164,7 +164,7 @@ if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking
 if ($cloaking_on == true) {
 
 	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
-	$click_cloaking_site_url_id = INDEXES::get_site_url_id($db); 
+	$click_cloaking_site_url_id = INDEXES::get_site_url_id($db, $cloaking_site_url);
 	$mysql['click_cloaking_site_url_id'] = $db->real_escape_string((string) $click_cloaking_site_url_id);         
 	
 }
@@ -192,7 +192,7 @@ $data=($de->setDirtyHour($mysql['click_id']));
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db); 
+$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string((string) $click_redirect_site_url_id);
 
 
