@@ -458,10 +458,10 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					}
 
 					if ($redirect['id'] != 'none') {
-						$rule_redirect_id = $db->real_escape_string($redirect['id']);
+						$rule_redirect_id = (int)$redirect['id'];
 						$rule_redirect_sql = "UPDATE 202_rotator_rules_redirects SET rule_id='".$rule_id."', ".$redirect_sql." WHERE id = '".$rule_redirect_id."'";
 						$rule_redirect_result = $db->query($rule_redirect_sql);
-						$redirects_ids[] = $redirect['id'];
+						$redirects_ids[] = $rule_redirect_id;
 					} else {
 						$rule_redirect_sql = "INSERT INTO 202_rotator_rules_redirects SET rule_id='".$rule_id."', ".$redirect_sql."";
 						$rule_redirect_result = $db->query($rule_redirect_sql);

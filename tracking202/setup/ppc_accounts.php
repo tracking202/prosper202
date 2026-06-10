@@ -168,7 +168,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
 			$add_success = true;
-			$the_ppc_account_id = $db->insert_id != 0 ? $db->insert_id : $mysql['ppc_account_id'];
+			// Cast to int: this id is interpolated into SQL without quotes, where
+			// real_escape_string() would not prevent injection in a numeric context.
+			$the_ppc_account_id = (int)($db->insert_id != 0 ? $db->insert_id : $mysql['ppc_account_id']);
 
 			foreach ($_POST['pixel_type_id'] as $key => $value) {
 				$mysql['pixel_type_id'] = $db->real_escape_string($value);
@@ -184,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				if ($mysql['pixel_code'] != "" && $mysql['pixel_type_id'] != "") {
 
 					if ($mysql['pixel_id'] != "") {
-						$pixel_sql = "UPDATE 202_ppc_account_pixels SET pixel_code='" . $mysql['pixel_code'] . "', pixel_type_id=" . $mysql['pixel_type_id'] . " WHERE pixel_id=" . $mysql['pixel_id'] . " AND ppc_account_id=" . $the_ppc_account_id;
+						$pixel_sql = "UPDATE 202_ppc_account_pixels SET pixel_code='" . $mysql['pixel_code'] . "', pixel_type_id=" . (int)$mysql['pixel_type_id'] . " WHERE pixel_id=" . (int)$mysql['pixel_id'] . " AND ppc_account_id=" . $the_ppc_account_id;
 
 						if ($slack) {
 							if ($ppc_old_account_row['pixel_type_id'] != $value) {
@@ -196,12 +198,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 							}
 						}
 						$db->query($pixel_sql);
-						$pixel_ids[] = $mysql['pixel_id'];
+						$pixel_ids[] = (int)$mysql['pixel_id'];
 					} else {
 						$pixel_sql = "INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code,pixel_type_id)
 								VALUES(" . $the_ppc_account_id . ",'"
 							. $mysql['pixel_code'] . "',"
-							. $mysql['pixel_type_id'] . ")";
+							. (int)$mysql['pixel_type_id'] . ")";
 
 						$slack_pixel_added_message_vars = ['type' => $pixel_type_row['pixel_type'], 'network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']];
 						$slack_pixel_added_message = true;

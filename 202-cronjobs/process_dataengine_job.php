@@ -85,8 +85,10 @@ try {
                         curl_multi_add_handle($master, $ch);
                     }
 
-                    // remove the curl handle that just completed
+                    // remove and close the completed handle so it does not leak across
+                    // the long-running cron job.
                     curl_multi_remove_handle($master, $done['handle']);
+                    curl_close($done['handle']);
                 }
             } while ($running);
 
