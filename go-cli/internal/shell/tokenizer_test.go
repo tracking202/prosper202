@@ -67,6 +67,36 @@ func TestTokenizeLine(t *testing.T) {
 			input: "--limit=10 --offset=20",
 			want:  []string{"--limit=10", "--offset=20"},
 		},
+		{
+			name:  "empty double-quoted argument preserved",
+			input: `campaign update --name ""`,
+			want:  []string{"campaign", "update", "--name", ""},
+		},
+		{
+			name:  "empty single-quoted argument preserved",
+			input: `campaign update --name ''`,
+			want:  []string{"campaign", "update", "--name", ""},
+		},
+		{
+			name:  "trailing comment stripped",
+			input: "campaign list # most recent",
+			want:  []string{"campaign", "list"},
+		},
+		{
+			name:  "full-line comment",
+			input: "# just a comment",
+			want:  nil,
+		},
+		{
+			name:  "hash inside a word is literal",
+			input: "tracker get a#b",
+			want:  []string{"tracker", "get", "a#b"},
+		},
+		{
+			name:  "hash inside quotes is literal",
+			input: `campaign create --name "promo #5"`,
+			want:  []string{"campaign", "create", "--name", "promo #5"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -124,6 +154,26 @@ func TestSplitCommands(t *testing.T) {
 			name:  "comment lines skipped",
 			input: "# this is a comment\ncampaign list\n# another comment\nhealth",
 			want:  []string{"campaign list", "health"},
+		},
+		{
+			name:  "trailing comment stripped",
+			input: "campaign list # most recent\nhealth",
+			want:  []string{"campaign list", "health"},
+		},
+		{
+			name:  "comment ends at semicolon",
+			input: "campaign list # note; health",
+			want:  []string{"campaign list", "health"},
+		},
+		{
+			name:  "hash inside a word is literal",
+			input: "tracker get a#b; health",
+			want:  []string{"tracker get a#b", "health"},
+		},
+		{
+			name:  "hash inside quotes is literal",
+			input: `campaign create --name "promo #5"; health`,
+			want:  []string{`campaign create --name "promo #5"`, "health"},
 		},
 		{
 			name:  "empty input",

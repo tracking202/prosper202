@@ -88,6 +88,10 @@ func verifyShellAccess() error {
 	}
 
 	if !client.SupportsCapability("shell") {
+		// Distinguish "the server said no" from "we couldn't ask the server".
+		if capErr := client.CapabilitiesError(); capErr != nil {
+			return fmt.Errorf("could not verify shell access: %w", capErr)
+		}
 		return fmt.Errorf("shell access is not enabled for this API key. Contact support to upgrade your plan")
 	}
 	return nil
@@ -132,14 +136,8 @@ func runInteractive(state *shell.State) error {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			continue
 		}
-		if len(output) > 0 {
-			// Store raw output as $_ if it's valid JSON
-			storeResult(state, output)
-			fmt.Print(string(output))
-			if output[len(output)-1] != '\n' {
-				fmt.Println()
-			}
-		}
+		storeResult(state, output)
+		printOutput(output)
 	}
 	return scanner.Err()
 }
@@ -172,12 +170,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 		if jsonOutput {
 			emitBatchResult(cmdStr, output, nil)
 		} else {
-			if len(output) > 0 {
-				fmt.Print(string(output))
-				if output[len(output)-1] != '\n' {
-					fmt.Println()
-				}
-			}
+			printOutput(output)
 		}
 		storeResult(state, output)
 	}
@@ -272,30 +265,27 @@ func handleBuiltin(line string, state *shell.State, currentProfile string) (bool
 
 	// Check for variable assignment: $name = command...
 	if strings.HasPrefix(line, "$") {
-		eqIdx := strings.Index(line, "=")
-		if eqIdx > 1 {
+		if eqIdx := strings.Index(line, "="); eqIdx >= 0 {
 			varName := strings.TrimSpace(line[1:eqIdx])
 			cmdStr := strings.TrimSpace(line[eqIdx+1:])
-			if varName != "" && cmdStr != "" {
-				output, err := executeShellCommand(cmdStr)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					return true, ""
-				}
-				if len(output) > 0 {
-					trimmed := bytes.TrimSpace(output)
-					if json.Valid(trimmed) {
-						state.Set(varName, json.RawMessage(trimmed))
-					} else {
-						state.Set(varName, json.RawMessage(fmt.Sprintf("%q", string(trimmed))))
-					}
-					fmt.Print(string(output))
-					if output[len(output)-1] != '\n' {
-						fmt.Println()
-					}
-				}
+			if varName == "" || strings.ContainsAny(varName, " \t") {
+				fmt.Fprintln(os.Stderr, "Syntax error: expected $name = command")
 				return true, ""
 			}
+			if cmdStr == "" {
+				fmt.Fprintf(os.Stderr, "Syntax error: assignment to $%s requires a command\n", varName)
+				return true, ""
+			}
+			output, err := executeShellCommand(cmdStr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return true, ""
+			}
+			if value, ok := normalizeValue(output); ok {
+				state.Set(varName, value)
+			}
+			printOutput(output)
+			return true, ""
 		}
 
 		// Variable reference: $name (just print it)
@@ -428,23 +418,46 @@ func executeShellCommand(line string) ([]byte, error) {
 	os.Stdout = oldStdout
 
 	if cmdErr != nil {
-		// Still return any output produced before the error
-		if len(captured) > 0 {
-			fmt.Print(string(captured))
-		}
+		// Still show any output produced before the error
+		printOutput(captured)
 		return nil, cmdErr
 	}
 	return captured, nil
 }
 
-// storeResult saves raw output as the $_ variable if it's valid JSON.
-func storeResult(state *shell.State, output []byte) {
-	trimmed := bytes.TrimSpace(output)
-	if len(trimmed) == 0 {
+// printOutput writes command output to stdout, ensuring a trailing newline.
+func printOutput(output []byte) {
+	if len(output) == 0 {
 		return
 	}
+	fmt.Print(string(output))
+	if output[len(output)-1] != '\n' {
+		fmt.Println()
+	}
+}
+
+// normalizeValue converts command output into a JSON value for session
+// variables: JSON output is stored as-is, anything else as a JSON string.
+// Returns false for empty output.
+func normalizeValue(output []byte) (json.RawMessage, bool) {
+	trimmed := bytes.TrimSpace(output)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
 	if json.Valid(trimmed) {
-		state.SetLast(json.RawMessage(trimmed))
+		return json.RawMessage(trimmed), true
+	}
+	quoted, err := json.Marshal(string(trimmed))
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(quoted), true
+}
+
+// storeResult saves command output as the $_ variable.
+func storeResult(state *shell.State, output []byte) {
+	if value, ok := normalizeValue(output); ok {
+		state.SetLast(value)
 	}
 }
 

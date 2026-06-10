@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Prosper202\License\ClickServerKeyValidator;
+use Prosper202\License\ShellAccessCache;
+
 class CapabilitiesController
 {
-    private const string CLICKSERVER_VALIDATE_URL = 'https://my.tracking202.com/api/v2/validate-customers-key';
-    private const int SHELL_CACHE_TTL_SECONDS = 28800; // 8 hours
-
     public function __construct(
         private readonly \mysqli $db,
         private readonly ?int $userId = null,
@@ -130,10 +130,12 @@ class CapabilitiesController
     /**
      * Determine shell access by validating the user's ClickServer API key
      * against my.tracking202.com. Returns false if the user has no key or
-     * the key is invalid. On network failure, denies access (fail-closed).
+     * the key is invalid.
      *
-     * Results are cached per-key for 8 hours in the system temp directory
-     * to avoid hitting my.tracking202.com on every capabilities request.
+     * Results are cached per-key (ShellAccessCache::TTL_SECONDS) to avoid
+     * hitting my.tracking202.com on every capabilities request. If ClickServer
+     * is unreachable the last known result is used regardless of age, and
+     * access is denied when no prior result exists (fail-closed).
      */
     private function shellAccess(): bool
     {
@@ -146,18 +148,19 @@ class CapabilitiesController
             return false;
         }
 
-        $cached = $this->readShellCache($customerKey);
+        $cached = ShellAccessCache::read($customerKey);
         if ($cached !== null) {
             return $cached;
         }
 
-        $result = $this->validateClickServerKey($customerKey);
-        // null = network failure; don't cache transient errors (fail-closed
-        // for this request but don't lock the user out for the full TTL).
-        if ($result !== null) {
-            $this->writeShellCache($customerKey, $result);
+        // Short timeouts: this runs on the synchronous request path, so a
+        // slow ClickServer must not stall /capabilities for long.
+        $result = ClickServerKeyValidator::validate($customerKey, 2, 4);
+        if ($result === null) {
+            return ShellAccessCache::readStale($customerKey) === true;
         }
-        return $result === true;
+        ShellAccessCache::write($customerKey, $result);
+        return $result;
     }
 
     private function loadClickServerKey(): string
@@ -184,64 +187,4 @@ class CapabilitiesController
         return trim((string)($row['p202_customer_api_key'] ?? ''));
     }
 
-    private function shellCachePath(string $key): string
-    {
-        return sys_get_temp_dir() . '/p202_shell_' . hash('sha256', $key) . '.cache';
-    }
-
-    private function readShellCache(string $key): ?bool
-    {
-        $path = $this->shellCachePath($key);
-        if (!is_file($path)) {
-            return null;
-        }
-        $mtime = filemtime($path);
-        if ($mtime === false || (time() - $mtime) > self::SHELL_CACHE_TTL_SECONDS) {
-            @unlink($path);
-            return null;
-        }
-        $content = @file_get_contents($path);
-        if ($content === false) {
-            return null;
-        }
-        return $content === '1';
-    }
-
-    private function writeShellCache(string $key, bool $valid): void
-    {
-        $path = $this->shellCachePath($key);
-        @file_put_contents($path, $valid ? '1' : '0');
-    }
-
-    /**
-     * Validate a ClickServer key against my.tracking202.com.
-     *
-     * @return bool|null true = valid, false = invalid, null = network failure
-     */
-    private function validateClickServerKey(string $key): ?bool
-    {
-        $ch = curl_init();
-        if ($ch === false) {
-            return null;
-        }
-
-        curl_setopt($ch, CURLOPT_URL, self::CLICKSERVER_VALIDATE_URL);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(['key' => $key]));
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-
-        $response = curl_exec($ch);
-        $failed = curl_errno($ch) || $response === false;
-        curl_close($ch);
-
-        if ($failed) {
-            return null; // Network failure — don't cache this result
-        }
-
-        $data = json_decode((string)$response, true);
-        return is_array($data) && ($data['msg'] ?? '') === 'Key valid';
-    }
 }

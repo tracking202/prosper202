@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"p202/internal/shell"
 )
 
 // newShellCapableServer creates a mock server that supports the capabilities
@@ -208,6 +210,44 @@ func TestShellPreventsRecursion(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot run shell from within shell") && !strings.Contains(err.Error(), "one or more commands failed") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestShellCapabilityFetchErrorSurfaced(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/versions":
+			_, _ = w.Write([]byte(`{"data":{"preferred":"v3"}}`))
+		default:
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	_, _, err := executeCommand("shell", "-c", "health")
+	if err == nil {
+		t.Fatal("expected error when capabilities endpoint fails")
+	}
+	if !strings.Contains(err.Error(), "could not verify shell access") {
+		t.Errorf("expected fetch failure to be surfaced, got: %v", err)
+	}
+}
+
+func TestShellMalformedAssignmentHandled(t *testing.T) {
+	state := shell.NewState()
+
+	for _, line := range []string{"$=", "$ = health", "$a b = health", "$x ="} {
+		handled, _ := handleBuiltin(line, state, "default")
+		if !handled {
+			t.Errorf("malformed assignment %q should be handled as a syntax error, not dispatched as a command", line)
+		}
+	}
+	if state.Count() != 0 {
+		t.Errorf("malformed assignments must not create variables, got %v", state.Names())
 	}
 }
 
