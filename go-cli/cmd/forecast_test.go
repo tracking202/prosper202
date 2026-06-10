@@ -482,6 +482,44 @@ func TestForecastRejectsEventsWithNonDayInterval(t *testing.T) {
 	}
 }
 
+func TestForecastHourIntervalHistoryLimits(t *testing.T) {
+	var periods []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		periods = append(periods, r.URL.Query().Get("period"))
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(30, "total_income")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	// Default history must shrink to last30 for hourly forecasts.
+	_, _, err := executeCommand("forecast", "--metric=revenue", "--interval=hour")
+	if err != nil {
+		t.Fatalf("hourly forecast with default history: %v", err)
+	}
+	if len(periods) == 0 || periods[0] != "last30" {
+		t.Errorf("default hourly history requested period %q, want last30", periods)
+	}
+
+	// Explicit windows beyond the 2000-bucket cap are rejected.
+	_, _, err = executeCommand("forecast", "--metric=revenue", "--interval=hour", "--history=last90")
+	if err == nil {
+		t.Fatal("expected error for hourly last90")
+	}
+	if !strings.Contains(err.Error(), "2000-bucket") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// last7 stays allowed.
+	_, _, err = executeCommand("forecast", "--metric=revenue", "--interval=hour", "--history=last7")
+	if err != nil {
+		t.Errorf("hourly last7 should be allowed: %v", err)
+	}
+}
+
 func TestParseTimeseries(t *testing.T) {
 	response := makeTimeseriesResponse(10, "total_income")
 	series, err := parseTimeseries([]byte(response), "total_income")

@@ -130,6 +130,21 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		history = "last90"
 	}
 
+	// reports/timeseries returns at most 2000 buckets ordered oldest-first,
+	// so hourly windows longer than last30 (720 buckets) would silently drop
+	// the most recent hours — the ones forecasts anchor on.
+	if interval == "hour" {
+		if !cmd.Flags().Changed("history") {
+			history = "last30"
+		} else {
+			switch history {
+			case "today", "yesterday", "last7", "last30":
+			default:
+				return validationError("--interval hour supports --history today, yesterday, last7, or last30; longer windows exceed the API's 2000-bucket limit and would drop the most recent hours")
+			}
+		}
+	}
+
 	smaWindow, _ := cmd.Flags().GetInt("window")
 	seasonal, _ := cmd.Flags().GetBool("seasonal")
 	useEvents, _ := cmd.Flags().GetBool("events")
