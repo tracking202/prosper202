@@ -280,7 +280,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	}
 
 	// Render output.
-	output, err := buildForecastOutput(result, metric, seasonal, useEvents || eventTag != "", futureEvents)
+	output, err := buildForecastOutput(result, metric, seasonal, useEvents || eventTag != "", futureEvents, learnedImpacts)
 	if err != nil {
 		return err
 	}
@@ -477,7 +477,7 @@ func parseWeekpartWeights(data []byte, metric string) forecast.SeasonalWeights {
 }
 
 // buildForecastOutput constructs the JSON output for rendering.
-func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, eventsActive bool, futureEvents []forecast.Event) ([]byte, error) {
+func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, eventsActive bool, futureEvents []forecast.Event, impacts map[string]forecast.LearnedImpact) ([]byte, error) {
 	predictions := make([]map[string]interface{}, len(result.Predictions))
 	for i, p := range result.Predictions {
 		row := map[string]interface{}{
@@ -521,14 +521,28 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, 
 	if eventsActive && len(futureEvents) > 0 {
 		names := make([]string, 0, len(futureEvents))
 		seen := map[string]bool{}
+		var unquantified []string
+		seenUnq := map[string]bool{}
 		for _, e := range futureEvents {
 			if !seen[e.Name] {
 				names = append(names, e.Name)
 				seen[e.Name] = true
 			}
+			// An event only adjusts values when its impact was learned from
+			// history or given via expected_impact_pct. We deliberately never
+			// invent a magnitude from impact_type alone — flag such events so
+			// users know they were seen but did not move the numbers.
+			if _, learned := impacts[e.Name]; !learned && e.ExpectedImpactPct == 0 && !seenUnq[e.Name] {
+				unquantified = append(unquantified, e.Name)
+				seenUnq[e.Name] = true
+			}
 		}
 		sort.Strings(names)
 		meta["events_in_horizon"] = names
+		if len(unquantified) > 0 {
+			sort.Strings(unquantified)
+			meta["events_unquantified"] = unquantified
+		}
 	}
 
 	output := map[string]interface{}{

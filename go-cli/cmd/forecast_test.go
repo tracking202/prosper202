@@ -762,6 +762,42 @@ func TestParseListCursor(t *testing.T) {
 	}
 }
 
+func TestForecastFlagsUnquantifiedEvents(t *testing.T) {
+	// A future event with impact_type but no expected_impact_pct and no
+	// training-range history cannot adjust values; it must be flagged in
+	// meta.events_unquantified instead of silently doing nothing.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		if strings.HasSuffix(r.URL.Path, "/forecast-events") {
+			// Event 3 days after the training range ends (timeseries starts
+			// 2024-01-01 and spans 30 days), suppress type, no percentage.
+			w.Write([]byte(`{"data":[{"event_id":1,"event_name":"Mystery Holiday","event_date":"2024-02-02","impact_type":"suppress"}],"pagination":{"cursor":null}}`))
+		} else {
+			w.Write([]byte(makeTimeseriesResponse(30, "total_income")))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=revenue", "--events", "--horizon=7", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	unq, ok := meta["events_unquantified"].([]interface{})
+	if !ok || len(unq) != 1 || unq[0] != "Mystery Holiday" {
+		t.Errorf("meta.events_unquantified = %v, want [Mystery Holiday]", meta["events_unquantified"])
+	}
+}
+
 func TestForecastEventTagFiltersFetchesEvents(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
