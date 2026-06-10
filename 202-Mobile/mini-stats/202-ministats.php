@@ -44,9 +44,10 @@ COALESCE(SUM(2st.cost)/sum(clicks), 0) AS cpc,
 COALESCE((SUM(2st.income)-SUM(2st.cost)), 0) AS net,
 COALESCE(((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100), 0) as roi 
 FROM 202_dataengine as 2st
-WHERE click_time >= '".$mysql['from']."'
+WHERE 2st.user_id = '".$mysql['user_id']."'
+AND click_time >= '".$mysql['from']."'
 AND click_time <= '".$mysql['to']."'
-$click_filtered"; 
+$click_filtered";
 
 $clicks_result = _mysqli_query($clicks_sql, $db);
 $clicks_row = $clicks_result->fetch_array(MYSQLI_ASSOC);

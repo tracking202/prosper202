@@ -50,7 +50,7 @@ $error = [];
 //show tracking code
 
 	$mysql['landing_page_id'] = $db->real_escape_string((string)$_POST['landing_page_id']);
-	$landing_page_sql = "SELECT * FROM 202_landing_pages LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) LEFT JOIN 202_aff_networks USING (aff_network_id) WHERE landing_page_id='".$mysql['landing_page_id']."'";
+	$landing_page_sql = "SELECT * FROM 202_landing_pages LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) LEFT JOIN 202_aff_networks USING (aff_network_id) WHERE landing_page_id='".$mysql['landing_page_id']."' AND 202_landing_pages.user_id='".$mysql['user_id']."'";
 	$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 	$landing_page_row = $landing_page_result->fetch_assoc();
 	

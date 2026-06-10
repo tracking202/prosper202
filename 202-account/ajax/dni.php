@@ -16,6 +16,7 @@ if (isset($_GET['getProgress'])) {
 
 if (isset($_GET['updateStatus'])) {
 	$mysql['dni'] = $db->real_escape_string((string)$_GET['dni']);
-	$sql = "UPDATE 202_dni_networks SET processed = '1' WHERE id = '".$mysql['dni']."'";
+	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+	$sql = "UPDATE 202_dni_networks SET processed = '1' WHERE id = '".$mysql['dni']."' AND user_id = '".$mysql['user_id']."'";
 	$db->query($sql);
 }

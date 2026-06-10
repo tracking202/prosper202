@@ -172,6 +172,13 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	$rotator_id = $db->real_escape_string((string)$_POST['rotator_id']);
 	$defaults = $db->real_escape_string((string)$_POST['defaults']);
 
+	// Verify the user owns this rotator before applying any changes to it or its rules.
+	$ownership_sql = "SELECT id FROM 202_rotators WHERE id='" . $rotator_id . "' AND user_id='" . $mysql['user_id'] . "' LIMIT 1";
+	$ownership_result = $db->query($ownership_sql) or record_mysql_error($ownership_sql);
+	if (!$ownership_result || !$ownership_result->fetch_assoc()) {
+		die("ERROR");
+	}
+
 	$rotator_sql = "SELECT 
 					2ro.name,
 					2ro.default_campaign,
@@ -408,9 +415,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 						break;	
 				}*/
 
-				$rule_sql = "UPDATE 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."' WHERE id='".$rule['rule_id']."'";
+				$rule_sql = "UPDATE 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."' WHERE id='".(int)$rule['rule_id']."'";
 				$rule_result = $db->query($rule_sql);
-				$rule_id = $rule['rule_id'];
+				$rule_id = (int)$rule['rule_id'];
 				$rules_id[] = $rule_id;
 
 				foreach ($rule['redirects'] as $redirect) {
@@ -536,9 +543,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$value = $db->real_escape_string($criteria['value']);
 
 					if ($criteria['criteria_id'] != 'none') {
-						$criteria_sql = "UPDATE 202_rotator_rules_criteria SET rotator_id='".$rotator_id."', rule_id='".$rule_id."', type='".$type."', statement='".$statement."', value='".$value."' WHERE id='".$criteria['criteria_id']."'";
+						$criteria_sql = "UPDATE 202_rotator_rules_criteria SET rotator_id='".$rotator_id."', rule_id='".$rule_id."', type='".$type."', statement='".$statement."', value='".$value."' WHERE id='".(int)$criteria['criteria_id']."'";
 						$criteria_result = $db->query($criteria_sql);
-						$criteria_id[] = $criteria['criteria_id'];
+						$criteria_id[] = (int)$criteria['criteria_id'];
 					} else {
 						$criteria_sql = "INSERT INTO 202_rotator_rules_criteria SET rotator_id='".$rotator_id."', rule_id='".$rule_id."', type='".$type."', statement='".$statement."', value='".$value."'";
 						$criteria_result = $db->query($criteria_sql);
