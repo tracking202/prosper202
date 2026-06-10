@@ -26,7 +26,9 @@ $to_year = $to[2] ?? '';
 
 //if from or to, validate, and if validated, set it accordingly
 
-if ((!isset($_POST['from']) || !$_POST['from']) and (!isset($_POST['to']) || !$_POST['to'])) {
+if ((!isset($_POST['from']) || !$_POST['from']) || (!isset($_POST['to']) || !$_POST['to'])
+	|| !checkdate((int)$from_month, (int)$from_day, (int)$from_year)
+	|| !checkdate((int)$to_month, (int)$to_day, (int)$to_year)) {
 	$error['time'] = '<div class="error">Please enter in the dates from and to like this <strong>mm/dd/yyyy</strong></div>';
 }
 $clean['from'] = mktime(0, 0, 0, (int)$from_month, (int)$from_day, (int)$from_year);

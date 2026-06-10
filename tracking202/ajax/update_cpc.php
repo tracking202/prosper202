@@ -15,6 +15,11 @@ $to_month = '';
 $to_day = '';
 $to_year = '';
 
+// Initialize error and html arrays before validation so results are not discarded
+$error = [];
+$html = [];
+$clean = [];
+
 if (isset($_POST['from'])) {
 	$from = explode('/', (string) $_POST['from']);
 	$from_month = $from[0] ?? '';
@@ -40,10 +45,6 @@ if ((!isset($_POST['from']) || empty($_POST['from'])) || (!isset($_POST['to']) |
 	$clean['to'] = mktime(23, 59, 59, (int)$to_month, (int)$to_day, (int)$to_year);
 	$html['to'] = date('m/d/y g:ia', $clean['to']);
 }
-
-// Initialize error and html arrays to prevent undefined variable warnings
-$error = [];
-$html = [];
 
 //set mysql variables
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
