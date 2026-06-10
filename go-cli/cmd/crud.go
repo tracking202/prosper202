@@ -641,6 +641,29 @@ func init() {
 				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
 			},
 		},
+		{
+			Name:     "forecast-event",
+			Aliases:  []string{"event"},
+			Plural:   "forecast events (holidays, promotions, anomalies that affect forecasting)",
+			Endpoint: "forecast-events",
+			Fields: []crudField{
+				{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
+				{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true},
+				{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)"},
+				{Name: "recurrence", Desc: "Recurrence: none, monthly, yearly, custom"},
+				{Name: "impact_type", Desc: "Impact type: boost, suppress, neutral"},
+				{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},
+				{Name: "lead_days", Desc: "Days before event that impact ramps up"},
+				{Name: "lag_days", Desc: "Days after event that impact decays"},
+				{Name: "tags", Desc: "Comma-separated tags (e.g. 'us-holidays,retail')"},
+				{Name: "notes", Desc: "Freeform notes"},
+			},
+			ListParams: []crudField{
+				{Name: "event_name", QueryKey: "filter[event_name]", Desc: "Filter by event name"},
+				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type"},
+				{Name: "tags", QueryKey: "filter[tags]", Desc: "Filter by tag"},
+			},
+		},
 	}
 
 	var trackerCmd *cobra.Command
