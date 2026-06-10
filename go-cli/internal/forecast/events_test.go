@@ -625,3 +625,38 @@ func TestBuildBaselinePredictions_CalendarTimeRegression(t *testing.T) {
 		t.Errorf("calendar-time baseline for day 11 = %.2f, want ~%.2f", pred, expected)
 	}
 }
+
+func TestPastEvents_LagWindowOverlapsTrainingStart(t *testing.T) {
+	// Core date (Nov 30) sits before the training range, but lag_days=2
+	// pushes its influence window into Dec 1-2 — it must be selected so
+	// those buckets get masked from baseline training.
+	events := []Event{
+		{Name: "Cyber Monday", Date: date(2025, 11, 30), LagDays: 2},
+	}
+	past := PastEvents(events, date(2025, 12, 1), date(2026, 2, 28))
+	if len(past) != 1 {
+		t.Fatalf("expected lag-overlapping event to be selected, got %d", len(past))
+	}
+}
+
+func TestPastEvents_LeadWindowOverlapsTrainingEnd(t *testing.T) {
+	// Core date (Mar 5) is after the training range, but lead_days=7 means
+	// the ramp-up influences the final training days.
+	events := []Event{
+		{Name: "Promo", Date: date(2026, 3, 5), LeadDays: 7},
+	}
+	past := PastEvents(events, date(2026, 1, 1), date(2026, 3, 1))
+	if len(past) != 1 {
+		t.Fatalf("expected lead-overlapping event to be selected, got %d", len(past))
+	}
+}
+
+func TestPastEvents_NonOverlappingExcluded(t *testing.T) {
+	events := []Event{
+		{Name: "Far Future", Date: date(2026, 6, 1), LeadDays: 2, LagDays: 2},
+	}
+	past := PastEvents(events, date(2026, 1, 1), date(2026, 3, 1))
+	if len(past) != 0 {
+		t.Fatalf("expected no events selected, got %d", len(past))
+	}
+}

@@ -254,31 +254,31 @@ func ApplyEventAdjustments(predictions []Prediction, events []Event, impacts map
 // FutureEvents filters events to those whose influence window overlaps with
 // the forecast horizon [start, end], expanding recurring events as needed.
 func FutureEvents(events []Event, start, end time.Time) []Event {
-	var future []Event
+	return overlappingEvents(events, start, end)
+}
+
+// PastEvents filters events to those whose influence window overlaps the
+// training data range [start, end], expanding recurring events as needed.
+// Window overlap (not core-date containment) is what matters: an event whose
+// core date sits just outside the range can still influence boundary buckets
+// through lead/lag days, and those must be masked from baseline training.
+func PastEvents(events []Event, start, end time.Time) []Event {
+	return overlappingEvents(events, start, end)
+}
+
+// overlappingEvents returns every recurring-expanded event instance whose
+// influence window overlaps [start, end].
+func overlappingEvents(events []Event, start, end time.Time) []Event {
+	var matched []Event
 	for _, e := range events {
 		for _, occ := range expandRecurring(e, start, end) {
 			w := occ.Window()
 			if !w.End.Before(start) && !w.Start.After(end) {
-				future = append(future, occ)
+				matched = append(matched, occ)
 			}
 		}
 	}
-	return future
-}
-
-// PastEvents filters events to those whose core date falls within the
-// training data time range [start, end], expanding recurring events as needed.
-func PastEvents(events []Event, start, end time.Time) []Event {
-	var past []Event
-	for _, e := range events {
-		for _, occ := range expandRecurring(e, start, end) {
-			day := truncateToDay(occ.Date)
-			if !day.Before(start) && !day.After(end) {
-				past = append(past, occ)
-			}
-		}
-	}
-	return past
+	return matched
 }
 
 // expandRecurring returns all instances of e whose windows could overlap [start, end].
