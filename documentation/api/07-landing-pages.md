@@ -18,9 +18,11 @@ Manage landing pages used between the traffic source and the destination.
 | ----- | ---- | -------- | ----------- |
 | `landing_page_url` | string | Yes | Landing page URL (max 2048) |
 | `aff_campaign_id` | integer | Yes | Campaign this page belongs to |
-| `landing_page_nickname` | string | No | Friendly name (max 255) |
+| `landing_page_nickname` | string | Yes | Friendly name (max 50) |
 | `leave_behind_page_url` | string | No | Leave-behind URL (max 2048) |
-| `landing_page_type` | integer | No | Page type identifier |
+| `landing_page_type` | integer | No | Page type identifier (default 0) |
+
+Auto-generated on create: `landing_page_time` (unix timestamp).
 
 ## Example
 

@@ -23,10 +23,10 @@ Manage campaigns.
 | `aff_campaign_url_3` | string | No | Alternate URL 3 (max 2048) |
 | `aff_campaign_url_4` | string | No | Alternate URL 4 (max 2048) |
 | `aff_campaign_url_5` | string | No | Alternate URL 5 (max 2048) |
-| `aff_campaign_payout` | decimal | No | Default payout amount |
+| `aff_campaign_payout` | decimal | Yes | Default payout amount |
 | `aff_campaign_currency` | string | No | Currency code (max 5) |
-| `aff_campaign_foreign_payout` | decimal | No | Foreign currency payout |
-| `aff_network_id` | integer | No | Associated network ID |
+| `aff_campaign_foreign_payout` | decimal | No | Foreign currency payout (default 0) |
+| `aff_network_id` | integer | Yes | Associated network ID |
 | `aff_campaign_cloaking` | integer | No | Cloaking enabled (0/1) |
 | `aff_campaign_rotate` | integer | No | Rotation enabled (0/1) |
 
