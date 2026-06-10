@@ -106,10 +106,10 @@ func TestBuildWeekdayWeights_InvalidDayName(t *testing.T) {
 }
 
 func TestBuildWeekdayWeights_NumericDayOfWeek(t *testing.T) {
-	// Weekpart API returns numeric day_of_week (0=Sunday..6=Saturday).
+	// Weekpart API returns MySQL WEEKDAY() indexes: 0=Monday..6=Sunday.
 	rows := []map[string]interface{}{
-		{"day_of_week": float64(1), "total_income": 120.0}, // Monday
-		{"day_of_week": float64(5), "total_income": 80.0},  // Friday
+		{"day_of_week": float64(0), "total_income": 120.0}, // Monday
+		{"day_of_week": float64(4), "total_income": 80.0},  // Friday
 	}
 	weights := BuildWeekdayWeights(rows, "total_income")
 	if weights == nil {
@@ -124,6 +124,59 @@ func TestBuildWeekdayWeights_NumericDayOfWeek(t *testing.T) {
 	}
 	if math.Abs(weights[time.Friday]-0.8) > 0.001 {
 		t.Errorf("Friday weight = %.3f, want 0.8", weights[time.Friday])
+	}
+}
+
+func TestBuildWeekdayWeights_RealAPIResponseShape(t *testing.T) {
+	// Mirrors ReportsController::weekpart exactly: short day_name plus
+	// WEEKDAY() index for every day of the week.
+	rows := []map[string]interface{}{
+		{"day_of_week": float64(0), "day_name": "Mon", "total_income": 120.0},
+		{"day_of_week": float64(1), "day_name": "Tue", "total_income": 80.0},
+		{"day_of_week": float64(2), "day_name": "Wed", "total_income": 100.0},
+		{"day_of_week": float64(3), "day_name": "Thu", "total_income": 110.0},
+		{"day_of_week": float64(4), "day_name": "Fri", "total_income": 90.0},
+		{"day_of_week": float64(5), "day_name": "Sat", "total_income": 60.0},
+		{"day_of_week": float64(6), "day_name": "Sun", "total_income": 140.0},
+	}
+	weights := BuildWeekdayWeights(rows, "total_income")
+	if weights == nil {
+		t.Fatal("expected non-nil weights for real API shape")
+	}
+	// Mean = 100.
+	expected := map[time.Weekday]float64{
+		time.Monday:    1.2,
+		time.Tuesday:   0.8,
+		time.Wednesday: 1.0,
+		time.Thursday:  1.1,
+		time.Friday:    0.9,
+		time.Saturday:  0.6,
+		time.Sunday:    1.4,
+	}
+	for dow, want := range expected {
+		if math.Abs(weights[dow]-want) > 0.001 {
+			t.Errorf("%s weight = %.3f, want %.3f", dow, weights[dow], want)
+		}
+	}
+}
+
+func TestBuildWeekdayWeights_NumericStringDayOfWeek(t *testing.T) {
+	// day_of_week may decode as a numeric string; it must use the
+	// WEEKDAY() convention, not be dropped.
+	rows := []map[string]interface{}{
+		{"day_of_week": "0", "total_income": 150.0}, // Monday
+		{"day_of_week": "6", "total_income": 50.0},  // Sunday
+	}
+	weights := BuildWeekdayWeights(rows, "total_income")
+	if weights == nil {
+		t.Fatal("expected non-nil weights with numeric-string day_of_week")
+	}
+	// Mean = 100.
+	if math.Abs(weights[time.Monday]-1.5) > 0.001 {
+		t.Errorf("Monday weight = %.3f, want 1.5", weights[time.Monday])
+	}
+	if math.Abs(weights[time.Sunday]-0.5) > 0.001 {
+		t.Errorf("Sunday weight = %.3f, want 0.5", weights[time.Sunday])
 	}
 }
 
