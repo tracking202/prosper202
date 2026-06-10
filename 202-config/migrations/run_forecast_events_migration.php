@@ -1,0 +1,135 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Migration script to create the forecast_events table and seed US holidays.
+ * Run this script once to set up the forecast events system.
+ */
+
+include_once dirname(__DIR__) . '/connect.php';
+
+if (!isset($db) || !($db instanceof mysqli)) {
+    die("Error: Database connection not available\n");
+}
+
+echo "Starting forecast events migration...\n";
+
+try {
+    $sqlFile = __DIR__ . '/create_forecast_events_table.sql';
+
+    if (!file_exists($sqlFile)) {
+        throw new Exception("Migration file not found: {$sqlFile}");
+    }
+
+    $sql = file_get_contents($sqlFile);
+
+    if ($sql === false) {
+        throw new Exception("Failed to read migration file");
+    }
+
+    $statements = array_filter(
+        array_map(trim(...), explode(';', $sql)),
+        function ($stmt) {
+            if (empty($stmt)) {
+                return false;
+            }
+            // Only skip chunks that are pure comments — strip all comment lines
+            // and check whether any actual SQL remains. Chunks that START with a
+            // comment but also contain SQL (e.g. the CREATE TABLE block) must
+            // not be dropped.
+            $withoutComments = preg_replace('/^\s*--[^\n]*/m', '', $stmt);
+            return trim($withoutComments) !== '';
+        }
+    );
+
+    echo "Found " . count($statements) . " SQL statements to execute...\n";
+
+    // MySQL implicitly commits DDL, so CREATE TABLE can never be rolled back.
+    // Run DDL outside the transaction and wrap only the seed INSERTs, so a
+    // failed seed leaves the table created but with no partial data.
+    $ddl = [];
+    $dml = [];
+    foreach ($statements as $statement) {
+        $sqlOnly = ltrim((string)preg_replace('/^\s*--[^\n]*/m', '', $statement));
+        if (preg_match('/^(CREATE|ALTER|DROP)\b/i', $sqlOnly)) {
+            $ddl[] = $statement;
+        } else {
+            $dml[] = $statement;
+        }
+    }
+
+    $executed = 0;
+    $runStatement = function (string $statement) use ($db, &$executed): void {
+        $executed++;
+        echo "Executing statement {$executed}...\n";
+
+        $result = $db->query($statement);
+
+        if (!$result) {
+            throw new Exception("SQL Error in statement {$executed}: " . $db->error);
+        }
+
+        if ($db->affected_rows > 0) {
+            echo "  -> Affected {$db->affected_rows} rows\n";
+        }
+    };
+
+    foreach ($ddl as $statement) {
+        $runStatement($statement);
+    }
+
+    // Re-running this script must not append duplicate seed rows: duplicate
+    // events get their multipliers applied once per row, inflating forecasts.
+    $result = $db->query('SELECT COUNT(*) AS c FROM `202_forecast_events`');
+    if (!$result) {
+        throw new Exception('Failed to check existing events: ' . $db->error);
+    }
+    $existing = (int)$result->fetch_assoc()['c'];
+    if ($existing > 0) {
+        echo "Table already contains {$existing} events — skipping seed data.\n";
+        $dml = [];
+    }
+
+    $db->begin_transaction();
+    $inTransaction = true;
+
+    foreach ($dml as $statement) {
+        $runStatement($statement);
+    }
+
+    $db->commit();
+    $inTransaction = false;
+
+    echo "\nMigration completed successfully!\n";
+
+    // Verify table creation
+    echo "\nVerifying table creation...\n";
+    $result = $db->query("SHOW TABLES LIKE '202_forecast_events'");
+    if ($result && $result->num_rows > 0) {
+        echo "  ✓ 202_forecast_events\n";
+    } else {
+        echo "  ✗ 202_forecast_events - NOT FOUND\n";
+    }
+
+    // Show seed data summary
+    echo "\nChecking seeded events...\n";
+    $result = $db->query("SELECT event_name, COUNT(*) as occurrences FROM 202_forecast_events GROUP BY event_name ORDER BY event_name");
+
+    if ($result && $result->num_rows > 0) {
+        echo "Seeded events:\n";
+        while ($row = $result->fetch_assoc()) {
+            echo "  {$row['event_name']}: {$row['occurrences']} occurrence(s)\n";
+        }
+    }
+
+} catch (Exception $e) {
+    if (!empty($inTransaction)) {
+        $db->rollback();
+    }
+    echo "\nMigration failed: " . $e->getMessage() . "\n";
+    exit(1);
+}
+
+echo "\n✓ Forecast events system is ready to use!\n";
+echo "Manage events via: p202 forecast-event list|create|update|delete\n";
