@@ -50,13 +50,17 @@ curl -X POST https://your-domain.com/api/v3/campaigns \
 
 `POST /campaigns/bulk-upsert` accepts an array of campaign objects. Requires an `Idempotency-Key` header.
 
+Rows without an `aff_campaign_id` (or `id`) are created and must include all
+required fields. Rows with an existing ID are updated and may send only the
+fields being changed.
+
 ```bash
 curl -X POST https://your-domain.com/api/v3/campaigns/bulk-upsert \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Idempotency-Key: unique-request-id" \
   -H "Content-Type: application/json" \
   -d '[
-    { "aff_campaign_name": "Campaign A", "aff_campaign_url": "https://..." },
-    { "aff_campaign_name": "Campaign B", "aff_campaign_url": "https://..." }
+    { "aff_campaign_name": "Campaign A", "aff_campaign_url": "https://...", "aff_campaign_payout": 1.50, "aff_network_id": 3 },
+    { "aff_campaign_name": "Campaign B", "aff_campaign_url": "https://...", "aff_campaign_payout": 2.00, "aff_network_id": 3 }
   ]'
 ```
