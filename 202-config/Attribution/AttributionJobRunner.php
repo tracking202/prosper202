@@ -261,11 +261,18 @@ final readonly class AttributionJobRunner
             return [];
         }
 
-        foreach ($state['snapshot_totals'] as $bucket => $totals) {
-            $snapshotId = $state['snapshot_ids'][$bucket] ?? null;
-            if ($snapshotId === null) {
+        // Iterate over every snapshot bucket we know about (existing snapshots are
+        // preloaded into snapshot_ids in initialiseModelState), not just the buckets that
+        // had conversions this run. A bucket whose only conversion was deleted/refunded
+        // has no entry in snapshot_totals; without re-saving it with zeroed totals its
+        // old, inflated revenue/conversion counts would survive the rebuild.
+        $emptyTotals = ['clicks' => 0, 'conversions' => 0, 'revenue' => 0.0, 'cost' => 0.0];
+        foreach ($state['snapshot_ids'] as $bucket => $snapshotId) {
+            if ($snapshotId === null || $snapshotId === 0) {
                 continue;
             }
+
+            $totals = $state['snapshot_totals'][$bucket] ?? $emptyTotals;
 
             $snapshot = new Snapshot(
                 snapshotId: $snapshotId,

@@ -381,15 +381,16 @@ class AttributionController extends SetupController
             return;
         }
         
-        $success = $this->modelRepository->delete($modelId);
-        
-        if ($success) {
+        try {
+            // delete() requires the owning user id and returns void (throws on failure).
+            $this->modelRepository->delete($modelId, $this->getUserId());
+
             $this->sendSlackNotification('attribution_model_deleted', [
                 'model_name' => $model->name
             ]);
-            
+
             $this->addSuccess('Attribution model deleted successfully');
-        } else {
+        } catch (\Throwable $e) {
             $this->addError('general', 'Failed to delete model');
         }
     }

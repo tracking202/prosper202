@@ -44,52 +44,16 @@ SELECT
 FROM `202_users` 
 WHERE `user_id` > 0;
 
--- Attribution Snapshots Table (if not exists)
-CREATE TABLE IF NOT EXISTS `202_attribution_snapshots` (
-  `snapshot_id` int(11) NOT NULL AUTO_INCREMENT,
-  `model_id` int(11) NOT NULL,
-  `conversion_id` int(11) NOT NULL,
-  `user_id` int(11) NOT NULL,
-  `snapshot_date` int(11) NOT NULL,
-  `total_touchpoints` int(11) NOT NULL DEFAULT 0,
-  `attribution_data` text DEFAULT NULL,
-  `created_at` int(11) NOT NULL,
-  PRIMARY KEY (`snapshot_id`),
-  KEY `model_conversion` (`model_id`, `conversion_id`),
-  KEY `user_date` (`user_id`, `snapshot_date`),
-  FOREIGN KEY (`model_id`) REFERENCES `202_attribution_models` (`model_id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Attribution calculation snapshots';
-
--- Attribution Touchpoints Table (if not exists)  
-CREATE TABLE IF NOT EXISTS `202_attribution_touchpoints` (
-  `touchpoint_id` int(11) NOT NULL AUTO_INCREMENT,
-  `snapshot_id` int(11) NOT NULL,
-  `click_id` int(11) NOT NULL,
-  `ppc_account_id` int(11) DEFAULT NULL,
-  `aff_campaign_id` int(11) DEFAULT NULL,
-  `landing_page_id` int(11) DEFAULT NULL,
-  `touchpoint_position` int(11) NOT NULL,
-  `touchpoint_timestamp` int(11) NOT NULL,
-  `attribution_credit` decimal(10,6) NOT NULL DEFAULT 0.000000,
-  `touchpoint_data` text DEFAULT NULL,
-  PRIMARY KEY (`touchpoint_id`),
-  KEY `snapshot_position` (`snapshot_id`, `touchpoint_position`),
-  KEY `click_attribution` (`click_id`, `attribution_credit`),
-  FOREIGN KEY (`snapshot_id`) REFERENCES `202_attribution_snapshots` (`snapshot_id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Individual touchpoints in attribution journeys';
-
--- Attribution Settings/Audit Table (if not exists)
-CREATE TABLE IF NOT EXISTS `202_attribution_settings` (
-  `setting_id` int(11) NOT NULL AUTO_INCREMENT,
-  `model_id` int(11) NOT NULL,
-  `setting_name` varchar(50) NOT NULL,
-  `setting_value` text DEFAULT NULL,
-  `created_at` int(11) NOT NULL,
-  `updated_at` int(11) NOT NULL,
-  PRIMARY KEY (`setting_id`),
-  UNIQUE KEY `model_setting_unique` (`model_id`, `setting_name`),
-  FOREIGN KEY (`model_id`) REFERENCES `202_attribution_models` (`model_id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Additional settings and audit data for attribution models';
+-- NOTE: 202_attribution_snapshots, 202_attribution_touchpoints and
+-- 202_attribution_settings are intentionally NOT created here. The canonical schema for
+-- those tables is owned by the installer (Prosper202\Database\Tables\AttributionTables via
+-- SchemaInstaller) and the upgrade path (functions-upgrade.php). Earlier revisions of this
+-- migration created them with a DIFFERENT, incompatible schema (e.g. snapshots with
+-- conversion_id/snapshot_date/attribution_data instead of the live
+-- scope_type/date_hour/attributed_* columns), which the application code cannot read. Because
+-- those used CREATE TABLE IF NOT EXISTS, running this migration on a fresh database before the
+-- installer would have silently created the wrong tables and broken the attribution feature.
+-- Create these tables via the installer/upgrade path, not this script.
 
 -- Add attribution model reference to campaigns table
 ALTER TABLE `202_aff_campaigns` 
