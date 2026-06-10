@@ -15,7 +15,7 @@ func TestStateSetGet(t *testing.T) {
 		t.Fatal("expected variable to exist")
 	}
 	if string(got) != `[{"id":1},{"id":2}]` {
-		t.Errorf("got %s, want [{'id':1},{'id':2}]", string(got))
+		t.Errorf("got %s, want [{\"id\":1},{\"id\":2}]", string(got))
 	}
 }
 

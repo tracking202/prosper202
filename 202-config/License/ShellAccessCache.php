@@ -55,9 +55,13 @@ class ShellAccessCache
         if ($path === null) {
             return;
         }
-        if (@file_put_contents($path, $valid ? '1' : '0') !== false) {
-            @chmod($path, 0600);
+        if (@file_put_contents($path, $valid ? '1' : '0', LOCK_EX) === false) {
+            // Not fatal (the next request just revalidates), but worth a trace
+            // so repeated external validation calls can be diagnosed.
+            error_log('ShellAccessCache: failed to write ' . $path);
+            return;
         }
+        @chmod($path, 0600);
     }
 
     public static function invalidate(string $key): void

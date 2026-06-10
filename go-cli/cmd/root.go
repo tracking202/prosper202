@@ -9,6 +9,7 @@ import (
 	configpkg "p202/internal/config"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var jsonOutput bool
@@ -67,4 +68,23 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&csvOutput, "csv", false, "Output as CSV instead of tables")
 	rootCmd.PersistentFlags().StringVar(&profileName, "profile", "", "Use a named configuration profile")
 	rootCmd.PersistentFlags().StringVar(&groupName, "group", "", "Use a tag group of profiles for multi-profile commands")
+}
+
+// resetAllFlags restores every flag in the command tree to its default value
+// and clears its Changed state. Needed when the same command tree is executed
+// more than once in a process (the interactive shell, tests), since Cobra
+// retains parsed flag values between Execute() calls.
+func resetAllFlags(cmd *cobra.Command) {
+	resetFlagSet := func(fs *pflag.FlagSet) {
+		fs.VisitAll(func(f *pflag.Flag) {
+			_ = fs.Set(f.Name, f.DefValue)
+			f.Changed = false
+		})
+	}
+
+	resetFlagSet(cmd.PersistentFlags())
+	resetFlagSet(cmd.Flags())
+	for _, c := range cmd.Commands() {
+		resetAllFlags(c)
+	}
 }

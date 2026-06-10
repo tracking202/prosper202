@@ -241,13 +241,122 @@ func TestShellMalformedAssignmentHandled(t *testing.T) {
 	state := shell.NewState()
 
 	for _, line := range []string{"$=", "$ = health", "$a b = health", "$x ="} {
-		handled, _ := handleBuiltin(line, state, "default")
+		handled, _, _ := handleBuiltin(line, state, "default")
 		if !handled {
 			t.Errorf("malformed assignment %q should be handled as a syntax error, not dispatched as a command", line)
 		}
 	}
 	if state.Count() != 0 {
 		t.Errorf("malformed assignments must not create variables, got %v", state.Names())
+	}
+}
+
+func TestShellLargeOutputDoesNotDeadlock(t *testing.T) {
+	// Output far beyond the kernel pipe buffer (~64KB) must not block the
+	// stdout capture in executeShellCommand.
+	big := `{"data":[{"id":1,"aff_campaign_name":"` + strings.Repeat("x", 256*1024) + `"}],"pagination":{"total":1,"limit":50,"offset":0}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/versions":
+			_, _ = w.Write([]byte(`{"data":{"preferred":"v3"}}`))
+		case r.URL.Path == "/api/v3/capabilities":
+			_, _ = w.Write([]byte(`{"data":{"shell":true}}`))
+		case r.URL.Path == "/api/v3/campaigns":
+			_, _ = w.Write([]byte(big))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	stdout, _, err := executeCommand("shell", "-c", "campaign list --json")
+	if err != nil {
+		t.Fatalf("large-output batch failed: %v", err)
+	}
+	if len(stdout) < 256*1024 {
+		t.Errorf("expected full large output, got %d bytes", len(stdout))
+	}
+}
+
+func TestShellFlagsDoNotLeakBetweenCommands(t *testing.T) {
+	srv := newShellCapableServer(t)
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	// --json on the first command must not stick to the second.
+	stdout, _, err := executeCommand("shell", "-c", "campaign list --json; campaign list")
+	if err != nil {
+		t.Fatalf("shell batch failed: %v", err)
+	}
+	// The quoted key appears only in JSON output; the table renders the bare
+	// column name. Exactly one JSON rendering means no leak.
+	switch n := strings.Count(stdout, `"aff_campaign_name"`); n {
+	case 0:
+		t.Fatalf("expected raw JSON from first command, got: %s", stdout)
+	case 1: // expected
+	default:
+		t.Errorf("second command also produced raw JSON; --json leaked between shell commands: %s", stdout)
+	}
+	if !strings.Contains(stdout, "Test Campaign") {
+		t.Errorf("expected table output from second command, got: %s", stdout)
+	}
+}
+
+func TestShellBuiltinsWorkInBatchMode(t *testing.T) {
+	srv := newShellCapableServer(t)
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	stdout, _, err := executeCommand("shell", "-c", "$h = system health; vars")
+	if err != nil {
+		t.Fatalf("batch with builtins failed: %v", err)
+	}
+	if !strings.Contains(stdout, "$h") {
+		t.Errorf("expected vars to list $h, got: %s", stdout)
+	}
+}
+
+func TestShellExitStopsBatch(t *testing.T) {
+	srv := newShellCapableServer(t)
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	stdout, _, err := executeCommand("shell", "-c", "exit; system health")
+	if err != nil {
+		t.Fatalf("batch with exit failed: %v", err)
+	}
+	if strings.Contains(stdout, "ok") {
+		t.Errorf("commands after exit should not run, got: %s", stdout)
+	}
+}
+
+func TestShellLongCommandFlag(t *testing.T) {
+	srv := newShellCapableServer(t)
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	stdout, _, err := executeCommand("shell", "--command", "system health")
+	if err != nil {
+		t.Fatalf("--command flag failed: %v", err)
+	}
+	if !strings.Contains(stdout, "ok") {
+		t.Errorf("expected health output, got: %s", stdout)
 	}
 }
 
