@@ -3682,13 +3682,13 @@ class DisplayData
                     $featureKey = $html['landing_page_nickname'] ?? false;
                     break;
                 case 'device':
-                    $featureKey = $html['device_name'] ?? false;
+                    $featureKey = $html['device_name'] ?? 'Unknown';
                     break;
                 case 'browser':
-                    $featureKey = $html['browser_name'] ?? false;
+                    $featureKey = $html['browser_name'] ?? 'Unknown';
                     break;
                 case 'platform':
-                    $featureKey = $html['platform_name'] ?? false;
+                    $featureKey = $html['platform_name'] ?? 'Unknown';
                     break;
             }
 
@@ -3794,7 +3794,11 @@ class DisplayData
         $up = new UserPrefs();
         $fileName = "sort_" . $reportType . ".php";
 
-        $query['pages'] = ceil((int)$foundRows / (int)$up->getPref('user_pref_limit'));
+        $userPrefLimit = (int)$up->getPref('user_pref_limit');
+        if ($userPrefLimit < 1) {
+            $userPrefLimit = 50; // matches the schema default; guards against division by zero
+        }
+        $query['pages'] = ceil((int)$foundRows / $userPrefLimit);
 
         if (isset($_POST['offset']) && $_POST['offset'] != '') {
             if (self::$db instanceof mysqli) {
