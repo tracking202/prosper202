@@ -18,7 +18,7 @@ AUTH::require_user();
             $html['type_name'] = htmlentities((string)($device_row['type_name'] ?? ''), ENT_QUOTES, 'UTF-8');
             $html['type_id'] = htmlentities((string)($device_row['type_id'] ?? ''), ENT_QUOTES, 'UTF-8');
             
-            if ($_POST['device_id'] == $device_row['type_id']) {
+            if (($_POST['device_id'] ?? '') == $device_row['type_id']) {
                 $selected = 'selected=""';   
             } else {
                 $selected = '';  

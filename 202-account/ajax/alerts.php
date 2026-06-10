@@ -24,7 +24,7 @@ foreach ($alerts as $alert) {
     if ($external_id) {
         $mysql['prosper_alert_id'] = $db->real_escape_string($external_id);
         $sql = "SELECT COUNT(*) AS count FROM 202_alerts WHERE prosper_alert_id='{$mysql['prosper_alert_id']}' AND prosper_alert_seen='1'";
-        $result = _mysqli_query($sql, $db);
+        $result = _mysqli_query($db, $sql);
         $row = $result->fetch_assoc();
         if ($row['count']) {
             $dontShow[$external_id] = true;
