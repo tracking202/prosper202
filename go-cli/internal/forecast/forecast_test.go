@@ -462,6 +462,17 @@ func TestRun_AnchorOverridesSeriesEnd(t *testing.T) {
 			t.Errorf("method %s: first prediction at %v, want %v", m, result.Predictions[0].T, want)
 		}
 	}
+
+	// Trend values must line up with the anchored dates, not the series end:
+	// the series is y = 10 + 5x with x = 0..29, the anchor sits at x = 34, so
+	// the first prediction (x = 35) must be 10 + 5*35 = 185, not 160.
+	result, err := Run(s, Config{Method: MethodLinear, Horizon: 1, Interval: IntervalDay, Anchor: anchor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(result.Predictions[0].Value-185.0) > 0.001 {
+		t.Errorf("linear anchored value = %.3f, want 185.0", result.Predictions[0].Value)
+	}
 }
 
 func TestRun_ZeroAnchorUsesSeriesEnd(t *testing.T) {

@@ -46,17 +46,19 @@ func linearForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 		residStd = math.Sqrt(sumResidSq / (n - 2))
 	}
 
-	// Project forward.
+	// Project forward. The anchor offset advances the projection so values
+	// line up with the anchored timestamps when trailing points were masked.
 	anchor := anchorTime(s, cfg)
+	offset := anchorOffset(s, cfg)
 	preds := make([]Prediction, cfg.Horizon)
 	for i := 0; i < cfg.Horizon; i++ {
-		x := float64(len(s) + i)
+		x := float64(len(s) + offset + i)
 		val := intercept + slope*x
 		t := nextTime(anchor, cfg.Interval, i+1)
 		preds[i] = Prediction{T: t, Value: val}
 	}
 
-	addBounds(preds, residStd, cfg.ConfidenceLevel)
+	addBounds(preds, residStd, cfg.ConfidenceLevel, offset)
 	return preds, slope, nil
 }
 

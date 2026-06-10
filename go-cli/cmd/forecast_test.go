@@ -642,6 +642,61 @@ func TestForecastWithEventsFetchesEventsEndpoint(t *testing.T) {
 	}
 }
 
+func TestForecastEventsFollowsPaginationCursor(t *testing.T) {
+	var eventCursors []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		if strings.HasSuffix(r.URL.Path, "/forecast-events") {
+			cursor := r.URL.Query().Get("cursor")
+			eventCursors = append(eventCursors, cursor)
+			if cursor == "" {
+				// First page: one event plus a next-page cursor.
+				w.Write([]byte(`{"data":[{"event_id":1,"event_name":"Page One Event","event_date":"2024-01-15"}],"pagination":{"cursor":"page2"}}`))
+			} else {
+				// Second page: final page, no cursor.
+				w.Write([]byte(`{"data":[{"event_id":2,"event_name":"Page Two Event","event_date":"2024-01-20"}],"pagination":{"cursor":null}}`))
+			}
+		} else {
+			w.Write([]byte(makeTimeseriesResponse(30, "total_income")))
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=revenue", "--events", "--json")
+	if err != nil {
+		t.Fatalf("forecast with paginated events error: %v", err)
+	}
+
+	if len(eventCursors) != 2 {
+		t.Fatalf("expected 2 forecast-events requests, got %d", len(eventCursors))
+	}
+	if eventCursors[0] != "" || eventCursors[1] != "page2" {
+		t.Errorf("cursors sent = %q, want [\"\", \"page2\"]", eventCursors)
+	}
+}
+
+func TestParseListCursor(t *testing.T) {
+	cases := []struct {
+		body string
+		want string
+	}{
+		{`{"data":[],"pagination":{"cursor":"abc123"}}`, "abc123"},
+		{`{"data":[],"pagination":{"cursor":null}}`, ""},
+		{`{"data":[]}`, ""},
+		{`not json`, ""},
+	}
+	for _, tc := range cases {
+		if got := parseListCursor([]byte(tc.body)); got != tc.want {
+			t.Errorf("parseListCursor(%q) = %q, want %q", tc.body, got, tc.want)
+		}
+	}
+}
+
 func TestForecastEventTagFiltersFetchesEvents(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)

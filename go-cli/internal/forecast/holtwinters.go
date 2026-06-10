@@ -24,18 +24,20 @@ func holtWintersForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 		trend = beta*(level-prevLevel) + (1-beta)*trend
 	}
 
-	// Project forward.
+	// Project forward. The anchor offset advances the projection so values
+	// line up with the anchored timestamps when trailing points were masked.
 	anchor := anchorTime(s, cfg)
+	offset := anchorOffset(s, cfg)
 	preds := make([]Prediction, cfg.Horizon)
 	for i := 0; i < cfg.Horizon; i++ {
-		h := float64(i + 1)
+		h := float64(offset + i + 1)
 		val := level + h*trend
 		t := nextTime(anchor, cfg.Interval, i+1)
 		preds[i] = Prediction{T: t, Value: val}
 	}
 
 	stddev := residualStdDev(s, MethodHoltWinters, cfg)
-	addBounds(preds, stddev, cfg.ConfidenceLevel)
+	addBounds(preds, stddev, cfg.ConfidenceLevel, offset)
 	return preds, trend, nil
 }
 

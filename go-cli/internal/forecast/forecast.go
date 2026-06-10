@@ -107,6 +107,33 @@ func anchorTime(s Series, cfg Config) time.Time {
 	return s[len(s)-1].T
 }
 
+// anchorOffset returns how many whole interval steps cfg.Anchor lies beyond
+// the series' last point (0 when Anchor is unset or not ahead). Trend models
+// must advance their projection by this many steps so values line up with
+// the anchored timestamps.
+func anchorOffset(s Series, cfg Config) int {
+	if cfg.Anchor.IsZero() {
+		return 0
+	}
+	last := s[len(s)-1].T
+	if !cfg.Anchor.After(last) {
+		return 0
+	}
+	d := cfg.Anchor.Sub(last)
+	var step time.Duration
+	switch cfg.Interval {
+	case IntervalHour:
+		step = time.Hour
+	case IntervalWeek:
+		step = 7 * 24 * time.Hour
+	case IntervalMonth:
+		step = 30 * 24 * time.Hour // approximate; Anchor is only set for day interval
+	default:
+		step = 24 * time.Hour
+	}
+	return int(d / step)
+}
+
 // ValidMethods returns all supported method names.
 func ValidMethods() []string {
 	return []string{
@@ -311,12 +338,14 @@ func zScore(confidence float64) float64 {
 	}
 }
 
-// addBounds applies confidence interval bounds to predictions.
-func addBounds(preds []Prediction, stddev, confidence float64) {
+// addBounds applies confidence interval bounds to predictions. offset is the
+// number of steps the first prediction lies beyond the series' last point in
+// excess of one (see anchorOffset); it widens bounds across anchor gaps.
+func addBounds(preds []Prediction, stddev, confidence float64, offset int) {
 	z := zScore(confidence)
 	for i := range preds {
 		// Widen bounds as we forecast further out.
-		spread := stddev * z * math.Sqrt(1.0+float64(i)/5.0)
+		spread := stddev * z * math.Sqrt(1.0+float64(offset+i)/5.0)
 		preds[i].LowerBound = preds[i].Value - spread
 		preds[i].UpperBound = preds[i].Value + spread
 	}

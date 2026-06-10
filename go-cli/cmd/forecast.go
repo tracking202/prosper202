@@ -199,13 +199,9 @@ func runForecast(cmd *cobra.Command, args []string) error {
 
 	if useEvents || eventTag != "" {
 		// Fetch all forecast events from the API.
-		eventsData, evErr := c.Get("forecast-events", map[string]string{"limit": "500"})
-		if evErr != nil {
-			return fmt.Errorf("fetching forecast events: %w", evErr)
-		}
-		allEvents, err = parseForecastEvents(eventsData)
+		allEvents, err = fetchAllForecastEvents(c)
 		if err != nil {
-			return fmt.Errorf("parsing forecast events: %w", err)
+			return err
 		}
 
 		// Filter by tag if specified.
@@ -572,6 +568,53 @@ func forecastMetricList() string {
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, ", ")
+}
+
+// maxForecastEventPages caps pagination at 50 pages × 500 events. Hitting it
+// means a pathological event count (or a server cursor bug); erroring is
+// safer than silently forecasting with a truncated event list.
+const maxForecastEventPages = 50
+
+// fetchAllForecastEvents retrieves every forecast event from the API,
+// following the list endpoint's pagination cursor across pages.
+func fetchAllForecastEvents(c *api.Client) ([]forecast.Event, error) {
+	var all []forecast.Event
+	params := map[string]string{"limit": "500"}
+
+	for page := 0; page < maxForecastEventPages; page++ {
+		data, err := c.Get("forecast-events", params)
+		if err != nil {
+			return nil, fmt.Errorf("fetching forecast events: %w", err)
+		}
+
+		events, err := parseForecastEvents(data)
+		if err != nil {
+			return nil, fmt.Errorf("parsing forecast events: %w", err)
+		}
+		all = append(all, events...)
+
+		cursor := parseListCursor(data)
+		if cursor == "" {
+			return all, nil
+		}
+		params = map[string]string{"limit": "500", "cursor": cursor}
+	}
+
+	return nil, fmt.Errorf("forecast events exceed %d pages — aborting rather than forecasting with a truncated event list", maxForecastEventPages)
+}
+
+// parseListCursor extracts the next-page cursor from a V3 list response,
+// returning "" when there are no more pages.
+func parseListCursor(data []byte) string {
+	var parsed struct {
+		Pagination struct {
+			Cursor string `json:"cursor"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return ""
+	}
+	return parsed.Pagination.Cursor
 }
 
 // parseForecastEvents parses the API response from GET /forecast-events into Event structs.

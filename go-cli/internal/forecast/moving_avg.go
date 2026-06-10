@@ -39,7 +39,7 @@ func smaForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 	}
 
 	stddev := residualStdDev(s, MethodSMA, cfg)
-	addBounds(preds, stddev, cfg.ConfidenceLevel)
+	addBounds(preds, stddev, cfg.ConfidenceLevel, anchorOffset(s, cfg))
 	return preds, trend, nil
 }
 
@@ -88,6 +88,6 @@ func wmaForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 	}
 
 	stddev := residualStdDev(s, MethodWMA, cfg)
-	addBounds(preds, stddev, cfg.ConfidenceLevel)
+	addBounds(preds, stddev, cfg.ConfidenceLevel, anchorOffset(s, cfg))
 	return preds, trend, nil
 }
