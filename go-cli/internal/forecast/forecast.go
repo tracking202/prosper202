@@ -367,6 +367,22 @@ func nextTime(ref time.Time, interval Interval, steps int) time.Time {
 	}
 }
 
+// intervalSteps returns the number of interval steps between two times.
+// Month steps count whole calendar months; the other intervals divide the
+// elapsed duration by the step length.
+func intervalSteps(from, to time.Time, interval Interval) float64 {
+	switch interval {
+	case IntervalHour:
+		return to.Sub(from).Hours()
+	case IntervalWeek:
+		return to.Sub(from).Hours() / (24 * 7)
+	case IntervalMonth:
+		return float64((to.Year()-from.Year())*12 + int(to.Month()) - int(from.Month()))
+	default:
+		return to.Sub(from).Hours() / 24
+	}
+}
+
 // backtest splits data into train/test and measures forecast accuracy.
 func backtest(s Series, cfg Config, method Method) (mae, rmse float64) {
 	holdout := len(s) / 5

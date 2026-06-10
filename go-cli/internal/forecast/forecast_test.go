@@ -486,3 +486,30 @@ func TestRun_ZeroAnchorUsesSeriesEnd(t *testing.T) {
 		t.Errorf("first prediction at %v, want %v", result.Predictions[0].T, want)
 	}
 }
+
+func TestRun_LinearCalendarGaps(t *testing.T) {
+	// y = 10 + 5x by calendar day, with a 10-day mid-series gap (as left by
+	// event masking). A dense-index fit would compress the gap and bias the
+	// slope; the calendar-time fit must recover slope 5 and project the next
+	// calendar day's value exactly.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var s Series
+	for day := 0; day < 30; day++ {
+		if day >= 10 && day < 20 {
+			continue // masked event window
+		}
+		s = append(s, Point{T: base.AddDate(0, 0, day), V: 10 + 5*float64(day)})
+	}
+
+	result, err := Run(s, Config{Method: MethodLinear, Horizon: 1, Interval: IntervalDay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(result.Trend-5.0) > 0.001 {
+		t.Errorf("slope = %.4f, want 5.0 (calendar-gap bias)", result.Trend)
+	}
+	// Last point is day 29; next calendar day is day 30 → 10 + 5*30 = 160.
+	if math.Abs(result.Predictions[0].Value-160.0) > 0.001 {
+		t.Errorf("prediction = %.4f, want 160.0", result.Predictions[0].Value)
+	}
+}
