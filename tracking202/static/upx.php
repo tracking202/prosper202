@@ -7,6 +7,7 @@ header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
+include_once(substr(__DIR__, 0,-19) . '/202-config/functions-tracking202api.php');
 
 $settingsService = AttributionServiceFactory::createSettingsService();
 
