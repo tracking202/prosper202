@@ -2,9 +2,11 @@
 -- Creates the 202_forecast_events table for storing holidays, promotions,
 -- anomalies, and other calendar events that affect forecasting accuracy.
 
+-- Keep this definition in sync with MiscTables::forecastEvents(), which
+-- creates the same table on fresh installs.
 CREATE TABLE IF NOT EXISTS `202_forecast_events` (
-  `event_id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_id` int(11) NOT NULL,
+  `event_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `user_id` mediumint(8) unsigned NOT NULL,
   `event_name` varchar(255) NOT NULL,
   `event_date` date NOT NULL,
   `end_date` date DEFAULT NULL,
@@ -21,7 +23,7 @@ CREATE TABLE IF NOT EXISTS `202_forecast_events` (
   KEY `user_date` (`user_id`, `event_date`),
   KEY `user_name` (`user_id`, `event_name`),
   KEY `user_recurrence` (`user_id`, `recurrence`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Calendar events for forecast adjustment (holidays, promos, anomalies)';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Calendar events for forecast adjustment (holidays, promos, anomalies)';
 
 -- Seed US federal holidays for 2025-2027 as default events.
 -- Users can delete these or add their own. Recurring yearly holidays use

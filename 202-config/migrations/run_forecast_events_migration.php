@@ -45,23 +45,49 @@ try {
 
     echo "Found " . count($statements) . " SQL statements to execute...\n";
 
-    $db->begin_transaction();
+    // MySQL implicitly commits DDL, so CREATE TABLE can never be rolled back.
+    // Run DDL outside the transaction and wrap only the seed INSERTs, so a
+    // failed seed leaves the table created but with no partial data.
+    $ddl = [];
+    $dml = [];
+    foreach ($statements as $statement) {
+        $sqlOnly = ltrim((string)preg_replace('/^\s*--[^\n]*/m', '', $statement));
+        if (preg_match('/^(CREATE|ALTER|DROP)\b/i', $sqlOnly)) {
+            $ddl[] = $statement;
+        } else {
+            $dml[] = $statement;
+        }
+    }
 
-    foreach ($statements as $index => $statement) {
-        echo "Executing statement " . ($index + 1) . "...\n";
+    $executed = 0;
+    $runStatement = function (string $statement) use ($db, &$executed): void {
+        $executed++;
+        echo "Executing statement {$executed}...\n";
 
         $result = $db->query($statement);
 
         if (!$result) {
-            throw new Exception("SQL Error in statement " . ($index + 1) . ": " . $db->error);
+            throw new Exception("SQL Error in statement {$executed}: " . $db->error);
         }
 
         if ($db->affected_rows > 0) {
             echo "  -> Affected {$db->affected_rows} rows\n";
         }
+    };
+
+    foreach ($ddl as $statement) {
+        $runStatement($statement);
+    }
+
+    $db->begin_transaction();
+    $inTransaction = true;
+
+    foreach ($dml as $statement) {
+        $runStatement($statement);
     }
 
     $db->commit();
+    $inTransaction = false;
 
     echo "\nMigration completed successfully!\n";
 
@@ -86,7 +112,9 @@ try {
     }
 
 } catch (Exception $e) {
-    $db->rollback();
+    if (!empty($inTransaction)) {
+        $db->rollback();
+    }
     echo "\nMigration failed: " . $e->getMessage() . "\n";
     exit(1);
 }

@@ -8,16 +8,16 @@ import (
 
 // Event represents a calendar event that affects forecasting.
 type Event struct {
-	ID               int       `json:"event_id"`
-	Name             string    `json:"event_name"`
-	Date             time.Time `json:"event_date"`
-	EndDate          time.Time `json:"end_date,omitempty"`
-	Recurrence       string    `json:"recurrence"`
-	ImpactType       string    `json:"impact_type"`
-	ExpectedImpactPct float64  `json:"expected_impact_pct"`
-	LeadDays         int       `json:"lead_days"`
-	LagDays          int       `json:"lag_days"`
-	Tags             string    `json:"tags"`
+	ID                int       `json:"event_id"`
+	Name              string    `json:"event_name"`
+	Date              time.Time `json:"event_date"`
+	EndDate           time.Time `json:"end_date,omitempty"`
+	Recurrence        string    `json:"recurrence"`
+	ImpactType        string    `json:"impact_type"`
+	ExpectedImpactPct float64   `json:"expected_impact_pct"`
+	LeadDays          int       `json:"lead_days"`
+	LagDays           int       `json:"lag_days"`
+	Tags              string    `json:"tags"`
 }
 
 // EventWindow is the full date range an event influences:
@@ -40,10 +40,10 @@ type ZoneImpact struct {
 // LearnedImpact holds the complete impact profile for one event name,
 // learned from historical data.
 type LearnedImpact struct {
-	EventName  string
-	Lead       ZoneImpact
-	Core       ZoneImpact
-	Lag        ZoneImpact
+	EventName   string
+	Lead        ZoneImpact
+	Core        ZoneImpact
+	Lag         ZoneImpact
 	Occurrences int // how many past occurrences were used
 }
 
@@ -366,6 +366,12 @@ func retreatEvent(e Event, recurrence string) Event {
 
 // buildBaselinePredictions creates a day-indexed map of what the baseline model
 // would predict for each day in the original series range.
+//
+// The baseline is always OLS regression, regardless of cfg.Method. This is
+// deliberate: the counterfactual needs in-sample predictions for historical
+// days, which the production forecasting methods (SMA/WMA/Holt-Winters) don't
+// provide without lookahead. The cost is that strongly non-linear series
+// misattribute some model error to event impact.
 func buildBaselinePredictions(clean, full Series, cfg Config) map[string]float64 {
 	if len(clean) < 3 {
 		return nil

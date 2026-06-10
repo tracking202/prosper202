@@ -16,17 +16,24 @@ import (
 )
 
 var forecastAllowedMetrics = map[string]bool{
-	"total_clicks":        true,
+	"total_clicks":         true,
 	"total_click_throughs": true,
-	"total_leads":         true,
-	"total_income":        true,
-	"total_cost":          true,
-	"total_net":           true,
-	"epc":                 true,
-	"avg_cpc":             true,
-	"conv_rate":           true,
-	"roi":                 true,
-	"cpa":                 true,
+	"total_leads":          true,
+	"total_income":         true,
+	"total_cost":           true,
+	"total_net":            true,
+	"epc":                  true,
+	"avg_cpc":              true,
+	"conv_rate":            true,
+	"roi":                  true,
+	"cpa":                  true,
+}
+
+// forecastSignedMetrics can legitimately go negative; all other metrics
+// are clamped at zero in the forecast output.
+var forecastSignedMetrics = map[string]bool{
+	"total_net": true,
+	"roi":       true,
 }
 
 var forecastMetricAliases = map[string]string{
@@ -199,18 +206,15 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		}
 
 		if len(allEvents) > 0 {
-			// Separate past events (in training range) from future events (in forecast range).
+			// Select past events within the training range.
 			trainStart := series[0].T
 			trainEnd := series[len(series)-1].T
 			pastEvents := forecast.PastEvents(allEvents, trainStart, trainEnd)
 
-			// Determine forecast horizon dates.
-			forecastStart := trainEnd.AddDate(0, 0, 1)
-			forecastEnd := forecastEndDate(trainEnd, interval, horizon)
-			futureEvents = forecast.FutureEvents(allEvents, forecastStart, forecastEnd)
-
 			// Learn impacts from historical event data.
 			if len(pastEvents) > 0 {
+				// LearnEventImpacts needs the unmasked series (actual event-day
+				// values); the baseline forecast then trains on the masked series.
 				learnedImpacts = forecast.LearnEventImpacts(series, pastEvents, cfg)
 
 				// Mask event days from training data for clean baseline fitting.
@@ -218,7 +222,18 @@ func runForecast(cmd *cobra.Command, args []string) error {
 				if len(series) < 3 {
 					return validationError("after masking event days, only %d data points remain — need at least 3", len(series))
 				}
+
+				// Masking may shorten the series; forecast.Run anchors prediction
+				// timestamps to the masked series' last point, so the forecast
+				// window must be derived from it too or future-event selection
+				// misses event days at the start of the horizon.
+				trainEnd = series[len(series)-1].T
 			}
+
+			// Determine forecast horizon dates.
+			forecastStart := trainEnd.AddDate(0, 0, 1)
+			forecastEnd := forecastEndDate(trainEnd, interval, horizon)
+			futureEvents = forecast.FutureEvents(allEvents, forecastStart, forecastEnd)
 		}
 	}
 
@@ -231,6 +246,12 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	// Apply event adjustments to predictions.
 	if len(futureEvents) > 0 {
 		result.Predictions = forecast.ApplyEventAdjustments(result.Predictions, futureEvents, learnedImpacts)
+	}
+
+	// Trending methods can project below zero on declining series; clamp
+	// metrics that cannot be negative (clicks, income, rates) at zero.
+	if !forecastSignedMetrics[metric] {
+		clampNonNegative(result.Predictions)
 	}
 
 	// Render output.
@@ -319,6 +340,7 @@ func parseBucketTime(obj map[string]interface{}) (time.Time, error) {
 		if raw, ok := obj[key].(string); ok && raw != "" {
 			for _, layout := range []string{
 				"2006-01-02 15:04:05",
+				"2006-01-02 15:04", // hour interval: %Y-%m-%d %H:00
 				"2006-01-02T15:04:05Z",
 				"2006-01-02",
 				"2006-01",
@@ -327,10 +349,32 @@ func parseBucketTime(obj map[string]interface{}) (time.Time, error) {
 					return t, nil
 				}
 			}
+			// week interval: %x-W%v (e.g. "2026-W03")
+			if t, ok := parseISOWeek(raw); ok {
+				return t, nil
+			}
 		}
 	}
 
 	return time.Time{}, fmt.Errorf("no parseable time field in bucket")
+}
+
+// parseISOWeek parses MySQL's %x-W%v week format (e.g. "2026-W03"),
+// returning the Monday of that ISO week.
+func parseISOWeek(s string) (time.Time, bool) {
+	var year, week int
+	if n, err := fmt.Sscanf(s, "%d-W%d", &year, &week); err != nil || n != 2 {
+		return time.Time{}, false
+	}
+	if week < 1 || week > 53 {
+		return time.Time{}, false
+	}
+	// January 4th is always in ISO week 1; walk back to that week's
+	// Monday, then advance by (week-1) weeks.
+	jan4 := time.Date(year, 1, 4, 0, 0, 0, 0, time.UTC)
+	daysSinceMonday := (int(jan4.Weekday()) + 6) % 7
+	week1Monday := jan4.AddDate(0, 0, -daysSinceMonday)
+	return week1Monday.AddDate(0, 0, (week-1)*7), true
 }
 
 // toUnixTimestamp converts an interface to a unix timestamp int64.
@@ -485,6 +529,21 @@ func formatPredictionTime(t time.Time, interval forecast.Interval) string {
 		return t.Format("2006-01-02") + " (wk)"
 	default:
 		return t.Format("2006-01-02")
+	}
+}
+
+// clampNonNegative floors prediction values and bounds at zero.
+func clampNonNegative(preds []forecast.Prediction) {
+	for i := range preds {
+		if preds[i].Value < 0 {
+			preds[i].Value = 0
+		}
+		if preds[i].LowerBound < 0 {
+			preds[i].LowerBound = 0
+		}
+		if preds[i].UpperBound < 0 {
+			preds[i].UpperBound = 0
+		}
 	}
 }
 

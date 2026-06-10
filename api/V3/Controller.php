@@ -425,14 +425,16 @@ abstract class Controller
             }
         }
 
+        // Reject before merging extras: a payload with no writable fields must
+        // fail validation rather than silently bump hook columns like updated_at.
+        if (empty($sets)) {
+            throw new ValidationException('No valid fields to update');
+        }
+
         foreach ($extras as $col => $info) {
             $sets[] = "$col = ?";
             $binds[] = $info['value'];
             $types .= $info['type'];
-        }
-
-        if (empty($sets)) {
-            throw new ValidationException('No valid fields to update');
         }
 
         $binds[] = $id;

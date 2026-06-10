@@ -8,9 +8,10 @@ package forecast
 // the sum of squared one-step-ahead forecast errors.
 //
 // Model:
-//   level(t) = alpha * y(t) + (1 - alpha) * (level(t-1) + trend(t-1))
-//   trend(t) = beta * (level(t) - level(t-1)) + (1 - beta) * trend(t-1)
-//   forecast(t+h) = level(t) + h * trend(t)
+//
+//	level(t) = alpha * y(t) + (1 - alpha) * (level(t-1) + trend(t-1))
+//	trend(t) = beta * (level(t) - level(t-1)) + (1 - beta) * trend(t-1)
+//	forecast(t+h) = level(t) + h * trend(t)
 func holtWintersForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 	alpha, beta := optimizeParams(s)
 

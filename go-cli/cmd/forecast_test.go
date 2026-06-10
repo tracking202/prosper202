@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"p202/internal/forecast"
 )
 
 func makeTimeseriesResponse(n int, metric string) string {
@@ -469,6 +471,64 @@ func TestParseTimeseries(t *testing.T) {
 		if series[i].T.Before(series[i-1].T) {
 			t.Error("series not sorted chronologically")
 		}
+	}
+}
+
+func TestParseBucketTimeHourFormat(t *testing.T) {
+	// reports/timeseries returns %Y-%m-%d %H:00 for hour intervals.
+	got, err := parseBucketTime(map[string]interface{}{"period": "2026-01-15 10:00"})
+	if err != nil {
+		t.Fatalf("parseBucketTime error: %v", err)
+	}
+	want := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("expected %v, got %v", want, got)
+	}
+}
+
+func TestParseBucketTimeISOWeekFormat(t *testing.T) {
+	// reports/timeseries returns %x-W%v for week intervals.
+	cases := []struct {
+		period string
+		want   time.Time
+	}{
+		{"2026-W03", time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)},  // Monday of ISO week 3, 2026
+		{"2026-W01", time.Date(2025, 12, 29, 0, 0, 0, 0, time.UTC)}, // ISO week 1 of 2026 starts in 2025
+		{"2020-W53", time.Date(2020, 12, 28, 0, 0, 0, 0, time.UTC)}, // 2020 is a 53-week ISO year
+	}
+	for _, tc := range cases {
+		got, err := parseBucketTime(map[string]interface{}{"period": tc.period})
+		if err != nil {
+			t.Fatalf("parseBucketTime(%q) error: %v", tc.period, err)
+		}
+		if !got.Equal(tc.want) {
+			t.Errorf("parseBucketTime(%q): expected %v, got %v", tc.period, tc.want, got)
+		}
+		if y, w := got.ISOWeek(); tc.period != fmt.Sprintf("%d-W%02d", y, w) {
+			t.Errorf("parseBucketTime(%q): round-trip gave %d-W%02d", tc.period, y, w)
+		}
+	}
+}
+
+func TestParseISOWeekRejectsInvalid(t *testing.T) {
+	for _, s := range []string{"2026-01", "2026-01-02", "2026-W00", "2026-W54", "garbage", ""} {
+		if _, ok := parseISOWeek(s); ok {
+			t.Errorf("parseISOWeek(%q) should fail", s)
+		}
+	}
+}
+
+func TestClampNonNegative(t *testing.T) {
+	preds := []forecast.Prediction{
+		{Value: -5, LowerBound: -10, UpperBound: -1},
+		{Value: 3, LowerBound: -2, UpperBound: 8},
+	}
+	clampNonNegative(preds)
+	if preds[0].Value != 0 || preds[0].LowerBound != 0 || preds[0].UpperBound != 0 {
+		t.Errorf("negative prediction not fully clamped: %+v", preds[0])
+	}
+	if preds[1].Value != 3 || preds[1].LowerBound != 0 || preds[1].UpperBound != 8 {
+		t.Errorf("mixed prediction clamped incorrectly: %+v", preds[1])
 	}
 }
 
