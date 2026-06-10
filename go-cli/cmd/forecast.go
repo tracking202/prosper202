@@ -59,7 +59,7 @@ method selection that picks the best fit via backtesting.
 
 With --seasonal, predictions are modulated by day-of-week weights derived from
 weekpart report data to account for weekly patterns (e.g., "Tuesdays always
-convert better").
+convert better"). Seasonal adjustment requires --interval day or hour.
 
 Event-aware forecasting (--events, --event-tag) uses stored calendar events and
 requires --interval day.
@@ -147,6 +147,12 @@ func runForecast(cmd *cobra.Command, args []string) error {
 
 	smaWindow, _ := cmd.Flags().GetInt("window")
 	seasonal, _ := cmd.Flags().GetBool("seasonal")
+	if seasonal && interval != "day" && interval != "hour" {
+		// Week/month predictions are aggregate buckets containing every
+		// weekday; scaling them by the bucket-start day's weight would
+		// systematically skew the totals.
+		return validationError("--seasonal requires --interval day or hour")
+	}
 	useEvents, _ := cmd.Flags().GetBool("events")
 	eventTag, _ := cmd.Flags().GetString("event-tag")
 	if (useEvents || eventTag != "") && interval != "day" {

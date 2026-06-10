@@ -482,6 +482,33 @@ func TestForecastRejectsEventsWithNonDayInterval(t *testing.T) {
 	}
 }
 
+func TestForecastRejectsSeasonalWithAggregateIntervals(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(30, "total_income")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	for _, iv := range []string{"week", "month"} {
+		_, _, err := executeCommand("forecast", "--metric=revenue", "--seasonal", "--interval="+iv)
+		if err == nil {
+			t.Fatalf("expected error for --seasonal with --interval %s", iv)
+		}
+		if !strings.Contains(err.Error(), "--interval day or hour") {
+			t.Errorf("unexpected error for %s: %v", iv, err)
+		}
+	}
+
+	// day stays allowed.
+	if _, _, err := executeCommand("forecast", "--metric=revenue", "--seasonal", "--interval=day"); err != nil {
+		t.Errorf("--seasonal with --interval day should be allowed: %v", err)
+	}
+}
+
 func TestForecastHourIntervalHistoryLimits(t *testing.T) {
 	var periods []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
