@@ -71,7 +71,9 @@ Manage multi-touch attribution models, view snapshots, and schedule exports.
 | `format` | string | `csv` | Export format: `csv` or `xls` |
 | `webhook_url` | string | — | URL to notify when export completes |
 
-Export statuses: `queued`, `processing`, `completed`, `failed`.
+Export statuses: `pending`, `processing`, `completed`, `failed`. Newly
+scheduled exports start as `pending` and are picked up by the
+`202-cronjobs/attribution-export.php` cron worker.
 
 ## Attribution Model Types
 
