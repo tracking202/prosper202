@@ -62,6 +62,7 @@ try {
                 curl_multi_add_handle($master, $ch);
             }
 
+            $failed = 0;
             do {
                 while (($execrun = curl_multi_exec($master, $running)) == CURLM_CALL_MULTI_PERFORM);
                 if ($execrun != CURLM_OK)
@@ -69,32 +70,36 @@ try {
                 // a request was just completed -- find out which one
                 while ($done = curl_multi_info_read($master)) {
                     $info = curl_getinfo($done['handle']);
-                    if ($info['http_code'] == 200) {
-                        $output = curl_multi_getcontent($done['handle']);
+                    if ($info['http_code'] != 200) {
+                        // request failed -- record it so the job is NOT marked processed
+                        // and this hour's aggregation is retried on the next run.
+                        $failed++;
+                    }
 
-                        // request successful.  process output using the callback function.
-                        //  $callback($output);
-
-                        // start a new request (it's important to do this before removing the old one)
+                    // start a new request (it's important to do this before removing the old
+                    // one) so the rolling window keeps draining, success or failure.
+                    if ($i < count($urls)) {
                         $ch = curl_init();
                         $options[CURLOPT_URL] = $urls[$i++];  // increment i
                         curl_setopt_array($ch, $options);
                         curl_multi_add_handle($master, $ch);
-
-                        // remove the curl handle that just completed
-                        curl_multi_remove_handle($master, $done['handle']);
-                    } else {
-                        // request failed.  add error handling.
                     }
+
+                    // remove the curl handle that just completed
+                    curl_multi_remove_handle($master, $done['handle']);
                 }
             } while ($running);
 
             curl_multi_close($master);
 
-
-
-
-            $sql = "UPDATE 202_dataengine_job SET processing = '0', processed = '1' WHERE time_from = '" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
+            if ($failed === 0) {
+                $sql = "UPDATE 202_dataengine_job SET processing = '0', processed = '1' WHERE time_from = '" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
+            } else {
+                // Release the processing lock but leave processed = '0' so the next run
+                // retries this window instead of permanently losing the aggregation.
+                $sql = "UPDATE 202_dataengine_job SET processing = '0' WHERE time_from = '" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
+                error_log("DataEngine Job: {$failed} of " . count($urls) . " aggregation requests failed for window {$mysql['click_time_from']}-{$mysql['click_time_to']}; left unprocessed for retry.");
+            }
             $db->query($sql);
         }
     }
