@@ -250,7 +250,9 @@ class AttributionController
         $format = (string)($payload['format'] ?? 'csv');
         $webhookUrl = (string)($payload['webhook_url'] ?? '');
         $now = time();
-        $status = 'queued';
+        // Must be 'pending': the export cron's claimPending() only selects status='pending',
+        // and 'queued' is not a valid ExportStatus enum value (would fatal on hydration).
+        $status = 'pending';
 
         $stmt = $this->prepare('INSERT INTO 202_attribution_exports (user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         $this->bind($stmt, 'iisiiissiiis',

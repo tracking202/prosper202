@@ -93,13 +93,25 @@ class UsersController
         $now = time();
         $active = (int)($payload['user_active'] ?? 1);
 
+        // user_dash_email, install_hash and user_hash are NOT NULL with no default; the
+        // V3 connection runs under MySQL strict mode, so they must be supplied explicitly.
+        // install_hash is an install-wide value (mirrors the UI, which copies it from user 1).
+        $installHash = '';
+        $hashStmt = $this->prepare('SELECT install_hash FROM 202_users WHERE user_id = 1 LIMIT 1');
+        $this->execute($hashStmt, 'Lookup failed');
+        $hashRow = $hashStmt->get_result()->fetch_assoc();
+        $hashStmt->close();
+        if ($hashRow && isset($hashRow['install_hash'])) {
+            $installHash = (string) $hashRow['install_hash'];
+        }
+
         $this->db->begin_transaction();
         try {
             $stmt = $this->prepare(
-                'INSERT INTO 202_users (user_fname, user_lname, user_name, user_pass, user_email, user_timezone, user_time_register, user_active, user_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)'
+                'INSERT INTO 202_users (user_fname, user_lname, user_name, user_pass, user_email, user_dash_email, user_timezone, user_time_register, user_active, install_hash, user_hash, user_deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)'
             );
-            $this->bind($stmt, 'ssssssii', $fname, $lname, $username, $hashedPass, $email, $tz, $now, $active);
+            $this->bind($stmt, 'sssssssiiss', $fname, $lname, $username, $hashedPass, $email, $email, $tz, $now, $active, $installHash, '');
             $this->execute($stmt, 'Create failed');
             $newId = $stmt->insert_id;
             $stmt->close();
