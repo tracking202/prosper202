@@ -79,6 +79,18 @@ try {
         $runStatement($statement);
     }
 
+    // Re-running this script must not append duplicate seed rows: duplicate
+    // events get their multipliers applied once per row, inflating forecasts.
+    $result = $db->query('SELECT COUNT(*) AS c FROM `202_forecast_events`');
+    if (!$result) {
+        throw new Exception('Failed to check existing events: ' . $db->error);
+    }
+    $existing = (int)$result->fetch_assoc()['c'];
+    if ($existing > 0) {
+        echo "Table already contains {$existing} events — skipping seed data.\n";
+        $dml = [];
+    }
+
     $db->begin_transaction();
     $inTransaction = true;
 

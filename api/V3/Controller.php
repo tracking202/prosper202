@@ -166,6 +166,17 @@ abstract class Controller
     }
 
     /**
+     * Build the WHERE condition for one list filter.
+     * Returns [sql with one placeholder, bind value, bind type].
+     * Override to customize matching for specific fields (default: equality).
+     * @return array{string, mixed, string}
+     */
+    protected function filterCondition(string $field, array $fieldDef, mixed $value): array
+    {
+        return ["$field = ?", $value, $fieldDef['type']];
+    }
+
+    /**
      * Called before UPDATE.  Return extra columns to include in the UPDATE SET.
      * @return array<string, array{type: string, value: mixed}>
      */
@@ -210,9 +221,10 @@ abstract class Controller
             foreach ($filters as $field => $value) {
                 $fieldDef = $fields[$field] ?? null;
                 if ($fieldDef && !($fieldDef['readonly'] ?? false)) {
-                    $where[] = "$field = ?";
-                    $binds[] = $value;
-                    $types .= $fieldDef['type'];
+                    [$condition, $bindValue, $bindType] = $this->filterCondition($field, $fieldDef, $value);
+                    $where[] = $condition;
+                    $binds[] = $bindValue;
+                    $types .= $bindType;
                 }
             }
         }

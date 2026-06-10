@@ -45,4 +45,20 @@ class ForecastEventsController extends Controller
             'updated_at' => ['type' => 'i', 'value' => time()],
         ];
     }
+
+    #[\Override]
+    protected function filterCondition(string $field, array $fieldDef, mixed $value): array
+    {
+        if ($field === 'tags') {
+            // Tags are stored as a comma-separated list ("us-holidays,retail");
+            // match by membership rather than whole-column equality, tolerating
+            // spaces after commas.
+            return [
+                "CONCAT(',', REPLACE(tags, ' ', ''), ',') LIKE CONCAT('%,', ?, ',%')",
+                trim((string)$value),
+                's',
+            ];
+        }
+        return parent::filterCondition($field, $fieldDef, $value);
+    }
 }
