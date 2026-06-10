@@ -457,6 +457,31 @@ func TestForecastRejectsInvalidInterval(t *testing.T) {
 	}
 }
 
+func TestForecastRejectsEventsWithNonDayInterval(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	for _, args := range [][]string{
+		{"forecast", "--metric=revenue", "--events", "--interval=week"},
+		{"forecast", "--metric=revenue", "--event-tag=us-holidays", "--interval=hour"},
+	} {
+		_, _, err := executeCommand(args...)
+		if err == nil {
+			t.Fatalf("expected error for %v", args)
+		}
+		if !strings.Contains(err.Error(), "--interval day") {
+			t.Errorf("unexpected error for %v: %v", args, err)
+		}
+	}
+}
+
 func TestParseTimeseries(t *testing.T) {
 	response := makeTimeseriesResponse(10, "total_income")
 	series, err := parseTimeseries([]byte(response), "total_income")
@@ -726,25 +751,6 @@ func TestFilterEventsByTag(t *testing.T) {
 	filtered = filterEventsByTag(events, "shopping,internal")
 	if len(filtered) != 2 {
 		t.Errorf("expected 2 events for tags 'shopping,internal', got %d", len(filtered))
-	}
-}
-
-func TestForecastEndDate(t *testing.T) {
-	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	dayEnd := forecastEndDate(base, "day", 7)
-	if dayEnd != base.AddDate(0, 0, 7) {
-		t.Errorf("day: got %v, want %v", dayEnd, base.AddDate(0, 0, 7))
-	}
-
-	weekEnd := forecastEndDate(base, "week", 4)
-	if weekEnd != base.AddDate(0, 0, 28) {
-		t.Errorf("week: got %v, want %v", weekEnd, base.AddDate(0, 0, 28))
-	}
-
-	monthEnd := forecastEndDate(base, "month", 3)
-	if monthEnd != base.AddDate(0, 3, 0) {
-		t.Errorf("month: got %v, want %v", monthEnd, base.AddDate(0, 3, 0))
 	}
 }
 

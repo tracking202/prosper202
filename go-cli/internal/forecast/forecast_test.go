@@ -440,3 +440,38 @@ func TestSelectBestMethod_SkipsZeroRMSE(t *testing.T) {
 		t.Errorf("expected default MethodLinear, got %q", method)
 	}
 }
+
+func TestRun_AnchorOverridesSeriesEnd(t *testing.T) {
+	// Simulates event masking dropping the most recent observations: the
+	// series ends Jan 30 but predictions must start after the anchor (Feb 4).
+	s := makeSeries(30, func(i int) float64 { return 10 + 5*float64(i) })
+	anchor := s[len(s)-1].T.AddDate(0, 0, 5)
+
+	for _, m := range []Method{MethodLinear, MethodSMA, MethodWMA, MethodHoltWinters} {
+		result, err := Run(s, Config{
+			Method:   m,
+			Horizon:  3,
+			Interval: IntervalDay,
+			Anchor:   anchor,
+		})
+		if err != nil {
+			t.Fatalf("method %s: %v", m, err)
+		}
+		want := anchor.AddDate(0, 0, 1)
+		if !result.Predictions[0].T.Equal(want) {
+			t.Errorf("method %s: first prediction at %v, want %v", m, result.Predictions[0].T, want)
+		}
+	}
+}
+
+func TestRun_ZeroAnchorUsesSeriesEnd(t *testing.T) {
+	s := makeSeries(10, func(i int) float64 { return float64(i) })
+	result, err := Run(s, Config{Method: MethodLinear, Horizon: 2, Interval: IntervalDay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := s[len(s)-1].T.AddDate(0, 0, 1)
+	if !result.Predictions[0].T.Equal(want) {
+		t.Errorf("first prediction at %v, want %v", result.Predictions[0].T, want)
+	}
+}

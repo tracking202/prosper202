@@ -57,9 +57,12 @@ it forward using the selected algorithm. Supports linear regression, simple
 and weighted moving averages, Holt-Winters exponential smoothing, and automatic
 method selection that picks the best fit via backtesting.
 
-Seasonal adjustment is applied automatically when day-of-week data is available,
-modulating predictions to account for weekly patterns (e.g., "Tuesdays always
+With --seasonal, predictions are modulated by day-of-week weights derived from
+weekpart report data to account for weekly patterns (e.g., "Tuesdays always
 convert better").
+
+Event-aware forecasting (--events, --event-tag) uses stored calendar events and
+requires --interval day.
 
 Examples:
   p202 forecast --metric revenue --horizon 7
@@ -131,6 +134,11 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	seasonal, _ := cmd.Flags().GetBool("seasonal")
 	useEvents, _ := cmd.Flags().GetBool("events")
 	eventTag, _ := cmd.Flags().GetString("event-tag")
+	if (useEvents || eventTag != "") && interval != "day" {
+		// Events are calendar-day entities and impact learning operates at day
+		// granularity; other intervals would silently produce wrong adjustments.
+		return validationError("--events and --event-tag require --interval day")
+	}
 	confidence, _ := cmd.Flags().GetFloat64("confidence")
 	if confidence <= 0 || confidence >= 1 {
 		confidence = 0.95
@@ -223,16 +231,16 @@ func runForecast(cmd *cobra.Command, args []string) error {
 					return validationError("after masking event days, only %d data points remain — need at least 3", len(series))
 				}
 
-				// Masking may shorten the series; forecast.Run anchors prediction
-				// timestamps to the masked series' last point, so the forecast
-				// window must be derived from it too or future-event selection
-				// misses event days at the start of the horizon.
-				trainEnd = series[len(series)-1].T
+				// Masking may drop the most recent observations, but predictions
+				// must still start after the original training end — not inside
+				// already-observed (masked) history. Anchoring also keeps the
+				// horizon aligned with futureEvents below.
+				cfg.Anchor = trainEnd
 			}
 
-			// Determine forecast horizon dates.
+			// Determine forecast horizon dates (events imply --interval day).
 			forecastStart := trainEnd.AddDate(0, 0, 1)
-			forecastEnd := forecastEndDate(trainEnd, interval, horizon)
+			forecastEnd := trainEnd.AddDate(0, 0, horizon)
 			futureEvents = forecast.FutureEvents(allEvents, forecastStart, forecastEnd)
 		}
 	}
@@ -704,20 +712,6 @@ func filterEventsByTag(events []forecast.Event, tagFilter string) []forecast.Eve
 		}
 	}
 	return filtered
-}
-
-// forecastEndDate computes the last date of the forecast horizon.
-func forecastEndDate(lastTraining time.Time, interval string, horizon int) time.Time {
-	switch interval {
-	case "hour":
-		return lastTraining.Add(time.Duration(horizon) * time.Hour)
-	case "week":
-		return lastTraining.AddDate(0, 0, horizon*7)
-	case "month":
-		return lastTraining.AddDate(0, horizon, 0)
-	default: // day
-		return lastTraining.AddDate(0, 0, horizon)
-	}
 }
 
 func init() {

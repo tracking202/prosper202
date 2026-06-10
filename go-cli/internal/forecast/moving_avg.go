@@ -31,10 +31,10 @@ func smaForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 		trend = avg - prevAvg
 	}
 
-	last := s[len(s)-1]
+	anchor := anchorTime(s, cfg)
 	preds := make([]Prediction, cfg.Horizon)
 	for i := 0; i < cfg.Horizon; i++ {
-		t := nextTime(last.T, cfg.Interval, i+1)
+		t := nextTime(anchor, cfg.Interval, i+1)
 		preds[i] = Prediction{T: t, Value: avg}
 	}
 
@@ -80,10 +80,10 @@ func wmaForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 		trend = wma - prevWMA
 	}
 
-	last := s[len(s)-1]
+	anchor := anchorTime(s, cfg)
 	preds := make([]Prediction, cfg.Horizon)
 	for i := 0; i < cfg.Horizon; i++ {
-		t := nextTime(last.T, cfg.Interval, i+1)
+		t := nextTime(anchor, cfg.Interval, i+1)
 		preds[i] = Prediction{T: t, Value: wma}
 	}
 

@@ -47,12 +47,12 @@ func linearForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 	}
 
 	// Project forward.
-	last := s[len(s)-1]
+	anchor := anchorTime(s, cfg)
 	preds := make([]Prediction, cfg.Horizon)
 	for i := 0; i < cfg.Horizon; i++ {
 		x := float64(len(s) + i)
 		val := intercept + slope*x
-		t := nextTime(last.T, cfg.Interval, i+1)
+		t := nextTime(anchor, cfg.Interval, i+1)
 		preds[i] = Prediction{T: t, Value: val}
 	}
 
@@ -62,10 +62,10 @@ func linearForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 
 // constantForecast returns a flat-line forecast at the given value.
 func constantForecast(s Series, cfg Config, value float64) []Prediction {
-	last := s[len(s)-1]
+	anchor := anchorTime(s, cfg)
 	preds := make([]Prediction, cfg.Horizon)
 	for i := range preds {
-		t := nextTime(last.T, cfg.Interval, i+1)
+		t := nextTime(anchor, cfg.Interval, i+1)
 		preds[i] = Prediction{
 			T:          t,
 			Value:      value,

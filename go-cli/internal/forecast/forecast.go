@@ -91,6 +91,20 @@ type Config struct {
 	SMAWindow       int
 	SeasonalWeights SeasonalWeights
 	ConfidenceLevel float64 // 0.0-1.0, default 0.95
+
+	// Anchor, when set, is the timestamp predictions step forward from
+	// instead of the series' last point. Used when training data has been
+	// masked (e.g. event days removed) so predictions still start after
+	// the last real observation rather than inside masked history.
+	Anchor time.Time
+}
+
+// anchorTime returns the reference point predictions step forward from.
+func anchorTime(s Series, cfg Config) time.Time {
+	if !cfg.Anchor.IsZero() {
+		return cfg.Anchor
+	}
+	return s[len(s)-1].T
 }
 
 // ValidMethods returns all supported method names.
@@ -248,6 +262,7 @@ func residualStdDev(s Series, method Method, cfg Config) float64 {
 	testCfg := cfg
 	testCfg.Horizon = holdout
 	testCfg.SeasonalWeights = nil
+	testCfg.Anchor = time.Time{}
 
 	var preds []Prediction
 	var err error
@@ -339,6 +354,7 @@ func backtest(s Series, cfg Config, method Method) (mae, rmse float64) {
 	testCfg := cfg
 	testCfg.Horizon = holdout
 	testCfg.SeasonalWeights = nil
+	testCfg.Anchor = time.Time{}
 
 	var preds []Prediction
 	var err error
