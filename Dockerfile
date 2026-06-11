@@ -16,7 +16,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # mod_rewrite plus the minimal override set the shipped .htaccess files need
-# (see the Apache notes in README.md)
+# (see the Apache notes in README.md). The dotfile deny matters here: the
+# compose bind mount puts the whole checkout — including .env and .git — in
+# the document root, and Apache only blocks .ht* by default.
 RUN a2enmod rewrite \
     && { \
         echo '<Directory /var/www/html>'; \
@@ -24,6 +26,10 @@ RUN a2enmod rewrite \
         echo '    AllowOverride FileInfo Options=FollowSymLinks'; \
         echo '    Require all granted'; \
         echo '</Directory>'; \
+        echo '# Deny dotfiles (.env, .git, ...) but keep /.well-known/ for ACME'; \
+        echo '<LocationMatch "/\.(?!well-known/)">'; \
+        echo '    Require all denied'; \
+        echo '</LocationMatch>'; \
     } > /etc/apache2/conf-available/prosper202.conf \
     && a2enconf prosper202
 
