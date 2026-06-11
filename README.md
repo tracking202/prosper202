@@ -74,13 +74,27 @@ Dependencies are automatically installed on container startup.
    # Edit 202-config.php with your database credentials
    ```
 
-3. Configure nginx to point to the project root. Example site configuration:
+3. Configure nginx to point to the project root. Example site configuration, tuned for click traffic (many small concurrent requests):
    ```nginx
+   # Reuse FastCGI connections to PHP-FPM instead of opening one per request
+   upstream php_fpm {
+       server unix:/path/to/php-fpm.sock; # or server 127.0.0.1:9000; adjust to your PHP-FPM setup
+       keepalive 16;
+   }
+
    server {
        listen 80;
        server_name your-domain.com;
        root /path/to/prosper202;
        index index.php index.html;
+
+       # Buffer access-log writes; under click bursts an unbuffered log
+       # costs one write() per hit
+       access_log /var/log/nginx/prosper202.access.log combined buffer=64k flush=5s;
+
+       # Cache the stat() results behind the try_files lookups
+       open_file_cache max=10000 inactive=30s;
+       open_file_cache_valid 60s;
 
        location / {
            try_files $uri $uri/ /index.php?$query_string;
@@ -95,7 +109,8 @@ Dependencies are automatically installed on container startup.
        }
 
        location ~ \.php$ {
-           fastcgi_pass unix:/path/to/php-fpm.sock; # or fastcgi_pass 127.0.0.1:9000; adjust to your PHP-FPM setup
+           fastcgi_pass php_fpm;
+           fastcgi_keep_conn on;
            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
            include fastcgi_params;
        }
@@ -105,6 +120,8 @@ Dependencies are automatically installed on container startup.
        }
    }
    ```
+
+   In `nginx.conf`, make sure `worker_processes auto;` is set and raise `worker_connections` (e.g. `4096`) if you expect sustained click volume. Concurrency is ultimately capped by PHP-FPM, so size `pm.max_children` in your FPM pool to match.
 
 4. Reload nginx:
    ```bash
@@ -141,6 +158,76 @@ The example assumes PHP is already hooked up — either mod_php (`sudo a2enmod p
 sudo a2enmod rewrite
 sudo systemctl restart apache2
 ```
+
+##### Apache tuned for click traffic
+
+The simple vhost above prioritizes working out of the box with the repo's `.htaccess` files. For a production click server, two things in it cost real throughput:
+
+- Any `AllowOverride` other than `None` makes Apache stat and re-parse `.htaccess` files in every directory along the request path, on every request.
+- mod_php forces the prefork MPM — one heavyweight process per connection. The event MPM with PHP-FPM handles click-burst concurrency far better (the same model as the Nginx setup).
+
+This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules into the vhost, so keep it in sync if those files change:
+
+```apache
+<VirtualHost *:80>
+    ServerName your-domain.com
+    DocumentRoot /path/to/prosper202
+
+    <Directory /path/to/prosper202>
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+
+    # Inlined from api/v2/.htaccess
+    <Directory /path/to/prosper202/api/v2>
+        RewriteEngine On
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteRule ^ index.php [QSA,L]
+    </Directory>
+
+    # Inlined from api/v3/.htaccess
+    <Directory /path/to/prosper202/api/v3>
+        RewriteEngine On
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule ^ index.php [QSA,L]
+    </Directory>
+
+    # Inlined from tracking202/update/reports/.htaccess
+    <Directory /path/to/prosper202/tracking202/update/reports>
+        RewriteEngine On
+        RewriteRule .* /202-404.php [L]
+    </Directory>
+
+    # PHP via FPM so the event MPM stays in place
+    <FilesMatch "\.php$">
+        SetHandler "proxy:unix:/run/php/php8.3-fpm.sock|fcgi://localhost"
+    </FilesMatch>
+
+    # Deny dotfiles (.git, .env, ...)
+    <LocationMatch "/\.">
+        Require all denied
+    </LocationMatch>
+
+    # Keep connections open across a visitor's click/redirect chain,
+    # but release them quickly so workers aren't pinned by idle clients
+    KeepAlive On
+    MaxKeepAliveRequests 1000
+    KeepAliveTimeout 2
+</VirtualHost>
+```
+
+Switch the MPM and PHP handler to match:
+
+```bash
+sudo a2dismod php8.3 mpm_prefork   # skip php8.3 if mod_php was never enabled
+sudo a2enmod mpm_event proxy_fcgi setenvif rewrite
+sudo a2enconf php8.3-fpm
+sudo systemctl restart apache2
+```
+
+As with Nginx, throughput is ultimately capped by PHP-FPM, so size `pm.max_children` in your FPM pool to your traffic; raise `MaxRequestWorkers` in `mpm_event.conf` alongside it.
 
 ## API v3
 
