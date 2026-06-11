@@ -58,9 +58,18 @@ docker compose up -d
 Dependencies are automatically installed on container startup. Alternatively, run `./install.sh` and pick the Docker option — it generates the `.env` for you.
 
 - Application: `http://localhost:8000`
-- phpMyAdmin: `http://localhost:8080` (user `root`, password from your `.env`)
+- phpMyAdmin (optional): `docker compose --profile debug up -d`, then `http://127.0.0.1:8080` (user `root`, password from your `.env`)
 
-There is intentionally no default database password — phpMyAdmin is exposed on port 8080, so a well-known default would be usable by anyone who can reach it. `docker compose up` refuses to start until `MYSQL_ROOT_PASSWORD` is set. Note the value is baked into the database volume on first start; changing `.env` later won't change the actual MySQL password.
+#### Security defaults
+
+Because anyone can deploy this compose file as-is, it ships with no known credentials or unnecessarily exposed services:
+
+- There is no default database password. `docker compose up` refuses to start until you set `MYSQL_ROOT_PASSWORD` (the value is baked into the database volume on first start; changing `.env` later won't change the actual MySQL password).
+- MySQL and memcached are not published on any host port — they are reachable only from the other containers.
+- phpMyAdmin does not start by default. It requires the `debug` profile and binds to `127.0.0.1` only, so it is never reachable from another machine.
+- The application itself is published on port 8000 with **no account until you finish the install wizard** — anyone who can reach the port before you do can claim the install. Complete the wizard immediately after `docker compose up`, especially on a machine with a public address.
+
+This stack is a development configuration (PHP `display_errors` is on). For production click servers, use the Manual Installation below with the tuned Nginx or Apache configs.
 
 ### Manual Installation
 

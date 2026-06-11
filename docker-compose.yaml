@@ -17,9 +17,9 @@ services:
   db:
     image: mysql:8.0
     environment:
-      # No default on purpose: a well-known root password would be usable by
-      # anyone who can reach phpMyAdmin on port 8080. Set it in .env (see
-      # .env.example) or let ./install.sh generate one.
+      # No default on purpose: this file ships in an open-source repo, so any
+      # default would be a well-known credential on every deployment. Set it
+      # in .env (see .env.example) or let ./install.sh generate one.
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env — copy .env.example or run ./install.sh}
       MYSQL_DATABASE: prosper202
     volumes:
@@ -33,10 +33,15 @@ services:
   memcached:
     image: memcached:1.6-alpine
 
+  # Opt-in only (docker compose --profile debug up -d) and bound to loopback:
+  # this panel exposes MySQL root, so it must never listen on a public
+  # interface by default.
   phpmyadmin:
     image: phpmyadmin:5
+    profiles:
+      - debug
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     environment:
       PMA_HOST: db
     depends_on:

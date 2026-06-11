@@ -1216,10 +1216,13 @@ show_summary() {
 
     if [ "$install_type" = "docker" ]; then
         lines+=("${ARROW} Application:  ${BOLD}http://localhost:8000${RESET}")
-        lines+=("${ARROW} phpMyAdmin:   ${BOLD}http://localhost:8080${RESET}")
         lines+=("")
-        lines+=("Credentials for phpMyAdmin:")
-        lines+=("  User: root | Password: MYSQL_ROOT_PASSWORD in .env")
+        lines+=("${WARN} Open the app and finish the install wizard now —")
+        lines+=("  until then anyone who can reach port 8000 can claim it.")
+        lines+=("")
+        lines+=("phpMyAdmin (optional, loopback only):")
+        lines+=("  docker compose --profile debug up -d")
+        lines+=("  http://127.0.0.1:8080 ${DIM}# root / MYSQL_ROOT_PASSWORD in .env${RESET}")
         lines+=("")
         lines+=("Useful commands:")
         lines+=("  docker compose logs -f    ${DIM}# View logs${RESET}")
