@@ -127,7 +127,9 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
            include fastcgi_params;
        }
 
-       location ~ /\. {
+       # Deny dotfiles (.git, .env, ...) but keep /.well-known/ reachable
+       # for ACME (Let's Encrypt) HTTP-01 validation
+       location ~ /\.(?!well-known/) {
            deny all;
        }
    }
@@ -157,8 +159,9 @@ If you prefer Apache over Nginx, point your document root at the project directo
         Require all granted
     </Directory>
 
-    # Deny dotfiles (.git, .env, ...), matching the Nginx example above
-    <LocationMatch "/\.">
+    # Deny dotfiles (.git, .env, ...) but keep /.well-known/ reachable for
+    # ACME (Let's Encrypt) HTTP-01 validation, matching the Nginx example above
+    <LocationMatch "/\.(?!well-known/)">
         Require all denied
     </LocationMatch>
 </VirtualHost>
@@ -217,8 +220,8 @@ This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules
         SetHandler "proxy:unix:/run/php/php8.3-fpm.sock|fcgi://localhost"
     </FilesMatch>
 
-    # Deny dotfiles (.git, .env, ...)
-    <LocationMatch "/\.">
+    # Deny dotfiles (.git, .env, ...) but keep /.well-known/ for ACME
+    <LocationMatch "/\.(?!well-known/)">
         Require all denied
     </LocationMatch>
 

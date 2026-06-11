@@ -26,43 +26,55 @@ function escape_config_value(string $value): string
 	return str_replace(['\\', "'"], ['\\\\', "\\'"], $value);
 }
 
+// Inverse of escape_config_value(), for reading values back out of the file
+function unescape_config_value(string $value): string
+{
+	return strtr($value, ['\\\\' => '\\', "\\'" => "'"]);
+}
+
+// Matches "$var = 'value';" config lines. The value part accepts any
+// character, with \' and \\ treated as escape sequences, so hostnames with
+// dots/hyphens and escaped passwords written by this wizard round-trip.
+$config_line_re = '/(\$\w+) = \'((?:[^\'\\\\]|\\\\.)*)\';/';
+
 // Check if 202-config.php has been created
 if (file_exists(substr(__DIR__, 0, -10) . '/202-config.php')) {
 	//_die("<p>The file '202-config.php' already exists. If you need to reset any of the configuration items in this file, please delete it first. You may try <a href='install.php'>installing now</a>.</p>");
-	$re = '/(\$\w*) = \'(\w*)\';/i';
-
 	$handle = fopen(substr(__DIR__, 0, -10) . '/202-config.php', 'r');
 	$old = [];
-	while (!feof($handle)) {
+	while ($handle !== false && !feof($handle)) {
 		$line = fgets($handle);
 		if ($line === false) {
 			continue;
 		}
 		$matches = [];
-			if (preg_match($re, $line, $matches)) {
+			if (preg_match($config_line_re, $line, $matches)) {
+			$value = unescape_config_value($matches[2]);
 			switch ($matches[1]) {
 			case '$dbname':
-				$odbname = $matches[2];
+				$odbname = $value;
 				break;
 			case '$dbuser':
-				$odbuser = $matches[2];
+				$odbuser = $value;
 				break;
 			case '$dbpass':
-				$odbpass = $matches[2];
+				$odbpass = $value;
 				break;
 			case '$dbhost':
-				$odbhost = $matches[2];
+				$odbhost = $value;
 				break;
 			case '$dbhostro':
-				$odbhostro = $matches[2];
+				$odbhostro = $value;
 				break;
 			case '$mchost':
-				$omchost = $matches[2];
+				$omchost = $value;
 				break;
 			}
 		}
 	}
-	fclose($handle);
+	if ($handle !== false) {
+		fclose($handle);
+	}
 }
 
 
@@ -232,9 +244,6 @@ switch ($step) {
 			<p><a href='setup-config.php?step=1' class='btn btn-sm btn-p202 btn-block'>Go back and enter your database credentials again!</a></p>
 		");
 		}
-		//regex to find values in the config file
-		$re = '/(\$\w*) = \'(\w*)\';/i';
-
 		$configPath = substr(__DIR__, 0, -10) . '/202-config.php';
 		$handle = fopen($configPath, 'w');
 		if ($handle === false) {
@@ -242,7 +251,7 @@ switch ($step) {
 		}
 
 		foreach ($configFile as $line) {
-			if (!preg_match($re, $line, $matches)) {
+			if (!preg_match($config_line_re, $line, $matches)) {
 				fwrite($handle, $line);
 				continue;
 			}
