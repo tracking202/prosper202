@@ -165,8 +165,24 @@ abstract class Controller
     {
     }
 
-    protected function beforeUpdate(int|string $id, array $payload): void
+    /**
+     * Build the WHERE condition for one list filter.
+     * Returns [sql with one placeholder, bind value, bind type].
+     * Override to customize matching for specific fields (default: equality).
+     * @return array{string, mixed, string}
+     */
+    protected function filterCondition(string $field, array $fieldDef, mixed $value): array
     {
+        return ["$field = ?", $value, $fieldDef['type']];
+    }
+
+    /**
+     * Called before UPDATE.  Return extra columns to include in the UPDATE SET.
+     * @return array<string, array{type: string, value: mixed}>
+     */
+    protected function beforeUpdate(int|string $id, array $payload): array
+    {
+        return [];
     }
 
     protected function beforeDelete(int|string $id): void
@@ -205,9 +221,10 @@ abstract class Controller
             foreach ($filters as $field => $value) {
                 $fieldDef = $fields[$field] ?? null;
                 if ($fieldDef && !($fieldDef['readonly'] ?? false)) {
-                    $where[] = "$field = ?";
-                    $binds[] = $value;
-                    $types .= $fieldDef['type'];
+                    [$condition, $bindValue, $bindType] = $this->filterCondition($field, $fieldDef, $value);
+                    $where[] = $condition;
+                    $binds[] = $bindValue;
+                    $types .= $bindType;
                 }
             }
         }
@@ -402,7 +419,7 @@ abstract class Controller
         $currentData = (array)$current['data'];
         $this->assertIfMatchSatisfied($currentData);
         $clean = $this->validatePayload($payload);
-        $this->beforeUpdate($id, $clean);
+        $extras = $this->beforeUpdate($id, $clean);
 
         $sets = [];
         $binds = [];
@@ -420,8 +437,16 @@ abstract class Controller
             }
         }
 
+        // Reject before merging extras: a payload with no writable fields must
+        // fail validation rather than silently bump hook columns like updated_at.
         if (empty($sets)) {
             throw new ValidationException('No valid fields to update');
+        }
+
+        foreach ($extras as $col => $info) {
+            $sets[] = "$col = ?";
+            $binds[] = $info['value'];
+            $types .= $info['type'];
         }
 
         $binds[] = $id;
