@@ -34,7 +34,9 @@ if (!function_exists('prosper202_version_compare')) {
 }
 
 if (!defined('PROSPER202_MIN_PHP_VERSION')) {
-    define('PROSPER202_MIN_PHP_VERSION', '8.1.0');
+    // Must match composer.json's "php" requirement; the codebase uses PHP 8.3
+    // syntax (typed class constants), so older runtimes fail to parse it.
+    define('PROSPER202_MIN_PHP_VERSION', '8.3.0');
 }
 
 if (!function_exists('php_version_supported')) {
