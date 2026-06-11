@@ -14,7 +14,6 @@ $success = false;
 $html = [
 	'user_email' => '',
 	'user_name' => '',
-	'user_pass' => '',
 	'user_api' => ''
 ];
 
@@ -68,8 +67,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 
 		// Check password length only if password was provided
-		if (isset($_POST['user_pass']) && !empty($_POST['user_pass']) && (strlen((string) $_POST['user_pass']) < 6 || strlen((string) $_POST['user_pass']) > 35)) {
-			$error['user_pass'] .= '<div class="error">Your password must be at least 6 characters long</div>';
+		if (isset($_POST['user_pass']) && !empty($_POST['user_pass'])) {
+			$pass_length = strlen((string) $_POST['user_pass']);
+			if ($pass_length < 6) {
+				$error['user_pass'] .= '<div class="error">Your password must be at least 6 characters long</div>';
+			} elseif ($pass_length > 35) {
+				$error['user_pass'] .= '<div class="error">Your password must be no more than 35 characters long</div>';
+			}
 		}
 
 		// Check if passwords match only if both were provided
@@ -179,9 +183,9 @@ if (!$success) {
 	// Initialize $version_error array
 	$version_error = [];
 
-	$phpversion = phpversion();
-	if ($phpversion < 5.4) {
-		$version_error['phpversion'] = 'Prosper202 requires PHP 5.4, or newer.';
+	// Same floors as requirements.php — keep the two in sync
+	if (!php_version_supported()) {
+		$version_error['phpversion'] = 'Prosper202 requires PHP ' . PROSPER202_MIN_PHP_VERSION . ', or newer.';
 	}
 
 	// Get Database version
@@ -189,14 +193,12 @@ if (!$success) {
 	if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
 		// Support For MariaDB
 		$mysqlversion = $match[1];
-		$dbwording = "MariaDB >= 10.0.12";
-		if ((version_compare($mysqlversion, '10.0.12') < 0)) {
-			$version_error['mysqlversion'] = 'Prosper202 requires MariaDB 10.0.12, or newer.';
+		if ((version_compare($mysqlversion, '10.6') < 0)) {
+			$version_error['mysqlversion'] = 'Prosper202 requires MariaDB 10.6, or newer.';
 		}
 	} else {
-		$dbwording = "MySQL >= 5.6";
-		if ((version_compare($mysqlversion, '5.6') < 0)) {
-			$version_error['mysqlversion'] = 'Prosper202 requires MySQL 5.6, or newer.';
+		if ((version_compare($mysqlversion, '8.0') < 0)) {
+			$version_error['mysqlversion'] = 'Prosper202 requires MySQL 8.0, or newer.';
 		}
 	}
 
@@ -207,7 +209,8 @@ if (!$success) {
 	}
 
 	if ($version_error) {
-		header("Location: /202-config/requirements.php");
+		header("Location: " . get_absolute_url() . "202-config/requirements.php");
+		exit;
 	}
 
 	info_top(); ?>
@@ -353,10 +356,6 @@ if ($success) {
 		<div class="row" style="margin-bottom: 10px;">
 			<div class="col-xs-3"><span class="label label-default">Username:</span></div>
 			<div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_name']; ?></span></div>
-		</div>
-		<div class="row" style="margin-bottom: 10px;">
-			<div class="col-xs-3"><span class="label label-default">Password:</span></div>
-			<div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_pass']; ?></span></div>
 		</div>
 		<div class="row" style="margin-bottom: 10px;">
 			<div class="col-xs-3"><span class="label label-default">Login address:</span></div>

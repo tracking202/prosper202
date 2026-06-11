@@ -59,6 +59,8 @@ Dependencies are automatically installed on container startup.
 - Application: `http://localhost:8000`
 - phpMyAdmin: `http://localhost:8080`
 
+The MySQL root password defaults to `root_password` for local development. To change it, set `MYSQL_ROOT_PASSWORD` in your environment or a `.env` file before the first `docker compose up` (the value is baked into the database volume on first start).
+
 ### Manual Installation
 
 1. Clone and install dependencies:

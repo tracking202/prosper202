@@ -695,11 +695,11 @@ test_db_connection() {
     local pass="$3"
     local name="$4"
 
-    # Escape single quotes in credentials for PHP
-    host="${host//\'/\\\'}"
-    user="${user//\'/\\\'}"
-    pass="${pass//\'/\\\'}"
-    name="${name//\'/\\\'}"
+    # Escape backslashes then single quotes in credentials for PHP
+    host="${host//\\/\\\\}"; host="${host//\'/\\\'}"
+    user="${user//\\/\\\\}"; user="${user//\'/\\\'}"
+    pass="${pass//\\/\\\\}"; pass="${pass//\'/\\\'}"
+    name="${name//\\/\\\\}"; name="${name//\'/\\\'}"
 
     # Build PHP test script with exception handling for PHP 8+
     local test_script="error_reporting(0); mysqli_report(MYSQLI_REPORT_OFF);
@@ -740,11 +740,11 @@ create_database() {
     local pass="$3"
     local name="$4"
 
-    # Escape single quotes in credentials for PHP
-    host="${host//\'/\\\'}"
-    user="${user//\'/\\\'}"
-    pass="${pass//\'/\\\'}"
-    name="${name//\'/\\\'}"
+    # Escape backslashes then single quotes in credentials for PHP
+    host="${host//\\/\\\\}"; host="${host//\'/\\\'}"
+    user="${user//\\/\\\\}"; user="${user//\'/\\\'}"
+    pass="${pass//\\/\\\\}"; pass="${pass//\'/\\\'}"
+    name="${name//\\/\\\\}"; name="${name//\'/\\\'}"
 
     local create_script="error_reporting(0); mysqli_report(MYSQLI_REPORT_OFF);
 try {
@@ -925,9 +925,12 @@ start_docker_containers() {
     # Hide cursor
     tput civis 2>/dev/null || true
 
+    # Same default as docker-compose.yaml; both honor MYSQL_ROOT_PASSWORD
+    local db_root_pass="${MYSQL_ROOT_PASSWORD:-root_password}"
+
     while [ $attempt -lt $max_attempts ]; do
         # Try to connect to MySQL
-        if $compose_cmd exec -T db mysqladmin ping -h localhost -u root -proot_password &>/dev/null 2>&1; then
+        if $compose_cmd exec -T db mysqladmin ping -h localhost -u root -p"$db_root_pass" &>/dev/null 2>&1; then
             break
         fi
         ((attempt++))
@@ -970,7 +973,7 @@ start_docker_containers() {
     DB_HOST="db"
     DB_NAME="prosper202"
     DB_USER="root"
-    DB_PASS="root_password"
+    DB_PASS="$db_root_pass"
     DB_HOST_RO="db"
     MC_HOST="memcached"
 

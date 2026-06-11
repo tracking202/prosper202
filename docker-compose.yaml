@@ -1,0 +1,44 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:80"
+    volumes:
+      - .:/var/www/html
+      - ./build/php/conf.d/error-reporting.ini:/usr/local/etc/php/conf.d/zz-error-reporting.ini:ro
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: prosper202
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$${MYSQL_ROOT_PASSWORD}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  memcached:
+    image: memcached:1.6-alpine
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:

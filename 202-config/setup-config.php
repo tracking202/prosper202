@@ -20,8 +20,14 @@ if (!is_writable(substr(__DIR__, 0, -10) . '/')) {
 }
 
 
+// Escape a value for inclusion in a single-quoted PHP string in 202-config.php
+function escape_config_value(string $value): string
+{
+	return str_replace(['\\', "'"], ['\\\\', "\\'"], $value);
+}
+
 // Check if 202-config.php has been created
-if (file_exists('../202-config.php')) {
+if (file_exists(substr(__DIR__, 0, -10) . '/202-config.php')) {
 	//_die("<p>The file '202-config.php' already exists. If you need to reset any of the configuration items in this file, please delete it first. You may try <a href='install.php'>installing now</a>.</p>");
 	$re = '/(\$\w*) = \'(\w*)\';/i';
 
@@ -122,7 +128,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbname" class="col-xs-4 control-label" style="text-align:left"><strong>Database Name:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbname" name="dbname" value="<?php echo ($odbname ?? 'prosper202'); ?>">
+						<input type="text" class="form-control input-sm" id="dbname" name="dbname" value="<?php echo htmlspecialchars($odbname ?? 'prosper202', ENT_QUOTES, 'UTF-8'); ?>">
 						<span class="help-block" style="font-size: 10px;">The name of the database you want to run Prosper202 in.</span>
 					</div>
 				</div>
@@ -130,7 +136,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbuser" class="col-xs-4 control-label" style="text-align:left"><strong>User Name:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbuser" name="dbuser" value="<?php echo ($odbuser ?? 'root'); ?>">
+						<input type="text" class="form-control input-sm" id="dbuser" name="dbuser" value="<?php echo htmlspecialchars($odbuser ?? 'root', ENT_QUOTES, 'UTF-8'); ?>">
 						<span class="help-block" style="font-size: 10px;">Your MySQL username</span>
 					</div>
 				</div>
@@ -138,7 +144,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbpass" class="col-xs-4 control-label" style="text-align:left"><strong>Password:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbpass" name="dbpass" value="<?php echo ($odbpass ?? 'root_password'); ?>">
+						<input type="password" class="form-control input-sm" id="dbpass" name="dbpass" value="<?php echo htmlspecialchars($odbpass ?? '', ENT_QUOTES, 'UTF-8'); ?>">
 						<span class="help-block" style="font-size: 10px;">...and MySQL password.</span>
 					</div>
 				</div>
@@ -146,7 +152,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbhost" class="col-xs-4 control-label" style="text-align:left"><strong>Database Host:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbhost" name="dbhost" value="<?php echo ($odbhost ?? 'localhost'); ?>">
+						<input type="text" class="form-control input-sm" id="dbhost" name="dbhost" value="<?php echo htmlspecialchars($odbhost ?? 'localhost', ENT_QUOTES, 'UTF-8'); ?>">
 						<span class="help-block" style="font-size: 10px;">99% chance you won't need to change this value.</span>
 					</div>
 				</div>
@@ -154,7 +160,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="dbhost" class="col-xs-4 control-label" style="text-align:left"><strong>Reporting Database:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="dbhostro" name="dbhostro" value="<?php echo ($odbhostro ?? 'localhost'); ?>">
+						<input type="text" class="form-control input-sm" id="dbhostro" name="dbhostro" value="<?php echo htmlspecialchars($odbhostro ?? 'localhost', ENT_QUOTES, 'UTF-8'); ?>">
 						<span class="help-block" style="font-size: 10px;">If you have a dedicated db for running reports, enter it here. If not, leave as localhost. </span>
 					</div>
 				</div>
@@ -162,7 +168,7 @@ switch ($step) {
 				<div class="form-group" style="margin-bottom: 0px;">
 					<label for="mchost" class="col-xs-4 control-label" style="text-align:left"><strong>Memcache Host:</strong></label>
 					<div class="col-xs-8" style="margin-top: 5px;">
-						<input type="text" class="form-control input-sm" id="mchost" name="mchost" value="<?php echo ($omchost ?? 'localhost'); ?>">
+						<input type="text" class="form-control input-sm" id="mchost" name="mchost" value="<?php echo htmlspecialchars($omchost ?? 'localhost', ENT_QUOTES, 'UTF-8'); ?>">
 						<span class="help-block" style="font-size: 10px;">If you don't know what this is, leave it alone.</span>
 					</div>
 				</div>
@@ -185,12 +191,12 @@ switch ($step) {
 
 	case 2:
 	case 2.2:
-		$dbname  = trim((string) $_POST['dbname']);
-		$dbuser   = trim((string) $_POST['dbuser']);
-		$dbpass = trim((string) $_POST['dbpass']);
-		$dbhost  = trim((string) $_POST['dbhost']);
-		$dbhostro  = trim((string) $_POST['dbhostro']);
-		$mchost  = trim((string) $_POST['mchost']);
+		$dbname  = trim((string) ($_POST['dbname'] ?? ''));
+		$dbuser   = trim((string) ($_POST['dbuser'] ?? ''));
+		$dbpass = trim((string) ($_POST['dbpass'] ?? ''));
+		$dbhost  = trim((string) ($_POST['dbhost'] ?? ''));
+		$dbhostro  = trim((string) ($_POST['dbhostro'] ?? ''));
+		$mchost  = trim((string) ($_POST['mchost'] ?? ''));
 
 		// Try to connect to the MySQL host server and gracefully handle mysqli strict mode
 		$db_error_msg = '';
@@ -229,22 +235,30 @@ switch ($step) {
 		//regex to find values in the config file
 		$re = '/(\$\w*) = \'(\w*)\';/i';
 
-		$handle = fopen(substr(__DIR__, 0, -10) . '/202-config.php', 'w');
+		$configPath = substr(__DIR__, 0, -10) . '/202-config.php';
+		$handle = fopen($configPath, 'w');
+		if ($handle === false) {
+			_die("<p>Could not open <code>202-config.php</code> for writing. Please check the directory permissions, or create the file manually from <code>202-config-sample.php</code>.</p>");
+		}
 
 		foreach ($configFile as $line) {
-			preg_match($re, $line, $matches);
+			if (!preg_match($re, $line, $matches)) {
+				fwrite($handle, $line);
+				continue;
+			}
 			match ($matches[1]) {
-                '$dbname' => fwrite($handle, str_replace("putyourdbnamehere", $dbname, $line)),
-                '$dbuser' => fwrite($handle, str_replace("'usernamehere'", "'$dbuser'", $line)),
-                '$dbpass' => fwrite($handle, str_replace("'yourpasswordhere'", "'$dbpass'", $line)),
-                '$dbhost' => fwrite($handle, str_replace("localhosthere", $dbhost, $line)),
-                '$dbhostro' => fwrite($handle, str_replace("localhostreplica", $dbhostro, $line)),
-                '$mchost' => fwrite($handle, str_replace("localhostmemcache", $mchost, $line)),
+                '$dbname' => fwrite($handle, str_replace("putyourdbnamehere", escape_config_value($dbname), $line)),
+                '$dbuser' => fwrite($handle, str_replace("usernamehere", escape_config_value($dbuser), $line)),
+                '$dbpass' => fwrite($handle, str_replace("yourpasswordhere", escape_config_value($dbpass), $line)),
+                '$dbhost' => fwrite($handle, str_replace("localhosthere", escape_config_value($dbhost), $line)),
+                '$dbhostro' => fwrite($handle, str_replace("localhostreplica", escape_config_value($dbhostro), $line)),
+                '$mchost' => fwrite($handle, str_replace("localhostmemcache", escape_config_value($mchost), $line)),
                 default => fwrite($handle, $line),
             };
 		}
 		fclose($handle);
-		chmod(substr(__DIR__, 0, -10) . '/202-config.php', 0666);
+		// Owner/group read only — this file holds database credentials
+		chmod($configPath, 0640);
 
 			_die("<p>All right sparky! You've made it through this part of the installation. Prosper202 can now communicate with your database. If you are ready, go ahead and <a class='btn btn-xs btn-p202' href=\"install.php\">run the install!</a></p>");
 	}
