@@ -16,13 +16,15 @@ Manage text ad creatives for tracking copy performance.
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `text_ad_name` | string | Yes | Ad name (max 255) |
-| `text_ad_headline` | string | No | Ad headline (max 500) |
-| `text_ad_description` | string | No | Ad description (max 2000) |
-| `text_ad_display_url` | string | No | Display URL (max 2048) |
-| `aff_campaign_id` | integer | No | Associated campaign |
-| `landing_page_id` | integer | No | Associated landing page |
-| `text_ad_type` | integer | No | Ad type identifier |
+| `text_ad_name` | string | Yes | Ad name (max 100) |
+| `text_ad_headline` | string | Yes | Ad headline (max 100) |
+| `text_ad_description` | string | Yes | Ad description (max 100) |
+| `text_ad_display_url` | string | Yes | Display URL (max 100) |
+| `aff_campaign_id` | integer | No | Associated campaign (default 0) |
+| `landing_page_id` | integer | No | Associated landing page (default 0) |
+| `text_ad_type` | integer | No | Ad type identifier (default 0) |
+
+Auto-generated on create: `text_ad_time` (unix timestamp).
 
 ## Example
 
@@ -33,6 +35,7 @@ curl -X POST https://your-domain.com/api/v3/text-ads \
   -d '{
     "text_ad_name": "Summer Sale Ad v2",
     "text_ad_headline": "50% Off This Weekend",
-    "text_ad_description": "Limited time offer on all products."
+    "text_ad_description": "Limited time offer on all products.",
+    "text_ad_display_url": "example.com/summer-sale"
   }'
 ```

@@ -68,9 +68,10 @@ class StubController extends Controller
         ];
     }
 
-    protected function beforeUpdate(int|string $id, array $payload): void
+    protected function beforeUpdate(int|string $id, array $payload): array
     {
         $this->beforeUpdateCalled = true;
+        return [];
     }
 
     protected function beforeDelete(int|string $id): void

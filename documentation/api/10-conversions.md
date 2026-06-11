@@ -43,6 +43,12 @@ List, inspect, manually create, and delete conversions.
 | `transaction_id` | string | No | Deduplication key |
 | `conv_time` | integer | No | Unix timestamp (defaults to now) |
 
+Creates are idempotent on `transaction_id`: if a conversion with the same
+`transaction_id` already exists for the given `click_id`, the existing
+conversion is returned instead of recording a duplicate. Omitting
+`transaction_id` skips this check, so retried requests without one will
+record multiple conversions.
+
 ## Example
 
 ```bash

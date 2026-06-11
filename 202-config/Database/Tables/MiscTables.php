@@ -49,6 +49,8 @@ final class MiscTables
             self::exportKeywords(),
             self::exportSessions(),
             self::exportTextads(),
+            // Forecast tables
+            self::forecastEvents(),
             // DNI tables
             self::dniNetworks(),
             // Bot202 Facebook Pixel tables
@@ -506,6 +508,33 @@ final class MiscTables
                 KEY `export_campaign_id` (`export_campaign_id`),
                 KEY `export_adgroup_id` (`export_adgroup_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function forecastEvents(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::FORECAST_EVENTS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::FORECAST_EVENTS . "` (
+                `event_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `event_name` varchar(255) NOT NULL,
+                `event_date` date NOT NULL,
+                `end_date` date DEFAULT NULL,
+                `recurrence` enum('none','monthly','yearly','custom') NOT NULL DEFAULT 'none',
+                `impact_type` enum('boost','suppress','neutral') NOT NULL DEFAULT 'neutral',
+                `expected_impact_pct` decimal(8,2) DEFAULT NULL,
+                `lead_days` int(11) NOT NULL DEFAULT 0,
+                `lag_days` int(11) NOT NULL DEFAULT 0,
+                `tags` varchar(500) DEFAULT NULL,
+                `notes` varchar(500) DEFAULT NULL,
+                `created_at` int(11) NOT NULL,
+                `updated_at` int(11) NOT NULL,
+                PRIMARY KEY (`event_id`),
+                KEY `user_date` (`user_id`, `event_date`),
+                KEY `user_name` (`user_id`, `event_name`),
+                KEY `user_recurrence` (`user_id`, `recurrence`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Calendar events for forecast adjustment (holidays, promos, anomalies)'"
         );
     }
 
