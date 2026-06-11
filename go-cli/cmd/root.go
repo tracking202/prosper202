@@ -88,3 +88,14 @@ func resetAllFlags(cmd *cobra.Command) {
 		resetAllFlags(c)
 	}
 }
+
+// confirmPrompt asks a yes/no question and reads the answer from stdin.
+// The prompt goes to stderr so it stays visible when stdout is captured
+// (interactive shell) or piped, and never pollutes data output.
+func confirmPrompt(format string, args ...interface{}) bool {
+	fmt.Fprintf(os.Stderr, format+" [y/N] ", args...)
+	var answer string
+	_, _ = fmt.Scanln(&answer)
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes"
+}

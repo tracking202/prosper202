@@ -241,9 +241,12 @@ func TestShellMalformedAssignmentHandled(t *testing.T) {
 	state := shell.NewState()
 
 	for _, line := range []string{"$=", "$ = health", "$a b = health", "$x ="} {
-		handled, _, _ := handleBuiltin(line, state, "default")
+		handled, _, _, err := handleBuiltin(line, state, "default")
 		if !handled {
 			t.Errorf("malformed assignment %q should be handled as a syntax error, not dispatched as a command", line)
+		}
+		if err == nil {
+			t.Errorf("malformed assignment %q should return a syntax error", line)
 		}
 	}
 	if state.Count() != 0 {
@@ -357,6 +360,57 @@ func TestShellLongCommandFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "ok") {
 		t.Errorf("expected health output, got: %s", stdout)
+	}
+}
+
+func TestShellAssignmentFailureStopsBatch(t *testing.T) {
+	srv := newShellCapableServer(t)
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	// A failing command inside $name = ... must fail the batch like a bare command.
+	stdout, _, err := executeCommand("shell", "--stop-on-error", "-c", "$x = campaign get 999; system health")
+	if err == nil {
+		t.Fatal("expected error when assignment command fails with --stop-on-error")
+	}
+	if !strings.Contains(err.Error(), "stopped on error") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if strings.Contains(stdout, "ok") {
+		t.Errorf("commands after failed assignment should not run with --stop-on-error, got: %s", stdout)
+	}
+
+	// Without --stop-on-error the batch continues but still reports failure.
+	_, _, err = executeCommand("shell", "-c", "$x = campaign get 999; system health")
+	if err == nil || !strings.Contains(err.Error(), "one or more commands failed") {
+		t.Errorf("expected batch failure from failed assignment, got: %v", err)
+	}
+}
+
+func TestShellUseReverifiesShellAccess(t *testing.T) {
+	licensed := newShellCapableServer(t)
+	defer licensed.Close()
+	unlicensed := newShellDeniedServer(t)
+	defer unlicensed.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "default", map[string]map[string]interface{}{
+		"default":    {"url": licensed.URL, "api_key": "test-key-12345678"},
+		"unlicensed": {"url": unlicensed.URL, "api_key": "other-key-12345678"},
+	})
+
+	// Switching to a profile whose key lacks shell access must fail and the
+	// session must stay on the licensed profile.
+	stdout, stderr, err := executeCommand("shell", "--stop-on-error", "-c", "use unlicensed; system health")
+	if err == nil {
+		t.Fatalf("expected use of unlicensed profile to fail, stdout: %s stderr: %s", stdout, stderr)
+	}
+	if !strings.Contains(err.Error(), "stopped on error") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

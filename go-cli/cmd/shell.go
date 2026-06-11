@@ -125,7 +125,11 @@ func runInteractive(state *shell.State) error {
 		}
 
 		// Handle built-in commands
-		if handled, newProfile, exit := handleBuiltin(line, state, activeProfile); handled {
+		if handled, newProfile, exit, err := handleBuiltin(line, state, activeProfile); handled {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				continue
+			}
 			if exit {
 				return nil
 			}
@@ -163,18 +167,28 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 
 		var handled, exit bool
 		var newProfile string
+		var builtinErr error
 		if jsonOutput {
 			// Capture built-in output so it doesn't corrupt the JSONL stream.
 			builtinOut := captureStdout(func() {
-				handled, newProfile, exit = handleBuiltin(cmdStr, state, activeProfile)
+				handled, newProfile, exit, builtinErr = handleBuiltin(cmdStr, state, activeProfile)
 			})
 			if handled {
-				emitBatchResult(cmdStr, builtinOut, nil)
+				emitBatchResult(cmdStr, builtinOut, builtinErr)
 			}
 		} else {
-			handled, newProfile, exit = handleBuiltin(cmdStr, state, activeProfile)
+			handled, newProfile, exit, builtinErr = handleBuiltin(cmdStr, state, activeProfile)
 		}
 		if handled {
+			if builtinErr != nil {
+				anyFailed = true
+				if !jsonOutput {
+					fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, builtinErr)
+				}
+				if stopOnError {
+					return fmt.Errorf("stopped on error: %v", builtinErr)
+				}
+			}
 			if exit {
 				break
 			}
@@ -249,53 +263,54 @@ func emitBatchResult(command string, output []byte, err error) {
 }
 
 // handleBuiltin checks for shell-specific commands that are not Cobra subcommands.
-// Returns (handled, newProfileName, exit). newProfileName is non-empty only if
-// the profile changed; exit is true when the session should end.
-func handleBuiltin(line string, state *shell.State, currentProfile string) (bool, string, bool) {
+// Returns (handled, newProfileName, exit, err). newProfileName is non-empty only
+// if the profile changed; exit is true when the session should end. Errors are
+// returned rather than printed so callers can fail batches and honor
+// --stop-on-error the same way as for regular commands.
+func handleBuiltin(line string, state *shell.State, currentProfile string) (bool, string, bool, error) {
 	lower := strings.ToLower(strings.TrimSpace(line))
 
 	switch {
 	case lower == "exit" || lower == "quit":
 		// Signal the caller to stop instead of os.Exit, so deferred cleanup runs.
-		return true, "", true
+		return true, "", true, nil
 
 	case lower == "help":
 		printShellHelp()
-		return true, "", false
+		return true, "", false, nil
 
 	case lower == "vars":
 		fmt.Print(state.FormatVarsList())
-		return true, "", false
+		return true, "", false, nil
 
 	case strings.HasPrefix(lower, "unset "):
 		name := strings.TrimSpace(line[6:])
 		name = strings.TrimPrefix(name, "$")
 		if name == "" {
-			fmt.Fprintln(os.Stderr, "Usage: unset <variable>")
-		} else if state.Delete(name) {
-			fmt.Printf("Deleted $%s\n", name)
-		} else {
-			fmt.Fprintf(os.Stderr, "Variable $%s not found\n", name)
+			return true, "", false, fmt.Errorf("usage: unset <variable>")
 		}
-		return true, "", false
+		if !state.Delete(name) {
+			return true, "", false, fmt.Errorf("variable $%s not found", name)
+		}
+		fmt.Printf("Deleted $%s\n", name)
+		return true, "", false, nil
 
 	case lower == "use":
 		fmt.Printf("Active profile: %s\n", currentProfile)
-		return true, "", false
+		return true, "", false, nil
 
 	case strings.HasPrefix(lower, "use "):
 		newName := strings.TrimSpace(line[4:])
 		newProfile, err := switchProfile(newName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			return true, "", false
+			return true, "", false, err
 		}
 		fmt.Printf("Switched to profile: %s\n", newProfile)
-		return true, newProfile, false
+		return true, newProfile, false, nil
 
 	case strings.HasPrefix(lower, "history"):
 		fmt.Println("Command history is available via terminal line editing (up/down arrows).")
-		return true, "", false
+		return true, "", false, nil
 	}
 
 	// Check for variable assignment: $name = command...
@@ -304,47 +319,44 @@ func handleBuiltin(line string, state *shell.State, currentProfile string) (bool
 			varName := strings.TrimSpace(line[1:eqIdx])
 			cmdStr := strings.TrimSpace(line[eqIdx+1:])
 			if varName == "" || strings.ContainsAny(varName, " \t") {
-				fmt.Fprintln(os.Stderr, "Syntax error: expected $name = command")
-				return true, "", false
+				return true, "", false, fmt.Errorf("syntax error: expected $name = command")
 			}
 			if cmdStr == "" {
-				fmt.Fprintf(os.Stderr, "Syntax error: assignment to $%s requires a command\n", varName)
-				return true, "", false
+				return true, "", false, fmt.Errorf("syntax error: assignment to $%s requires a command", varName)
 			}
 			output, err := executeShellCommand(cmdStr)
 			if err != nil {
 				printOutput(output) // partial output produced before the error
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				return true, "", false
+				return true, "", false, err
 			}
 			if value, ok := normalizeValue(output); ok {
 				state.Set(varName, value)
 			}
 			printOutput(output)
-			return true, "", false
+			return true, "", false, nil
 		}
 
 		// Variable reference: $name (just print it)
 		varName := strings.TrimSpace(line[1:])
 		if varName != "" && !strings.Contains(varName, " ") {
-			if val, ok := state.Get(varName); ok {
-				var parsed interface{}
-				if json.Unmarshal(val, &parsed) == nil {
-					pretty, err := json.MarshalIndent(parsed, "", "  ")
-					if err == nil {
-						fmt.Println(string(pretty))
-						return true, "", false
-					}
-				}
-				fmt.Println(string(val))
-			} else {
-				fmt.Fprintf(os.Stderr, "Variable $%s not found\n", varName)
+			val, ok := state.Get(varName)
+			if !ok {
+				return true, "", false, fmt.Errorf("variable $%s not found", varName)
 			}
-			return true, "", false
+			var parsed interface{}
+			if json.Unmarshal(val, &parsed) == nil {
+				pretty, err := json.MarshalIndent(parsed, "", "  ")
+				if err == nil {
+					fmt.Println(string(pretty))
+					return true, "", false, nil
+				}
+			}
+			fmt.Println(string(val))
+			return true, "", false, nil
 		}
 	}
 
-	return false, "", false
+	return false, "", false, nil
 }
 
 func printShellHelp() {
@@ -386,7 +398,15 @@ func switchProfile(name string) (string, error) {
 		return "", fmt.Errorf("profile %q not found. available: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 	}
 
+	// Shell access is granted per API key, so switching profiles must pass
+	// the same gate as shell startup — otherwise "use" would let a licensed
+	// profile bootstrap a session for an unlicensed one.
+	previous := configpkg.GetActiveOverride()
 	configpkg.SetActiveOverride(name)
+	if err := verifyShellAccess(); err != nil {
+		configpkg.SetActiveOverride(previous)
+		return "", fmt.Errorf("cannot switch to profile %q: %w", name, err)
+	}
 	return name, nil
 }
 

@@ -157,15 +157,9 @@ var rotatorDeleteCmd = &cobra.Command{
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
-			if !force {
-				fmt.Printf("Delete %d rotators and all their rules? [y/N] ", len(idList))
-				var answer string
-				fmt.Scanln(&answer)
-				answer = strings.ToLower(strings.TrimSpace(answer))
-				if answer != "y" && answer != "yes" {
-					fmt.Println("Cancelled.")
-					return nil
-				}
+			if !force && !confirmPrompt("Delete %d rotators and all their rules?", len(idList)) {
+				fmt.Println("Cancelled.")
+				return nil
 			}
 
 			deleted := 0
@@ -186,14 +180,9 @@ var rotatorDeleteCmd = &cobra.Command{
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Delete rotator %s and all its rules? [y/N] ", args[0])
-			var answer string
-			fmt.Scanln(&answer)
-			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
+		if !force && !confirmPrompt("Delete rotator %s and all its rules?", args[0]) {
+			fmt.Println("Cancelled.")
+			return nil
 		}
 		if err := c.Delete("rotators/" + args[0]); err != nil {
 			return err

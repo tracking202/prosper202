@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"p202/internal/api"
 	"p202/internal/output"
@@ -148,14 +147,9 @@ var attrModelDeleteCmd = &cobra.Command{
 			return err
 		}
 		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Delete attribution model %s and all related data? [y/N] ", args[0])
-			var answer string
-			fmt.Scanln(&answer)
-			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
+		if !force && !confirmPrompt("Delete attribution model %s and all related data?", args[0]) {
+			fmt.Println("Cancelled.")
+			return nil
 		}
 		if err := c.Delete("attribution/models/" + args[0]); err != nil {
 			return err
