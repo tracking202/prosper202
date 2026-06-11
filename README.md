@@ -115,7 +115,7 @@ Dependencies are automatically installed on container startup.
 
 #### Apache Alternative
 
-If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled with `AllowOverride All` so the `.htaccess` files in `api/v2/` and `api/v3/` can handle routing. Example virtual host:
+If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v2/`, `api/v3/`, and `tracking202/update/reports/` can handle routing. Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
 
 ```apache
 <VirtualHost *:80>
@@ -124,17 +124,22 @@ If you prefer Apache over Nginx, point your document root at the project directo
 
     <Directory /path/to/prosper202>
         Options -Indexes +FollowSymLinks
-        AllowOverride All
+        AllowOverride FileInfo Options=FollowSymLinks
         Require all granted
     </Directory>
+
+    # Deny dotfiles (.git, .env, ...), matching the Nginx example above
+    <LocationMatch "/\.">
+        Require all denied
+    </LocationMatch>
 </VirtualHost>
 ```
 
-Enable the required module and reload:
+The example assumes PHP is already hooked up — either mod_php (`sudo a2enmod php8.3`) or PHP-FPM (`sudo a2enmod proxy_fcgi setenvif && sudo a2enconf php8.3-fpm`). Enable the rewrite module and restart:
 
 ```bash
 sudo a2enmod rewrite
-sudo systemctl reload apache2
+sudo systemctl restart apache2
 ```
 
 ## API v3
