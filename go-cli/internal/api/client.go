@@ -24,6 +24,7 @@ type Client struct {
 
 	capabilities       map[string]interface{}
 	capabilitiesLoaded bool
+	capabilitiesErr    error
 }
 
 type APIError struct {
@@ -167,6 +168,14 @@ func (c *Client) Capability(path ...string) (interface{}, bool) {
 	return current, true
 }
 
+// CapabilitiesError reports why the server capabilities could not be loaded,
+// or nil if they loaded successfully. It lets callers distinguish "the server
+// does not grant this capability" from "the capabilities could not be fetched".
+func (c *Client) CapabilitiesError() error {
+	c.ensureCapabilities()
+	return c.capabilitiesErr
+}
+
 func (c *Client) ensureCapabilities() {
 	if c.capabilitiesLoaded {
 		return
@@ -177,6 +186,7 @@ func (c *Client) ensureCapabilities() {
 
 	req, err := http.NewRequest("GET", c.baseURL+"/capabilities", nil)
 	if err != nil {
+		c.capabilitiesErr = err
 		return
 	}
 	if c.apiKey != "" {
@@ -187,19 +197,23 @@ func (c *Client) ensureCapabilities() {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.capabilitiesErr = err
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
+		c.capabilitiesErr = fmt.Errorf("capabilities request returned HTTP %d", resp.StatusCode)
 		return
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
+		c.capabilitiesErr = fmt.Errorf("reading capabilities response: %w", err)
 		return
 	}
 	var decoded map[string]interface{}
 	if err := json.Unmarshal(body, &decoded); err != nil {
+		c.capabilitiesErr = fmt.Errorf("parsing capabilities response: %w", err)
 		return
 	}
 	if data, ok := decoded["data"].(map[string]interface{}); ok {

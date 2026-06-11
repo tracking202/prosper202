@@ -148,15 +148,9 @@ var conversionDeleteCmd = &cobra.Command{
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
-			if !force {
-				fmt.Printf("Delete %d conversions? [y/N] ", len(idList))
-				var answer string
-				fmt.Scanln(&answer)
-				answer = strings.ToLower(strings.TrimSpace(answer))
-				if answer != "y" && answer != "yes" {
-					fmt.Println("Cancelled.")
-					return nil
-				}
+			if !force && !confirmPrompt("Delete %d conversions?", len(idList)) {
+				fmt.Println("Cancelled.")
+				return nil
 			}
 
 			deleted := 0
@@ -177,14 +171,9 @@ var conversionDeleteCmd = &cobra.Command{
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Delete conversion %s? [y/N] ", args[0])
-			var answer string
-			fmt.Scanln(&answer)
-			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
+		if !force && !confirmPrompt("Delete conversion %s?", args[0]) {
+			fmt.Println("Cancelled.")
+			return nil
 		}
 		if err := c.Delete("conversions/" + args[0]); err != nil {
 			return err

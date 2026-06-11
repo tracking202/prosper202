@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Prosper202\License\ClickServerKeyValidator;
+use Prosper202\License\ShellAccessCache;
+
 class CapabilitiesController
 {
-    public function __construct(private readonly \mysqli $db)
-    {
+    public function __construct(
+        private readonly \mysqli $db,
+        private readonly ?int $userId = null,
+    ) {
     }
 
     public function versions(): array
@@ -44,6 +49,7 @@ class CapabilitiesController
                         'bulk_upsert_per_minute' => 60,
                     ],
                 ],
+                'shell' => $this->shellAccess(),
                 'server' => [
                     'build' => $this->resolveBuildVersion(),
                     'commit' => defined('P202_GIT_COMMIT') ? (string)P202_GIT_COMMIT : 'unknown',
@@ -120,4 +126,65 @@ class CapabilitiesController
         }
         return 500;
     }
+
+    /**
+     * Determine shell access by validating the user's ClickServer API key
+     * against my.tracking202.com. Returns false if the user has no key or
+     * the key is invalid.
+     *
+     * Results are cached per-key (ShellAccessCache::TTL_SECONDS) to avoid
+     * hitting my.tracking202.com on every capabilities request. If ClickServer
+     * is unreachable the last known result is used regardless of age, and
+     * access is denied when no prior result exists (fail-closed).
+     */
+    private function shellAccess(): bool
+    {
+        if ($this->userId === null) {
+            return false;
+        }
+
+        $customerKey = $this->loadClickServerKey();
+        if ($customerKey === '') {
+            return false;
+        }
+
+        $cached = ShellAccessCache::read($customerKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        // Short timeouts: this runs on the synchronous request path, so a
+        // slow ClickServer must not stall /capabilities for long.
+        $result = ClickServerKeyValidator::validate($customerKey, 2, 4);
+        if ($result === null) {
+            return ShellAccessCache::readStale($customerKey) === true;
+        }
+        ShellAccessCache::write($customerKey, $result);
+        return $result;
+    }
+
+    private function loadClickServerKey(): string
+    {
+        $stmt = $this->db->prepare(
+            'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
+        );
+        if (!$stmt) {
+            return '';
+        }
+        $stmt->bind_param('i', $this->userId);
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            return '';
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            return '';
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        return trim((string)($row['p202_customer_api_key'] ?? ''));
+    }
+
 }

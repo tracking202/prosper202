@@ -19,9 +19,6 @@ import (
 
 	configpkg "p202/internal/config"
 	"p202/internal/syncstate"
-
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 // setTestHome sets HOME (or USERPROFILE on Windows) via t.Setenv so it
@@ -445,15 +442,27 @@ func executeCommand(args ...string) (string, string, error) {
 	rootCmd.SetErr(stderrBuf)
 	rootCmd.SetArgs(args)
 
-	// Capture os.Stdout since output.Render and fmt.Printf write to os.Stdout
+	// Capture os.Stdout since output.Render and fmt.Printf write to os.Stdout.
+	// Drain concurrently so output larger than the kernel pipe buffer (~64KB)
+	// doesn't block the command under test.
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
+	stdoutDone := make(chan []byte, 1)
+	go func() {
+		buf, _ := io.ReadAll(r)
+		stdoutDone <- buf
+	}()
 
 	// Capture os.Stderr since output.renderPagination writes directly to os.Stderr
 	oldStderr := os.Stderr
 	rErr, wErr, _ := os.Pipe()
 	os.Stderr = wErr
+	stderrDone := make(chan []byte, 1)
+	go func() {
+		buf, _ := io.ReadAll(rErr)
+		stderrDone <- buf
+	}()
 
 	err := rootCmd.Execute()
 
@@ -462,35 +471,17 @@ func executeCommand(args ...string) (string, string, error) {
 	wErr.Close()
 	os.Stderr = oldStderr
 
-	var pipeBuf bytes.Buffer
-	io.Copy(&pipeBuf, r)
+	pipeBuf := <-stdoutDone
 	r.Close()
-
-	var pipeErrBuf bytes.Buffer
-	io.Copy(&pipeErrBuf, rErr)
+	pipeErrBuf := <-stderrDone
 	rErr.Close()
 
 	// Combine cobra's SetOut buffer with pipe-captured stdout
-	combined := stdoutBuf.String() + pipeBuf.String()
+	combined := stdoutBuf.String() + string(pipeBuf)
 	// Combine cobra's SetErr buffer with pipe-captured stderr
-	combinedErr := stderrBuf.String() + pipeErrBuf.String()
+	combinedErr := stderrBuf.String() + string(pipeErrBuf)
 
 	return combined, combinedErr, err
-}
-
-func resetAllFlags(cmd *cobra.Command) {
-	resetFlagSet := func(fs *pflag.FlagSet) {
-		fs.VisitAll(func(f *pflag.Flag) {
-			_ = fs.Set(f.Name, f.DefValue)
-			f.Changed = false
-		})
-	}
-
-	resetFlagSet(cmd.PersistentFlags())
-	resetFlagSet(cmd.Flags())
-	for _, c := range cmd.Commands() {
-		resetAllFlags(c)
-	}
 }
 
 func TestConfigSetURL(t *testing.T) {

@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+// Loaded directly (not via autoload) because some legacy entry points include
+// this file before the Composer autoloader is registered.
+require_once __DIR__ . '/License/ClickServerKeyValidator.php';
+require_once __DIR__ . '/License/ShellAccessCache.php';
+
 /**
  * Password helper functions live here to avoid bootstrap order issues.
  * They support both legacy salted MD5 hashes and modern password_hash()-based hashes.
@@ -300,46 +305,26 @@ class AUTH
             return true;
         }
 
-        $post = [];
-        $post['key'] = $user_api_key;
-        $fields = http_build_query($post);
-// Initiate curl
-        $ch = curl_init();
-// Set the url
-        curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-// Verify the TLS certificate so the validation response cannot be forged
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-// Will return the response, if false it print the response
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-// Set to post
-        curl_setopt($ch, CURLOPT_POST, true);
-// Set post fields
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-// Prevent network issues from logging users out
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-// Execute
-        $result = curl_exec($ch);
-        $curlFailed = curl_errno($ch) || $result === false;
-        // close connection
-        curl_close($ch);
+        $keyIsValid = \Prosper202\License\ClickServerKeyValidator::validate($user_api_key);
 
         // On network failure, don't punish the user — assume valid until next check
-        if ($curlFailed) {
+        if ($keyIsValid === null) {
             return true;
         }
 
-        $api_validate = json_decode((string) $result, true);
-        if (is_array($api_validate) && ($api_validate['msg'] ?? '') === "Key valid") {
+        if ($keyIsValid) {
         //update the api key
             $user_sql = "	UPDATE 	202_users
 							SET		p202_customer_api_key='" . $user_api_key . "'
 							WHERE 	user_id='" . $_SESSION['user_id'] . "'";
             _mysqli_query($user_sql);
             self::writeSessionValue('valid_key', true);
+            // Warm the CLI shell license cache so p202 shell works without its own round-trip.
+            \Prosper202\License\ShellAccessCache::write($user_api_key, true);
             return true;
         } else {
+            // Deny the CLI shell immediately when the key is no longer valid.
+            \Prosper202\License\ShellAccessCache::write($user_api_key, false);
             return false;
         }
     }

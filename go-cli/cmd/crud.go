@@ -468,15 +468,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 
 				force, _ := cmd.Flags().GetBool("force")
-				if !force {
-					fmt.Printf("Delete %d %s? [y/N] ", len(idList), entity.Plural)
-					var answer string
-					fmt.Scanln(&answer)
-					answer = strings.ToLower(strings.TrimSpace(answer))
-					if answer != "y" && answer != "yes" {
-						fmt.Println("Cancelled.")
-						return nil
-					}
+				if !force && !confirmPrompt("Delete %d %s?", len(idList), entity.Plural) {
+					fmt.Println("Cancelled.")
+					return nil
 				}
 
 				deleted := 0
@@ -497,14 +491,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
-			if !force {
-				fmt.Printf("Delete %s %s? [y/N] ", entity.Name, args[0])
-				var answer string
-				fmt.Scanln(&answer)
-				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-					fmt.Println("Cancelled.")
-					return nil
-				}
+			if !force && !confirmPrompt("Delete %s %s?", entity.Name, args[0]) {
+				fmt.Println("Cancelled.")
+				return nil
 			}
 			if err := c.Delete(entity.Endpoint + "/" + args[0]); err != nil {
 				return err

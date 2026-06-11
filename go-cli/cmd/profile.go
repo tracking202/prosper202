@@ -86,15 +86,9 @@ var configRemoveProfileCmd = &cobra.Command{
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Remove profile %s? [y/N] ", name)
-			var answer string
-			fmt.Scanln(&answer)
-			answer = strings.ToLower(strings.TrimSpace(answer))
-			if answer != "y" && answer != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
+		if !force && !confirmPrompt("Remove profile %s?", name) {
+			fmt.Println("Cancelled.")
+			return nil
 		}
 
 		delete(cfg.Profiles, name)
