@@ -51,15 +51,16 @@ The install script will:
 ```bash
 git clone https://github.com/tracking202/prosper202.git
 cd prosper202
+echo "MYSQL_ROOT_PASSWORD=$(openssl rand -hex 16)" > .env
 docker compose up -d
 ```
 
-Dependencies are automatically installed on container startup.
+Dependencies are automatically installed on container startup. Alternatively, run `./install.sh` and pick the Docker option — it generates the `.env` for you.
 
 - Application: `http://localhost:8000`
-- phpMyAdmin: `http://localhost:8080`
+- phpMyAdmin: `http://localhost:8080` (user `root`, password from your `.env`)
 
-The MySQL root password defaults to `root_password` for local development. To change it, set `MYSQL_ROOT_PASSWORD` in your environment or a `.env` file before the first `docker compose up` (the value is baked into the database volume on first start).
+There is intentionally no default database password — phpMyAdmin is exposed on port 8080, so a well-known default would be usable by anyone who can reach it. `docker compose up` refuses to start until `MYSQL_ROOT_PASSWORD` is set. Note the value is baked into the database volume on first start; changing `.env` later won't change the actual MySQL password.
 
 ### Manual Installation
 

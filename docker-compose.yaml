@@ -17,7 +17,10 @@ services:
   db:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      # No default on purpose: a well-known root password would be usable by
+      # anyone who can reach phpMyAdmin on port 8080. Set it in .env (see
+      # .env.example) or let ./install.sh generate one.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env — copy .env.example or run ./install.sh}
       MYSQL_DATABASE: prosper202
     volumes:
       - db_data:/var/lib/mysql

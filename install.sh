@@ -319,6 +319,15 @@ sed_in_place() {
     fi
 }
 
+# Hex only: safe to embed in .env, sed replacements, and PHP single quotes
+generate_db_password() {
+    if command -v openssl &>/dev/null; then
+        openssl rand -hex 16
+    elif [ -r /dev/urandom ]; then
+        od -vN16 -An -tx1 /dev/urandom | tr -d ' \n'
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 2: Detection Functions
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -899,6 +908,25 @@ start_docker_containers() {
         compose_cmd="docker-compose"
     fi
 
+    # Resolve the MySQL root password before compose up: environment first,
+    # then .env, otherwise generate one. docker-compose.yaml deliberately has
+    # no default — a well-known password would be reachable via phpMyAdmin.
+    local db_root_pass="${MYSQL_ROOT_PASSWORD:-}"
+    if [ -z "$db_root_pass" ] && [ -f "$SCRIPT_DIR/.env" ]; then
+        db_root_pass=$(grep -E '^MYSQL_ROOT_PASSWORD=' "$SCRIPT_DIR/.env" | tail -1 | cut -d= -f2-)
+    fi
+    if [ -z "$db_root_pass" ]; then
+        db_root_pass=$(generate_db_password)
+        if [ -z "$db_root_pass" ]; then
+            print_error "Could not generate a database password (no openssl or /dev/urandom)"
+            return 1
+        fi
+        printf 'MYSQL_ROOT_PASSWORD=%s\n' "$db_root_pass" >> "$SCRIPT_DIR/.env"
+        chmod 600 "$SCRIPT_DIR/.env" 2>/dev/null || true
+        print_success "Generated MySQL root password (saved to .env)"
+    fi
+    export MYSQL_ROOT_PASSWORD="$db_root_pass"
+
     # Build and start containers (build handles pulling base images)
     print_info "Building and starting containers..."
     $compose_cmd up -d --build > "$TMP_DIR/docker_output.log" 2>&1 &
@@ -924,9 +952,6 @@ start_docker_containers() {
 
     # Hide cursor
     tput civis 2>/dev/null || true
-
-    # Same default as docker-compose.yaml; both honor MYSQL_ROOT_PASSWORD
-    local db_root_pass="${MYSQL_ROOT_PASSWORD:-root_password}"
 
     while [ $attempt -lt $max_attempts ]; do
         # Try to connect to MySQL
@@ -1193,8 +1218,8 @@ show_summary() {
         lines+=("${ARROW} Application:  ${BOLD}http://localhost:8000${RESET}")
         lines+=("${ARROW} phpMyAdmin:   ${BOLD}http://localhost:8080${RESET}")
         lines+=("")
-        lines+=("Default credentials for phpMyAdmin:")
-        lines+=("  User: root | Password: root_password")
+        lines+=("Credentials for phpMyAdmin:")
+        lines+=("  User: root | Password: MYSQL_ROOT_PASSWORD in .env")
         lines+=("")
         lines+=("Useful commands:")
         lines+=("  docker compose logs -f    ${DIM}# View logs${RESET}")

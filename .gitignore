@@ -8,6 +8,7 @@ phpstan.neon
 # Environment / secrets
 .env
 .env.*
+!.env.example
 
 # Docker (local overrides only; docker-compose.yaml and Dockerfile are tracked)
 docker-compose.staging.yml
