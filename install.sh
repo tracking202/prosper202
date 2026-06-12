@@ -319,6 +319,15 @@ sed_in_place() {
     fi
 }
 
+# Hex only: safe to embed in .env, sed replacements, and PHP single quotes
+generate_db_password() {
+    if command -v openssl &>/dev/null; then
+        openssl rand -hex 16
+    elif [ -r /dev/urandom ]; then
+        od -vN16 -An -tx1 /dev/urandom | tr -d ' \n'
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 2: Detection Functions
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -695,11 +704,11 @@ test_db_connection() {
     local pass="$3"
     local name="$4"
 
-    # Escape single quotes in credentials for PHP
-    host="${host//\'/\\\'}"
-    user="${user//\'/\\\'}"
-    pass="${pass//\'/\\\'}"
-    name="${name//\'/\\\'}"
+    # Escape backslashes then single quotes in credentials for PHP
+    host="${host//\\/\\\\}"; host="${host//\'/\\\'}"
+    user="${user//\\/\\\\}"; user="${user//\'/\\\'}"
+    pass="${pass//\\/\\\\}"; pass="${pass//\'/\\\'}"
+    name="${name//\\/\\\\}"; name="${name//\'/\\\'}"
 
     # Build PHP test script with exception handling for PHP 8+
     local test_script="error_reporting(0); mysqli_report(MYSQLI_REPORT_OFF);
@@ -740,11 +749,11 @@ create_database() {
     local pass="$3"
     local name="$4"
 
-    # Escape single quotes in credentials for PHP
-    host="${host//\'/\\\'}"
-    user="${user//\'/\\\'}"
-    pass="${pass//\'/\\\'}"
-    name="${name//\'/\\\'}"
+    # Escape backslashes then single quotes in credentials for PHP
+    host="${host//\\/\\\\}"; host="${host//\'/\\\'}"
+    user="${user//\\/\\\\}"; user="${user//\'/\\\'}"
+    pass="${pass//\\/\\\\}"; pass="${pass//\'/\\\'}"
+    name="${name//\\/\\\\}"; name="${name//\'/\\\'}"
 
     local create_script="error_reporting(0); mysqli_report(MYSQLI_REPORT_OFF);
 try {
@@ -899,6 +908,25 @@ start_docker_containers() {
         compose_cmd="docker-compose"
     fi
 
+    # Resolve the MySQL root password before compose up: environment first,
+    # then .env, otherwise generate one. docker-compose.yaml deliberately has
+    # no default — a well-known password would be reachable via phpMyAdmin.
+    local db_root_pass="${MYSQL_ROOT_PASSWORD:-}"
+    if [ -z "$db_root_pass" ] && [ -f "$SCRIPT_DIR/.env" ]; then
+        db_root_pass=$(grep -E '^MYSQL_ROOT_PASSWORD=' "$SCRIPT_DIR/.env" | tail -1 | cut -d= -f2-)
+    fi
+    if [ -z "$db_root_pass" ]; then
+        db_root_pass=$(generate_db_password)
+        if [ -z "$db_root_pass" ]; then
+            print_error "Could not generate a database password (no openssl or /dev/urandom)"
+            return 1
+        fi
+        printf 'MYSQL_ROOT_PASSWORD=%s\n' "$db_root_pass" >> "$SCRIPT_DIR/.env"
+        chmod 600 "$SCRIPT_DIR/.env" 2>/dev/null || true
+        print_success "Generated MySQL root password (saved to .env)"
+    fi
+    export MYSQL_ROOT_PASSWORD="$db_root_pass"
+
     # Build and start containers (build handles pulling base images)
     print_info "Building and starting containers..."
     $compose_cmd up -d --build > "$TMP_DIR/docker_output.log" 2>&1 &
@@ -927,7 +955,7 @@ start_docker_containers() {
 
     while [ $attempt -lt $max_attempts ]; do
         # Try to connect to MySQL
-        if $compose_cmd exec -T db mysqladmin ping -h localhost -u root -proot_password &>/dev/null 2>&1; then
+        if $compose_cmd exec -T db mysqladmin ping -h localhost -u root -p"$db_root_pass" &>/dev/null 2>&1; then
             break
         fi
         ((attempt++))
@@ -970,7 +998,7 @@ start_docker_containers() {
     DB_HOST="db"
     DB_NAME="prosper202"
     DB_USER="root"
-    DB_PASS="root_password"
+    DB_PASS="$db_root_pass"
     DB_HOST_RO="db"
     MC_HOST="memcached"
 
@@ -1188,10 +1216,13 @@ show_summary() {
 
     if [ "$install_type" = "docker" ]; then
         lines+=("${ARROW} Application:  ${BOLD}http://localhost:8000${RESET}")
-        lines+=("${ARROW} phpMyAdmin:   ${BOLD}http://localhost:8080${RESET}")
         lines+=("")
-        lines+=("Default credentials for phpMyAdmin:")
-        lines+=("  User: root | Password: root_password")
+        lines+=("${WARN} Open the app and finish the install wizard now —")
+        lines+=("  until then anyone who can reach port 8000 can claim it.")
+        lines+=("")
+        lines+=("phpMyAdmin (optional, loopback only):")
+        lines+=("  docker compose --profile debug up -d")
+        lines+=("  http://127.0.0.1:8080 ${DIM}# root / MYSQL_ROOT_PASSWORD in .env${RESET}")
         lines+=("")
         lines+=("Useful commands:")
         lines+=("  docker compose logs -f    ${DIM}# View logs${RESET}")
