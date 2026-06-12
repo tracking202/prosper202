@@ -1189,7 +1189,13 @@ ORDER BY ppc_network_id , name , variable";
 
             // No recognized metrics selected: skip the query and let every
             // series fall through to its zero-filled default.
-            $result = $selectParts === [] ? false : self::$db->query($sqlObj);
+            $result = false;
+            if ($selectParts !== []) {
+                $result = self::$db->query($sqlObj);
+                if (!$result) {
+                    error_log('DataEngine getChart query failed: ' . self::$db->error);
+                }
+            }
 
             $campaign_name = '';
 
