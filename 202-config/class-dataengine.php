@@ -1142,23 +1142,25 @@ ORDER BY ppc_network_id , name , variable";
         }
 
         foreach (array_keys($chart) as $campaign) {
-            $i = 0;
             $types = [];
             $data = [];
-            $sqlSelectObj = '';
+            $selectParts = [];
 
             foreach ($chart[$campaign] as $type) {
-                $i++;
-                $end = (count($chart[$campaign]) == $i) ? '' : ',';
-
-                [$metricSql, $typeName] = self::CHART_METRICS[$type] ?? ['', ucfirst((string) $type)];
-                $sqlSelectObj .= $metricSql . $end;
+                // Unknown/stale metric types in a saved config are excluded
+                // from the SELECT (they would break the SQL) but still get a
+                // series entry, which renders as zeros.
+                [$metricSql, $typeName] = self::CHART_METRICS[$type] ?? [null, ucfirst((string) $type)];
+                if ($metricSql !== null) {
+                    $selectParts[] = $metricSql;
+                }
 
                 $types[] = [
                     'type_name' => $typeName,
                     'sql_name' => $type,
                 ];
             }
+            $sqlSelectObj = implode(',', $selectParts);
 
             if ($time_range == 'hours') {
                 $rangeGroupby = "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y %l:00%p')";
@@ -1185,7 +1187,9 @@ ORDER BY ppc_network_id , name , variable";
             $sqlObj .= $click_filtered . " ";
             $sqlObj .= "GROUP BY " . $rangeGroupby . ";";
 
-            $result = self::$db->query($sqlObj);
+            // No recognized metrics selected: skip the query and let every
+            // series fall through to its zero-filled default.
+            $result = $selectParts === [] ? false : self::$db->query($sqlObj);
 
             $campaign_name = '';
 
@@ -1212,7 +1216,9 @@ ORDER BY ppc_network_id , name , variable";
                     } elseif ($time_range == 'hours') {
                         $key = $range->format('M d Y g:iA');
                     }
-                    if (isset($data['categories'][$key])) {
+                    if (isset($data['categories'][$key]) && array_key_exists($type['sql_name'], $data['data'][$key])) {
+                        // SQL NULL (e.g. payout with zero leads) stays null
+                        // in the series; only truly absent metrics become '0'.
                         $seriesData[] = $data['data'][$key][$type['sql_name']];
                     } else {
                         $seriesData[] = '0';
