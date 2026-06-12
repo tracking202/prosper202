@@ -1119,7 +1119,7 @@ ORDER BY ppc_network_id , name , variable";
         'ctr' => [' (clicks/click_out)*100 AS ctr', 'CTR'],
         'leads' => [' SUM(leads) AS leads', 'Leads'],
         'su_ratio' => [' (SUM(click_lead)/SUM(clicks))*100 AS su_ratio', 'Avg S/U'],
-        'payout' => [' (SUM(income) / sum(leads)) AS payout, ', 'Avg Payout'],
+        'payout' => [' (SUM(income) / sum(leads)) AS payout', 'Avg Payout'],
         'epc' => [' SUM(income)/clicks AS epc', 'Avg EPC'],
         'cpc' => [' SUM(cost)/SUM(clicks) AS cpc', 'Avg CPC'],
         'income' => [' SUM(income) AS income', 'Income'],
