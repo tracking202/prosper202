@@ -45,21 +45,7 @@ while ($user_row2 = $user_result->fetch_assoc()) {
 
 $user_row['user_chart_data'] = unserialize((string)($user_row['user_chart_data'] ?? ''), ['allowed_classes' => false]);
 
-if ($user_row['user_pref_show'] == 'all') {
-	$click_filtered = '';
-}
-if ($user_row['user_pref_show'] == 'real') {
-	$click_filtered = " AND click_filtered='0' ";
-}
-if ($user_row['user_pref_show'] == 'filtered') {
-	$click_filtered = " AND click_filtered='1' ";
-}
-if ($user_row['user_pref_show'] == 'filtered_bot') {
-	$click_filtered = " AND click_bot='1' ";
-}
-if ($user_row['user_pref_show'] == 'leads') {
-	$click_filtered = " AND click_lead='1' ";
-}
+// (show filter handled by DataEngine::getReportData -> getFilters)
 
 if ($user_row['user_cpc_or_cpv'] == 'cpv')  $cpv = true;
 else 										$cpv = false; ?>

@@ -47,6 +47,22 @@ if (!function_exists('get_template_directory')) {
     }
 }
 
+if (!function_exists('dollar_format')) {
+    // Real implementation: 202-config/functions-tracking202.php
+    function dollar_format($amount, $currency = null, $cpv = false): string
+    {
+        return '';
+    }
+}
+
+if (!function_exists('inet6_ntoa')) {
+    // Real implementation: 202-config/connect2.php
+    function inet6_ntoa($ip): string
+    {
+        return '';
+    }
+}
+
 if (!interface_exists('FraudDetectionInterface')) {
     interface FraudDetectionInterface
     {
