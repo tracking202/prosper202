@@ -219,6 +219,12 @@ class DataEngine
             throw new Exception('Unable to load user report preferences');
         }
 
+        // Stored prefs are still attacker-influenced input: escape the free
+        // text value before it is interpolated into a LIKE clause.
+        if (!empty($user_row['user_pref_keyword'])) {
+            $user_row['user_pref_keyword'] = self::$db->real_escape_string((string) $user_row['user_pref_keyword']);
+        }
+
         $ipIdList = null;
         if (!empty($user_row['user_pref_ip'])) {
             $ipIdList = (string) $this->get_ip_id($this->ipAddress($user_row['user_pref_ip']));
@@ -466,7 +472,7 @@ class DataEngine
 
         $sql = "select landing_page_nickname,
 2st.landing_page_id, sum(clicks) as clicks, sum(click_out) as click_out,
-(clicks/click_out)*100 as ctr,SUM(leads) AS leads,(SUM(click_lead)/sum(clicks))*100 as su_ratio,
+(SUM(click_out)/sum(clicks))*100 as ctr,SUM(leads) AS leads,(SUM(click_lead)/sum(clicks))*100 as su_ratio,
 (SUM(income) / sum(leads)) AS payout,SUM(income)/SUM(clicks) as epc,SUM(cost)/sum(clicks) AS cpc,SUM(income) AS income, SUM(cost) AS cost,(SUM(income)-SUM(cost)) AS net,((SUM(income)-SUM(cost))/SUM(cost)*100 ) as roi
 from 202_dataengine as 2st
 LEFT OUTER JOIN 202_landing_pages USING (landing_page_id)"
@@ -489,7 +495,7 @@ ORDER BY landing_page_id ASC";
             SUM(2c.click_out) AS click_out,
             SUM(2c.leads) AS leads,
             2ac.aff_campaign_payout AS payout,
-            (clicks/click_out)*100 as ctr,
+            (SUM(click_out)/sum(clicks))*100 as ctr,
             SUM(2c.income) AS income,
             SUM(2c.cost) AS cost,
             SUM(income)/SUM(clicks) as epc,
@@ -537,7 +543,7 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
         $click_sql = "select" . $labelSelect . "
         sum(clicks) as clicks,
         sum(click_out) as click_out,
-        (clicks/click_out)*100 as ctr,
+        (SUM(click_out)/sum(clicks))*100 as ctr,
         SUM(leads) AS leads,
         (SUM(click_lead)/sum(clicks))*100 as su_ratio,
         (SUM(income) / sum(leads)) AS payout,
@@ -578,7 +584,7 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             2st.{$select_by_id},
             sum(clicks) as clicks,
             sum(click_out) as click_out,
-            (clicks/click_out)*100 as ctr,
+            (SUM(click_out)/sum(clicks))*100 as ctr,
             SUM(leads) AS leads,
             (SUM(click_lead)/sum(clicks))*100 as su_ratio,
             (SUM(income) / sum(leads)) AS payout,
@@ -1125,11 +1131,11 @@ ORDER BY ppc_network_id , name , variable";
     private const CHART_METRICS = [
         'clicks' => [' SUM(clicks) AS clicks', 'Clicks'],
         'click_out' => [' SUM(click_out) AS click_out', 'Click Throughs'],
-        'ctr' => [' (clicks/click_out)*100 AS ctr', 'CTR'],
+        'ctr' => [' (SUM(click_out)/SUM(clicks))*100 AS ctr', 'CTR'],
         'leads' => [' SUM(leads) AS leads', 'Leads'],
         'su_ratio' => [' (SUM(click_lead)/SUM(clicks))*100 AS su_ratio', 'Avg S/U'],
         'payout' => [' (SUM(income) / sum(leads)) AS payout', 'Avg Payout'],
-        'epc' => [' SUM(income)/clicks AS epc', 'Avg EPC'],
+        'epc' => [' SUM(income)/SUM(clicks) AS epc', 'Avg EPC'],
         'cpc' => [' SUM(cost)/SUM(clicks) AS cpc', 'Avg CPC'],
         'income' => [' SUM(income) AS income', 'Income'],
         'cost' => [' SUM(cost) AS cost', 'Cost'],

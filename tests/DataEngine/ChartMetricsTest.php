@@ -28,7 +28,7 @@ final class ChartMetricsTest extends TestCase
         $source = file_get_contents(__DIR__ . '/../../202-config/class-dataengine.php');
         self::assertNotFalse($source, 'class-dataengine.php must be readable');
 
-        preg_match('/private const CHART_METRICS = \[(.*?)\n    \];/s', $source, $block);
+        preg_match('/private const CHART_METRICS = \[(.*?)\];/s', $source, $block);
         self::assertNotEmpty($block, 'Must find the CHART_METRICS constant');
 
         preg_match_all("/'([a-z_]+)' => \['([^']*)', '([^']*)'\]/", $block[1], $entries, PREG_SET_ORDER);

@@ -8,7 +8,9 @@ namespace Prosper202\DataEngine;
  * Builds the WHERE/JOIN/LIMIT SQL fragments derived from a user's report
  * preferences (202_users_pref row). Pure string assembly — the caller
  * resolves anything that needs a database lookup (IP and referer ids) and
- * passes the result in, which keeps this fully unit-testable.
+ * passes the result in, which keeps this fully unit-testable. The caller
+ * is also responsible for escaping the free-text keyword preference;
+ * numeric preferences are integer-cast here as defense in depth.
  *
  * Faithful to the legacy DataEngine::getFilters(), including the quirk that
  * a "show" preference of real/filtered/filtered_bot/leads *replaces* any
@@ -39,7 +41,7 @@ final class UserPrefFilters
         $join = '';
 
         if (!empty($userRow['user_pref_subid']) && $userRow['user_pref_subid'] != '0') {
-            $filter .= " AND 2st.click_id=" . $userRow['user_pref_subid'];
+            $filter .= " AND 2st.click_id=" . (int) $userRow['user_pref_subid'];
         }
 
         $showFilter = self::showFilter((string) ($userRow['user_pref_show'] ?? 'all'));
@@ -48,22 +50,22 @@ final class UserPrefFilters
         }
 
         if (!empty($userRow['user_pref_device_id']) && $userRow['user_pref_device_id'] != '0') {
-            $filter .= " AND 2st.device_id in (select device_id from 202_device_models where device_type=" . $userRow['user_pref_device_id'] . ")";
+            $filter .= " AND 2st.device_id in (select device_id from 202_device_models where device_type=" . (int) $userRow['user_pref_device_id'] . ")";
         }
         if (!empty($userRow['user_pref_browser_id']) && $userRow['user_pref_browser_id'] != '0') {
-            $filter .= " AND 2st.browser_id=" . $userRow['user_pref_browser_id'];
+            $filter .= " AND 2st.browser_id=" . (int) $userRow['user_pref_browser_id'];
         }
         if (!empty($userRow['user_pref_platform_id']) && $userRow['user_pref_platform_id'] != '0') {
-            $filter .= " AND 2st.platform_id=" . $userRow['user_pref_platform_id'];
+            $filter .= " AND 2st.platform_id=" . (int) $userRow['user_pref_platform_id'];
         }
         if (!empty($userRow['user_pref_country_id']) && $userRow['user_pref_country_id'] != '0') {
-            $filter .= " AND 2st.country_id=" . $userRow['user_pref_country_id'];
+            $filter .= " AND 2st.country_id=" . (int) $userRow['user_pref_country_id'];
         }
         if (!empty($userRow['user_pref_region_id']) && $userRow['user_pref_region_id'] != '0') {
-            $filter .= " AND 2st.region_id=" . $userRow['user_pref_region_id'];
+            $filter .= " AND 2st.region_id=" . (int) $userRow['user_pref_region_id'];
         }
         if (!empty($userRow['user_pref_isp_id']) && $userRow['user_pref_isp_id'] != '0') {
-            $filter .= " AND 2st.isp_id=" . $userRow['user_pref_isp_id'];
+            $filter .= " AND 2st.isp_id=" . (int) $userRow['user_pref_isp_id'];
         }
 
         // "No Traffic Source" is stored as 16777215 (the column maximum)
@@ -71,22 +73,22 @@ final class UserPrefFilters
         if (($userRow['user_pref_ppc_network_id'] ?? '0') == '16777215') {
             $filter .= " AND 2st.ppc_network_id IS NULL";
         } elseif (!empty($userRow['user_pref_ppc_network_id']) && $userRow['user_pref_ppc_network_id'] != '0') {
-            $filter .= " AND 2st.ppc_network_id=" . $userRow['user_pref_ppc_network_id'];
+            $filter .= " AND 2st.ppc_network_id=" . (int) $userRow['user_pref_ppc_network_id'];
         }
         if (!empty($userRow['user_pref_ppc_account_id']) && $userRow['user_pref_ppc_account_id'] != '0') {
-            $filter .= " AND 2st.ppc_account_id=" . $userRow['user_pref_ppc_account_id'];
+            $filter .= " AND 2st.ppc_account_id=" . (int) $userRow['user_pref_ppc_account_id'];
         }
         if (!empty($userRow['user_pref_aff_network_id']) && $userRow['user_pref_aff_network_id'] != '0') {
-            $filter .= " AND 2st.aff_network_id=" . $userRow['user_pref_aff_network_id'];
+            $filter .= " AND 2st.aff_network_id=" . (int) $userRow['user_pref_aff_network_id'];
         }
         if (!empty($userRow['user_pref_aff_campaign_id']) && $userRow['user_pref_aff_campaign_id'] != '0') {
-            $filter .= " AND 2st.aff_campaign_id=" . $userRow['user_pref_aff_campaign_id'];
+            $filter .= " AND 2st.aff_campaign_id=" . (int) $userRow['user_pref_aff_campaign_id'];
         }
         if (!empty($userRow['user_pref_text_ad_id']) && $userRow['user_pref_text_ad_id'] != '0') {
-            $filter .= " AND 2st.text_ad_id=" . $userRow['user_pref_text_ad_id'];
+            $filter .= " AND 2st.text_ad_id=" . (int) $userRow['user_pref_text_ad_id'];
         }
         if (!empty($userRow['user_pref_landing_page_id']) && $userRow['user_pref_landing_page_id'] != '0') {
-            $filter .= " AND 2st.landing_page_id=" . $userRow['user_pref_landing_page_id'];
+            $filter .= " AND 2st.landing_page_id=" . (int) $userRow['user_pref_landing_page_id'];
         }
 
         if (($userRow['user_pref_method_of_promotion'] ?? '') == 'directlink') {
@@ -118,7 +120,8 @@ final class UserPrefFilters
         }
 
         if (!empty($userRow['user_pref_limit']) && !$forDownload) {
-            $limit = ' Limit ' . ($offset * (int) $userRow['user_pref_limit']) . ',' . $userRow['user_pref_limit'];
+            $pageSize = (int) $userRow['user_pref_limit'];
+            $limit = ' Limit ' . ($offset * $pageSize) . ',' . $pageSize;
         } else {
             $limit = '';
         }

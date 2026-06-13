@@ -74,7 +74,7 @@ if (!class_exists('DataEngine')) {
                            ORDER BY        c.click_id DESC
                            LIMIT           1';
 
-                $click_result1 = $db->query($click_sql1) or record_mysql_error($db);
+                $click_result1 = $db->query($click_sql1) or record_mysql_error($db, $click_sql1);
                 $click_row1 = $click_result1->fetch_assoc();
 
                 if ($click_row1 && isset($click_row1['click_id'])) {

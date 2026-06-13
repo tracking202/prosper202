@@ -139,6 +139,22 @@ namespace Tests\DataEngine {
             self::assertSame('Jan 01, 2026 at 3pm', $html['click_time_from_disp']);
         }
 
+        public function testNonTotalRowsDoNotCarryTotalKeys(): void
+        {
+            $html = $this->formatter->format(['clicks' => '5', 'income' => '10']);
+
+            self::assertArrayNotHasKey('total_clicks', $html);
+            self::assertArrayNotHasKey('total_roi', $html);
+        }
+
+        public function testTotalRowCampaignFallbackUsesPrefixedKey(): void
+        {
+            $html = $this->formatter->format(['clicks' => '5'], 'total');
+
+            self::assertSame('[Landing Page/Smart Redirector Campaign]', $html['total_aff_campaign_name']);
+            self::assertArrayNotHasKey('aff_campaign_name', $html);
+        }
+
         public function testMissingCampaignNameGetsFallbackLabel(): void
         {
             $html = $this->formatter->format(['clicks' => '1']);

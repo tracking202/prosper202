@@ -78,13 +78,18 @@ final class HtmlReportFormatter
             $html[$prepend . $key] = $this->formatValue((string) $key, $value, $ctr);
         }
 
-        if (!isset($html['aff_campaign_name']) || strlen($html['aff_campaign_name']) == 0) {
-            $html['aff_campaign_name'] = '[Landing Page/Smart Redirector Campaign]';
+        $campaignKey = $prepend . 'aff_campaign_name';
+        if (!isset($html[$campaignKey]) || strlen($html[$campaignKey]) == 0) {
+            $html[$campaignKey] = '[Landing Page/Smart Redirector Campaign]';
         }
 
-        foreach (self::REQUIRED_TOTAL_KEYS as $key) {
-            if (!isset($html[$key]) || $html[$key] === '') {
-                $html[$key] = '0';
+        // Only totals rows carry total_* keys; backfilling them on every row
+        // (as the legacy formatter did) made the row types indistinguishable.
+        if ($prepend === 'total_') {
+            foreach (self::REQUIRED_TOTAL_KEYS as $key) {
+                if (!isset($html[$key]) || $html[$key] === '') {
+                    $html[$key] = '0';
+                }
             }
         }
 

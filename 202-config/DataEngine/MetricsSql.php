@@ -9,9 +9,11 @@ namespace Prosper202\DataEngine;
  * ROI, ...). Every report against 202_dataengine selects this same set of
  * aggregates; previously the fragment was duplicated in every report method.
  *
- * The expressions are kept byte-for-byte semantically identical to the
- * legacy queries, including their quirks (e.g. CTR uses the bare `clicks`
- * and `click_out` columns of the first row in the group, not SUM()).
+ * CTR is click_out/clicks over the aggregated group — the orientation and
+ * aggregation the variable report and the display formatter always used.
+ * The legacy fragment computed (clicks/click_out) from the bare columns of
+ * an arbitrary row in the group, which only affected ORDER BY `ctr` because
+ * the formatter recomputes CTR for display.
  */
 final class MetricsSql
 {
@@ -21,7 +23,7 @@ final class MetricsSql
      */
     public const GROUPED_SELECT = '
 sum(clicks) as clicks, sum(click_out) as click_out,
-(clicks/click_out)*100 as ctr,
+(SUM(click_out)/sum(clicks))*100 as ctr,
 SUM(leads) AS leads,
 (SUM(click_lead)/sum(clicks))*100 as su_ratio,
 (SUM(income) / sum(leads)) AS payout,
