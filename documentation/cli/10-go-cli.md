@@ -51,6 +51,9 @@ p202 config show
 | `p202 report summary` | Performance summary |
 | `p202 report breakdown` | Performance by dimension |
 | `p202 attribution model list` | List attribution models |
+| `p202 forecast` | Forecast future metrics from historical data |
+| `p202 dashboard` | Overview of clicks, conversions, revenue, cost, profit, ROI |
+| `p202 analytics` | Grouped performance analytics shorthand |
 | `p202 user list` | List users |
 | `p202 system health` | Health check |
 
@@ -148,6 +151,28 @@ p202 analytics --group-by country --period last30 --sort conversions --limit 10
 ```
 
 Aliases: `--group-by lp` -> `landing_page`, `--sort conversions` -> `total_leads`, `--sort revenue` -> `total_income`.
+
+## Forecasting
+
+Project any tracked metric forward from historical time-series data. Supports
+linear regression, simple and weighted moving averages, Holt-Winters
+exponential smoothing, and automatic method selection via backtesting.
+
+```bash
+p202 forecast --metric revenue --horizon 7
+p202 forecast --metric clicks --history last90 --method linear
+p202 forecast --metric profit --horizon 14 --method auto --seasonal
+```
+
+With `--seasonal`, predictions are modulated by day-of-week weights derived from
+weekpart report data (requires `--interval day` or `hour`). Event-aware
+forecasting (`--events`, `--event-tag`) folds in stored [forecast
+events](../api/18-forecast-events.md) and requires `--interval day`:
+
+```bash
+p202 forecast --metric revenue --events --horizon 14
+p202 forecast --metric clicks --events --event-tag us-holidays
+```
 
 ## Bulk Operations
 

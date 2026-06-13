@@ -141,6 +141,14 @@ abstract class Controller
                 default:
                     $clean[$col] = $value;
             }
+
+            if (
+                isset($def['allowed'])
+                && array_key_exists($col, $clean)
+                && !in_array($clean[$col], $def['allowed'], true)
+            ) {
+                $errors[$col] = "Field '$col' must be one of: " . implode(', ', $def['allowed']);
+            }
         }
 
         if ($errors) {

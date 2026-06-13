@@ -78,6 +78,7 @@ class CapabilitiesController
             'campaigns' => $base,
             'landing-pages' => $base,
             'text-ads' => $base,
+            'forecast-events' => $base,
             'trackers' => $base,
         ];
     }

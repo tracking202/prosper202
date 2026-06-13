@@ -394,6 +394,7 @@ try {
             'trackers'      => '/trackers',
             'landing_pages' => '/landing-pages',
             'text_ads'      => '/text-ads',
+            'forecast_events' => '/forecast-events',
             'clicks'        => '/clicks',
             'conversions'   => '/conversions',
             'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',

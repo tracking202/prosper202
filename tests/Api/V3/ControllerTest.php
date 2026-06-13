@@ -55,6 +55,7 @@ class StubController extends Controller
             'description' => ['type' => 's', 'max_length' => 500],
             'amount'      => ['type' => 'd'],
             'priority'    => ['type' => 'i'],
+            'status'      => ['type' => 's', 'allowed' => ['open', 'closed']],
             'created_at'  => ['type' => 's', 'readonly' => true],
         ];
     }
@@ -892,6 +893,27 @@ final class ControllerTest extends TestCase
         [$ctrl] = $this->createControllerWithDb();
         $clean = $ctrl->testValidatePayload(['description' => 'Only optional'], false);
         $this->assertArrayHasKey('description', $clean);
+    }
+
+    public function testValidatePayloadAllowedValuePasses(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        $clean = $ctrl->testValidatePayload(['status' => 'closed']);
+        $this->assertSame('closed', $clean['status']);
+    }
+
+    public function testValidatePayloadRejectsDisallowedValue(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        $this->expectException(ValidationException::class);
+        $ctrl->testValidatePayload(['status' => 'archived']);
+    }
+
+    public function testValidatePayloadAllowedNotCheckedWhenAbsent(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        $clean = $ctrl->testValidatePayload(['name' => 'Test']);
+        $this->assertArrayNotHasKey('status', $clean);
     }
 
     public function testValidatePayloadCollectsMultipleErrors(): void

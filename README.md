@@ -9,7 +9,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Self-Hosted & Full Source Code** — Run Prosper202 100% on your own servers for ultimate control of your proprietary data and marketing methods. Customize the full source code to meet your needs.
 - **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields.
 - **12+ Report Types** — Keywords, geo, device, browser, OS, referrer, ISP, landing page, and custom dimension reports. Track profit and loss, conversion metrics, EPC per keyword, per text ad, per referrer, and more.
-- **Multi-Touch Attribution** — Five attribution models including last-touch, time-decay, position-based, and algorithmic.
+- **Multi-Touch Attribution** — Six attribution models: first-touch, last-touch, linear, time-decay, position-based, and algorithmic.
 - **Split Testing** — Run unlimited weighted split tests to discover your best marketing message and offer. Pause non-converting tests and automatically send all traffic to the winner.
 - **Smart Redirector & Traffic Rules** — Rule-based traffic distribution with weighted rotation, geo-targeting, and device filtering.
 - **BlazerCache Technology** — Fast redirects that continue working even if the database goes down, preventing lost revenue.
@@ -247,7 +247,7 @@ As with Nginx, throughput is ultimately capped by PHP-FPM, so size `pm.max_child
 
 ## API v3
 
-REST API under `/api/v3/` with bearer token authentication. Covers all Prosper202 entities: campaigns, networks, traffic sources, trackers, landing pages, text ads, clicks, conversions, rotators, attribution models, users, and system operations.
+REST API under `/api/v3/` with bearer token authentication. Covers campaigns, affiliate and PPC networks, PPC accounts, trackers, landing pages, text ads, clicks, conversions, rotators, attribution models, forecast events, and users, plus server-side sync, capability discovery, and system operations.
 
 ```bash
 curl -H "Authorization: Bearer <api-key>" https://your-server/api/v3/campaigns
