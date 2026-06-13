@@ -140,43 +140,37 @@ final class UserPrefFilters
      * Also used standalone by the account-overview reports via
      * DataEngine::getAccountOverviewFilters() in class-dataengine.php.
      *
-     * DIVERGENT COPIES — a follow-up should converge these to call showFilter():
+     * The optional $columnPrefix parameter allows aliased call sites to qualify
+     * column names (e.g. pass '2c.' for ReportSummaryForm which queries against
+     * the 202_clicks alias). The default empty string keeps all existing
+     * single-argument callers byte-identical to before.
      *
-     *   202-config/functions-tracking202.php ~line 1345 (visitor-log context):
-     *     real:          " AND click_filtered='0' "     [matches]
-     *     filtered:      " AND click_filtered='1' "     [matches]
-     *     filtered_bot:  " AND click_bot='1'"           [matches, trailing space differs]
-     *     leads:         " AND click_filtered='0' AND click_lead='1' "
-     *                    *** DIVERGES — adds click_filtered='0' guard ***
+     * The scattered inline copies listed below are being converged to call this
+     * method:
      *
-     *   202-Mobile/mini-stats/202-ministats.php ~line 18,
-     *   tracking202/ajax/sort_browsers.php ~line 26,
-     *   tracking202/ajax/sort_cities.php ~line 26,
-     *   tracking202/ajax/sort_isp.php ~line 26,
-     *   tracking202/ajax/sort_ips.php ~line 26,
-     *   tracking202/ajax/sort_referers.php ~line 26,
-     *   tracking202/ajax/sort_rotator.php ~line 25,
-     *   tracking202/ajax/account_overview.php ~line 48,
-     *   tracking202/ajax/sort_landing_pages.php ~line 26:
-     *     real:          " AND click_filtered='0' "     [matches]
-     *     filtered:      " AND click_filtered='1' "     [matches]
-     *     filtered_bot:  " AND click_bot='1' "          [matches]
-     *     leads:         " AND click_lead='1' "
-     *                    (functionally equivalent to click_lead!='0' on tinyint(1))
+     *   202-Mobile/mini-stats/202-ministats.php,
+     *   tracking202/ajax/sort_browsers.php,
+     *   tracking202/ajax/sort_cities.php,
+     *   tracking202/ajax/sort_isp.php,
+     *   tracking202/ajax/sort_ips.php,
+     *   tracking202/ajax/sort_referers.php,
+     *   tracking202/ajax/sort_rotator.php,
+     *   tracking202/ajax/account_overview.php,
+     *   tracking202/ajax/sort_landing_pages.php,
+     *   202-config/ReportSummaryForm.class.php (uses $columnPrefix = '2c.').
      *
-     *   202-config/ReportSummaryForm.class.php ~line 928:
-     *     real:          AND 2c.click_filtered=0        [unquoted, different alias]
-     *     filtered:      AND 2c.click_filtered=1        [unquoted, different alias]
-     *     filtered_bot:  AND 2c.click_bot=1             [unquoted, different alias]
-     *     leads:         AND 2c.click_lead!=0           [unquoted; same logic as here]
+     *   EXCEPTION — 202-config/functions-tracking202.php (visitor-log context)
+     *   is deliberately left as-is: its 'leads' case adds an extra
+     *   `AND click_filtered='0'` guard (real-leads-only semantics) that is
+     *   intentionally different from this method and must not be replaced.
      */
-    public static function showFilter(string $show): string
+    public static function showFilter(string $show, string $columnPrefix = ''): string
     {
         return match ($show) {
-            'real' => " AND click_filtered='0' ",
-            'filtered' => " AND click_filtered='1' ",
-            'filtered_bot' => " AND click_bot='1' ",
-            'leads' => " AND click_lead!='0' ",
+            'real' => " AND " . $columnPrefix . "click_filtered='0' ",
+            'filtered' => " AND " . $columnPrefix . "click_filtered='1' ",
+            'filtered_bot' => " AND " . $columnPrefix . "click_bot='1' ",
+            'leads' => " AND " . $columnPrefix . "click_lead!='0' ",
             default => '',
         };
     }

@@ -1340,6 +1340,8 @@ function query(
         $click_sql .= " AND      2c.click_id='" . $mysql['user_landing_subid'] . "'";
     }
 
+    // NOTE: intentionally NOT converged to UserPrefFilters::showFilter — this
+    // visitor-log view scopes 'leads' to real (non-filtered) leads only.
     // set show preferences
     if ($pref_show == true) {
         if ($user_row['user_pref_show'] == 'filtered') {

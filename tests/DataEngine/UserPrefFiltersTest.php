@@ -173,4 +173,11 @@ final class UserPrefFiltersTest extends TestCase
         self::assertSame(" AND click_lead!='0' ", UserPrefFilters::showFilter('leads'));
         self::assertSame('', UserPrefFilters::showFilter('unknown'));
     }
+
+    public function testShowFilterAppliesColumnPrefix(): void
+    {
+        self::assertSame(" AND 2c.click_filtered='0' ", UserPrefFilters::showFilter('real', '2c.'));
+        self::assertSame(" AND 2c.click_lead!='0' ", UserPrefFilters::showFilter('leads', '2c.'));
+        self::assertSame('', UserPrefFilters::showFilter('all', '2c.'));
+    }
 }

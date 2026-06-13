@@ -22,21 +22,7 @@ $user_result = _mysqli_query($user_sql); //($user_sql);
 $user_row = $user_result->fetch_assoc();
 $breakdown = $user_row['user_pref_breakdown'];
 
-if ($user_row['user_pref_show'] == 'all') {
-	$click_filtered = '';
-}
-if ($user_row['user_pref_show'] == 'real') {
-	$click_filtered = " AND click_filtered='0' ";
-}
-if ($user_row['user_pref_show'] == 'filtered') {
-	$click_filtered = " AND click_filtered='1' ";
-}
-if ($user_row['user_pref_show'] == 'filtered_bot') {
-	$click_filtered = " AND click_bot='1' ";
-}
-if ($user_row['user_pref_show'] == 'leads') {
-	$click_filtered = " AND click_lead='1' ";
-}
+$click_filtered = \Prosper202\DataEngine\UserPrefFilters::showFilter((string)($user_row['user_pref_show'] ?? ''));
 
 if ($user_row['user_cpc_or_cpv'] == 'cpv')  $cpv = true;
 else 										$cpv = false;

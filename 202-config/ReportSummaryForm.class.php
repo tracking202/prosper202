@@ -925,23 +925,7 @@ class ReportSummaryForm extends ReportBasicForm
 			";
 		}
 
-		if ($user_row['user_pref_show'] == 'real') {
-			$info_sql .= "
-				AND 2c.click_filtered=0
-			";
-		} else if ($user_row['user_pref_show'] == 'filtered') {
-			$info_sql .= "
-				AND 2c.click_filtered=1
-			";
-		} else if ($user_row['user_pref_show'] == 'filtered_bot') {
-			$info_sql .= "
-				AND 2c.click_bot=1
-			";
-		} else if ($user_row['user_pref_show'] == 'leads') {
-			$info_sql .= "
-				AND 2c.click_lead!=0
-			";
-		}
+		$info_sql .= \Prosper202\DataEngine\UserPrefFilters::showFilter((string)($user_row['user_pref_show'] ?? ''), '2c.');
 		if ($user_row['user_pref_country_id']) {
 			$mysql['user_pref_country_id'] = $db->real_escape_string($user_row['user_pref_country_id']);
 			$info_sql .= "
