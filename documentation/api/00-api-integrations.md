@@ -1,6 +1,6 @@
 # Prosper202 REST API v3
 
-Prosper202 includes a full REST API (v3) for managing campaigns, tracking clicks, reporting, attribution, user management, server-side sync, and system administration. The API returns JSON and follows standard REST conventions.
+Prosper202 includes a full REST API (v3) for managing campaigns, tracking clicks, reporting, attribution, forecasting, user management, server-side sync, and system administration. The API returns JSON and follows standard REST conventions.
 
 ## API Endpoint
 
@@ -126,6 +126,7 @@ Empty response body.
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |
+| Forecast Events | CRUD + bulk-upsert | [Forecast Events](18-forecast-events.md) |
 | Users | CRUD + roles, API keys, preferences | [Users](14-users.md) |
 | System | Health, version, cron, errors, metrics, db-stats | [System](15-system.md) |
 | Sync | Jobs, planning, change feed, audit | [Sync](16-sync.md) |
