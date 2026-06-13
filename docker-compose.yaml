@@ -8,6 +8,13 @@ services:
       - ./build/php/conf.d/error-reporting.ini:/usr/local/etc/php/conf.d/zz-error-reporting.ini:ro
     environment:
       APP_ENV: ${APP_ENV:-development}
+      # Passed through so the entrypoint can self-write 202-config.php and the
+      # wizard opens with the database step already done. Must match the db
+      # service below.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env — copy .env.example or run ./start.sh}
+      MYSQL_DATABASE: prosper202
+      DB_HOST: db
+      MC_HOST: memcached
     depends_on:
       db:
         condition: service_healthy
