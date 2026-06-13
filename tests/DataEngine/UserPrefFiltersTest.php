@@ -147,7 +147,7 @@ final class UserPrefFiltersTest extends TestCase
     {
         $result = UserPrefFilters::build($this->prefs(['user_pref_ip' => '1.2.3.4']), 0, false, null);
 
-        self::assertSame(" AND 2st.ip_id=''", $result['filter']);
+        self::assertSame(" AND 0=1", $result['filter']);
     }
 
     public function testResolvedRefererFilterUsesInList(): void
@@ -161,7 +161,7 @@ final class UserPrefFiltersTest extends TestCase
     {
         $result = UserPrefFilters::build($this->prefs(['user_pref_referer' => 'example.com']), 0, false, null, null);
 
-        self::assertSame(" AND 2st.click_referer_site_url_id=''", $result['filter']);
+        self::assertSame(" AND 0=1", $result['filter']);
     }
 
     public function testShowFilterMapping(): void

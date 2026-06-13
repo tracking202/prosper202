@@ -833,7 +833,9 @@ ORDER BY ppc_network_id , name , variable";
             return false;
         }
 
-        $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . $click_id);
+        // click_id can originate from a caller-supplied cookie/request value;
+        // cast to int so it cannot break out of the WHERE clause.
+        $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
 
         if (!$db->query($dsql)) {
             error_log('DataEngine setDirtyHour rollup failed: ' . $db->error);

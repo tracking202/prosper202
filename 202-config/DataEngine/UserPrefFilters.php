@@ -106,8 +106,10 @@ final class UserPrefFilters
             if (($ipIdList ?? '') !== '') {
                 $filter .= " AND 2st.ip_id=" . $ipIdList;
             } else {
-                // Filter matched nothing: force an empty result set.
-                $filter .= " AND 2st.ip_id=''";
+                // Filter matched nothing: force an empty result set. ip_id is
+                // numeric/NULL, so `ip_id=''` would coerce to `ip_id=0` and
+                // could match real rows; use an unconditionally false predicate.
+                $filter .= " AND 0=1";
             }
         }
 
@@ -115,7 +117,9 @@ final class UserPrefFilters
             if (($refererIdList ?? '') !== '') {
                 $filter .= " AND 2st.click_referer_site_url_id in (" . $refererIdList . ")";
             } else {
-                $filter .= " AND 2st.click_referer_site_url_id=''";
+                // click_referer_site_url_id is numeric/NULL; `=''` would coerce
+                // to 0 and match direct/unknown-referer rows. Force empty set.
+                $filter .= " AND 0=1";
             }
         }
 

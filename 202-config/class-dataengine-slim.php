@@ -88,9 +88,11 @@ if (!class_exists('DataEngine')) {
                 return false;
             }
 
+            // click_id can originate from a caller-supplied cookie/request
+            // value; cast to int so it cannot break out of the WHERE clause.
             $dsql = ClickRollupSql::insertSelect(
                 '202_dataengine',
-                '2c.click_id=' . $click_id,
+                '2c.click_id=' . (int) $click_id,
                 updateLandingPageId: true
             );
 
