@@ -57,6 +57,11 @@ zip**, not a `git clone` — the release already bundles all PHP dependencies
 > Maintainers build this zip with `build/scripts/package-release.sh` (see
 > [Building a release](#building-a-release)).
 
+> **Coming soon:** a one-click install via Softaculous/Installatron, so you can
+> install Prosper202 straight from your hosting control panel with no upload step.
+> It is packaged from the same release zip; until it lands in those catalogs, use
+> the download-and-upload steps above.
+
 ### From source
 
 #### Quick Install
