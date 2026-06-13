@@ -513,14 +513,14 @@ ORDER BY landing_page_id ASC";
             SUM(2c.click_out) AS click_out,
             SUM(2c.leads) AS leads,
             2ac.aff_campaign_payout AS payout,
-            (SUM(click_out)/sum(clicks))*100 as ctr,
+            CASE WHEN SUM(clicks) > 0 THEN (SUM(click_out)/SUM(clicks))*100 ELSE 0 END as ctr,
             SUM(2c.income) AS income,
             SUM(2c.cost) AS cost,
-            SUM(income)/SUM(clicks) as epc,
-            (SUM(click_lead)/sum(clicks))*100 as su_ratio,
-            SUM(cost)/sum(clicks) AS cpc,
+            CASE WHEN SUM(clicks) > 0 THEN SUM(income)/SUM(clicks) ELSE 0 END as epc,
+            CASE WHEN SUM(clicks) > 0 THEN (SUM(click_lead)/SUM(clicks))*100 ELSE 0 END as su_ratio,
+            CASE WHEN SUM(clicks) > 0 THEN SUM(cost)/SUM(clicks) ELSE 0 END AS cpc,
             (SUM(income)-SUM(cost)) AS net,
-            ((SUM(income)-SUM(cost))/SUM(cost)*100 ) as roi
+            CASE WHEN SUM(cost) > 0 THEN ((SUM(income)-SUM(cost))/SUM(cost)*100) ELSE 0 END as roi
              FROM 202_dataengine AS 2c
              LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id)
              WHERE 2c.user_id = " . $this->mysql['user_id'] . "
@@ -1127,10 +1127,14 @@ ORDER BY ppc_network_id , name , variable";
                 $sqlObj .= "LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) ";
             }
 
-            $sqlObj .= "WHERE click_time >= '" . $from . "' AND click_time <= '" . $to . "' ";
+            // click_time is an integer timestamp and aff_campaign_id an int id;
+            // cast both so neither can break out of the clause regardless of
+            // how the caller sourced them (from/to come from the request,
+            // campaign from the stored chart config).
+            $sqlObj .= "WHERE click_time >= '" . (int) $from . "' AND click_time <= '" . (int) $to . "' ";
 
             if ($campaign != '0') {
-                $sqlObj .= "AND aff_campaign_id = '" . $campaign . "' ";
+                $sqlObj .= "AND aff_campaign_id = '" . (int) $campaign . "' ";
             }
             $sqlObj .= $click_filtered . " ";
             $sqlObj .= "GROUP BY " . $rangeGroupby . ";";
