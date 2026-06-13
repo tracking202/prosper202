@@ -123,6 +123,10 @@ class DataEngine
      * Runs a simple COUNT(DISTINCT ...) on 202_dataengine — no lookup JOINs,
      * no aggregates — so it can use covering indexes.
      *
+     * COUNT(DISTINCT ...) ignores NULLs, but a NULL dimension renders as its
+     * own report group ("[no keyword]" etc.), so one is added back whenever
+     * any row has a NULL key — otherwise the last page was unreachable.
+     *
      * @param array{join?: string, filter?: string} $filters
      */
     private function countGroups(string $fkColumn, string $from, string $to, array $filters): int
@@ -131,7 +135,7 @@ class DataEngine
             return 0;
         }
 
-        $countSql = "SELECT COUNT(DISTINCT 2st." . $fkColumn . ") AS cnt FROM 202_dataengine AS 2st "
+        $countSql = "SELECT COUNT(DISTINCT 2st." . $fkColumn . ") + IFNULL(MAX(2st." . $fkColumn . " IS NULL), 0) AS cnt FROM 202_dataengine AS 2st "
             . $filters['join']
             . $this->mysql['user_id_query']
             . " AND click_time >= " . $from
