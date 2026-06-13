@@ -106,6 +106,9 @@ namespace Tests\DataEngine {
                 'isp_name' => '',
                 'landing_page_nickname' => '',
                 'ip_address' => '',
+                'device_name' => '',
+                'browser_name' => null,
+                'platform_name' => '',
             ]);
 
             self::assertSame('[no keyword]', $html['keyword']);
@@ -116,6 +119,9 @@ namespace Tests\DataEngine {
             self::assertSame('[no isp]', $html['isp_name']);
             self::assertSame('[direct link]', $html['landing_page_nickname']);
             self::assertSame('[no ip]', $html['ip_address']);
+            self::assertSame('[no device]', $html['device_name']);
+            self::assertSame('[no browser]', $html['browser_name']);
+            self::assertSame('[no platform]', $html['platform_name']);
         }
 
         public function testDimensionValuesAreHtmlEscaped(): void

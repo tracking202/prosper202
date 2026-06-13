@@ -837,21 +837,23 @@ ORDER BY ppc_network_id , name , variable";
     }
 
     /**
-     * Resolve the ORDER BY clause for a report.
+     * Resolve the ORDER BY clause for a report. An explicit $order (used by
+     * the breakdown/hourly reports) wins; otherwise the posted sort key is
+     * consulted. Unknown keys fall back to leads DESC via the SortOrder
+     * whitelist, so request input can never reach the SQL verbatim.
      *
-     * Preserved legacy contract: the posted sort key is always overwritten
-     * with the explicit $order argument (default ''), so grouped reports
-     * always sort by leads DESC and pagination links (which read
-     * $_POST['order'] afterwards) carry the same value. Do not "fix" this
-     * without also auditing the grouped-report SQL: mapped clauses have no
-     * leading space and only parse after the call sites that pass an
-     * explicit $order.
+     * (The legacy version unconditionally overwrote $_POST['order'] with
+     * the $order argument, which made posted sort keys unreachable for
+     * grouped reports.)
      */
     public function sortOrder($order = '')
     {
-        $_POST['order'] = htmlentities((string) $order, ENT_QUOTES, 'UTF-8');
+        $sortKey = (string) $order;
+        if ($sortKey === '') {
+            $sortKey = htmlentities((string) ($_POST['order'] ?? ''), ENT_QUOTES, 'UTF-8');
+        }
 
-        return SortOrder::orderByClause($_POST['order']);
+        return SortOrder::orderByClause($sortKey);
     }
 
     /**
@@ -912,7 +914,10 @@ ORDER BY ppc_network_id , name , variable";
 
         $delayed_result = self::$db->query("SELECT * FROM 202_dirty_hours where processed != 1");
         if (!$delayed_result) {
-            exit();
+            // Legacy exit() here killed the whole cron run; log and let the
+            // remaining cron tasks proceed.
+            error_log('DataEngine processDirtyHours failed to read 202_dirty_hours: ' . self::$db->error);
+            return;
         }
 
         while ($delayed_row = $delayed_result->fetch_assoc()) {
@@ -1248,8 +1253,6 @@ ORDER BY ppc_network_id , name , variable";
  */
 class DisplayData
 {
-    private static ?mysqli $db = null;
-
     /** Report type => table header label. */
     private const FEATURE_LABELS = [
         'LpOverview' => 'Direct Link / Landing Pages',
@@ -1289,15 +1292,6 @@ class DisplayData
 
     /** Report types whose table is not paginated. */
     private const UNPAGINATED = ['breakdown', 'hourly', 'weekly'];
-
-    public function __construct()
-    {
-        try {
-            self::$db = DB::getInstance()->getConnection();
-        } catch (Exception) {
-            self::$db = null;
-        }
-    }
 
     /**
      * Bootstrap label style (primary/important/default) for a net or ROI value.
@@ -1415,7 +1409,7 @@ class DisplayData
             $totalNetStyle = self::labelStyle($html['total_net'] ?? 0);
             $totalRoiStyle = self::labelStyle($html['total_roi'] ?? 0);
 
-            $masked = $userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher'];
+            $masked = $userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher']);
 
             if ($i != $rowCount - 1) {
                 if ($masked) {
@@ -1533,7 +1527,7 @@ class DisplayData
                 $netStyle = self::labelStyle($ppc_account['net']);
                 $roiStyle = self::labelStyle($ppc_account['roi']);
 
-                if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+                if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
                     $ppc_account['clicks'] = '?';
                     $ppc_account['click_out'] = '?';
                     $ppc_account['leads'] = '?';
@@ -1569,7 +1563,7 @@ class DisplayData
                 </tr> ';
             }
 
-            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
                 $campaign['total_clicks'] = '?';
                 $campaign['total_click_out'] = '?';
                 $campaign['total_leads'] = '?';
@@ -1642,7 +1636,7 @@ class DisplayData
                     foreach ($html['variables'] as $variables) {
                         echo '
                     <tr class="sub">
-                       <td class="result_main_column_level_1" colspan="13"><strong>' . ($html[$i]['ppc_network_name'] ?? '') . ' - ' . ($variables[0]['variable_name'] ?? '') . '</strong></td>
+                       <td class="result_main_column_level_1" colspan="13"><strong>' . ($html[0]['ppc_network_name'] ?? '') . ' - ' . ($variables[0]['variable_name'] ?? '') . '</strong></td>
                     </tr> ';
 
                         foreach ($variables['values'] ?? [] as $value) {
@@ -1703,6 +1697,13 @@ class DisplayData
         echo $featureLabel . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
 
         foreach (array_values((array) $theData) as $html) {
+            // The trailing totals row carries only total_* keys; letting it
+            // fall through printed an "Unknown" row of empty cells (plus
+            // undefined-key warnings) in device/browser/platform downloads.
+            if (!isset($html['clicks'])) {
+                continue;
+            }
+
             $featureKey = match ($reportType) {
                 'keyword' => $html['keyword'] ?? false,
                 'textad' => $html['text_ad_name'] ?? false,
@@ -1729,7 +1730,7 @@ class DisplayData
                 continue;
             }
 
-            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
+            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
                 $html['clicks'] = '?';
                 $html['click_out'] = '?';
                 $html['leads'] = '?';
@@ -1783,7 +1784,10 @@ class DisplayData
 
     public function paginate($reportType, $foundRows)
     {
-        $order = $_POST['order'] ?? '';
+        // Whitelisted, not escaped: this value lands inside an onclick
+        // handler, where HTML entities are decoded before the JS executes,
+        // so only known sort keys may be reflected at all.
+        $order = SortOrder::canonicalKey((string) ($_POST['order'] ?? ''));
 
         $fileSlug = match ($reportType) {
             'textad' => 'text_ads',

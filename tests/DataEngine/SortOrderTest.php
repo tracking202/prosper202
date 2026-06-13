@@ -16,32 +16,50 @@ final class SortOrderTest extends TestCase
         self::assertSame(' ORDER BY leads DESC', SortOrder::orderByClause('clicks; DROP TABLE 202_clicks'));
     }
 
-    public function testDefaultClauseKeepsItsLeadingSpace(): void
+    public function testEveryClauseKeepsItsLeadingSpace(): void
     {
-        // Grouped-report SQL concatenates the default clause directly after
+        // Report SQL concatenates the clause directly after
         // "group by <column>", so the leading space is load-bearing.
         self::assertStringStartsWith(' ', SortOrder::DEFAULT_ORDER);
+        self::assertStringStartsWith(' ', SortOrder::orderByClause('sort_breakdown_clicks asc'));
+        self::assertStringStartsWith(' ', SortOrder::orderByClause('breakdown desc'));
     }
 
     public function testTimeOrderingMapsDirectly(): void
     {
-        self::assertSame('ORDER BY click_time DESC', SortOrder::orderByClause('sort_breakdown_time_order desc'));
-        self::assertSame('ORDER BY click_time ASC', SortOrder::orderByClause('sort_breakdown_time_order asc'));
+        self::assertSame(' ORDER BY click_time DESC', SortOrder::orderByClause('sort_breakdown_time_order desc'));
+        self::assertSame(' ORDER BY click_time ASC', SortOrder::orderByClause('sort_breakdown_time_order asc'));
     }
 
-    public function testMetricOrderingIsInverted(): void
+    public function testMetricOrderingMatchesItsKey(): void
     {
-        // The posted value is the *next* toggle state, so "asc" sorts DESC.
-        self::assertSame('ORDER BY `clicks` DESC', SortOrder::orderByClause('sort_breakdown_clicks asc'));
-        self::assertSame('ORDER BY `clicks` ASC', SortOrder::orderByClause('sort_breakdown_clicks desc'));
-        self::assertSame('ORDER BY `net` DESC', SortOrder::orderByClause('sort_breakdown_net asc'));
-        self::assertSame('ORDER BY `roi` ASC', SortOrder::orderByClause('sort_breakdown_roi desc'));
+        // The legacy map inverted these (asc sorted DESC) to match a toggle
+        // contract of a UI that no longer exists; keys now mean what they say.
+        self::assertSame(' ORDER BY `clicks` ASC', SortOrder::orderByClause('sort_breakdown_clicks asc'));
+        self::assertSame(' ORDER BY `clicks` DESC', SortOrder::orderByClause('sort_breakdown_clicks desc'));
+        self::assertSame(' ORDER BY `net` ASC', SortOrder::orderByClause('sort_breakdown_net asc'));
+        self::assertSame(' ORDER BY `roi` DESC', SortOrder::orderByClause('sort_breakdown_roi desc'));
+    }
+
+    public function testSuRatioSortsByItsRealAlias(): void
+    {
+        // The legacy map produced ORDER BY `su`, a column no report query
+        // defines; the metric's alias is su_ratio.
+        self::assertSame(' ORDER BY `su_ratio` DESC', SortOrder::orderByClause('sort_breakdown_su_ratio desc'));
+    }
+
+    public function testCanonicalKeyOnlyReflectsWhitelistedKeys(): void
+    {
+        self::assertSame('sort_breakdown_income desc', SortOrder::canonicalKey('sort_breakdown_income desc'));
+        self::assertSame('', SortOrder::canonicalKey(''));
+        self::assertSame('', SortOrder::canonicalKey("x'); alert(1);//"));
+        self::assertSame('', SortOrder::canonicalKey('sort_breakdown_income DESC'), 'Case must match exactly');
     }
 
     public function testHourBreakdownOrdering(): void
     {
         self::assertSame(
-            'ORDER BY cast(DATE_FORMAT(FROM_UNIXTIME(click_time),"%k") as UNSIGNED) ASC',
+            ' ORDER BY cast(DATE_FORMAT(FROM_UNIXTIME(click_time),"%k") as UNSIGNED) ASC',
             SortOrder::orderByClause('breakdown asc')
         );
     }
@@ -58,10 +76,10 @@ final class SortOrderTest extends TestCase
         foreach ($keys as $key) {
             foreach (['asc', 'desc'] as $direction) {
                 $clause = SortOrder::orderByClause($key . ' ' . $direction);
-                self::assertMatchesRegularExpression(
-                    '/^ORDER BY `[a-z_]+` (ASC|DESC)$/',
+                self::assertSame(
+                    ' ORDER BY `' . str_replace(['sort_breakdown_', 'click_throughs'], ['', 'click_out'], $key) . '` ' . strtoupper($direction),
                     $clause,
-                    "Clause for '$key $direction' must be a simple whitelisted ORDER BY"
+                    "Clause for '$key $direction' must sort its own column in the stated direction"
                 );
             }
         }

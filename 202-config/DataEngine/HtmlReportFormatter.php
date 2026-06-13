@@ -31,9 +31,11 @@ final class HtmlReportFormatter
         'country_code' => 'non',
         'isp_name' => '[no isp]',
         'landing_page_nickname' => '[direct link]',
-        'device' => '[no device]',
-        'browser' => '[no browser]',
-        'platform' => '[no platform]',
+        // The legacy switch keyed these as 'device'/'browser'/'platform',
+        // which no report column is named, so the placeholders never fired.
+        'device_name' => '[no device]',
+        'browser_name' => '[no browser]',
+        'platform_name' => '[no platform]',
     ];
 
     /** Totals keys that must always be present (default '0') in the output. */
