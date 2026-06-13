@@ -8,10 +8,11 @@ namespace Prosper202\DataEngine;
  * Accumulates the "Totals for report" row while iterating report rows.
  *
  * This reproduces the accumulation loop that was copy-pasted into every
- * report method, including its intentional quirks:
- *  - `payout` is a running average recomputed as (previous + current) / n,
- *    which is how the legacy reports have always displayed it;
- *  - ratios are recomputed from the running totals on every row.
+ * report method, with one deliberate correction: total `payout` is now
+ * income/leads across the whole report — the same definition every row's
+ * payout column uses. The legacy code computed a running pseudo-average,
+ * round((previous + current) / row_count, 2), whose weights don't sum to 1
+ * and whose result changed when the same report was re-sorted.
  *
  * Divisions by zero return 0 instead of raising DivisionByZeroError. The
  * legacy code wrapped these divisions in `@round(...)`, which silenced the
@@ -55,8 +56,8 @@ final class ReportTotals
         $totals['cpc'] = self::ratio($totals['cost'], $totals['clicks'], 5);
         $totals['leads'] += (float) ($row['leads'] ?? 0);
         $totals['su_ratio'] = self::ratio($totals['leads'] * 100, $totals['clicks'], 2);
-        $totals['payout'] = round(($totals['payout'] + (float) ($row['payout'] ?? 0)) / $this->rowCount, 2);
         $totals['income'] += (float) ($row['income'] ?? 0);
+        $totals['payout'] = self::ratio($totals['income'], $totals['leads'], 2);
         $totals['epc'] = self::ratio($totals['income'], $totals['clicks'], 5);
         $totals['net'] = $totals['income'] - $totals['cost'];
         $totals['roi'] = self::ratio($totals['net'] * 100, $totals['cost'], 0);

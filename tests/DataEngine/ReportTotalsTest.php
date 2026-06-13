@@ -41,22 +41,47 @@ final class ReportTotalsTest extends TestCase
         self::assertEquals(40.0, $result['ctr'], 'CTR = click_out / clicks * 100');
         self::assertEquals(0.1, $result['cpc'], 'CPC = cost / clicks');
         self::assertEquals(5.0, $result['su_ratio'], 'S/U = leads / clicks * 100');
-        self::assertEquals(8.0, $result['payout']);
+        self::assertEquals(10.0, $result['payout'], 'payout = income / leads');
         self::assertEquals(0.5, $result['epc'], 'EPC = income / clicks');
         self::assertEquals(40.0, $result['net'], 'net = income - cost');
         self::assertEquals(400.0, $result['roi'], 'ROI = net / cost * 100');
     }
 
-    public function testPayoutIsTheLegacyRunningAverage(): void
+    public function testPayoutIsIncomeOverLeadsAcrossTheReport(): void
     {
         $totals = new ReportTotals();
-        $totals->add(['clicks' => 1, 'payout' => 10]);
-        $totals->add(['clicks' => 1, 'payout' => 20]);
+        $totals->add(['clicks' => 1, 'leads' => 1, 'income' => 10]);
+        $totals->add(['clicks' => 1, 'leads' => 1, 'income' => 20]);
+        $totals->add(['clicks' => 1, 'leads' => 1, 'income' => 30]);
 
-        // Legacy formula: round((previous_total + current) / row_count, 2)
-        // = round((10 + 20) / 2, 2) = 15.0
-        self::assertEquals(15.0, $totals->toArray()['payout']);
-        self::assertSame(2, $totals->rowCount());
+        // 60 income / 3 leads — not the legacy running pseudo-average,
+        // which produced 15.0 here (and a different value re-sorted).
+        self::assertEquals(20.0, $totals->toArray()['payout']);
+        self::assertSame(3, $totals->rowCount());
+    }
+
+    public function testPayoutIsOrderIndependent(): void
+    {
+        $ascending = new ReportTotals();
+        $descending = new ReportTotals();
+        $rows = [
+            ['leads' => 1, 'income' => 10],
+            ['leads' => 1, 'income' => 20],
+            ['leads' => 1, 'income' => 30],
+        ];
+
+        foreach ($rows as $row) {
+            $ascending->add($row);
+        }
+        foreach (array_reverse($rows) as $row) {
+            $descending->add($row);
+        }
+
+        self::assertEquals(
+            $ascending->toArray()['payout'],
+            $descending->toArray()['payout'],
+            'Re-sorting a report must not change its totals'
+        );
     }
 
     public function testZeroDenominatorsProduceZeroInsteadOfFataling(): void
