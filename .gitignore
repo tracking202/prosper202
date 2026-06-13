@@ -26,6 +26,9 @@ build/debug/
 build/logs/
 build/staging-config.php
 
+# Release artifacts (build/scripts/package-release.sh output)
+/dist/
+
 # Development and documentation
 /docs/
 phpstan-errors.txt

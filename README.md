@@ -33,7 +33,33 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 
 ## Installation
 
-### Quick Install
+There are two tracks. Pick by what you have access to:
+
+| You have… | Use | What you do |
+|-----------|-----|-------------|
+| Shared/cPanel hosting, **no terminal** | **Download & upload** (below) | Upload a pre-built zip, click through the wizard |
+| A terminal (VPS, local, Docker) | **From source** (below) | `git clone` + `./install.sh` or Docker |
+
+### Download & Upload (no terminal)
+
+For shared hosting (cPanel/Plesk) where you can't run Composer. Use the **release
+zip**, not a `git clone` — the release already bundles all PHP dependencies
+(`vendor/`) and the Go CLI binaries, so nothing needs to be compiled on the server.
+
+1. Download `prosper202-<version>.zip` from the
+   [Releases page](https://github.com/tracking202/prosper202/releases).
+2. Upload and extract it into your web root (cPanel **File Manager → Upload →
+   Extract**, or FTP).
+3. Browse to your site. The setup wizard runs automatically and walks you through
+   every step — it checks requirements, **creates the database for you**, validates
+   your API key, and creates your admin account. No config file editing, no terminal.
+
+> Maintainers build this zip with `build/scripts/package-release.sh` (see
+> [Building a release](#building-a-release)).
+
+### From source
+
+#### Quick Install
 
 ```bash
 git clone https://github.com/tracking202/prosper202.git
@@ -45,8 +71,9 @@ The install script will:
 - Check for PHP and Composer (installs Composer if missing)
 - Install PHP dependencies
 - Create config file from sample
+- Test/create the database and print the cron line to add
 
-### Docker
+#### Docker
 
 ```bash
 git clone https://github.com/tracking202/prosper202.git
@@ -72,7 +99,7 @@ Because anyone can deploy this compose file as-is, it ships with no known creden
 
 This stack is a development configuration (PHP `display_errors` is on). For production click servers, use the Manual Installation below with the tuned Nginx or Apache configs.
 
-### Manual Installation
+#### Manual Installation
 
 1. Clone and install dependencies:
    ```bash
@@ -305,6 +332,20 @@ cd go-cli && make test
 ```bash
 ./scripts/php-lint.sh
 ```
+
+### Building a release
+
+Produce the self-contained zip used by the [Download & Upload](#download--upload-no-terminal)
+track. It bundles `vendor/` (Composer `--no-dev`) and cross-built Go CLI binaries so
+end users need no Composer or Go toolchain:
+
+```bash
+build/scripts/package-release.sh
+# -> dist/prosper202-<version>.zip  (+ printed SHA256)
+```
+
+The version comes from `202-config/version.php`, the single source of truth, and is
+passed through to the Go build so the CLI's `--version` matches the zip name.
 
 ## Configuration
 

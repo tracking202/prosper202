@@ -171,11 +171,24 @@ if (file_exists(ROOT_PATH  . '202-config.php')) {
     die();
 }
 include_once(ROOT_PATH  . '202-config.php');
-// Load Composer autoloader if available for PSR-4 classes.
+// Composer dependencies provide the PSR-4 classes used by tracking, install,
+// and the API. A missing vendor/ almost always means the app was deployed from
+// a raw git clone without running `composer install`. Fail loudly with guidance
+// instead of silently limping on to a confusing "Class not found" fatal deeper
+// in the request (CLAUDE.md #4: no silent fallbacks).
 $autoloadPath = ROOT_PATH . 'vendor/autoload.php';
-if (file_exists($autoloadPath)) {
-    require_once $autoloadPath;
+if (!file_exists($autoloadPath)) {
+    http_response_code(500);
+    die('<h2>Prosper202: dependencies are missing</h2>'
+        . '<p>The <code>vendor/</code> folder was not found, so required libraries '
+        . 'cannot be loaded.</p><ul>'
+        . '<li><strong>Shared hosting / no terminal:</strong> download the official '
+        . 'release zip &mdash; it already bundles <code>vendor/</code> &mdash; and upload '
+        . 'that instead of a raw <code>git clone</code>.</li>'
+        . '<li><strong>Have a terminal:</strong> run <code>composer install</code> in the '
+        . 'Prosper202 directory.</li></ul>');
 }
+require_once $autoloadPath;
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
