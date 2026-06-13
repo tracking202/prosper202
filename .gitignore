@@ -36,7 +36,10 @@ task-plan-*
 multi-touch-qa-runbook.md
 
 # IDE and editor files
-.claude/
+# Ignore local Claude settings but keep version-controlled skills shipped with
+# the repo (e.g. the onboarding skill).
+.claude/*
+!.claude/skills/
 .github/copilot-instructions.md
 CLAUDE.local.md
 CLAUDE.md
