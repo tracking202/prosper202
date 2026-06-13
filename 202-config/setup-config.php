@@ -210,40 +210,59 @@ switch ($step) {
 		$dbhostro  = trim((string) ($_POST['dbhostro'] ?? ''));
 		$mchost  = trim((string) ($_POST['mchost'] ?? ''));
 
-		// Try to connect to the MySQL host server and gracefully handle mysqli strict mode
-		$db_error_msg = '';
-		$db_error_no = 0;
-		try {
-			$connect = mysqli_connect($dbhost, $dbuser, $dbpass, $dbname);
-		} catch (mysqli_sql_exception $e) {
-			$connect = false;
-			$db_error_msg = $e->getMessage();
-			$db_error_no = (int) $e->getCode();
-		}
+		// Probe the connection with return values rather than exceptions so we
+		// can distinguish "host/credentials wrong" from "database not created
+		// yet" and try to create the database ourselves.
+		mysqli_report(MYSQLI_REPORT_OFF);
+
+		// First connect to the server WITHOUT a database, so a missing database
+		// isn't mistaken for bad credentials.
+		$connect = mysqli_connect($dbhost, $dbuser, $dbpass);
 
 		//if it could not connect, error
 		if (!$connect) {
-			// Fall back to mysqli helper if the exception didn't capture the message
-			if ($db_error_msg === '') {
-				$db_error_msg = mysqli_connect_error();
-				$db_error_no = mysqli_connect_errno();
-			}
+			$db_error_msg = mysqli_connect_error();
+			$db_error_no = mysqli_connect_errno();
 
 			_die("<h6>Error establishing a database connection</h6>
 			<p><small>This either means that the username and password information is incorrect or we can't contact the database server at <code>$dbhost</code>. This could mean your host's database server is down.</small></p>
-			<p><strong style='color: red;'>MySQL Error ($db_error_no): $db_error_msg</strong></p> 
+			<p><strong style='color: red;'>MySQL Error ($db_error_no): $db_error_msg</strong></p>
 			<small>
-			<ul> 
+			<ul>
 				<li>Are you sure you have the correct username and password?</li>
 				<li>Are you sure that you have typed the correct hostname?</li>
-				<li>Are you sure that you have typed the correct database name?</li>
 				<li>Are you sure that the database server is running?</li>
 			</ul>
-			</small> 
+			</small>
 			<p><small>If you're unsure what these terms mean you should probably contact your host. If you still need help, please visit the <a href='http://support.tracking202.com/how-to-set-up-and-use-prosper202-pro/installing-prosper202?utm_source=db-install-error'>Prosper202 Support Site</a>.</small> </p>
 			<p><a href='setup-config.php?step=1' class='btn btn-sm btn-p202 btn-block'>Go back and enter your database credentials again!</a></p>
 		");
 		}
+
+		// Host + credentials are good. Select the database; if it doesn't exist
+		// yet, try to create it. On shared hosting the account often lacks the
+		// CREATE privilege (the DB must be made in the control panel first), so
+		// fail gracefully with that guidance. Check every return value.
+		$create_error = '';
+		if (!mysqli_select_db($connect, $dbname)) {
+			$dbname_quoted = str_replace('`', '``', $dbname);
+			$create_sql = "CREATE DATABASE IF NOT EXISTS `$dbname_quoted` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+			if (!mysqli_query($connect, $create_sql)) {
+				$create_error = mysqli_error($connect);
+			} elseif (!mysqli_select_db($connect, $dbname)) {
+				$create_error = mysqli_error($connect) ?: 'could not select the database after creating it';
+			}
+		}
+		if ($create_error !== '') {
+			$dbname_html = htmlspecialchars($dbname, ENT_QUOTES, 'UTF-8');
+			$create_error_html = htmlspecialchars($create_error, ENT_QUOTES, 'UTF-8');
+			_die("<h6>Could not create the database</h6>
+			<p><small>We connected to <code>$dbhost</code> as <code>$dbuser</code>, but the database <code>$dbname_html</code> does not exist and we couldn't create it. On shared hosting you usually have to create the database yourself first (for example cPanel &rarr; <em>MySQL Databases</em>), then come back and re-run this step.</small></p>
+			<p><strong style='color: red;'>MySQL Error: $create_error_html</strong></p>
+			<p><a href='setup-config.php?step=1' class='btn btn-sm btn-p202 btn-block'>Go back and check your database details</a></p>
+		");
+		}
+
 		$configPath = substr(__DIR__, 0, -10) . '/202-config.php';
 		$handle = fopen($configPath, 'w');
 		if ($handle === false) {
