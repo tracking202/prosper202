@@ -23,11 +23,11 @@ date using its expected impact, lead, and lag windows.
 | `event_name` | string | Yes | Event label (max 255) |
 | `event_date` | string | Yes | Start date `YYYY-MM-DD` (max 10) |
 | `end_date` | string | No | End date `YYYY-MM-DD` for multi-day events (max 10) |
-| `recurrence` | string | No | Recurrence hint, e.g. `yearly` (max 10) |
-| `impact_type` | string | No | Direction of impact, e.g. `lift` / `drop` (max 10) |
-| `expected_impact_pct` | number | No | Expected percentage impact on the metric |
-| `lead_days` | integer | No | Days before the event that impact begins |
-| `lag_days` | integer | No | Days after the event that impact persists |
+| `recurrence` | string | No | One of `none`, `monthly`, `yearly`, `custom` (default `none`) |
+| `impact_type` | string | No | One of `boost`, `suppress`, `neutral` (default `neutral`) |
+| `expected_impact_pct` | number | No | Expected percentage impact on the metric (decimal) |
+| `lead_days` | integer | No | Days before the event that impact begins (default 0) |
+| `lag_days` | integer | No | Days after the event that impact persists (default 0) |
 | `tags` | string | No | Comma-separated tags, e.g. `us-holidays,retail` (max 500) |
 | `notes` | string | No | Free-form notes (max 500) |
 
@@ -49,9 +49,9 @@ curl -X POST https://your-domain.com/api/v3/forecast-events \
   -d '{
     "event_name": "Black Friday",
     "event_date": "2026-11-27",
-    "recurrence": "yearly",
-    "impact_type": "lift",
-    "expected_impact_pct": 35,
+    "recurrence": "custom",
+    "impact_type": "boost",
+    "expected_impact_pct": 200,
     "lead_days": 3,
     "lag_days": 2,
     "tags": "us-holidays,retail"
