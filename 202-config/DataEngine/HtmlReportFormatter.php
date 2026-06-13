@@ -107,7 +107,7 @@ final class HtmlReportFormatter
         }
 
         if (isset(self::EMPTY_PLACEHOLDERS[$key])) {
-            if (!$value) {
+            if ($value === null || $value === '') {
                 return $this->escape(self::EMPTY_PLACEHOLDERS[$key]);
             }
 
@@ -126,7 +126,7 @@ final class HtmlReportFormatter
 
     private function formatIpAddress(mixed $value): string
     {
-        if (!$value) {
+        if ($value === null || $value === '') {
             return $this->escape('[no ip]');
         }
 

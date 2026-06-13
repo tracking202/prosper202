@@ -23,16 +23,16 @@ final class MetricsSql
      */
     public const GROUPED_SELECT = '
 sum(clicks) as clicks, sum(click_out) as click_out,
-(SUM(click_out)/sum(clicks))*100 as ctr,
+CASE WHEN SUM(clicks) > 0 THEN (SUM(click_out)/SUM(clicks))*100 ELSE 0 END as ctr,
 SUM(leads) AS leads,
-(SUM(click_lead)/sum(clicks))*100 as su_ratio,
-(SUM(income) / sum(leads)) AS payout,
+CASE WHEN SUM(clicks) > 0 THEN (SUM(2st.click_lead)/SUM(clicks))*100 ELSE 0 END as su_ratio,
+CASE WHEN SUM(leads) > 0 THEN (SUM(income) / SUM(leads)) ELSE 0 END AS payout,
 SUM(2st.income) AS income,
-SUM(2st.income)/sum(clicks) as epc,
+CASE WHEN SUM(clicks) > 0 THEN SUM(2st.income)/SUM(clicks) ELSE 0 END as epc,
 SUM(2st.cost) AS cost,
-SUM(2st.cost)/sum(clicks) AS cpc,
+CASE WHEN SUM(clicks) > 0 THEN SUM(2st.cost)/SUM(clicks) ELSE 0 END AS cpc,
 (SUM(2st.income)-SUM(2st.cost)) AS net,
-((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100 ) as roi';
+CASE WHEN SUM(2st.cost) > 0 THEN ((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100) ELSE 0 END as roi';
 
     private function __construct()
     {

@@ -124,6 +124,23 @@ namespace Tests\DataEngine {
             self::assertSame('[no platform]', $html['platform_name']);
         }
 
+        public function testDimensionValueZeroIsNotTreatedAsEmpty(): void
+        {
+            // The string "0" is falsy in PHP but is a legitimate dimension value
+            // (e.g. a keyword literally named "0", a landing page nicknamed "0",
+            // an anomalous country_code "0"). It must render as "0", not as the
+            // placeholder ("[no keyword]", "[direct link]", etc.).
+            $html = $this->formatter->format([
+                'keyword' => '0',
+                'landing_page_nickname' => '0',
+                'country_code' => '0',
+            ]);
+
+            self::assertSame('0', $html['keyword']);
+            self::assertSame('0', $html['landing_page_nickname']);
+            self::assertSame('0', $html['country_code']);
+        }
+
         public function testDimensionValuesAreHtmlEscaped(): void
         {
             $html = $this->formatter->format(['keyword' => '<script>alert(1)</script>']);

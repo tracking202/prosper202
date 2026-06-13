@@ -134,8 +134,41 @@ final class UserPrefFilters
     }
 
     /**
-     * WHERE fragment for the "show real/filtered/bot/lead clicks" preference.
-     * Also used standalone by the account-overview reports.
+     * Canonical WHERE fragment for the "show real/filtered/bot/lead clicks"
+     * user preference (user_pref_show column in 202_users_pref).
+     *
+     * Also used standalone by the account-overview reports via
+     * DataEngine::getAccountOverviewFilters() in class-dataengine.php.
+     *
+     * DIVERGENT COPIES — a follow-up should converge these to call showFilter():
+     *
+     *   202-config/functions-tracking202.php ~line 1345 (visitor-log context):
+     *     real:          " AND click_filtered='0' "     [matches]
+     *     filtered:      " AND click_filtered='1' "     [matches]
+     *     filtered_bot:  " AND click_bot='1'"           [matches, trailing space differs]
+     *     leads:         " AND click_filtered='0' AND click_lead='1' "
+     *                    *** DIVERGES — adds click_filtered='0' guard ***
+     *
+     *   202-Mobile/mini-stats/202-ministats.php ~line 18,
+     *   tracking202/ajax/sort_browsers.php ~line 26,
+     *   tracking202/ajax/sort_cities.php ~line 26,
+     *   tracking202/ajax/sort_isp.php ~line 26,
+     *   tracking202/ajax/sort_ips.php ~line 26,
+     *   tracking202/ajax/sort_referers.php ~line 26,
+     *   tracking202/ajax/sort_rotator.php ~line 25,
+     *   tracking202/ajax/account_overview.php ~line 48,
+     *   tracking202/ajax/sort_landing_pages.php ~line 26:
+     *     real:          " AND click_filtered='0' "     [matches]
+     *     filtered:      " AND click_filtered='1' "     [matches]
+     *     filtered_bot:  " AND click_bot='1' "          [matches]
+     *     leads:         " AND click_lead='1' "
+     *                    (functionally equivalent to click_lead!='0' on tinyint(1))
+     *
+     *   202-config/ReportSummaryForm.class.php ~line 928:
+     *     real:          AND 2c.click_filtered=0        [unquoted, different alias]
+     *     filtered:      AND 2c.click_filtered=1        [unquoted, different alias]
+     *     filtered_bot:  AND 2c.click_bot=1             [unquoted, different alias]
+     *     leads:         AND 2c.click_lead!=0           [unquoted; same logic as here]
      */
     public static function showFilter(string $show): string
     {

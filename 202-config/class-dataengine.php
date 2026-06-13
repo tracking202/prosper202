@@ -172,6 +172,20 @@ class DataEngine
 
     public function getReportData($reportType, $clickFrom, $clickTo, $cpv): mixed
     {
+        // Fix #9: grouped dimension reports dispatch through GroupedReportRegistry
+        // directly, eliminating the 12 one-line wrapper methods that were the
+        // only callers of runGroupedReport($this->groupedDefinition(...)).
+        // The ip report still needs resolveIpv6Functions() called first (via
+        // groupedDefinition), which the path below handles correctly.
+        $groupedTypes = [
+            'keyword', 'textad', 'referer', 'ip', 'country', 'region', 'city',
+            'isp', 'landingpage', 'device', 'browser', 'platform',
+        ];
+
+        if (in_array($reportType, $groupedTypes, true)) {
+            return $this->runGroupedReport($this->groupedDefinition($reportType), $clickFrom, $clickTo, $cpv);
+        }
+
         return match ($reportType) {
             'LpOverview' => $this->doLpOverviewReport($clickFrom, $clickTo, $cpv),
             'campaignOverview' => $this->doCampaignOverviewReport($clickFrom, $clickTo, $cpv),
@@ -180,18 +194,6 @@ class DataEngine
             'breakdown' => $this->doBreakdownReport($clickFrom, $clickTo, $cpv),
             'hourly' => $this->doHourlyReport($clickFrom, $clickTo, $cpv),
             'weekly' => $this->doWeeklyReport($clickFrom, $clickTo, $cpv),
-            'keyword' => $this->doKeywordReport($clickFrom, $clickTo, $cpv),
-            'textad' => $this->doTextadReport($clickFrom, $clickTo, $cpv),
-            'referer' => $this->doRefererReport($clickFrom, $clickTo, $cpv),
-            'ip' => $this->doIPReport($clickFrom, $clickTo, $cpv),
-            'country' => $this->doCountryReport($clickFrom, $clickTo, $cpv),
-            'region' => $this->doRegionReport($clickFrom, $clickTo, $cpv),
-            'city' => $this->doCityReport($clickFrom, $clickTo, $cpv),
-            'isp' => $this->doISPReport($clickFrom, $clickTo, $cpv),
-            'landingpage' => $this->doLandingPageReport($clickFrom, $clickTo, $cpv),
-            'device' => $this->doDeviceReport($clickFrom, $clickTo, $cpv),
-            'browser' => $this->doBrowserReport($clickFrom, $clickTo, $cpv),
-            'platform' => $this->doPlatformReport($clickFrom, $clickTo, $cpv),
             'variable' => $this->doVariableReport($clickFrom, $clickTo, $cpv),
             default => null,
         };
@@ -209,15 +211,24 @@ class DataEngine
             throw new Exception('Database connection not available');
         }
 
+        // Fix #4: resolve IPv6 globals before get_ip_id is called below, so
+        // every report sees consistent SQL function names regardless of type.
+        $this->resolveIpv6Functions();
+
         $userId = self::$db->real_escape_string((string) $_SESSION['user_id']);
         $offset = (isset($_POST['offset']) && $_POST['offset'] != '')
             ? (int) self::$db->real_escape_string((string) $_POST['offset'])
             : 0;
 
         $user_result = _mysqli_query("SELECT * FROM 202_users_pref WHERE user_id=" . $userId);
-        if (!$user_result || !($user_row = $user_result->fetch_assoc())) {
+        if (!$user_result) {
+            // Real DB failure — keep throwing (collectRows will log it if it
+            // gets that far, but here we must abort before building filters).
             throw new Exception('Unable to load user report preferences');
         }
+        // Fix #2: a missing pref row (brand-new account) should degrade
+        // gracefully, not 500.  Build filters from an empty row → all defaults.
+        $user_row = $user_result->fetch_assoc() ?: [];
 
         // Stored prefs are still attacker-influenced input: escape the free
         // text value before it is interpolated into a LIKE clause.
@@ -246,9 +257,12 @@ class DataEngine
 
         $userId = self::$db->real_escape_string((string) $_SESSION['user_id']);
         $user_result = _mysqli_query("SELECT user_pref_show FROM 202_users_pref WHERE user_id=" . $userId);
-        if (!$user_result || !($user_row = $user_result->fetch_assoc())) {
+        if (!$user_result) {
+            // Real DB failure — throw.
             throw new Exception('Unable to load user report preferences');
         }
+        // Fix #2: no pref row (brand-new account) → degrade to default ('all').
+        $user_row = $user_result->fetch_assoc() ?: [];
 
         return UserPrefFilters::showFilter((string) ($user_row['user_pref_show'] ?? 'all'));
     }
@@ -332,6 +346,9 @@ class DataEngine
             $ip->address = $ip_address;
             $ip->type = filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? 'ipv4' : 'ipv6';
         } else {
+            // Fix #10: always set ->address so get_ip_id never reads an unset
+            // property regardless of which branch was taken.
+            $ip->address = '';
             $ip->type = 'invalid';
         }
 
@@ -470,10 +487,11 @@ class DataEngine
     {
         $click_filtered = $this->getAccountOverviewFilters();
 
+        // Fix #3a: use the canonical metric SELECT list (MetricsSql::GROUPED_SELECT)
+        // in place of the inline copy. The only join is 202_landing_pages which has
+        // no income/cost/clicks columns, so the 2st. prefix in GROUPED_SELECT is safe.
         $sql = "select landing_page_nickname,
-2st.landing_page_id, sum(clicks) as clicks, sum(click_out) as click_out,
-(SUM(click_out)/sum(clicks))*100 as ctr,SUM(leads) AS leads,(SUM(click_lead)/sum(clicks))*100 as su_ratio,
-(SUM(income) / sum(leads)) AS payout,SUM(income)/SUM(clicks) as epc,SUM(cost)/sum(clicks) AS cpc,SUM(income) AS income, SUM(cost) AS cost,(SUM(income)-SUM(cost)) AS net,((SUM(income)-SUM(cost))/SUM(cost)*100 ) as roi
+2st.landing_page_id," . MetricsSql::GROUPED_SELECT . "
 from 202_dataengine as 2st
 LEFT OUTER JOIN 202_landing_pages USING (landing_page_id)"
             . $this->mysql['user_id_query'] . "
@@ -540,19 +558,10 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             AND 2st.aff_campaign_id IS TRUE";
         }
 
-        $click_sql = "select" . $labelSelect . "
-        sum(clicks) as clicks,
-        sum(click_out) as click_out,
-        (SUM(click_out)/sum(clicks))*100 as ctr,
-        SUM(leads) AS leads,
-        (SUM(click_lead)/sum(clicks))*100 as su_ratio,
-        (SUM(income) / sum(leads)) AS payout,
-        SUM(income)/SUM(clicks) as epc,
-        SUM(cost)/sum(clicks) AS cpc,
-        SUM(income) AS income,
-        SUM(cost) AS cost,
-        (SUM(income)-SUM(cost)) AS net,
-        ((SUM(income)-SUM(cost))/SUM(cost)*100 ) as roi
+        // Fix #3a: use canonical metric SELECT. Joins are 202_landing_pages /
+        // 202_aff_campaigns / 202_aff_networks — none carry income/cost/clicks,
+        // so the 2st. prefix in GROUPED_SELECT is unambiguous.
+        $click_sql = "select" . $labelSelect . MetricsSql::GROUPED_SELECT . "
         from 202_dataengine as 2st"
             . $labelJoins
             . $this->mysql['user_id_query']
@@ -577,23 +586,13 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             return $data;
         }
 
+        // Fix #3a: use canonical metric SELECT. Joins are 202_ppc_accounts and
+        // 202_ppc_networks — neither carries income/cost/clicks, so 2st. is safe.
         $ppc_sql = "select
             ppc_account_name,
             ppc_network_name,
             2st.ppc_account_id,
-            2st.{$select_by_id},
-            sum(clicks) as clicks,
-            sum(click_out) as click_out,
-            (SUM(click_out)/sum(clicks))*100 as ctr,
-            SUM(leads) AS leads,
-            (SUM(click_lead)/sum(clicks))*100 as su_ratio,
-            (SUM(income) / sum(leads)) AS payout,
-            SUM(income)/SUM(clicks) as epc,
-            SUM(cost)/sum(clicks) AS cpc,
-            SUM(income) AS income,
-            SUM(cost) AS cost,
-            (SUM(income)-SUM(cost)) AS net,
-            ((SUM(income)-SUM(cost))/SUM(cost)*100 ) as roi
+            2st.{$select_by_id}," . MetricsSql::GROUPED_SELECT . "
             from 202_dataengine as 2st
             LEFT JOIN 202_ppc_accounts ON (2st.ppc_account_id = 202_ppc_accounts.ppc_account_id)
             LEFT JOIN 202_ppc_networks ON (202_ppc_accounts.ppc_network_id = 202_ppc_networks.ppc_network_id)"
@@ -665,89 +664,21 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
         return $this->collectRows($sql, $cpv);
     }
 
-    public function doKeywordReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('keyword'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doTextadReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('textad'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doRefererReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('referer'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doIPReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('ip'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doCountryReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('country'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doRegionReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('region'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doCityReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('city'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doISPReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('isp'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doLandingPageReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('landingpage'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doDeviceReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('device'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doBrowserReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('browser'), $clickFrom, $clickTo, $cpv);
-    }
-
-    public function doPlatformReport($clickFrom, $clickTo, $cpv)
-    {
-        return $this->runGroupedReport($this->groupedDefinition('platform'), $clickFrom, $clickTo, $cpv);
-    }
-
     public function doVariableReport($clickFrom, $clickTo, $cpv)
     {
         $filters = $this->getFilters();
         $data = [];
 
+        // Fix #1: include $filters['join'] so keyword filter's 2k alias resolves.
+        // Fix #3a: replace inline metric columns with MetricsSql::GROUPED_SELECT.
+        // 202_ppc_networks has no income/cost/clicks, so 2st. prefix is safe.
         $click_sql = " SELECT 2st.user_id,
         2st.ppc_network_id,
-        ppc_network_name,
-        sum(clicks) as clicks,
-        sum(click_out) as click_out,
-        (sum(click_out)/sum(clicks))*100 as ctr,
-        SUM(leads) AS leads,
-        (SUM(click_lead)/sum(clicks))*100 as su_ratio,
-        (SUM(income) / sum(leads)) AS payout,
-        SUM(2st.income) AS income,
-        SUM(2st.income)/sum(clicks) as epc,
-        SUM(2st.cost) AS cost,
-        SUM(2st.cost)/sum(clicks) AS cpc,
-        (SUM(2st.income)-SUM(2st.cost)) AS net,
-        ((SUM(2st.income)-SUM(2st.cost))/SUM(2st.cost)*100 ) as roi,
+        ppc_network_name," . MetricsSql::GROUPED_SELECT . ",
         GROUP_CONCAT(DISTINCT(2st.variable_set_id)) as variable_set_ids
         FROM 202_dataengine as 2st
         JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id)"
+            . $filters['join']
             . $this->mysql['user_id_query']
             . " AND 2st.variable_set_id != 0 AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'] . "
         group by 2st.user_id, 2st.ppc_network_id" . $filters['limit'];
@@ -764,23 +695,16 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             $data[] = $this->htmlFormat($totals->toArray(), $cpv, 'total');
         }
 
+        // Fix #1: include $filters['join'] so keyword filter's 2k alias resolves.
+        // Fix #3a: replace inline metric columns with MetricsSql::GROUPED_SELECT.
+        // Joined tables (202_variable_sets2, 202_custom_variables,
+        // 202_ppc_network_variables, 202_ppc_networks) have no income/cost/clicks,
+        // so the 2st. prefix in GROUPED_SELECT is unambiguous.
         $click_sql = " SELECT
             2st.user_id,
     ppc_network_name,
     name as variable_name,
-    variable as variable_value,
-    sum(clicks) as clicks,
-    sum(click_out) as click_out,
-    (sum(click_out) / sum(clicks)) * 100 as ctr,
-    SUM(leads) AS leads,
-    (SUM(click_lead) / sum(clicks)) * 100 as su_ratio,
-    (SUM(income) / sum(leads)) AS payout,
-    SUM(2st.income) AS income,
-    SUM(2st.income) / sum(clicks) as epc,
-    SUM(2st.cost) AS cost,
-    SUM(2st.cost) / sum(clicks) AS cpc,
-    (SUM(2st.income) - SUM(2st.cost)) AS net,
-    ((SUM(2st.income) - SUM(2st.cost)) / SUM(2st.cost) * 100) as roi,
+    variable as variable_value," . MetricsSql::GROUPED_SELECT . ",
     2st.ppc_network_id,
     2st.variable_set_id,
     variables,
@@ -795,7 +719,7 @@ FROM
     202_ppc_network_variables ON (202_custom_variables.ppc_variable_id = 202_ppc_network_variables.ppc_variable_id)
         JOIN
     202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id)
-" . $this->mysql['user_id_query'] . "
+" . $filters['join'] . $this->mysql['user_id_query'] . "
         AND 2st.variable_set_id != 0
         AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'] . "
 group by ppc_network_id , name , variable
@@ -860,7 +784,11 @@ ORDER BY ppc_network_id , name , variable";
     {
         $sortKey = (string) $order;
         if ($sortKey === '') {
-            $sortKey = htmlentities((string) ($_POST['order'] ?? ''), ENT_QUOTES, 'UTF-8');
+            // Fix #5: pass the raw posted value — htmlentities was wrong context
+            // here (entities get decoded before JS executes) and could silently
+            // produce unknown keys that forced the leads-DESC fallback.
+            // The whitelist inside SortOrder::orderByClause makes this safe.
+            $sortKey = (string) ($_POST['order'] ?? '');
         }
 
         return SortOrder::orderByClause($sortKey);
@@ -985,8 +913,6 @@ ORDER BY ppc_network_id , name , variable";
     {
         global $db;
 
-        $user_id = $_SESSION['user_own_id'] ?? 1;
-
         $info_result = $db->query($query);
         if (!$info_result) {
             // Log details server-side; do not expose DB error or SQL to the response.
@@ -999,7 +925,9 @@ ORDER BY ppc_network_id , name , variable";
             return true;
         }
 
-        $this->doSummary($info_result, $from, $to, $user_id, $upgrade, $new);
+        // Fix #9b: $user_id was recomputed here but doSummary never reads it;
+        // pass the default value instead of reintroducing the dead variable.
+        $this->doSummary($info_result, $from, $to, 1, $upgrade, $new);
         return $info_result;
     }
 
@@ -1030,7 +958,10 @@ ORDER BY ppc_network_id , name , variable";
                     $columnList .= $key . ",";
                     $updateList .= "$key = VALUES($key),";
                 }
-                if (!$value) {
+                // Fix #6b: only treat genuinely empty values as ''; real zeros
+                // (integer 0, string '0') must be written as-is so flag columns
+                // and numeric zeroes survive strict-mode inserts.
+                if ($value === null || $value === '') {
                     $valuesList .= "'',";
                 } else {
                     $valuesList .= $db->real_escape_string((string) $value) . ",";
@@ -1866,6 +1797,13 @@ class UserPrefs
             self::$db = DB::getInstance()->getConnection();
         } catch (Exception) {
             self::$db = null;
+        }
+
+        // Fix #10: guard against null db — if connection failed, leave prefs
+        // at their default empty state and return rather than hitting a TypeError.
+        if (!self::$db instanceof mysqli) {
+            self::$userPref = [];
+            return;
         }
 
         $userId = self::$db->real_escape_string((string) $_SESSION['user_id']);
