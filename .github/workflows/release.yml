@@ -81,6 +81,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish GitHub Release
+        # Only publish on a tag push. A workflow_dispatch run from a branch has
+        # no release tag, so it builds + summarizes the artifact (per
+        # RELEASING.md) without invoking action-gh-release, which would fail.
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/prosper202-*.zip
