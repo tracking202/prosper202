@@ -31,3 +31,9 @@ When building `bind_param($types, ...)` with many parameters, count types agains
 - Read the file first, then think about what each line does, especially error paths.
 - After writing code, re-read it as a skeptic looking for the failure mode, not as the author expecting it to work.
 - When fixing a pattern (e.g., unchecked execute), grep the entire codebase for every instance — don't fix one and assume the rest are fine.
+
+## Before committing
+- Always perform a full deploy-quality code review of the staged changes before committing. Treat every commit as if it ships to production.
+- Walk each changed file individually (per the Review discipline above), tracing error paths and the failure modes in the "Error patterns to avoid" list.
+- Confirm the code lints/compiles and that any relevant tests pass. If tests or static analysis can't be run in the environment, say so explicitly rather than implying they passed.
+- Only commit once the review is clean; if it surfaces issues, fix them and re-review before committing.
