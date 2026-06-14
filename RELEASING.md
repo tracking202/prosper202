@@ -50,8 +50,8 @@ This is the normal path. CI builds and publishes; you only tag.
 
    ```bash
    git checkout main && git pull
-   git tag v2.0.0          # must match version.php's 2.0.0
-   git push origin v2.0.0
+   git tag v1.9.59          # must match version.php (currently 1.9.59)
+   git push origin v1.9.59
    ```
 
 3. **Let CI do the rest.** The [`Release` workflow](.github/workflows/release.yml)
