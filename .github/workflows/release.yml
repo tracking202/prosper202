@@ -1,0 +1,72 @@
+name: Release
+
+# Build a self-contained release zip and publish it to GitHub Releases.
+#
+# The heavy lifting lives in build/scripts/package-release.sh — this workflow
+# only provisions the toolchain that script preflights for (php, composer, go,
+# git, zip), runs it on a version tag, and attaches the artifact. Release logic
+# is never duplicated in YAML.
+#
+# Flow: bump 202-config/version.php -> git tag vX.Y.Z -> git push --tags
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # create the Release and upload the zip asset
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # package-release.sh uses `git archive HEAD`
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'   # matches composer.json "php": ">=8.3"
+          tools: composer
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'   # matches go-cli/go.mod
+
+      - name: Build release artifact
+        id: build
+        run: |
+          bash build/scripts/package-release.sh
+          zip_path="$(ls dist/prosper202-*.zip)"
+          echo "zip_path=${zip_path}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "${zip_path}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize release artifact
+        if: always()
+        run: |
+          zip_path="${{ steps.build.outputs.zip_path }}"
+          {
+            echo "### Release Artifact"
+            echo ""
+            if [ -n "${zip_path}" ] && [ -f "${zip_path}" ]; then
+              echo "| Item | Value |"
+              echo "| --- | --- |"
+              echo "| Artifact | \`$(basename "${zip_path}")\` |"
+              echo "| Size | $(du -h "${zip_path}" | cut -f1) |"
+              echo "| SHA256 | \`${{ steps.build.outputs.sha256 }}\` |"
+            else
+              echo "> ❌ Build did not produce a zip. Review the job log above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/prosper202-*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
