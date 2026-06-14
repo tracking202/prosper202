@@ -43,8 +43,9 @@ jobs:
         run: |
           bash build/scripts/package-release.sh
           zip_path="$(ls dist/prosper202-*.zip)"
+          sha256="$(sha256sum "${zip_path}" | cut -d' ' -f1)"
           echo "zip_path=${zip_path}" >> "$GITHUB_OUTPUT"
-          echo "sha256=$(sha256sum "${zip_path}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
 
       - name: Summarize release artifact
         if: always()

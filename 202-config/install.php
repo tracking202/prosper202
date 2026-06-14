@@ -389,8 +389,14 @@ if ($success) {
 
 		<?php
 		// Build the absolute base URL for the cron line and CLI connection hints.
+		// Prefer the Host header so a non-default port (e.g. Docker's :8000) or
+		// vhost is preserved — SERVER_NAME drops the port, and inside a container
+		// SERVER_PORT is the internal 80, not the mapped port the user sees. The
+		// value is output through htmlspecialchars below, so a forged Host can't
+		// inject markup.
 		$scheme = (isset($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) === 'on') ? 'https' : 'http';
-		$base_url = $scheme . '://' . $_SERVER['SERVER_NAME'] . get_absolute_url();
+		$host = (string) ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost');
+		$base_url = $scheme . '://' . $host . get_absolute_url();
 		$cron_line = '* * * * * curl -s "' . $base_url . '202-cronjobs/index.php" >/dev/null 2>&1';
 		?>
 
@@ -402,8 +408,8 @@ if ($success) {
 		<h6 style="margin-top: 20px;">Connect the CLI / Claude onboarding (optional)</h6>
 		<small>Use this REST API key with the <code>p202</code> CLI or the Claude <code>/onboard-prosper202</code> skill to finish setup hands-free. <strong>Copy it now</strong> — for security it isn't shown again (you can always generate a new one under Account &rarr; REST API Keys).</small>
 		<div class="row" style="margin-top: 8px; margin-bottom: 6px;">
-			<div class="col-xs-3"><span class="label label-default">API URL:</span></div>
-			<div class="col-xs-9"><small><code><?php echo htmlspecialchars($base_url . 'api/v3', ENT_QUOTES, 'UTF-8'); ?></code></small></div>
+			<div class="col-xs-3"><span class="label label-default">Instance URL:</span></div>
+			<div class="col-xs-9"><small><code><?php echo htmlspecialchars(rtrim($base_url, '/'), ENT_QUOTES, 'UTF-8'); ?></code></small> &mdash; use with <code>p202 config set-url</code> (the CLI appends <code>/api/v3</code> itself)</div>
 		</div>
 		<div class="row" style="margin-bottom: 6px;">
 			<div class="col-xs-3"><span class="label label-default">User ID:</span></div>

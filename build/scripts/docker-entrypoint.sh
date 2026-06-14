@@ -22,7 +22,7 @@ fi
 # is safe to run on every container start. A real failure (missing sample,
 # unwritable target) would otherwise boot the container with broken DB config,
 # so let `set -e` surface it loudly instead of swallowing it.
-if [ -n "$MYSQL_ROOT_PASSWORD" ]; then
+if [ -n "${MYSQL_ROOT_PASSWORD:-}" ]; then
     php build/scripts/write-config.php
 fi
 

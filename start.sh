@@ -14,12 +14,27 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
+# Generate a 32-char hex secret from whatever's available. openssl isn't
+# guaranteed to be installed, and under `set -o pipefail` a `tr </dev/urandom |
+# head` pipe would fail (head closes early -> SIGPIPE), so read a fixed number of
+# bytes with head first, then format.
+gen_secret() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 16
+    elif [ -r /dev/urandom ]; then
+        head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'
+    else
+        echo "Error: need 'openssl' or a readable /dev/urandom to generate a DB password." >&2
+        exit 1
+    fi
+}
+
 # Generate .env with a random DB password on first run. The password is baked
 # into the database volume on first start, so we never overwrite an existing one.
 if [ ! -f .env ]; then
     echo "Creating .env with a generated database password..."
     {
-        echo "MYSQL_ROOT_PASSWORD=$(openssl rand -hex 16)"
+        echo "MYSQL_ROOT_PASSWORD=$(gen_secret)"
         echo "APP_ENV=development"
     } > .env
 fi

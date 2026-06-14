@@ -61,19 +61,24 @@ if (file_put_contents($target, $content) === false) {
     fwrite(STDERR, "Error: could not write {$target}\n");
     exit(1);
 }
-// 202-config.php holds DB credentials, so keep it non-world-readable. But this
-// script runs from the Docker entrypoint as root, while Apache serves requests
-// as www-data — a root-owned 0640 file is unreadable by the web server and would
-// 500 every page. Hand the file to the web user so it can read its own config;
-// if ownership can't be transferred (user missing, or not running as root), fall
-// back to world-readable so the app still boots instead of breaking silently.
+// 202-config.php holds DB credentials, so it must stay non-world-readable (0640)
+// AND be readable by the web server. This script runs from the Docker entrypoint
+// as root while Apache serves as www-data, so a root-owned file is unreadable by
+// the web server and would 500 every page — hand ownership to the web user.
+// chown succeeds when running as root, or as a no-op when we already ARE the web
+// user (chowning a file to its own owner). If it fails for any other reason we
+// fail loudly rather than weaken permissions on a credentials file: a silent
+// 0644 would expose DB credentials and mask a misconfigured image.
 chmod($target, 0640);
 $webUser  = getenv('APACHE_RUN_USER') ?: 'www-data';
 $webGroup = getenv('APACHE_RUN_GROUP') ?: $webUser;
 if (@chown($target, $webUser)) {
     @chgrp($target, $webGroup);
 } else {
-    chmod($target, 0644);
+    fwrite(STDERR, "Error: could not give 202-config.php to the web user '{$webUser}'. "
+        . "Run this as root (the Docker entrypoint does), or chown the file to '{$webUser}' "
+        . "yourself. Refusing to relax permissions on a file containing DB credentials.\n");
+    exit(1);
 }
 
 echo "Wrote 202-config.php (db host={$dbHost}).\n";

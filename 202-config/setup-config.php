@@ -221,11 +221,12 @@ switch ($step) {
 
 		//if it could not connect, error
 		if (!$connect) {
-			$db_error_msg = mysqli_connect_error();
-			$db_error_no = mysqli_connect_errno();
+			$db_error_msg = htmlspecialchars((string) mysqli_connect_error(), ENT_QUOTES, 'UTF-8');
+			$db_error_no = (int) mysqli_connect_errno();
+			$dbhost_html = htmlspecialchars($dbhost, ENT_QUOTES, 'UTF-8');
 
 			_die("<h6>Error establishing a database connection</h6>
-			<p><small>This either means that the username and password information is incorrect or we can't contact the database server at <code>$dbhost</code>. This could mean your host's database server is down.</small></p>
+			<p><small>This either means that the username and password information is incorrect or we can't contact the database server at <code>$dbhost_html</code>. This could mean your host's database server is down.</small></p>
 			<p><strong style='color: red;'>MySQL Error ($db_error_no): $db_error_msg</strong></p>
 			<small>
 			<ul>
@@ -255,9 +256,11 @@ switch ($step) {
 		}
 		if ($create_error !== '') {
 			$dbname_html = htmlspecialchars($dbname, ENT_QUOTES, 'UTF-8');
+			$dbhost_html = htmlspecialchars($dbhost, ENT_QUOTES, 'UTF-8');
+			$dbuser_html = htmlspecialchars($dbuser, ENT_QUOTES, 'UTF-8');
 			$create_error_html = htmlspecialchars($create_error, ENT_QUOTES, 'UTF-8');
 			_die("<h6>Could not create the database</h6>
-			<p><small>We connected to <code>$dbhost</code> as <code>$dbuser</code>, but the database <code>$dbname_html</code> does not exist and we couldn't create it. On shared hosting you usually have to create the database yourself first (for example cPanel &rarr; <em>MySQL Databases</em>), then come back and re-run this step.</small></p>
+			<p><small>We connected to <code>$dbhost_html</code> as <code>$dbuser_html</code>, but the database <code>$dbname_html</code> does not exist and we couldn't create it. On shared hosting you usually have to create the database yourself first (for example cPanel &rarr; <em>MySQL Databases</em>), then come back and re-run this step.</small></p>
 			<p><strong style='color: red;'>MySQL Error: $create_error_html</strong></p>
 			<p><a href='setup-config.php?step=1' class='btn btn-sm btn-p202 btn-block'>Go back and check your database details</a></p>
 		");

@@ -55,12 +55,14 @@ if [ ! -f "$STAGE/vendor/autoload.php" ]; then
     exit 1
 fi
 
-# --- 3. cross-build the Go CLI; stage binaries under go-cli/dist ---
-# VERSION is passed through so the CLI's -X main.version matches the zip name.
+# --- 3. cross-build the Go CLI from the STAGED (archived) source ---
+# Build inside $STAGE, not $REPO_ROOT, so the binaries match the exact source
+# bundled in the zip — a dirty working tree can't ship binaries whose behavior
+# diverges from the shipped source. The Makefile writes to its own dist/, so the
+# binaries land directly under $STAGE/go-cli/dist. VERSION is passed through so
+# the CLI's -X main.version matches the zip name. It also keeps $REPO_ROOT clean.
 echo "==> Building Go CLI for all platforms..."
-make -C "$REPO_ROOT/go-cli" all VERSION="$VERSION"
-mkdir -p "$STAGE/go-cli/dist"
-cp -R "$REPO_ROOT/go-cli/dist/." "$STAGE/go-cli/dist/"
+make -C "$STAGE/go-cli" all VERSION="$VERSION"
 
 # --- 4. strip dev-only cruft from the shipped artifact ---
 echo "==> Stripping dev artifacts..."
