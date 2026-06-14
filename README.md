@@ -352,6 +352,11 @@ build/scripts/package-release.sh
 The version comes from `202-config/version.php`, the single source of truth, and is
 passed through to the Go build so the CLI's `--version` matches the zip name.
 
+Tagged releases (`v*`) are built and published automatically by the
+[`Release` workflow](.github/workflows/release.yml). For the full maintainer
+process — versioning, tagging, CI, local builds, and troubleshooting — see
+**[RELEASING.md](RELEASING.md)**.
+
 ## Configuration
 
 - **Main config**: `202-config.php` (created from `202-config-sample.php`)
