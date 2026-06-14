@@ -88,78 +88,127 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$installer = new INSTALL();
 		$installer->install_databases();
 
-		$mysql['user_email'] = $db->real_escape_string($_POST['user_email'] ?? '');
-		$mysql['user_name'] = $db->real_escape_string($_POST['user_name'] ?? '');
-		$mysql['user_timezone'] = $db->real_escape_string($_POST['user_timezone'] ?? '');
-		$mysql['p202_customer_api_key'] = $db->real_escape_string($_POST['user_api'] ?? '');
-		$mysql['user_time_register'] = $db->real_escape_string((string) time());
+		// Raw, unescaped values — these are bound as parameters below, so prepared
+		// statements handle the escaping. No manual real_escape_string() needed.
+		$user_email         = (string) ($_POST['user_email'] ?? '');
+		$user_name          = (string) ($_POST['user_name'] ?? '');
+		$user_timezone      = (string) ($_POST['user_timezone'] ?? '');
+		$user_api           = (string) ($_POST['user_api'] ?? '');
+		$user_time_register = time();
 
-		//md5 the user pass with salt
-	 	$hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
-	 	$user_pass = $hasher($_POST['user_pass']);
-		$mysql['user_pass'] = $db->real_escape_string($user_pass);      
+		// hash_user_pass() (password_hash/bcrypt) is always available via
+		// functions-auth.php; fresh installs never use the legacy md5 path.
+		$user_pass = hash_user_pass((string) $_POST['user_pass']);
 
- 		$hash = md5(uniqid((string) random_int(0, mt_getrandmax()), TRUE));
-		// $user_hash = intercomHash($hash); // Removed intercomHash call
-		$user_hash = ''; // Default empty value
+		$hash = md5(uniqid((string) random_int(0, mt_getrandmax()), TRUE));
+		$user_hash = ''; // reserved for future use
 
-		//insert this user
-		$user_sql = "INSERT IGNORE INTO 202_users
-					SET	user_email='" . $mysql['user_email'] . "',
-						user_name='" . $mysql['user_name'] . "',
-						user_pass='" . $mysql['user_pass'] . "',
-						user_timezone='" . $mysql['user_timezone'] . "',
-						user_time_register='" . $mysql['user_time_register'] . "',
-						install_hash='" . $hash . "',
-						user_hash='" . $user_hash . "',
-						p202_customer_api_key='" . $mysql['p202_customer_api_key'] . "'";
-		$user_result = _mysqli_query($user_sql);
-
-		// Get the user_id of the newly inserted user or the existing user with the same username
-		$user_id = $db->insert_id;
-
-		// If insert_id is 0 (because the user already existed due to INSERT IGNORE), get the user_id manually
-		if ($user_id == 0) {
-			$check_sql = "SELECT user_id FROM 202_users WHERE user_name='" . $mysql['user_name'] . "'";
-			$check_result = _mysqli_query($check_sql);
-			if ($check_result && $check_result->num_rows > 0) {
-				$check_row = $check_result->fetch_assoc();
-				$user_id = $check_row['user_id'];
+		// prepare-or-throw so every statement's return value is checked (CLAUDE.md #1)
+		$prepare = static function (string $sql) use ($db): \mysqli_stmt {
+			$stmt = $db->prepare($sql);
+			if ($stmt === false) {
+				throw new \RuntimeException('Failed to prepare statement: ' . $db->error);
 			}
+			return $stmt;
+		};
+
+		// Create the user, its preference row, and its role atomically so a
+		// mid-way failure can't leave a half-built account behind.
+		$db->begin_transaction();
+		try {
+			$stmt = $prepare(
+				"INSERT IGNORE INTO 202_users
+					SET user_email=?, user_name=?, user_pass=?, user_timezone=?,
+						user_time_register=?, install_hash=?, user_hash=?, p202_customer_api_key=?"
+			);
+			$stmt->bind_param(
+				'ssssisss',
+				$user_email,
+				$user_name,
+				$user_pass,
+				$user_timezone,
+				$user_time_register,
+				$hash,
+				$user_hash,
+				$user_api
+			);
+			if (!$stmt->execute()) {
+				$stmt->close();
+				throw new \RuntimeException('Failed to insert user: ' . $db->error);
+			}
+			$user_id = (int) $db->insert_id;
+			$stmt->close();
+
+			// INSERT IGNORE yields insert_id 0 when the row already exists;
+			// look up the existing id so the rest of setup can proceed.
+			if ($user_id === 0) {
+				$stmt = $prepare("SELECT user_id FROM 202_users WHERE user_name=? LIMIT 1");
+				$stmt->bind_param('s', $user_name);
+				if (!$stmt->execute()) {
+					$stmt->close();
+					throw new \RuntimeException('Failed to look up user: ' . $db->error);
+				}
+				$lookup = $stmt->get_result();
+				if ($lookup && $row = $lookup->fetch_assoc()) {
+					$user_id = (int) $row['user_id'];
+				}
+				$stmt->close();
+			}
+
+			if ($user_id <= 0) {
+				throw new \RuntimeException('Could not determine a valid user_id');
+			}
+
+			$stmt = $prepare("INSERT IGNORE INTO 202_users_pref SET user_id=?");
+			$stmt->bind_param('i', $user_id);
+			if (!$stmt->execute()) {
+				$stmt->close();
+				throw new \RuntimeException('Failed to insert user preferences: ' . $db->error);
+			}
+			$stmt->close();
+
+			$stmt = $prepare("INSERT IGNORE INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, 1)");
+			$stmt->bind_param('i', $user_id);
+			if (!$stmt->execute()) {
+				$stmt->close();
+				throw new \RuntimeException('Failed to insert user role: ' . $db->error);
+			}
+			$stmt->close();
+
+			$db->commit();
+		} catch (\Throwable $e) {
+			$db->rollback();
+			$user_id = 0;
+			$error['general'] = '<div class="error">Failed to create user account. Please try again with a different username.</div>';
 		}
 
-		// Only proceed if we have a valid user_id
+		// Only continue post-setup once the account is committed.
 		if ($user_id > 0) {
-			$mysql['user_id'] = $db->real_escape_string((string) $user_id);
-
-			// Update user preference table - use INSERT IGNORE to handle duplicates
-			$user_sql = "INSERT IGNORE INTO 202_users_pref SET user_id='" . $mysql['user_id'] . "'";
-			$user_result = _mysqli_query($user_sql);
-
-			// Insert user role - use the actual user_id, not a hardcoded value
-			$role_sql = "INSERT IGNORE INTO `202_user_role` (`user_id`, `role_id`) VALUES ('" . $mysql['user_id'] . "', 1)";
-			$role_result = _mysqli_query($role_sql);
-
 			$cron = callAutoCron('register');
 
 			if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
-				$sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '" . $mysql['user_id'] . "'";
-				$result = _mysqli_query($sql);
+				// auto_cron is a non-critical optimization flag; the account is
+				// already committed, so don't fail the install if this can't be set.
+				try {
+					$stmt = $prepare("UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = ?");
+					$stmt->bind_param('i', $user_id);
+					if (!$stmt->execute()) {
+						$stmt->close();
+						throw new \RuntimeException('Failed to enable auto cron: ' . $db->error);
+					}
+					$stmt->close();
+				} catch (\Throwable $e) {
+					error_log('Prosper202 install: ' . $e->getMessage());
+				}
 			}
 
-			// Add null check before accessing array offset on line 120
-				if (isset($mysql['user_timezone'])) {
-					registerDailyEmail('07', $mysql['user_timezone'], $hash);
-				}
+			registerDailyEmail('07', $user_timezone, $hash);
 
 			// create partitions after everything else is setup
 			$installer->install_database_partitions();
 
 			//if this worked, show them the success screen
 			$success = true;
-		} else {
-			// If we couldn't get a valid user_id, show an error
-			$error['general'] = '<div class="error">Failed to create user account. Please try again with a different username.</div>';
 		}
 	}
 
