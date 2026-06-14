@@ -115,13 +115,13 @@ if (is_installed() == true) {
 			'success'   => false,
 			'retryable' => false,
 			'errors'    => [
-				'general' => '<div class="error">Prosper202 is already installed. <a href="' . get_absolute_url() . '202-login.php">Log in now</a>.</div>',
+				'general' => '<div class="error">Prosper202 is already installed — your account is ready. <a href="' . get_absolute_url() . '202-login.php">Log in to continue</a>.</div>',
 			],
 		]);
 	}
 
 	_die("<h6>Already Installed</h6>
-			  <small>You appear to have already installed Prosper202. To reinstall please clear your old database tables first. <a href='" . get_absolute_url() . "202-login.php'>Login Now</a></small>");
+			  <small>Prosper202 is already installed — your account is ready. <a href='" . get_absolute_url() . "202-login.php'>Log in to continue</a>.<br>Reinstalling? Clear your old database tables first.</small>");
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
