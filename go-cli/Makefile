@@ -1,5 +1,7 @@
 BINARY := p202
-VERSION := 2.0.0
+# Fallback only — the release build overrides this with VERSION from
+# 202-config/version.php (the single source of truth). Keep it in sync.
+VERSION := 1.9.59
 BUILD_DIR := dist
 
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64

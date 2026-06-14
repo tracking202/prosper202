@@ -10,6 +10,39 @@ template_top();  ?>
 <div class="row home">
 	<div class="col-xs-7">
 		<div class="row">
+			<div class="col-xs-12" id="p202-getting-started" style="display:none;">
+				<h6 class="h6-home">Get Started <span class="glyphicon glyphicon-flag home-icons"></span>
+					<a href="#" id="p202-gs-dismiss" class="pull-right" style="text-decoration:none;color:#999;" title="Dismiss">&times;</a>
+				</h6>
+				<div style="padding: 5px 0 12px;">
+					<small>Three steps to your first tracking link:</small>
+					<ol style="margin-top: 6px;">
+						<li><a href="<?php echo get_absolute_url(); ?>tracking202/setup/ppc_accounts.php">Add a traffic source</a> &mdash; where your clicks come from</li>
+						<li><a href="<?php echo get_absolute_url(); ?>tracking202/setup/aff_campaigns.php">Create a campaign</a> &mdash; the offer you promote</li>
+						<li><a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_trackers.php">Generate a tracking link</a> and put it in your traffic source</li>
+					</ol>
+					<small>Prefer hands-free? Ask Claude to <strong>&ldquo;onboard Prosper202&rdquo;</strong> and it will set this up for you.</small>
+				</div>
+			</div>
+			<script>
+			(function () {
+				try {
+					var card = document.getElementById('p202-getting-started');
+					if (!card) return;
+					if (localStorage.getItem('p202_getting_started_dismissed') !== '1') {
+						card.style.display = '';
+					}
+					var x = document.getElementById('p202-gs-dismiss');
+					if (x) {
+						x.addEventListener('click', function (e) {
+							e.preventDefault();
+							localStorage.setItem('p202_getting_started_dismissed', '1');
+							card.style.display = 'none';
+						});
+					}
+				} catch (err) {}
+			})();
+			</script>
 			<?php if (isset($_SESSION['user_pref_ad_settings']) && $_SESSION['user_pref_ad_settings'] != 'hide_all') { ?>
 				<div class="col-xs-12">
 					<h6 class="h6-home">Special Offers <span class="glyphicon glyphicon-tags home-icons"></span></h6>

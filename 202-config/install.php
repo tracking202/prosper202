@@ -14,7 +14,9 @@ $success = false;
 $html = [
 	'user_email' => '',
 	'user_name' => '',
-	'user_api' => ''
+	'user_api' => '',
+	'rest_api_key' => '',
+	'user_id' => 0
 ];
 
 // Initialize $error array elements to prevent undefined array key warnings
@@ -146,6 +148,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '" . $mysql['user_id'] . "'";
 				$result = _mysqli_query($sql);
 			}
+
+			// Generate a REST API v3 key for the new admin so the CLI and the
+			// Claude onboarding agent can authenticate right away. This is the
+			// local 202_api_keys Bearer key, distinct from the my.tracking202
+			// install key (p202_customer_api_key) collected above.
+			$rest_api_key = bin2hex(random_bytes(32));
+			$apikey_stmt = $db->prepare("INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)");
+			if ($apikey_stmt === false) {
+				$rest_api_key = '';
+			} else {
+				// $user_id is a string when read back via SELECT on the
+				// INSERT IGNORE existing-user path; bind it as a real int.
+				$apikey_user_id = (int) $user_id;
+				$apikey_created_at = time();
+				$apikey_stmt->bind_param('isi', $apikey_user_id, $rest_api_key, $apikey_created_at);
+				if (!$apikey_stmt->execute()) {
+					// Don't surface a key we failed to persist.
+					$rest_api_key = '';
+				}
+				$apikey_stmt->close();
+			}
+			$html['rest_api_key'] = htmlentities($rest_api_key, ENT_QUOTES, 'UTF-8');
+			$html['user_id'] = (int) $user_id;
 
 			// Add null check before accessing array offset on line 120
 				if (isset($mysql['user_timezone'])) {
@@ -362,7 +387,41 @@ if ($success) {
 			<div class="col-xs-9"><small><?php printf('<a href="%s202-login.php">%s202-login.php</a>', get_absolute_url(), $_SERVER['SERVER_NAME'] . get_absolute_url()); ?></small></div>
 		</div>
 
-		<p><small>Were you expecting more steps? Sorry thats it!</small></p>
+		<?php
+		// Build the absolute base URL for the cron line and CLI connection hints.
+		// Prefer the Host header so a non-default port (e.g. Docker's :8000) or
+		// vhost is preserved — SERVER_NAME drops the port, and inside a container
+		// SERVER_PORT is the internal 80, not the mapped port the user sees. The
+		// value is output through htmlspecialchars below, so a forged Host can't
+		// inject markup.
+		$scheme = (isset($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) === 'on') ? 'https' : 'http';
+		$host = (string) ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost');
+		$base_url = $scheme . '://' . $host . get_absolute_url();
+		$cron_line = '* * * * * curl -s "' . $base_url . '202-cronjobs/index.php" >/dev/null 2>&1';
+		?>
+
+		<h6 style="margin-top: 20px;">Keep background jobs running (cron)</h6>
+		<small>Reports, attribution and emails run on a schedule. If you used Docker this is already handled by the <code>cron</code> service. Otherwise, add this one line to your crontab (<code>crontab -e</code>):</small>
+		<pre style="white-space: pre-wrap; word-break: break-all; font-size: 11px;"><?php echo htmlspecialchars($cron_line, ENT_QUOTES, 'UTF-8'); ?></pre>
+
+		<?php if ($html['rest_api_key'] !== '') { ?>
+		<h6 style="margin-top: 20px;">Connect the CLI / Claude onboarding (optional)</h6>
+		<small>Use this REST API key with the <code>p202</code> CLI or the Claude <code>/onboard-prosper202</code> skill to finish setup hands-free. <strong>Copy it now</strong> — for security it isn't shown again (you can always generate a new one under Account &rarr; REST API Keys).</small>
+		<div class="row" style="margin-top: 8px; margin-bottom: 6px;">
+			<div class="col-xs-3"><span class="label label-default">Instance URL:</span></div>
+			<div class="col-xs-9"><small><code><?php echo htmlspecialchars(rtrim($base_url, '/'), ENT_QUOTES, 'UTF-8'); ?></code></small> &mdash; use with <code>p202 config set-url</code> (the CLI appends <code>/api/v3</code> itself)</div>
+		</div>
+		<div class="row" style="margin-bottom: 6px;">
+			<div class="col-xs-3"><span class="label label-default">User ID:</span></div>
+			<div class="col-xs-9"><small><code><?php echo (int) $html['user_id']; ?></code></small></div>
+		</div>
+		<div class="row" style="margin-bottom: 6px;">
+			<div class="col-xs-3"><span class="label label-default">API key:</span></div>
+			<div class="col-xs-9"><small><code style="word-break: break-all;"><?php echo $html['rest_api_key']; ?></code></small></div>
+		</div>
+		<?php } ?>
+
+		<p style="margin-top: 15px;"><small>Were you expecting more steps? Sorry thats it!</small></p>
 	</div>
 <?php info_bottom();
 }
