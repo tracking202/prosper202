@@ -18,6 +18,15 @@ $install_warnings = [];
 // Whether the last account-creation failure looks transient and worth a retry.
 $retryable = false;
 
+// Single source of truth for the field rules, shared by the server-side checks
+// below and the client-side JS (injected via json_encode) so the two can't drift.
+$rules = [
+	'username_min' => 4,
+	'username_max' => 20,
+	'password_min' => 6,
+	'password_max' => 35,
+];
+
 /**
  * Emit a JSON response for the AJAX install flow and stop. Any buffered output is
  * discarded first so the body is always valid JSON. A json_encode() failure is
@@ -126,20 +135,42 @@ if (is_installed() == true) {
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	// CSRF: the form embeds the app-wide session token (set in connect.php and
+	// persisted across AJAX via withWritableSession). Reject any POST whose token
+	// doesn't match the session before doing any work.
+	$expected_token = (string) ($_SESSION['token'] ?? '');
+	$csrf_ok = $expected_token !== '' && hash_equals($expected_token, (string) ($_POST['token'] ?? ''));
+
+	if (!$csrf_ok) {
+		$error['general'] = '<div class="error">Your session has expired or the security check failed. Please refresh the page and submit again.</div>';
+		if ($isAjax) {
+			install_json([
+				'success'   => false,
+				'retryable' => false,
+				'errors'    => ['general' => $error['general']],
+			]);
+		}
+	}
+
+	// Raw POST reads are null-coalesced so a malformed request (missing fields)
+	// produces validation errors, not "undefined array key" warnings.
+	$in_email = (string) ($_POST['user_email'] ?? '');
+	$in_name  = (string) ($_POST['user_name'] ?? '');
+
 	//check email
-	if (check_email_address($_POST['user_email']) == false) {
+	if (check_email_address($in_email) == false) {
 		$error['user_email'] = '<div class="error">Please enter a valid email address</div>';
 	}
 
 	//check username
-	if ($_POST['user_name'] == '') {
+	if ($in_name === '') {
 		$error['user_name'] = '<div class="error">You must type in your desired username</div>';
 	}
-	if (!ctype_alnum((string) $_POST['user_name'])) {
+	if (!ctype_alnum($in_name)) {
 		$error['user_name'] .= '<div class="error">Your username may only contain alphanumeric characters</div>';
 	}
-	if ((strlen((string) $_POST['user_name']) < 4) or (strlen((string) $_POST['user_name']) > 20)) {
-		$error['user_name'] .= '<div class="error">Your username must be between 4 and 20 characters long</div>';
+	if ((strlen($in_name) < $rules['username_min']) or (strlen($in_name) > $rules['username_max'])) {
+		$error['user_name'] .= '<div class="error">Your username must be between ' . $rules['username_min'] . ' and ' . $rules['username_max'] . ' characters long</div>';
 	}
 
 	// Check if password field is empty
@@ -155,10 +186,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// Check password length only if password was provided
 		if (isset($_POST['user_pass']) && !empty($_POST['user_pass'])) {
 			$pass_length = strlen((string) $_POST['user_pass']);
-			if ($pass_length < 6) {
-				$error['user_pass'] .= '<div class="error">Your password must be at least 6 characters long</div>';
-			} elseif ($pass_length > 35) {
-				$error['user_pass'] .= '<div class="error">Your password must be no more than 35 characters long</div>';
+			if ($pass_length < $rules['password_min']) {
+				$error['user_pass'] .= '<div class="error">Your password must be at least ' . $rules['password_min'] . ' characters long</div>';
+			} elseif ($pass_length > $rules['password_max']) {
+				$error['user_pass'] .= '<div class="error">Your password must be no more than ' . $rules['password_max'] . ' characters long</div>';
 			}
 		}
 
@@ -167,8 +198,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$error['user_pass'] .= '<div class="error">Your passwords did not match, please try again</div>';
 		}
 
-	//if no error occurred, let's create the user account
-	if (empty($error['user_email']) && empty($error['user_name']) && empty($error['user_pass'])) {
+	//if the CSRF check passed and no validation error occurred, create the account
+	if ($csrf_ok && empty($error['user_email']) && empty($error['user_name']) && empty($error['user_pass'])) {
 
 		//no error, so now set up the mysql database structures and the account
 		$installer = new INSTALL();
@@ -440,6 +471,7 @@ if (!$success) {
 		<div id="install-general-error"><?php echo $error['general'] ?? ''; ?></div>
 		<form method="post" action="" class="form-horizontal" role="form" id="install-prosper202">
 
+			<input type="hidden" name="token" value="<?php echo htmlentities((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 			<input type="hidden" class="form-control input-sm" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>">
 
 			<div class="form-group <?php if ($error['user_email']) echo "has-error"; ?>">
@@ -537,6 +569,8 @@ if (!$success) {
 			<script type="text/javascript">
 			(function () {
 				var BASE = <?php echo json_encode(get_absolute_url()); ?>;
+				// Field rules come from the server ($rules) so client and server can't drift.
+				var RULES = <?php echo json_encode($rules); ?>;
 				var MAX_ATTEMPTS = 3; // 1 try + 2 auto-retries on transient/network failures
 				var form = document.getElementById('install-prosper202');
 				if (!form) { return; }
@@ -545,6 +579,12 @@ if (!$success) {
 				function setHtml(id, html) {
 					var el = document.getElementById(id);
 					if (el) { el.innerHTML = html || ''; }
+				}
+				// Neutral (non-error) status shown in the general-error slot while a retry is pending.
+				function showRetrying(nextAttempt) {
+					setHtml('install-general-error', '<div style="margin-top:5px;padding:5px 10px;border-radius:4px;'
+						+ 'font-size:12px;color:#31708f;background-color:#d9edf7;border:1px solid #bce8f1;">'
+						+ 'Connection issue — retrying… (attempt ' + nextAttempt + ' of ' + MAX_ATTEMPTS + ')</div>');
 				}
 				function markGroup(name, on) {
 					var input = form.querySelector('[name="' + name + '"]');
@@ -574,7 +614,10 @@ if (!$success) {
 					var name = form.user_name.value || '';
 					var pass = form.user_pass.value || '';
 					var verify = form.verify_user_pass.value || '';
-					if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+					// Permissive subset of the server's filter_var check: reject only input
+					// that's obviously not an address, so we never block a value the server
+					// would accept. The server stays the authoritative validator.
+					if (!/^[^\s@]+@[^\s@]+$/.test(email)) {
 						errors.user_email = 'Please enter a valid email address';
 					}
 					var nameErr = '';
@@ -582,14 +625,14 @@ if (!$success) {
 						nameErr += 'You must type in your desired username. ';
 					} else {
 						if (!/^[a-zA-Z0-9]+$/.test(name)) { nameErr += 'Your username may only contain alphanumeric characters. '; }
-						if (name.length < 4 || name.length > 20) { nameErr += 'Your username must be between 4 and 20 characters long. '; }
+						if (name.length < RULES.username_min || name.length > RULES.username_max) { nameErr += 'Your username must be between ' + RULES.username_min + ' and ' + RULES.username_max + ' characters long. '; }
 					}
 					if (nameErr) { errors.user_name = nameErr.trim(); }
 					var passErr = '';
 					if (!pass) { passErr += 'You must type in your desired password. '; }
 					if (!verify) { passErr += 'You must verify your password. '; }
-					if (pass && pass.length < 6) { passErr += 'Your password must be at least 6 characters long. '; }
-					if (pass && pass.length > 35) { passErr += 'Your password must be no more than 35 characters long. '; }
+					if (pass && pass.length < RULES.password_min) { passErr += 'Your password must be at least ' + RULES.password_min + ' characters long. '; }
+					if (pass && pass.length > RULES.password_max) { passErr += 'Your password must be no more than ' + RULES.password_max + ' characters long. '; }
 					if (pass && verify && pass !== verify) { passErr += 'Your passwords did not match, please try again. '; }
 					if (passErr) { errors.user_pass = passErr.trim(); }
 					return errors;
@@ -627,6 +670,7 @@ if (!$success) {
 							return;
 						}
 						if (res.retryable && n < MAX_ATTEMPTS) {
+							showRetrying(n + 1);
 							setTimeout(function () { attempt(n + 1); }, Math.pow(2, n) * 1000);
 							return;
 						}
@@ -636,6 +680,7 @@ if (!$success) {
 					}).catch(function () {
 						// Network failure or a non-JSON response (e.g. a server error page).
 						if (n < MAX_ATTEMPTS) {
+							showRetrying(n + 1);
 							setTimeout(function () { attempt(n + 1); }, Math.pow(2, n) * 1000);
 							return;
 						}
