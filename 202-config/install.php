@@ -7,9 +7,9 @@ if (!isset($db) || !($db instanceof mysqli)) {
 	_die('Database connection unavailable.');
 }
 
-// Detect XHR/AJAX submissions so we can answer with JSON instead of a full page.
-$isAjax = isset($_SERVER['HTTP_X_REQUESTED_WITH'])
-	&& strtolower((string) $_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
+// connect.php already computes this with identical logic; reuse it so AJAX
+// detection stays consistent with the rest of the app. We answer AJAX with JSON.
+$isAjax = $_is_ajax ?? false;
 
 // Non-critical issues collected during install. They're surfaced as a gentle note
 // on the success screen instead of blocking the install — all are safe to fix later.
@@ -63,7 +63,7 @@ function render_install_success(array $html, array $warnings): void
 		</div>
 		<div class="row" style="margin-bottom: 10px;">
 			<div class="col-xs-3"><span class="label label-default">Login address:</span></div>
-			<div class="col-xs-9"><small><?php printf('<a href="%s202-login.php">%s202-login.php</a>', $base, $_SERVER['SERVER_NAME'] . $base); ?></small></div>
+			<div class="col-xs-9"><small><?php printf('<a href="%s202-login.php">%s202-login.php</a>', $base, htmlentities((string) ($_SERVER['SERVER_NAME'] ?? ''), ENT_QUOTES, 'UTF-8') . $base); ?></small></div>
 		</div>
 		<?php if ($warnings) { ?>
 			<div style="margin: 12px 0; padding: 8px 12px; border: 1px solid #faebcc; background: #fcf8e3; color: #8a6d3b; border-radius: 4px; font-size: 12px;">
@@ -192,7 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$prepare = static function (string $sql) use ($db): \mysqli_stmt {
 			$stmt = $db->prepare($sql);
 			if ($stmt === false) {
-				throw new \RuntimeException('Failed to prepare statement: ' . $db->error);
+				throw new \RuntimeException('Failed to prepare statement: ' . $db->error, (int) $db->errno);
 			}
 			return $stmt;
 		};
@@ -225,8 +225,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$user_api
 			);
 			if (!$stmt->execute()) {
+				// Capture the real driver errno (STRICT-only report mode means
+				// execute() returns false instead of throwing) so the catch below
+				// can tell a transient failure from a permanent one.
+				$errno = (int) $stmt->errno;
 				$stmt->close();
-				throw new \RuntimeException('Failed to insert user: ' . $db->error);
+				throw new \RuntimeException('Failed to insert user: ' . $db->error, $errno);
 			}
 			$user_id = (int) $db->insert_id;
 			$stmt->close();
@@ -237,8 +241,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$stmt = $prepare("SELECT user_id FROM 202_users WHERE user_name=? LIMIT 1");
 				$stmt->bind_param('s', $user_name);
 				if (!$stmt->execute()) {
+					$errno = (int) $stmt->errno;
 					$stmt->close();
-					throw new \RuntimeException('Failed to look up user: ' . $db->error);
+					throw new \RuntimeException('Failed to look up user: ' . $db->error, $errno);
 				}
 				$lookup = $stmt->get_result();
 				if ($lookup && $row = $lookup->fetch_assoc()) {
@@ -254,16 +259,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$stmt = $prepare("INSERT IGNORE INTO 202_users_pref SET user_id=?");
 			$stmt->bind_param('i', $user_id);
 			if (!$stmt->execute()) {
+				$errno = (int) $stmt->errno;
 				$stmt->close();
-				throw new \RuntimeException('Failed to insert user preferences: ' . $db->error);
+				throw new \RuntimeException('Failed to insert user preferences: ' . $db->error, $errno);
 			}
 			$stmt->close();
 
 			$stmt = $prepare("INSERT IGNORE INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, 1)");
 			$stmt->bind_param('i', $user_id);
 			if (!$stmt->execute()) {
+				$errno = (int) $stmt->errno;
 				$stmt->close();
-				throw new \RuntimeException('Failed to insert user role: ' . $db->error);
+				throw new \RuntimeException('Failed to insert user role: ' . $db->error, $errno);
 			}
 			$stmt->close();
 
