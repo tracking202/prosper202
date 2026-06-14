@@ -48,15 +48,32 @@ if ($content === false) {
     exit(1);
 }
 
+// Single-pass replacement: strtr substitutes every token at once and never
+// re-scans text it just inserted, so a credential value that happens to contain
+// another placeholder token can't be double-substituted.
+$map = [];
 foreach ($replacements as $token => $value) {
-    $content = str_replace($token, $escape((string) $value), $content);
+    $map[$token] = $escape((string) $value);
 }
+$content = strtr($content, $map);
 
 if (file_put_contents($target, $content) === false) {
     fwrite(STDERR, "Error: could not write {$target}\n");
     exit(1);
 }
-// Owner/group read only — this file holds database credentials.
+// 202-config.php holds DB credentials, so keep it non-world-readable. But this
+// script runs from the Docker entrypoint as root, while Apache serves requests
+// as www-data — a root-owned 0640 file is unreadable by the web server and would
+// 500 every page. Hand the file to the web user so it can read its own config;
+// if ownership can't be transferred (user missing, or not running as root), fall
+// back to world-readable so the app still boots instead of breaking silently.
 chmod($target, 0640);
+$webUser  = getenv('APACHE_RUN_USER') ?: 'www-data';
+$webGroup = getenv('APACHE_RUN_GROUP') ?: $webUser;
+if (@chown($target, $webUser)) {
+    @chgrp($target, $webGroup);
+} else {
+    chmod($target, 0644);
+}
 
 echo "Wrote 202-config.php (db host={$dbHost}).\n";

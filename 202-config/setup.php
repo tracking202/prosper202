@@ -34,12 +34,10 @@ if (is_installed() === true) {
     exit;
 }
 
-// If the paid API key was already captured, jump straight to the admin step;
-// otherwise start at the requirements screen which leads into the key step.
-if (isset($_COOKIE['user_api']) && $_COOKIE['user_api'] !== '') {
-    header('Location: ' . get_absolute_url() . '202-config/install.php');
-    exit;
-}
-
+// Always start at the requirements screen so the server checks (PHP version and
+// extensions, MySQL version, curl) run before account creation — install.php
+// performs none of those. A stale user_api cookie must not let the user skip the
+// gate, so we no longer short-circuit to install.php. requirements.php ->
+// get_apikey.php -> install.php are chained by the buttons on each page.
 header('Location: ' . get_absolute_url() . '202-config/requirements.php');
 exit;

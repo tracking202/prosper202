@@ -19,9 +19,11 @@ fi
 # Self-write 202-config.php from the sample using the DB credentials passed in
 # by docker-compose, so the setup wizard opens with the database step already
 # done. write-config.php is a no-op when 202-config.php already exists, so this
-# is safe to run on every container start.
+# is safe to run on every container start. A real failure (missing sample,
+# unwritable target) would otherwise boot the container with broken DB config,
+# so let `set -e` surface it loudly instead of swallowing it.
 if [ -n "$MYSQL_ROOT_PASSWORD" ]; then
-    php build/scripts/write-config.php || echo "Skipping config generation."
+    php build/scripts/write-config.php
 fi
 
 # Execute the main command (Apache)

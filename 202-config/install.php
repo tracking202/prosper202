@@ -158,8 +158,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if ($apikey_stmt === false) {
 				$rest_api_key = '';
 			} else {
+				// $user_id is a string when read back via SELECT on the
+				// INSERT IGNORE existing-user path; bind it as a real int.
+				$apikey_user_id = (int) $user_id;
 				$apikey_created_at = time();
-				$apikey_stmt->bind_param('isi', $user_id, $rest_api_key, $apikey_created_at);
+				$apikey_stmt->bind_param('isi', $apikey_user_id, $rest_api_key, $apikey_created_at);
 				if (!$apikey_stmt->execute()) {
 					// Don't surface a key we failed to persist.
 					$rest_api_key = '';
