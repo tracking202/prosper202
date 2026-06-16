@@ -98,3 +98,68 @@ if (!function_exists('install_validate_account')) {
         return $errors;
     }
 }
+
+if (!function_exists('install_encode_response')) {
+    /**
+     * Encode an install AJAX payload to JSON. On a json_encode() failure (e.g. a
+     * value containing malformed UTF-8) it returns an explicit error body rather
+     * than an empty one (CLAUDE.md #4).
+     *
+     * @param  array<string,mixed> $payload
+     * @return array{ok:bool,body:string}
+     */
+    function install_encode_response(array $payload): array
+    {
+        $json = json_encode($payload);
+        if ($json === false) {
+            return [
+                'ok'   => false,
+                'body' => '{"success":false,"retryable":true,"errors":{"general":"<div class=\"error\">The server hit an unexpected error encoding its response. Please try again.</div>"}}',
+            ];
+        }
+
+        return ['ok' => true, 'body' => $json];
+    }
+}
+
+if (!function_exists('render_install_success')) {
+    /**
+     * Render the post-install success panel (the .main block) so it can be swapped
+     * into the page over AJAX or printed directly on the no-JS path. The base URL
+     * and server name are injected (no globals) so the markup can be unit-tested.
+     *
+     * $html['user_name'] is expected pre-escaped; $serverName is escaped here.
+     * $warnings are developer-authored, safe HTML strings.
+     *
+     * @param array<string,string> $html
+     * @param list<string>         $warnings
+     */
+    function render_install_success(array $html, array $warnings, string $base, string $serverName): void
+    {
+        $safeServerName = htmlentities($serverName, ENT_QUOTES, 'UTF-8');
+        ?>
+        <div class="main col-xs-7 install">
+            <center><img src="<?php echo $base; ?>202-img/prosper202.png"></center>
+            <h6>Success!</h6>
+            <small>Prosper202 has been installed. Now you can <a href="<?php echo $base; ?>202-login.php">log in</a>.</small><br></br>
+            <div class="row" style="margin-bottom: 10px;">
+                <div class="col-xs-3"><span class="label label-default">Username:</span></div>
+                <div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_name']; ?></span></div>
+            </div>
+            <div class="row" style="margin-bottom: 10px;">
+                <div class="col-xs-3"><span class="label label-default">Login address:</span></div>
+                <div class="col-xs-9"><small><?php printf('<a href="%s202-login.php">%s202-login.php</a>', $base, $safeServerName . $base); ?></small></div>
+            </div>
+            <?php if ($warnings) { ?>
+                <div style="margin: 12px 0; padding: 8px 12px; border: 1px solid #faebcc; background: #fcf8e3; color: #8a6d3b; border-radius: 4px; font-size: 12px;">
+                    <strong>You're all set — a couple of optional steps need a quick follow-up:</strong>
+                    <ul style="margin: 6px 0 0 18px;">
+                        <?php foreach ($warnings as $w) { echo '<li>' . $w . '</li>'; } ?>
+                    </ul>
+                </div>
+            <?php } ?>
+            <p><small>Were you expecting more steps? Sorry thats it!</small></p>
+        </div>
+        <?php
+    }
+}

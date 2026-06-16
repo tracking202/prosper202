@@ -25,8 +25,9 @@ $rules = install_default_rules();
 
 /**
  * Emit a JSON response for the AJAX install flow and stop. Any buffered output is
- * discarded first so the body is always valid JSON. A json_encode() failure is
- * surfaced explicitly rather than sending an empty body (CLAUDE.md #4).
+ * discarded first so the body is always valid JSON. The payload is encoded via the
+ * unit-tested install_encode_response(), which surfaces a json_encode() failure
+ * explicitly rather than sending an empty body (CLAUDE.md #4).
  *
  * @param array<string,mixed> $payload
  */
@@ -36,51 +37,12 @@ function install_json(array $payload): never
 		ob_end_clean();
 	}
 	header('Content-Type: application/json; charset=utf-8');
-	$json = json_encode($payload);
-	if ($json === false) {
+	$encoded = install_encode_response($payload);
+	if (!$encoded['ok']) {
 		http_response_code(500);
-		echo '{"success":false,"retryable":true,"errors":{"general":"<div class=\"error\">The server hit an unexpected error encoding its response. Please try again.</div>"}}';
-		exit;
 	}
-	echo $json;
+	echo $encoded['body'];
 	exit;
-}
-
-/**
- * Render just the post-install success panel (the .main block), so it can be
- * swapped into the page over AJAX or printed directly on the no-JS path.
- * $warnings are developer-authored, safe HTML strings.
- *
- * @param array<string,string> $html
- * @param list<string>         $warnings
- */
-function render_install_success(array $html, array $warnings): void
-{
-	$base = get_absolute_url();
-	?>
-	<div class="main col-xs-7 install">
-		<center><img src="<?php echo $base; ?>202-img/prosper202.png"></center>
-		<h6>Success!</h6>
-		<small>Prosper202 has been installed. Now you can <a href="<?php echo $base; ?>202-login.php">log in</a>.</small><br></br>
-		<div class="row" style="margin-bottom: 10px;">
-			<div class="col-xs-3"><span class="label label-default">Username:</span></div>
-			<div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_name']; ?></span></div>
-		</div>
-		<div class="row" style="margin-bottom: 10px;">
-			<div class="col-xs-3"><span class="label label-default">Login address:</span></div>
-			<div class="col-xs-9"><small><?php printf('<a href="%s202-login.php">%s202-login.php</a>', $base, htmlentities((string) ($_SERVER['SERVER_NAME'] ?? ''), ENT_QUOTES, 'UTF-8') . $base); ?></small></div>
-		</div>
-		<?php if ($warnings) { ?>
-			<div style="margin: 12px 0; padding: 8px 12px; border: 1px solid #faebcc; background: #fcf8e3; color: #8a6d3b; border-radius: 4px; font-size: 12px;">
-				<strong>You're all set — a couple of optional steps need a quick follow-up:</strong>
-				<ul style="margin: 6px 0 0 18px;">
-					<?php foreach ($warnings as $w) { echo '<li>' . $w . '</li>'; } ?>
-				</ul>
-			</div>
-		<?php } ?>
-		<p><small>Were you expecting more steps? Sorry thats it!</small></p>
-	</div>
-	<?php
 }
 
 // Buffer everything for AJAX requests so stray output never corrupts the JSON body.
@@ -343,7 +305,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if ($isAjax) {
 		if ($success) {
 			ob_start();
-			render_install_success($html, $install_warnings);
+			render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''));
 			$panel = ob_get_clean();
 			install_json([
 				'success'  => true,
@@ -670,6 +632,6 @@ if (!$success) {
 //if success is equal to true, and this campaign did complete
 if ($success) {
 	info_top();
-	render_install_success($html, $install_warnings);
+	render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''));
 	info_bottom();
 }

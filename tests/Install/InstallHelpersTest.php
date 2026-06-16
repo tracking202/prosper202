@@ -171,4 +171,73 @@ final class InstallHelpersTest extends TestCase
 
         $this->assertSame('', $errors['user_name']);
     }
+
+    public function testEncodeResponseRoundTripsValidPayload(): void
+    {
+        $payload = ['success' => true, 'warnings' => ['a'], 'errors' => ['general' => '<div>x</div>']];
+
+        $encoded = install_encode_response($payload);
+
+        $this->assertTrue($encoded['ok']);
+        $this->assertSame($payload, json_decode($encoded['body'], true));
+    }
+
+    public function testEncodeResponseFallsBackOnUnencodablePayload(): void
+    {
+        // Malformed UTF-8 makes json_encode() return false.
+        $encoded = install_encode_response(['errors' => ['general' => "\xB1\x31"]]);
+
+        $this->assertFalse($encoded['ok']);
+        $decoded = json_decode($encoded['body'], true);
+        $this->assertIsArray($decoded);
+        $this->assertFalse($decoded['success']);
+        $this->assertTrue($decoded['retryable']);
+        $this->assertStringContainsString('unexpected error', $decoded['errors']['general']);
+    }
+
+    /** Capture the success panel HTML. */
+    private function renderSuccess(array $html, array $warnings, string $base, string $serverName): string
+    {
+        ob_start();
+        render_install_success($html, $warnings, $base, $serverName);
+        return (string) ob_get_clean();
+    }
+
+    public function testSuccessPanelRendersAccountAndLoginLink(): void
+    {
+        $out = $this->renderSuccess(['user_name' => 'admin1'], [], 'https://host.test/', 'host.test');
+
+        $this->assertStringContainsString('Success!', $out);
+        $this->assertStringContainsString('admin1', $out);
+        $this->assertStringContainsString('https://host.test/202-login.php', $out);
+        // No warnings block when there are no warnings.
+        $this->assertStringNotContainsString('need a quick follow-up', $out);
+    }
+
+    public function testSuccessPanelRendersWarnings(): void
+    {
+        $out = $this->renderSuccess(
+            ['user_name' => 'admin1'],
+            ['Cron setup did not complete.'],
+            'https://host.test/',
+            'host.test'
+        );
+
+        $this->assertStringContainsString('need a quick follow-up', $out);
+        $this->assertStringContainsString('Cron setup did not complete.', $out);
+    }
+
+    public function testSuccessPanelEscapesServerName(): void
+    {
+        $out = $this->renderSuccess(
+            ['user_name' => 'admin1'],
+            [],
+            'https://host.test/',
+            '"><img src=x onerror=alert(1)>'
+        );
+
+        // The injected markup must be escaped, never reflected raw.
+        $this->assertStringNotContainsString('<img src=x', $out);
+        $this->assertStringContainsString('&lt;img', $out);
+    }
 }
