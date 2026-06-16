@@ -342,9 +342,14 @@ class AUTH
     public static function remember_me_on_logged_out()
     {
         if (isset($_COOKIE['remember_me']) && AUTH::logged_in() == false) {
-            [$user_id, $auth_key, $hash] = explode('-', (string) $_COOKIE['remember_me']);
+            $parts = explode('-', (string) $_COOKIE['remember_me']);
+            if (count($parts) !== 3) {
+                return false;
+            }
+            [$user_id, $auth_key, $hash] = $parts;
             if (!empty($user_id) && !empty($auth_key) && !empty($hash)) {
-                if ($hash !== hash_hmac('sha256', $user_id . '-' . $auth_key, (string) self::get_user_secret_key($user_id))) {
+                $expected = hash_hmac('sha256', $user_id . '-' . $auth_key, (string) self::get_user_secret_key($user_id));
+                if (!hash_equals($expected, (string) $hash)) {
                     return false;
                 }
 
@@ -478,6 +483,28 @@ class AUTH
     {
         $sql = 'DELETE FROM 202_auth_keys WHERE expires < UNIX_TIMESTAMP()';
         _mysqli_query($sql);
+    }
+
+    /**
+     * Build a sanitized, serialized snapshot of the request for the login audit
+     * log. The previous code stored serialize($_SERVER) and serialize($_SESSION)
+     * verbatim, which persisted live secrets at rest on every login attempt —
+     * the request's Cookie header (containing the PHPSESSID and remember_me
+     * token), Authorization header, and the whole session (API keys, CSRF
+     * token). None of that is ever displayed; only a few forensic fields are.
+     * Keep just those safe fields and drop everything sensitive.
+     */
+    public static function login_audit_snapshot(): string
+    {
+        $server = $_SERVER ?? [];
+        $safe = [];
+        foreach (['REQUEST_METHOD', 'REQUEST_URI', 'SERVER_NAME', 'HTTP_HOST', 'HTTP_USER_AGENT', 'HTTP_REFERER', 'REMOTE_ADDR'] as $key) {
+            if (isset($server[$key]) && is_scalar($server[$key])) {
+                $safe[$key] = (string) $server[$key];
+            }
+        }
+
+        return serialize($safe);
     }
 
     public static function dev_urand($min = 0, $max = 0x7FFFFFFF)

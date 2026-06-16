@@ -281,6 +281,37 @@ final class AuthClassTest extends TestCase
         $this->assertSame(14, AUTH::LOGOUT_DAYS);
     }
 
+    public function testLoginAuditSnapshotKeepsSafeFieldsOnly(): void
+    {
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REQUEST_URI'] = '/202-login.php';
+        $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test Agent';
+        $_SERVER['REMOTE_ADDR'] = '203.0.113.7';
+
+        $snapshot = unserialize(AUTH::login_audit_snapshot());
+
+        $this->assertSame('POST', $snapshot['REQUEST_METHOD']);
+        $this->assertSame('/202-login.php', $snapshot['REQUEST_URI']);
+        $this->assertSame('PHPUnit Test Agent', $snapshot['HTTP_USER_AGENT']);
+        $this->assertSame('203.0.113.7', $snapshot['REMOTE_ADDR']);
+    }
+
+    public function testLoginAuditSnapshotDropsSecrets(): void
+    {
+        $_SERVER['HTTP_COOKIE'] = 'PHPSESSID=abc123; remember_me=42-secretkey-deadbeef';
+        $_SERVER['HTTP_AUTHORIZATION'] = 'Bearer supersecret';
+        $_SERVER['PHP_AUTH_PW'] = 'hunter2';
+
+        $snapshot = unserialize(AUTH::login_audit_snapshot());
+
+        $this->assertArrayNotHasKey('HTTP_COOKIE', $snapshot);
+        $this->assertArrayNotHasKey('HTTP_AUTHORIZATION', $snapshot);
+        $this->assertArrayNotHasKey('PHP_AUTH_PW', $snapshot);
+        $serialized = AUTH::login_audit_snapshot();
+        $this->assertStringNotContainsString('remember_me', $serialized);
+        $this->assertStringNotContainsString('supersecret', $serialized);
+    }
+
     public function testAuthenticateWithEmptyUsername(): void
     {
         $mockDb = $this->createMockDb();

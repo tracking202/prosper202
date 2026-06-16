@@ -14,14 +14,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	$user_sql = "SELECT user_id FROM 202_users WHERE user_name='" . $mysql['user_name'] . "' AND user_email='" . $mysql['user_email'] . "'";
 	$user_result = _mysqli_query($user_sql, $db);
-	$user_row = $user_result->fetch_assoc();
+	$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
 
-	if (!$user_row) {
-		$error['user'] = 'Invalid username /email combination.';
-	}
+	// Always report success regardless of whether the account exists. Revealing
+	// "invalid username/email combination" lets an attacker enumerate which
+	// usernames and emails are registered. Only actually issue a reset when the
+	// account matches.
+	$success = true;
 
-	//i there isn't any error, give this user, a new password, and email it to them!
-	if (!$error) {
+	if ($user_row) {
 
 		$mysql['user_id'] = $db->real_escape_string((string) $user_row['user_id']);
 
@@ -47,18 +48,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$to = '';
 		}
 		$server_name = str_replace(["\r", "\n"], '', (string) ($_SERVER['SERVER_NAME'] ?? ''));
+		// Match the scheme the request came in on so the reset link isn't downgraded to http.
+		$is_https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+			|| (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
+		$scheme = $is_https ? 'https' : 'http';
+		$reset_url = $scheme . '://' . $server_name . get_absolute_url() . '202-pass-reset.php?key=' . $user_pass_key;
 		$subject = "[Propser202 on " . $server_name . "] Password Reset";
 
 		$message = "
 <p>Someone has asked to reset the password for the following site and username.</p>
 
-<p><a href=\"http://" . $server_name . "\">http://" . $server_name . "</a></p>
+<p><a href=\"" . $scheme . "://" . $server_name . "\">" . $scheme . "://" . $server_name . "</a></p>
 
 <p>Username: " . htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8') . "</p>
 
 <p>To reset your password visit the following address, otherwise just ignore this email and nothing will happen.</p>
 
-<p><a href=\"http://" . $server_name . "/202-pass-reset.php?key=$user_pass_key\">http://" . $server_name . get_absolute_url() . "202-pass-reset.php?key=$user_pass_key</a></p>";
+<p><a href=\"" . $reset_url . "\">" . $reset_url . "</a></p>";
 
 		$from = "propser202@" . $server_name;
 
@@ -72,8 +78,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($to !== '') {
 			mail((string) $to, $subject, $message, $header);
 		}
-
-		$success = true;
 	}
 
 

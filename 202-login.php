@@ -25,9 +25,6 @@ if (!is_installed()) {
     exit;
 }
 
-$user_sql = "SET @@global.sql_mode= ''";
-$user_results = $db->query($user_sql);
-
 $detect = new DeviceDetect();
 $parser = Parser::create();
 $userAgent = $detect->getUserAgent();
@@ -103,8 +100,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$login_log_stmt = $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
 	if ($login_log_stmt) {
 		$login_error_serialized = serialize($error);
-		$login_server_serialized = serialize($_SERVER);
-		$login_session_serialized = serialize($_SESSION);
+		$login_server_serialized = AUTH::login_audit_snapshot();
+		$login_session_serialized = ''; // never persist session contents (API keys, tokens) at rest
 		$redacted_password = '[filtered]';
 		$ip_address = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 		$login_time = time();

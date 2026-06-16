@@ -8,11 +8,18 @@ $html = [];
 $success = false;
 
 //take password retireveal and see if it is legitimate
-$mysql['user_pass_key'] = $db->real_escape_string((string)($_GET['key'] ?? ''));
+$submitted_key = (string)($_GET['key'] ?? '');
+$mysql['user_pass_key'] = $db->real_escape_string($submitted_key);
 
-$user_sql = "SELECT * FROM 202_users WHERE user_pass_key='" . $mysql['user_pass_key'] . "'";
-$user_result = _mysqli_query($user_sql, $db);
-$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
+// Never look up on a blank key. Reset keys are cleared to NULL after use, but
+// guarding here keeps an empty "?key=" from ever matching a row by accident.
+if ($submitted_key === '') {
+	$user_row = null;
+} else {
+	$user_sql = "SELECT * FROM 202_users WHERE user_pass_key='" . $mysql['user_pass_key'] . "'";
+	$user_result = _mysqli_query($user_sql, $db);
+	$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
+}
 
 if (!$user_row) {
 	$error['user_pass_key'] = '<div class="error">No key was found like that</div>';
@@ -43,8 +50,8 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 	if (($_POST['verify_user_pass'] ?? '') == '') {
 		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">You must type verify your password</div>';
 	}
-	if ((strlen((string) ($_POST['user_pass'] ?? '')) < 6) or (strlen((string) ($_POST['user_pass'] ?? '')) > 15)) {
-		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Passwords must be 6 to 15 characters long</div>';
+	if ((strlen((string) ($_POST['user_pass'] ?? '')) < 8) or (strlen((string) ($_POST['user_pass'] ?? '')) > 128)) {
+		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Passwords must be 8 to 128 characters long</div>';
 	}
 	if (($_POST['user_pass'] ?? '') != ($_POST['verify_user_pass'] ?? '')) {
 		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Your passwords did not match, please try again</div>';
@@ -58,8 +65,11 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 
 		$mysql['user_id'] = $db->real_escape_string($user_row['user_id']);
 
+		// Clear the reset key as well as the timestamp so the link is single-use
+		// and cannot be replayed even before the 3-day window elapses.
 		$user_sql = "UPDATE 	202_users
 						  SET		user_pass='" . $mysql['user_pass'] . "',
+									user_pass_key=NULL,
 									user_pass_time='0'
 						  WHERE	user_id='" . $mysql['user_id'] . "'";
 		$user_result = _mysqli_query($user_sql, $db);
