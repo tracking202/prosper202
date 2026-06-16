@@ -65,6 +65,12 @@ class AUTH
     public const RATE_LIMIT_MAX_PER_USER = 10;
     public const RATE_LIMIT_MAX_PER_IP = 50;
 
+    // Step-up protection: wrong current-password attempts allowed within one
+    // session before the change-password flow tears the session down. Guards
+    // against someone holding a session they shouldn't (shared machine, ridden
+    // cookie) guessing the password toward a full account takeover.
+    public const MAX_PASSWORD_REAUTH_FAILS = 5;
+
     private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted != 1 AND u.user_active = 1 LIMIT 1';
     private static bool $passwordColumnChecked = false;
     private static bool $sessionHeartbeatRefreshed = false;

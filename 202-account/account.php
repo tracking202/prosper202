@@ -563,6 +563,30 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 			$verify_stmt->close();
 			if (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
 				$error['user_pass'] .= 'Your old password was typed incorrectly.';
+
+				// Count wrong current-password attempts within this session (only
+				// when the request is genuine — a valid CSRF token — so a forged
+				// cross-site POST can't force-logout the victim). Too many almost
+				// always means someone is poking at a session they shouldn't have,
+				// so tear it down and force a fresh login rather than letting them
+				// keep guessing toward an account takeover.
+				if (empty($error['token'])) {
+					$_SESSION['pw_change_fails'] = (int) ($_SESSION['pw_change_fails'] ?? 0) + 1;
+					if ($_SESSION['pw_change_fails'] >= AUTH::MAX_PASSWORD_REAUTH_FAILS) {
+						session_destroy();
+						$secure = function_exists('getSecureStatus')
+							? getSecureStatus()
+							: (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
+						setcookie('remember_me', '', ['expires' => 1, 'path' => '/', 'domain' => AUTH::cookie_domain(), 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
+						unset($_COOKIE['remember_me']);
+						header('location: ' . get_absolute_url() . '202-login.php');
+						exit;
+					}
+				}
+			} else {
+				// Correct current password — this is the legitimate owner, so
+				// clear the failure counter.
+				unset($_SESSION['pw_change_fails']);
 			}
 		} else {
 			$error['user_pass'] .= 'Unable to verify your current password at this time.';
