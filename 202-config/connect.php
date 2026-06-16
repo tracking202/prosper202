@@ -60,8 +60,15 @@ DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
 // Messaging API configuration (Intercom-style messenger).
 // Central server contract: 202-config/Messaging/CENTRAL-API.md
-DEFINE('MESSAGING_API_URL', 'https://my.tracking202.com/api/v3/messaging');
-DEFINE('MESSAGING_SYNC_THROTTLE', 20); // seconds between per-user network syncs
+// Both values are overridable via environment variables so a developer can point
+// the app at the local mock server (202-config/Messaging/mock-server.php) without
+// editing tracked config, e.g. MESSAGING_API_URL=http://127.0.0.1:8787/messaging
+if (!defined('MESSAGING_API_URL')) {
+    DEFINE('MESSAGING_API_URL', getenv('MESSAGING_API_URL') ?: 'https://my.tracking202.com/api/v3/messaging');
+}
+if (!defined('MESSAGING_SYNC_THROTTLE')) {
+    DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user network syncs
+}
 
 //fix for nginx with no server name set
 if ($_SERVER['SERVER_NAME'] == '_') {
