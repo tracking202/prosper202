@@ -231,6 +231,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 			$stmt->close();
 
+			// Default dashboard chart for the new account, keyed on the committed
+			// $user_id. A rolled-back retry consumes the AUTO_INCREMENT id, so the
+			// account isn't necessarily user 1; account_overview.php joins charts on
+			// the user's own id, so a hard-coded id would leave the account chartless.
+			$chart_data = 'a:3:{i:0;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:6:"clicks";}i:1;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:9:"click_out";}i:2;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:5:"leads";}}';
+			$chart_range = 'days';
+			$stmt = $prepare("INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`) VALUES (?, ?, ?)");
+			$stmt->bind_param('iss', $user_id, $chart_data, $chart_range);
+			if (!$stmt->execute()) {
+				$errno = (int) $stmt->errno;
+				$stmtError = $stmt->error;
+				$stmt->close();
+				throw new \RuntimeException('Failed to insert default chart: ' . $stmtError, $errno);
+			}
+			$stmt->close();
+
 			if (!$db->commit()) {
 				throw new \RuntimeException('Failed to commit transaction: ' . $db->error, (int) $db->errno);
 			}

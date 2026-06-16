@@ -25,7 +25,8 @@ final readonly class DataSeeder
         $this->seedRoles();
         $this->seedPermissions();
         $this->seedRolePermissions();
-        $this->seedDefaultChartData();
+        // The default chart is per-user and created with the committed user_id by
+        // the installer (install.php), not seeded here with a hard-coded id.
         $this->seedClicksTotal();
     }
 
@@ -118,25 +119,6 @@ final readonly class DataSeeder
             (2, 22), (2, 23),
             (3, 12), (3, 14), (3, 15), (3, 22),
             (4, 12)";
-        _mysqli_query($sql);
-    }
-
-    /**
-     * Seed default chart data.
-     */
-    public function seedDefaultChartData(): void
-    {
-        // Idempotent: an install retry re-runs install_databases() before any user is
-        // committed, and 202_charts has no unique key, so skip if the default chart
-        // row already exists. Otherwise each retry duplicates it and dashboard joins
-        // (which read by user_id) would see two default charts.
-        $existing = _mysqli_query("SELECT 1 FROM `" . TableRegistry::CHARTS . "` WHERE `user_id` = 1 LIMIT 1");
-        if ($existing instanceof \mysqli_result && $existing->num_rows > 0) {
-            return;
-        }
-
-        $sql = "INSERT INTO `" . TableRegistry::CHARTS . "` (`user_id`, `data`, `chart_time_range`) VALUES
-            (1, 'a:3:{i:0;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:6:\"clicks\";}i:1;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:9:\"click_out\";}i:2;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:5:\"leads\";}}', 'days')";
         _mysqli_query($sql);
     }
 
