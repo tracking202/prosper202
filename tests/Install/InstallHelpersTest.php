@@ -1,0 +1,174 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Install;
+
+use PHPUnit\Framework\TestCase;
+
+/**
+ * Unit tests for the installer's pure helpers: field rules, CSRF token check,
+ * and account validation.
+ *
+ * @covers ::install_default_rules
+ * @covers ::install_csrf_ok
+ * @covers ::install_validate_account
+ */
+final class InstallHelpersTest extends TestCase
+{
+    public static function setUpBeforeClass(): void
+    {
+        require_once __DIR__ . '/../../202-config/functions-install-helpers.php';
+    }
+
+    /** @return array{username_min:int,username_max:int,password_min:int,password_max:int} */
+    private function rules(): array
+    {
+        return install_default_rules();
+    }
+
+    /** A fully valid submission, overridable per field. */
+    private function validPost(array $overrides = []): array
+    {
+        return array_merge([
+            'user_email'       => 'owner@example.com',
+            'user_name'        => 'admin1',
+            'user_pass'        => 'secret9',
+            'verify_user_pass' => 'secret9',
+        ], $overrides);
+    }
+
+    public function testDefaultRulesAreStable(): void
+    {
+        $this->assertSame(
+            ['username_min' => 4, 'username_max' => 20, 'password_min' => 6, 'password_max' => 35],
+            install_default_rules()
+        );
+    }
+
+    public function testCsrfRejectsEmptyExpectedToken(): void
+    {
+        $this->assertFalse(install_csrf_ok('', ''));
+        $this->assertFalse(install_csrf_ok('', 'anything'));
+    }
+
+    public function testCsrfRejectsMismatchAndEmptySubmission(): void
+    {
+        $this->assertFalse(install_csrf_ok('expected-token', 'wrong-token'));
+        $this->assertFalse(install_csrf_ok('expected-token', ''));
+    }
+
+    public function testCsrfAcceptsExactMatch(): void
+    {
+        $this->assertTrue(install_csrf_ok('a-real-token', 'a-real-token'));
+    }
+
+    public function testValidSubmissionHasNoErrors(): void
+    {
+        $errors = install_validate_account($this->validPost(), $this->rules());
+
+        $this->assertSame(
+            ['user_email' => '', 'user_name' => '', 'user_pass' => ''],
+            $errors
+        );
+    }
+
+    public function testInvalidEmailIsRejected(): void
+    {
+        $errors = install_validate_account($this->validPost(['user_email' => 'not-an-email']), $this->rules());
+
+        $this->assertStringContainsString('valid email address', $errors['user_email']);
+        $this->assertSame('', $errors['user_name']);
+        $this->assertSame('', $errors['user_pass']);
+    }
+
+    public function testMissingEmailKeyIsRejectedWithoutWarning(): void
+    {
+        $post = $this->validPost();
+        unset($post['user_email']);
+
+        $errors = install_validate_account($post, $this->rules());
+
+        $this->assertStringContainsString('valid email address', $errors['user_email']);
+    }
+
+    public function testEmptyUsernameIsRejected(): void
+    {
+        $errors = install_validate_account($this->validPost(['user_name' => '']), $this->rules());
+
+        $this->assertStringContainsString('type in your desired username', $errors['user_name']);
+    }
+
+    public function testNonAlphanumericUsernameIsRejected(): void
+    {
+        $errors = install_validate_account($this->validPost(['user_name' => 'bad name!']), $this->rules());
+
+        $this->assertStringContainsString('alphanumeric', $errors['user_name']);
+    }
+
+    public function testTooShortUsernameIsRejected(): void
+    {
+        $errors = install_validate_account($this->validPost(['user_name' => 'ab']), $this->rules());
+
+        $this->assertStringContainsString('between 4 and 20', $errors['user_name']);
+    }
+
+    public function testTooLongUsernameIsRejected(): void
+    {
+        $errors = install_validate_account($this->validPost(['user_name' => str_repeat('a', 21)]), $this->rules());
+
+        $this->assertStringContainsString('between 4 and 20', $errors['user_name']);
+    }
+
+    public function testMissingPasswordIsRejected(): void
+    {
+        $post = $this->validPost();
+        unset($post['user_pass'], $post['verify_user_pass']);
+
+        $errors = install_validate_account($post, $this->rules());
+
+        $this->assertStringContainsString('type in your desired password', $errors['user_pass']);
+        $this->assertStringContainsString('verify your password', $errors['user_pass']);
+    }
+
+    public function testTooShortPasswordIsRejected(): void
+    {
+        $errors = install_validate_account(
+            $this->validPost(['user_pass' => 'ab1', 'verify_user_pass' => 'ab1']),
+            $this->rules()
+        );
+
+        $this->assertStringContainsString('at least 6 characters', $errors['user_pass']);
+    }
+
+    public function testTooLongPasswordIsRejected(): void
+    {
+        $long = str_repeat('x', 36);
+        $errors = install_validate_account(
+            $this->validPost(['user_pass' => $long, 'verify_user_pass' => $long]),
+            $this->rules()
+        );
+
+        $this->assertStringContainsString('no more than 35 characters', $errors['user_pass']);
+    }
+
+    public function testMismatchedPasswordsAreRejected(): void
+    {
+        $errors = install_validate_account(
+            $this->validPost(['user_pass' => 'secret9', 'verify_user_pass' => 'secret8']),
+            $this->rules()
+        );
+
+        $this->assertStringContainsString('did not match', $errors['user_pass']);
+    }
+
+    public function testRuleBoundsAreHonored(): void
+    {
+        // With a relaxed min, a 2-char username that fails the default passes here.
+        $relaxed = ['username_min' => 2, 'username_max' => 20, 'password_min' => 6, 'password_max' => 35];
+
+        $errors = install_validate_account($this->validPost(['user_name' => 'ab']), $relaxed);
+
+        $this->assertSame('', $errors['user_name']);
+    }
+}

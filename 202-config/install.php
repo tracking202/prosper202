@@ -3,6 +3,7 @@ declare(strict_types=1);
 //include mysql settings
 include_once(__DIR__ . '/connect.php');
 include_once(__DIR__ . '/functions-install.php');
+include_once(__DIR__ . '/functions-install-helpers.php');
 if (!isset($db) || !($db instanceof mysqli)) {
 	_die('Database connection unavailable.');
 }
@@ -18,14 +19,9 @@ $install_warnings = [];
 // Whether the last account-creation failure looks transient and worth a retry.
 $retryable = false;
 
-// Single source of truth for the field rules, shared by the server-side checks
-// below and the client-side JS (injected via json_encode) so the two can't drift.
-$rules = [
-	'username_min' => 4,
-	'username_max' => 20,
-	'password_min' => 6,
-	'password_max' => 35,
-];
+// Field rules, shared by the server-side validation and the client-side JS
+// (injected via json_encode) so the two can't drift. See functions-install-helpers.php.
+$rules = install_default_rules();
 
 /**
  * Emit a JSON response for the AJAX install flow and stop. Any buffered output is
@@ -139,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// persisted across AJAX via withWritableSession). Reject any POST whose token
 	// doesn't match the session before doing any work.
 	$expected_token = (string) ($_SESSION['token'] ?? '');
-	$csrf_ok = $expected_token !== '' && hash_equals($expected_token, (string) ($_POST['token'] ?? ''));
+	$csrf_ok = install_csrf_ok($expected_token, (string) ($_POST['token'] ?? ''));
 
 	if (!$csrf_ok) {
 		$error['general'] = '<div class="error">Your session has expired or the security check failed. Please refresh the page and submit again.</div>';
@@ -152,51 +148,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
-	// Raw POST reads are null-coalesced so a malformed request (missing fields)
-	// produces validation errors, not "undefined array key" warnings.
-	$in_email = (string) ($_POST['user_email'] ?? '');
-	$in_name  = (string) ($_POST['user_name'] ?? '');
-
-	//check email
-	if (check_email_address($in_email) == false) {
-		$error['user_email'] = '<div class="error">Please enter a valid email address</div>';
-	}
-
-	//check username
-	if ($in_name === '') {
-		$error['user_name'] = '<div class="error">You must type in your desired username</div>';
-	}
-	if (!ctype_alnum($in_name)) {
-		$error['user_name'] .= '<div class="error">Your username may only contain alphanumeric characters</div>';
-	}
-	if ((strlen($in_name) < $rules['username_min']) or (strlen($in_name) > $rules['username_max'])) {
-		$error['user_name'] .= '<div class="error">Your username must be between ' . $rules['username_min'] . ' and ' . $rules['username_max'] . ' characters long</div>';
-	}
-
-	// Check if password field is empty
-	if (!isset($_POST['user_pass']) || empty($_POST['user_pass'])) {
-		$error['user_pass'] = '<div class="error">You must type in your desired password</div>';
-	}
-
-		// Check if password verification field is empty
-		if (!isset($_POST['verify_user_pass']) || empty($_POST['verify_user_pass'])) {
-			$error['user_pass'] .= '<div class="error">You must verify your password</div>';
-		}
-
-		// Check password length only if password was provided
-		if (isset($_POST['user_pass']) && !empty($_POST['user_pass'])) {
-			$pass_length = strlen((string) $_POST['user_pass']);
-			if ($pass_length < $rules['password_min']) {
-				$error['user_pass'] .= '<div class="error">Your password must be at least ' . $rules['password_min'] . ' characters long</div>';
-			} elseif ($pass_length > $rules['password_max']) {
-				$error['user_pass'] .= '<div class="error">Your password must be no more than ' . $rules['password_max'] . ' characters long</div>';
-			}
-		}
-
-		// Check if passwords match only if both were provided
-		if (isset($_POST['user_pass']) && isset($_POST['verify_user_pass']) && $_POST['user_pass'] != $_POST['verify_user_pass']) {
-			$error['user_pass'] .= '<div class="error">Your passwords did not match, please try again</div>';
-		}
+	// Validate the account fields. The rule checks live in a pure, unit-tested
+	// helper (functions-install-helpers.php); $error['general'] from the CSRF check
+	// above is preserved.
+	$fieldErrors = install_validate_account($_POST, $rules);
+	$error['user_email'] = $fieldErrors['user_email'];
+	$error['user_name']  = $fieldErrors['user_name'];
+	$error['user_pass']  = $fieldErrors['user_pass'];
 
 	//if the CSRF check passed and no validation error occurred, create the account
 	if ($csrf_ok && empty($error['user_email']) && empty($error['user_name']) && empty($error['user_pass'])) {

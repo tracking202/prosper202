@@ -7,38 +7,27 @@ if (!class_exists('DataEngine')) {
     include_once(__DIR__ . '/class-dataengine.php');
 }
 
-if (!function_exists('_upgrade_query')) {
+if (!function_exists('_upgrade_query_run')) {
     /**
-     * Resilient query runner for the upgrade path.
+     * Testable core of the upgrade query runner. Kept free of globals, real sleeps
+     * and _die() so the retry/classification logic can be unit-tested: the caller
+     * supplies the connection, the backoff sleeper, and the "give up" handler.
      *
-     * Runs the same global-$db query that _mysqli_query() does, but transparently
-     * retries transient lock-wait (1205) / deadlock (1213) errors — the failures a
-     * live, loaded server produces mid-migration — with exponential backoff. For
-     * those two errors the statement provably did not apply (the lock was never
-     * granted / the work was rolled back), so re-running the identical SQL is safe
-     * even when the statement isn't idempotent.
+     * Retries transient lock-wait (1205) / deadlock (1213) errors — for those the
+     * statement provably did not apply, so re-running the identical SQL is safe even
+     * when it isn't idempotent. Every other outcome preserves _mysqli_query()'s
+     * contract exactly (the mysqli_result, or false). A transient error that never
+     * clears hands off to $onExhausted instead of silently skipping a step.
      *
-     * Every other outcome preserves _mysqli_query()'s contract exactly (the
-     * mysqli_result, or false), so the upgrade's intentional "ignore an
-     * already-applied step" calls keep behaving as before. A transient error that
-     * never clears stops with a clear, resumable message instead of silently
-     * skipping a migration step.
-     *
-     * Only autocommit statements flow through here; the one explicit-transaction
-     * block (the 1.9.57 migration) calls $connection->query() directly, so a
-     * per-statement retry never runs inside an open transaction.
-     *
-     * @param  string|mixed $sql
-     * @return \mysqli_result|bool
+     * @param  object   $conn        anything exposing query(), ->errno and ->error (a mysqli in production)
+     * @param  string   $sql
+     * @param  callable $sleeper     fn(int $seconds): void — invoked with the backoff before each retry
+     * @param  callable $onExhausted fn(int $errno, string $error): mixed — invoked when a transient error never clears
+     * @param  int      $maxAttempts total attempts (1 + retries)
+     * @return \mysqli_result|bool|mixed
      */
-    function _upgrade_query($sql)
+    function _upgrade_query_run($conn, string $sql, callable $sleeper, callable $onExhausted, int $maxAttempts = 4)
     {
-        global $db;
-
-        $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
-        $sql  = (string) $sql;
-
-        $maxAttempts    = 4;            // 1 attempt + up to 3 retries
         $transientCodes = [1205, 1213]; // lock wait timeout, deadlock
 
         for ($attempt = 1; ; $attempt++) {
@@ -69,23 +58,61 @@ if (!function_exists('_upgrade_query')) {
             if ($isTransient && $attempt < $maxAttempts) {
                 error_log('Prosper202 upgrade: transient DB error ' . $errno . ' (' . $error
                     . '); retry ' . $attempt . ' of ' . ($maxAttempts - 1));
-                sleep(2 ** ($attempt - 1)); // 1s, 2s, 4s
+                $sleeper(2 ** ($attempt - 1)); // 1s, 2s, 4s
                 continue;
             }
 
-            // Transient but exhausted: the server stayed locked. Stop loudly — the
-            // upgrade is built to resume (IF [NOT] EXISTS / existence guards), so a
-            // re-run picks up where this left off.
+            // Transient but exhausted: hand off to the caller to stop loudly.
             if ($isTransient) {
-                error_log('Prosper202 upgrade: persistent transient DB error ' . $errno . ': ' . $error);
-                _die("<h6>Upgrade paused</h6>
-                    <small>The database stayed locked after several retries, which usually means the server is busy right now. Please re-run the upgrade in a few minutes — it resumes where it left off. <a href='" . get_absolute_url() . "202-login.php'>Back to login</a></small>");
+                return $onExhausted($errno, $error);
             }
 
             // Non-transient failure: preserve _mysqli_query()'s legacy contract so the
             // upgrade's "ignore already-applied" steps behave exactly as before.
             return false;
         }
+    }
+}
+
+if (!function_exists('_upgrade_query')) {
+    /**
+     * Resilient query runner for the upgrade path.
+     *
+     * Runs the same global-$db query that _mysqli_query() does, but transparently
+     * retries transient lock-wait (1205) / deadlock (1213) errors — the failures a
+     * live, loaded server produces mid-migration — with exponential backoff. A
+     * transient error that never clears stops with a clear, resumable message
+     * instead of silently skipping a migration step; every other outcome preserves
+     * _mysqli_query()'s contract exactly (the mysqli_result, or false).
+     *
+     * Only autocommit statements flow through here; the one explicit-transaction
+     * block (the 1.9.57 migration) calls $connection->query() directly, so a
+     * per-statement retry never runs inside an open transaction.
+     *
+     * @param  string|mixed $sql
+     * @return \mysqli_result|bool
+     */
+    function _upgrade_query($sql)
+    {
+        global $db;
+
+        $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+
+        return _upgrade_query_run(
+            $conn,
+            (string) $sql,
+            static function (int $seconds): void {
+                sleep($seconds);
+            },
+            static function (int $errno, string $error) {
+                // Transient error that never cleared: the server stayed locked. Stop
+                // loudly — the upgrade resumes (IF [NOT] EXISTS / existence guards) on
+                // re-run. The errno/error go only to the log, never to the user.
+                error_log('Prosper202 upgrade: persistent transient DB error ' . $errno . ': ' . $error);
+                _die("<h6>Upgrade paused</h6>
+                    <small>The database stayed locked after several retries, which usually means the server is busy right now. Please re-run the upgrade in a few minutes — it resumes where it left off. <a href='" . get_absolute_url() . "202-login.php'>Back to login</a></small>");
+            }
+        );
     }
 }
 
