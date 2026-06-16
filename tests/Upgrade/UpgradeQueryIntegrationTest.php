@@ -62,6 +62,11 @@ final class UpgradeQueryIntegrationTest extends TestCase
         if (self::$lock instanceof \mysqli && !self::$lock->connect_errno) {
             self::$lock->close();
         }
+
+        // Restore the default mysqli reporting we turned off in setUpBeforeClass so
+        // later tests in the same process aren't affected (e.g. mysqli_sql_exception
+        // failures staying hidden).
+        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
     }
 
     private function noopSleeper(): callable

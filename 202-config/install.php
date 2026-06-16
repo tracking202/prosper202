@@ -244,7 +244,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$retryable = false;
 				$error['general'] = '<div class="error">We couldn\'t finish creating your account. You can '
 					. '<a href="' . get_absolute_url() . '202-config/setup-config.php">re-check your database settings</a> '
-					. 'or follow the <a href="http://support.tracking202.com/" target="_blank">manual install guide</a>, then try again.</div>';
+					. 'or follow the <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">manual install guide</a>, then try again.</div>';
 			}
 		}
 
@@ -383,7 +383,7 @@ if (!$success) {
 		<h6>Welcome</h6>
 		<small>Welcome to the five minute Prosper202 installation process! Just fill in the information below, and you'll be on your way to using the most powerful internet marketing applications in the world.</small>
 		<br><br>
-		<small>Need Extra Help? Check out our <a href="http://support.tracking202.com/" target="_blank">ReadMe documentation</a>.</small>
+		<small>Need Extra Help? Check out our <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">ReadMe documentation</a>.</small>
 
 		<h6>Create your account</h6>
 		<small>Please provide the following information. Don't worry, you can always change these settings later.</small>
@@ -608,7 +608,7 @@ if (!$success) {
 						setHtml('install-general-error', '<div class="error">We\'re having trouble reaching the server. '
 							+ 'Check your connection and try again. If it keeps happening you can '
 							+ '<a href="' + BASE + '202-config/setup-config.php">re-check your database settings</a> '
-							+ 'or follow the <a href="http://support.tracking202.com/" target="_blank">manual install guide</a>.</div>');
+							+ 'or follow the <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">manual install guide</a>.</div>');
 					});
 				}
 

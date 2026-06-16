@@ -164,7 +164,7 @@ if (!function_exists('render_install_success')) {
                     </ul>
                 </div>
             <?php } ?>
-            <p><small>Were you expecting more steps? Sorry thats it!</small></p>
+            <p><small>Were you expecting more steps? Sorry, that's it!</small></p>
         </div>
         <?php
     }
