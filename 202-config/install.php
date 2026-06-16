@@ -156,7 +156,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// before we open our transaction.
 			$installer->install_databases();
 
-			$db->begin_transaction();
+			if (!$db->begin_transaction()) {
+				throw new \RuntimeException('Failed to start transaction: ' . $db->error, (int) $db->errno);
+			}
 			$inTransaction = true;
 
 			$stmt = $prepare(
@@ -180,8 +182,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// execute() returns false instead of throwing) so the catch below
 				// can tell a transient failure from a permanent one.
 				$errno = (int) $stmt->errno;
+				$stmtError = $stmt->error;
 				$stmt->close();
-				throw new \RuntimeException('Failed to insert user: ' . $db->error, $errno);
+				throw new \RuntimeException('Failed to insert user: ' . $stmtError, $errno);
 			}
 			$user_id = (int) $db->insert_id;
 			$stmt->close();
@@ -193,8 +196,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$stmt->bind_param('s', $user_name);
 				if (!$stmt->execute()) {
 					$errno = (int) $stmt->errno;
+					$stmtError = $stmt->error;
 					$stmt->close();
-					throw new \RuntimeException('Failed to look up user: ' . $db->error, $errno);
+					throw new \RuntimeException('Failed to look up user: ' . $stmtError, $errno);
 				}
 				$lookup = $stmt->get_result();
 				if ($lookup && $row = $lookup->fetch_assoc()) {
@@ -211,8 +215,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$stmt->bind_param('i', $user_id);
 			if (!$stmt->execute()) {
 				$errno = (int) $stmt->errno;
+				$stmtError = $stmt->error;
 				$stmt->close();
-				throw new \RuntimeException('Failed to insert user preferences: ' . $db->error, $errno);
+				throw new \RuntimeException('Failed to insert user preferences: ' . $stmtError, $errno);
 			}
 			$stmt->close();
 
@@ -220,12 +225,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$stmt->bind_param('i', $user_id);
 			if (!$stmt->execute()) {
 				$errno = (int) $stmt->errno;
+				$stmtError = $stmt->error;
 				$stmt->close();
-				throw new \RuntimeException('Failed to insert user role: ' . $db->error, $errno);
+				throw new \RuntimeException('Failed to insert user role: ' . $stmtError, $errno);
 			}
 			$stmt->close();
 
-			$db->commit();
+			if (!$db->commit()) {
+				throw new \RuntimeException('Failed to commit transaction: ' . $db->error, (int) $db->errno);
+			}
 			$inTransaction = false;
 		} catch (\Throwable $e) {
 			if ($inTransaction) {
@@ -259,8 +267,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$stmt = $prepare("UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = ?");
 					$stmt->bind_param('i', $user_id);
 					if (!$stmt->execute()) {
+						$errno = (int) $stmt->errno;
+						$stmtError = $stmt->error;
 						$stmt->close();
-						throw new \RuntimeException('auto_cron flag update failed: ' . $db->error);
+						throw new \RuntimeException('auto_cron flag update failed (' . $errno . '): ' . $stmtError);
 					}
 					$stmt->close();
 				}

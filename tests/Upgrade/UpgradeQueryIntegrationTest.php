@@ -37,11 +37,17 @@ final class UpgradeQueryIntegrationTest extends TestCase
         $user = getenv('P202_TEST_DB_USER') ?: 'root';
         $pass = getenv('P202_TEST_DB_PASS') ?: '';
 
-        // Don't let the driver throw on connect; we want a clean skip instead.
+        // Don't let the driver throw on the connection probe; we want a clean skip.
         mysqli_report(MYSQLI_REPORT_OFF);
 
         self::$main = @new \mysqli($host, $user, $pass, $name);
         self::$lock = @new \mysqli($host, $user, $pass, $name);
+
+        // Restore the codebase default (connect.php uses MYSQLI_REPORT_STRICT) right
+        // after the probe so the OFF state can't leak into the rest of the process —
+        // including down the markTestSkipped() path below, which bypasses tearDown.
+        mysqli_report(MYSQLI_REPORT_STRICT);
+
         if (self::$main->connect_errno || self::$lock->connect_errno) {
             self::markTestSkipped('Could not connect to the test database.');
         }
@@ -63,10 +69,10 @@ final class UpgradeQueryIntegrationTest extends TestCase
             self::$lock->close();
         }
 
-        // Restore the default mysqli reporting we turned off in setUpBeforeClass so
-        // later tests in the same process aren't affected (e.g. mysqli_sql_exception
-        // failures staying hidden).
-        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+        // Defensive: also restore the codebase default (MYSQLI_REPORT_STRICT, as
+        // set in connect.php) here. setUpBeforeClass already restores it after the
+        // connection probe, so this only matters if a later change moves that.
+        mysqli_report(MYSQLI_REPORT_STRICT);
     }
 
     private function noopSleeper(): callable
