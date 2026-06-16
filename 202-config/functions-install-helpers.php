@@ -58,8 +58,13 @@ if (!function_exists('install_validate_account')) {
         $email = (string) ($post['user_email'] ?? '');
         $name  = (string) ($post['user_name'] ?? '');
 
-        // Mirrors check_email_address() (filter_var FILTER_VALIDATE_EMAIL).
-        if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+        // Prefer the shared check_email_address() in production so the email rule
+        // can't drift from the rest of the app (CLAUDE.md #5); fall back to the
+        // identical filter_var only when this helper is loaded in isolation (tests).
+        $emailValid = function_exists('check_email_address')
+            ? (bool) check_email_address($email)
+            : filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+        if (!$emailValid) {
             $errors['user_email'] = '<div class="error">Please enter a valid email address</div>';
         }
 
@@ -128,8 +133,9 @@ if (!function_exists('render_install_success')) {
      * into the page over AJAX or printed directly on the no-JS path. The base URL
      * and server name are injected (no globals) so the markup can be unit-tested.
      *
-     * $html['user_name'] is expected pre-escaped; $serverName is escaped here.
-     * $warnings are developer-authored, safe HTML strings.
+     * $html['user_name'] is expected pre-escaped and $base is a trusted internal
+     * URL (get_absolute_url()); both are emitted as-is. Only $serverName is escaped
+     * here. $warnings are developer-authored, safe HTML strings.
      *
      * @param array<string,string> $html
      * @param list<string>         $warnings

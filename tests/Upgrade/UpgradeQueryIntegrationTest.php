@@ -114,6 +114,16 @@ final class UpgradeQueryIntegrationTest extends TestCase
         // so the first UPDATE fails with errno 1205.
         self::$main->query('SET SESSION innodb_lock_wait_timeout = 1');
 
+        // If the server ignored/clamped that (some managed builds enforce a floor),
+        // the UPDATE below would block for the server default instead of failing
+        // fast — and since the lock is only released inside the sleeper (which runs
+        // only after a 1205), the test would hang. Bail cleanly instead.
+        $timeoutRow = self::$main->query('SELECT @@innodb_lock_wait_timeout AS t')->fetch_assoc();
+        if ((int) $timeoutRow['t'] > 2) {
+            self::$lock->commit(); // release the held lock before skipping
+            $this->markTestSkipped('Server did not honor a low innodb_lock_wait_timeout; skipping to avoid a long block.');
+        }
+
         // The injected sleeper releases the lock the first time the runner backs off,
         // so the retried UPDATE succeeds — exercising the real transient-retry path.
         $released = false;

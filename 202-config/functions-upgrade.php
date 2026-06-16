@@ -28,7 +28,8 @@ if (!function_exists('_upgrade_query_run')) {
      */
     function _upgrade_query_run($conn, string $sql, callable $sleeper, callable $onExhausted, int $maxAttempts = 4)
     {
-        $transientCodes = [1205, 1213]; // lock wait timeout, deadlock
+        $maxAttempts    = max(1, $maxAttempts); // always make at least one attempt
+        $transientCodes = [1205, 1213];         // lock wait timeout, deadlock
 
         for ($attempt = 1; ; $attempt++) {
             $errno = 0;

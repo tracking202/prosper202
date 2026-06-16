@@ -189,7 +189,7 @@ final class FakeUpgradeConnection
         $outcome = $this->outcomes[$this->queryCount] ?? 0;
         $this->queryCount++;
 
-        if (is_callable($outcome)) {
+        if ($outcome instanceof \Closure) {
             return $outcome();
         }
         if (is_int($outcome)) {
