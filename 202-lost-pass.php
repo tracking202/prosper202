@@ -38,13 +38,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 		$mysql['user_pass_time'] = time();
 
 		//insert this verification key into the database, and the timestamp of inserting it
-		$update_sql = "	UPDATE 	202_users 
+		$update_sql = "	UPDATE 	202_users
 							SET 		user_pass_key='" . $mysql['user_pass_key'] . "',
 										user_pass_time='" . $mysql['user_pass_time'] . "'
 							WHERE		user_id='" . $mysql['user_id'] . "'";
 		$update_result = _mysqli_query($update_sql, $db);
 
-
+		// If the key never persisted, do not mail a dead reset link. Log it
+		// server-side but keep the generic success message (below) so the
+		// response is identical whether or not the account exists.
+		if ($update_result === false) {
+			prosper_log('lost-pass', 'Failed to store reset key for user_id ' . $mysql['user_id'] . ': ' . $db->error);
+		} else {
 		//now email the user the script to reset their email
 		//normalize recipient: strip CR/LF and require a valid address before use in headers/mail()
 		$to = str_replace(["\r", "\n"], '', (string) $_POST['user_email']);
@@ -53,9 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 		}
 		$server_name = str_replace(["\r", "\n"], '', (string) ($_SERVER['SERVER_NAME'] ?? ''));
 		// Match the scheme the request came in on so the reset link isn't downgraded to http.
-		$is_https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
-			|| (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
-		$scheme = $is_https ? 'https' : 'http';
+		$scheme = getSecureStatus() ? 'https' : 'http';
 		$reset_url = $scheme . '://' . $server_name . get_absolute_url() . '202-pass-reset.php?key=' . $user_pass_key;
 		$subject = "[Propser202 on " . $server_name . "] Password Reset";
 
@@ -81,6 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 
 		if ($to !== '') {
 			mail((string) $to, $subject, $message, $header);
+		}
 		}
 	}
 

@@ -225,12 +225,16 @@ abstract class TestCase extends BaseTestCase
      */
     protected function setUpSession(array $sessionData = []): void
     {
+        // Derive the fingerprint from the production helper so this stays in sync
+        // with AUTH::logged_in()'s check (which now uses a UA-bound HMAC, not md5).
+        require_once __DIR__ . '/../202-config/functions-auth.php';
+
         $_SESSION = array_merge([
             'user_id' => 1,
             'user_name' => 'testuser',
             'user_own_id' => 1,
             'user_timezone' => 'America/New_York',
-            'session_fingerprint' => md5('session_fingerprint' . 'PHPUnit Test Agent' . 'test_session_id'),
+            'session_fingerprint' => \AUTH::session_fingerprint(),
             'session_time' => time(),
         ], $sessionData);
     }

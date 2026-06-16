@@ -465,7 +465,9 @@ class AUTH
         _mysqli_query($sql);
         $hash = hash_hmac('sha256', $_SESSION['user_own_id'] . '-' . $auth_key, (string) self::get_user_secret_key($_SESSION['user_own_id']));
         $expire = strtotime('+' . self::LOGOUT_DAYS . ' days');
-        $secure = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+        // Use the canonical HTTPS check so the cookie's Secure flag isn't dropped
+        // behind proxies that signal TLS via X-Forwarded-SSL/Port or REQUEST_SCHEME.
+        $secure = function_exists('getSecureStatus') ? getSecureStatus() : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
         setcookie('remember_me', $_SESSION['user_own_id'] . '-' . $auth_key . '-' . $hash, [
             'expires' => $expire,
             'path' => '/',

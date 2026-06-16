@@ -542,8 +542,8 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	if ($_POST['retype_new_user_pass'] == '') {
 		$error['user_pass'] .= ' You must type verify your password.';
 	}
-	if ((strlen((string) $_POST['new_user_pass']) < 6) or (strlen((string) $_POST['new_user_pass']) > 35)) {
-		$error['user_pass'] .= ' Your password must be between 6 and 35 characters long.';
+	if ((strlen((string) $_POST['new_user_pass']) < 8) or (strlen((string) $_POST['new_user_pass']) > 128)) {
+		$error['user_pass'] .= ' Your password must be between 8 and 128 characters long.';
 	}
 	if ($_POST['new_user_pass'] != $_POST['retype_new_user_pass']) {
 		$error['user_pass'] .= ' Your password did not match, please try again.';

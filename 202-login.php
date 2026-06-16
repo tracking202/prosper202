@@ -8,7 +8,6 @@ include_once(__DIR__ . '/vendor/autoload.php');
 use UAParser\Parser;
 
 prosper_log('login', 'Request received with method ' . ($_SERVER['REQUEST_METHOD'] ?? 'UNKNOWN') . ' from IP ' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
-prosper_log('login', 'Session snapshot: ' . json_encode($_SESSION));
 
 // Initialize variables to prevent undefined variable warnings
 $error = [];
@@ -174,7 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		AUTH::begin_user_session($user_row);
 		$_SESSION['user_mods_lb'] = $user_row['user_mods_lb'];
-		prosper_log('login', 'Post-login session: ' . json_encode($_SESSION));
+		prosper_log('login', 'Login succeeded for user_id ' . (int) $user_row['user_id']);
 
 		if (isset($_POST['remember_me'])) {
 			AUTH::remember_me_on_auth();
