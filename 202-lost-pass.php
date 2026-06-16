@@ -7,7 +7,11 @@ $error = [];
 $html = [];
 $success = false;
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !AUTH::check_csrf_token()) {
+	$error['user'] = 'Your session has expired. Please reload the page and try again.';
+}
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 
 	$mysql['user_name'] = $db->real_escape_string((string)$_POST['user_name']);
 	$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
@@ -101,6 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			<center><img src="202-img/prosper202.png"></center>
 			<center><span class="infotext">Please enter your username and e-mail address.<br />You will receive a new password via e-mail to <a href="<?php echo get_absolute_url(); ?>202-login.php">login</a> with.</span></center>
 			<form class="form-signin form-horizontal" role="form" method="post" action="">
+				<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 				<div class="form-group <?php if (isset($error['user'])) echo "has-error"; ?>">
 					<?php if (isset($error['user'])) { ?>
 						<div class="tooltip right in login_tooltip">

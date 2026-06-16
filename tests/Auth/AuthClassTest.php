@@ -14,6 +14,7 @@ final class AuthClassTest extends TestCase
     private array $originalSession = [];
     private array $originalServer = [];
     private array $originalCookie = [];
+    private array $originalPost = [];
 
     protected function setUp(): void
     {
@@ -23,6 +24,7 @@ final class AuthClassTest extends TestCase
         $this->originalSession = $_SESSION ?? [];
         $this->originalServer = $_SERVER ?? [];
         $this->originalCookie = $_COOKIE ?? [];
+        $this->originalPost = $_POST ?? [];
 
         // Set default server variables
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test Agent';
@@ -46,6 +48,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = $this->originalSession;
         $_SERVER = $this->originalServer;
         $_COOKIE = $this->originalCookie;
+        $_POST = $this->originalPost;
 
         parent::tearDown();
     }
@@ -63,7 +66,7 @@ final class AuthClassTest extends TestCase
     {
         $_SESSION = [
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time(),
         ];
 
@@ -76,7 +79,7 @@ final class AuthClassTest extends TestCase
     {
         $_SESSION = [
             'user_name' => 'testuser',
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time(),
         ];
 
@@ -117,7 +120,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time() - 60000, // More than 50000 seconds ago
         ];
 
@@ -131,7 +134,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time(),
         ];
 
@@ -146,7 +149,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => $oldTime,
         ];
 
@@ -279,6 +282,49 @@ final class AuthClassTest extends TestCase
     public function testLogoutDaysConstant(): void
     {
         $this->assertSame(14, AUTH::LOGOUT_DAYS);
+    }
+
+    public function testSessionFingerprintBindsToUserAgent(): void
+    {
+        $_SERVER['HTTP_USER_AGENT'] = 'Agent A';
+        $fingerprintA = AUTH::session_fingerprint();
+
+        $_SERVER['HTTP_USER_AGENT'] = 'Agent B';
+        $fingerprintB = AUTH::session_fingerprint();
+
+        $this->assertNotSame($fingerprintA, $fingerprintB, 'Fingerprint must change with the User-Agent');
+        // It must no longer be the trivially derivable md5 of just the session id.
+        $this->assertNotSame(md5('session_fingerprint' . session_id()), $fingerprintA);
+    }
+
+    public function testCheckCsrfTokenMatchesSessionToken(): void
+    {
+        $_SESSION['token'] = 'a-valid-token';
+
+        $_POST['token'] = 'a-valid-token';
+        $this->assertTrue(AUTH::check_csrf_token());
+
+        $_POST['token'] = 'forged';
+        $this->assertFalse(AUTH::check_csrf_token());
+
+        unset($_POST['token']);
+        $this->assertFalse(AUTH::check_csrf_token());
+    }
+
+    public function testIsRateLimitedTrueWhenFailuresExceedThreshold(): void
+    {
+        $mockDb = $this->createMockDb([
+            '202_users_log' => ['failures' => AUTH::RATE_LIMIT_MAX_PER_IP + 1],
+        ]);
+
+        $this->assertTrue(AUTH::is_rate_limited($mockDb, 'someone', '203.0.113.9'));
+    }
+
+    public function testIsRateLimitedFalseWhenNoRecentFailures(): void
+    {
+        $mockDb = $this->createMockDb(); // fetch_assoc() returns null -> 0 failures
+
+        $this->assertFalse(AUTH::is_rate_limited($mockDb, 'someone', '203.0.113.9'));
     }
 
     public function testLoginAuditSnapshotKeepsSafeFieldsOnly(): void

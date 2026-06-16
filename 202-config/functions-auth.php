@@ -56,6 +56,15 @@ if (!function_exists('verify_user_pass')) {
 class AUTH
 {
     public const LOGOUT_DAYS = 14;
+
+    // Brute-force throttle: once failed attempts within RATE_LIMIT_WINDOW seconds
+    // exceed these counts, further attempts are blocked until older failures age
+    // out of the window. The per-account limit protects a targeted user; the
+    // higher per-IP limit is a backstop that still tolerates shared NAT/proxy IPs.
+    public const RATE_LIMIT_WINDOW = 900;       // 15 minutes
+    public const RATE_LIMIT_MAX_PER_USER = 10;
+    public const RATE_LIMIT_MAX_PER_IP = 50;
+
     private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted != 1 AND u.user_active = 1 LIMIT 1';
     private static bool $passwordColumnChecked = false;
     private static bool $sessionHeartbeatRefreshed = false;
@@ -88,7 +97,7 @@ class AUTH
     public static function logged_in()
     {
         $session_time_passed = isset($_SESSION['session_time']) ? time() - $_SESSION['session_time'] : PHP_INT_MAX;
-        if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and ($_SESSION['session_fingerprint'] == md5('session_fingerprint' . session_id())) and ($session_time_passed < 50000)) {
+        if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and hash_equals(self::session_fingerprint(), (string) $_SESSION['session_fingerprint']) and ($session_time_passed < 50000)) {
             if (!self::$sessionHeartbeatRefreshed) {
                 self::writeSessionValue('session_time', time());
                 self::$sessionHeartbeatRefreshed = true;
@@ -232,7 +241,7 @@ class AUTH
                 session_regenerate_id(true);
             }
 
-            $_SESSION['session_fingerprint'] = md5('session_fingerprint' . session_id());
+            $_SESSION['session_fingerprint'] = self::session_fingerprint();
             $_SESSION['session_time'] = time();
             $_SESSION['user_name'] = $user_row['user_name'];
             $_SESSION['user_id'] = (int) $user_row['user_id'];
@@ -505,6 +514,73 @@ class AUTH
         }
 
         return serialize($safe);
+    }
+
+    /**
+     * Derive the session fingerprint. Binds the session to the client's
+     * User-Agent on top of the session id (HMAC keyed on the id, so it still
+     * rotates with session_regenerate_id()). The previous value hashed only the
+     * session id, which an attacker who stole the cookie already possessed — so
+     * it provided no protection. Binding to the User-Agent means a leaked session
+     * id alone (e.g. from a log) no longer validates unless the UA is replayed.
+     */
+    public static function session_fingerprint(): string
+    {
+        $userAgent = (string) ($_SERVER['HTTP_USER_AGENT'] ?? '');
+        return hash_hmac('sha256', 'session_fingerprint|' . $userAgent, (string) session_id());
+    }
+
+    /**
+     * Constant-time validation of the anti-CSRF token. Forms embed
+     * $_SESSION['token'] (seeded in connect.php) as a hidden field; a cross-site
+     * attacker cannot read it, so a forged POST fails this check.
+     */
+    public static function check_csrf_token(): bool
+    {
+        return hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''));
+    }
+
+    /**
+     * Brute-force throttle. Returns true when recent failed login attempts for
+     * this IP or username exceed the configured thresholds within the rolling
+     * window, in which case the caller should reject the attempt without
+     * checking credentials.
+     */
+    public static function is_rate_limited(\mysqli $db, string $username, string $ip): bool
+    {
+        $since = time() - self::RATE_LIMIT_WINDOW;
+
+        $ip = trim($ip);
+        if ($ip !== '' && self::count_recent_failures($db, 'ip_address', $ip, $since) >= self::RATE_LIMIT_MAX_PER_IP) {
+            return true;
+        }
+
+        $username = trim($username);
+        if ($username !== '' && self::count_recent_failures($db, 'user_name', $username, $since) >= self::RATE_LIMIT_MAX_PER_USER) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static function count_recent_failures(\mysqli $db, string $column, string $value, int $since): int
+    {
+        // $column is a fixed internal literal ('ip_address' | 'user_name'), never
+        // request input, so it is safe to interpolate; $value/$since are bound.
+        $stmt = $db->prepare(
+            'SELECT COUNT(*) AS failures FROM 202_users_log '
+            . 'WHERE login_success = 0 AND ' . $column . ' = ? AND login_time >= ?'
+        );
+        if (!$stmt) {
+            throw new \RuntimeException('Unable to prepare login throttle query: ' . $db->error);
+        }
+        self::bind($stmt, 'si', $value, $since);
+        self::execute($stmt, 'Unable to execute login throttle query');
+        $result = $stmt->get_result();
+        $row = $result ? $result->fetch_assoc() : null;
+        $stmt->close();
+
+        return $row ? (int) $row['failures'] : 0;
     }
 
     public static function dev_urand($min = 0, $max = 0x7FFFFFFF)

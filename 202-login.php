@@ -64,14 +64,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$username_raw = (string)($_POST['user_name'] ?? '');
 	$password = (string)($_POST['user_pass'] ?? '');
 	$username = trim($username_raw);
+	$login_ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+	$rate_limited = false;
 	prosper_log('login', 'Processing login attempt for username ' . $username);
 
-	if ($username === '') {
+	// CSRF: the form embeds the session token; a cross-site POST cannot read it.
+	$csrf_ok = AUTH::check_csrf_token();
+	if (!$csrf_ok) {
+		$error['user'] = 'Your session has expired. Please reload the page and try again.';
+		prosper_log('login', 'Rejected login with missing/invalid CSRF token for username ' . $username);
+	}
+
+	if (!$error && $username === '') {
 		$error['user'] = 'Please enter a username.';
 	}
 
-	if ($password === '') {
+	if (!$error && $password === '') {
 		$error['user'] = ($error['user'] ?? '') . ' Please enter a password.';
+	}
+
+	// Brute-force throttle: stop checking credentials once an IP or account has
+	// piled up failures. Fail open if the throttle query itself errors.
+	if (!$error) {
+		try {
+			$rate_limited = AUTH::is_rate_limited($db, $username, $login_ip);
+		} catch (RuntimeException $exception) {
+			prosper_log('login', 'Rate limit check failed: ' . $exception->getMessage());
+		}
+		if ($rate_limited) {
+			$error['user'] = 'Too many failed login attempts. Please wait a few minutes and try again.';
+			prosper_log('login', 'Throttled login attempt for username ' . $username . ' from IP ' . $login_ip);
+		}
 	}
 
 	$login_result = null;
@@ -96,8 +119,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$slack->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
 	}
 
+	// Don't record throttled/CSRF-rejected attempts: no credentials were checked,
+	// and logging them would extend the rolling window and keep a legitimate user
+	// locked out indefinitely.
 	$login_success = empty($error) ? 1 : 0;
-	$login_log_stmt = $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+	$should_log_attempt = !$rate_limited && $csrf_ok;
+	$login_log_stmt = $should_log_attempt
+		? $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+		: false;
 	if ($login_log_stmt) {
 		$login_error_serialized = serialize($error);
 		$login_server_serialized = AUTH::login_audit_snapshot();
@@ -118,7 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		);
 		$login_log_stmt->execute();
 		$login_log_stmt->close();
-	} else {
+	} elseif ($should_log_attempt) {
 		prosper_log('login', 'Unable to prepare login log statement: ' . $db->error);
 	}
 
@@ -162,6 +191,7 @@ info_top(); ?>
 	<div class="main col-xs-4">
 		<center><img src="202-img/prosper202.png"></center>
 		<form class="form-signin form-horizontal" role="form" method="post" action="">
+			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 			<div class="form-group <?php if (isset($error['user'])) echo "has-error"; ?>">
 				<?php if (isset($error['user'])) { ?>
 					<div class="tooltip right in login_tooltip">

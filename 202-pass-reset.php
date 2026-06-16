@@ -37,23 +37,24 @@ if (!$error) {
 }
 
 
-//if the key is legit, make sure their new posted password is legit     
+//if the key is legit, make sure their new posted password is legit
 if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 
-	//check tokens    
-	//if ($_POST['token'] != $_SESSION['token']) { $error['token'] = '<div class="error">You must use our forms to submit data.</div';  }
+	//check tokens (CSRF): the form embeds the session token; reject forged posts
+	if (!AUTH::check_csrf_token()) {
+		$error['user_pass'] = '<div class="error">Your session has expired. Please reload the page and try again.</div>';
+	}
 
-
-	if (($_POST['user_pass'] ?? '') == '') {
+	if (!$error && ($_POST['user_pass'] ?? '') == '') {
 		$error['user_pass'] = '<div class="error">You must type in your desired password</div>';
 	}
-	if (($_POST['verify_user_pass'] ?? '') == '') {
+	if (!$error && ($_POST['verify_user_pass'] ?? '') == '') {
 		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">You must type verify your password</div>';
 	}
-	if ((strlen((string) ($_POST['user_pass'] ?? '')) < 8) or (strlen((string) ($_POST['user_pass'] ?? '')) > 128)) {
+	if (!$error && ((strlen((string) ($_POST['user_pass'] ?? '')) < 8) or (strlen((string) ($_POST['user_pass'] ?? '')) > 128))) {
 		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Passwords must be 8 to 128 characters long</div>';
 	}
-	if (($_POST['user_pass'] ?? '') != ($_POST['verify_user_pass'] ?? '')) {
+	if (!$error && (($_POST['user_pass'] ?? '') != ($_POST['verify_user_pass'] ?? ''))) {
 		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Your passwords did not match, please try again</div>';
 	}
 
@@ -106,6 +107,7 @@ if (!empty($error['user_pass_key'])) {
 		<center><img src="202-img/prosper202.png"></center>
 		<center><span class="infotext">Please create a new password and verify it to proceed.</span></center>
 		<form class="form-signin form-horizontal" role="form" method="post" action="">
+			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 			<div class="form-group">
 				<input type="text" class="form-control first" id="user_name" name="user_name" value="<?php echo $html['user_name']; ?>" disabled="disabled">
 			</div>
