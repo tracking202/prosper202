@@ -126,6 +126,15 @@ final readonly class DataSeeder
      */
     public function seedDefaultChartData(): void
     {
+        // Idempotent: an install retry re-runs install_databases() before any user is
+        // committed, and 202_charts has no unique key, so skip if the default chart
+        // row already exists. Otherwise each retry duplicates it and dashboard joins
+        // (which read by user_id) would see two default charts.
+        $existing = _mysqli_query("SELECT 1 FROM `" . TableRegistry::CHARTS . "` WHERE `user_id` = 1 LIMIT 1");
+        if ($existing instanceof \mysqli_result && $existing->num_rows > 0) {
+            return;
+        }
+
         $sql = "INSERT INTO `" . TableRegistry::CHARTS . "` (`user_id`, `data`, `chart_time_range`) VALUES
             (1, 'a:3:{i:0;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:6:\"clicks\";}i:1;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:9:\"click_out\";}i:2;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:5:\"leads\";}}', 'days')";
         _mysqli_query($sql);
@@ -145,6 +154,13 @@ final readonly class DataSeeder
      */
     public function seedVersion(string $version): void
     {
+        // Idempotent: 202_version is read as a single row (e.g. functions-upgrade.php),
+        // so don't add a second row when an install retry re-runs the seed step.
+        $existing = _mysqli_query("SELECT 1 FROM " . TableRegistry::VERSION . " LIMIT 1");
+        if ($existing instanceof \mysqli_result && $existing->num_rows > 0) {
+            return;
+        }
+
         $escapedVersion = $this->connection->real_escape_string($version);
         $sql = "INSERT INTO " . TableRegistry::VERSION . " SET version='{$escapedVersion}'";
         _mysqli_query($sql);
