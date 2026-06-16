@@ -58,9 +58,10 @@ if (!function_exists('withWritableSession')) {
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
-// Dashboard API configuration
-DEFINE('DASHBOARD_API_URL', 'https://my.tracking202.com/api/v1');
-DEFINE('DASHBOARD_CACHE_TTL', 3600); // 1 hour
+// Messaging API configuration (Intercom-style messenger).
+// Central server contract: 202-config/Messaging/CENTRAL-API.md
+DEFINE('MESSAGING_API_URL', 'https://my.tracking202.com/api/v3/messaging');
+DEFINE('MESSAGING_SYNC_THROTTLE', 20); // seconds between per-user network syncs
 
 //fix for nginx with no server name set
 if ($_SERVER['SERVER_NAME'] == '_') {
@@ -205,6 +206,7 @@ include_once(CONFIG_PATH . '/formatting.php');
 include_once(CONFIG_PATH . '/Role.class.php');
 include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');
+include_once(CONFIG_PATH . '/Messaging/MessagingService.class.php');
 include_once(CONFIG_PATH . '/functions-timeframe.php');
 include_once(CONFIG_PATH . '/functions-db.php');
 include_once(CONFIG_PATH . '/functions-indexes.php');

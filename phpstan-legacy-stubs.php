@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace {
 
-if (!defined('DASHBOARD_API_URL')) {
-    define('DASHBOARD_API_URL', '');
+if (!defined('MESSAGING_API_URL')) {
+    define('MESSAGING_API_URL', '');
 }
-if (!defined('DASHBOARD_CACHE_TTL')) {
-    define('DASHBOARD_CACHE_TTL', 300);
+if (!defined('MESSAGING_SYNC_THROTTLE')) {
+    define('MESSAGING_SYNC_THROTTLE', 20);
 }
 if (!defined('MYSQL_ASSOC')) {
     define('MYSQL_ASSOC', MYSQLI_ASSOC);

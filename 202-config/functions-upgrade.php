@@ -3196,10 +3196,102 @@ class UPGRADE
             $prosper202_version = '1.9.60';
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.60') {
+        if ($prosper202_version == '1.9.60') {
 
-            $prosper202_version = '1.9.60';
+            // Intercom-style messaging system. This replaces the old dashboard
+            // content/alerts sync (202_dashboard_content, 202_dashboard_sync,
+            // 202_alerts), which is removed below.
+
+            // Conversation threads (one per broadcast/conversation, per user).
+            $sql = "CREATE TABLE IF NOT EXISTS `202_messaging_conversations` (
+              `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+              `user_id` mediumint(8) unsigned NOT NULL,
+              `external_id` varchar(100) NOT NULL,
+              `type` enum('conversation','broadcast') NOT NULL DEFAULT 'conversation',
+              `subject` varchar(255) DEFAULT NULL,
+              `status` enum('open','closed') NOT NULL DEFAULT 'open',
+              `last_message_at` timestamp NULL DEFAULT NULL,
+              `last_message_preview` varchar(255) DEFAULT NULL,
+              `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `user_external` (`user_id`,`external_id`),
+              KEY `user_recent` (`user_id`,`last_message_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Individual messages within a conversation.
+            $sql = "CREATE TABLE IF NOT EXISTS `202_messaging_messages` (
+              `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+              `conversation_id` int(11) unsigned NOT NULL,
+              `external_id` varchar(100) DEFAULT NULL,
+              `client_token` varchar(64) DEFAULT NULL,
+              `direction` enum('inbound','outbound') NOT NULL,
+              `author` enum('team','system','user') NOT NULL DEFAULT 'team',
+              `body` mediumtext NOT NULL,
+              `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `read_at` timestamp NULL DEFAULT NULL,
+              `receipt_sent` tinyint(1) NOT NULL DEFAULT '0',
+              `delivery_status` enum('pending','sent','delivered','failed') NOT NULL DEFAULT 'delivered',
+              `sync_attempts` int(11) NOT NULL DEFAULT '0',
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `conv_external` (`conversation_id`,`external_id`),
+              KEY `conv_created` (`conversation_id`,`created_at`),
+              KEY `conv_token` (`conversation_id`,`client_token`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Per-user sync state (throttle timestamps + opaque pull cursor).
+            $sql = "CREATE TABLE IF NOT EXISTS `202_messaging_sync` (
+              `user_id` mediumint(8) unsigned NOT NULL,
+              `last_sync` timestamp NULL DEFAULT NULL,
+              `last_success` timestamp NULL DEFAULT NULL,
+              `sync_cursor` varchar(100) DEFAULT NULL,
+              `error_count` int(11) NOT NULL DEFAULT '0',
+              `last_error` text,
+              PRIMARY KEY (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Queued behavioural events for segmentation (flushed to central).
+            $sql = "CREATE TABLE IF NOT EXISTS `202_messaging_events` (
+              `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+              `user_id` mediumint(8) unsigned NOT NULL,
+              `event_name` varchar(255) NOT NULL,
+              `metadata` json DEFAULT NULL,
+              `occurred_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `client_token` varchar(64) NOT NULL,
+              `delivery_status` enum('pending','sent','failed') NOT NULL DEFAULT 'pending',
+              `sync_attempts` int(11) NOT NULL DEFAULT '0',
+              PRIMARY KEY (`id`),
+              KEY `user_pending` (`user_id`,`delivery_status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Latest custom-attribute snapshot per user for segmentation.
+            $sql = "CREATE TABLE IF NOT EXISTS `202_messaging_attributes` (
+              `user_id` mediumint(8) unsigned NOT NULL,
+              `data` json DEFAULT NULL,
+              `dirty` tinyint(1) NOT NULL DEFAULT '0',
+              `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              PRIMARY KEY (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+            $result = _mysqli_query($sql);
+
+            // Retire the old dashboard content/alerts sync tables.
+            $sql = "DROP TABLE IF EXISTS `202_dashboard_content`, `202_dashboard_sync`, `202_alerts`";
+            $result = _mysqli_query($sql);
+
+            $sql = "UPDATE 202_version SET version='1.9.61'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.61';
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if ($prosper202_version > '1.9.61') {
+
+            $prosper202_version = '1.9.61';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }
