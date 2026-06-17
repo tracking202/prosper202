@@ -187,6 +187,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				throw new \RuntimeException('Failed to insert user: ' . $stmtError, $errno);
 			}
 			$user_id = (int) $db->insert_id;
+			// Whether THIS request created the user, vs. INSERT IGNORE finding an
+			// existing row in the lookup below. Only a newly-created account gets a
+			// default chart: 202_charts has no unique key, so inserting one for an
+			// already-existing user (e.g. two concurrent same-username installs) would
+			// duplicate it. The pref/role rows are INSERT IGNORE, so they're already safe.
+			$user_created = $user_id > 0;
 			$stmt->close();
 
 			// INSERT IGNORE yields insert_id 0 when the row already exists;
@@ -231,21 +237,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 			$stmt->close();
 
-			// Default dashboard chart for the new account, keyed on the committed
-			// $user_id. A rolled-back retry consumes the AUTO_INCREMENT id, so the
-			// account isn't necessarily user 1; account_overview.php joins charts on
-			// the user's own id, so a hard-coded id would leave the account chartless.
-			$chart_data = 'a:3:{i:0;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:6:"clicks";}i:1;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:9:"click_out";}i:2;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:5:"leads";}}';
-			$chart_range = 'days';
-			$stmt = $prepare("INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`) VALUES (?, ?, ?)");
-			$stmt->bind_param('iss', $user_id, $chart_data, $chart_range);
-			if (!$stmt->execute()) {
-				$errno = (int) $stmt->errno;
-				$stmtError = $stmt->error;
+			if ($user_created) {
+				// Default dashboard chart for the new account, keyed on the committed
+				// $user_id. A rolled-back retry consumes the AUTO_INCREMENT id, so the
+				// account isn't necessarily user 1; account_overview.php joins charts on
+				// the user's own id, so a hard-coded id would leave the account chartless.
+				$chart_data = 'a:3:{i:0;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:6:"clicks";}i:1;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:9:"click_out";}i:2;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:5:"leads";}}';
+				$chart_range = 'days';
+				$stmt = $prepare("INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`) VALUES (?, ?, ?)");
+				$stmt->bind_param('iss', $user_id, $chart_data, $chart_range);
+				if (!$stmt->execute()) {
+					$errno = (int) $stmt->errno;
+					$stmtError = $stmt->error;
+					$stmt->close();
+					throw new \RuntimeException('Failed to insert default chart: ' . $stmtError, $errno);
+				}
 				$stmt->close();
-				throw new \RuntimeException('Failed to insert default chart: ' . $stmtError, $errno);
 			}
-			$stmt->close();
 
 			if (!$db->commit()) {
 				throw new \RuntimeException('Failed to commit transaction: ' . $db->error, (int) $db->errno);
@@ -514,9 +522,9 @@ if (!$success) {
 			<button class="btn btn-lg btn-p202 btn-block" type="submit">Install Prosper202 ClickServer<span class="fui-check-inverted pull-right"></span></button>
 			<script type="text/javascript">
 			(function () {
-				var BASE = <?php echo json_encode(get_absolute_url()); ?>;
+				var BASE = <?php echo json_encode(get_absolute_url()) ?: '""'; ?>;
 				// Field rules come from the server ($rules) so client and server can't drift.
-				var RULES = <?php echo json_encode($rules); ?>;
+				var RULES = <?php echo json_encode($rules) ?: '{}'; ?>;
 				var MAX_ATTEMPTS = 3; // 1 try + 2 auto-retries on transient/network failures
 				var form = document.getElementById('install-prosper202');
 				if (!form) { return; }
