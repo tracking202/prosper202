@@ -289,3 +289,58 @@ the data locally (`202_messaging_attributes`, `202_messaging_events`) and forwar
 
 The client never surfaces raw transport errors to end users; the widget simply shows the
 last successfully cached state.
+
+---
+
+## Known limitations & operational notes
+
+These are scale/architecture concerns, not bugs. For a typical self-hosted install (one
+operator or a small team, with a responsive central server) neither is noticeable. They
+matter for large multi-user installs or when the central server is slow/unreachable, and
+each needs an infrastructure or contract change to resolve — deliberately out of scope for
+the client-side implementation.
+
+### 1. The inbox poll syncs synchronously
+
+`202-account/ajax/messaging/inbox.php` calls `MessagingService::sync()` on every poll
+(~every 25s per open widget), which makes the outbound HTTPS calls to this API. It is
+throttled by `MESSAGING_SYNC_THROTTLE` (default 20s), and a failed sync still stamps
+`last_sync` so a down server is not re-hit within the window. But because the poll interval
+is longer than the throttle, most polls do reach the network, and PHP holds a web worker
+for the duration of that call. If this API is slow or down, each poll blocks up to
+~21s (10s timeout × 2 attempts + 1s pause); the browser degrades gracefully (it shows
+cached state), but enough concurrent users polling into a slow upstream can exhaust the
+front-end worker pool.
+
+- **Mitigations in place:** throttle + capped retries (2 attempts, 1s backoff); the widget
+  never blocks the page and always renders the last cached state.
+- **Proper fix (ops/infra):** make `inbox.php` read the local cache only, and move *all*
+  network sync into the `202-cronjobs/sync-messaging.php` cron (run it frequently and
+  monitor it). PHP has no built-in async, so a non-blocking request path requires either a
+  job runner/queue that owns the outbound calls, or `fastcgi_finish_request()` to flush the
+  response before syncing (still occupies a worker). This is a deployment decision, so it
+  belongs in the install runbook rather than the client code.
+
+### 2. The cron syncs users sequentially (no batch pull)
+
+`202-cronjobs/sync-messaging.php` iterates active users and calls
+`MessagingService::forUser($id)->sync(true)` one at a time. Each `sync()` is several HTTP
+round-trips (flush events, push pending messages, report receipts, pull), so total runtime
+is `N users × (several sequential calls)`. At hundreds/thousands of users the cron runtime
+balloons, one slow/timing-out user stalls the rest, and delivery latency grows.
+
+- **Proper fix (requires a central-API change):** add a **batched pull** so the cron can
+  fetch many users in one request, e.g.
+
+  ```
+  POST /pull/batch
+  { "install_hash": "...", "api_key": "...",
+    "users": [ { "user_id": 1, "cursor": "..." }, { "user_id": 2, "cursor": "..." } ] }
+  -> { "ok": true, "results": [ { "user_id": 1, "cursor": "...", "conversations": [...] }, ... ] }
+  ```
+
+  The cron would then page through users (e.g. 100 per request) instead of one request per
+  user. Client-only alternatives (`curl_multi` parallelism, sharding users across cron
+  workers) add complexity and still issue N requests at this server, so the real win is
+  server-side batch support. **This endpoint is not yet implemented** — until it exists, the
+  cron uses the per-user `POST /pull` above.
