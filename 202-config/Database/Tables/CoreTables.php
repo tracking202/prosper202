@@ -125,6 +125,7 @@ final class CoreTables
                 `status` enum('open','closed') NOT NULL DEFAULT 'open',
                 `last_message_at` timestamp NULL DEFAULT NULL,
                 `last_message_preview` varchar(255) DEFAULT NULL,
+                `local_only` tinyint(1) NOT NULL DEFAULT '0',
                 `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (`id`),

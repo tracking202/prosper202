@@ -235,7 +235,10 @@
             .then(function (data) {
                 if (!data || !data.ok) { return; }
                 renderThread(data);
-                refreshInbox(); // unread badge drops after opening
+                // Mark read via the CSRF-protected endpoint (thread.php is read-only),
+                // then refresh so the unread badge drops.
+                postForm('202-account/ajax/messaging/read.php', { conversation: extId })
+                    .then(function () { refreshInbox(); });
             });
     }
 

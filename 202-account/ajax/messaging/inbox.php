@@ -21,8 +21,10 @@ if ($service === null) {
 $service->sync();
 
 $inbox = $service->getInbox();
+// Substitute invalid UTF-8 rather than letting json_encode() fail (which would
+// send an empty body) when a message body contains bad bytes.
 echo json_encode([
     'ok'            => true,
     'unread_count'  => $inbox['unread_count'],
     'conversations' => $inbox['conversations'],
-]);
+], JSON_INVALID_UTF8_SUBSTITUTE);

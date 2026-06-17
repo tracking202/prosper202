@@ -26,12 +26,10 @@ if (!class_exists('AUTH')) {
     exit;
 }
 
-// Mirror require_user()'s login + remember-me handling, minus the license gate.
-if (!AUTH::logged_in()) {
-    AUTH::remember_me_on_logged_out();
-}
-
-if (!AUTH::logged_in()) {
+// Same login + remember-me check require_user() uses (shared implementation, so
+// the security-sensitive logic can't drift), but without the license gate and
+// returning JSON 401 instead of the HTML access-denied page.
+if (!AUTH::logged_in_with_remember()) {
     http_response_code(401);
     header('Content-Type: application/json');
     echo json_encode(['ok' => false, 'error' => 'authentication required']);

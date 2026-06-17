@@ -253,15 +253,24 @@ class AUTH
         self::$sessionHeartbeatRefreshed = true;
     }
 
-    public static function require_user($auth_type = '')
+    /**
+     * True if the request has an authenticated user, restoring a session from a
+     * valid remember-me cookie if needed. This is the single source of truth for
+     * "is this request logged in" so callers (require_user, the messaging AJAX
+     * gate) don't each re-implement the login + remember-me sequence.
+     */
+    public static function logged_in_with_remember(): bool
     {
-        $loggedIn = AUTH::logged_in();
-        if ($loggedIn == false) {
-            AUTH::remember_me_on_logged_out();
-            $loggedIn = AUTH::logged_in();
+        if (AUTH::logged_in()) {
+            return true;
         }
+        AUTH::remember_me_on_logged_out();
+        return AUTH::logged_in();
+    }
 
-        if ($loggedIn == false) {
+    public static function require_user($auth_type = '', bool $requireLicense = true)
+    {
+        if (AUTH::logged_in_with_remember() == false) {
             if ($auth_type == "toolbar") {
                 self::writeSessionValue('toolbar', 'true');
             }
@@ -270,7 +279,9 @@ class AUTH
 //go up one level
         }
         AUTH::set_timezone($_SESSION['user_timezone']);
-        AUTH::require_valid_api_key();
+        if ($requireLicense) {
+            AUTH::require_valid_api_key();
+        }
     }
 
     public static function require_valid_api_key()

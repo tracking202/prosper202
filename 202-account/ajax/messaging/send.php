@@ -48,4 +48,4 @@ echo json_encode([
     'ok'                       => true,
     'conversation_external_id' => $result['conversation_external_id'],
     'message'                  => $result['message'],
-]);
+], JSON_INVALID_UTF8_SUBSTITUTE);

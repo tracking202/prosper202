@@ -142,14 +142,33 @@ class MessagingService
 
                 $conversationId = $this->upsertConversation($conversation);
 
-                $messages = $conversation['messages'] ?? [];
+                // Track the newest message so we touch the conversation's
+                // last_message_at/preview exactly once (not once per message).
+                $newestTs   = null;
+                $newestBody = '';
+                $messages   = $conversation['messages'] ?? [];
                 if (is_array($messages)) {
                     foreach ($messages as $message) {
-                        if (is_array($message)) {
-                            $this->upsertMessage($conversationId, $message);
+                        if (!is_array($message)) {
+                            continue;
+                        }
+                        $this->upsertMessage($conversationId, $message);
+                        $ts = $this->normalizeDate($message['created_at'] ?? null);
+                        if ($ts !== null && ($newestTs === null || $ts > $newestTs)) {
+                            $newestTs   = $ts;
+                            $newestBody = isset($message['body']) ? (string) $message['body'] : '';
                         }
                     }
                 }
+                if ($newestTs !== null) {
+                    $this->touchConversation($conversationId, $newestTs, $newestBody);
+                }
+            }
+
+            // Optional: the server may signal conversations it has removed/retracted
+            // so the local cache doesn't keep them forever (see CENTRAL-API.md).
+            if (isset($response['deleted_conversation_ids']) && is_array($response['deleted_conversation_ids'])) {
+                $this->deleteConversations($response['deleted_conversation_ids']);
             }
 
             $this->db->commit();
@@ -218,6 +237,79 @@ class MessagingService
     }
 
     /**
+     * Insert a local-only placeholder conversation (no server id yet).
+     */
+    private function insertLocalConversation(string $externalId): int
+    {
+        $now  = date('Y-m-d H:i:s');
+        $sql  = "INSERT INTO 202_messaging_conversations
+                    (user_id, external_id, type, status, last_message_at, local_only)
+                 VALUES (?, ?, 'conversation', 'open', ?, 1)";
+        $stmt = $this->db->prepare($sql);
+        if (!$stmt) {
+            throw new RuntimeException('prepare insert local conversation failed');
+        }
+        $stmt->bind_param('iss', $this->userId, $externalId, $now);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new RuntimeException('insert local conversation failed');
+        }
+        $newId = (int) $stmt->insert_id;
+        $stmt->close();
+        return $newId;
+    }
+
+    private function isLocalConversation(int $conversationId): bool
+    {
+        $sql  = "SELECT local_only FROM 202_messaging_conversations WHERE id = ?";
+        $stmt = $this->db->prepare($sql);
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('i', $conversationId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return false;
+        }
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return $row ? ((int) $row['local_only'] === 1) : false;
+    }
+
+    /**
+     * Delete local conversations (and their messages) the server has retracted.
+     * Scoped to this user via findConversationId(). Runs inside applyPull's txn.
+     *
+     * @param array<int,mixed> $externalIds
+     */
+    private function deleteConversations(array $externalIds): void
+    {
+        foreach ($externalIds as $externalId) {
+            if (!is_string($externalId) && !is_int($externalId)) {
+                continue;
+            }
+            $conversationId = $this->findConversationId((string) $externalId);
+            if ($conversationId === null) {
+                continue;
+            }
+            // Table/column names are hardcoded (not user input); only the id is bound.
+            foreach (['202_messaging_messages' => 'conversation_id', '202_messaging_conversations' => 'id'] as $table => $col) {
+                $sql  = "DELETE FROM {$table} WHERE {$col} = ?";
+                $stmt = $this->db->prepare($sql);
+                if (!$stmt) {
+                    throw new RuntimeException('prepare delete conversation failed');
+                }
+                $stmt->bind_param('i', $conversationId);
+                if (!$stmt->execute()) {
+                    $stmt->close();
+                    throw new RuntimeException('delete conversation failed');
+                }
+                $stmt->close();
+            }
+        }
+    }
+
+    /**
      * Insert or reconcile a message within a conversation.
      *
      * Reconciliation: an outbound message we queued locally has a client_token
@@ -253,13 +345,19 @@ class MessagingService
                     throw new RuntimeException('reconcile message failed');
                 }
                 $stmt->close();
-                $this->touchConversation($conversationId, $createdAt, $body);
                 return;
             }
         }
 
-        // Skip if we already have this server message.
-        if ($externalId !== null && $this->messageExists($conversationId, $externalId)) {
+        // The contract guarantees an external_id; if a message arrives without one,
+        // derive a stable synthetic id from its content so repeated pulls dedupe via
+        // messageExists() below instead of inserting a fresh copy every sync.
+        if ($externalId === null) {
+            $externalId = 'syn_' . md5($direction . '|' . $author . '|' . $createdAt . '|' . $body);
+        }
+
+        // Skip if we already have this message.
+        if ($this->messageExists($conversationId, $externalId)) {
             return;
         }
 
@@ -278,22 +376,24 @@ class MessagingService
             throw new RuntimeException('insert message failed');
         }
         $stmt->close();
-
-        $this->touchConversation($conversationId, $createdAt, $body);
     }
 
     private function touchConversation(int $conversationId, string $createdAt, string $body): void
     {
         $preview = mb_substr(trim($body), 0, 200);
+        // Advance the preview only when this message is at least as new as the
+        // stored last_message_at (the preview assignment is evaluated first, so it
+        // still sees the pre-update last_message_at). This prevents an out-of-order
+        // delta from showing an older message's text against a newer timestamp.
         $sql  = "UPDATE 202_messaging_conversations
-                    SET last_message_at = GREATEST(COALESCE(last_message_at, ?), ?),
-                        last_message_preview = ?
+                    SET last_message_preview = IF(? >= COALESCE(last_message_at, '1970-01-01 00:00:00'), ?, last_message_preview),
+                        last_message_at = GREATEST(COALESCE(last_message_at, ?), ?)
                   WHERE id = ?";
         $stmt = $this->db->prepare($sql);
         if (!$stmt) {
             throw new RuntimeException('prepare touch conversation failed');
         }
-        $stmt->bind_param('sssi', $createdAt, $createdAt, $preview, $conversationId);
+        $stmt->bind_param('ssssi', $createdAt, $preview, $createdAt, $createdAt, $conversationId);
         if (!$stmt->execute()) {
             $stmt->close();
             throw new RuntimeException('touch conversation failed');
@@ -331,13 +431,11 @@ class MessagingService
         }
 
         if ($conversationExternalId === null || $conversationExternalId === '') {
-            $conversationExternalId = 'pending_' . $clientToken;
-            $conversationId = $this->upsertConversation([
-                'external_id'     => $conversationExternalId,
-                'type'            => 'conversation',
-                'status'          => 'open',
-                'last_message_at' => date('Y-m-d H:i:s'),
-            ]);
+            // Local-only placeholder until the server issues a real id. The
+            // local_only column (not the id string) drives routing in pushMessage,
+            // so a server-issued id can never be mistaken for a local placeholder.
+            $conversationExternalId = 'local-' . $clientToken;
+            $conversationId = $this->insertLocalConversation($conversationExternalId);
         }
 
         $now  = date('Y-m-d H:i:s');
@@ -416,11 +514,11 @@ class MessagingService
         }
 
         $conversationId = (int) $message['conversation_id'];
-        $convExternalId = $this->getConversationExternalId($conversationId);
-        // A 'pending_' external id is local-only; tell the server this is a new thread.
-        $sendConvId = ($convExternalId !== null && !str_starts_with($convExternalId, 'pending_'))
-            ? $convExternalId
-            : null;
+        // Local-only placeholders have no server id yet → tell the server this is a
+        // new thread; otherwise reply into the existing conversation.
+        $sendConvId = $this->isLocalConversation($conversationId)
+            ? null
+            : $this->getConversationExternalId($conversationId);
 
         $response = $this->client()->send(
             $this->identity,
@@ -489,7 +587,7 @@ class MessagingService
         $subject    = isset($c['subject']) ? (string) $c['subject'] : null;
 
         $sql  = "UPDATE 202_messaging_conversations
-                    SET external_id = ?, type = ?, status = ?, subject = ?
+                    SET external_id = ?, type = ?, status = ?, subject = ?, local_only = 0
                   WHERE id = ?";
         $stmt = $this->db->prepare($sql);
         if (!$stmt) {
@@ -561,8 +659,12 @@ class MessagingService
      */
     private function reportReadReceipts(): void
     {
-        $externalIds = [];
-        $sql = "SELECT external_id FROM 202_messaging_messages
+        // Map local row id => external_id. We flag by local id, never by
+        // external_id alone: the same external_id can belong to another user's row
+        // on a multi-user install (UNIQUE key is (conversation_id, external_id)),
+        // so an external_id-scoped UPDATE would wrongly suppress their receipt.
+        $rows = [];
+        $sql = "SELECT id, external_id FROM 202_messaging_messages
                  WHERE read_at IS NOT NULL AND receipt_sent = 0
                    AND direction = 'inbound' AND external_id IS NOT NULL
                    AND conversation_id IN (SELECT id FROM 202_messaging_conversations WHERE user_id = ?)
@@ -575,29 +677,30 @@ class MessagingService
         if ($stmt->execute()) {
             $result = $stmt->get_result();
             while ($row = $result->fetch_assoc()) {
-                $externalIds[] = (string) $row['external_id'];
+                $rows[(int) $row['id']] = (string) $row['external_id'];
             }
         }
         $stmt->close();
 
-        if ($externalIds === []) {
+        if ($rows === []) {
             return;
         }
 
-        $response = $this->client()->markRead($this->identity, $externalIds);
+        $response = $this->client()->markRead($this->identity, array_values($rows));
         if ($response === null) {
             return; // try again next sync
         }
 
-        // Flag the reported receipts so we don't resend them.
-        $placeholders = implode(',', array_fill(0, count($externalIds), '?'));
-        $types = str_repeat('s', count($externalIds));
-        $sql  = "UPDATE 202_messaging_messages SET receipt_sent = 1 WHERE external_id IN ($placeholders)";
+        // Flag exactly the rows we just reported, by local id.
+        $ids = array_keys($rows);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $types = str_repeat('i', count($ids));
+        $sql  = "UPDATE 202_messaging_messages SET receipt_sent = 1 WHERE id IN ($placeholders)";
         $stmt = $this->db->prepare($sql);
         if (!$stmt) {
             return;
         }
-        $stmt->bind_param($types, ...$externalIds);
+        $stmt->bind_param($types, ...$ids);
         if (!$stmt->execute()) {
             error_log('MessagingService: reportReadReceipts flag update failed');
         }
@@ -800,11 +903,14 @@ class MessagingService
     public function getInbox(): array
     {
         $conversations = [];
+        // Single aggregate join instead of a correlated COUNT subquery per row.
+        // (Runs under sql_mode='' per connect.php, so GROUP BY c.id is allowed.)
         $sql = "SELECT c.external_id, c.type, c.subject, c.status, c.last_message_at, c.last_message_preview,
-                       (SELECT COUNT(*) FROM 202_messaging_messages m
-                          WHERE m.conversation_id = c.id AND m.direction = 'inbound' AND m.read_at IS NULL) AS unread
+                       CAST(COALESCE(SUM(m.direction = 'inbound' AND m.read_at IS NULL), 0) AS UNSIGNED) AS unread
                   FROM 202_messaging_conversations c
+                  LEFT JOIN 202_messaging_messages m ON m.conversation_id = c.id
                  WHERE c.user_id = ?
+                 GROUP BY c.id
                  ORDER BY c.last_message_at DESC, c.id DESC
                  LIMIT 50";
         $stmt = $this->db->prepare($sql);

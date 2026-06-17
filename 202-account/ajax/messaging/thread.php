@@ -24,12 +24,11 @@ if ($service === null) {
     exit;
 }
 
-// Opening a thread marks its inbound messages read (local state only — fast).
-$service->markConversationRead($conversationExternalId);
-
+// Read-only: marking the thread read is a state change and goes through the
+// CSRF-protected read.php endpoint (the widget POSTs there after opening a thread).
 $thread = $service->getConversation($conversationExternalId);
 echo json_encode([
     'ok'           => true,
     'conversation' => $thread['conversation'],
     'messages'     => $thread['messages'],
-]);
+], JSON_INVALID_UTF8_SUBSTITUTE);

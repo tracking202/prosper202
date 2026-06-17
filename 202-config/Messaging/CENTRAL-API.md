@@ -132,11 +132,15 @@ return either full state or only changes since `cursor`.
         }
       ]
     }
-  ]
+  ],
+  "deleted_conversation_ids": ["conv_retracted1"]
 }
 ```
 
 Notes:
+- `deleted_conversation_ids` (optional) is an array of conversation `external_id`s the
+  server has retracted/removed; the client deletes those conversations and their messages
+  from its local cache. Omit it (or send `[]`) when there is nothing to delete.
 - `direction` is from the **user's** perspective: `inbound` = received, `outbound` = sent.
 - `body` is plain text. The client HTML-escapes it before rendering. Do not send HTML.
 - `cursor` is opaque to the client and echoed back on the next `pull`. Use it to return
