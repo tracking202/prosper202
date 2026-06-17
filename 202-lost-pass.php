@@ -59,7 +59,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 		$server_name = str_replace(["\r", "\n"], '', (string) ($_SERVER['SERVER_NAME'] ?? ''));
 		// Match the scheme the request came in on so the reset link isn't downgraded to http.
 		$scheme = getSecureStatus() ? 'https' : 'http';
-		$reset_url = $scheme . '://' . $server_name . get_absolute_url() . '202-pass-reset.php?key=' . $user_pass_key;
+		// get_absolute_url() is '' on root installs, so ensure a leading slash or
+		// the link becomes "https://example.com202-pass-reset.php" (unusable).
+		$base_path = get_absolute_url();
+		if ($base_path === '' || $base_path[0] !== '/') {
+			$base_path = '/' . $base_path;
+		}
+		$reset_url = $scheme . '://' . $server_name . $base_path . '202-pass-reset.php?key=' . $user_pass_key;
 		$subject = "[Prosper202 on " . $server_name . "] Password Reset";
 
 		$message = "

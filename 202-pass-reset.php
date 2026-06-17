@@ -51,8 +51,9 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 	if (!$error && ($_POST['verify_user_pass'] ?? '') == '') {
 		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">You must type verify your password</div>';
 	}
-	if (!$error && ((strlen((string) ($_POST['user_pass'] ?? '')) < 8) or (strlen((string) ($_POST['user_pass'] ?? '')) > 128))) {
-		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Passwords must be 8 to 128 characters long</div>';
+	// Cap at 72 bytes (bcrypt's effective input length under PASSWORD_DEFAULT).
+	if (!$error && ((strlen((string) ($_POST['user_pass'] ?? '')) < 8) or (strlen((string) ($_POST['user_pass'] ?? '')) > 72))) {
+		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Passwords must be 8 to 72 characters long</div>';
 	}
 	if (!$error && (($_POST['user_pass'] ?? '') != ($_POST['verify_user_pass'] ?? ''))) {
 		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Your passwords did not match, please try again</div>';

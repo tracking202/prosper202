@@ -542,8 +542,11 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	if ($_POST['retype_new_user_pass'] == '') {
 		$error['user_pass'] .= ' You must type verify your password.';
 	}
-	if ((strlen((string) $_POST['new_user_pass']) < 8) or (strlen((string) $_POST['new_user_pass']) > 128)) {
-		$error['user_pass'] .= ' Your password must be between 8 and 128 characters long.';
+	// Cap at 72 bytes: PASSWORD_DEFAULT is bcrypt, which only hashes the first 72
+	// bytes. Allowing more would silently ignore the tail (any suffix past byte 72
+	// would also authenticate).
+	if ((strlen((string) $_POST['new_user_pass']) < 8) or (strlen((string) $_POST['new_user_pass']) > 72)) {
+		$error['user_pass'] .= ' Your password must be between 8 and 72 characters long.';
 	}
 	if ($_POST['new_user_pass'] != $_POST['retype_new_user_pass']) {
 		$error['user_pass'] .= ' Your password did not match, please try again.';
