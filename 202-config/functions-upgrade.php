@@ -3227,18 +3227,27 @@ class UPGRADE
             // Add the UNIQUE backstop only if it is not already present.
             $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'";
             $result = _mysqli_query($sql);
-            if (!($result && mysqli_num_rows($result) > 0)) {
+            $uniqueKeyPresent = ($result && mysqli_num_rows($result) > 0);
+            if (!$uniqueKeyPresent) {
                 $sql = "ALTER TABLE `202_conversion_logs`
                         ADD UNIQUE KEY `uniq_click_transaction` (`click_id`,`transaction_id`)";
-                $result = _mysqli_query($sql);
+                _mysqli_query($sql);
 
-                // The new composite unique key covers the click_id lookup as a
-                // leftmost prefix, so drop the now-redundant standalone index.
-                $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'click_id'";
+                // Re-check: only treat the key as present if the ALTER actually
+                // succeeded (e.g. it can fail if de-duplication above did not run).
+                $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'";
                 $result = _mysqli_query($sql);
-                if ($result && mysqli_num_rows($result) > 0) {
-                    $sql = "ALTER TABLE `202_conversion_logs` DROP INDEX `click_id`";
+                $uniqueKeyPresent = ($result && mysqli_num_rows($result) > 0);
+
+                if ($uniqueKeyPresent) {
+                    // The new composite unique key covers the click_id lookup as a
+                    // leftmost prefix, so drop the now-redundant standalone index.
+                    $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'click_id'";
                     $result = _mysqli_query($sql);
+                    if ($result && mysqli_num_rows($result) > 0) {
+                        $sql = "ALTER TABLE `202_conversion_logs` DROP INDEX `click_id`";
+                        _mysqli_query($sql);
+                    }
                 }
             }
 
@@ -3250,13 +3259,20 @@ class UPGRADE
             $result = _mysqli_query($sql);
             if (!($result && mysqli_num_rows($result) > 0)) {
                 $sql = "ALTER TABLE `202_clicks` ADD KEY `user_click_time` (`user_id`,`click_time`)";
-                $result = _mysqli_query($sql);
+                _mysqli_query($sql);
             }
 
-            $sql = "UPDATE 202_version SET version='1.9.61'";
-            $result = _mysqli_query($sql);
+            // Only advance the schema version once the UNIQUE integrity backstop is
+            // actually in place. If it could not be created (e.g. a failed
+            // de-duplication left colliding rows), leave the version at 1.9.60 so
+            // this block re-runs next upgrade instead of silently skipping the key.
+            // The UPDATE/ALTER statements above are all idempotent on re-run.
+            if ($uniqueKeyPresent) {
+                $sql = "UPDATE 202_version SET version='1.9.61'";
+                $result = _mysqli_query($sql);
 
-            $prosper202_version = '1.9.61';
+                $prosper202_version = '1.9.61';
+            }
         }
 
         //This will enable p202 to downgrade to this version if installed over a newer version

@@ -60,7 +60,8 @@ if (!function_exists('p202ApplyConversionUpdate')) {
         string $clickCpa,
         bool $usePixelPayout = false,
         string $clickPayout = '',
-        ?string $affCampaignId = null
+        ?string $affCampaignId = null,
+        bool $deferDirtyHour = false
     ): bool {
         $escapedCpa = $db->real_escape_string($clickCpa);
         $sqlSet = $escapedCpa !== ''
@@ -102,8 +103,12 @@ if (!function_exists('p202ApplyConversionUpdate')) {
             }
         }
 
-        $de = new DataEngine();
-        $de->setDirtyHour($clickId);
+        // Cache invalidation (memcache write). Transactional callers defer this
+        // until AFTER commit so the click-row lock is not held across cache I/O.
+        if (!$deferDirtyHour) {
+            $de = new DataEngine();
+            $de->setDirtyHour($clickId);
+        }
 
         // Report whether the primary 202_clicks update succeeded so transactional
         // callers (p202RecordConversion) can roll back instead of committing a
@@ -211,12 +216,16 @@ if (!function_exists('p202RecordConversion')) {
 
             // Idempotency: a non-empty network order id already recorded for this
             // click means this is a replay/retry — return the existing conversion.
+            // The lookup intentionally does NOT filter on `deleted`: it must match
+            // the UNIQUE (click_id, transaction_id) key (which ignores `deleted`),
+            // otherwise a replay of a soft-deleted conversion would miss here and
+            // then hit a duplicate-key error on insert.
             if ($transactionId !== '') {
                 $txEsc = $db->real_escape_string($transactionId);
                 $dupSql = "SELECT conv_id FROM 202_conversion_logs"
                     . " WHERE click_id = " . $clickId
                     . " AND transaction_id = '" . $txEsc . "'"
-                    . " AND deleted = 0 LIMIT 1";
+                    . " LIMIT 1";
                 $dupResult = $db->query($dupSql);
                 if ($dupResult === false) {
                     throw new \RuntimeException('p202RecordConversion: idempotency lookup failed: ' . p202SafeDbError($db));
@@ -230,7 +239,9 @@ if (!function_exists('p202RecordConversion')) {
             }
 
             // Apply the click-side conversion update (lead flag, cpa, payout).
-            if (!p202ApplyConversionUpdate($db, (string) $clickId, $clickCpa, $usePixelPayout, $clickPayout)) {
+            // Defer the dirty-hour cache write until after commit (below) so the
+            // click-row lock is not held across memcache I/O.
+            if (!p202ApplyConversionUpdate($db, (string) $clickId, $clickCpa, $usePixelPayout, $clickPayout, null, true)) {
                 throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $clickId);
             }
 
@@ -261,6 +272,10 @@ if (!function_exists('p202RecordConversion')) {
             $convId = (int) $db->insert_id;
 
             $db->commit();
+
+            // Cache invalidation runs AFTER commit so the click lock is released first.
+            $de = new DataEngine();
+            $de->setDirtyHour((string) $clickId);
 
             return ['conv_id' => $convId, 'duplicate' => false];
         } catch (\Throwable $e) {

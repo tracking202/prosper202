@@ -46,13 +46,20 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         mysqli_report(MYSQLI_REPORT_STRICT);
 
         $port = (int) (getenv('P202_TEST_DB_PORT') ?: 3306);
-        $db = @mysqli_connect(
-            $host,
-            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
-            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
-            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
-            $port
-        );
+        // Under MYSQLI_REPORT_STRICT a failed connect throws rather than returning
+        // false, so catch it and leave self::$db null → the tests skip cleanly
+        // (e.g. when the DB is briefly unreachable in CI) instead of erroring.
+        try {
+            $db = @mysqli_connect(
+                $host,
+                (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+                (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+                (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+                $port
+            );
+        } catch (\Throwable $e) {
+            return; // connection failed; tests will skip
+        }
         if (!$db) {
             return; // connection failed; tests will skip
         }

@@ -75,13 +75,15 @@ if (function_exists('openssl_decrypt')) {
 
         $mysql['click_cpa'] = $db->real_escape_string((string) ($cpa_row['click_cpa'] ?? ''));
 
-        p202ApplyConversionUpdate(
+        if (!p202ApplyConversionUpdate(
             $db,
             (string) $mysql['click_id'],
             (string) $mysql['click_cpa'],
             true,
             (string) $mysql['click_payout']
-        );
+        )) {
+            error_log('cb202: failed to apply conversion update for click ' . $mysql['click_id']);
+        }
     }
 
 } else {

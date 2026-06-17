@@ -260,6 +260,8 @@ if (is_numeric($mysql['click_id'])) {
 
 	// Atomic + idempotent: locks the click, dedupes on transaction id, and
 	// applies the click update and conversion_logs insert in one transaction.
+	$conversionResult = ['conv_id' => 0, 'duplicate' => false];
+	try {
 	$conversionResult = p202RecordConversion(
 		$db,
 		[
@@ -279,9 +281,12 @@ if (is_numeric($mysql['click_id'])) {
 		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
 		p202ExtractTransactionId($_GET)
 	);
+	} catch (\Throwable $conversionError) {
+		error_log('upx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
+	}
 	$conversionId = $conversionResult['conv_id'];
 
-        if ($conversionId > 0) {
+        if ($conversionId > 0 && !$conversionResult['duplicate']) {
                 $scope = [
                         'user_id' => (int) $mysql['click_user_id'],
                         'campaign_id' => (int) $mysql['campaign_id'],
