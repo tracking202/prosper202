@@ -545,7 +545,16 @@ class AUTH
      */
     public static function check_csrf_token(): bool
     {
-        return hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''));
+        $sessionToken = (string) ($_SESSION['token'] ?? '');
+        $postedToken = (string) ($_POST['token'] ?? '');
+        // Fail closed when either side is empty. Otherwise hash_equals('', '')
+        // would return true and let a request through if the session token was
+        // never seeded (session start/write failure, or a legacy entry point
+        // that bypasses connect.php).
+        if ($sessionToken === '' || $postedToken === '') {
+            return false;
+        }
+        return hash_equals($sessionToken, $postedToken);
     }
 
     /**

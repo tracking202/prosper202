@@ -311,6 +311,19 @@ final class AuthClassTest extends TestCase
         $this->assertFalse(AUTH::check_csrf_token());
     }
 
+    public function testCheckCsrfTokenFailsClosedWhenSessionTokenMissing(): void
+    {
+        // Both sides empty must NOT pass — hash_equals('', '') is true, so the
+        // helper has to reject empty tokens explicitly (fail closed).
+        unset($_SESSION['token']);
+        $_POST['token'] = '';
+        $this->assertFalse(AUTH::check_csrf_token());
+
+        $_SESSION['token'] = '';
+        $_POST['token'] = '';
+        $this->assertFalse(AUTH::check_csrf_token());
+    }
+
     public function testIsRateLimitedTrueWhenFailuresExceedThreshold(): void
     {
         $mockDb = $this->createMockDb([

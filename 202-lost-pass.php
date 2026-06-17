@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 		// Match the scheme the request came in on so the reset link isn't downgraded to http.
 		$scheme = getSecureStatus() ? 'https' : 'http';
 		$reset_url = $scheme . '://' . $server_name . get_absolute_url() . '202-pass-reset.php?key=' . $user_pass_key;
-		$subject = "[Propser202 on " . $server_name . "] Password Reset";
+		$subject = "[Prosper202 on " . $server_name . "] Password Reset";
 
 		$message = "
 <p>Someone has asked to reset the password for the following site and username.</p>
@@ -73,9 +73,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 
 <p><a href=\"" . $reset_url . "\">" . $reset_url . "</a></p>";
 
-		$from = "propser202@" . $server_name;
+		$from = "prosper202@" . $server_name;
 
-		$header = "From: Propser202<" . $from . "> \r\n";
+		$header = "From: Prosper202<" . $from . "> \r\n";
 		$header .= "Reply-To: " . $from . " \r\n";
 		$header .=  "To: " . $to . " \r\n";
 		$header .= "Content-Type: text/html; charset=\"iso-8859-1\" \r\n";

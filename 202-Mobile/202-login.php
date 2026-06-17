@@ -13,7 +13,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$username_raw = (string)($_POST['user_name'] ?? '');
 	$password = (string)($_POST['user_pass'] ?? '');
 	$username = trim($username_raw);
-	$login_ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+	// Trust-aware client IP (set by connect.php), not the shared proxy REMOTE_ADDR.
+	$login_ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 	$rate_limited = false;
 
 	// CSRF: validate the session token the form already embeds.
@@ -63,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$login_server_serialized = AUTH::login_audit_snapshot();
 		$login_session_serialized = ''; // never persist session contents (API keys, tokens) at rest
 		$redacted_password = '[filtered]';
-		$ip_address = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+		$ip_address = $login_ip; // same client IP the throttle keys on, so counts line up
 		$login_time = time();
 		$log_stmt->bind_param(
 			'sssiisss',
