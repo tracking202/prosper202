@@ -6,6 +6,117 @@ declare(strict_types=1);
 if (!class_exists('DataEngine')) {
     include_once(__DIR__ . '/class-dataengine.php');
 }
+
+if (!function_exists('_upgrade_query_run')) {
+    /**
+     * Testable core of the upgrade query runner. Kept free of globals, real sleeps
+     * and _die() so the retry/classification logic can be unit-tested: the caller
+     * supplies the connection, the backoff sleeper, and the "give up" handler.
+     *
+     * Retries transient lock-wait (1205) / deadlock (1213) errors — for those the
+     * statement provably did not apply, so re-running the identical SQL is safe even
+     * when it isn't idempotent. Every other outcome preserves _mysqli_query()'s
+     * contract exactly (the mysqli_result, or false). A transient error that never
+     * clears hands off to $onExhausted instead of silently skipping a step.
+     *
+     * @param  object   $conn        anything exposing query(), ->errno and ->error (a mysqli in production)
+     * @param  string   $sql
+     * @param  callable $sleeper     fn(int $seconds): void — invoked with the backoff before each retry
+     * @param  callable $onExhausted fn(int $errno, string $error): mixed — invoked when a transient error never clears
+     * @param  int      $maxAttempts total attempts (1 + retries)
+     * @return \mysqli_result|bool|mixed
+     */
+    function _upgrade_query_run($conn, string $sql, callable $sleeper, callable $onExhausted, int $maxAttempts = 4)
+    {
+        $maxAttempts    = max(1, $maxAttempts); // always make at least one attempt
+        $transientCodes = [1205, 1213];         // lock wait timeout, deadlock
+
+        for ($attempt = 1; ; $attempt++) {
+            $errno = 0;
+            $error = '';
+
+            try {
+                $result = @$conn->query($sql);
+            } catch (\mysqli_sql_exception $e) {
+                // Covers environments that also enable MYSQLI_REPORT_ERROR.
+                $result = false;
+                $errno  = (int) $e->getCode();
+                $error  = $e->getMessage();
+            }
+
+            if ($result !== false) {
+                return $result;
+            }
+
+            if ($errno === 0) {
+                $errno = (int) $conn->errno;
+                $error = (string) $conn->error;
+            }
+
+            $isTransient = in_array($errno, $transientCodes, true);
+
+            // Transient with attempts left: back off and re-run the same statement.
+            if ($isTransient && $attempt < $maxAttempts) {
+                error_log('Prosper202 upgrade: transient DB error ' . $errno . ' (' . $error
+                    . '); retry ' . $attempt . ' of ' . ($maxAttempts - 1));
+                $sleeper(2 ** ($attempt - 1)); // 1s, 2s, 4s
+                continue;
+            }
+
+            // Transient but exhausted: hand off to the caller to stop loudly.
+            if ($isTransient) {
+                return $onExhausted($errno, $error);
+            }
+
+            // Non-transient failure: preserve _mysqli_query()'s legacy contract so the
+            // upgrade's "ignore already-applied" steps behave exactly as before.
+            return false;
+        }
+    }
+}
+
+if (!function_exists('_upgrade_query')) {
+    /**
+     * Resilient query runner for the upgrade path.
+     *
+     * Runs the same global-$db query that _mysqli_query() does, but transparently
+     * retries transient lock-wait (1205) / deadlock (1213) errors — the failures a
+     * live, loaded server produces mid-migration — with exponential backoff. A
+     * transient error that never clears stops with a clear, resumable message
+     * instead of silently skipping a migration step; every other outcome preserves
+     * _mysqli_query()'s contract exactly (the mysqli_result, or false).
+     *
+     * Only autocommit statements flow through here; the one explicit-transaction
+     * block (the 1.9.57 migration) calls $connection->query() directly, so a
+     * per-statement retry never runs inside an open transaction.
+     *
+     * @param  string|mixed $sql
+     * @return \mysqli_result|bool
+     */
+    function _upgrade_query($sql)
+    {
+        global $db;
+
+        $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+
+        return _upgrade_query_run(
+            $conn,
+            (string) $sql,
+            static function (int $seconds): void {
+                sleep($seconds);
+            },
+            static function (int $errno, string $error) {
+                // Transient error that never cleared: the server stayed locked. Stop
+                // loudly — the upgrade resumes (IF [NOT] EXISTS / existence guards) on
+                // re-run. The errno/error go only to the log, never to the user.
+                error_log('Prosper202 upgrade: persistent transient DB error ' . $errno . ': ' . $error);
+                _die("<h6>Upgrade paused</h6>
+                    <small>The database stayed locked after several retries, which usually means the server is busy right now. Please re-run the upgrade in a few minutes — it resumes where it left off. <a href='" . get_absolute_url() . "202-login.php'>Back to login</a></small>");
+            }
+        );
+    }
+}
+
 class PROSPER202
 {
 
@@ -61,7 +172,7 @@ class UPGRADE
 
         //Try to disable mysql strict mode
         $sql = "SET session sql_mode= ''";
-        $result = _mysqli_query($sql);
+        $result = _upgrade_query($sql);
 
         $partition_start = time();
         $partition_end = strtotime('+3 years', $partition_start);
@@ -69,7 +180,7 @@ class UPGRADE
         $p_count = 0;
 
         $sql = "SELECT PLUGIN_NAME as Name, PLUGIN_STATUS as Status FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_TYPE='STORAGE ENGINE' AND PLUGIN_NAME='partition' AND PLUGIN_STATUS='ACTIVE'";
-        $result = _mysqli_query($sql);
+        $result = _upgrade_query($sql);
 
         if ($result->num_rows != 1) {
             $mysql_partitioning_fail = 1;
@@ -86,11 +197,11 @@ class UPGRADE
             $sql = "CREATE TABLE IF NOT EXISTS `202_version` (
 					  `version` varchar(50) NOT NULL
 					) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // drop the old table
             $sql = "DROP TABLE `202_sort_landings`";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // create the new landing page sorting table
             $sql = "CREATE TABLE IF NOT EXISTS `202_sort_landing_pages` (
@@ -125,11 +236,11 @@ class UPGRADE
 				  KEY `sort_landing_page_net` (`sort_landing_page_net`),
 				  KEY `sort_landing_page_roi` (`sort_landing_page_roi`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // this is now up to 1.0.3
             $sql = "INSERT INTO 202_version SET version='1.0.3'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // now set the new mysql version
             $prosper202_version = '1.0.3';
@@ -138,21 +249,21 @@ class UPGRADE
         // upgrade from 1.0.3 to 1.0.4
         if ($prosper202_version == '1.0.3') {
             $sql = "UPDATE 202_version SET version='1.0.4'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.0.4';
         }
 
         // upgrade from 1.0.4 to 1.0.5
         if ($prosper202_version == '1.0.4') {
             $sql = "UPDATE 202_version SET version='1.0.5'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.0.5';
         }
 
         // upgrade from 1.0.5 to 1.0.6
         if ($prosper202_version == '1.0.5') {
             $sql = "UPDATE 202_version SET version='1.0.6'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.0.6';
         }
 
@@ -160,159 +271,159 @@ class UPGRADE
         if ($prosper202_version == '1.0.6') {
 
             // this is upgrading things to BIGINT
-            $result = _mysqli_query("ALTER TABLE `202_clicks` 			CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL");
-            $result = _mysqli_query("ALTER TABLE `202_clicks_advance` 	CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL , 
+            $result = _upgrade_query("ALTER TABLE `202_clicks` 			CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL");
+            $result = _upgrade_query("ALTER TABLE `202_clicks_advance` 	CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL , 
 																			CHANGE `keyword_id` `keyword_id` BIGINT UNSIGNED NOT NULL ,
 																			CHANGE `ip_id` `ip_id` BIGINT UNSIGNED NOT NULL");
-            $result = _mysqli_query(" ALTER TABLE `202_clicks_counter` 	CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  ");
-            $result = _mysqli_query(" ALTER TABLE `202_clicks_record` 	CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL  ");
-            $result = _mysqli_query(" ALTER TABLE `202_clicks_site` 		CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL ,
+            $result = _upgrade_query(" ALTER TABLE `202_clicks_counter` 	CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  ");
+            $result = _upgrade_query(" ALTER TABLE `202_clicks_record` 	CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL  ");
+            $result = _upgrade_query(" ALTER TABLE `202_clicks_site` 		CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL ,
 																			CHANGE `click_referer_site_url_id` `click_referer_site_url_id` BIGINT UNSIGNED NOT NULL ,
 																			CHANGE `click_landing_site_url_id` `click_landing_site_url_id` BIGINT UNSIGNED NOT NULL ,
 																			CHANGE `click_outbound_site_url_id` `click_outbound_site_url_id` BIGINT UNSIGNED NOT NULL ,
 																			CHANGE `click_cloaking_site_url_id` `click_cloaking_site_url_id` BIGINT UNSIGNED NOT NULL ,
 																			CHANGE `click_redirect_site_url_id` `click_redirect_site_url_id` BIGINT UNSIGNED NOT NULL ");
-            $result = _mysqli_query(" ALTER TABLE `202_clicks_spy` 		CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL  ");
-            $result = _mysqli_query(" ALTER TABLE `202_ips` 			CHANGE `ip_id` `ip_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  ");
-            $result = _mysqli_query(" ALTER TABLE `202_keywords` 		CHANGE `keyword_id` `keyword_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  ");
-            $result = _mysqli_query(" ALTER TABLE `202_last_ips` 		CHANGE `ip_id` `ip_id` BIGINT NOT NULL  ");
-            $result = _mysqli_query(" ALTER TABLE `202_mysql_errors` 	CHANGE `ip_id` `ip_id` BIGINT UNSIGNED NOT NULL ,
+            $result = _upgrade_query(" ALTER TABLE `202_clicks_spy` 		CHANGE `click_id` `click_id` BIGINT UNSIGNED NOT NULL  ");
+            $result = _upgrade_query(" ALTER TABLE `202_ips` 			CHANGE `ip_id` `ip_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  ");
+            $result = _upgrade_query(" ALTER TABLE `202_keywords` 		CHANGE `keyword_id` `keyword_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  ");
+            $result = _upgrade_query(" ALTER TABLE `202_last_ips` 		CHANGE `ip_id` `ip_id` BIGINT NOT NULL  ");
+            $result = _upgrade_query(" ALTER TABLE `202_mysql_errors` 	CHANGE `ip_id` `ip_id` BIGINT UNSIGNED NOT NULL ,
 																			CHANGE `site_id` `site_id` BIGINT UNSIGNED NOT NULL ");
-            $result = _mysqli_query(" ALTER TABLE `202_site_domains` 	CHANGE `site_domain_id` `site_domain_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  ");
-            $result = _mysqli_query(" ALTER TABLE `202_site_urls` 		CHANGE `site_url_id` `site_url_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT ,
+            $result = _upgrade_query(" ALTER TABLE `202_site_domains` 	CHANGE `site_domain_id` `site_domain_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT  ");
+            $result = _upgrade_query(" ALTER TABLE `202_site_urls` 		CHANGE `site_url_id` `site_url_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT ,
 																			CHANGE `site_domain_id` `site_domain_id` BIGINT UNSIGNED NOT NULL ");
-            $result = _mysqli_query(" ALTER TABLE `202_sort_ips` CHANGE `ip_id` `ip_id` BIGINT UNSIGNED NOT NULL  ");
-            $result = _mysqli_query(" ALTER TABLE `202_sort_keywords` CHANGE `keyword_id` `keyword_id` BIGINT UNSIGNED NOT NULL  ");
-            $result = _mysqli_query(" ALTER TABLE `202_sort_referers` CHANGE `referer_id` `referer_id` BIGINT UNSIGNED NOT NULL  ");
-            $result = _mysqli_query(" ALTER TABLE `202_users` CHANGE `user_last_login_ip_id` `user_last_login_ip_id` BIGINT UNSIGNED NOT NULL  ");
+            $result = _upgrade_query(" ALTER TABLE `202_sort_ips` CHANGE `ip_id` `ip_id` BIGINT UNSIGNED NOT NULL  ");
+            $result = _upgrade_query(" ALTER TABLE `202_sort_keywords` CHANGE `keyword_id` `keyword_id` BIGINT UNSIGNED NOT NULL  ");
+            $result = _upgrade_query(" ALTER TABLE `202_sort_referers` CHANGE `referer_id` `referer_id` BIGINT UNSIGNED NOT NULL  ");
+            $result = _upgrade_query(" ALTER TABLE `202_users` CHANGE `user_last_login_ip_id` `user_last_login_ip_id` BIGINT UNSIGNED NOT NULL  ");
 
             // mysql version set to 1.1.0 now
             $sql = "UPDATE 202_version SET version='1.1.0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.1.0';
         }
 
         // upgrade from 1.1.0 to 1.1.1
         if ($prosper202_version == '1.1.0') {
             $sql = "UPDATE 202_version SET version='1.1.1'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.1.1';
         }
 
         // upgrade from 1.1.1 to 1.1.2
         if ($prosper202_version == '1.1.1') {
             $sql = "UPDATE 202_version SET version='1.1.2'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.1.2';
         }
 
         // upgrade from 1.1.2 to 1.2.0
         if ($prosper202_version == '1.1.2') {
 
-            $result = _mysqli_query("	 CREATE TABLE IF NOT EXISTS `202_rotations` (
+            $result = _upgrade_query("	 CREATE TABLE IF NOT EXISTS `202_rotations` (
 										  `aff_campaign_id` mediumint(8) unsigned NOT NULL,
 										  `rotation_num` tinyint(4) NOT NULL,
 										  PRIMARY KEY (`aff_campaign_id`)
 										) ENGINE=MEMORY DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
 
-            $result = _mysqli_query("	INSERT INTO 202_browsers SET browser_id = '9', browser_name = 'Chrome'");
-            $result = _mysqli_query("	INSERT INTO 202_browsers SET browser_id = '10', browser_name = 'Mobile'");
-            $result = _mysqli_query("	INSERT INTO 202_browsers SET browser_id = '11', browser_name = 'Console'");
-            $result = _mysqli_query(" 	ALTER TABLE  `202_clicks` CHANGE  `click_cpc`  `click_cpc` DECIMAL( 7, 5 ) NOT NULL ");
-            $result = _mysqli_query(" 	ALTER TABLE  `202_trackers` CHANGE  `click_cpc`  `click_cpc` DECIMAL( 7, 5 ) NOT NULL ");
+            $result = _upgrade_query("	INSERT INTO 202_browsers SET browser_id = '9', browser_name = 'Chrome'");
+            $result = _upgrade_query("	INSERT INTO 202_browsers SET browser_id = '10', browser_name = 'Mobile'");
+            $result = _upgrade_query("	INSERT INTO 202_browsers SET browser_id = '11', browser_name = 'Console'");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_clicks` CHANGE  `click_cpc`  `click_cpc` DECIMAL( 7, 5 ) NOT NULL ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_trackers` CHANGE  `click_cpc`  `click_cpc` DECIMAL( 7, 5 ) NOT NULL ");
 
-            $result = _mysqli_query(" 	ALTER TABLE  `202_users_pref` ADD  `user_cpc_or_cpv` CHAR( 3 ) NOT NULL DEFAULT  'cpc' AFTER  `user_pref_chart` ; ");
-            $result = _mysqli_query(" 	ALTER TABLE  `202_users_pref` ADD  `user_keyword_searched_or_bidded` VARCHAR( 255 ) NOT NULL DEFAULT  'searched' AFTER  `user_cpc_or_cpv` ; ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_users_pref` ADD  `user_cpc_or_cpv` CHAR( 3 ) NOT NULL DEFAULT  'cpc' AFTER  `user_pref_chart` ; ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_users_pref` ADD  `user_keyword_searched_or_bidded` VARCHAR( 255 ) NOT NULL DEFAULT  'searched' AFTER  `user_cpc_or_cpv` ; ");
 
-            $result = _mysqli_query(" 	ALTER TABLE  `202_aff_campaigns` ADD  `aff_campaign_url_2` TEXT NOT NULL AFTER  `aff_campaign_url` ,
+            $result = _upgrade_query(" 	ALTER TABLE  `202_aff_campaigns` ADD  `aff_campaign_url_2` TEXT NOT NULL AFTER  `aff_campaign_url` ,
 										ADD  `aff_campaign_url_3` TEXT NOT NULL AFTER  `aff_campaign_url_2` ,
 										ADD  `aff_campaign_url_4` TEXT NOT NULL AFTER  `aff_campaign_url_3` ,
 										ADD  `aff_campaign_url_5` TEXT NOT NULL AFTER  `aff_campaign_url_4` ;");
 
-            $result = _mysqli_query(" 	ALTER TABLE  `202_aff_campaigns` CHANGE  `aff_campaign_url`  `aff_campaign_url` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_aff_campaigns` CHANGE  `aff_campaign_url`  `aff_campaign_url` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL");
 
-            $result = _mysqli_query(" 	ALTER TABLE  `202_aff_campaigns` ADD  `aff_campaign_rotate` TINYINT( 1 ) NOT NULL DEFAULT  '0' AFTER  `aff_campaign_time` ;");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_aff_campaigns` ADD  `aff_campaign_rotate` TINYINT( 1 ) NOT NULL DEFAULT  '0' AFTER  `aff_campaign_time` ;");
 
-            $result = _mysqli_query(" 	ALTER TABLE`202_sort_breakdowns` CHANGE `sort_breakdown_avg_cpc` `sort_breakdown_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
+            $result = _upgrade_query(" 	ALTER TABLE`202_sort_breakdowns` CHANGE `sort_breakdown_avg_cpc` `sort_breakdown_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
 										CHANGE `sort_breakdown_cost` `sort_breakdown_cost` DECIMAL( 13, 5 ) NOT NULL ,
 										CHANGE `sort_breakdown_net` `sort_breakdown_net` DECIMAL( 13, 5 ) NOT NULL;");
 
-            $result = _mysqli_query(" 	ALTER TABLE`202_sort_ips` CHANGE `sort_ip_avg_cpc` `sort_ip_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
+            $result = _upgrade_query(" 	ALTER TABLE`202_sort_ips` CHANGE `sort_ip_avg_cpc` `sort_ip_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
 										CHANGE `sort_ip_cost` `sort_ip_cost` DECIMAL( 13, 5 ) NOT NULL ,
 										CHANGE `sort_ip_net` `sort_ip_net` DECIMAL( 13, 5 ) NOT NULL;");
 
-            $result = _mysqli_query(" 	ALTER TABLE`202_sort_keywords` CHANGE `sort_keyword_avg_cpc` `sort_keyword_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
+            $result = _upgrade_query(" 	ALTER TABLE`202_sort_keywords` CHANGE `sort_keyword_avg_cpc` `sort_keyword_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
 										CHANGE `sort_keyword_cost` `sort_keyword_cost` DECIMAL( 13, 5 ) NOT NULL ,
 										CHANGE `sort_keyword_net` `sort_keyword_net` DECIMAL( 13, 5 ) NOT NULL;");
 
-            $result = _mysqli_query("   ALTER TABLE`202_sort_landing_pages` CHANGE `sort_landing_page_avg_cpc` `sort_landing_page_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
+            $result = _upgrade_query("   ALTER TABLE`202_sort_landing_pages` CHANGE `sort_landing_page_avg_cpc` `sort_landing_page_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
 										CHANGE `sort_landing_page_cost` `sort_landing_page_cost` DECIMAL( 13, 5 ) NOT NULL ,
 										CHANGE `sort_landing_page_net` `sort_landing_page_net` DECIMAL( 13, 5 ) NOT NULL;");
 
-            $result = _mysqli_query(" 	ALTER TABLE`202_sort_referers` CHANGE `sort_referer_avg_cpc` `sort_referer_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
+            $result = _upgrade_query(" 	ALTER TABLE`202_sort_referers` CHANGE `sort_referer_avg_cpc` `sort_referer_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
 										CHANGE `sort_referer_cost` `sort_referer_cost` DECIMAL( 13, 5 ) NOT NULL ,
 										CHANGE `sort_referer_net` `sort_referer_net` DECIMAL( 13, 5 ) NOT NULL;");
 
-            $result = _mysqli_query(" 	ALTER TABLE`202_sort_text_ads` CHANGE `sort_text_ad_avg_cpc` `sort_text_ad_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
+            $result = _upgrade_query(" 	ALTER TABLE`202_sort_text_ads` CHANGE `sort_text_ad_avg_cpc` `sort_text_ad_avg_cpc` DECIMAL( 7, 5 ) NOT NULL ,
 										CHANGE `sort_text_ad_cost` `sort_text_ad_cost` DECIMAL( 13, 5 ) NOT NULL ,
 										CHANGE `sort_text_ad_net` `sort_text_ad_net` DECIMAL( 13, 5 ) NOT NULL; ");
 
             $sql = "UPDATE 202_version SET version='1.2.0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.2.0';
         }
 
         // upgrade from 1.2.0 to 1,2,1
         if ($prosper202_version == '1.2.0') {
             $sql = "UPDATE 202_version SET version='1.2.1'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.2.1';
         }
 
         // upgrade from 1.2.1 to 1.3.0
         if ($prosper202_version == '1.2.1') {
 
-            $result = _mysqli_query(" 	ALTER TABLE  `202_users` ADD  `user_api_key` VARCHAR( 255 ) NOT NULL AFTER  `user_pass_time` ; ");
-            $result = _mysqli_query(" 	ALTER TABLE  `202_users` ADD  `user_stats202_app_key` VARCHAR( 255 ) NOT NULL AFTER  `user_api_key` ; ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_users` ADD  `user_api_key` VARCHAR( 255 ) NOT NULL AFTER  `user_pass_time` ; ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_users` ADD  `user_stats202_app_key` VARCHAR( 255 ) NOT NULL AFTER  `user_api_key` ; ");
             $sql = "UPDATE 202_version SET version='1.3.0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.3.0';
         }
 
         // upgrade from 1.3.0 to 1.3.1
         if ($prosper202_version == '1.3.0') {
 
-            $result = _mysqli_query(" 	ALTER TABLE  `202_clicks_spy` ENGINE = InnoDB ");
-            $result = _mysqli_query(" 	ALTER TABLE  `202_last_ips` ENGINE = InnoDB ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_clicks_spy` ENGINE = InnoDB ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_last_ips` ENGINE = InnoDB ");
 
             $sql = "UPDATE 202_version SET version='1.3.1'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.3.1';
         }
 
         // upgrade from 1.3.1 to 1.3.2
         if ($prosper202_version == '1.3.1') {
 
-            $result = _mysqli_query(" 	ALTER TABLE  `202_clicks_spy` ENGINE = InnoDB ");
-            $result = _mysqli_query(" 	ALTER TABLE  `202_last_ips` ENGINE = InnoDB ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_clicks_spy` ENGINE = InnoDB ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_last_ips` ENGINE = InnoDB ");
 
             $sql = "UPDATE 202_version SET version='1.3.2'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.3.2';
         }
 
         // upgrade from 1.3.2 to 1.4
         if ($prosper202_version == '1.3.2') {
 
-            $result = _mysqli_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_tracking_domain` varchar(255) NOT NULL DEFAULT '';");
-            $result = _mysqli_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_pref_group_1` tinyint(3);");
-            $result = _mysqli_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_pref_group_2` tinyint(3);");
-            $result = _mysqli_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_pref_group_3` tinyint(3);");
-            $result = _mysqli_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_pref_group_4` tinyint(3);");
+            $result = _upgrade_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_tracking_domain` varchar(255) NOT NULL DEFAULT '';");
+            $result = _upgrade_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_pref_group_1` tinyint(3);");
+            $result = _upgrade_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_pref_group_2` tinyint(3);");
+            $result = _upgrade_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_pref_group_3` tinyint(3);");
+            $result = _upgrade_query("	ALTER TABLE 202_users_pref ADD COLUMN `user_pref_group_4` tinyint(3);");
 
-            $result = _mysqli_query("	UPDATE 202_aff_campaigns SET aff_campaign_url=CONCAT(aff_campaign_url,'[[subid]]') ");
+            $result = _upgrade_query("	UPDATE 202_aff_campaigns SET aff_campaign_url=CONCAT(aff_campaign_url,'[[subid]]') ");
 
-            $result = _mysqli_query(" 	CREATE TABLE `202_clicks_tracking` (
+            $result = _upgrade_query(" 	CREATE TABLE `202_clicks_tracking` (
 										  `click_id` bigint(20) unsigned NOT NULL,
 										  `c1` varchar(255) NOT NULL DEFAULT '',
 										  `c2` varchar(255) NOT NULL DEFAULT '',
@@ -322,49 +433,49 @@ class UPGRADE
 										) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
 
             $sql = "UPDATE 202_version SET version='1.4'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.4';
         }
 
         // upgrade from 1.4 to 1.4.1
         if ($prosper202_version == '1.4') {
-            $result = _mysqli_query(" 	CREATE TABLE `202_tracking_c1` (
+            $result = _upgrade_query(" 	CREATE TABLE `202_tracking_c1` (
 										  `c1_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 										  `c1` varchar(50) NOT NULL,
 										  PRIMARY KEY (`c1_id`),
 										  UNIQUE KEY `c1` (`c1`(191))
 										) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
 
-            $result = _mysqli_query(" 	CREATE TABLE `202_tracking_c2` (
+            $result = _upgrade_query(" 	CREATE TABLE `202_tracking_c2` (
 										  `c2_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 										  `c2` varchar(50) NOT NULL,
 										  PRIMARY KEY (`c2_id`),
 										  UNIQUE KEY `c2` (`c2`(191))
 										) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
 
-            $result = _mysqli_query(" 	CREATE TABLE `202_tracking_c3` (
+            $result = _upgrade_query(" 	CREATE TABLE `202_tracking_c3` (
 										  `c3_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 										  `c3` varchar(50) NOT NULL,
 										  PRIMARY KEY (`c3_id`),
 										  UNIQUE KEY `c3` (`c3`(191))
 										) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
 
-            $result = _mysqli_query(" 	CREATE TABLE `202_tracking_c4` (
+            $result = _upgrade_query(" 	CREATE TABLE `202_tracking_c4` (
 										  `c4_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 										  `c4` varchar(50) NOT NULL,
 										  PRIMARY KEY (`c4_id`),
 										  UNIQUE KEY `c4` (`c4`(191))
 										) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
             $sql = "UPDATE 202_version SET version='1.4.1'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.4.1';
         }
 
         // upgrade from 1.4.1 to 1.4.2
         if ($prosper202_version == '1.4.1') {
-            $result = _mysqli_query(" 	 DROP TABLE `202_clicks_tracking`; ");
+            $result = _upgrade_query(" 	 DROP TABLE `202_clicks_tracking`; ");
 
-            $result = _mysqli_query(" 	 CREATE TABLE `202_clicks_tracking` (
+            $result = _upgrade_query(" 	 CREATE TABLE `202_clicks_tracking` (
 										  `click_id` bigint(20) unsigned NOT NULL,
 										  `c1_id` bigint(20) NOT NULL,
 										  `c2_id` bigint(20) NOT NULL,
@@ -374,18 +485,18 @@ class UPGRADE
 										) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
 
             $sql = "UPDATE 202_version SET version='1.4.2'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.4.2';
         }
 
         // upgrade from 1.4.2 to 1.4.3
         if ($prosper202_version == '1.4.2') {
 
-            $result = _mysqli_query(" 	ALTER TABLE  `202_clicks_spy` ENGINE = InnoDB ");
-            $result = _mysqli_query(" 	ALTER TABLE  `202_last_ips` ENGINE = InnoDB ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_clicks_spy` ENGINE = InnoDB ");
+            $result = _upgrade_query(" 	ALTER TABLE  `202_last_ips` ENGINE = InnoDB ");
 
             $sql = "UPDATE 202_version SET version='1.4.3'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.4.3';
         }
 
@@ -393,7 +504,7 @@ class UPGRADE
         if ($prosper202_version == '1.4.3') {
 
             $sql = "UPDATE 202_version SET version='1.5'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.5';
         }
 
@@ -401,30 +512,30 @@ class UPGRADE
         if ($prosper202_version == '1.5') {
 
             $sql = "UPDATE 202_version SET version='1.5.1'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.5.1';
         }
 
         // upgrade from 1.5.1 to 1.6
         if ($prosper202_version == '1.5.1') {
 
-            $result = _mysqli_query("CREATE TABLE IF NOT EXISTS `202_alerts` (
+            $result = _upgrade_query("CREATE TABLE IF NOT EXISTS `202_alerts` (
 			  `prosper_alert_id` int(11) NOT NULL,
 			  `prosper_alert_seen` tinyint(1) NOT NULL,
 			  UNIQUE KEY `prosper_alert_id` (`prosper_alert_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
 
-            $result = _mysqli_query("CREATE TABLE IF NOT EXISTS `202_offers` (
+            $result = _upgrade_query("CREATE TABLE IF NOT EXISTS `202_offers` (
 				  `user_id` mediumint(8) unsigned NOT NULL,
 				  `offer_id` mediumint(10) unsigned NOT NULL,
 				  `offer_seen` tinyint(1) NOT NULL DEFAULT '1',
 				  UNIQUE KEY `user_id` (`user_id`,`offer_id`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;");
 
-            $result = _mysqli_query("ALTER TABLE  `202_cronjobs` ENGINE = InnoDB;");
+            $result = _upgrade_query("ALTER TABLE  `202_cronjobs` ENGINE = InnoDB;");
 
             $sql = "UPDATE 202_version SET version='1.6'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.6';
         }
 
@@ -432,7 +543,7 @@ class UPGRADE
         if ($prosper202_version == '1.6') {
 
             $sql = "UPDATE 202_version SET version='1.6.1'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.6.1';
         }
 
@@ -440,7 +551,7 @@ class UPGRADE
         if ($prosper202_version == '1.6.1') {
 
             $sql = "UPDATE 202_version SET version='1.6.2'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.6.2';
         }
 
@@ -448,7 +559,7 @@ class UPGRADE
         if ($prosper202_version == '1.6.2') {
 
             $sql = "UPDATE 202_version SET version='1.7'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.7';
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_pixel_types` (
@@ -457,7 +568,7 @@ class UPGRADE
   			  PRIMARY KEY (`pixel_type_id`) ,
   		      UNIQUE INDEX `pixel_type_UNIQUE` (`pixel_type` ASC) 
   			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_ppc_account_pixels` (
  			  `pixel_id` mediumint(8) unsigned NOT NULL auto_increment,
@@ -466,36 +577,36 @@ class UPGRADE
   			  `ppc_account_id` mediumint(8) unsigned NOT NULL,
   			  PRIMARY KEY  (`pixel_id`)
  			  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_clicks_total` (
 			  `click_count` int(20) unsigned NOT NULL default '0',
  			  PRIMARY KEY  (`click_count`)
 			  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT IGNORE INTO `202_pixel_types` (`pixel_type`) VALUES 
 			  ('Image'),
 			  ('Iframe'),
 			  ('Javascript'),
 			  ('Postback')";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT IGNORE INTO `202_platforms` (`platform_name`) VALUES 
 			  ('Mobile'),
 			  ('Tablet');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT IGNORE INTO `202_clicks_total` (`click_count`) VALUES
 		(0);";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
         }
 
         // upgrade from 1.7 beta to 1.7.1 beta
         if ($prosper202_version == '1.7') {
 
             $sql = "UPDATE 202_version SET version='1.7.1'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.7.1';
             $sql = "CREATE TABLE IF NOT EXISTS `202_sort_keywords_lpctr` (
   			  `sort_keyword_id` int(10) unsigned NOT NULL auto_increment,
@@ -518,7 +629,7 @@ class UPGRADE
 			  KEY `keyword_id` (`keyword_id`),
 			  KEY `sort_keyword_clicks` (`sort_keyword_clicks`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sort_text_ads_lpctr` (
   `sort_text_ad_id` int(10) unsigned NOT NULL auto_increment,
@@ -550,7 +661,7 @@ class UPGRADE
   KEY `sort_keyword_net` (`sort_text_ad_net`),
   KEY `sort_keyword_roi` (`sort_text_ad_roi`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sort_referers_lpctr` (
   `sort_referer_id` int(10) unsigned NOT NULL auto_increment,
@@ -582,23 +693,23 @@ class UPGRADE
   KEY `sort_keyword_net` (`sort_referer_net`),
   KEY `sort_keyword_roi` (`sort_referer_roi`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_tracking_c1` CHANGE COLUMN `c1` `c1` VARCHAR(350) NOT NULL  ;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_tracking_c2` CHANGE COLUMN `c2` `c2` VARCHAR(350) NOT NULL  ;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_tracking_c3` CHANGE COLUMN `c3` `c3` VARCHAR(350) NOT NULL  ;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_tracking_c4` CHANGE COLUMN `c4` `c4` VARCHAR(350) NOT NULL  ;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
         }
 
         // upgrade from 1.7.1 to 1.7.2 beta
         if ($prosper202_version == '1.7.1') {
 
             $sql = "UPDATE 202_version SET version='1.7.2'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.7.2';
         }
 
@@ -606,39 +717,39 @@ class UPGRADE
         if ($prosper202_version == '1.7.2') {
 
             $sql = "UPDATE 202_version SET version='1.7.3'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.7.3';
             $sql = "ALTER TABLE `202_users` MODIFY COLUMN `user_timezone` VARCHAR(50) NOT NULL default 'Pacific/Pitcairn';";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "UPDATE `202_users` SET user_timezone='Pacific/Pitcairn' WHERE user_id=1";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_sort_breakdowns`" . " ADD `sort_breakdown_click_throughs` mediumint(8) unsigned NOT NULL AFTER `sort_breakdown_clicks`," . " ADD `sort_breakdown_ctr` decimal(10,2) NOT NULL AFTER `sort_breakdown_click_throughs`," . " ADD KEY `sort_breakdown_click_throughs` (`sort_breakdown_click_throughs`)," . " ADD KEY `sort_breakdown_ctr` (`sort_breakdown_ctr`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_clicks_spy` ADD INDEX (`click_id`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "INSERT INTO `202_pixel_types` (`pixel_type`) VALUES ('Raw')";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `cache_time` VARCHAR(4) NOT NULL default '0';";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
         }
 
         // upgrade from 1.7.3 to 1.7.4
         if ($prosper202_version == '1.7.3') {
 
             $sql = "UPDATE 202_version SET version='1.7.4'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.7.4';
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `cb_key` VARCHAR(250) NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `cb_verified` tinyint(1) NOT NULL default '0';";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
         }
 
         // upgrade from 1.7.4 to 1.7.5
         if ($prosper202_version == '1.7.4') {
 
             $sql = "UPDATE 202_version SET version='1.7.5'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.7.5';
         }
 
@@ -646,17 +757,17 @@ class UPGRADE
         if ($prosper202_version == '1.7.5') {
 
             $sql = "UPDATE 202_version SET version='1.7.6'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.7.6';
             $sql = "ALTER TABLE `202_users` ADD COLUMN `clickserver_api_key` VARCHAR(250) NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
         }
 
         // upgrade from 1.7.6 to 1.8.0
         if ($prosper202_version == '1.7.6') {
 
             $sql = "UPDATE 202_version SET version='1.8.0'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.0';
         }
 
@@ -664,7 +775,7 @@ class UPGRADE
         if ($prosper202_version == '1.8.0') {
 
             $sql = "UPDATE 202_version SET version='1.8.1'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.1';
         }
 
@@ -672,7 +783,7 @@ class UPGRADE
         if ($prosper202_version == '1.8.1') {
 
             $sql = "UPDATE 202_version SET version='1.8.2'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.2';
         }
 
@@ -680,21 +791,21 @@ class UPGRADE
         if ($prosper202_version == '1.8.2') {
 
             $sql = "DROP TABLE IF EXISTS 202_locations";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "DROP TABLE IF EXISTS 202_locations_country";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "DROP TABLE IF EXISTS 202_locations_city";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "DROP TABLE IF EXISTS 202_locations_block";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "DROP TABLE IF EXISTS 202_locations_coordinates";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "DROP TABLE IF EXISTS 202_locations_region";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_clicks_advance` ADD COLUMN `country_id` bigint(20) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $sql = "ALTER TABLE `202_clicks_advance` ADD COLUMN `city_id` bigint(20) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_locations_city` (
 				  `city_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -702,7 +813,7 @@ class UPGRADE
 				  `city_name` varchar(50) NOT NULL DEFAULT '',
 				  PRIMARY KEY (`city_id`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_locations_country` (
 				  `country_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -710,7 +821,7 @@ class UPGRADE
 				  `country_name` varchar(50) NOT NULL DEFAULT '',
 				  PRIMARY KEY (`country_id`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_sort_cities` (
 			  `sort_city_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -729,7 +840,7 @@ class UPGRADE
 			  `sort_city_roi` decimal(10,2) NOT NULL,
 			  PRIMARY KEY (`sort_city_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_sort_countries` (
 				  `sort_country_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -747,14 +858,14 @@ class UPGRADE
 				  `sort_country_roi` decimal(10,2) NOT NULL,
 				  PRIMARY KEY (`sort_country_id`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_locations_isp` (
 				  `isp_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 				  `isp_name` varchar(50) NOT NULL DEFAULT '',
 				  PRIMARY KEY (`isp_id`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_sort_isps` (
 				  `sort_isp_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -772,45 +883,45 @@ class UPGRADE
 				  `sort_isp_roi` decimal(10,2) NOT NULL,
 				  PRIMARY KEY (`sort_isp_id`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_clicks_advance` ADD COLUMN `isp_id` bigint(20) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `maxmind_isp` tinyint(1) NOT NULL default '0';";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_isp_id` tinyint(3) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_device_id` tinyint(3) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_browser_id` tinyint(3) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_platform_id` tinyint(3) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_api_keys` (
 				  `user_id` mediumint(8) unsigned NOT NULL,
 				  `api_key` varchar(250) NOT NULL DEFAULT '',
 				  `created_at` int(10) NOT NULL
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "TRUNCATE TABLE 202_browsers;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "TRUNCATE TABLE 202_platforms;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_device_types` (
 			  `type_id` tinyint(1) unsigned NOT NULL,
 			  `type_name` varchar(50) NOT NULL,
 			  PRIMARY KEY (`type_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_device_types` (`type_id`, `type_name`)
 				VALUES
@@ -818,7 +929,7 @@ class UPGRADE
 					(2, 'Mobile'),
 					(3, 'Tablet'),
 					(4, 'Bot');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_device_models` (
 			  `device_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -826,16 +937,16 @@ class UPGRADE
 			  `device_type` tinyint(1) NOT NULL,
 			  PRIMARY KEY (`device_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_clicks_advance` ADD COLUMN `device_id` bigint(20) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_clicks` ADD COLUMN `click_bot` tinyint(1) NOT NULL default '0';";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_clicks_spy` ADD COLUMN `click_bot` tinyint(1) NOT NULL default '0';";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_sort_devices` (
 			  `sort_device_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -853,7 +964,7 @@ class UPGRADE
 			  `sort_device_roi` decimal(10,2) NOT NULL,
 			  PRIMARY KEY (`sort_device_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sort_browsers` (
 			  `sort_browser_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -871,7 +982,7 @@ class UPGRADE
 			  `sort_browser_roi` decimal(10,2) NOT NULL,
 			  PRIMARY KEY (`sort_browser_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sort_platforms` (
 			  `sort_platform_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -889,23 +1000,23 @@ class UPGRADE
 			  `sort_platform_roi` decimal(10,2) NOT NULL,
 			  PRIMARY KEY (`sort_platform_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users` ADD COLUMN `install_hash` varchar(255) NOT NULL,
 										  ADD COLUMN `user_hash` varchar(255) NOT NULL,
 										  ADD COLUMN `modal_status` int(1) NOT NULL,
 										  ADD COLUMN `vip_perks_status` int(1) NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $hash = md5(uniqid((string)random_int(0, mt_getrandmax()), TRUE));
             // $user_hash = intercomHash($hash); // Removed intercomHash call
             $user_hash = ''; // Default empty value
 
             $sql = "UPDATE 202_users SET install_hash='" . $hash . "', user_hash='" . $user_hash . "' WHERE user_id='1'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.8.2.1'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.2.1';
         }
 
@@ -913,7 +1024,7 @@ class UPGRADE
         if ($prosper202_version == '1.8.2.1') {
 
             $sql = "ALTER TABLE `202_clicks_advance` ADD COLUMN `region_id` bigint(20) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_locations_region` (
 				  `region_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -921,7 +1032,7 @@ class UPGRADE
 				  `region_name` varchar(50) NOT NULL,
 				  PRIMARY KEY (`region_id`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sort_regions` (
 			  `sort_regions_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -940,13 +1051,13 @@ class UPGRADE
 			  `sort_region_roi` decimal(10,2) NOT NULL,
 			  PRIMARY KEY (`sort_regions_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_region_id` tinyint(3) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.8.2.2'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.2.2';
         }
 
@@ -964,7 +1075,7 @@ class UPGRADE
   			  `default_campaign` int(11) DEFAULT NULL,
 			  PRIMARY KEY (`id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_rotator_rules` (
 			  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -974,7 +1085,7 @@ class UPGRADE
 			  `value` text NOT NULL,
 			  PRIMARY KEY (`id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_rotator_clicks` (
 			  `click_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -986,7 +1097,7 @@ class UPGRADE
 			  PRIMARY KEY (`click_id`),
 			  KEY `rotator_id` (`rotator_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sort_rotators` (
 			  `sort_rotator_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -1006,37 +1117,37 @@ class UPGRADE
 			  `type` varchar(50) NOT NULL DEFAULT '',
 			  PRIMARY KEY (`sort_rotator_id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_clicks` ADD COLUMN `rotator_id` mediumint(0) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "DROP TABLE IF EXISTS 202_sort_browsers, 202_sort_cities, 202_sort_countries, 202_sort_devices, 202_sort_ips, 202_sort_isps, 202_sort_keywords, 202_sort_keywords_lpctr, 202_sort_landing_pages, 202_sort_platforms, 202_sort_referers, 202_sort_referers_lpctr, 202_sort_regions, 202_sort_text_ads, 202_sort_text_ads_lpctr;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.8.3'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.3';
         }
 
         // upgrade from 1.8.3 to 1.8.3.1
         if ($prosper202_version == '1.8.3') {
             $sql = "UPDATE 202_version SET version='1.8.3.1'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.3.1';
         }
 
         // upgrade from 1.8.3.1 to 1.8.3.2
         if ($prosper202_version == '1.8.3.1') {
             $sql = "UPDATE 202_version SET version='1.8.3.2'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.3.2';
         }
 
         // upgrade from 1.8.3.2 to 1.8.3.3
         if ($prosper202_version == '1.8.3.2') {
             $sql = "UPDATE 202_version SET version='1.8.3.3'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.3.3';
         }
 
@@ -1044,16 +1155,16 @@ class UPGRADE
         if ($prosper202_version == '1.8.3.3') {
 
             $sql = "ALTER TABLE `202_clicks` MODIFY `rotator_id` int(10) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_clicks` ADD COLUMN `rule_id` int(10) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_trackers` ADD COLUMN `rotator_id` int(11) unsigned NOT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "DROP TABLE IF EXISTS 202_sort_rotators, 202_rotator_rules, 202_rotator_clicks, 202_rotators;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_rotators` (
 			  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -1063,7 +1174,7 @@ class UPGRADE
 			  `default_campaign` int(11) DEFAULT NULL,
 			  PRIMARY KEY (`id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_rotator_rules` (
 			  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -1074,7 +1185,7 @@ class UPGRADE
 			  `redirect_campaign` int(11) DEFAULT NULL,
 			  PRIMARY KEY (`id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_rotator_rules_criteria` (
 			  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -1085,7 +1196,7 @@ class UPGRADE
 			  `value` text NOT NULL,
 			  PRIMARY KEY (`id`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "SELECT  CONCAT('ALTER TABLE ', table_name, ' ENGINE=InnoDB;') AS sql_statements
 			FROM    information_schema.tables AS tb
@@ -1093,63 +1204,63 @@ class UPGRADE
 			AND     `ENGINE` = 'MyISAM'
 			AND     `TABLE_TYPE` = 'BASE TABLE'
 			ORDER BY table_name DESC;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             while ($row = $result->fetch_assoc()) {
-                _mysqli_query($row['sql_statements']);
+                _upgrade_query($row['sql_statements']);
             }
 
             $sql = "UPDATE 202_version SET version='1.8.4'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.4';
         }
 
         // upgrade from 1.8.4 to 1.8.5
         if ($prosper202_version == '1.8.4') {
             $sql = "UPDATE 202_version SET version='1.8.5'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.5';
         }
 
         // upgrade from 1.8.5 to 1.8.6
         if ($prosper202_version == '1.8.5') {
             $sql = "UPDATE 202_version SET version='1.8.6'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.6';
         }
 
         // upgrade from 1.8.6 to 1.8.7
         if ($prosper202_version == '1.8.6') {
             $sql = "UPDATE 202_version SET version='1.8.7'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.7';
         }
 
         // upgrade from 1.8.7 to 1.8.8
         if ($prosper202_version == '1.8.7') {
             $sql = "UPDATE 202_version SET version='1.8.8'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.8';
         }
 
         // upgrade from 1.8.8 to 1.8.9
         if ($prosper202_version == '1.8.8') {
             $sql = "UPDATE 202_version SET version='1.8.9'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.9';
         }
 
         // upgrade from 1.8.9 to 1.8.10
         if ($prosper202_version == '1.8.9') {
             $sql = "UPDATE 202_version SET version='1.8.10'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.10';
         }
 
         //upgrade from 1.8.10 to 1.8.11
         if ($prosper202_version == '1.8.10') {
             $sql = "UPDATE 202_version SET version='1.8.11'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.8.11';
         }
 
@@ -1169,10 +1280,10 @@ class UPGRADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
 
 
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_users ENGINE = InnoDB";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_dataengine` (
               `user_id` mediumint(8) unsigned NOT NULL,
@@ -1221,7 +1332,7 @@ class UPGRADE
               KEY `user_id` (`user_id`,`click_time`),
               KEY `dataenginejob` (`click_time`,`ppc_network_id`,`aff_network_id`,`keyword_id`,`click_referer_site_url_id`,`country_id`,`region_id`,`city_id`,`browser_id`,`device_id`,`platform_id`,`ip_id`,`c1_id`,`c2_id`,`c3_id`,`c4_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             if (!$mysql_partitioning_fail) {
                 $partition_time = $partition_start;
@@ -1235,7 +1346,7 @@ class UPGRADE
                 }
                 $p_count += 1;
                 $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
-                $result = _mysqli_query($sql);
+                $result = _upgrade_query($sql);
             }
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_google` (
@@ -1248,48 +1359,48 @@ class UPGRADE
           `utm_content_id` bigint(20) unsigned NOT NULL,
           PRIMARY KEY (`click_id`,`gclid`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_utm_campaign` (
   `utm_campaign_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `utm_campaign` varchar(350) NOT NULL DEFAULT '',
   PRIMARY KEY (`utm_campaign_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_utm_content` (
   `utm_content_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `utm_content` varchar(350) NOT NULL DEFAULT '',
   PRIMARY KEY (`utm_content_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_utm_medium` (
   `utm_medium_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `utm_medium` varchar(350) NOT NULL DEFAULT '',
   PRIMARY KEY (`utm_medium_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_utm_source` (
   `utm_source_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `utm_source` varchar(350) NOT NULL DEFAULT '',
   PRIMARY KEY (`utm_source_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_utm_term` (
   `utm_term_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `utm_term` varchar(350) NOT NULL DEFAULT '',
   PRIMARY KEY (`utm_term_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_referer_data` varchar(10) NOT NULL DEFAULT 'browser';";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.0'; ";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.0';
         }
 
@@ -1297,19 +1408,19 @@ class UPGRADE
         if ($prosper202_version == '1.9.0') {
 
             $sql = "ALTER TABLE `202_rotator_rules` ADD COLUMN `redirect_lp` int(11) DEFAULT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_rotator_rules` ADD COLUMN `auto_monetizer` tinyint(1) DEFAULT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_rotators` ADD COLUMN `default_lp` int(11) DEFAULT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_rotators` ADD COLUMN `auto_monetizer` tinyint(1) DEFAULT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.1'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.1';
         }
 
@@ -1317,7 +1428,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.1') {
 
             $sql = "UPDATE 202_version SET version='1.9.2'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.2';
         }
 
@@ -1325,14 +1436,14 @@ class UPGRADE
         if ($prosper202_version == '1.9.2') {
 
             $sql = "ALTER TABLE `202_trackers` ADD COLUMN `click_cpa` decimal(7,5) DEFAULT NULL;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_cpa_trackers` (
               `click_id` bigint(20) unsigned NOT NULL,
               `tracker_id_public` int(11) unsigned NOT NULL,
               KEY `tracker_id` (`tracker_id_public`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE  IF NOT EXISTS `202_conversion_logs` (
               `conv_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -1350,7 +1461,7 @@ class UPGRADE
               KEY `user_id` (`user_id`),
               KEY `campaign_id` (`campaign_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE  IF NOT EXISTS `202_dataengine_job` (
               `time_from` int(10) unsigned NOT NULL DEFAULT '0',
@@ -1358,10 +1469,10 @@ class UPGRADE
               `processing` tinyint(1) NOT NULL DEFAULT '0',
               `processed` tinyint(1) NOT NULL DEFAULT '0'
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "TRUNCATE TABLE 202_dataengine";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $de = new DataEngine();
             // DataEngine has two declarations: the full class (class-dataengine.php, loaded
@@ -1374,7 +1485,7 @@ class UPGRADE
             }
 
             $sql = "UPDATE 202_version SET version='1.9.3'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.3';
         }
 
@@ -1382,7 +1493,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.3') {
 
             $sql = "DROP TABLE 202_charts";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_charts` (
               `user_id` mediumint(8) unsigned NOT NULL,
@@ -1390,12 +1501,12 @@ class UPGRADE
               `chart_time_range` varchar(255) NOT NULL DEFAULT '',
               KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`)
                    VALUES
                    (1, 'a:3:{i:0;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:6:\"clicks\";}i:1;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:9:\"click_out\";}i:2;a:2:{s:11:\"campaign_id\";s:1:\"0\";s:10:\"value_type\";s:5:\"leads\";}}', 'days');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
 
             $sql = "ALTER TABLE `202_users` 
@@ -1403,10 +1514,10 @@ class UPGRADE
             ADD COLUMN `user_lname` varchar(50) DEFAULT NULL,
             ADD COLUMN `user_active` int(1) NOT NULL DEFAULT '1',
             ADD COLUMN `user_deleted` int(1) NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.4'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.4';
         }
 
@@ -1414,19 +1525,19 @@ class UPGRADE
         if ($prosper202_version == '1.9.4') {
 
             $sql = "ALTER TABLE 202_users ENGINE = INNODB";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_users_pref 
                     ADD COLUMN `user_pref_cloak_referer` varchar(11) DEFAULT 'origin',
                     ADD COLUMN `user_slack_incoming_webhook` text NOT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_permissions` (
               `permission_id` int(11) NOT NULL AUTO_INCREMENT,
               `permission_description` varchar(50) NOT NULL,
               PRIMARY KEY (`permission_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_permissions` (`permission_id`, `permission_description`)
                     VALUES
@@ -1451,14 +1562,14 @@ class UPGRADE
                         (19, 'access_to_api_integrations'),
                         (20, 'access_to_settings'),
                         (21, 'remove_tracker');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_roles` (
               `role_id` int(11) NOT NULL AUTO_INCREMENT,
               `role_name` varchar(50) NOT NULL,
               PRIMARY KEY (`role_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_roles` (`role_id`, `role_name`)
                     VALUES
@@ -1467,7 +1578,7 @@ class UPGRADE
                         (3, 'Campaign manager'),
                         (4, 'Campaign optimizer'),
                         (5, 'Campaign viewer');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_role_permission` (
               `role_id` int(11) NOT NULL,
@@ -1477,7 +1588,7 @@ class UPGRADE
               CONSTRAINT `202_role_permission_ibfk_1` FOREIGN KEY (`role_id`) REFERENCES `202_roles` (`role_id`),
               CONSTRAINT `202_role_permission_ibfk_2` FOREIGN KEY (`permission_id`) REFERENCES `202_permissions` (`permission_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_role_permission` (`role_id`, `permission_id`)
                     VALUES
@@ -1526,7 +1637,7 @@ class UPGRADE
                         (3, 14),
                         (3, 15),
                         (4, 12);";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_user_role` (
               `user_id` mediumint(8) unsigned NOT NULL,
@@ -1536,19 +1647,19 @@ class UPGRADE
               CONSTRAINT `202_user_role_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `202_users` (`user_id`),
               CONSTRAINT `202_user_role_ibfk_2` FOREIGN KEY (`role_id`) REFERENCES `202_roles` (`role_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (1, 1);";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_rotators MODIFY `auto_monetizer` char(4) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_rotator_rules MODIFY `auto_monetizer` char(4) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_trackers MODIFY `click_cpc` decimal(7,5) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_custom_variables` (
@@ -1559,7 +1670,7 @@ class UPGRADE
               KEY `variable` (`variable`(191)),
               KEY `ppc_variable_id` (`ppc_variable_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_clicks_variable` (
               `click_id` bigint(20) unsigned NOT NULL,
@@ -1567,7 +1678,7 @@ class UPGRADE
               KEY `custom_variable_id` (`variable_set_id`),
               KEY `click_id` (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_ppc_network_variables` (
               `ppc_variable_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -1579,7 +1690,7 @@ class UPGRADE
               PRIMARY KEY (`ppc_variable_id`),
               KEY `ppc_network_id` (`ppc_network_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_variable_sets` (
               `variable_set_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -1587,7 +1698,7 @@ class UPGRADE
               KEY `custom_variable_id` (`variables`),
               KEY `click_id` (`variable_set_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_dirty_hours 
                     ADD COLUMN `ppc_network_id` mediumint(8) unsigned DEFAULT '0',
@@ -1617,20 +1728,20 @@ class UPGRADE
                     ADD COLUMN `click_filtered` tinyint(1) NOT NULL DEFAULT '0',
                     ADD COLUMN `click_bot` tinyint(1) NOT NULL DEFAULT '0',
                     ADD COLUMN `click_alp` tinyint(1) NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_cronjob_logs` (
                       `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
                       `last_execution_time` int(10) unsigned NOT NULL,
                       PRIMARY KEY (`id`)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // $sql = "ALTER TABLE 202_dataengine ADD COLUMN `variable_set_id` varchar(255) DEFAULT '0'";
-            //$result = _mysqli_query($sql);
+            //$result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.5'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.5';
         }
 
@@ -1643,7 +1754,7 @@ class UPGRADE
                   `rule_redirect_id` bigint(20) unsigned NOT NULL,
                   PRIMARY KEY (`click_id`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_dataengine_new` (
                 `user_id` mediumint(8) unsigned NOT NULL,
@@ -1692,7 +1803,7 @@ class UPGRADE
                 KEY `user_id` (`user_id`,`click_time`),
                 KEY `dataenginejob` (`click_time`,`ppc_network_id`,`aff_network_id`,`keyword_id`,`click_referer_site_url_id`,`country_id`,`region_id`,`city_id`,`browser_id`,`device_id`,`platform_id`,`ip_id`,`c1_id`,`c2_id`,`c3_id`,`c4_id`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             if (!$mysql_partitioning_fail) {
                 $partition_time = $partition_start;
@@ -1706,7 +1817,7 @@ class UPGRADE
                 }
                 $p_count += 1;
                 $sql .= "PARTITION p" . $p_count . " VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */;";
-                $result = _mysqli_query($sql);
+                $result = _upgrade_query($sql);
             }
 
             $time_to = time();
@@ -1714,10 +1825,10 @@ class UPGRADE
             $snippet = "AND 2c.user_id = 1";
 
             $sql = "RENAME TABLE 202_dataengine TO 202_dataengine_old";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "RENAME TABLE 202_dataengine_new TO 202_dataengine";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $de = new DataEngine();
             // PHPStan resolves DataEngine to the slim stub (see note above); the full class
@@ -1740,10 +1851,10 @@ class UPGRADE
                   `name` text NOT NULL,
                   PRIMARY KEY (`id`)
                 ) ENGINE=InnoDB";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "SELECT * FROM 202_rotator_rules";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             if ($result->num_rows > 0) {
                 while ($row = $result->fetch_assoc()) {
                     $redirect_name = '';
@@ -1751,12 +1862,12 @@ class UPGRADE
                         $redirect_name = "URL: <a href=" . $row['redirect_url'] . ">link</a>";
                     } else if ($row['redirect_campaign'] != null) {
                         $redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '" . $row['redirect_campaign'] . "'";
-                        $redirect_type_result = _mysqli_query($redirect_type_sql);
+                        $redirect_type_result = _upgrade_query($redirect_type_sql);
                         $redirect_type_row = $redirect_type_result->fetch_assoc();
                         $redirect_name = "Campaign: " . $redirect_type_row['aff_campaign_name'];
                     } else if ($row['redirect_lp'] != null) {
                         $redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '" . $row['redirect_lp'] . "'";
-                        $redirect_type_result = _mysqli_query($redirect_type_sql);
+                        $redirect_type_result = _upgrade_query($redirect_type_sql);
                         $redirect_type_row = $redirect_type_result->fetch_assoc();
                         $redirect_name = "Landing page: " . $redirect_type_row['landing_page_nickname'];
                     } else if ($row['auto_monetizer'] != null) {
@@ -1785,20 +1896,20 @@ class UPGRADE
 
                     $insert_redirect_sql .= "name = '" . $redirect_name . "'";
 
-                    $insert_redirect_result = _mysqli_query($insert_redirect_sql);
+                    $insert_redirect_result = _upgrade_query($insert_redirect_sql);
                 }
             }
 
             $sql = "ALTER TABLE 202_rotator_rules DROP redirect_url, DROP redirect_campaign, DROP redirect_lp, DROP auto_monetizer, ADD COLUMN `splittest` tinyint(1) NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_users_pref ADD COLUMN `auto_cron` tinyint(1) NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $autocron = false;
 
             $sql = "SELECT * FROM 202_cronjob_logs";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             if ($result->num_rows > 0) {
                 $row = $result->fetch_assoc();
 
@@ -1816,112 +1927,112 @@ class UPGRADE
 
                 if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
                     $sql = "UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = '1'";
-                    $result = _mysqli_query($sql);
+                    $result = _upgrade_query($sql);
                 }
             }
 
 
             $sql = "UPDATE 202_version SET version='1.9.6'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.6';
         }
 
         if ($prosper202_version == '1.9.6') {
 
             $sql = "ALTER TABLE 202_users_pref ADD COLUMN `user_daily_email` char(2) NOT NULL DEFAULT '07'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "SELECT user_timezone, install_hash, user_daily_email FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_id = 1";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $row = $result->fetch_assoc();
 
             registerDailyEmail($row['user_daily_email'], $row['user_timezone'], $row['install_hash']);
 
             $sql = "ALTER TABLE 202_keywords CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.7'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.7';
         }
 
         if ($prosper202_version == '1.9.7') {
 
             $sql = "UPDATE 202_version SET version='1.9.8'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.8';
         }
 
         if ($prosper202_version == '1.9.8') {
 
             $sql = "UPDATE 202_version SET version='1.9.9'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.9';
         }
 
         if ($prosper202_version == '1.9.9') {
 
             $sql = "UPDATE 202_version SET version='1.9.10'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.10';
         }
 
         if ($prosper202_version == '1.9.10') {
 
             $sql = "UPDATE 202_version SET version='1.9.11'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.11';
         }
 
         if ($prosper202_version == '1.9.11') {
             $sql = "ALTER TABLE 202_rotators ADD COLUMN `public_id` int(11) NOT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "SELECT id FROM 202_rotators";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             if ($result->num_rows > 0) {
                 while ($row = $result->fetch_assoc()) {
-                    _mysqli_query("UPDATE 202_rotators SET public_id = '" . random_int(1, 9) . $row['id'] . random_int(1, 9) . "' WHERE id = '" . $row['id'] . "'");
+                    _upgrade_query("UPDATE 202_rotators SET public_id = '" . random_int(1, 9) . $row['id'] . random_int(1, 9) . "' WHERE id = '" . $row['id'] . "'");
                 }
             }
 
             $sql = "UPDATE 202_version SET version='1.9.12'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.12';
         }
 
         if ($prosper202_version == '1.9.12') {
 
             $sql = "UPDATE 202_version SET version='1.9.13'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.13';
         }
 
         if ($prosper202_version == '1.9.13') {
 
             $sql = "UPDATE 202_version SET version='1.9.14'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.14';
         }
 
         if ($prosper202_version == '1.9.14') {
 
             $sql = "UPDATE 202_version SET version='1.9.15'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.15';
         }
 
         if ($prosper202_version == '1.9.15') {
 
             $sql = "UPDATE 202_version SET version='1.9.16'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.16';
         }
 
         if ($prosper202_version == '1.9.16') {
 
             $sql = "UPDATE 202_version SET version='1.9.17'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.17';
         }
 
@@ -1939,14 +2050,14 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `networkId` (`networkId`(191))
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_aff_networks ADD COLUMN `dni_network_id` mediumint(8) DEFAULT NULL, ADD INDEX `dni_network_id` (`dni_network_id`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
 
             $sql = "UPDATE 202_version SET version='1.9.18'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $prosper202_version = '1.9.18';
         }
 
@@ -1960,13 +2071,13 @@ class UPGRADE
 				  KEY `202_auth_keys_user_id_auth_key` (`user_id`,`auth_key`),
 				  KEY `202_auth_keys_expires` (`expires`)
 				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users` ADD COLUMN `secret_key` CHAR(48) NULL  AFTER `user_deleted`";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.19'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.19';
         }
@@ -1974,10 +2085,10 @@ class UPGRADE
         if ($prosper202_version == '1.9.19') {
 
             $sql = "ALTER TABLE `202_dni_networks` ADD COLUMN `shortDescription` varchar(255) NOT NULL, ADD COLUMN `favIcon` varchar(255) NOT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.20'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.20';
         }
@@ -1985,7 +2096,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.20') {
 
             $sql = "UPDATE 202_version SET version='1.9.21'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.21';
         }
@@ -1993,20 +2104,20 @@ class UPGRADE
         if ($prosper202_version == '1.9.21') {
 
             $sql = "DROP INDEX ppc_network_id ON 202_ppc_network_variables";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE INDEX ppc_network_id ON 202_ppc_network_variables (ppc_network_id,deleted)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             //make gclid longer for everyone currently on pro
             $sql = "ALTER TABLE 202_google MODIFY gclid VARCHAR(150)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_dynamic_bid` tinyint(1) NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.22'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.22';
         }
@@ -2014,7 +2125,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.22') {
 
             $sql = "UPDATE 202_version SET version='1.9.23'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.23';
         }
@@ -2022,7 +2133,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.23') {
 
             $sql = "UPDATE 202_version SET version='1.9.24'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.24';
         }
@@ -2030,7 +2141,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.24') {
 
             $sql = "UPDATE 202_version SET version='1.9.25'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.25';
         }
@@ -2038,7 +2149,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.25') {
 
             $sql = "UPDATE 202_version SET version='1.9.26'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.26';
         }
@@ -2046,7 +2157,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.26') {
 
             $sql = "UPDATE 202_version SET version='1.9.27'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.27';
         }
@@ -2054,16 +2165,16 @@ class UPGRADE
         if ($prosper202_version == '1.9.27') {
 
             $sql = "ALTER TABLE 202_users DROP `leave_behind_page_url`";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_users DROP `user_mods`";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_users ADD COLUMN  `user_mods_lb` tinyint(1) unsigned NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.28'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.28';
         }
@@ -2071,10 +2182,10 @@ class UPGRADE
         if ($prosper202_version == '1.9.28') {
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_subid` bigint(20) unsigned DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.29'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.29';
         }
@@ -2082,25 +2193,25 @@ class UPGRADE
         if ($prosper202_version == '1.9.29' || $prosper202_version == '1.9.30' || $prosper202_version == '1.9.30a' || $prosper202_version == '1.9.30b') {
 
             $sql = "ALTER TABLE `202_conversion_logs` ADD COLUMN `transaction_id` varchar(255) DEFAULT NULL, ADD COLUMN `click_payout` decimal(11,5) NOT NULL, ADD COLUMN `deleted` tinyint(4) NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_auto_database_optimization_days` int(11) unsigned DEFAULT '0', ADD COLUMN `zaxaa_api_signature` varchar(250) DEFAULT NULL, ADD COLUMN `jvzoo_ipn_secret_key` varchar(250) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_account_currency` char(3) NOT NULL DEFAULT 'USD'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_variable_sets2` (`variable_set_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,`variables` varchar(255) NOT NULL DEFAULT '',PRIMARY KEY (`variable_set_id`,`variables`(191)),KEY `custom_variable_id` (`variables`(191)),KEY `click_id` (`variable_set_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_aff_campaigns` ADD COLUMN `aff_campaign_currency` char(3) NOT NULL DEFAULT 'USD', ADD COLUMN `aff_campaign_foreign_payout` decimal(8,2) NOT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_users` ADD COLUMN `p202_customer_api_key` char(60) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.30b'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_filters` (
             `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2109,14 +2220,14 @@ class UPGRADE
             `filter_value` decimal(20,5) DEFAULT NULL,
             PRIMARY KEY (`id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.30b';
 
             //Move data from variable_sets into variable_sets2
             $sql = "SELECT * from 202_variable_sets";
 
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $i = 0;
             $row = '';
@@ -2131,7 +2242,7 @@ class UPGRADE
 
                 if (($i % 600) == 0) {
                     $row = "insert ignore into `202_variable_sets2` (`variable_set_id`, `variables`) values " . rtrim($row, ',') . ";";
-                    _mysqli_query($row);
+                    _upgrade_query($row);
 
                     $i = 0;
                     $row = '';
@@ -2141,14 +2252,14 @@ class UPGRADE
             //add the last bit of data if there's any left
             if ($row) {
                 $row = "insert ignore into `202_variable_sets2` (`variable_set_id`, `variables`) values " . rtrim($row, ',') . ";";
-                _mysqli_query($row);
+                _upgrade_query($row);
             }
         }
 
         if ($prosper202_version == '1.9.30' || $prosper202_version == '1.9.30a' || $prosper202_version == '1.9.30b') {
 
             $sql = "UPDATE 202_version SET version='1.9.31'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.31';
         }
@@ -2163,7 +2274,7 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ad_network_ads` (
               `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2172,7 +2283,7 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ad_network_titles` (
               `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2181,10 +2292,10 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.32'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.32';
         }
@@ -2192,7 +2303,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.32') {
 
             $sql = "UPDATE 202_version SET version='1.9.33'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.33';
         }
@@ -2208,7 +2319,7 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ad_feed_outbrain_tokens` (
               `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2220,7 +2331,7 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ad_feed_taboola_tokens` (
               `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2232,7 +2343,7 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ad_feed_custom_tokens` (
               `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2243,19 +2354,19 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_ad_feed_contentad_tokens` ADD COLUMN `utm_term` varchar(350) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_ad_feed_taboola_tokens` ADD COLUMN `utm_term` varchar(350) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_ad_feed_outbrain_tokens` ADD COLUMN `utm_term` varchar(350) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.34'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.34';
         }
@@ -2263,7 +2374,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.34') {
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `revcontent_user_id` varchar(250) DEFAULT NULL, ADD COLUMN `revcontent_user_secret` varchar(250) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ad_feed_revcontent_tokens` (
               `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2276,23 +2387,23 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_ad_network_feeds` ADD COLUMN `revcontent_boost_id` text";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.35'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.35';
         }
 
         if ($prosper202_version == '1.9.35') {
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `facebook_ads_linked` int(1) NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_ad_network_feeds` ADD COLUMN `facebook_ad_set_id` int(11) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ad_feed_facebook_tokens` (
               `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2305,7 +2416,7 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ad_network_bodies` (
               `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2314,10 +2425,10 @@ class UPGRADE
               PRIMARY KEY (`id`),
               KEY `feed_id` (`feed_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.36'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.36';
         }
@@ -2325,7 +2436,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.36') {
 
             $sql = "UPDATE 202_version SET version='1.9.37'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.37';
         }
@@ -2333,7 +2444,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.37') {
 
             $sql = "UPDATE 202_version SET version='1.9.38'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.38';
         }
@@ -2341,14 +2452,14 @@ class UPGRADE
         if ($prosper202_version == '1.9.38') {
 
             $sql = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_ad_settings` varchar(11) NOT NULL DEFAULT 'show_all'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_users_pref SET maxmind_isp='0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
 
             $sql = "UPDATE 202_version SET version='1.9.39'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.39';
         }
@@ -2356,10 +2467,10 @@ class UPGRADE
         if ($prosper202_version == '1.9.39') {
 
             $sql = "ALTER TABLE 202_landing_pages ADD COLUMN leave_behind_page_url varchar(255) NOT NULL DEFAULT ''";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.40'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.40';
         }
@@ -2367,13 +2478,13 @@ class UPGRADE
         if ($prosper202_version == '1.9.40') {
 
             $sql = "ALTER TABLE 202_ppc_accounts ADD COLUMN `ppc_account_default` tinyint(1) unsigned NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_ppc_accounts ADD INDEX (`ppc_account_default`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.41'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.41';
         }
@@ -2381,10 +2492,10 @@ class UPGRADE
         if ($prosper202_version == '1.9.41') {
 
             $sql = "INSERT INTO 202_users_pref(user_id) SELECT user_id from `202_users` where `user_id` not in (select user_id from 202_users_pref)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.42'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.42';
         }
@@ -2393,7 +2504,7 @@ class UPGRADE
 
 
             $sql = "UPDATE 202_version SET version='1.9.43'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.43';
         }
@@ -2402,7 +2513,7 @@ class UPGRADE
 
 
             $sql = "UPDATE 202_version SET version='1.9.44'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.44';
         }
@@ -2411,7 +2522,7 @@ class UPGRADE
 
 
             $sql = "UPDATE 202_version SET version='1.9.45'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.45';
         }
@@ -2420,13 +2531,13 @@ class UPGRADE
 
             //This is a fix for 1.9.44 not setting this up for new installs
             $sql = "ALTER TABLE 202_ppc_accounts ADD COLUMN `ppc_account_default` tinyint(1) unsigned NOT NULL DEFAULT '0'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_ppc_accounts ADD INDEX (`ppc_account_default`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.46'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.46';
         }
@@ -2435,7 +2546,7 @@ class UPGRADE
 
 
             $sql = "UPDATE 202_version SET version='1.9.47'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.47';
         }
@@ -2443,19 +2554,19 @@ class UPGRADE
         if ($prosper202_version == '1.9.47') {
 
             $sql = "ALTER TABLE 202_users ADD COLUMN `user_public_publisher_id` varchar(10) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_users ADD INDEX (`user_public_publisher_id`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_roles` (`role_id`, `role_name`) VALUES (6, 'Publisher')";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // Add publisher Ids to all existing users
             createPublisherIds();
 
             $sql = "UPDATE 202_version SET version='1.9.48'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.48';
         }
@@ -2463,7 +2574,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.48') {
 
             $sql = "UPDATE 202_version SET version='1.9.49'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.49';
         }
@@ -2471,10 +2582,10 @@ class UPGRADE
         if ($prosper202_version == '1.9.49') {
 
             $sql = "ALTER TABLE 202_users ADD COLUMN `user_dash_email` varchar(100) NOT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.50'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.50';
         }
@@ -2482,16 +2593,16 @@ class UPGRADE
         if ($prosper202_version == '1.9.50') {
 
             $sql = "ALTER TABLE 202_cpa_trackers ADD PRIMARY KEY (`click_id`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_users_pref ADD COLUMN `user_delete_data_clickid` int(10) unsigned DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE 202_users_pref ADD COLUMN `user_pref_privacy` varchar(100) NOT NULL DEFAULT 'disabled'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_locations_city` ADD INDEX   `city_name` (`city_name`,`main_country_id`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_bing` (
             `click_id` bigint(20) unsigned NOT NULL,
@@ -2504,7 +2615,7 @@ class UPGRADE
             PRIMARY KEY (`click_id`,`msclkid`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
 
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE `202_ips_v6` (
             `ip_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -2515,15 +2626,15 @@ class UPGRADE
             KEY `location_id` (`location_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
 
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             //set collations and char set
 
             $sql = "ALTER TABLE `202_ips` CHANGE `ip_address` `ip_address` VARCHAR(15) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.51'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.51';
         }
@@ -2534,16 +2645,16 @@ class UPGRADE
             //set collations and char set
 
             $sql = "ALTER TABLE `202_ips` CHANGE `ip_address` `ip_address` VARCHAR(15) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // for the varchar(191) fix
             $sql = "CREATE TABLE  IF NOT EXISTS `202_variable_sets2` (`variable_set_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,`variables` varchar(255) NOT NULL DEFAULT '',PRIMARY KEY (`variable_set_id`,`variables`(191)),KEY `custom_variable_id` (`variables`(191)),KEY `click_id` (`variable_set_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             //Move data from variable_sets into variable_sets2
             $sql = "SELECT * from 202_variable_sets";
 
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $i = 0;
             $row = '';
@@ -2558,7 +2669,7 @@ class UPGRADE
 
                 if (($i % 600) == 0) {
                     $row = "insert ignore into `202_variable_sets2` (`variable_set_id`, `variables`) values " . rtrim($row, ',') . ";";
-                    _mysqli_query($row);
+                    _upgrade_query($row);
 
                     $i = 0;
                     $row = '';
@@ -2568,7 +2679,7 @@ class UPGRADE
             //add the last bit of data if there's any left
             if ($row) {
                 $row = "insert ignore into `202_variable_sets2` (`variable_set_id`, `variables`) values " . rtrim($row, ',') . ";";
-                _mysqli_query($row);
+                _upgrade_query($row);
             }
 
             //add fbclid table
@@ -2582,13 +2693,13 @@ class UPGRADE
             `utm_content_id` bigint(20) unsigned NOT NULL,
             PRIMARY KEY (`click_id`,`fbclid`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_ppc_account_pixels` ADD INDEX  `ppc_account_id` (`ppc_account_id`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.52'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.52';
         }
@@ -2597,10 +2708,10 @@ class UPGRADE
         if ($prosper202_version == '1.9.52') {
 
             $sql = "ALTER TABLE 202_users_pref ADD COLUMN `ipqs_api_key` varchar(250) DEFAULT NULL";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.53'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.53';
         }
@@ -2617,7 +2728,7 @@ class UPGRADE
                 PRIMARY KEY (`b202_fbpa_id`),
                 UNIQUE KEY `landing_page_id` (`landing_page_id`)
               ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_bot202_facebook_pixel_content_type` (
                 `content_type_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2626,7 +2737,7 @@ class UPGRADE
                 PRIMARY KEY (`content_type_id`),
                 KEY `content_type_id` (`content_type_id`,`content_type_description`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_bot202_facebook_pixel_click_events` (
                 `event_type_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2635,15 +2746,15 @@ class UPGRADE
                 PRIMARY KEY (`event_type_id`),
                 KEY `event_type_id` (`event_type_id`,`event_type_description`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
 
             $sql = "INSERT IGNORE INTO `202_pixel_types` (`pixel_type`) VALUES
 				('Bot202 Facebook Pixel Assistant');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.54'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.54';
         }
@@ -2651,7 +2762,7 @@ class UPGRADE
         if ($prosper202_version == '1.9.54') {
 
             $sql = "DROP TABLE IF EXISTS `202_bot202_facebook_pixel_click_events`";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_bot202_facebook_pixel_click_events` (
                 `event_type_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2660,16 +2771,16 @@ class UPGRADE
                 PRIMARY KEY (`event_type_id`),
                 KEY `event_type_id` (`event_type_id`,`event_type_description`)
               ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_bot202_facebook_pixel_click_events` (`event_type_id`, `event_type`, `event_type_description`)
                     VALUES
                     (1,X'56696577436F6E74656E74',X'547261636B2041733A205669657720436F6E74656E74'),
                     (2,X'416464546F43617274',X'547261636B2041733A2041646420546F2043617274');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "DROP TABLE IF EXISTS `202_bot202_facebook_pixel_content_type`;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_bot202_facebook_pixel_content_type` (
                 `content_type_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
@@ -2678,7 +2789,7 @@ class UPGRADE
                 PRIMARY KEY (`content_type_id`),
                 KEY `content_type_id` (`content_type_id`,`content_type_description`)
               ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT INTO `202_bot202_facebook_pixel_content_type` (`content_type_id`, `content_type`, `content_type_description`)
             VALUES
@@ -2688,20 +2799,20 @@ class UPGRADE
                 (4,X'64657374696E6174696F6E',X'54726176656C2044657374696E6174696F6E'),
                 (5,X'76656869636C65',X'4E6577202620557365642056656869636C6573'),
                 (6,X'686F6D655F6C697374696E67',X'5265616C2045737461746520262052656E74616C2050726F7065727479');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "ALTER TABLE `202_aff_campaigns` ADD INDEX  `aff_campaign_id` (`aff_campaign_id`,`aff_campaign_name`)";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             if ($_POST['lp_ssl'] == 1 || !isset($_POST['lp_ssl'])) {
 
                 //upgrade to ssl if user requests it or if no option is set
                 $sql = "UPDATE 202_landing_pages set landing_page_url = REPLACE(landing_page_url,'http://','https://')";
-                $result = _mysqli_query($sql);
+                $result = _upgrade_query($sql);
             }
 
             $sql = "UPDATE 202_version SET version='1.9.55'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.55';
         }
@@ -2725,7 +2836,7 @@ class UPGRADE
               KEY `content_type_active_published` (`content_type`,`is_active`,`published_at`),
               UNIQUE KEY `unique_content` (`content_type`,`external_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // Create dashboard sync tracking table
             $sql = "CREATE TABLE IF NOT EXISTS `202_dashboard_sync` (
@@ -2736,10 +2847,10 @@ class UPGRADE
               `last_error` text,
               PRIMARY KEY (`content_type`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.56'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.56';
         }
@@ -2761,7 +2872,7 @@ class UPGRADE
               UNIQUE KEY `model_slug_user` (`user_id`,`model_slug`),
               KEY `user_default` (`user_id`,`is_default`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_snapshots` (
               `snapshot_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -2781,7 +2892,7 @@ class UPGRADE
               KEY `model_hour_scope` (`model_id`,`date_hour`,`scope_type`,`scope_id`),
               KEY `user_hour` (`user_id`,`date_hour`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_touchpoints` (
               `touchpoint_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -2796,7 +2907,7 @@ class UPGRADE
               KEY `snapshot_conv` (`snapshot_id`,`conv_id`),
               KEY `click_lookup` (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_settings` (
               `setting_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -2811,7 +2922,7 @@ class UPGRADE
               UNIQUE KEY `user_scope` (`user_id`,`scope_type`,`scope_id`),
               KEY `model_lookup` (`model_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_audit` (
               `audit_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -2825,7 +2936,7 @@ class UPGRADE
               KEY `model_lookup` (`model_id`),
               KEY `action_lookup` (`action`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_exports` (
               `export_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -2858,12 +2969,12 @@ class UPGRADE
               KEY `user_status` (`user_id`,`status`),
               KEY `queued_at` (`queued_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT IGNORE INTO `202_permissions` (`permission_id`, `permission_description`) VALUES
                     (22, 'view_attribution_reports'),
                     (23, 'manage_attribution_models');";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "INSERT IGNORE INTO `202_role_permission` (`role_id`, `permission_id`) VALUES
                     (1, 22),
@@ -2871,21 +2982,21 @@ class UPGRADE
                     (2, 22),
                     (2, 23),
                     (3, 22);";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             // Add attribution model reference to campaigns table (check if column exists first)
             $sql = "SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS
                     WHERE TABLE_SCHEMA = DATABASE()
                     AND TABLE_NAME = '202_aff_campaigns'
                     AND COLUMN_NAME = 'attribution_model_id'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $row = mysqli_fetch_assoc($result);
 
             if ($row['count'] == 0) {
                 $sql = "ALTER TABLE `202_aff_campaigns`
                         ADD COLUMN `attribution_model_id` int(11) DEFAULT NULL
                         AFTER `aff_campaign_cloaking`";
-                $result = _mysqli_query($sql);
+                $result = _upgrade_query($sql);
             }
 
             // Create index for attribution model lookups (check if index exists first)
@@ -2893,13 +3004,13 @@ class UPGRADE
                     WHERE TABLE_SCHEMA = DATABASE()
                     AND TABLE_NAME = '202_aff_campaigns'
                     AND INDEX_NAME = 'idx_attribution_model'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             $row = mysqli_fetch_assoc($result);
 
             if ($row['count'] == 0) {
                 $sql = "ALTER TABLE `202_aff_campaigns`
                         ADD INDEX `idx_attribution_model` (`attribution_model_id`)";
-                $result = _mysqli_query($sql);
+                $result = _upgrade_query($sql);
             }
 
             // Create default "Last Touch" attribution model for existing users
@@ -2926,10 +3037,10 @@ class UPGRADE
                         UNIX_TIMESTAMP() as updated_at
                     FROM `202_users`
                     WHERE `user_id` > 0";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.56'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.56';
         }
@@ -2947,10 +3058,10 @@ class UPGRADE
               KEY `conv_id` (`conv_id`),
               KEY `click_lookup` (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.57'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.57';
         }
@@ -3030,7 +3141,7 @@ class UPGRADE
             }
 
             $sql = "UPDATE 202_version SET version='1.9.58'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.58';
         }
@@ -3063,10 +3174,10 @@ class UPGRADE
               KEY `user_status` (`user_id`,`status`),
               KEY `model_status` (`model_id`,`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "UPDATE 202_version SET version='1.9.59'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.59';
         }
@@ -3101,7 +3212,7 @@ class UPGRADE
               KEY `created_at` (`created_at`),
               KEY `source_target` (`source_label`,`target_label`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sync_job_events` (
               `event_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -3114,7 +3225,7 @@ class UPGRADE
               PRIMARY KEY (`event_id`),
               KEY `job_created` (`sync_job_id`,`created_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sync_job_items` (
               `item_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -3133,7 +3244,7 @@ class UPGRADE
               KEY `job_entity_status` (`sync_job_id`,`entity`,`status`),
               KEY `job_action` (`sync_job_id`,`action`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_change_log` (
               `change_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -3148,7 +3259,7 @@ class UPGRADE
               KEY `entity_changed` (`entity`,`changed_at`),
               KEY `digest_lookup` (`natural_key_digest`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_deleted_log` (
               `deleted_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -3162,7 +3273,7 @@ class UPGRADE
               KEY `entity_deleted` (`entity`,`deleted_at`),
               KEY `digest_lookup` (`natural_key_digest`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "CREATE TABLE IF NOT EXISTS `202_sync_audit` (
               `audit_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -3181,13 +3292,13 @@ class UPGRADE
               KEY `actor_created` (`actor_user_id`,`created_at`),
               KEY `source_target_status` (`source_label`,`target_label`,`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $sql = "SHOW COLUMNS FROM `202_api_keys` LIKE 'scope'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
             if (!($result && mysqli_num_rows($result) > 0)) {
                 $sql = "ALTER TABLE `202_api_keys` ADD COLUMN `scope` text DEFAULT NULL AFTER `api_key`";
-                $result = _mysqli_query($sql);
+                $result = _upgrade_query($sql);
             }
 
             // Composite indexes for AUTH::is_rate_limited()'s per-login throttle
@@ -3198,14 +3309,14 @@ class UPGRADE
                 'throttle_user' => 'ADD INDEX `throttle_user` (`user_name`(64), `login_success`, `login_time`)',
                 'throttle_ip' => 'ADD INDEX `throttle_ip` (`ip_address`(45), `login_success`, `login_time`)',
             ] as $indexName => $addClause) {
-                $idxResult = _mysqli_query("SHOW INDEX FROM `202_users_log` WHERE Key_name = '" . $indexName . "'");
+                $idxResult = _upgrade_query("SHOW INDEX FROM `202_users_log` WHERE Key_name = '" . $indexName . "'");
                 if (!($idxResult && mysqli_num_rows($idxResult) > 0)) {
-                    _mysqli_query("ALTER TABLE `202_users_log` " . $addClause);
+                    _upgrade_query("ALTER TABLE `202_users_log` " . $addClause);
                 }
             }
 
             $sql = "UPDATE 202_version SET version='1.9.60'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
 
             $prosper202_version = '1.9.60';
         }
@@ -3215,7 +3326,7 @@ class UPGRADE
 
             $prosper202_version = '1.9.60';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
-            $result = _mysqli_query($sql);
+            $result = _upgrade_query($sql);
         }
 
         return true;

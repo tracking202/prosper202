@@ -3075,6 +3075,9 @@ function callAutoCron($endpoint)
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     // Execute
     $result = curl_exec($ch);
 
@@ -3106,6 +3109,9 @@ function registerDailyEmail($time, $timezone, $hash)
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     // Execute
     $result = curl_exec($ch);
 
