@@ -6,7 +6,7 @@ ob_start();
 // only allow numeric acip's
 
 $urlvarslist = $_GET;
-$acip = $_GET['acip'];
+$acip = $_GET['acip'] ?? '';
 
     
 
@@ -227,12 +227,29 @@ $info_sql = "
 ";
 
 $info_row = memcache_mysql_fetch_assoc($db, $info_sql);
+
+// Guard BEFORE dereferencing: the public click id / campaign combo may not
+// exist (expired, mistyped, or a DB hiccup). Never crash the redirect — fall
+// back to the cached outbound url for this campaign if we have one.
+if (!$info_row || !isset($info_row['click_id'])) {
+    if ($memcacheWorking) {
+        $getUrl = $memcache->get(md5('ac_' . $acip . systemHash()));
+        if ($getUrl) {
+            $urlvars = getPrePopVars($urlvarslist);
+            $new_url = setPrePopVars($urlvars, str_replace('[[subid]]', 'p202', $getUrl), false);
+            header('location: ' . $new_url);
+            die();
+        }
+    }
+    die();
+}
+
 // cache the url for later use if db is down
 if ($memcacheWorking) {
-    
-    $url = $tracker_row['aff_campaign_url'] . "&subid=p202";
+
+    $url = $info_row['aff_campaign_url'] . "&subid=p202";
     $tid = $acip;
-    
+
     $getKey = $memcache->get(md5('ac_' . $tid . systemHash()));
     if ($getKey === false) {
         $setUrl = setCache(md5('ac_' . $tid . systemHash()), $url, 0);

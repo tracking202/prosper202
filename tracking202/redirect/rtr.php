@@ -61,6 +61,21 @@ $rotator_sql = "SELECT  tr.user_id,
 				LEFT JOIN 202_users_pref AS up ON up.user_id = tr.user_id
 				WHERE   tracker_id_public='".$mysql['tracker_id_public']."'"; 
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
+
+// Guard BEFORE dereferencing: a missing row (unknown tracker, DB hiccup, or
+// stale cache) must never crash the redirect. Fall back to the cached default
+// url so the visitor still lands somewhere instead of losing the click.
+if (!$rotator_row) {
+	if ($memcacheWorking) {
+		$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
+		if ($getUrl) {
+			header('location: ' . $getUrl);
+			die();
+		}
+	}
+	die();
+}
+
 $user_id = $db->real_escape_string((string)$rotator_row['user_id']);
 $user_keyword_searched_or_bidded = $db->real_escape_string($rotator_row['user_keyword_searched_or_bidded']);
 
@@ -68,9 +83,8 @@ $user_keyword_searched_or_bidded = $db->real_escape_string($rotator_row['user_ke
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['rotator_id']);
 $rule_sql = "SELECT ru.id as rule_id
 			 FROM 202_rotator_rules AS ru
-			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'"; 
+			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'";
 $rule_row = foreach_memcache_mysql_fetch_assoc($db, $rule_sql);
-if (!$rotator_row) die();
 
 AUTH::set_timezone($rotator_row['user_timezone']);
 

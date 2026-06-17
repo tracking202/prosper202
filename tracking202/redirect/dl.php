@@ -635,7 +635,11 @@ if ($mysql['click_cpa'] != NULL) {
 	$insert_sql = "INSERT INTO 202_cpa_trackers
                                    SET         click_id='" . $mysql['click_id'] . "',
                                                            tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-	$insert_result = $db->query($insert_sql);
+	// Post-redirect: the visitor is already gone, so log a failure instead of
+	// dying (which would abandon the remaining bookkeeping below).
+	if ($db->query($insert_sql) === false) {
+		error_log('dl.php: failed to insert cpa_tracker for click ' . $mysql['click_id'] . ': ' . $db->error);
+	}
 }
 
 //set dirty hour
@@ -644,5 +648,8 @@ $data = ($de->setDirtyHour($mysql['click_id']));
 
 if (isset($_COOKIE['p202_ipx'])) {
 	$mysql['p202_ipx'] = $db->real_escape_string($_COOKIE['p202_ipx']);
-	$db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'");
+	$impression_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'";
+	if ($db->query($impression_sql) === false) {
+		error_log('dl.php: failed to link impression ' . $mysql['p202_ipx'] . ' to click ' . $mysql['click_id'] . ': ' . $db->error);
+	}
 }
