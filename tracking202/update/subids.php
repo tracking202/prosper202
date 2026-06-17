@@ -5,6 +5,8 @@ include_once(substr(__DIR__, 0, -19) . '/202-config/connect.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 
 use Prosper202\Attribution\AttributionServiceFactory;
+use Prosper202\Conversion\MysqlConversionRepository;
+use Prosper202\Database\Connection;
 AUTH::require_user();
 
 if (!$userObj->hasPermission("access_to_update_section")) {
@@ -25,6 +27,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$subids = trim((string) $subids);
 	$subids = explode("\r", $subids);
 	$subids = str_replace("\n", '', $subids);
+
+	// Conversion rows go through the single canonical writer.
+	$conversionRepo = new MysqlConversionRepository(new Connection($db));
 
 	foreach ($subids as $click_id) {
 		$mysql['click_id'] = $db->real_escape_string($click_id);
@@ -78,32 +83,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			";
 			$update_result = $db->query($update_sql) or die($db->error);
 
-			// Insert into conversion_logs for attribution tracking (skip if already logged)
+			// Insert into conversion_logs for attribution tracking. Subid uploads
+			// carry no transaction id, so dedup is click-level: skip if this click
+			// already has a (non-deleted) conversion. The insert itself goes through
+			// the shared writer (prepared statements, full column set).
 			$check_sql = "SELECT conv_id FROM 202_conversion_logs WHERE click_id = '" . $mysql['click_id'] . "' AND user_id = '" . $mysql['user_id'] . "' AND deleted = 0 LIMIT 1";
 			$check_result = $db->query($check_sql);
 			if ($check_result && $check_result->num_rows === 0) {
 				$conv_time = time();
 				$click_time = (int) $click_row['click_time'];
-				$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time));
-				$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
-				$diff = $click_time_to_date->diff($conv_time_to_date);
-				$time_difference = $db->real_escape_string($diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec');
-				$campaign_id = $db->real_escape_string((string) $click_row['aff_campaign_id']);
-				$click_payout = $db->real_escape_string((string) $click_row['click_payout']);
+				$diff = (new DateTime(date('Y-m-d H:i:s', $click_time)))->diff(new DateTime(date('Y-m-d H:i:s', $conv_time)));
 
-				$log_sql = "INSERT INTO 202_conversion_logs
-					SET conv_id = DEFAULT,
-						click_id = '" . $mysql['click_id'] . "',
-						campaign_id = '" . $campaign_id . "',
-						click_payout = '" . $click_payout . "',
-						user_id = '" . $mysql['user_id'] . "',
-						click_time = '" . $click_time . "',
-						conv_time = '" . $conv_time . "',
-						time_difference = '" . $time_difference . "',
-						ip = '',
-						pixel_type = '0',
-						user_agent = 'subid-upload'";
-				$db->query($log_sql);
+				$conversionRepo->record(
+					(int) $mysql['user_id'],
+					[
+						'click_id'        => (int) $mysql['click_id'],
+						'transaction_id'  => '',
+						'campaign_id'     => (int) $click_row['aff_campaign_id'],
+						'payout'          => (float) $click_row['click_payout'],
+						'click_time'      => $click_time,
+						'conv_time'       => $conv_time,
+						'time_difference' => $diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec',
+						'ip'              => '',
+						'pixel_type'      => 0,
+						'user_agent'      => 'subid-upload',
+					]
+				);
 			}
 
 			$de = new DataEngine();
