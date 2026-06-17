@@ -3242,6 +3242,17 @@ class UPGRADE
                 }
             }
 
+            // Add a composite index for the "last click for this ip/user within N
+            // days" lookback the off/postback redirects run on every conversion.
+            // The existing (user_id, click_lead) key can't serve the click_time
+            // range, forcing a scan that adds latency to the hot path.
+            $sql = "SHOW INDEX FROM `202_clicks` WHERE Key_name = 'user_click_time'";
+            $result = _mysqli_query($sql);
+            if (!($result && mysqli_num_rows($result) > 0)) {
+                $sql = "ALTER TABLE `202_clicks` ADD KEY `user_click_time` (`user_id`,`click_time`)";
+                $result = _mysqli_query($sql);
+            }
+
             $sql = "UPDATE 202_version SET version='1.9.61'";
             $result = _mysqli_query($sql);
 

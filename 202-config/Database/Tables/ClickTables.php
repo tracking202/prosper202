@@ -62,7 +62,8 @@ final class ClickTables
                 KEY `click_alp` (`click_alp`),
                 KEY `landing_page_id` (`landing_page_id`),
                 KEY `overview_index2` (`user_id`,`click_filtered`,`landing_page_id`,`aff_campaign_id`),
-                KEY `rotator_id` (`rotator_id`)
+                KEY `rotator_id` (`rotator_id`),
+                KEY `user_click_time` (`user_id`,`click_time`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
