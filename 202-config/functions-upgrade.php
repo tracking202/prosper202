@@ -3196,10 +3196,62 @@ class UPGRADE
             $prosper202_version = '1.9.60';
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.60') {
+        // upgrade from 1.9.60 to 1.9.61 - enforce conversion idempotency at the DB
+        // level so retried/replayed postbacks can never double-count a conversion.
+        if ($prosper202_version == '1.9.60') {
 
-            $prosper202_version = '1.9.60';
+            // Empty transaction ids must be stored as NULL, not '', otherwise the
+            // UNIQUE key below would reject a click legitimately converting more
+            // than once when no network order id is supplied (NULLs do not collide).
+            $sql = "UPDATE 202_conversion_logs SET transaction_id = NULL WHERE transaction_id = ''";
+            $result = _mysqli_query($sql);
+
+            // Defensively neutralise any pre-existing duplicate (click_id, transaction_id)
+            // rows by nulling the transaction id on all but the earliest of each group.
+            // This preserves every conversion row (no data loss) while allowing the
+            // UNIQUE index to be created on installs that already contain duplicates.
+            $sql = "UPDATE 202_conversion_logs AS c
+                    JOIN (
+                        SELECT MIN(conv_id) AS keep_id, click_id, transaction_id
+                        FROM 202_conversion_logs
+                        WHERE transaction_id IS NOT NULL
+                        GROUP BY click_id, transaction_id
+                        HAVING COUNT(*) > 1
+                    ) AS d
+                      ON c.click_id = d.click_id
+                     AND c.transaction_id = d.transaction_id
+                    SET c.transaction_id = NULL
+                    WHERE c.conv_id <> d.keep_id";
+            $result = _mysqli_query($sql);
+
+            // Add the UNIQUE backstop only if it is not already present.
+            $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'";
+            $result = _mysqli_query($sql);
+            if (!($result && mysqli_num_rows($result) > 0)) {
+                $sql = "ALTER TABLE `202_conversion_logs`
+                        ADD UNIQUE KEY `uniq_click_transaction` (`click_id`,`transaction_id`)";
+                $result = _mysqli_query($sql);
+
+                // The new composite unique key covers the click_id lookup as a
+                // leftmost prefix, so drop the now-redundant standalone index.
+                $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'click_id'";
+                $result = _mysqli_query($sql);
+                if ($result && mysqli_num_rows($result) > 0) {
+                    $sql = "ALTER TABLE `202_conversion_logs` DROP INDEX `click_id`";
+                    $result = _mysqli_query($sql);
+                }
+            }
+
+            $sql = "UPDATE 202_version SET version='1.9.61'";
+            $result = _mysqli_query($sql);
+
+            $prosper202_version = '1.9.61';
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if ($prosper202_version > '1.9.61') {
+
+            $prosper202_version = '1.9.61';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _mysqli_query($sql);
         }

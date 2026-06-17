@@ -76,7 +76,15 @@ if (is_numeric($mysql['click_id'])) {
 				LEFT JOIN 202_trackers USING (tracker_id_public)  
 				WHERE click_id = '".$mysql['click_id']."'";
 	$cpa_result = $db->query($cpa_sql);
+	if ($cpa_result === false) {
+		error_log('gpx: cpa lookup failed: ' . $db->error);
+		return;
+	}
 	$cpa_row = $cpa_result->fetch_assoc();
+	if (!$cpa_row) {
+		// Unknown click id; nothing to convert.
+		return;
+	}
 
         if (!$cpa_row['click_lead']) {
 
@@ -86,52 +94,52 @@ if (is_numeric($mysql['click_id'])) {
                 $mysql['click_time'] = $db->real_escape_string((string) ($cpa_row['click_time'] ?? '0'));
 
 		$conv_time = time();
-		$click_time_to_date = new DateTime(date('Y-m-d H:i:s', (int) $mysql['click_time']));
+		$click_time_raw = (int) ($cpa_row['click_time'] ?? 0);
+		$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time_raw));
 		$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', (int) $conv_time));
 		$diff = $click_time_to_date->diff($conv_time_to_date);
-		$mysql['time_difference'] =  $db->real_escape_string($diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec');
-		$mysql['conv_time'] = $db->real_escape_string((string) $conv_time);
-		$mysql['ip'] = $db->real_escape_string($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
-		$mysql['user_agent'] = $db->real_escape_string($_SERVER['HTTP_USER_AGENT'] ?? '');
-		
+		$time_difference = $diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec';
+		$mysql['conv_time'] = $conv_time;
+
 		$mysql['click_cpa'] = $db->real_escape_string((string) ($cpa_row['click_cpa'] ?? ''));
-	
+
 			if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
 				$mysql['use_pixel_payout'] = 1;
 				$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
 			}
-			p202ApplyConversionUpdate(
-				$db,
-				(string) $mysql['click_id'],
-				(string) $mysql['click_cpa'],
-				$mysql['use_pixel_payout'] == 1,
-				(string) ($mysql['click_payout'] ?? '')
-			);
 
-		// Get click_payout for conversion log
-		$click_payout_for_log = $mysql['click_payout'] ?? '0';
-		if (!$mysql['use_pixel_payout']) {
-			$payout_sql = "SELECT click_payout FROM 202_clicks WHERE click_id = '".$mysql['click_id']."'";
+		// payout to record: pixel amount override if present, otherwise the click's own payout
+		$click_payout_for_log = ($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '0') : '0';
+		if ($mysql['use_pixel_payout'] != 1) {
+			$payout_sql = "SELECT click_payout FROM 202_clicks WHERE click_id = " . (int) $mysql['click_id'];
 			$payout_result = $db->query($payout_sql);
 			if ($payout_result && $payout_row = $payout_result->fetch_assoc()) {
-				$click_payout_for_log = $db->real_escape_string($payout_row['click_payout']);
+				$click_payout_for_log = (string) $payout_row['click_payout'];
 			}
 		}
 
-		$log_sql = "INSERT INTO 202_conversion_logs
-				SET conv_id = DEFAULT,
-					click_id = '".$mysql['click_id']."',
-					campaign_id = '".$mysql['campaign_id']."',
-					click_payout = '".$click_payout_for_log."',
-					user_id = '".$mysql['click_user_id']."',
-					click_time = '".$mysql['click_time']."',
-					conv_time = '".$mysql['conv_time']."',
-					time_difference = '".$mysql['time_difference']."',
-					ip = '".$mysql['ip']."',
-					pixel_type = '1',
-					user_agent = '".$mysql['user_agent']."'";
-                $db->query($log_sql);
-                $conversionId = (int) $db->insert_id;
+		// Atomic + idempotent: locks the click, dedupes on transaction id, and
+		// applies the click update and conversion_logs insert in one transaction.
+		$conversionResult = p202RecordConversion(
+			$db,
+			[
+				'click_id'        => (int) $mysql['click_id'],
+				'campaign_id'     => (string) ($cpa_row['aff_campaign_id'] ?? '0'),
+				'user_id'         => (string) ($cpa_row['user_id'] ?? '0'),
+				'click_time'      => $click_time_raw,
+				'conv_time'       => $conv_time,
+				'time_difference' => $time_difference,
+				'ip'              => $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '',
+				'pixel_type'      => 1,
+				'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
+				'click_payout'    => $click_payout_for_log,
+			],
+			(string) ($cpa_row['click_cpa'] ?? ''),
+			$mysql['use_pixel_payout'] == 1,
+			($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
+			p202ExtractTransactionId($_GET)
+		);
+		$conversionId = $conversionResult['conv_id'];
 
                 if ($conversionId > 0) {
                         $scope = [

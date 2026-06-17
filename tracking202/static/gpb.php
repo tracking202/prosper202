@@ -109,7 +109,13 @@ LIMIT 1";
 
 
 $cvar_sql_result = $db->query($cvar_sql);
+if ($cvar_sql_result === false) {
+	p202RespondJsonError(500, 'Click lookup failed');
+}
 $cvar_sql_row = $cvar_sql_result->fetch_assoc();
+if (!$cvar_sql_row) {
+	p202RespondJsonError(404, 'Click data not found');
+}
 $mysql['t202kw'] = $db->real_escape_string($cvar_sql_row['keyword']);
 $mysql['c1'] = $db->real_escape_string($cvar_sql_row['c1']);
 $mysql['c2'] = $db->real_escape_string($cvar_sql_row['c2']);
@@ -236,39 +242,45 @@ if($mysql['ppc_account_id']){
 if (is_numeric($mysql['click_id'])) {
 
 	$conv_time = time();
-	$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $mysql['click_time']));
+	$click_time_raw = (int) ($cvar_sql_row['click_time'] ?? 0);
+	$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time_raw));
 	$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
 	$diff = $click_time_to_date->diff($conv_time_to_date);
-	$mysql['time_difference'] =  $db->real_escape_string($diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec');
-	$mysql['conv_time'] = $db->real_escape_string($conv_time);
-	$mysql['ip'] = $db->real_escape_string($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
-	$mysql['user_agent'] = $db->real_escape_string($_SERVER['HTTP_USER_AGENT'] ?? '');
+	$time_difference = $diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec';
+	$mysql['conv_time'] = $conv_time;
 
 			if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
 				$mysql['use_pixel_payout'] = 1;
 				$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
 			}
-		p202ApplyConversionUpdate(
+
+		// payout to record: pixel amount override if present, otherwise the click's own payout
+		$click_payout_for_log = ($mysql['use_pixel_payout'] == 1)
+			? (string) ($_GET['amount'] ?? '0')
+			: (string) ($cvar_sql_row['click_payout'] ?? '0');
+
+		// Atomic + idempotent: locks the click, dedupes on transaction id, and
+		// applies the click update and conversion_logs insert in one transaction.
+		$conversionResult = p202RecordConversion(
 			$db,
-			(string) $mysql['click_id'],
-			(string) $mysql['click_cpa'],
+			[
+				'click_id'        => (int) $mysql['click_id'],
+				'campaign_id'     => (string) ($cvar_sql_row['aff_campaign_id'] ?? '0'),
+				'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
+				'click_time'      => $click_time_raw,
+				'conv_time'       => $conv_time,
+				'time_difference' => $time_difference,
+				'ip'              => $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '',
+				'pixel_type'      => 2,
+				'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
+				'click_payout'    => $click_payout_for_log,
+			],
+			(string) ($cvar_sql_row['click_cpa'] ?? ''),
 			$mysql['use_pixel_payout'] == 1,
-			(string) ($mysql['click_payout'] ?? '')
+			($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
+			p202ExtractTransactionId($_GET)
 		);
-		
-		$log_sql = "INSERT INTO 202_conversion_logs
-				SET conv_id = DEFAULT,
-					click_id = '".$mysql['click_id']."',
-					campaign_id = '".$mysql['campaign_id']."',
-					user_id = '".$mysql['click_user_id']."',
-					click_time = '".$mysql['click_time']."',
-					conv_time = '".$mysql['conv_time']."',
-					time_difference = '".$mysql['time_difference']."',
-					ip = '".$mysql['ip']."',
-					pixel_type = '2',
-					user_agent = '".$mysql['user_agent']."'";
-        $db->query($log_sql);
-        $conversionId = (int) $db->insert_id;
+		$conversionId = $conversionResult['conv_id'];
 	        $advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
 
         if ($conversionId > 0) {

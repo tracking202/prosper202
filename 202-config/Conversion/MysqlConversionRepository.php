@@ -104,7 +104,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $stmt = $this->conn->prepareWrite(
                 'INSERT INTO 202_conversion_logs (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)'
             );
-            $this->conn->bind($stmt, 'isidiii', [$clickId, $transactionId, $campaignId, $payout, $userId, $clickTime, $convTime]);
+            // Store an absent transaction id as NULL (not '') so the UNIQUE key on
+            // (click_id, transaction_id) still allows a click to convert more than
+            // once when no order id is supplied (multiple NULLs do not collide).
+            $transactionIdForInsert = $transactionId !== '' ? $transactionId : null;
+            $this->conn->bind($stmt, 'isidiii', [$clickId, $transactionIdForInsert, $campaignId, $payout, $userId, $clickTime, $convTime]);
             $convId = $this->conn->executeInsert($stmt);
 
             $stmt = $this->conn->prepareWrite(

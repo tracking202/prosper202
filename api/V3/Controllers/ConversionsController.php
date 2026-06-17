@@ -147,7 +147,11 @@ class ConversionsController
                 (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0)";
             $stmt = $this->prepare($sql);
-            $this->bind($stmt, 'isidiii', $clickId, $transactionId, $campaignId, $payout, $this->userId, $clickTime, $convTime);
+            // Store an absent transaction id as NULL (not '') so the UNIQUE key on
+            // (click_id, transaction_id) still allows a click to convert more than
+            // once when no order id is supplied (multiple NULLs do not collide).
+            $transactionIdForInsert = $transactionId !== '' ? $transactionId : null;
+            $this->bind($stmt, 'isidiii', $clickId, $transactionIdForInsert, $campaignId, $payout, $this->userId, $clickTime, $convTime);
 
             $this->execute($stmt, 'Failed to create conversion');
             $convId = $stmt->insert_id;
