@@ -127,7 +127,8 @@ class ConversionsController
         } catch (\Prosper202\Conversion\ClickNotFoundException $e) {
             throw new NotFoundException('Click not found or not owned by user');
         } catch (\Throwable $e) {
-            throw new DatabaseException('Failed to create conversion');
+            // Preserve the underlying failure for server-side logs via getPrevious().
+            throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
         }
 
         return $this->get($convId);

@@ -54,50 +54,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 
 		if (is_numeric($mysql['click_id'])) {
-			$update_sql = "
-				UPDATE
-					202_clicks
-				SET
-					click_lead='1',
-					`click_filtered`='0'
-				WHERE
-					click_id='" . $mysql['click_id'] . "'
-					AND user_id='" . $mysql['user_id'] . "'
-			";
-			try {
-				$update_result = $db->query($update_sql);
-			} catch (Exception $e) {
-				error_log("Database query failed: " . $e->getMessage());
-				throw new RuntimeException("An error occurred while updating the database.");
-			}
+			$clickId = (int) $mysql['click_id'];
+			$userId = (int) $mysql['user_id'];
 
-			$update_sql = "
-				UPDATE
-					202_clicks_spy
-				SET
-					click_lead='1',
-					`click_filtered`='0'
-				WHERE
-					click_id='" . $mysql['click_id'] . "'
-					AND user_id='" . $mysql['user_id'] . "'
-			";
-			$update_result = $db->query($update_sql) or die($db->error);
+			// Flag the click as a lead and clear any filtering, on both the clicks
+			// and spy tables. When a conversion row is recorded this runs inside the
+			// repository transaction (below) so the flag and the audit row commit or
+			// roll back together.
+			$applyClickUpdate = function () use ($db, $clickId, $userId): void {
+				foreach (['202_clicks', '202_clicks_spy'] as $table) {
+					$update_sql = "UPDATE " . $table . " SET click_lead='1', `click_filtered`='0'"
+						. " WHERE click_id='" . $clickId . "' AND user_id='" . $userId . "'";
+					if (!$db->query($update_sql)) {
+						throw new RuntimeException('subids: failed to update ' . $table . ' for click ' . $clickId);
+					}
+				}
+			};
 
-			// Insert into conversion_logs for attribution tracking. Subid uploads
-			// carry no transaction id, so dedup is click-level: skip if this click
-			// already has a (non-deleted) conversion. The insert itself goes through
-			// the shared writer (prepared statements, full column set).
-			$check_sql = "SELECT conv_id FROM 202_conversion_logs WHERE click_id = '" . $mysql['click_id'] . "' AND user_id = '" . $mysql['user_id'] . "' AND deleted = 0 LIMIT 1";
+			// Click-level dedup (subid uploads carry no transaction id): only record
+			// a conversion when this click has no non-deleted conversion yet.
+			$check_sql = "SELECT conv_id FROM 202_conversion_logs WHERE click_id = '" . $clickId . "' AND user_id = '" . $userId . "' AND deleted = 0 LIMIT 1";
 			$check_result = $db->query($check_sql);
+
 			if ($check_result && $check_result->num_rows === 0) {
 				$conv_time = time();
 				$click_time = (int) $click_row['click_time'];
 				$diff = (new DateTime(date('Y-m-d H:i:s', $click_time)))->diff(new DateTime(date('Y-m-d H:i:s', $conv_time)));
 
 				$conversionRepo->record(
-					(int) $mysql['user_id'],
+					$userId,
 					[
-						'click_id'        => (int) $mysql['click_id'],
+						'click_id'        => $clickId,
 						'transaction_id'  => '',
 						'campaign_id'     => (int) $click_row['aff_campaign_id'],
 						'payout'          => (float) $click_row['click_payout'],
@@ -107,12 +94,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						'ip'              => '',
 						'pixel_type'      => 0,
 						'user_agent'      => 'subid-upload',
-					]
+					],
+					function (int $lockedClickId, float $payout) use ($applyClickUpdate): void {
+						$applyClickUpdate();
+					}
 				);
+			} else {
+				// Already has a conversion logged; just (re)apply the click flag.
+				$applyClickUpdate();
 			}
 
 			$de = new DataEngine();
-			$de->setDirtyHour($mysql['click_id']);
+			$de->setDirtyHour((string) $clickId);
 		}
 	}
 

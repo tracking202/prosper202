@@ -113,7 +113,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             throw new RuntimeException('click_id is required');
         }
 
-        $rawTransactionId = (string) ($data['transaction_id'] ?? '');
+        // Trim centrally so a blank/whitespace-only id is treated as absent
+        // (stored NULL, no dedup) across every ingestion path.
+        $rawTransactionId = trim((string) ($data['transaction_id'] ?? ''));
         $transactionId = $rawTransactionId !== '' ? $rawTransactionId : null;
         $convTime = (int) ($data['conv_time'] ?? time());
         $payoutOverride = isset($data['payout']) ? (float) $data['payout'] : null;
