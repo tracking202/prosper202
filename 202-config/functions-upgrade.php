@@ -3190,6 +3190,20 @@ class UPGRADE
                 $result = _mysqli_query($sql);
             }
 
+            // Composite indexes for AUTH::is_rate_limited()'s per-login throttle
+            // query (login_success = 0 AND <key> = ? AND login_time >= ?). Added
+            // only if missing so re-running the upgrade is safe; the per-username
+            // path was previously unindexed and forced a full scan of the log.
+            foreach ([
+                'throttle_user' => 'ADD INDEX `throttle_user` (`user_name`(64), `login_success`, `login_time`)',
+                'throttle_ip' => 'ADD INDEX `throttle_ip` (`ip_address`(45), `login_success`, `login_time`)',
+            ] as $indexName => $addClause) {
+                $idxResult = _mysqli_query("SHOW INDEX FROM `202_users_log` WHERE Key_name = '" . $indexName . "'");
+                if (!($idxResult && mysqli_num_rows($idxResult) > 0)) {
+                    _mysqli_query("ALTER TABLE `202_users_log` " . $addClause);
+                }
+            }
+
             $sql = "UPDATE 202_version SET version='1.9.60'";
             $result = _mysqli_query($sql);
 

@@ -13,6 +13,27 @@ require_once(__DIR__ . '/version.php');
 ini_set('session.gc_maxlifetime', '50000');
 ini_set('session.cookie_lifetime', '0'); // session cookie — expires when browser closes
 
+// Harden the session cookie before it is created. Without these, the PHPSESSID
+// cookie is readable from JavaScript (XSS session theft) and sent cross-site.
+//  - HttpOnly:  not exposed to document.cookie
+//  - SameSite:  Lax blocks the cookie on cross-site POSTs (CSRF mitigation) while
+//               still allowing normal top-level navigations.
+//  - Secure:    only sent over HTTPS. Gated on the request actually being HTTPS so
+//               plain-HTTP installs (local/dev, TLS-terminating proxies that don't
+//               forward the flag) keep working.
+// This mirrors getSecureStatus() (functions-tracking202.php); we can't call that
+// helper here because it isn't loaded until after the session must be started.
+$_request_is_https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
+    || (!empty($_SERVER['HTTP_X_FORWARDED_SSL']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_SSL']) === 'on')
+    || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443)
+    || (isset($_SERVER['HTTP_X_FORWARDED_PORT']) && (int) $_SERVER['HTTP_X_FORWARDED_PORT'] === 443)
+    || (isset($_SERVER['REQUEST_SCHEME']) && strtolower((string) $_SERVER['REQUEST_SCHEME']) === 'https');
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
+ini_set('session.cookie_secure', $_request_is_https ? '1' : '0');
+ini_set('session.use_strict_mode', '1'); // reject attacker-supplied (uninitialized) session IDs
+
 // Start the session at the beginning to avoid undefined $_SESSION variable.
 // AJAX detection depends on clients sending X-Requested-With. jQuery does this
 // automatically; fetch() and sendBeacon() do not unless the caller adds it.
