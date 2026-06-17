@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 include_once(str_repeat('../', 3) . '202-config/connect.php');
 
-AUTH::require_user();
+require __DIR__ . '/_auth.php';
 
 header('Content-Type: application/json');
 
@@ -21,7 +21,7 @@ if ($conversationExternalId === '') {
     exit;
 }
 
-$userId  = (int) ($_SESSION['user_id'] ?? 0);
+$userId  = $messagingUserId;
 $service = MessagingService::forUser($userId);
 
 if ($service !== null) {
