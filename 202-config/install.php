@@ -163,13 +163,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 			$inTransaction = true;
 
+			// user_dash_email is NOT NULL with no default; set it to the account email
+			// so the INSERT is valid regardless of the session sql_mode (strict mode
+			// would otherwise reject the row, and non-strict would store an empty string).
 			$stmt = $prepare(
 				"INSERT IGNORE INTO 202_users
-					SET user_email=?, user_name=?, user_pass=?, user_timezone=?,
+					SET user_email=?, user_dash_email=?, user_name=?, user_pass=?, user_timezone=?,
 						user_time_register=?, install_hash=?, user_hash=?, p202_customer_api_key=?"
 			);
 			$stmt->bind_param(
-				'ssssisss',
+				'sssssisss',
+				$user_email,
 				$user_email,
 				$user_name,
 				$user_pass,

@@ -8,11 +8,14 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * Unit tests for the installer's pure helpers: field rules, CSRF token check,
- * and account validation.
+ * account validation, JSON encoding, base-URL building, and success rendering.
  *
  * @covers ::install_default_rules
  * @covers ::install_csrf_ok
  * @covers ::install_validate_account
+ * @covers ::install_encode_response
+ * @covers ::install_request_base_url
+ * @covers ::render_install_success
  */
 final class InstallHelpersTest extends TestCase
 {
