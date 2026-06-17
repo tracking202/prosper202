@@ -153,7 +153,9 @@ final class UserTables
                 `login_session` text NOT NULL,
                 PRIMARY KEY (`login_id`),
                 KEY `login_pass` (`login_success`),
-                KEY `ip_address` (`ip_address`(191))
+                KEY `ip_address` (`ip_address`(191)),
+                KEY `throttle_user` (`user_name`(64), `login_success`, `login_time`),
+                KEY `throttle_ip` (`ip_address`(45), `login_success`, `login_time`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
