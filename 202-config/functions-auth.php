@@ -539,6 +539,25 @@ class AUTH
     }
 
     /**
+     * Return the trust-aware client IP, validated. connect.php normalizes the
+     * real client address into HTTP_X_FORWARDED_FOR (CF-Connecting-IP, X-Real-IP,
+     * …) but on a direct request — or a proxy that doesn't strip client-supplied
+     * forwarding headers — that value can be attacker-controlled garbage or
+     * longer than the 255-char log column. Validate it as an IP and fall back to
+     * REMOTE_ADDR, so the throttle key and audit log only ever see a real IP.
+     */
+    public static function client_ip(): string
+    {
+        foreach ([$_SERVER['HTTP_X_FORWARDED_FOR'] ?? '', $_SERVER['REMOTE_ADDR'] ?? ''] as $candidate) {
+            $candidate = trim((string) $candidate);
+            if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+                return $candidate;
+            }
+        }
+        return '0.0.0.0';
+    }
+
+    /**
      * Constant-time validation of the anti-CSRF token. Forms embed
      * $_SESSION['token'] (seeded in connect.php) as a hidden field; a cross-site
      * attacker cannot read it, so a forged POST fails this check.

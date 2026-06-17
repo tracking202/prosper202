@@ -13,8 +13,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$username_raw = (string)($_POST['user_name'] ?? '');
 	$password = (string)($_POST['user_pass'] ?? '');
 	$username = trim($username_raw);
-	// Trust-aware client IP (set by connect.php), not the shared proxy REMOTE_ADDR.
-	$login_ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+	// Validated, trust-aware client IP (not the shared proxy REMOTE_ADDR, and
+	// rejects spoofed/overlong forwarded values).
+	$login_ip = AUTH::client_ip();
 	$rate_limited = false;
 
 	// CSRF: validate the session token the form already embeds.

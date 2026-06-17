@@ -324,6 +324,31 @@ final class AuthClassTest extends TestCase
         $this->assertFalse(AUTH::check_csrf_token());
     }
 
+    public function testClientIpReturnsValidForwardedIp(): void
+    {
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.23';
+        $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+
+        $this->assertSame('198.51.100.23', AUTH::client_ip());
+    }
+
+    public function testClientIpFallsBackWhenForwardedValueIsNotAnIp(): void
+    {
+        // Attacker-supplied garbage / overlong value must not be used.
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = str_repeat('A', 4000);
+        $_SERVER['REMOTE_ADDR'] = '203.0.113.5';
+
+        $this->assertSame('203.0.113.5', AUTH::client_ip());
+    }
+
+    public function testClientIpReturnsPlaceholderWhenNothingValid(): void
+    {
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = 'not-an-ip';
+        $_SERVER['REMOTE_ADDR'] = 'also-bad';
+
+        $this->assertSame('0.0.0.0', AUTH::client_ip());
+    }
+
     public function testIsRateLimitedTrueWhenFailuresExceedThreshold(): void
     {
         $mockDb = $this->createMockDb([
