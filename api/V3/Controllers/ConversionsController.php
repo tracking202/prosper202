@@ -106,66 +106,28 @@ class ConversionsController
             throw new ValidationException('click_id is required', ['click_id' => 'Must be a positive integer']);
         }
 
-        $payoutInput = array_key_exists('payout', $payload) ? (float)$payload['payout'] : null;
-        $transactionId = (string)($payload['transaction_id'] ?? '');
-        $convTime = (int)($payload['conv_time'] ?? time());
+        $data = [
+            'click_id' => $clickId,
+            'transaction_id' => (string)($payload['transaction_id'] ?? ''),
+            'conv_time' => (int)($payload['conv_time'] ?? time()),
+        ];
+        if (array_key_exists('payout', $payload)) {
+            $data['payout'] = (float)$payload['payout'];
+        }
 
-        $this->db->begin_transaction();
+        // Delegate to the single canonical conversion writer so the V3 API and the
+        // legacy postback/pixel endpoints share one transactional, idempotent path
+        // (locks the click, de-dupes on transaction_id, inserts + flags the click).
+        $repo = new \Prosper202\Conversion\MysqlConversionRepository(
+            new \Prosper202\Database\Connection($this->db)
+        );
+
         try {
-            // Lock the source click row inside the transaction so two concurrent postbacks
-            // for the same click serialize here instead of both recording a conversion
-            // (TOCTOU race). Mirrors MysqlConversionRepository::create().
-            $stmt = $this->prepare('SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE');
-            $this->bind($stmt, 'ii', $clickId, $this->userId);
-            $this->execute($stmt, 'Query failed');
-            $click = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-
-            if (!$click) {
-                throw new NotFoundException('Click not found or not owned by user');
-            }
-
-            // Idempotency: if this transaction_id was already recorded for this click,
-            // return the existing conversion instead of double-counting on a replay/retry.
-            if ($transactionId !== '') {
-                $dupStmt = $this->prepare('SELECT conv_id FROM 202_conversion_logs WHERE user_id = ? AND click_id = ? AND transaction_id = ? AND deleted = 0 LIMIT 1');
-                $this->bind($dupStmt, 'iis', $this->userId, $clickId, $transactionId);
-                $this->execute($dupStmt, 'Query failed');
-                $dup = $dupStmt->get_result()->fetch_assoc();
-                $dupStmt->close();
-                if ($dup) {
-                    $this->db->commit();
-                    return $this->get((int)$dup['conv_id']);
-                }
-            }
-
-            $payout = (float)($payoutInput ?? $click['click_payout'] ?? 0);
-            $campaignId = (int)$click['aff_campaign_id'];
-            $clickTime = (int)($click['click_time'] ?? 0);
-
-            $sql = "INSERT INTO 202_conversion_logs
-                (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0)";
-            $stmt = $this->prepare($sql);
-            // Store an absent transaction id as NULL (not '') so the UNIQUE key on
-            // (click_id, transaction_id) still allows a click to convert more than
-            // once when no order id is supplied (multiple NULLs do not collide).
-            $transactionIdForInsert = $transactionId !== '' ? $transactionId : null;
-            $this->bind($stmt, 'isidiii', $clickId, $transactionIdForInsert, $campaignId, $payout, $this->userId, $clickTime, $convTime);
-
-            $this->execute($stmt, 'Failed to create conversion');
-            $convId = $stmt->insert_id;
-            $stmt->close();
-
-            $stmt = $this->prepare('UPDATE 202_clicks SET click_lead = 1, click_payout = ? WHERE click_id = ? AND user_id = ?');
-            $this->bind($stmt, 'dii', $payout, $clickId, $this->userId);
-            $this->execute($stmt, 'Failed to update click');
-            $stmt->close();
-
-            $this->db->commit();
+            $convId = $repo->create($this->userId, $data);
+        } catch (\Prosper202\Conversion\ClickNotFoundException $e) {
+            throw new NotFoundException('Click not found or not owned by user');
         } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
+            throw new DatabaseException('Failed to create conversion');
         }
 
         return $this->get($convId);

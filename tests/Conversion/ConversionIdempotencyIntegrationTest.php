@@ -190,4 +190,31 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::assertFalse($result['duplicate']);
         self::assertSame(0, $this->conversionCount(999999), 'No conversion may be recorded for a non-existent click');
     }
+
+    // --- V3 API path (now shares the same canonical writer) ---
+
+    public function testV3ControllerCreateIsIdempotentThroughSharedWriter(): void
+    {
+        $this->insertClick(1100);
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+
+        $first = $controller->create(['click_id' => 1100, 'transaction_id' => 'V3-DUP', 'payout' => 5.0]);
+        $second = $controller->create(['click_id' => 1100, 'transaction_id' => 'V3-DUP', 'payout' => 5.0]);
+
+        $firstId = (int) $first['data']['conv_id'];
+        self::assertGreaterThan(0, $firstId);
+        self::assertSame($firstId, (int) $second['data']['conv_id'], 'V3 create must dedupe on transaction_id');
+        self::assertSame(1, $this->conversionCount(1100), 'A replayed V3 create must not double-count');
+
+        $click = self::$db->query('SELECT click_lead FROM 202_clicks WHERE click_id=1100')->fetch_assoc();
+        self::assertSame('1', (string) $click['click_lead'], 'V3 create must flag the source click');
+    }
+
+    public function testV3ControllerCreateThrowsNotFoundForMissingClick(): void
+    {
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+
+        $this->expectException(\Api\V3\Exception\NotFoundException::class);
+        $controller->create(['click_id' => 888888, 'transaction_id' => 'V3-X']);
+    }
 }

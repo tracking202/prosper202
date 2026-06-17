@@ -142,40 +142,17 @@ if (!function_exists('p202ExtractTransactionId')) {
     }
 }
 
-if (!function_exists('p202SafeDbError')) {
-    /**
-     * Read mysqli::$error without risking a fatal Error. On PHP 8.4 accessing
-     * ->error on a closed/never-opened connection throws "object is already
-     * closed"; we never want diagnostics to crash the caller.
-     */
-    function p202SafeDbError(mysqli $db): string
-    {
-        try {
-            return (string) $db->error;
-        } catch (\Error $e) {
-            return '(error unavailable)';
-        }
-    }
-}
-
 if (!function_exists('p202RecordConversion')) {
     /**
      * Record a conversion atomically and idempotently for the legacy static
      * postback/pixel endpoints (gpx/gpb/upx).
      *
-     * Everything runs in a single transaction:
-     *   1. the source click row is locked with SELECT ... FOR UPDATE so concurrent
-     *      or retried postbacks for the same click serialise here instead of both
-     *      recording a conversion (TOCTOU race / double count);
-     *   2. when $transactionId is a non-empty network order id that was already
-     *      recorded for this click, the existing conv_id is returned and nothing
-     *      is written (idempotent replay);
-     *   3. otherwise the click-side update (lead flag / payout) and the
-     *      202_conversion_logs insert are applied together — if either fails the
-     *      whole thing is rolled back, so a click is never flagged converted
-     *      without an audit row and vice versa.
-     *
-     * Values in $log are raw (unescaped); this function escapes them.
+     * Thin adapter over the canonical writer MysqlConversionRepository::record():
+     * the click is locked (SELECT ... FOR UPDATE), the conversion is de-duplicated
+     * on a non-empty transaction id (idempotent replay), and the conversion_logs
+     * insert plus the legacy click-side update (lead flag / cpa / payout / spy
+     * table) commit or roll back together. The dirty-hour cache write happens
+     * after commit, only for a newly recorded conversion.
      *
      * @param array<string,int|float|string> $log Conversion_logs column values.
      *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
@@ -196,91 +173,45 @@ if (!function_exists('p202RecordConversion')) {
             throw new \InvalidArgumentException('p202RecordConversion: click_id must be a positive integer');
         }
 
-        $transactionId = trim($transactionId);
+        // Delegate the transactional lock + idempotency + insert to the single
+        // canonical conversion writer (MysqlConversionRepository). The legacy
+        // click-side update (lead flag, cpa, spy table) runs inside that same
+        // transaction via the callback, so the click flag and the audit row commit
+        // or roll back together. Dirty-hour cache invalidation is deferred to after
+        // commit so the click-row lock is not held across memcache I/O.
+        $conn = new \Prosper202\Database\Connection($db);
+        $repo = new \Prosper202\Conversion\MysqlConversionRepository($conn);
 
-        $db->begin_transaction();
-        try {
-            // Lock the source click row so concurrent/retried postbacks for the
-            // same click serialise here instead of both recording a conversion.
-            $lockResult = $db->query('SELECT click_id FROM 202_clicks WHERE click_id = ' . $clickId . ' LIMIT 1 FOR UPDATE');
-            if ($lockResult === false) {
-                throw new \RuntimeException('p202RecordConversion: failed to lock click row: ' . p202SafeDbError($db));
-            }
-            $clickExists = $lockResult->fetch_assoc();
-            $lockResult->free();
-            if (!$clickExists) {
-                // The click is gone; do not insert an orphan conversion.
-                $db->rollback();
-                return ['conv_id' => 0, 'duplicate' => false];
-            }
+        $data = [
+            'click_id'        => $clickId,
+            'transaction_id'  => trim($transactionId),
+            'campaign_id'     => (int) ($log['campaign_id'] ?? 0),
+            'payout'          => (float) ($log['click_payout'] ?? 0),
+            'click_time'      => (int) ($log['click_time'] ?? 0),
+            'conv_time'       => (int) ($log['conv_time'] ?? time()),
+            'time_difference' => (string) ($log['time_difference'] ?? ''),
+            'ip'              => (string) ($log['ip'] ?? ''),
+            'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
+            'user_agent'      => (string) ($log['user_agent'] ?? ''),
+        ];
 
-            // Idempotency: a non-empty network order id already recorded for this
-            // click means this is a replay/retry — return the existing conversion.
-            // The lookup intentionally does NOT filter on `deleted`: it must match
-            // the UNIQUE (click_id, transaction_id) key (which ignores `deleted`),
-            // otherwise a replay of a soft-deleted conversion would miss here and
-            // then hit a duplicate-key error on insert.
-            if ($transactionId !== '') {
-                $txEsc = $db->real_escape_string($transactionId);
-                $dupSql = "SELECT conv_id FROM 202_conversion_logs"
-                    . " WHERE click_id = " . $clickId
-                    . " AND transaction_id = '" . $txEsc . "'"
-                    . " LIMIT 1";
-                $dupResult = $db->query($dupSql);
-                if ($dupResult === false) {
-                    throw new \RuntimeException('p202RecordConversion: idempotency lookup failed: ' . p202SafeDbError($db));
-                }
-                $dupRow = $dupResult->fetch_assoc();
-                $dupResult->free();
-                if ($dupRow) {
-                    $db->commit();
-                    return ['conv_id' => (int) $dupRow['conv_id'], 'duplicate' => true];
+        $result = $repo->record(
+            (int) ($log['user_id'] ?? 0),
+            $data,
+            function (int $lockedClickId, float $payout) use ($db, $clickCpa, $usePixelPayout, $clickPayout): void {
+                if (!p202ApplyConversionUpdate($db, (string) $lockedClickId, $clickCpa, $usePixelPayout, $clickPayout, null, true)) {
+                    throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $lockedClickId);
                 }
             }
+        );
 
-            // Apply the click-side conversion update (lead flag, cpa, payout).
-            // Defer the dirty-hour cache write until after commit (below) so the
-            // click-row lock is not held across memcache I/O.
-            if (!p202ApplyConversionUpdate($db, (string) $clickId, $clickCpa, $usePixelPayout, $clickPayout, null, true)) {
-                throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $clickId);
-            }
-
-            // Empty transaction ids are stored as NULL (not '') so the UNIQUE key on
-            // (click_id, transaction_id) still allows a click to convert more than
-            // once when no network order id is supplied.
-            $transactionSql = $transactionId !== ''
-                ? "'" . $db->real_escape_string($transactionId) . "'"
-                : 'NULL';
-
-            $insertSql = "INSERT INTO 202_conversion_logs SET"
-                . " click_id = " . $clickId . ","
-                . " transaction_id = " . $transactionSql . ","
-                . " campaign_id = '" . $db->real_escape_string((string) ($log['campaign_id'] ?? '0')) . "',"
-                . " click_payout = '" . $db->real_escape_string((string) ($log['click_payout'] ?? '0')) . "',"
-                . " user_id = '" . $db->real_escape_string((string) ($log['user_id'] ?? '0')) . "',"
-                . " click_time = '" . $db->real_escape_string((string) ($log['click_time'] ?? '0')) . "',"
-                . " conv_time = '" . $db->real_escape_string((string) ($log['conv_time'] ?? '0')) . "',"
-                . " time_difference = '" . $db->real_escape_string((string) ($log['time_difference'] ?? '')) . "',"
-                . " ip = '" . $db->real_escape_string((string) ($log['ip'] ?? '')) . "',"
-                . " pixel_type = '" . $db->real_escape_string((string) ($log['pixel_type'] ?? '0')) . "',"
-                . " user_agent = '" . $db->real_escape_string((string) ($log['user_agent'] ?? '')) . "',"
-                . " deleted = 0";
-
-            if (!$db->query($insertSql)) {
-                throw new \RuntimeException('p202RecordConversion: conversion_logs insert failed: ' . p202SafeDbError($db));
-            }
-            $convId = (int) $db->insert_id;
-
-            $db->commit();
-
-            // Cache invalidation runs AFTER commit so the click lock is released first.
+        // Invalidate the hour cache only when a NEW conversion was recorded — not on
+        // an idempotent duplicate, and not when the click was missing.
+        if ($result['clickFound'] && !$result['duplicate']) {
             $de = new DataEngine();
             $de->setDirtyHour((string) $clickId);
-
-            return ['conv_id' => $convId, 'duplicate' => false];
-        } catch (\Throwable $e) {
-            $db->rollback();
-            throw $e;
         }
+
+        return ['conv_id' => $result['convId'], 'duplicate' => $result['duplicate']];
     }
 }
