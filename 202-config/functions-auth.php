@@ -56,6 +56,21 @@ if (!function_exists('verify_user_pass')) {
 class AUTH
 {
     public const LOGOUT_DAYS = 14;
+
+    // Brute-force throttle: once failed attempts within RATE_LIMIT_WINDOW seconds
+    // exceed these counts, further attempts are blocked until older failures age
+    // out of the window. The per-account limit protects a targeted user; the
+    // higher per-IP limit is a backstop that still tolerates shared NAT/proxy IPs.
+    public const RATE_LIMIT_WINDOW = 900;       // 15 minutes
+    public const RATE_LIMIT_MAX_PER_USER = 10;
+    public const RATE_LIMIT_MAX_PER_IP = 50;
+
+    // Step-up protection: wrong current-password attempts allowed within one
+    // session before the change-password flow tears the session down. Guards
+    // against someone holding a session they shouldn't (shared machine, ridden
+    // cookie) guessing the password toward a full account takeover.
+    public const MAX_PASSWORD_REAUTH_FAILS = 5;
+
     private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted != 1 AND u.user_active = 1 LIMIT 1';
     private static bool $passwordColumnChecked = false;
     private static bool $sessionHeartbeatRefreshed = false;
@@ -88,7 +103,7 @@ class AUTH
     public static function logged_in()
     {
         $session_time_passed = isset($_SESSION['session_time']) ? time() - $_SESSION['session_time'] : PHP_INT_MAX;
-        if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and ($_SESSION['session_fingerprint'] == md5('session_fingerprint' . session_id())) and ($session_time_passed < 50000)) {
+        if (isset($_SESSION['user_name']) and isset($_SESSION['user_id']) and isset($_SESSION['session_fingerprint']) and hash_equals(self::session_fingerprint(), (string) $_SESSION['session_fingerprint']) and ($session_time_passed < 50000)) {
             if (!self::$sessionHeartbeatRefreshed) {
                 self::writeSessionValue('session_time', time());
                 self::$sessionHeartbeatRefreshed = true;
@@ -232,7 +247,7 @@ class AUTH
                 session_regenerate_id(true);
             }
 
-            $_SESSION['session_fingerprint'] = md5('session_fingerprint' . session_id());
+            $_SESSION['session_fingerprint'] = self::session_fingerprint();
             $_SESSION['session_time'] = time();
             $_SESSION['user_name'] = $user_row['user_name'];
             $_SESSION['user_id'] = (int) $user_row['user_id'];
@@ -342,9 +357,14 @@ class AUTH
     public static function remember_me_on_logged_out()
     {
         if (isset($_COOKIE['remember_me']) && AUTH::logged_in() == false) {
-            [$user_id, $auth_key, $hash] = explode('-', (string) $_COOKIE['remember_me']);
+            $parts = explode('-', (string) $_COOKIE['remember_me']);
+            if (count($parts) !== 3) {
+                return false;
+            }
+            [$user_id, $auth_key, $hash] = $parts;
             if (!empty($user_id) && !empty($auth_key) && !empty($hash)) {
-                if ($hash !== hash_hmac('sha256', $user_id . '-' . $auth_key, (string) self::get_user_secret_key($user_id))) {
+                $expected = hash_hmac('sha256', $user_id . '-' . $auth_key, (string) self::get_user_secret_key($user_id));
+                if (!hash_equals($expected, (string) $hash)) {
                     return false;
                 }
 
@@ -451,7 +471,9 @@ class AUTH
         _mysqli_query($sql);
         $hash = hash_hmac('sha256', $_SESSION['user_own_id'] . '-' . $auth_key, (string) self::get_user_secret_key($_SESSION['user_own_id']));
         $expire = strtotime('+' . self::LOGOUT_DAYS . ' days');
-        $secure = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+        // Use the canonical HTTPS check so the cookie's Secure flag isn't dropped
+        // behind proxies that signal TLS via X-Forwarded-SSL/Port or REQUEST_SCHEME.
+        $secure = function_exists('getSecureStatus') ? getSecureStatus() : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
         setcookie('remember_me', $_SESSION['user_own_id'] . '-' . $auth_key . '-' . $hash, [
             'expires' => $expire,
             'path' => '/',
@@ -478,6 +500,123 @@ class AUTH
     {
         $sql = 'DELETE FROM 202_auth_keys WHERE expires < UNIX_TIMESTAMP()';
         _mysqli_query($sql);
+    }
+
+    /**
+     * Build a sanitized, serialized snapshot of the request for the login audit
+     * log. The previous code stored serialize($_SERVER) and serialize($_SESSION)
+     * verbatim, which persisted live secrets at rest on every login attempt —
+     * the request's Cookie header (containing the PHPSESSID and remember_me
+     * token), Authorization header, and the whole session (API keys, CSRF
+     * token). None of that is ever displayed; only a few forensic fields are.
+     * Keep just those safe fields and drop everything sensitive.
+     */
+    public static function login_audit_snapshot(): string
+    {
+        $server = $_SERVER ?? [];
+        $safe = [];
+        foreach (['REQUEST_METHOD', 'REQUEST_URI', 'SERVER_NAME', 'HTTP_HOST', 'HTTP_USER_AGENT', 'HTTP_REFERER', 'REMOTE_ADDR'] as $key) {
+            if (isset($server[$key]) && is_scalar($server[$key])) {
+                $safe[$key] = (string) $server[$key];
+            }
+        }
+
+        return serialize($safe);
+    }
+
+    /**
+     * Derive the session fingerprint. Binds the session to the client's
+     * User-Agent on top of the session id (HMAC keyed on the id, so it still
+     * rotates with session_regenerate_id()). The previous value hashed only the
+     * session id, which an attacker who stole the cookie already possessed — so
+     * it provided no protection. Binding to the User-Agent means a leaked session
+     * id alone (e.g. from a log) no longer validates unless the UA is replayed.
+     */
+    public static function session_fingerprint(): string
+    {
+        $userAgent = (string) ($_SERVER['HTTP_USER_AGENT'] ?? '');
+        return hash_hmac('sha256', 'session_fingerprint|' . $userAgent, (string) session_id());
+    }
+
+    /**
+     * Return the trust-aware client IP, validated. connect.php normalizes the
+     * real client address into HTTP_X_FORWARDED_FOR (CF-Connecting-IP, X-Real-IP,
+     * …) but on a direct request — or a proxy that doesn't strip client-supplied
+     * forwarding headers — that value can be attacker-controlled garbage or
+     * longer than the 255-char log column. Validate it as an IP and fall back to
+     * REMOTE_ADDR, so the throttle key and audit log only ever see a real IP.
+     */
+    public static function client_ip(): string
+    {
+        foreach ([$_SERVER['HTTP_X_FORWARDED_FOR'] ?? '', $_SERVER['REMOTE_ADDR'] ?? ''] as $candidate) {
+            $candidate = trim((string) $candidate);
+            if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+                return $candidate;
+            }
+        }
+        return '0.0.0.0';
+    }
+
+    /**
+     * Constant-time validation of the anti-CSRF token. Forms embed
+     * $_SESSION['token'] (seeded in connect.php) as a hidden field; a cross-site
+     * attacker cannot read it, so a forged POST fails this check.
+     */
+    public static function check_csrf_token(): bool
+    {
+        $sessionToken = (string) ($_SESSION['token'] ?? '');
+        $postedToken = (string) ($_POST['token'] ?? '');
+        // Fail closed when either side is empty. Otherwise hash_equals('', '')
+        // would return true and let a request through if the session token was
+        // never seeded (session start/write failure, or a legacy entry point
+        // that bypasses connect.php).
+        if ($sessionToken === '' || $postedToken === '') {
+            return false;
+        }
+        return hash_equals($sessionToken, $postedToken);
+    }
+
+    /**
+     * Brute-force throttle. Returns true when recent failed login attempts for
+     * this IP or username exceed the configured thresholds within the rolling
+     * window, in which case the caller should reject the attempt without
+     * checking credentials.
+     */
+    public static function is_rate_limited(\mysqli $db, string $username, string $ip): bool
+    {
+        $since = time() - self::RATE_LIMIT_WINDOW;
+
+        $ip = trim($ip);
+        if ($ip !== '' && self::count_recent_failures($db, 'ip_address', $ip, $since) >= self::RATE_LIMIT_MAX_PER_IP) {
+            return true;
+        }
+
+        $username = trim($username);
+        if ($username !== '' && self::count_recent_failures($db, 'user_name', $username, $since) >= self::RATE_LIMIT_MAX_PER_USER) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static function count_recent_failures(\mysqli $db, string $column, string $value, int $since): int
+    {
+        // $column is a fixed internal literal ('ip_address' | 'user_name'), never
+        // request input, so it is safe to interpolate; $value/$since are bound.
+        $stmt = $db->prepare(
+            'SELECT COUNT(*) AS failures FROM 202_users_log '
+            . 'WHERE login_success = 0 AND ' . $column . ' = ? AND login_time >= ?'
+        );
+        if (!$stmt) {
+            throw new \RuntimeException('Unable to prepare login throttle query: ' . $db->error);
+        }
+        self::bind($stmt, 'si', $value, $since);
+        self::execute($stmt, 'Unable to execute login throttle query');
+        $result = $stmt->get_result();
+        $row = $result ? $result->fetch_assoc() : null;
+        $stmt->close();
+
+        return $row ? (int) $row['failures'] : 0;
     }
 
     public static function dev_urand($min = 0, $max = 0x7FFFFFFF)

@@ -8,6 +8,13 @@ services:
       - ./build/php/conf.d/error-reporting.ini:/usr/local/etc/php/conf.d/zz-error-reporting.ini:ro
     environment:
       APP_ENV: ${APP_ENV:-development}
+      # Passed through so the entrypoint can self-write 202-config.php and the
+      # wizard opens with the database step already done. Must match the db
+      # service below.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env — copy .env.example or run ./start.sh}
+      MYSQL_DATABASE: prosper202
+      DB_HOST: db
+      MC_HOST: memcached
     depends_on:
       db:
         condition: service_healthy
@@ -32,6 +39,22 @@ services:
 
   memcached:
     image: memcached:1.6-alpine
+
+  # Runs the scheduled jobs so the user never has to touch the host crontab.
+  # 202-cronjobs/index.php has its own file-lock and frequency tiers, so polling
+  # it once a minute is safe. busybox wget (built into alpine) avoids any extra
+  # install step; failures while the web container is still booting are ignored.
+  cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_started
+    command: >
+      sh -c 'while true; do
+               wget -q -O /dev/null http://web/202-cronjobs/index.php || true;
+               sleep 60;
+             done'
 
   # Opt-in only (docker compose --profile debug up -d) and bound to loopback:
   # this panel exposes MySQL root, so it must never listen on a public

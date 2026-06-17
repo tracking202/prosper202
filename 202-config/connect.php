@@ -13,6 +13,27 @@ require_once(__DIR__ . '/version.php');
 ini_set('session.gc_maxlifetime', '50000');
 ini_set('session.cookie_lifetime', '0'); // session cookie — expires when browser closes
 
+// Harden the session cookie before it is created. Without these, the PHPSESSID
+// cookie is readable from JavaScript (XSS session theft) and sent cross-site.
+//  - HttpOnly:  not exposed to document.cookie
+//  - SameSite:  Lax blocks the cookie on cross-site POSTs (CSRF mitigation) while
+//               still allowing normal top-level navigations.
+//  - Secure:    only sent over HTTPS. Gated on the request actually being HTTPS so
+//               plain-HTTP installs (local/dev, TLS-terminating proxies that don't
+//               forward the flag) keep working.
+// This mirrors getSecureStatus() (functions-tracking202.php); we can't call that
+// helper here because it isn't loaded until after the session must be started.
+$_request_is_https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
+    || (!empty($_SERVER['HTTP_X_FORWARDED_SSL']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_SSL']) === 'on')
+    || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443)
+    || (isset($_SERVER['HTTP_X_FORWARDED_PORT']) && (int) $_SERVER['HTTP_X_FORWARDED_PORT'] === 443)
+    || (isset($_SERVER['REQUEST_SCHEME']) && strtolower((string) $_SERVER['REQUEST_SCHEME']) === 'https');
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
+ini_set('session.cookie_secure', $_request_is_https ? '1' : '0');
+ini_set('session.use_strict_mode', '1'); // reject attacker-supplied (uninitialized) session IDs
+
 // Start the session at the beginning to avoid undefined $_SESSION variable.
 // AJAX detection depends on clients sending X-Requested-With. jQuery does this
 // automatically; fetch() and sendBeacon() do not unless the caller adds it.
@@ -171,11 +192,24 @@ if (file_exists(ROOT_PATH  . '202-config.php')) {
     die();
 }
 include_once(ROOT_PATH  . '202-config.php');
-// Load Composer autoloader if available for PSR-4 classes.
+// Composer dependencies provide the PSR-4 classes used by tracking, install,
+// and the API. A missing vendor/ almost always means the app was deployed from
+// a raw git clone without running `composer install`. Fail loudly with guidance
+// instead of silently limping on to a confusing "Class not found" fatal deeper
+// in the request (CLAUDE.md #4: no silent fallbacks).
 $autoloadPath = ROOT_PATH . 'vendor/autoload.php';
-if (file_exists($autoloadPath)) {
-    require_once $autoloadPath;
+if (!file_exists($autoloadPath)) {
+    http_response_code(500);
+    die('<h2>Prosper202: dependencies are missing</h2>'
+        . '<p>The <code>vendor/</code> folder was not found, so required libraries '
+        . 'cannot be loaded.</p><ul>'
+        . '<li><strong>Shared hosting / no terminal:</strong> download the official '
+        . 'release zip &mdash; it already bundles <code>vendor/</code> &mdash; and upload '
+        . 'that instead of a raw <code>git clone</code>.</li>'
+        . '<li><strong>Have a terminal:</strong> run <code>composer install</code> in the '
+        . 'Prosper202 directory.</li></ul>');
 }
+require_once $autoloadPath;
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');

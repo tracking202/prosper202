@@ -7,21 +7,26 @@ $error = [];
 $html = [];
 $success = false;
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !AUTH::check_csrf_token()) {
+	$error['user'] = 'Your session has expired. Please reload the page and try again.';
+}
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 
 	$mysql['user_name'] = $db->real_escape_string((string)$_POST['user_name']);
 	$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
 
 	$user_sql = "SELECT user_id FROM 202_users WHERE user_name='" . $mysql['user_name'] . "' AND user_email='" . $mysql['user_email'] . "'";
 	$user_result = _mysqli_query($user_sql, $db);
-	$user_row = $user_result->fetch_assoc();
+	$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
 
-	if (!$user_row) {
-		$error['user'] = 'Invalid username /email combination.';
-	}
+	// Always report success regardless of whether the account exists. Revealing
+	// "invalid username/email combination" lets an attacker enumerate which
+	// usernames and emails are registered. Only actually issue a reset when the
+	// account matches.
+	$success = true;
 
-	//i there isn't any error, give this user, a new password, and email it to them!
-	if (!$error) {
+	if ($user_row) {
 
 		$mysql['user_id'] = $db->real_escape_string((string) $user_row['user_id']);
 
@@ -33,13 +38,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['user_pass_time'] = time();
 
 		//insert this verification key into the database, and the timestamp of inserting it
-		$update_sql = "	UPDATE 	202_users 
+		$update_sql = "	UPDATE 	202_users
 							SET 		user_pass_key='" . $mysql['user_pass_key'] . "',
 										user_pass_time='" . $mysql['user_pass_time'] . "'
 							WHERE		user_id='" . $mysql['user_id'] . "'";
 		$update_result = _mysqli_query($update_sql, $db);
 
-
+		// If the key never persisted, do not mail a dead reset link. Log it
+		// server-side but keep the generic success message (below) so the
+		// response is identical whether or not the account exists.
+		if ($update_result === false) {
+			prosper_log('lost-pass', 'Failed to store reset key for user_id ' . $mysql['user_id'] . ': ' . $db->error);
+		} else {
 		//now email the user the script to reset their email
 		//normalize recipient: strip CR/LF and require a valid address before use in headers/mail()
 		$to = str_replace(["\r", "\n"], '', (string) $_POST['user_email']);
@@ -47,22 +57,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$to = '';
 		}
 		$server_name = str_replace(["\r", "\n"], '', (string) ($_SERVER['SERVER_NAME'] ?? ''));
-		$subject = "[Propser202 on " . $server_name . "] Password Reset";
+		// Match the scheme the request came in on so the reset link isn't downgraded to http.
+		$scheme = getSecureStatus() ? 'https' : 'http';
+		// get_absolute_url() is '' on root installs, so ensure a leading slash or
+		// the link becomes "https://example.com202-pass-reset.php" (unusable).
+		$base_path = get_absolute_url();
+		if ($base_path === '' || $base_path[0] !== '/') {
+			$base_path = '/' . $base_path;
+		}
+		$reset_url = $scheme . '://' . $server_name . $base_path . '202-pass-reset.php?key=' . $user_pass_key;
+		$subject = "[Prosper202 on " . $server_name . "] Password Reset";
 
 		$message = "
 <p>Someone has asked to reset the password for the following site and username.</p>
 
-<p><a href=\"http://" . $server_name . "\">http://" . $server_name . "</a></p>
+<p><a href=\"" . $scheme . "://" . $server_name . "\">" . $scheme . "://" . $server_name . "</a></p>
 
 <p>Username: " . htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8') . "</p>
 
 <p>To reset your password visit the following address, otherwise just ignore this email and nothing will happen.</p>
 
-<p><a href=\"http://" . $server_name . "/202-pass-reset.php?key=$user_pass_key\">http://" . $server_name . get_absolute_url() . "202-pass-reset.php?key=$user_pass_key</a></p>";
+<p><a href=\"" . $reset_url . "\">" . $reset_url . "</a></p>";
 
-		$from = "propser202@" . $server_name;
+		$from = "prosper202@" . $server_name;
 
-		$header = "From: Propser202<" . $from . "> \r\n";
+		$header = "From: Prosper202<" . $from . "> \r\n";
 		$header .= "Reply-To: " . $from . " \r\n";
 		$header .=  "To: " . $to . " \r\n";
 		$header .= "Content-Type: text/html; charset=\"iso-8859-1\" \r\n";
@@ -72,8 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($to !== '') {
 			mail((string) $to, $subject, $message, $header);
 		}
-
-		$success = true;
+		}
 	}
 
 
@@ -97,6 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			<center><img src="202-img/prosper202.png"></center>
 			<center><span class="infotext">Please enter your username and e-mail address.<br />You will receive a new password via e-mail to <a href="<?php echo get_absolute_url(); ?>202-login.php">login</a> with.</span></center>
 			<form class="form-signin form-horizontal" role="form" method="post" action="">
+				<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 				<div class="form-group <?php if (isset($error['user'])) echo "has-error"; ?>">
 					<?php if (isset($error['user'])) { ?>
 						<div class="tooltip right in login_tooltip">

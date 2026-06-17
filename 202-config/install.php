@@ -57,7 +57,9 @@ $success = false;
 $html = [
 	'user_email' => '',
 	'user_name' => '',
-	'user_api' => ''
+	'user_api' => '',
+	'rest_api_key' => '',
+	'user_id' => 0
 ];
 
 // Initialize $error array elements to prevent undefined array key warnings
@@ -303,6 +305,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$install_warnings[] = 'Automatic cron setup didn\'t complete. Tracking still works — you can enable it later from <strong>Settings &rarr; Cron</strong>.';
 			}
 
+			// Generate a REST API v3 key for the new admin so the CLI and the
+			// Claude onboarding agent can authenticate right away. This is the
+			// local 202_api_keys Bearer key, distinct from the my.tracking202
+			// install key (p202_customer_api_key) collected above. Best-effort:
+			// failing to persist a key just means it isn't shown, not a failed install.
+			$rest_api_key = bin2hex(random_bytes(32));
+			$apikey_stmt = $db->prepare("INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)");
+			if ($apikey_stmt === false) {
+				$rest_api_key = '';
+			} else {
+				$apikey_created_at = time();
+				// $user_id is already a real int in this flow (cast on insert and lookup).
+				$apikey_stmt->bind_param('isi', $user_id, $rest_api_key, $apikey_created_at);
+				if (!$apikey_stmt->execute()) {
+					// Don't surface a key we failed to persist.
+					$rest_api_key = '';
+				}
+				$apikey_stmt->close();
+			}
+			$html['rest_api_key'] = htmlentities($rest_api_key, ENT_QUOTES, 'UTF-8');
+			$html['user_id'] = $user_id;
+
 			// Daily email reports register with an external service; optional.
 			try {
 				registerDailyEmail('07', $user_timezone, $hash);
@@ -339,7 +363,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if ($isAjax) {
 		if ($success) {
 			ob_start();
-			render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''));
+			$base_url = install_request_base_url($_SERVER, get_absolute_url());
+			render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''), $base_url);
 			$panel = ob_get_clean();
 			install_json([
 				'success'  => true,
@@ -666,6 +691,7 @@ if (!$success) {
 //if success is equal to true, and this campaign did complete
 if ($success) {
 	info_top();
-	render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''));
+	$base_url = install_request_base_url($_SERVER, get_absolute_url());
+	render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''), $base_url);
 	info_bottom();
 }

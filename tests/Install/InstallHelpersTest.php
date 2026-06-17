@@ -196,11 +196,51 @@ final class InstallHelpersTest extends TestCase
     }
 
     /** Capture the success panel HTML. */
-    private function renderSuccess(array $html, array $warnings, string $base, string $serverName): string
+    private function renderSuccess(array $html, array $warnings, string $base, string $serverName, string $baseUrl = 'https://host.test/'): string
     {
         ob_start();
-        render_install_success($html, $warnings, $base, $serverName);
+        render_install_success($html, $warnings, $base, $serverName, $baseUrl);
         return (string) ob_get_clean();
+    }
+
+    public function testRequestBaseUrlPrefersHostHeaderAndScheme(): void
+    {
+        $this->assertSame(
+            'https://host.test:8000/',
+            install_request_base_url(['HTTPS' => 'on', 'HTTP_HOST' => 'host.test:8000', 'SERVER_NAME' => 'host.test'], '/')
+        );
+        $this->assertSame(
+            'http://fallback.test/p/',
+            install_request_base_url(['SERVER_NAME' => 'fallback.test'], '/p/')
+        );
+        $this->assertSame(
+            'http://localhost/',
+            install_request_base_url([], '/')
+        );
+    }
+
+    public function testSuccessPanelRendersCronLine(): void
+    {
+        $out = $this->renderSuccess(['user_name' => 'admin1'], [], 'https://host.test/', 'host.test', 'https://host.test:8000/');
+
+        $this->assertStringContainsString('Keep background jobs running', $out);
+        $this->assertStringContainsString('https://host.test:8000/202-cronjobs/index.php', $out);
+    }
+
+    public function testSuccessPanelShowsApiKeyOnlyWhenPresent(): void
+    {
+        $without = $this->renderSuccess(['user_name' => 'admin1'], [], 'https://host.test/', 'host.test');
+        $this->assertStringNotContainsString('Connect the CLI', $without);
+
+        $with = $this->renderSuccess(
+            ['user_name' => 'admin1', 'rest_api_key' => 'deadbeef', 'user_id' => 7],
+            [],
+            'https://host.test/',
+            'host.test'
+        );
+        $this->assertStringContainsString('Connect the CLI', $with);
+        $this->assertStringContainsString('deadbeef', $with);
+        $this->assertStringContainsString('<code>7</code>', $with);
     }
 
     public function testSuccessPanelRendersAccountAndLoginLink(): void

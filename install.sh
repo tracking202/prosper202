@@ -1237,6 +1237,10 @@ show_summary() {
         lines+=("  2. Open the application in your browser")
         lines+=("     Complete the setup wizard to create your admin account")
         lines+=("")
+        lines+=("  3. Keep background jobs running — add this to your crontab")
+        lines+=("     (${DIM}crontab -e${RESET}; replace the URL with your site):")
+        lines+=("     ${BOLD}* * * * * curl -s \"http://your-domain/202-cronjobs/index.php\" >/dev/null 2>&1${RESET}")
+        lines+=("")
         if [ -f "$SCRIPT_DIR/202-config.php" ]; then
             lines+=("  ${CHECK} Config file: 202-config.php")
         fi

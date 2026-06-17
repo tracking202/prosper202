@@ -13,9 +13,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$username_raw = (string)($_POST['user_name'] ?? '');
 	$password = (string)($_POST['user_pass'] ?? '');
 	$username = trim($username_raw);
+	// Validated, trust-aware client IP (not the shared proxy REMOTE_ADDR, and
+	// rejects spoofed/overlong forwarded values).
+	$login_ip = AUTH::client_ip();
+	$rate_limited = false;
 
-	if ($username === '' || $password === '') {
+	// CSRF: validate the session token the form already embeds.
+	$csrf_ok = AUTH::check_csrf_token();
+	if (!$csrf_ok) {
+		$error['user'] = '<div class="error">Your session has expired. Please reload the page and try again.</div>';
+	}
+
+	if (empty($error) && ($username === '' || $password === '')) {
 		$error['user'] = '<div class="error">Enter both a username and password.</div>';
+	}
+
+	// Brute-force throttle (fail open if the throttle query errors).
+	if (empty($error)) {
+		try {
+			$rate_limited = AUTH::is_rate_limited($db, $username, $login_ip);
+		} catch (RuntimeException $exception) {
+			prosper_log('login', 'Mobile rate limit check failed: ' . $exception->getMessage());
+		}
+		if ($rate_limited) {
+			$error['user'] = '<div class="error">Too many failed login attempts. Please wait a few minutes and try again.</div>';
+		}
 	}
 
 	$login_result = null;
@@ -32,14 +54,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['user'] = '<div class="error">Your username or password is incorrect.</div>';
 	}
 
+	// Skip logging throttled/CSRF-rejected attempts so the window can clear.
 	$login_success = empty($error) ? 1 : 0;
-	$log_stmt = $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+	$should_log_attempt = !$rate_limited && $csrf_ok;
+	$log_stmt = $should_log_attempt
+		? $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+		: false;
 	if ($log_stmt) {
 		$login_error_serialized = serialize($error);
-		$login_server_serialized = serialize($_SERVER);
-		$login_session_serialized = serialize($_SESSION);
+		$login_server_serialized = AUTH::login_audit_snapshot();
+		$login_session_serialized = ''; // never persist session contents (API keys, tokens) at rest
 		$redacted_password = '[filtered]';
-		$ip_address = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+		$ip_address = $login_ip; // same client IP the throttle keys on, so counts line up
 		$login_time = time();
 		$log_stmt->bind_param(
 			'sssiisss',
@@ -54,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		);
 		$log_stmt->execute();
 		$log_stmt->close();
-	} else {
+	} elseif ($should_log_attempt) {
 		prosper_log('login', 'Unable to prepare mobile login log statement: ' . $db->error);
 	}
 

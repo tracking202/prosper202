@@ -542,8 +542,11 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	if ($_POST['retype_new_user_pass'] == '') {
 		$error['user_pass'] .= ' You must type verify your password.';
 	}
-	if ((strlen((string) $_POST['new_user_pass']) < 6) or (strlen((string) $_POST['new_user_pass']) > 35)) {
-		$error['user_pass'] .= ' Your password must be between 6 and 35 characters long.';
+	// Cap at 72 bytes: PASSWORD_DEFAULT is bcrypt, which only hashes the first 72
+	// bytes. Allowing more would silently ignore the tail (any suffix past byte 72
+	// would also authenticate).
+	if ((strlen((string) $_POST['new_user_pass']) < 8) or (strlen((string) $_POST['new_user_pass']) > 72)) {
+		$error['user_pass'] .= ' Your password must be between 8 and 72 characters long.';
 	}
 	if ($_POST['new_user_pass'] != $_POST['retype_new_user_pass']) {
 		$error['user_pass'] .= ' Your password did not match, please try again.';
@@ -563,6 +566,30 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 			$verify_stmt->close();
 			if (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
 				$error['user_pass'] .= 'Your old password was typed incorrectly.';
+
+				// Count wrong current-password attempts within this session (only
+				// when the request is genuine — a valid CSRF token — so a forged
+				// cross-site POST can't force-logout the victim). Too many almost
+				// always means someone is poking at a session they shouldn't have,
+				// so tear it down and force a fresh login rather than letting them
+				// keep guessing toward an account takeover.
+				if (empty($error['token'])) {
+					$_SESSION['pw_change_fails'] = (int) ($_SESSION['pw_change_fails'] ?? 0) + 1;
+					if ($_SESSION['pw_change_fails'] >= AUTH::MAX_PASSWORD_REAUTH_FAILS) {
+						session_destroy();
+						$secure = function_exists('getSecureStatus')
+							? getSecureStatus()
+							: (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
+						setcookie('remember_me', '', ['expires' => 1, 'path' => '/', 'domain' => AUTH::cookie_domain(), 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
+						unset($_COOKIE['remember_me']);
+						header('location: ' . get_absolute_url() . '202-login.php');
+						exit;
+					}
+				}
+			} else {
+				// Correct current password — this is the legitimate owner, so
+				// clear the failure counter.
+				unset($_SESSION['pw_change_fails']);
 			}
 		} else {
 			$error['user_pass'] .= 'Unable to verify your current password at this time.';
