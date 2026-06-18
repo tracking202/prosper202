@@ -62,9 +62,20 @@ class MessagingService
         }
 
         $service = new self($db, $userId, []);
+
+        // Sub-users on a multi-user install share the owner's install_hash but may
+        // not carry their own p202_customer_api_key. The central API authenticates
+        // with api_key + install_hash, so fall back to the install owner's key
+        // (mirroring the license lookup in functions-auth.php) rather than sending
+        // an empty key, which the server would reject.
+        $apiKey = $feedback['api_key'];
+        if (($apiKey === null || $apiKey === '') && !empty($feedback['install_hash'])) {
+            $apiKey = self::resolveInstallApiKey($db, (string) $feedback['install_hash']);
+        }
+
         $service->identity = [
             'install_hash'  => $feedback['install_hash'],
-            'api_key'       => $feedback['api_key'],
+            'api_key'       => $apiKey,
             'user_id'       => $userId,
             'user_email'    => $feedback['user_email'],
             'registered_at' => $feedback['time_stamp'],
@@ -72,6 +83,30 @@ class MessagingService
         ];
 
         return $service;
+    }
+
+    /**
+     * Find the install owner's customer API key by install_hash, for sub-users
+     * whose own row carries no p202_customer_api_key.
+     */
+    private static function resolveInstallApiKey(mysqli $db, string $installHash): ?string
+    {
+        $sql = "SELECT p202_customer_api_key FROM 202_users
+                 WHERE install_hash = ? AND user_deleted != 1 AND user_active = 1
+                   AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != ''
+                 ORDER BY user_id ASC LIMIT 1";
+        $stmt = $db->prepare($sql);
+        if (!$stmt) {
+            return null;
+        }
+        $stmt->bind_param('s', $installHash);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return null;
+        }
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return $row ? (string) $row['p202_customer_api_key'] : null;
     }
 
     private function client(): MessagingClient
@@ -691,20 +726,16 @@ class MessagingService
             return; // try again next sync
         }
 
-        // Flag exactly the rows we just reported, by local id.
-        $ids = array_keys($rows);
-        $placeholders = implode(',', array_fill(0, count($ids), '?'));
-        $types = str_repeat('i', count($ids));
-        $sql  = "UPDATE 202_messaging_messages SET receipt_sent = 1 WHERE id IN ($placeholders)";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param($types, ...$ids);
-        if (!$stmt->execute()) {
+        // Flag exactly the rows we just reported, by local id. The ids are
+        // integers we just read from the DB (array keys), so they are safe to
+        // inline — this avoids the by-reference pitfalls of binding a dynamic
+        // IN-list via bind_param(...$ids).
+        $ids = array_map('intval', array_keys($rows));
+        $idList = implode(',', $ids);
+        $sql  = "UPDATE 202_messaging_messages SET receipt_sent = 1 WHERE id IN ($idList)";
+        if (!$this->db->query($sql)) {
             error_log('MessagingService: reportReadReceipts flag update failed');
         }
-        $stmt->close();
     }
 
     // ---------------------------------------------------------------------

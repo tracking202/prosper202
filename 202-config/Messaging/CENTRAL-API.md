@@ -9,7 +9,7 @@ The client side (this repository) is implemented in:
 - `202-config/Messaging/MessagingClient.class.php` — HTTP transport
 - `202-config/Messaging/MessagingService.class.php` — local cache + sync orchestration
 - `202-account/ajax/messaging/*.php` — browser endpoints
-- `202-js/messenger.php`, `202-css/messenger.css` — the floating widget
+- `202-js/messenger.js`, `202-css/messenger.css` — the floating widget
 - `202-cronjobs/sync-messaging.php` — proactive background delivery
 
 Because each Prosper202 install is self-hosted and can only make **outbound** HTTPS
@@ -256,7 +256,7 @@ snapshot plus several events at once.
 
 Page code on a Prosper202 install can feed the messenger exactly the way Intercom's
 JavaScript API works — a command queue on a single global function. The widget
-(`202-js/messenger.php`) installs this before it finishes loading, so calls made early
+(`202-js/messenger.js`) installs this before it finishes loading, so calls made early
 are buffered and replayed.
 
 ```js

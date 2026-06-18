@@ -34,8 +34,6 @@ declare(strict_types=1);
 // State persistence
 // ---------------------------------------------------------------------------
 
-const MOCK_STATE_FILE = null; // resolved at runtime below
-
 function state_path(): string
 {
     return sys_get_temp_dir() . '/p202_mock_messaging.json';

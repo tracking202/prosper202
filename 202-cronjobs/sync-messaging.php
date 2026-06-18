@@ -16,7 +16,7 @@
 
 declare(strict_types=1);
 
-include_once(str_repeat('../', 1) . '202-config/connect.php');
+include_once(__DIR__ . '/../202-config/connect.php');
 
 // Prevent overlapping runs.
 $lockFile   = __DIR__ . '/messaging-sync.lock';

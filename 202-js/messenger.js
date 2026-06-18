@@ -213,7 +213,9 @@
             ? (m.delivery_status === 'pending' ? 'Sending…'
                 : m.delivery_status === 'failed' ? 'Not delivered' : 'Sent')
             : (m.author === 'system' ? 'System' : 'Prosper202 Team');
-        bodyEl.appendChild(el('div', { 'class': 'p202m-msg-meta ' + dir }, esc(metaText + ' · ' + timeAgo(m.created_at))));
+        var ago = timeAgo(m.created_at);
+        if (ago) { metaText += ' · ' + ago; } // only add the separator when we have a timestamp
+        bodyEl.appendChild(el('div', { 'class': 'p202m-msg-meta ' + dir }, esc(metaText)));
     }
 
     function scrollBottom() { bodyEl.scrollTop = bodyEl.scrollHeight; }
