@@ -199,7 +199,7 @@ final class AttributionTables
                 `user_agent` text NOT NULL,
                 `deleted` tinyint(4) NOT NULL DEFAULT '0',
                 PRIMARY KEY (`conv_id`),
-                KEY `click_id` (`click_id`),
+                UNIQUE KEY `uniq_click_transaction` (`click_id`,`transaction_id`),
                 KEY `user_id` (`user_id`),
                 KEY `campaign_id` (`campaign_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"

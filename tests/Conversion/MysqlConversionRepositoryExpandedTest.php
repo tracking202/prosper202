@@ -170,6 +170,77 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::assertNotEmpty($lockStmts, 'Must use FOR UPDATE to prevent race conditions');
     }
 
+    public function testCreateDeduplicatesOnTransactionId(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows(
+            'FROM 202_clicks WHERE click_id = ?',
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+        );
+        // A conversion with this (click_id, transaction_id) already exists.
+        $write->whenQueryContainsReturnRows('SELECT conv_id FROM 202_conversion_logs', [['conv_id' => 99]]);
+
+        [$repo] = $this->buildRepo($write);
+        $id = $repo->create(1, ['click_id' => 10, 'transaction_id' => 'DUP']);
+
+        self::assertSame(99, $id, 'A duplicate transaction id must return the existing conversion');
+        self::assertCount(0, $write->statementsContaining('INSERT INTO 202_conversion_logs'), 'No second row may be inserted');
+        self::assertCount(0, $write->statementsContaining('UPDATE 202_clicks SET click_lead = 1'), 'The click must not be re-flagged on a duplicate');
+    }
+
+    // --- record() (shared writer used by the legacy static endpoints) ---
+
+    public function testRecordWritesLegacyColumnsAndRunsClickSideCallbackInTransaction(): void
+    {
+        $write = new InsertReportingFakeMysqliConnection(5);
+        $write->whenQueryContainsReturnRows(
+            'FROM 202_clicks WHERE click_id = ?',
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+        );
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $callbackArgs = null;
+        $result = $repo->record(
+            1,
+            [
+                'click_id' => 10,
+                'transaction_id' => '',
+                'pixel_type' => 3,
+                'ip' => '203.0.113.9',
+                'user_agent' => 'UA/1.0',
+                'time_difference' => '0 days',
+            ],
+            function (int $clickId, float $payout) use (&$callbackArgs): void {
+                $callbackArgs = [$clickId, $payout];
+            }
+        );
+
+        self::assertSame(5, $result['convId']);
+        self::assertFalse($result['duplicate']);
+        self::assertTrue($result['clickFound']);
+        self::assertSame([10, 2.75], $callbackArgs, 'The click-side callback runs with the locked click id and payout');
+
+        $insert = $write->statementsContaining('INSERT INTO 202_conversion_logs');
+        self::assertCount(1, $insert);
+        // Base 7 columns (isidiii) + the 4 legacy columns (time_difference, ip,
+        // pixel_type, user_agent) = 11 bound params.
+        self::assertSame(11, strlen($insert[0]->boundTypes));
+        self::assertStringStartsWith('isidiii', $insert[0]->boundTypes);
+        self::assertStringContainsString('pixel_type', $insert[0]->sql);
+    }
+
+    public function testRecordReturnsClickNotFoundWithoutThrowing(): void
+    {
+        $write = new FakeMysqliConnection(); // no click row registered → lock finds nothing
+
+        [$repo] = $this->buildRepo($write);
+        $result = $repo->record(1, ['click_id' => 999]);
+
+        self::assertSame(0, $result['convId']);
+        self::assertFalse($result['clickFound']);
+        self::assertCount(0, $write->statementsContaining('INSERT INTO 202_conversion_logs'));
+    }
+
     // --- softDelete() ---
 
     public function testSoftDeleteSetsDeletedFlag(): void

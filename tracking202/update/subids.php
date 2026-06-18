@@ -5,6 +5,8 @@ include_once(substr(__DIR__, 0, -19) . '/202-config/connect.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 
 use Prosper202\Attribution\AttributionServiceFactory;
+use Prosper202\Conversion\MysqlConversionRepository;
+use Prosper202\Database\Connection;
 AUTH::require_user();
 
 if (!$userObj->hasPermission("access_to_update_section")) {
@@ -25,6 +27,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$subids = trim((string) $subids);
 	$subids = explode("\r", $subids);
 	$subids = str_replace("\n", '', $subids);
+
+	// Conversion rows go through the single canonical writer.
+	$conversionRepo = new MysqlConversionRepository(new Connection($db));
 
 	foreach ($subids as $click_id) {
 		$mysql['click_id'] = $db->real_escape_string($click_id);
@@ -49,65 +54,58 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 
 		if (is_numeric($mysql['click_id'])) {
-			$update_sql = "
-				UPDATE
-					202_clicks
-				SET
-					click_lead='1',
-					`click_filtered`='0'
-				WHERE
-					click_id='" . $mysql['click_id'] . "'
-					AND user_id='" . $mysql['user_id'] . "'
-			";
-			try {
-				$update_result = $db->query($update_sql);
-			} catch (Exception $e) {
-				error_log("Database query failed: " . $e->getMessage());
-				throw new RuntimeException("An error occurred while updating the database.");
-			}
+			$clickId = (int) $mysql['click_id'];
+			$userId = (int) $mysql['user_id'];
 
-			$update_sql = "
-				UPDATE
-					202_clicks_spy
-				SET
-					click_lead='1',
-					`click_filtered`='0'
-				WHERE
-					click_id='" . $mysql['click_id'] . "'
-					AND user_id='" . $mysql['user_id'] . "'
-			";
-			$update_result = $db->query($update_sql) or die($db->error);
+			// Flag the click as a lead and clear any filtering, on both the clicks
+			// and spy tables. When a conversion row is recorded this runs inside the
+			// repository transaction (below) so the flag and the audit row commit or
+			// roll back together.
+			$applyClickUpdate = function () use ($db, $clickId, $userId): void {
+				foreach (['202_clicks', '202_clicks_spy'] as $table) {
+					$update_sql = "UPDATE " . $table . " SET click_lead='1', `click_filtered`='0'"
+						. " WHERE click_id='" . $clickId . "' AND user_id='" . $userId . "'";
+					if (!$db->query($update_sql)) {
+						throw new RuntimeException('subids: failed to update ' . $table . ' for click ' . $clickId);
+					}
+				}
+			};
 
-			// Insert into conversion_logs for attribution tracking (skip if already logged)
-			$check_sql = "SELECT conv_id FROM 202_conversion_logs WHERE click_id = '" . $mysql['click_id'] . "' AND user_id = '" . $mysql['user_id'] . "' AND deleted = 0 LIMIT 1";
+			// Click-level dedup (subid uploads carry no transaction id): only record
+			// a conversion when this click has no non-deleted conversion yet.
+			$check_sql = "SELECT conv_id FROM 202_conversion_logs WHERE click_id = '" . $clickId . "' AND user_id = '" . $userId . "' AND deleted = 0 LIMIT 1";
 			$check_result = $db->query($check_sql);
+
 			if ($check_result && $check_result->num_rows === 0) {
 				$conv_time = time();
 				$click_time = (int) $click_row['click_time'];
-				$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time));
-				$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
-				$diff = $click_time_to_date->diff($conv_time_to_date);
-				$time_difference = $db->real_escape_string($diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec');
-				$campaign_id = $db->real_escape_string((string) $click_row['aff_campaign_id']);
-				$click_payout = $db->real_escape_string((string) $click_row['click_payout']);
+				$diff = (new DateTime(date('Y-m-d H:i:s', $click_time)))->diff(new DateTime(date('Y-m-d H:i:s', $conv_time)));
 
-				$log_sql = "INSERT INTO 202_conversion_logs
-					SET conv_id = DEFAULT,
-						click_id = '" . $mysql['click_id'] . "',
-						campaign_id = '" . $campaign_id . "',
-						click_payout = '" . $click_payout . "',
-						user_id = '" . $mysql['user_id'] . "',
-						click_time = '" . $click_time . "',
-						conv_time = '" . $conv_time . "',
-						time_difference = '" . $time_difference . "',
-						ip = '',
-						pixel_type = '0',
-						user_agent = 'subid-upload'";
-				$db->query($log_sql);
+				$conversionRepo->record(
+					$userId,
+					[
+						'click_id'        => $clickId,
+						'transaction_id'  => '',
+						'campaign_id'     => (int) $click_row['aff_campaign_id'],
+						'payout'          => (float) $click_row['click_payout'],
+						'click_time'      => $click_time,
+						'conv_time'       => $conv_time,
+						'time_difference' => $diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec',
+						'ip'              => '',
+						'pixel_type'      => 0,
+						'user_agent'      => 'subid-upload',
+					],
+					function (int $lockedClickId, float $payout) use ($applyClickUpdate): void {
+						$applyClickUpdate();
+					}
+				);
+			} else {
+				// Already has a conversion logged; just (re)apply the click flag.
+				$applyClickUpdate();
 			}
 
 			$de = new DataEngine();
-			$de->setDirtyHour($mysql['click_id']);
+			$de->setDirtyHour((string) $clickId);
 		}
 	}
 

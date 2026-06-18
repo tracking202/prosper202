@@ -1,0 +1,87 @@
+name: Run Integration Tests
+
+on:
+  push:
+    paths:
+      - '**.php'
+  pull_request:
+    paths:
+      - '**.php'
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: prosper202
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          # See php-unit.yml for why the procedural `memcache` extension is disabled.
+          extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Configure Composer authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            composer config -g github-oauth.github.com "${GITHUB_TOKEN}"
+          fi
+
+      - name: Install dependencies
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
+              echo "MySQL is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready in time" >&2
+          exit 1
+
+      # DB-backed integration tests self-install the schema (SchemaInstaller) and
+      # skip cleanly when P202_TEST_DB_HOST is unset, so this job is the only place
+      # they actually exercise a database.
+      - name: Run conversion integrity integration tests
+        env:
+          P202_TEST_DB_HOST: 127.0.0.1
+          P202_TEST_DB_PORT: 3306
+          P202_TEST_DB_USER: root
+          P202_TEST_DB_PASS: root
+          P202_TEST_DB_NAME: prosper202
+        run: |
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Conversion/ConversionIdempotencyIntegrationTest.php \
+            --verbose --no-coverage

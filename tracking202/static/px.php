@@ -50,9 +50,11 @@ if ($mysql['click_id']) {
 
 	$mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa'] ?? '');
 	
-		p202ApplyConversionUpdate(
+		if (!p202ApplyConversionUpdate(
 			$db,
 			(string) $mysql['click_id'],
 			(string) $mysql['click_cpa']
-		);
+		)) {
+			error_log('px: failed to apply conversion update for click ' . $mysql['click_id']);
+		}
 	}

@@ -460,33 +460,8 @@ $mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 $ip_address = $ip;
 $user_id = $tracker_row['user_id'];
 
-//GEO Lookup
-$GeoData = getGeoData($ip_address);
-$countryName = $GeoData['country'] ?? '';
-$countryCode = $GeoData['country_code'] ?? '';
-$country_id = $locationRepo->findOrCreateCountry($countryName, $countryCode);
-$mysql['country_id'] = $db->real_escape_string((string)$country_id);
-
-$regionName = $GeoData['region'] ?? '';
-$region_id = $locationRepo->findOrCreateRegion($regionName, $country_id);
-$mysql['region_id'] = $db->real_escape_string((string)$region_id);
-
-$cityName = $GeoData['city'] ?? '';
-$city_id = $locationRepo->findOrCreateCity($cityName, $country_id);
-$mysql['city_id'] = $db->real_escape_string((string)$city_id);
-
-
-// Initialize isp_id with default value
-$mysql['isp_id'] = '0';
-if ($tracker_row['maxmind_isp'] == '1') {
-	$IspData = getIspData($ip_address);
-	if (is_string($IspData)) {
-		$IspDataParts = explode(',', $IspData);
-		$IspData = $IspDataParts[0];
-	}
-	$isp_id = $locationRepo->findOrCreateIsp($IspData);
-	$mysql['isp_id'] = $db->real_escape_string((string)$isp_id);
-}
+// GEO/ISP (MaxMind) lookups are deferred into $computeAndRecordClick so the slow
+// database reads stay off the redirect critical path for non-cloaked clicks.
 
 if ($device_id['type'] == '4') {
 	$mysql['click_filtered'] = '1';
@@ -533,7 +508,27 @@ if ($cloaking_on === true) {
 }
 
 // Helper: compute remaining click data and record
-$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url): void {
+$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address): void {
+	// GEO lookup (deferred here so MaxMind reads stay off the redirect hot path)
+	$GeoData = getGeoData($ip_address);
+	$country_id = $locationRepo->findOrCreateCountry($GeoData['country'] ?? '', $GeoData['country_code'] ?? '');
+	$mysql['country_id'] = (string) $country_id;
+	$region_id = $locationRepo->findOrCreateRegion($GeoData['region'] ?? '', $country_id);
+	$mysql['region_id'] = (string) $region_id;
+	$city_id = $locationRepo->findOrCreateCity($GeoData['city'] ?? '', $country_id);
+	$mysql['city_id'] = (string) $city_id;
+
+	// ISP lookup (MaxMind; only when the tracker enables it)
+	$mysql['isp_id'] = '0';
+	if ($tracker_row['maxmind_isp'] == '1') {
+		$IspData = getIspData($ip_address);
+		if (is_string($IspData)) {
+			$IspDataParts = explode(',', $IspData);
+			$IspData = $IspDataParts[0];
+		}
+		$mysql['isp_id'] = (string) $locationRepo->findOrCreateIsp($IspData);
+	}
+
 	// Compute variable_set_id
 	$total_vars = count($custom_var_ids);
 	if ($total_vars > 0) {
@@ -635,7 +630,11 @@ if ($mysql['click_cpa'] != NULL) {
 	$insert_sql = "INSERT INTO 202_cpa_trackers
                                    SET         click_id='" . $mysql['click_id'] . "',
                                                            tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-	$insert_result = $db->query($insert_sql);
+	// Post-redirect: the visitor is already gone, so log a failure instead of
+	// dying (which would abandon the remaining bookkeeping below).
+	if ($db->query($insert_sql) === false) {
+		error_log('dl.php: failed to insert cpa_tracker for click ' . $mysql['click_id'] . ': ' . $db->error);
+	}
 }
 
 //set dirty hour
@@ -644,5 +643,8 @@ $data = ($de->setDirtyHour($mysql['click_id']));
 
 if (isset($_COOKIE['p202_ipx'])) {
 	$mysql['p202_ipx'] = $db->real_escape_string($_COOKIE['p202_ipx']);
-	$db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'");
+	$impression_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'";
+	if ($db->query($impression_sql) === false) {
+		error_log('dl.php: failed to link impression ' . $mysql['p202_ipx'] . ' to click ' . $mysql['click_id'] . ': ' . $db->error);
+	}
 }

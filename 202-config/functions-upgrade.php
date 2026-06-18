@@ -3321,10 +3321,89 @@ class UPGRADE
             $prosper202_version = '1.9.60';
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.60') {
+        // upgrade from 1.9.60 to 1.9.61 - enforce conversion idempotency at the DB
+        // level so retried/replayed postbacks can never double-count a conversion.
+        if ($prosper202_version == '1.9.60') {
 
-            $prosper202_version = '1.9.60';
+            // Empty transaction ids must be stored as NULL, not '', otherwise the
+            // UNIQUE key below would reject a click legitimately converting more
+            // than once when no network order id is supplied (NULLs do not collide).
+            $sql = "UPDATE 202_conversion_logs SET transaction_id = NULL WHERE transaction_id = ''";
+            $result = _upgrade_query($sql);
+
+            // Defensively neutralise any pre-existing duplicate (click_id, transaction_id)
+            // rows by nulling the transaction id on all but the earliest of each group.
+            // This preserves every conversion row (no data loss) while allowing the
+            // UNIQUE index to be created on installs that already contain duplicates.
+            $sql = "UPDATE 202_conversion_logs AS c
+                    JOIN (
+                        SELECT MIN(conv_id) AS keep_id, click_id, transaction_id
+                        FROM 202_conversion_logs
+                        WHERE transaction_id IS NOT NULL
+                        GROUP BY click_id, transaction_id
+                        HAVING COUNT(*) > 1
+                    ) AS d
+                      ON c.click_id = d.click_id
+                     AND c.transaction_id = d.transaction_id
+                    SET c.transaction_id = NULL
+                    WHERE c.conv_id <> d.keep_id";
+            $result = _upgrade_query($sql);
+
+            // Add the UNIQUE backstop only if it is not already present.
+            $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'";
+            $result = _upgrade_query($sql);
+            $uniqueKeyPresent = ($result && mysqli_num_rows($result) > 0);
+            if (!$uniqueKeyPresent) {
+                $sql = "ALTER TABLE `202_conversion_logs`
+                        ADD UNIQUE KEY `uniq_click_transaction` (`click_id`,`transaction_id`)";
+                _upgrade_query($sql);
+
+                // Re-check: only treat the key as present if the ALTER actually
+                // succeeded (e.g. it can fail if de-duplication above did not run).
+                $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'";
+                $result = _upgrade_query($sql);
+                $uniqueKeyPresent = ($result && mysqli_num_rows($result) > 0);
+
+                if ($uniqueKeyPresent) {
+                    // The new composite unique key covers the click_id lookup as a
+                    // leftmost prefix, so drop the now-redundant standalone index.
+                    $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'click_id'";
+                    $result = _upgrade_query($sql);
+                    if ($result && mysqli_num_rows($result) > 0) {
+                        $sql = "ALTER TABLE `202_conversion_logs` DROP INDEX `click_id`";
+                        _upgrade_query($sql);
+                    }
+                }
+            }
+
+            // Add a composite index for the "last click for this ip/user within N
+            // days" lookback the off/postback redirects run on every conversion.
+            // The existing (user_id, click_lead) key can't serve the click_time
+            // range, forcing a scan that adds latency to the hot path.
+            $sql = "SHOW INDEX FROM `202_clicks` WHERE Key_name = 'user_click_time'";
+            $result = _upgrade_query($sql);
+            if (!($result && mysqli_num_rows($result) > 0)) {
+                $sql = "ALTER TABLE `202_clicks` ADD KEY `user_click_time` (`user_id`,`click_time`)";
+                _upgrade_query($sql);
+            }
+
+            // Only advance the schema version once the UNIQUE integrity backstop is
+            // actually in place. If it could not be created (e.g. a failed
+            // de-duplication left colliding rows), leave the version at 1.9.60 so
+            // this block re-runs next upgrade instead of silently skipping the key.
+            // The UPDATE/ALTER statements above are all idempotent on re-run.
+            if ($uniqueKeyPresent) {
+                $sql = "UPDATE 202_version SET version='1.9.61'";
+                $result = _upgrade_query($sql);
+
+                $prosper202_version = '1.9.61';
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if ($prosper202_version > '1.9.61') {
+
+            $prosper202_version = '1.9.61';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }
