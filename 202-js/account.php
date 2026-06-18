@@ -83,11 +83,6 @@ $(document).ready(function() {
 
 });
 
-$(document).on('closed.bs.alert', '#prosper-alerts', function() {
-	var id = $(this).data("alertid");
-    $.post("<?php echo get_absolute_url();?>202-account/ajax/alert-seen.php", { prosper_alert_id:id })
-});
-
 $(document).on('click', '#delete-rest-key', function() {
     var key = $(this).parent().attr("id");
     

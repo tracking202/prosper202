@@ -729,15 +729,24 @@ function info_top(): void
 		$result = curl_exec($ch);
 		curl_close($ch);
 
-		if (strlen($result) > 2000 || !$result) {
-			$result = [
-				'wallpaperImg' => 'https://tracking202-static.s3.amazonaws.com/wallpaper202.jpg',
-				'wallpaperUrl' => 'https://prosper.tracking202.com/apps/?utm_source=p202profb'
-			];
-			return $result;
+		$fallback = [
+			'wallpaperImg' => 'https://tracking202-static.s3.amazonaws.com/wallpaper202.jpg',
+			'wallpaperUrl' => 'https://prosper.tracking202.com/apps/?utm_source=p202profb'
+		];
+
+		if (!is_string($result) || $result === '' || strlen($result) > 2000) {
+			return $fallback;
 		}
-		$result = json_decode($result, true);
-		return $result;
+
+		$decoded = json_decode($result, true);
+		// The remote may return non-JSON (e.g. an error page) or JSON missing the
+		// expected keys; fall back to defaults rather than handing callers a null or
+		// partial array, which caused undefined-offset warnings in info_top().
+		if (!is_array($decoded) || !isset($decoded['wallpaperImg'], $decoded['wallpaperUrl'])) {
+			return $fallback;
+		}
+
+		return $decoded;
 	}
 
 	/**

@@ -79,9 +79,17 @@ if (!function_exists('withWritableSession')) {
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
-// Dashboard API configuration
-DEFINE('DASHBOARD_API_URL', 'https://my.tracking202.com/api/v1');
-DEFINE('DASHBOARD_CACHE_TTL', 3600); // 1 hour
+// Messaging API configuration (Intercom-style messenger).
+// Central server contract: 202-config/Messaging/CENTRAL-API.md
+// Both values are overridable via environment variables so a developer can point
+// the app at the local mock server (202-config/Messaging/mock-server.php) without
+// editing tracked config, e.g. MESSAGING_API_URL=http://127.0.0.1:8787/messaging
+if (!defined('MESSAGING_API_URL')) {
+    DEFINE('MESSAGING_API_URL', getenv('MESSAGING_API_URL') ?: 'https://my.tracking202.com/api/v3/messaging');
+}
+if (!defined('MESSAGING_SYNC_THROTTLE')) {
+    DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user network syncs
+}
 
 //fix for nginx with no server name set
 if ($_SERVER['SERVER_NAME'] == '_') {
@@ -226,6 +234,7 @@ include_once(CONFIG_PATH . '/formatting.php');
 include_once(CONFIG_PATH . '/Role.class.php');
 include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');
+include_once(CONFIG_PATH . '/Messaging/MessagingService.class.php');
 include_once(CONFIG_PATH . '/functions-timeframe.php');
 include_once(CONFIG_PATH . '/functions-db.php');
 include_once(CONFIG_PATH . '/functions-indexes.php');

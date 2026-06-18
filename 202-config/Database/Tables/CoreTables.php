@@ -26,10 +26,14 @@ final class CoreTables
             self::cronjobLogs(),
             self::mysqlErrors(),
             self::delayedSqls(),
-            self::alerts(),
             self::offers(),
             self::filters(),
             self::userDataFeedback(),
+            self::messagingConversations(),
+            self::messagingMessages(),
+            self::messagingSync(),
+            self::messagingEvents(),
+            self::messagingAttributes(),
         ];
     }
 
@@ -108,14 +112,99 @@ final class CoreTables
         );
     }
 
-    public static function alerts(): SchemaDefinition
+    public static function messagingConversations(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
-            TableRegistry::ALERTS,
-            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ALERTS . "` (
-                `prosper_alert_id` int(11) NOT NULL,
-                `prosper_alert_seen` tinyint(1) NOT NULL,
-                UNIQUE KEY `prosper_alert_id` (`prosper_alert_id`)
+            TableRegistry::MESSAGING_CONVERSATIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::MESSAGING_CONVERSATIONS . "` (
+                `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `external_id` varchar(100) NOT NULL,
+                `type` enum('conversation','broadcast') NOT NULL DEFAULT 'conversation',
+                `subject` varchar(255) DEFAULT NULL,
+                `status` enum('open','closed') NOT NULL DEFAULT 'open',
+                `last_message_at` timestamp NULL DEFAULT NULL,
+                `last_message_preview` varchar(255) DEFAULT NULL,
+                `local_only` tinyint(1) NOT NULL DEFAULT '0',
+                `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `user_external` (`user_id`,`external_id`),
+                KEY `user_recent` (`user_id`,`last_message_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function messagingMessages(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::MESSAGING_MESSAGES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::MESSAGING_MESSAGES . "` (
+                `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `conversation_id` int(11) unsigned NOT NULL,
+                `external_id` varchar(100) DEFAULT NULL,
+                `client_token` varchar(64) DEFAULT NULL,
+                `direction` enum('inbound','outbound') NOT NULL,
+                `author` enum('team','system','user') NOT NULL DEFAULT 'team',
+                `body` mediumtext NOT NULL,
+                `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `read_at` timestamp NULL DEFAULT NULL,
+                `receipt_sent` tinyint(1) NOT NULL DEFAULT '0',
+                `delivery_status` enum('pending','sent','delivered','failed') NOT NULL DEFAULT 'delivered',
+                `sync_attempts` int(11) NOT NULL DEFAULT '0',
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `conv_external` (`conversation_id`,`external_id`),
+                KEY `conv_created` (`conversation_id`,`created_at`),
+                KEY `conv_token` (`conversation_id`,`client_token`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function messagingSync(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::MESSAGING_SYNC,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::MESSAGING_SYNC . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `last_sync` timestamp NULL DEFAULT NULL,
+                `last_success` timestamp NULL DEFAULT NULL,
+                `sync_cursor` varchar(100) DEFAULT NULL,
+                `error_count` int(11) NOT NULL DEFAULT '0',
+                `last_error` text,
+                PRIMARY KEY (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function messagingEvents(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::MESSAGING_EVENTS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::MESSAGING_EVENTS . "` (
+                `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `event_name` varchar(255) NOT NULL,
+                `metadata` json DEFAULT NULL,
+                `occurred_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `client_token` varchar(64) NOT NULL,
+                `delivery_status` enum('pending','sent','failed') NOT NULL DEFAULT 'pending',
+                `sync_attempts` int(11) NOT NULL DEFAULT '0',
+                PRIMARY KEY (`id`),
+                KEY `user_pending` (`user_id`,`delivery_status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function messagingAttributes(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::MESSAGING_ATTRIBUTES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::MESSAGING_ATTRIBUTES . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `data` json DEFAULT NULL,
+                `dirty` tinyint(1) NOT NULL DEFAULT '0',
+                `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

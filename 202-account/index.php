@@ -50,10 +50,6 @@ template_top();  ?>
 
 				</div>
 			<?php } ?>
-			<div class="col-xs-12" style="min-height: 306px;">
-				<h6 class="h6-home">Tracking202 News <span class="glyphicon glyphicon-comment home-icons"></span></h6>
-				<div id="tracking202_posts"><img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" style="display: block;" /></div>
-			</div>
 
 		</div>
 	</div>
@@ -142,10 +138,6 @@ template_top();  ?>
 
 			</div>
 
-			<div class="col-xs-12">
-				<h6 class="h6-home">Partners <span class="glyphicon glyphicon-thumbs-up home-icons"></span></h6>
-				<div id="tracking202_sponsors"><img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" style="display: block;" /></div>
-			</div>
 		</div>
 	</div>
 </div>

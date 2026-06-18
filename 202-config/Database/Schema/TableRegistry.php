@@ -16,7 +16,6 @@ final class TableRegistry
     public const string CRONJOB_LOGS = '202_cronjob_logs';
     public const string MYSQL_ERRORS = '202_mysql_errors';
     public const string DELAYED_SQLS = '202_delayed_sqls';
-    public const string ALERTS = '202_alerts';
     public const string OFFERS = '202_offers';
     public const string FILTERS = '202_filters';
     public const string SYNC_JOBS = '202_sync_jobs';
@@ -25,6 +24,13 @@ final class TableRegistry
     public const string CHANGE_LOG = '202_change_log';
     public const string DELETED_LOG = '202_deleted_log';
     public const string SYNC_AUDIT = '202_sync_audit';
+
+    // Messaging tables (Intercom-style messenger)
+    public const string MESSAGING_CONVERSATIONS = '202_messaging_conversations';
+    public const string MESSAGING_MESSAGES = '202_messaging_messages';
+    public const string MESSAGING_SYNC = '202_messaging_sync';
+    public const string MESSAGING_EVENTS = '202_messaging_events';
+    public const string MESSAGING_ATTRIBUTES = '202_messaging_attributes';
 
     // User tables
     public const string USERS = '202_users';

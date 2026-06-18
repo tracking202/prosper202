@@ -1,0 +1,313 @@
+/* Prosper202 Messenger — floating Intercom-style widget.
+   All rules are scoped under #p202-messenger to avoid colliding with app styles. */
+
+#p202-messenger,
+#p202-messenger * {
+    box-sizing: border-box;
+}
+
+#p202-messenger {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 2147483000;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Launcher bubble */
+#p202-messenger-launcher {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    background: #16a085;
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+#p202-messenger-launcher:hover {
+    transform: scale(1.05);
+    background: #138d75;
+}
+
+#p202-messenger-launcher svg {
+    width: 26px;
+    height: 26px;
+    fill: #fff;
+}
+
+/* Unread badge */
+#p202-messenger-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    border-radius: 10px;
+    background: #e74c3c;
+    color: #fff;
+    font-size: 11px;
+    line-height: 20px;
+    text-align: center;
+    font-weight: 600;
+    display: none;
+}
+
+#p202-messenger-badge.is-visible {
+    display: block;
+}
+
+/* Panel */
+#p202-messenger-panel {
+    position: absolute;
+    right: 0;
+    bottom: 72px;
+    width: 376px;
+    max-width: calc(100vw - 40px);
+    height: 560px;
+    max-height: calc(100vh - 120px);
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.28);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#p202-messenger.is-open #p202-messenger-panel {
+    display: flex;
+}
+
+#p202-messenger-header {
+    background: #16a085;
+    color: #fff;
+    padding: 18px 20px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#p202-messenger-header .p202m-title {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+}
+
+#p202-messenger-header .p202m-back,
+#p202-messenger-header .p202m-close {
+    background: none;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 1;
+    padding: 0 4px;
+    opacity: 0.9;
+}
+
+#p202-messenger-header .p202m-back {
+    display: none;
+    margin-right: 8px;
+}
+
+#p202-messenger.is-thread #p202-messenger-header .p202m-back {
+    display: inline-block;
+}
+
+#p202-messenger-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    background: #f7f9fa;
+}
+
+/* Conversation list */
+.p202m-conv {
+    padding: 14px 18px;
+    border-bottom: 1px solid #eceff1;
+    cursor: pointer;
+    background: #fff;
+}
+
+.p202m-conv:hover {
+    background: #f3f6f7;
+}
+
+.p202m-conv-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.p202m-conv-subject {
+    font-weight: 600;
+    font-size: 14px;
+    color: #2c3e50;
+    margin: 0;
+}
+
+.p202m-conv-time {
+    font-size: 11px;
+    color: #95a5a6;
+    white-space: nowrap;
+    margin-left: 8px;
+}
+
+.p202m-conv-preview {
+    font-size: 13px;
+    color: #7f8c8d;
+    margin: 4px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.p202m-conv.is-unread .p202m-conv-subject {
+    color: #16a085;
+}
+
+.p202m-conv.is-unread .p202m-conv-preview {
+    color: #2c3e50;
+    font-weight: 500;
+}
+
+.p202m-conv-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #16a085;
+    margin-right: 6px;
+}
+
+/* Empty / loading states */
+.p202m-empty {
+    padding: 40px 24px;
+    text-align: center;
+    color: #95a5a6;
+    font-size: 14px;
+}
+
+/* Thread */
+.p202m-msg {
+    margin: 12px 16px;
+    display: flex;
+}
+
+.p202m-msg-bubble {
+    max-width: 78%;
+    padding: 10px 13px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.p202m-msg.inbound {
+    justify-content: flex-start;
+}
+
+.p202m-msg.inbound .p202m-msg-bubble {
+    background: #fff;
+    color: #2c3e50;
+    border: 1px solid #e1e8ed;
+    border-bottom-left-radius: 4px;
+}
+
+.p202m-msg.outbound {
+    justify-content: flex-end;
+}
+
+.p202m-msg.outbound .p202m-msg-bubble {
+    background: #16a085;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+}
+
+.p202m-msg-meta {
+    font-size: 11px;
+    color: #b0bcc4;
+    margin: 2px 16px 0;
+}
+
+.p202m-msg.outbound .p202m-msg-meta {
+    text-align: right;
+}
+
+.p202m-msg.pending .p202m-msg-bubble {
+    opacity: 0.6;
+}
+
+.p202m-msg.failed .p202m-msg-bubble {
+    background: #e74c3c;
+    color: #fff;
+}
+
+/* Composer */
+#p202-messenger-composer {
+    flex: 0 0 auto;
+    border-top: 1px solid #e1e8ed;
+    background: #fff;
+    padding: 10px;
+    display: flex;
+    align-items: flex-end;
+}
+
+#p202-messenger-input {
+    flex: 1 1 auto;
+    resize: none;
+    border: 1px solid #dce4e8;
+    border-radius: 8px;
+    padding: 9px 11px;
+    font-size: 14px;
+    font-family: inherit;
+    max-height: 120px;
+    line-height: 1.4;
+    outline: none;
+}
+
+#p202-messenger-input:focus {
+    border-color: #16a085;
+}
+
+#p202-messenger-send {
+    flex: 0 0 auto;
+    margin-left: 8px;
+    border: none;
+    background: #16a085;
+    color: #fff;
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+#p202-messenger-send:disabled {
+    background: #b2c2bd;
+    cursor: not-allowed;
+}
+
+#p202-messenger-newbtn {
+    display: block;
+    width: calc(100% - 36px);
+    margin: 14px 18px;
+    padding: 10px;
+    border: 1px solid #16a085;
+    background: #fff;
+    color: #16a085;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+#p202-messenger-newbtn:hover {
+    background: #16a085;
+    color: #fff;
+}

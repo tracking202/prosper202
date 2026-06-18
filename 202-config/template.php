@@ -163,6 +163,10 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<link href="<?php echo get_absolute_url(); ?>202-css/css/select2.css" rel="stylesheet" />
 		<!-- Loading Custom CSS -->
 		<link href="<?php echo get_absolute_url(); ?>202-css/custom.css" rel="stylesheet">
+		<?php if (!empty($_SESSION['user_id'])) { ?>
+			<!-- Prosper202 Messenger -->
+			<link href="<?php echo get_absolute_url(); ?>202-css/messenger.css" rel="stylesheet">
+		<?php } ?>
 		<!-- Load JS here -->
 		<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery-1.11.2.min.js"></script>
 		<script type="text/javascript" src="https://dp5k1x6z3k332.cloudfront.net/jquery-ui.min.js"></script>
@@ -198,9 +202,6 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			<?php break;
 
 			case "202-account": ?>
-				<?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] == "202-account") and !$navigation[2]) { ?>
-					<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/home.php"></script>
-				<?php } ?>
 				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/account.php"></script>
 				<?php if (isset($navigation[2]) && $navigation[2] == 'attribution.php') { ?>
 					<script type="text/javascript" src="https://code.highcharts.com/highcharts.js"></script>
@@ -494,5 +495,19 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 				}, 3000);
 			});
 		</script>
+		<?php if (!empty($_SESSION['user_id'])) { ?>
+			<!-- Prosper202 Messenger: config + command-queue stub + widget -->
+			<script type="text/javascript">
+				window.P202M_CONFIG = {
+					base: <?php echo json_encode(get_absolute_url()); ?>,
+					token: <?php echo json_encode($_SESSION['token'] ?? ''); ?>
+				};
+				/* Buffer any early Prosper202Messenger(...) calls until the widget loads. */
+				window.Prosper202Messenger = window.Prosper202Messenger || function () {
+					(window.Prosper202Messenger.q = window.Prosper202Messenger.q || []).push(arguments);
+				};
+			</script>
+			<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/messenger.js"></script>
+		<?php } ?>
 	</body>
 <?php } ?>
