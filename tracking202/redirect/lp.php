@@ -2,7 +2,7 @@
 declare(strict_types=1);
 $vars=$_GET;
 #only allow numeric t202ids
-$lpip = $_GET['lpip']; 
+$lpip = $_GET['lpip'] ?? '';
 if (!is_numeric($lpip)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
@@ -109,10 +109,18 @@ if ($memcacheWorking) {
 }
 
 //grab the GET variables from the LANDING PAGE
-$landing_page_site_url_address_parsed = parse_url((string) $_SERVER['HTTP_REFERER']);  
-parse_str($landing_page_site_url_address_parsed['query'], $_GET);       
+// Only overwrite $_GET when the referer actually carries a query string —
+// otherwise parse_str('') would wipe every incoming parameter (losing the
+// landing page's tracking data) and warn on the missing 'query' key.
+$landing_page_site_url_address_parsed = parse_url((string) ($_SERVER['HTTP_REFERER'] ?? ''));
+$landing_page_query = is_array($landing_page_site_url_address_parsed)
+	? ($landing_page_site_url_address_parsed['query'] ?? '')
+	: '';
+if ($landing_page_query !== '') {
+	parse_str($landing_page_query, $_GET);
+}
 
-if ($_GET['t202id']) { 
+if (!empty($_GET['t202id'])) {
 	//grab tracker data if avaliable
 	$mysql['tracker_id_public'] = $db->real_escape_string((string)$_GET['t202id']);
 

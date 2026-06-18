@@ -23,11 +23,13 @@ $cpa_row = ($cpa_result !== false) ? $cpa_result->fetch_assoc() : null;
 
 $mysql['click_cpa'] = $db->real_escape_string($cpa_row['click_cpa'] ?? '');
 	
-p202ApplyConversionUpdate(
+if (!p202ApplyConversionUpdate(
 	$db,
 	(string) $mysql['click_id'],
 	(string) $mysql['click_cpa'],
 	false,
 	'',
 	(string) $mysql['aff_campaign_id']
-);
+)) {
+	error_log('pb: failed to apply conversion update for click ' . $mysql['click_id']);
+}

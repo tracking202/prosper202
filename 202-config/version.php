@@ -6,7 +6,7 @@
 declare(strict_types=1);
 
 // Validate version format before defining
-$version_string = '1.9.61';
+$version_string = '1.9.62';
 if (!preg_match('/^\d+\.\d+\.\d+(-[a-zA-Z0-9]+)?$/', $version_string)) {
     throw new Exception('Invalid version format: ' . $version_string);
 }

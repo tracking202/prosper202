@@ -51,7 +51,9 @@ class INSTALL
      * This method creates all 70+ database tables required by Prosper202
      * and populates them with initial seed data (roles, permissions, etc.).
      *
-     * @throws RuntimeException If database connection fails
+     * @throws RuntimeException If the database connection fails or any table
+     *                          fails to create (a partial schema is never
+     *                          reported as a successful install).
      */
     public function install_databases(): void
     {
@@ -69,11 +71,16 @@ class INSTALL
         $installer = new SchemaInstaller($db);
         $result = $installer->install();
 
-        // Log any errors (but don't fail - matches original behavior)
+        // Surface real schema failures instead of silently continuing. Every
+        // CREATE TABLE uses IF NOT EXISTS, so re-running over an existing or
+        // partial schema does not register an error here — only genuine failures
+        // (permissions, syntax, disk) populate $result->errors, and those must
+        // abort the install rather than leave a half-built schema reported as success.
         if ($result->hasErrors()) {
             foreach ($result->errors as $error) {
                 error_log('INSTALL::install_databases() - ' . $error);
             }
+            throw new RuntimeException('Schema installation failed: ' . implode('; ', $result->errors));
         }
 
         // Seed initial data

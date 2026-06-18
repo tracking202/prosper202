@@ -14,6 +14,7 @@ final class AuthClassTest extends TestCase
     private array $originalSession = [];
     private array $originalServer = [];
     private array $originalCookie = [];
+    private array $originalPost = [];
 
     protected function setUp(): void
     {
@@ -23,6 +24,7 @@ final class AuthClassTest extends TestCase
         $this->originalSession = $_SESSION ?? [];
         $this->originalServer = $_SERVER ?? [];
         $this->originalCookie = $_COOKIE ?? [];
+        $this->originalPost = $_POST ?? [];
 
         // Set default server variables
         $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test Agent';
@@ -46,6 +48,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = $this->originalSession;
         $_SERVER = $this->originalServer;
         $_COOKIE = $this->originalCookie;
+        $_POST = $this->originalPost;
 
         parent::tearDown();
     }
@@ -63,7 +66,7 @@ final class AuthClassTest extends TestCase
     {
         $_SESSION = [
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time(),
         ];
 
@@ -76,7 +79,7 @@ final class AuthClassTest extends TestCase
     {
         $_SESSION = [
             'user_name' => 'testuser',
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time(),
         ];
 
@@ -117,7 +120,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time() - 60000, // More than 50000 seconds ago
         ];
 
@@ -131,7 +134,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => time(),
         ];
 
@@ -146,7 +149,7 @@ final class AuthClassTest extends TestCase
         $_SESSION = [
             'user_name' => 'testuser',
             'user_id' => 1,
-            'session_fingerprint' => md5('session_fingerprint' . session_id()),
+            'session_fingerprint' => AUTH::session_fingerprint(),
             'session_time' => $oldTime,
         ];
 
@@ -279,6 +282,118 @@ final class AuthClassTest extends TestCase
     public function testLogoutDaysConstant(): void
     {
         $this->assertSame(14, AUTH::LOGOUT_DAYS);
+    }
+
+    public function testSessionFingerprintBindsToUserAgent(): void
+    {
+        $_SERVER['HTTP_USER_AGENT'] = 'Agent A';
+        $fingerprintA = AUTH::session_fingerprint();
+
+        $_SERVER['HTTP_USER_AGENT'] = 'Agent B';
+        $fingerprintB = AUTH::session_fingerprint();
+
+        $this->assertNotSame($fingerprintA, $fingerprintB, 'Fingerprint must change with the User-Agent');
+        // It must no longer be the trivially derivable md5 of just the session id.
+        $this->assertNotSame(md5('session_fingerprint' . session_id()), $fingerprintA);
+    }
+
+    public function testCheckCsrfTokenMatchesSessionToken(): void
+    {
+        $_SESSION['token'] = 'a-valid-token';
+
+        $_POST['token'] = 'a-valid-token';
+        $this->assertTrue(AUTH::check_csrf_token());
+
+        $_POST['token'] = 'forged';
+        $this->assertFalse(AUTH::check_csrf_token());
+
+        unset($_POST['token']);
+        $this->assertFalse(AUTH::check_csrf_token());
+    }
+
+    public function testCheckCsrfTokenFailsClosedWhenSessionTokenMissing(): void
+    {
+        // Both sides empty must NOT pass — hash_equals('', '') is true, so the
+        // helper has to reject empty tokens explicitly (fail closed).
+        unset($_SESSION['token']);
+        $_POST['token'] = '';
+        $this->assertFalse(AUTH::check_csrf_token());
+
+        $_SESSION['token'] = '';
+        $_POST['token'] = '';
+        $this->assertFalse(AUTH::check_csrf_token());
+    }
+
+    public function testClientIpReturnsValidForwardedIp(): void
+    {
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.23';
+        $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+
+        $this->assertSame('198.51.100.23', AUTH::client_ip());
+    }
+
+    public function testClientIpFallsBackWhenForwardedValueIsNotAnIp(): void
+    {
+        // Attacker-supplied garbage / overlong value must not be used.
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = str_repeat('A', 4000);
+        $_SERVER['REMOTE_ADDR'] = '203.0.113.5';
+
+        $this->assertSame('203.0.113.5', AUTH::client_ip());
+    }
+
+    public function testClientIpReturnsPlaceholderWhenNothingValid(): void
+    {
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = 'not-an-ip';
+        $_SERVER['REMOTE_ADDR'] = 'also-bad';
+
+        $this->assertSame('0.0.0.0', AUTH::client_ip());
+    }
+
+    public function testIsRateLimitedTrueWhenFailuresExceedThreshold(): void
+    {
+        $mockDb = $this->createMockDb([
+            '202_users_log' => ['failures' => AUTH::RATE_LIMIT_MAX_PER_IP + 1],
+        ]);
+
+        $this->assertTrue(AUTH::is_rate_limited($mockDb, 'someone', '203.0.113.9'));
+    }
+
+    public function testIsRateLimitedFalseWhenNoRecentFailures(): void
+    {
+        $mockDb = $this->createMockDb(); // fetch_assoc() returns null -> 0 failures
+
+        $this->assertFalse(AUTH::is_rate_limited($mockDb, 'someone', '203.0.113.9'));
+    }
+
+    public function testLoginAuditSnapshotKeepsSafeFieldsOnly(): void
+    {
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REQUEST_URI'] = '/202-login.php';
+        $_SERVER['HTTP_USER_AGENT'] = 'PHPUnit Test Agent';
+        $_SERVER['REMOTE_ADDR'] = '203.0.113.7';
+
+        $snapshot = unserialize(AUTH::login_audit_snapshot());
+
+        $this->assertSame('POST', $snapshot['REQUEST_METHOD']);
+        $this->assertSame('/202-login.php', $snapshot['REQUEST_URI']);
+        $this->assertSame('PHPUnit Test Agent', $snapshot['HTTP_USER_AGENT']);
+        $this->assertSame('203.0.113.7', $snapshot['REMOTE_ADDR']);
+    }
+
+    public function testLoginAuditSnapshotDropsSecrets(): void
+    {
+        $_SERVER['HTTP_COOKIE'] = 'PHPSESSID=abc123; remember_me=42-secretkey-deadbeef';
+        $_SERVER['HTTP_AUTHORIZATION'] = 'Bearer supersecret';
+        $_SERVER['PHP_AUTH_PW'] = 'hunter2';
+
+        $snapshot = unserialize(AUTH::login_audit_snapshot());
+
+        $this->assertArrayNotHasKey('HTTP_COOKIE', $snapshot);
+        $this->assertArrayNotHasKey('HTTP_AUTHORIZATION', $snapshot);
+        $this->assertArrayNotHasKey('PHP_AUTH_PW', $snapshot);
+        $serialized = AUTH::login_audit_snapshot();
+        $this->assertStringNotContainsString('remember_me', $serialized);
+        $this->assertStringNotContainsString('supersecret', $serialized);
     }
 
     public function testAuthenticateWithEmptyUsername(): void
