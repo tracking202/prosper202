@@ -451,18 +451,10 @@ $today_year = (int) date('Y', time());
 $click_time = mktime(12, 0, 0, $today_month, $today_day, $today_year);
 $mysql['click_time'] = $db->real_escape_string((string) $click_time);
 
-//ensure this click_summary exists — atomic upsert avoids race condition
-$insert_sql = "INSERT INTO 202_summary_overview
-				   	SET         user_id='" . $mysql['user_id'] . "',
-							   aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-							   ppc_account_id='" . $mysql['ppc_account_id'] . "',
-							   click_time='" . $mysql['click_time'] . "'
-				ON DUPLICATE KEY UPDATE click_time=click_time";
-$insert_result = $db->query($insert_sql);
-if (!$insert_result) {
-	record_mysql_error($db, $insert_sql);
-}
-#}
+// The legacy 202_summary_overview roll-up was removed: that table is created by
+// no installer, so the upsert failed and record_mysql_error() (`: never`) killed
+// click recording on a fresh install. The DataEngine setDirtyHour() call below
+// performs the live aggregation, so the dead write is dropped.
 
 //we had the add the triple \\\, because of the regex expression, to include the ? mark.
 //$old_lp_site_url = 'http://'.$_SERVER['SERVER_NAME'].'/tracking202/redirect/lp.php\\\?lpip='.$landing_page_id_public;  
@@ -480,11 +472,11 @@ if (isset($_COOKIE['p202_ipx'])) {
 	$mysql['p202_ipx'] = $db->real_escape_string((string) $_COOKIE['p202_ipx']);
 	$ipx_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'";
 	$ipx_result = $db->query($ipx_sql);
-	if (!$ipx_result) { record_mysql_error($db, $ipx_sql); }
+	if (!$ipx_result) { error_log('record_simple: impression link skipped (202_clicks_impressions unavailable): ' . $db->error); }
 } else {
 	$ipx_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE click_id IS NULL AND landing_page_id = '" . $mysql['landing_page_id'] . "' ORDER BY impression_id DESC LIMIT 1";
 	$ipx_result = $db->query($ipx_sql);
-	if (!$ipx_result) { record_mysql_error($db, $ipx_sql); }
+	if (!$ipx_result) { error_log('record_simple: impression link skipped (202_clicks_impressions unavailable): ' . $db->error); }
 }
 
 header('Content-Type: application/javascript; charset=UTF-8');

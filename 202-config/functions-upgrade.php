@@ -3487,6 +3487,38 @@ class UPGRADE
             $sql = "DROP TABLE IF EXISTS `202_dashboard_content`, `202_dashboard_sync`, `202_alerts`";
             $result = _upgrade_query($sql);
 
+            // 202_user_role historically had no UNIQUE key, so the install-time
+            // "INSERT IGNORE ... (user_id, role_id)" couldn't actually dedupe and a
+            // re-entrant/concurrent install could leave duplicate role grants. Dedupe
+            // any existing duplicates and add the UNIQUE key so the grant is truly
+            // idempotent. Guarded against re-runs (a mid-upgrade retry re-enters this
+            // block) and written to never leave the table empty.
+            $uniqueExists = false;
+            $idx = _upgrade_query("SHOW INDEX FROM `202_user_role` WHERE Key_name = 'uniq_user_role'");
+            if ($idx instanceof mysqli_result) {
+                $uniqueExists = $idx->num_rows > 0;
+            }
+            if (!$uniqueExists) {
+                // Temporary surrogate key lets us delete all-but-one of each dup group
+                // without ever emptying the table.
+                $tmpExists = false;
+                $col = _upgrade_query("SHOW COLUMNS FROM `202_user_role` LIKE '_dedup_id'");
+                if ($col instanceof mysqli_result) {
+                    $tmpExists = $col->num_rows > 0;
+                }
+                if (!$tmpExists) {
+                    $result = _upgrade_query("ALTER TABLE `202_user_role` ADD COLUMN `_dedup_id` int unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY");
+                }
+                $result = _upgrade_query("DELETE r1 FROM `202_user_role` r1 JOIN `202_user_role` r2 ON r1.user_id = r2.user_id AND r1.role_id = r2.role_id AND r1._dedup_id > r2._dedup_id");
+                $result = _upgrade_query("ALTER TABLE `202_user_role` DROP COLUMN `_dedup_id`");
+                $result = _upgrade_query("ALTER TABLE `202_user_role` ADD UNIQUE KEY `uniq_user_role` (`user_id`,`role_id`)");
+            }
+
+            // 202_conversion_logs.ip was varchar(15) — too small for IPv6 (and for a
+            // forwarded address). Widen to 45 (IPv6 max) so a real client IP isn't
+            // truncated. Non-lossy widening; safe to re-run.
+            $result = _upgrade_query("ALTER TABLE `202_conversion_logs` MODIFY `ip` varchar(45) NOT NULL DEFAULT ''");
+
             $sql = "UPDATE 202_version SET version='1.9.62'";
             $result = _upgrade_query($sql);
 

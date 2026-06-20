@@ -277,21 +277,21 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 						<nav class="navbar navbar-default" role="navigation">
 							<ul class="nav navbar-nav">
                                                                 <li <?php if (isset($navigation[1]) && isset($navigation[2]) && ($navigation[1] === '202-account') and !$navigation[2]) {
-										echo 'class="active";';
+										echo 'class="active"';
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-account/" id="HomePage"><span class="fui-home"></span> Home </a></li>
                                                                 <li <?php if (isset($navigation[1]) && $navigation[1] === 'tracking202') {
-                                                                                echo 'class="active";';
+                                                                                echo 'class="active"';
                                                                         } ?>><a href="<?php echo get_absolute_url(); ?>tracking202/" id="ClickServerPage"><span class="fui-heart"></span> Prosper202 CS </a></li>
                                                                 <?php if (isset($userObj) && $userObj->hasPermission("view_attribution_reports")) { ?>
                                                                         <li <?php if (isset($navigation[1]) && isset($navigation[2]) && $navigation[1] === '202-account' && $navigation[2] === 'attribution.php') {
-                                                                                        echo 'class="active";';
+                                                                                        echo 'class="active"';
                                                                                 } ?>><a href="<?php echo get_absolute_url(); ?>202-account/attribution.php" id="AttributionPage"><span class="fui-graph"></span> Attribution </a></li>
                                                                 <?php } ?>
                                                                 <li <?php if (isset($navigation[1]) && $navigation[1] == '202-tv') {
-                                                                                echo 'class="active";';
+                                                                                echo 'class="active"';
                                                                         } ?>><a href="<?php echo get_absolute_url(); ?>202-tv/" id="Tv202Page"><span class="fui-video" aria-hidden="true"></span> Watch TV202 </a> </li>
 								<li <?php if (isset($navigation[1]) && $navigation[1] == '202-resources') {
-										echo 'class="active";';
+										echo 'class="active"';
 									} ?>><a href="<?php echo get_absolute_url(); ?>202-resources/" id="ResourcesPage"><span class="fui-star-2"></span> Hot Deals & Discounts </a></li>
 							</ul>
 							<ul class="nav navbar-nav navbar-right">
@@ -301,30 +301,30 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 									<a href="#" class="dropdown-toggle" data-toggle="dropdown">My Account <?php if (isset($user_data['vip_perks_status']) && $user_data['vip_perks_status']) echo '<span class="label label-important" id="notification">1</span>'; ?><b class="caret"></b></a>
 									<span class="dropdown-arrow"></span>
 									<ul class="dropdown-menu">
-										<li <?php if ($navigation[2] == 'account.php') {
-												echo 'class="active";';
+										<li <?php if (($navigation[2] ?? '') == 'account.php') {
+												echo 'class="active"';
 											} ?>><a href="<?php echo get_absolute_url(); ?>202-account/account.php" id="PersonalSettingsPage">Personal Settings</a></li>
 										<?php if (isset($userObj) && $userObj->hasPermission("access_to_vip_perks")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'vip-perks.php') {
-																												echo 'class="active";';
+																												echo 'class="active"';
 																											} ?>><a href="<?php echo get_absolute_url(); ?>202-account/vip-perks.php" id="VIPPerksPage">VIP Perks Profile</a> <?php if (isset($user_data['vip_perks_status']) && $user_data['vip_perks_status']) echo '<span class="label label-important" id="notification-perks">1</span>'; ?></li><?php } ?>
 										<?php if (isset($userObj) && $userObj->hasPermission("access_to_api_integrations")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'api-integrations.php') {
-																														echo 'class="active";';
+																														echo 'class="active"';
 																													} ?>><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php" id="3rdPartyAPIPage">3rd Party API Integrations</a></li><?php } ?>
                                                                                 <?php if (isset($userObj) && $userObj->hasPermission("view_attribution_reports")) { ?>
                                                                                         <li <?php if (isset($navigation[2]) && $navigation[2] === 'attribution.php') {
-                                                                                                        echo 'class="active";';
+                                                                                                        echo 'class="active"';
                                                                                                 } ?>>
                                                                                                 <a href="<?php echo get_absolute_url(); ?>202-account/attribution.php" id="AttributionAnalyticsPage">Attribution Analytics</a>
                                                                                         </li>
                                                                                 <?php } ?>
 										<?php if (isset($userObj) && $userObj->hasPermission("add_users")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'user-management.php') {
-																									echo 'class="active";';
+																									echo 'class="active"';
 																								} ?>><a href="<?php echo get_absolute_url(); ?>202-account/user-management.php" id="UserManagementPage">User Management</a></li><?php } ?>
 										<?php if (isset($userObj) && $userObj->hasPermission("access_to_settings")) { ?><li <?php if (isset($navigation[2]) && $navigation[2] == 'administration.php') {
-																												echo 'class="active";';
+																												echo 'class="active"';
 																											} ?>><a href="<?php echo get_absolute_url(); ?>202-account/administration.php" id="SettingsPage"><span class="fui-gear icon-navbar"></span> Settings</a></li><?php } ?>
-										<li <?php if ($navigation[2] == 'help.php') {
-												echo 'class="active";';
+										<li <?php if (($navigation[2] ?? '') == 'help.php') {
+												echo 'class="active"';
 											} ?>><a href="<?php echo get_absolute_url(); ?>202-account/help.php" id="HelpPage">Help<span class="fui-question icon-navbar"></span></a></li>
 									</ul>
 								</li>
@@ -338,12 +338,13 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 				<?php if ($navigation[1] == 'tracking202') {
 					include_once(substr(__DIR__, 0, -10) . '/tracking202/_config/top.php');
 				} ?>
-				<div class="main" <?php if ($navigation[2] == 'setup') {
+				<div class="main" <?php if (($navigation[2] ?? '') == 'setup') {
 										echo 'style="border-top-left-radius:0px;"';
 									} ?>>
 
 					<?php if ($navigation[1] == 'tracking202') {
-						if (($navigation[2] == 'setup') or ($navigation[2] == 'bots') or ($navigation[2] == 'overview') or ($navigation[2] == 'analyze') or ($navigation[2] == 'update') or ($navigation[2] == 'export')) {
+						$nav2 = $navigation[2] ?? '';
+						if (($nav2 == 'setup') or ($nav2 == 'bots') or ($nav2 == 'overview') or ($nav2 == 'analyze') or ($nav2 == 'update') or ($nav2 == 'export')) {
 							include_once(substr(__DIR__, 0, -10) . '/tracking202/_config/sub-menu.php');
 						}
 					} ?>
@@ -401,9 +402,9 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<!-- Support widget removed -->
 		<?php
 				if (!isset($_SESSION['publisher']) || $_SESSION['publisher'] !== true) {
-					$user_data = get_user_data_feedback($_SESSION['user_id']);
+					$user_data = get_user_data_feedback($_SESSION['user_id'] ?? 0);
 
-					if (!$user_data['modal_status']) {
+					if (empty($user_data['modal_status'])) {
 						$data = getSurveyData($user_data['install_hash']); ?>
 
 				<script type="text/javascript">

@@ -27,7 +27,9 @@ if(isset($_COOKIE['tracking202subid'])) { //if there's a cookie use it
     $click_id = $_COOKIE['tracking202subid'];
 }
 
-else { //if not find the list clicks id of the ip within a 30 day range
+else if ($db) { //if not find the list clicks id of the ip within a 30 day range
+    // Guarded on $db: when MySQL is down the BlazerCache fallback below handles
+    // the redirect, so we must not dereference a false $db here first.
     $mysql['user_id'] = 1;
     $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
     $daysago = time() - 86400; // 24 hours
@@ -43,11 +45,14 @@ else { //if not find the list clicks id of the ip within a 30 day range
 					LIMIT 		1";
 
     $click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-    $click_row1 = $click_result1->fetch_assoc();
-    $mysql['click_id'] = $db->real_escape_string((string)$click_row1['click_id']);
+    // No matching click within the window yields zero rows; guard so a null row
+    // doesn't trigger array-offset-on-null warnings/empty values downstream.
+    $click_row1 = ($click_result1 instanceof mysqli_result) ? $click_result1->fetch_assoc() : null;
+    $click_row1 = $click_row1 ?: [];
+    $mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
     $click_id = $mysql['click_id'];
-    $mysql['ppc_account_id'] = $db->real_escape_string((string)$click_row1['ppc_account_id']);
-    $mysql['click_id_public'] = $db->real_escape_string($click_row1['click_id_public']);
+    $mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
+    $mysql['click_id_public'] = $db->real_escape_string((string)($click_row1['click_id_public'] ?? ''));
     $pci=$mysql['click_id_public'];
 
 }
@@ -109,7 +114,7 @@ if ($usedCachedRedirect == true) {
 }
 
 /* OK FIRST IF THERE IS NO PUBLIC CLICK_ID, JUST REDIRECT TO THE NORMAL CAMPAIGN */
-if ($vars[1] == '' && $pci == '') {
+if ($pci == '') {
     $mysql['aff_campaign_id_public'] = $db->real_escape_string($acip);
  $aff_campaign_sql = "SELECT   aff_campaign_rotate, 
 									aff_campaign_url, 
@@ -281,6 +286,9 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $mysql['click_out'] = 1;
 
+// Initialize before the branch so the non-cloaked path doesn't read an
+// undefined variable at the $cloaking_on checks further down (matches dl.php/lp.php).
+$cloaking_on = false;
 if (($info_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
 (($info_row['click_cloaking'] == - 1) and ($info_row['aff_campaign_cloaking'] == 1)) or ((! isset($info_row['click_cloaking'])) and ($info_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
 {
@@ -357,27 +365,11 @@ $today_year = date('Y', time());
 // the click_time is recorded in the middle of the day
 $click_time = mktime(12, 0, 0, $today_month, $today_day, $today_year);
 $mysql['click_time'] = $db->real_escape_string((string)$click_time);
-// check to make sure this click_summary doesn't already exist
-$check_sql = "SELECT  *
-				  FROM    202_summary_overview
-				  WHERE user_id='" . $mysql['user_id'] . "'
-				  AND     landing_page_id='" . $mysql['landing_page_id'] . "'
-				  AND     aff_campaign_id='" . $mysql['aff_campaign_id'] . "'
-				  AND     click_time='" . $mysql['click_time'] . "'";
-$check_result = $db->query($check_sql) or record_mysql_error($check_sql);
-$check_count = $check_result->num_rows;
-
-// if this click summary hasn't been recorded do this now
-if ($check_count == 0) {
-    
-    $insert_sql = "INSERT INTO 202_summary_overview
-					   	SET         user_id='" . $mysql['user_id'] . "',
-								   landing_page_id='" . $mysql['landing_page_id'] . "',
-								   aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-								   click_time='" . $mysql['click_time'] . "'";
-    $insert_result = $db->query($insert_sql) or record_mysql_error($db);
-}
-// }
+// NOTE: the legacy 202_summary_overview roll-up write was removed here. That
+// table is created by no installer in this codebase, so the SELECT/INSERT failed
+// and record_mysql_error() (declared `: never`) terminated the offer redirect on a
+// fresh install. Aggregation is handled by the DataEngine setDirtyHour() call below,
+// so the dead write is simply dropped.
 
 // set the cookie
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);

@@ -841,6 +841,11 @@ create_config_file() {
     sed_in_place "s|$dbhostro_pattern|$dbhostro_replacement|" "$config_file"
     sed_in_place "s|$mchost_pattern|$mchost_replacement|" "$config_file"
 
+    # 202-config.php holds DB credentials, so keep it non-world-readable, matching
+    # the PHP writers (setup-config.php and build/scripts/write-config.php both
+    # chmod 0640). Best-effort: never abort the install over a chmod failure.
+    chmod 640 "$config_file" 2>/dev/null || true
+
     print_success "Config file created: 202-config.php"
     return 0
 }

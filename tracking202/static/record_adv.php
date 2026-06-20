@@ -422,11 +422,11 @@ if (isset($_COOKIE['p202_ipx'])) {
 	$mysql['p202_ipx'] = $db->real_escape_string((string) $_COOKIE['p202_ipx']);
 	$ipx_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'";
 	$ipx_result = $db->query($ipx_sql);
-	if (!$ipx_result) { record_mysql_error($db, $ipx_sql); }
+	if (!$ipx_result) { error_log('record_adv: impression link skipped (202_clicks_impressions unavailable): ' . $db->error); }
 } else {
 	$ipx_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE click_id IS NULL AND landing_page_id = '" . $mysql['landing_page_id'] . "' ORDER BY impression_id DESC LIMIT 1";
 	$ipx_result = $db->query($ipx_sql);
-	if (!$ipx_result) { record_mysql_error($db, $ipx_sql); }
+	if (!$ipx_result) { error_log('record_adv: impression link skipped (202_clicks_impressions unavailable): ' . $db->error); }
 }
 
 header('Content-Type: application/javascript; charset=UTF-8');

@@ -16,6 +16,7 @@
       "Prosper202\\": "202-config/",
       "Tracking202\\": "tracking202/",
       "Prosper202Interfaces\\": "202-interfaces/",
+      "Api\\V3\\": "api/v3/",
       "Api\\": "api/",
       "P202Cli\\": "cli/"
     }

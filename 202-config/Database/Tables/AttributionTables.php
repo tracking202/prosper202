@@ -194,7 +194,7 @@ final class AttributionTables
                 `click_time` int(10) NOT NULL,
                 `conv_time` int(10) NOT NULL,
                 `time_difference` text NOT NULL,
-                `ip` varchar(15) NOT NULL DEFAULT '',
+                `ip` varchar(45) NOT NULL DEFAULT '',
                 `pixel_type` int(11) unsigned NOT NULL,
                 `user_agent` text NOT NULL,
                 `deleted` tinyint(4) NOT NULL DEFAULT '0',

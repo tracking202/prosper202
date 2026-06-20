@@ -9,8 +9,9 @@ require __DIR__ . '/_auth.php';
 header('Content-Type: application/json');
 
 // CSRF: the same-origin token must match (auto-attached by template.php for jQuery;
-// the messenger widget attaches it explicitly to its fetch() POSTs).
-if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+// the messenger widget attaches it explicitly to its fetch() POSTs). Use the shared
+// guarded helper so an unseeded session token can't slip through hash_equals('','').
+if (!AUTH::check_csrf_token()) {
     http_response_code(403);
     echo json_encode(['ok' => false, 'error' => 'invalid token']);
     exit;

@@ -8,7 +8,8 @@ require __DIR__ . '/_auth.php';
 
 header('Content-Type: application/json');
 
-if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+// Shared guarded helper: fails closed when either token side is empty.
+if (!AUTH::check_csrf_token()) {
     http_response_code(403);
     echo json_encode(['ok' => false, 'error' => 'invalid token']);
     exit;
