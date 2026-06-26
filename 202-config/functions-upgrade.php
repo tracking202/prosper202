@@ -3532,14 +3532,28 @@ class UPGRADE
             // truncated. Non-lossy widening; safe to re-run.
             $result = _upgrade_query("ALTER TABLE `202_conversion_logs` MODIFY `ip` varchar(45) NOT NULL DEFAULT ''");
 
-            $sql = "UPDATE 202_version SET version='1.9.63'";
-            $result = _upgrade_query($sql);
-
-            $prosper202_version = '1.9.63';
+            // Only advance the recorded version once the integrity-critical UNIQUE key
+            // is actually present. _upgrade_query() returns false (without dying) on a
+            // non-transient failure, so a failed dedupe/ADD-UNIQUE must not silently
+            // mark the install as 1.9.63 — leave the version so the next upgrade run
+            // re-enters this (idempotent) block and retries instead of stranding the
+            // table with duplicate role grants and no unique key.
+            $uniqueNow = false;
+            $verify = _upgrade_query("SHOW INDEX FROM `202_user_role` WHERE Key_name = 'uniq_user_role'");
+            if ($verify instanceof mysqli_result) {
+                $uniqueNow = $verify->num_rows > 0;
+            }
+            if ($uniqueNow) {
+                $sql = "UPDATE 202_version SET version='1.9.63'";
+                $result = _upgrade_query($sql);
+                $prosper202_version = '1.9.63';
+            } else {
+                error_log('Prosper202 upgrade: 202_user_role.uniq_user_role was not created; leaving version at 1.9.62 so the next run retries.');
+            }
         }
 
         //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.63') {
+        if (version_compare((string) $prosper202_version, '1.9.63', '>')) {
 
             $prosper202_version = '1.9.63';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";

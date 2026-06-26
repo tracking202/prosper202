@@ -3550,12 +3550,31 @@ function getUTMParams(&$mysql)
     $mysql['utm_content'] = $db->real_escape_string($utm_content);
 }
 
-function updateImpressionPixel(&$mysql)
+/**
+ * Link the visitor's impression row to a freshly-recorded click. Single source for
+ * what was previously copy-pasted across record_simple.php, record_adv.php and
+ * dl.php (each with slightly different error handling). If a p202_ipx cookie is
+ * present, link that exact impression; otherwise fall back to the latest unlinked
+ * impression for the landing page (when one is supplied — dl.php has none, so it
+ * no-ops without a cookie, preserving its prior behavior).
+ *
+ * 202_clicks_impressions is created by no installer today, so a failure is logged,
+ * never fatal — click recording must not die on the optional impression table.
+ */
+function p202LinkImpressionToClick(mysqli $db, $clickId, $landingPageId = null, string $context = 'record')
 {
-    global $db;
-    if (null !== (getCookie202('p202_ipx'))) {
-        $mysql['p202_ipx'] = $db->real_escape_string(getCookie202('p202_ipx'));
-        $db->query("UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'");
+    $clickId = $db->real_escape_string((string) $clickId);
+    if (isset($_COOKIE['p202_ipx'])) {
+        $ipx = $db->real_escape_string((string) $_COOKIE['p202_ipx']);
+        $sql = "UPDATE 202_clicks_impressions SET click_id = '" . $clickId . "' WHERE impression_id = '" . $ipx . "'";
+    } elseif ($landingPageId !== null && $landingPageId !== '') {
+        $lp = $db->real_escape_string((string) $landingPageId);
+        $sql = "UPDATE 202_clicks_impressions SET click_id = '" . $clickId . "' WHERE click_id IS NULL AND landing_page_id = '" . $lp . "' ORDER BY impression_id DESC LIMIT 1";
+    } else {
+        return; // no cookie and no landing page to fall back to (e.g. dl.php)
+    }
+    if (!$db->query($sql)) {
+        error_log($context . ': impression link skipped (202_clicks_impressions unavailable): ' . $db->error);
     }
 }
 

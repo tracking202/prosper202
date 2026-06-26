@@ -847,22 +847,28 @@ create_config_file() {
 
     # ...but the web server (often www-data/apache/nginx, distinct from the user
     # running this script on a VPS) must still be able to read it, or every request
-    # 500s right after we report success. Mirror write-config.php: hand the file to
-    # the web user/group when a distinct one exists and we have permission. If we
-    # can't (unprivileged install), fall back to world-readable so the install works
-    # rather than silently breaking, and warn the operator to lock it down.
-    local current_user web_user=""
+    # 500s right after we report success. Hand the file to the web user/group: honor
+    # APACHE_RUN_USER/APACHE_RUN_GROUP first (the same override build/scripts/write-config.php
+    # uses, so a custom web user is covered), else probe the common service users.
+    # Like write-config.php, we refuse to relax the mode on a credentials file: if we
+    # can't grant access we keep 0640 and warn loudly rather than fall back to a
+    # world-readable 0644 that would expose the DB password.
+    local current_user web_user web_group
     current_user="$(id -un 2>/dev/null)"
-    for u in www-data apache nginx http; do
-        if id "$u" >/dev/null 2>&1; then web_user="$u"; break; fi
-    done
+    web_user="${APACHE_RUN_USER:-}"
+    web_group="${APACHE_RUN_GROUP:-}"
+    if [ -z "$web_user" ]; then
+        for u in www-data apache nginx http; do
+            if id "$u" >/dev/null 2>&1; then web_user="$u"; break; fi
+        done
+    fi
+    [ -z "$web_group" ] && web_group="$web_user"
     if [ -n "$web_user" ] && [ "$web_user" != "$current_user" ]; then
-        if chown "$web_user":"$web_user" "$config_file" 2>/dev/null \
-            || chgrp "$web_user" "$config_file" 2>/dev/null; then
+        if chown "$web_user":"$web_group" "$config_file" 2>/dev/null \
+            || chgrp "$web_group" "$config_file" 2>/dev/null; then
             : # web user can now read the 0640 file via owner or group read
         else
-            chmod 644 "$config_file" 2>/dev/null || true
-            print_warning "202-config.php left world-readable (0644): could not assign it to '$web_user'. On a shared/multi-user host, lock it down: chown $web_user 202-config.php && chmod 640 202-config.php"
+            print_warning "202-config.php (mode 0640, owner '$current_user') may be unreadable by the web user '$web_user', which would 500 every request. Run the installer as root, or grant access yourself: chown $web_user 202-config.php && chmod 640 202-config.php. Refusing to relax the file to world-readable since it holds DB credentials."
         fi
     fi
 
