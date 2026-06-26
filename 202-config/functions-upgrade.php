@@ -3487,12 +3487,25 @@ class UPGRADE
             $sql = "DROP TABLE IF EXISTS `202_dashboard_content`, `202_dashboard_sync`, `202_alerts`";
             $result = _upgrade_query($sql);
 
-            // 202_user_role historically had no UNIQUE key, so the install-time
+            $sql = "UPDATE 202_version SET version='1.9.62'";
+            $result = _upgrade_query($sql);
+
+            $prosper202_version = '1.9.62';
+        }
+
+        // 1.9.62 -> 1.9.63: schema repairs that must also reach installs ALREADY
+        // on 1.9.62. The 1.9.61->1.9.62 block above was already consumed by master
+        // deployments, and upgrade_databases() isn't even called once the DB version
+        // equals the code version — so a stranded 1.9.62 install would never run a
+        // fix placed in that block. Giving these their own version block guarantees
+        // every install converges. All steps are idempotent.
+        if ($prosper202_version == '1.9.62') {
+
+            // 202_user_role had no UNIQUE key, so the install-time
             // "INSERT IGNORE ... (user_id, role_id)" couldn't actually dedupe and a
             // re-entrant/concurrent install could leave duplicate role grants. Dedupe
             // any existing duplicates and add the UNIQUE key so the grant is truly
-            // idempotent. Guarded against re-runs (a mid-upgrade retry re-enters this
-            // block) and written to never leave the table empty.
+            // idempotent. Guarded against re-runs and written to never empty the table.
             $uniqueExists = false;
             $idx = _upgrade_query("SHOW INDEX FROM `202_user_role` WHERE Key_name = 'uniq_user_role'");
             if ($idx instanceof mysqli_result) {
@@ -3519,16 +3532,16 @@ class UPGRADE
             // truncated. Non-lossy widening; safe to re-run.
             $result = _upgrade_query("ALTER TABLE `202_conversion_logs` MODIFY `ip` varchar(45) NOT NULL DEFAULT ''");
 
-            $sql = "UPDATE 202_version SET version='1.9.62'";
+            $sql = "UPDATE 202_version SET version='1.9.63'";
             $result = _upgrade_query($sql);
 
-            $prosper202_version = '1.9.62';
+            $prosper202_version = '1.9.63';
         }
 
         //This will enable p202 to downgrade to this version if installed over a newer version
-        if ($prosper202_version > '1.9.62') {
+        if ($prosper202_version > '1.9.63') {
 
-            $prosper202_version = '1.9.62';
+            $prosper202_version = '1.9.63';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }
