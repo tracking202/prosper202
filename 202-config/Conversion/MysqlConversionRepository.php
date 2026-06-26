@@ -150,8 +150,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $campaignId = isset($data['campaign_id']) ? (int) $data['campaign_id'] : (int) $click['aff_campaign_id'];
             $clickTime = isset($data['click_time']) ? (int) $data['click_time'] : (int) ($click['click_time'] ?? 0);
 
-            // Base column set is exactly the historical V3 insert; the legacy
-            // columns are appended only when the caller supplies them.
+            // Base column set is exactly the historical V3 insert; the NOT-NULL
+            // legacy columns are always appended below (with defaults when absent).
             $columns = ['click_id', 'transaction_id', 'campaign_id', 'click_payout', 'user_id', 'click_time', 'conv_time'];
             $types = 'isidiii';
             $values = [$clickId, $transactionId, $campaignId, $payout, $userId, $clickTime, $convTime];

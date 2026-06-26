@@ -841,10 +841,30 @@ create_config_file() {
     sed_in_place "s|$dbhostro_pattern|$dbhostro_replacement|" "$config_file"
     sed_in_place "s|$mchost_pattern|$mchost_replacement|" "$config_file"
 
-    # 202-config.php holds DB credentials, so keep it non-world-readable, matching
-    # the PHP writers (setup-config.php and build/scripts/write-config.php both
-    # chmod 0640). Best-effort: never abort the install over a chmod failure.
+    # 202-config.php holds DB credentials, so keep it non-world-readable (0640),
+    # matching the PHP writers (setup-config.php and build/scripts/write-config.php).
     chmod 640 "$config_file" 2>/dev/null || true
+
+    # ...but the web server (often www-data/apache/nginx, distinct from the user
+    # running this script on a VPS) must still be able to read it, or every request
+    # 500s right after we report success. Mirror write-config.php: hand the file to
+    # the web user/group when a distinct one exists and we have permission. If we
+    # can't (unprivileged install), fall back to world-readable so the install works
+    # rather than silently breaking, and warn the operator to lock it down.
+    local current_user web_user=""
+    current_user="$(id -un 2>/dev/null)"
+    for u in www-data apache nginx http; do
+        if id "$u" >/dev/null 2>&1; then web_user="$u"; break; fi
+    done
+    if [ -n "$web_user" ] && [ "$web_user" != "$current_user" ]; then
+        if chown "$web_user":"$web_user" "$config_file" 2>/dev/null \
+            || chgrp "$web_user" "$config_file" 2>/dev/null; then
+            : # web user can now read the 0640 file via owner or group read
+        else
+            chmod 644 "$config_file" 2>/dev/null || true
+            print_warning "202-config.php left world-readable (0644): could not assign it to '$web_user'. On a shared/multi-user host, lock it down: chown $web_user 202-config.php && chmod 640 202-config.php"
+        fi
+    fi
 
     print_success "Config file created: 202-config.php"
     return 0
