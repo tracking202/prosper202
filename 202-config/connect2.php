@@ -3558,8 +3558,12 @@ function getUTMParams(&$mysql)
  * impression for the landing page (when one is supplied — dl.php has none, so it
  * no-ops without a cookie, preserving its prior behavior).
  *
- * 202_clicks_impressions is created by no installer today, so a failure is logged,
- * never fatal — click recording must not die on the optional impression table.
+ * 202_clicks_impressions is created by no installer today, so a missing table is
+ * logged, never fatal — click recording must not die on the optional impression
+ * link. The query is wrapped in try/catch because that non-fatal guarantee depends
+ * on the mysqli_report() mode: under MYSQLI_REPORT_STRICT alone (what connect2.php
+ * sets) a missing table makes query() return false, but under STRICT|ERROR (the
+ * PHP 8.1 default) it throws mysqli_sql_exception — handle both.
  */
 function p202LinkImpressionToClick(mysqli $db, $clickId, $landingPageId = null, string $context = 'record')
 {
@@ -3573,8 +3577,12 @@ function p202LinkImpressionToClick(mysqli $db, $clickId, $landingPageId = null, 
     } else {
         return; // no cookie and no landing page to fall back to (e.g. dl.php)
     }
-    if (!$db->query($sql)) {
-        error_log($context . ': impression link skipped (202_clicks_impressions unavailable): ' . $db->error);
+    try {
+        if (!$db->query($sql)) {
+            error_log($context . ': impression link skipped (202_clicks_impressions unavailable): ' . $db->error);
+        }
+    } catch (\mysqli_sql_exception $e) {
+        error_log($context . ': impression link skipped (202_clicks_impressions unavailable): ' . $e->getMessage());
     }
 }
 
