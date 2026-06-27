@@ -14,8 +14,13 @@ $gs_count = static function (string $sql): int {
     $row = memcache_mysql_fetch_assoc($sql, 0);
     return is_array($row) ? (int) ($row['c'] ?? 0) : 0;
 };
-$gs_has_traffic  = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_ppc_accounts WHERE user_id=" . $gs_user_id . " AND ppc_account_deleted='0'") > 0;
-$gs_has_campaign = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_aff_campaigns WHERE user_id=" . $gs_user_id . " AND aff_campaign_deleted='0'") > 0;
+// Join each child count to its parent table and require the parent to be active:
+// deleting a traffic source / category only soft-deletes the parent row, leaving
+// orphaned account/campaign rows behind. Without these joins those orphans would
+// still mark the step complete (or hide the whole card) for a user who no longer
+// has a usable source/category, instead of prompting them to recreate it.
+$gs_has_traffic  = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_ppc_accounts a JOIN 202_ppc_networks n ON a.ppc_network_id = n.ppc_network_id WHERE a.user_id=" . $gs_user_id . " AND a.ppc_account_deleted='0' AND n.ppc_network_deleted='0'") > 0;
+$gs_has_campaign = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_aff_campaigns c JOIN 202_aff_networks n ON c.aff_network_id = n.aff_network_id WHERE c.user_id=" . $gs_user_id . " AND c.aff_campaign_deleted='0' AND n.aff_network_deleted='0'") > 0;
 $gs_has_tracker  = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_trackers WHERE user_id=" . $gs_user_id) > 0;
 $gs_all_done = $gs_has_traffic && $gs_has_campaign && $gs_has_tracker;
 
