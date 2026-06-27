@@ -8,9 +8,13 @@ select.input-sm {
 }
 
 .container{
-  max-width: none !important;
-  min-width: 1450;
-  width: 1450px;
+  /* Keep the wide ~1450px layout on large screens, but use a fluid width so the
+     container never exceeds the viewport (a hardcoded width:1450px overflowed by
+     10px at a 1440px viewport, producing a stray horizontal scrollbar). */
+  width: 100%;
+  max-width: 1450px !important;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .navbar-default{
