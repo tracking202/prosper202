@@ -172,7 +172,11 @@ class CapabilitiesController
         if (!$stmt) {
             return '';
         }
-        $stmt->bind_param('i', $this->userId);
+        // bind_param() binds by reference; a readonly property can't be passed
+        // by reference (PHP 8: "Cannot indirectly modify readonly property"),
+        // so copy it to a local first.
+        $userId = $this->userId;
+        $stmt->bind_param('i', $userId);
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
             return '';

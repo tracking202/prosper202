@@ -104,7 +104,17 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // Verify INSERT INTO 202_conversion_logs was prepared
         $insertStmts = $write->statementsContaining('INSERT INTO 202_conversion_logs');
         self::assertCount(1, $insertStmts);
-        self::assertSame('isidiii', $insertStmts[0]->boundTypes);
+        // The NOT-NULL legacy columns (time_difference, ip, pixel_type, user_agent)
+        // are always bound now — even when the caller (e.g. the V3 API) omits them —
+        // so the INSERT can't fail under STRICT sql_mode with "Field doesn't have a
+        // default value". Base 'isidiii' + s,s,i,s for the four appended columns.
+        self::assertSame('isidiiissis', $insertStmts[0]->boundTypes);
+        // The four defaults land at the tail of the bound values: time_difference is
+        // a (non-negative) seconds string, then ip='', pixel_type=0, user_agent=''.
+        $bound = $insertStmts[0]->boundValues;
+        self::assertSame('', $bound[8], 'ip defaults to empty string');
+        self::assertSame(0, $bound[9], 'pixel_type defaults to 0');
+        self::assertSame('', $bound[10], 'user_agent defaults to empty string');
     }
 
     public function testCreateUpdatesClickLeadFlag(): void

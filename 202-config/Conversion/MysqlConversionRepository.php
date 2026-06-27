@@ -150,18 +150,31 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $campaignId = isset($data['campaign_id']) ? (int) $data['campaign_id'] : (int) $click['aff_campaign_id'];
             $clickTime = isset($data['click_time']) ? (int) $data['click_time'] : (int) ($click['click_time'] ?? 0);
 
-            // Base column set is exactly the historical V3 insert; the legacy
-            // columns are appended only when the caller supplies them.
+            // Base column set is exactly the historical V3 insert; the NOT-NULL
+            // legacy columns are always appended below (with defaults when absent).
             $columns = ['click_id', 'transaction_id', 'campaign_id', 'click_payout', 'user_id', 'click_time', 'conv_time'];
             $types = 'isidiii';
             $values = [$clickId, $transactionId, $campaignId, $payout, $userId, $clickTime, $convTime];
 
+            // These columns are NOT NULL with no DB default. Callers that have the
+            // context (the legacy pixel/postback paths) pass them in $data; callers
+            // that don't (the V3 API) would otherwise omit them entirely, and the
+            // INSERT then fails under STRICT sql_mode with "Field doesn't have a
+            // default value" — silently dropping the conversion. Always include them,
+            // using the caller's value when supplied and a sensible default otherwise,
+            // so every ingestion path writes a valid row. time_difference is the
+            // click->conversion gap in seconds.
+            $legacyDefaults = [
+                'time_difference' => (string) max(0, $convTime - $clickTime),
+                'ip' => '',
+                'pixel_type' => 0,
+                'user_agent' => '',
+            ];
             foreach (['time_difference' => 's', 'ip' => 's', 'pixel_type' => 'i', 'user_agent' => 's'] as $col => $type) {
-                if (array_key_exists($col, $data)) {
-                    $columns[] = $col;
-                    $types .= $type;
-                    $values[] = $type === 'i' ? (int) $data[$col] : (string) $data[$col];
-                }
+                $value = array_key_exists($col, $data) ? $data[$col] : $legacyDefaults[$col];
+                $columns[] = $col;
+                $types .= $type;
+                $values[] = $type === 'i' ? (int) $value : (string) $value;
             }
 
             $placeholders = rtrim(str_repeat('?, ', count($values)), ', ');

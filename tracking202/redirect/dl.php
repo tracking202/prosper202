@@ -641,10 +641,4 @@ if ($mysql['click_cpa'] != NULL) {
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
 
-if (isset($_COOKIE['p202_ipx'])) {
-	$mysql['p202_ipx'] = $db->real_escape_string($_COOKIE['p202_ipx']);
-	$impression_sql = "UPDATE 202_clicks_impressions SET click_id = '" . $mysql['click_id'] . "' WHERE impression_id = '" . $mysql['p202_ipx'] . "'";
-	if ($db->query($impression_sql) === false) {
-		error_log('dl.php: failed to link impression ' . $mysql['p202_ipx'] . ' to click ' . $mysql['click_id'] . ': ' . $db->error);
-	}
-}
+p202LinkImpressionToClick($db, $mysql['click_id'], null, 'dl.php');

@@ -71,7 +71,7 @@ class AUTH
     // cookie) guessing the password toward a full account takeover.
     public const MAX_PASSWORD_REAUTH_FAILS = 5;
 
-    private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted != 1 AND u.user_active = 1 LIMIT 1';
+    private const string LOGIN_SELECT = 'SELECT u.user_id, u.user_name, u.user_pass, u.user_api_key, u.user_stats202_app_key, u.user_timezone, u.user_mods_lb, u.install_hash, u.p202_customer_api_key, up.user_id AS pref_user_id, up.user_slack_incoming_webhook FROM 202_users u LEFT JOIN 202_users_pref up ON up.user_id = u.user_id WHERE u.user_name = ? AND u.user_deleted != 1 AND u.user_active = 1 LIMIT 1';
     private static bool $passwordColumnChecked = false;
     private static bool $sessionHeartbeatRefreshed = false;
 
@@ -404,7 +404,10 @@ class AUTH
 						2u.user_active = 1
                 	LIMIT 1';
                 $user_result = _mysqli_query($sql);
-                $user_row = $user_result->fetch_assoc();
+                // _mysqli_query() returns false on a query failure; guard before
+                // fetch_assoc() so a transient DB error during remember-me restore
+                // doesn't fatal on false->fetch_assoc().
+                $user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
                 if ($user_row) {
                     self::begin_user_session($user_row);
                     self::writeSessionValue('user_cirrus_link', $user_row['user_api_key'] ?? null);
@@ -442,7 +445,8 @@ class AUTH
 				user_id = "' . $mysql['user_id'] . '"
 		';
         $user_result = _mysqli_query($sql);
-        $user_row = $user_result->fetch_assoc();
+        // Guard against a false return from a failed query before fetch_assoc().
+        $user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
         if (empty($user_row['secret_key'])) {
             $mysql['secret_key'] = self::generate_random_string(48);
             $sql = '

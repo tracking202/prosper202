@@ -206,7 +206,7 @@ final class UserTables
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::USER_ROLE . "` (
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `role_id` int(11) NOT NULL,
-                KEY `user_id` (`user_id`),
+                UNIQUE KEY `uniq_user_role` (`user_id`,`role_id`),
                 KEY `role_id` (`role_id`),
                 CONSTRAINT `202_user_role_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `202_users` (`user_id`),
                 CONSTRAINT `202_user_role_ibfk_2` FOREIGN KEY (`role_id`) REFERENCES `202_roles` (`role_id`)
