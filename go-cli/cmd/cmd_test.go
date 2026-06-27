@@ -2293,7 +2293,7 @@ func TestTrackerGetURL(t *testing.T) {
 		gotPath = r.URL.Path
 		gotMethod = r.Method
 		w.WriteHeader(200)
-		w.Write([]byte(`{"data":{"tracker_id":56,"direct_url":"https://trk.example.com/tracking202/redirect/go.php?t202id=123"}}`))
+		w.Write([]byte(`{"data":{"tracker_id":56,"direct_url":"https://trk.example.com/tracking202/redirect/dl.php?t202id=123"}}`))
 	}))
 	defer srv.Close()
 
