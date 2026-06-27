@@ -16,13 +16,13 @@ class TrackersController extends Controller
     {
         return [
             'aff_campaign_id'   => ['type' => 'i', 'required' => true],
-            'ppc_account_id'    => ['type' => 'i'],
-            'text_ad_id'        => ['type' => 'i'],
-            'landing_page_id'   => ['type' => 'i'],
-            'rotator_id'        => ['type' => 'i'],
+            'ppc_account_id'    => ['type' => 'i', 'default' => 0],
+            'text_ad_id'        => ['type' => 'i', 'default' => 0],
+            'landing_page_id'   => ['type' => 'i', 'default' => 0],
+            'rotator_id'        => ['type' => 'i', 'default' => 0],
             'click_cpc'         => ['type' => 'd'],
             'click_cpa'         => ['type' => 'd'],
-            'click_cloaking'    => ['type' => 'i'],
+            'click_cloaking'    => ['type' => 'i', 'default' => 0],
             'tracker_id_public' => ['type' => 'i'],
         ];
     }
