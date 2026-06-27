@@ -3552,10 +3552,50 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.63', '>')) {
+        if ($prosper202_version == '1.9.63') {
 
-            $prosper202_version = '1.9.63';
+            // 202_forecast_events ships in the fresh-install schema
+            // (MiscTables::forecastEvents) but was never added to this upgrade
+            // chain, so installs upgraded to 1.9.63 are missing it and the V3
+            // /forecast-events endpoints return 500. Create it here (IF NOT
+            // EXISTS, matching the fresh-install DDL verbatim) so existing
+            // installs converge. Fresh installs create the table empty, so no
+            // seed data is added here.
+            $sql = "CREATE TABLE IF NOT EXISTS `202_forecast_events` (
+                `event_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `event_name` varchar(255) NOT NULL,
+                `event_date` date NOT NULL,
+                `end_date` date DEFAULT NULL,
+                `recurrence` enum('none','monthly','yearly','custom') NOT NULL DEFAULT 'none',
+                `impact_type` enum('boost','suppress','neutral') NOT NULL DEFAULT 'neutral',
+                `expected_impact_pct` decimal(8,2) DEFAULT NULL,
+                `lead_days` int(11) NOT NULL DEFAULT 0,
+                `lag_days` int(11) NOT NULL DEFAULT 0,
+                `tags` varchar(500) DEFAULT NULL,
+                `notes` varchar(500) DEFAULT NULL,
+                `created_at` int(11) NOT NULL,
+                `updated_at` int(11) NOT NULL,
+                PRIMARY KEY (`event_id`),
+                KEY `user_date` (`user_id`, `event_date`),
+                KEY `user_name` (`user_id`, `event_name`),
+                KEY `user_recurrence` (`user_id`, `recurrence`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Calendar events for forecast adjustment (holidays, promos, anomalies)'";
+            $result = _upgrade_query($sql);
+
+            if ($result !== false) {
+                $sql = "UPDATE 202_version SET version='1.9.64'";
+                $result = _upgrade_query($sql);
+                $prosper202_version = '1.9.64';
+            } else {
+                error_log('Prosper202 upgrade: failed to create 202_forecast_events; leaving version at 1.9.63 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.64', '>')) {
+
+            $prosper202_version = '1.9.64';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }
