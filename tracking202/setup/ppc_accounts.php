@@ -422,7 +422,7 @@ template_top('Traffic Sources'); ?>
 				<span class="infotext">What Traffic Sources do you use? Some examples include, Facebook Ads, Twitter Ads, BingAds, & Google Adwords.</span>
 
 				<form method="post" action="<?php echo $_SERVER['REDIRECT_URL'] ?? ''; ?>" class="form-inline" role="form" style="margin:15px 0px;">
-					<div class="form-group <?php if (isset($error['ppc_network_name'])) echo "has-error"; ?>"
+					<div class="form-group <?php if (isset($error['ppc_network_name'])) echo "has-error"; ?>">
 						<label class="sr-only" for="ppc_network_name">Traffic source</label>
 						<input type="text" class="form-control input-sm" id="ppc_network_name" name="ppc_network_name" placeholder="Traffic source" value="<?php echo $html['ppc_network_name'] ?? ''; ?>">
 					</div>
@@ -1012,6 +1012,12 @@ template_top('Traffic Sources'); ?>
 }
 
 #trafficSourceList .source-item {
+    /* Override the shared `.setup-side-panel ul > li` flex rule (sub-menu.php):
+       this is a structured card (header + nested account list), not a flat
+       flex row, so it must stack its children vertically. Without display:block
+       an empty account list wraps beside the header instead of below it. */
+    display: block;
+    margin-bottom: 0;
     border: 1px solid #dbe3ec;
     border-radius: 10px;
     background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);

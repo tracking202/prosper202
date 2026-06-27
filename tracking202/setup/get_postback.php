@@ -158,7 +158,7 @@ $unSecuredUniversalPixelJS = '
 
 		    </div>
 		    					<div class="form-group">
-						<label class="col-md-3 control-label" for="subid_value"><i class="fa fa-tag"></i> SubID:</label>
+						<label class="col-md-3 control-label" for="subid_value" style="text-align: left;"><i class="fa fa-tag"></i> SubID:</label>
 						<div class="col-md-4">
 							<input class="form-control" type="text" name="subid_value" id="subid_value" placeholder="{aff_sub}"/>
 							<p class="help-block">Network-specific subID parameter. Common formats:</p>

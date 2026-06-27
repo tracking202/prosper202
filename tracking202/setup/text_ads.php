@@ -482,9 +482,9 @@ template_top('Text Ads Setup');  ?>
 								$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 								if ($userObj->hasPermission("remove_text_ad")) {
-								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
+								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
 							} else {
-								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
+								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?copy_text_ad_id=%s" class="list-action">copy</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
 							}		
 							
 										
@@ -539,9 +539,9 @@ template_top('Text Ads Setup');  ?>
 										$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 										
 										if ($userObj->hasPermission("remove_text_ad")) {
-											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
+											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
 										} else {
-											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?edit_text_ad_id=%s" class="list-action">edit</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
+											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?copy_text_ad_id=%s" class="list-action">copy</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
 										}
 							
 										
