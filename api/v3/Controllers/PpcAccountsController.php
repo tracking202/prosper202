@@ -20,4 +20,14 @@ class PpcAccountsController extends Controller
             'ppc_account_default' => ['type' => 'i'],
         ];
     }
+
+    #[\Override]
+    protected function beforeCreate(array $payload): array
+    {
+        // ppc_account_time is NOT NULL with no default; supply it so the INSERT
+        // succeeds under STRICT_TRANS_TABLES (mirrors AffNetworksController).
+        return [
+            'ppc_account_time' => ['type' => 'i', 'value' => time()],
+        ];
+    }
 }
