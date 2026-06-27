@@ -3,6 +3,16 @@ declare(strict_types=1);
 
 use Tracking202\Redirect\RedirectHelper;
 
+// go.php is a direct public entry point that uses RedirectHelper before any
+// bootstrap (connect2.php) loads the Composer autoloader, so pull in the
+// self-contained class explicitly. The class lives in the PSR-4 directory
+// tracking202/Redirect/ (capital R), while this script sits in lowercase
+// tracking202/redirect/; reference it via ../Redirect/ so the path is correct
+// on case-sensitive (Linux production) filesystems. A bare
+// __DIR__ . '/RedirectHelper.php' would resolve to the lowercase directory and
+// fatal with "Failed opening required" everywhere except case-insensitive macOS.
+require_once __DIR__ . '/../Redirect/RedirectHelper.php';
+
 $vars = explode(' ', base64_decode((string) RedirectHelper::getStringParam('202v')));
 
 if(isset($vars[1])){

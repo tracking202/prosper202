@@ -3025,40 +3025,93 @@ function rotator_data($query, $type)
 
 function changelog(): array
 {
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php');
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Execute
-    $result = curl_exec($ch);
+    // Release notes are an object keyed by version, each entry { version, logs[] }.
+    //
+    // The build ships a bundled copy (202-config/changelogs.json) as a reliable,
+    // offline floor, then merges the remote list on top. The merge matters for the
+    // forward-looking screens (update-needed / 1-click upgrade) that run on the OLD
+    // install before files are replaced: those need notes for a newer version that
+    // this build's bundle cannot yet contain. The bundle guarantees the list is
+    // never empty even when the remote endpoint is stale, slow, or offline.
+    $entries = changelog_bundled();
 
-    // close connection
+    foreach (changelog_remote() as $version => $entry) {
+        if (is_array($entry) && isset($entry['version'], $entry['logs']) && is_array($entry['logs'])) {
+            $entries[(string) $version] = $entry;
+        }
+    }
+
+    // The array key is the authoritative version. Keep each entry's 'version' field
+    // in sync with it so the rendered release number is correct even when an
+    // upstream source mislabels an entry (the remote list ships at least one).
+    foreach ($entries as $version => $entry) {
+        if (is_array($entry)) {
+            $entry['version'] = (string) $version;
+            $entries[$version] = $entry;
+        }
+    }
+
+    // Newest first for display.
+    uksort($entries, static fn($a, $b): int => version_compare((string) $b, (string) $a));
+
+    return $entries;
+}
+
+function changelog_bundled(): array
+{
+    $changelog_file = __DIR__ . '/changelogs.json';
+
+    if (!is_readable($changelog_file)) {
+        return [];
+    }
+
+    $result = file_get_contents($changelog_file);
+    if ($result === false) {
+        return [];
+    }
+
+    $decoded = json_decode($result, true);
+    // Fail safe with an empty list rather than returning null and triggering a
+    // TypeError against the declared : array return type.
+    return is_array($decoded) ? $decoded : [];
+}
+
+function changelog_remote(): array
+{
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php');
+    // Disable SSL verification (legacy endpoint).
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Bounded timeouts so a slow/offline endpoint can never hang the upgrade screen.
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+
+    $result = curl_exec($ch);
+    $http_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    return json_decode($result, true);
+    // Best-effort only: any failure (transport, non-200, malformed JSON) yields an
+    // empty list so the caller falls back to the bundled changelog.
+    if ($result === false || $http_code !== 200) {
+        return [];
+    }
+
+    $decoded = json_decode($result, true);
+    return is_array($decoded) ? $decoded : [];
 }
 
 function changelogPremium(): array
 {
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php');
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Execute
-    $result = curl_exec($ch);
+    // Premium and paid share the same release notes. Premium call sites iterate the
+    // result as version => [log, ...], so flatten the { version, logs[] } entries
+    // that changelog() returns into that shape.
+    $flat = [];
+    foreach (changelog() as $version => $entry) {
+        $flat[(string) $version] = $entry['logs'] ?? [];
+    }
 
-    // close connection
-    curl_close($ch);
-
-    return json_decode($result, true);
+    return $flat;
 }
 
 function callAutoCron($endpoint)

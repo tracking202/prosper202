@@ -1,0 +1,668 @@
+{
+  "1.9.63": {
+    "version": "1.9.63",
+    "logs": [
+      "Fixed: REST API v3 errors when reading account capabilities and recording conversions",
+      "Fixed: Fresh installations could crash while recording clicks and conversions",
+      "Fixed: Conversion recording no longer fails on servers running MySQL in strict mode",
+      "Update: Hardened the installer and database schema for clean installs and upgrades"
+    ]
+  },
+  "1.9.62": {
+    "version": "1.9.62",
+    "logs": [
+      "New: In-app messenger for two-way communication and support directly inside your dashboard",
+      "Update: Replaced the old one-way dashboard alerts and content sync with the new messaging system"
+    ]
+  },
+  "1.9.61": {
+    "version": "1.9.61",
+    "logs": [
+      "Update: Conversion recording is now idempotent and atomic, so conversions can no longer be double-counted or partially saved across postback, pixel, and API tracking",
+      "Fixed: Clicks are no longer dropped during redirects when a tracker or click lookup misses",
+      "Fixed: Conversion callback (cb202) no longer crashes on malformed or undecryptable data"
+    ]
+  },
+  "1.9.60": {
+    "version": "1.9.60",
+    "logs": [
+      "Update: Hardened the login and authentication flow for improved account security"
+    ]
+  },
+  "1.9.59": {
+    "version": "1.9.59",
+    "logs": [
+      "New: Multi-touch attribution engine with Last Touch, Time Decay, Position Based, and Assisted models",
+      "New: Attribution REST API endpoint for accessing attribution calculations and results",
+      "New: Automated attribution processing via cron with batch recalculation"
+    ]
+  },
+  "1.9.56": {
+    "version": "1.9.56",
+    "logs": [
+      "Update: Centralized version management for more reliable upgrades"
+    ]
+  },
+  "1.9.51": {
+    "version": "1.9.51",
+    "logs": [
+      "New: GDPR Compliance Options To Mask IP and Cookieless Functionality",
+      "New: Prosper202 Postback can be used as Webhook url for Shopify conversion tracking",
+      "New: Ability To Remap Default Prosper202 Url Varables To Custom Varables",
+      "New: PCI value available on dynamic content segments and t202DataObj",
+      "New: Support for Bing MSCLKID for offline conversions",
+      "New: Dynamic content segments can now display dynamic dates on landing pages",
+      "New: Up To 10x faster Zero Redirect PurLink Redirects",
+      "New: [[CPA]] Token",
+      "New: Support for ipv6",
+      "New: Support for php 7.2",
+      "New: Smart Redirector can now id European traffic for GDPR and other uses",
+      "New: AdBlocker Detection to ensure Prosper202 dashboard works as expected",
+      "New: PurLinks now support pages that use forms for lead gen",
+      "Update: All api calls use https",
+      "Update: If a public click id is missing in the url, find it from the database",
+      "Update: Support for newer browsers such as Brave",
+      "Update: Improved the logout to be more secure",
+      "Update: Spy View will use the read only database if it exists",
+      "Update: 202-config-sample.php now includes read only database",
+      "Update: Maxbounty uses s1 for LinkAssist",
+      "Update: Direct links work even when database is offline with BlazerCache",
+      "Update: Group Overview reports more accurate",
+      "Update: Faster Bot Detection Code",
+      "Update: Switch to new GEOLite2 Database",
+      "Update: Cron jobs will run more frequently",
+      "Update: Big deletion jobs will run in batches",
+      "Fixed: Tokens were not being pass correctly",
+      "Fixed: Device type report in group overview was not correct",
+      "Fixed: Users were not able to reupload subid conversion data if it had been deleted",
+      "Fixed: Cloaked Landing Pages did not redirect correctly",
+      "Fixed: Cron jobs use more accurate times ",
+      "Fixed: API Key was not being loaded correctly",
+      "Fixed: Conversion log was calculating wrong date difference between first click and conversion",
+      "Fixed: More secure database error page ",
+      "Fixed: Some new clicks were not getting set with ip address"
+    ]
+  },
+  "1.9.50": {
+    "version": "1.9.50",
+    "logs": [
+      "New: Login page wallpaper",
+      "New: [[transactionid]] token",
+      "New: Mailchimp, Instagram, Pinterest, Snapchat, Quora icons for spy & visitor view",
+      "Update: Refresh Facebook, Twitter, Youtube icons for spy & visitor view",
+      "Update: Advanced Landing Page Javascript",
+      "Update: Pixel url validation",
+      "Fixed: Correct display of links in step 8",
+      "Fixed: Duplicate Conversion checker for the dedupe pixel and postback option",
+      "Fixed: Update Currency did not save the new settings",
+      "Fixed: Only create publisher ids if random_bytes function exists",
+      "Fixed: Memcache error in DataEngine reports"
+    ]
+  },
+  "1.9.49": {
+    "version": "1.9.49",
+    "logs": [
+      "Fixed: Smart Redirector was not passing values into tokens",
+      "No chat widget for publishers",
+      "Limit publisher ability to see ppc accounts, landing pages and campaign lists"
+    ]
+  },
+  "1.9.48": {
+    "version": "1.9.48",
+    "logs": [
+      "New: Create Internal Affiliate Program with new Publishers feature",
+      "New: View Transaction Id Report in Group Overview",
+      "New: View Publisher and User Report in Group Overview",
+      "New: Support for downgrading from newer version down to 1.9.48",
+      "New: [[t202pubid]] Token for dynamically passing public publisher id to other urls and postbacks",
+      "Fixed: Link To Text Ads",
+      "Fixed: Prosper202 API will not list deleted landing pages",
+      "Fixed: Iframe pixel code fixed",
+      "Fixed: CLickbank postback/ips url works in PHP7",
+      "Fixed: Fix for users installing in subdirectory",
+      "Fixed: Upgrade Check Typo Bug"
+    ]
+  },
+  "1.9.47": {
+    "version": "1.9.47",
+    "logs": [
+      "New: Bot202 LinkAssist Support for additional networks",
+      "New: Dynamic Content Segments Supports IP address display",
+      "Fixed: 1-Click Auto Updates work"
+    ]
+  },
+  "1.9.46": {
+    "version": "1.9.46",
+    "logs": [
+      "New: Bot202 Link Assist Automatically Detects and auto formats affiliate links with [[subid]] token",
+      "New: Auto check landing pages to make sure the lp javascript is placed",
+      "New: Async Landing page Javascript snippet with automatic support for https",
+      "Update: Improved less confusing installation flow",
+      "Fixed: Bug with geoip when php geoip module is installed on server",
+      "Fixed: Bug with upgrade from versions older than 1.9.3",
+      "Fixed: Workaround for when SERVER_NAME is _",
+      "Fixed: Database changes during upgrades and new installs"
+    ]
+  },
+  "1.9.45": {
+    "version": "1.9.45",
+    "logs": [
+      "New: Zero Redirect PurLink Technology For Landing Pages",
+      "New: Advanced Landing Pages now support Leave Behind links for extra revenue",
+      "New: Ability to get secure LP javascript",
+      "Update: The Smart Redirector allows for substring matching in the referrer url rule",
+      "Update: Landing page Javascript loads faster for even better tracking",
+      "Fixed: Redirect issues on some Smart Redirector links",
+      "Fixed: Day parting report sorts hourly by default",
+      "Fixed: Hourly Overview reports sorts data hourly by default",
+      "Fixed: Landing Page Tracking Error",
+      "Fixed: Login issue during setup for some users",
+      "Fixed: Fixed width layout"
+    ]
+  },
+  "1.9.44": {
+    "version": "1.9.44",
+    "logs": [
+      "New: Performance Optimizations for Direct Links",
+      "New: Support for PHP 7",
+      "New: Quick Activation of DNI Networks",
+      "New: Global Postback url accepts POST data",
+      "New: sourceid token to pass ppc account id for better source tracking and segmentation by the network",
+      "New: Filter by subid",
+      "New: Inline Help documentation links",
+      "New: Easy link to premium Maxmind database purchase",
+      "New: API Endpoint For ClickServer Version",
+      "Fixed: Advanced Landing pages on step 4 listed alphabetically",
+      "Fixed: Timezone for GMT 0 works correctly",
+      "Fixed: Document Roots that are symlinks are correctly detected",
+      "Fixed: Chart data displays correctly",
+      "Fixed: Chart customization modal closes correctly",
+      "Fixed: List of landing pages displayed correctly",
+      "Fixed: Autocron was not registering correctly"
+    ]
+  },
+  "1.9.29": {
+    "version": "1.9.29",
+    "logs": [
+      "New: Performance Optimizations for Direct Links",
+      "New: Support for PHP 7",
+      "New: Quick Activation of DNI Networks",
+      "New: Global Postback url accepts POST data",
+      "New: sourceid token to pass ppc account id for better source tracking and segmentation by the network",
+      "New: Filter by subid",
+      "New: Inline Help documentation links",
+      "New: Easy link to premium Maxmind database purchase",
+      "New: API Endpoint For ClickServer Version",
+      "Fixed: Advanced Landing pages on step 4 listed alphabetically",
+      "Fixed: Timezone for GMT 0 works correctly",
+      "Fixed: Document Roots that are symlinks are correctly detected",
+      "Fixed: Chart data displays correctly",
+      "Fixed: Chart customization modal closes correctly",
+      "Fixed: List of landing pages displayed correctly",
+      "Fixed: Autocron was not registering correctly"
+    ]
+  },
+  "1.9.28": {
+    "version": "1.9.28",
+    "logs": [
+      "Fixed: Group overview reporting on all ppc networks even when only one network was selected",
+      "Fixed: Fixed: New landing pages were not being saved",
+      "Fixed: Overview report shows direct link and simple landing page stats"
+    ]
+  },
+  "1.9.27": {
+    "version": "1.9.27",
+    "logs": [
+      "New: Instant Deep Link Offer Setup via Direct Network Integration",
+      "New: Table for tracking subids is cleared daily for performance purposes",
+      "New: Performance tweaks for referrer tracking table, New installations only",
+      "New: Prosper202 Pro installs and Runs On Shared Hosting Plans",
+      "Fix: Error with dropdowns not working with DNI has been fixed"
+    ]
+  },
+  "1.9.26": {
+    "version": "1.9.26",
+    "logs": [
+      "Fixed: Group overview filtering for PPC Networks",
+      "Fixed: Alignment of dropdown values"
+    ]
+  },
+  "1.9.25": {
+    "version": "1.9.25",
+    "logs": [
+      "New: Allow users on servers with no partition support to still install Prosper202 Pro",
+      "New: Ability to run reports on traffic that come from no ppc networks (For example organic traffic)",
+      "New: Added info on how to use Dynamic Content Segments on landing pages",
+      "New: Ability to specify which url variable to use as the t202kw value",
+      "New: Quickly type and filter any of the data in Prosper202 drop downs",
+      "New: Optimize tables  with partitions for new installs of Prosper202 Pro",
+      "New: Optimized code fo C1-C4 custom variables",
+      "New: Skip option for VIP Perks modal",
+      "Fixed: Reports pages will not show errors when there is no data",
+      "Fixed: Only live landing pages show in dropdown",
+      "Fixed: Fixed various issues for users who have Prosper202 installed in subdirectories",
+      "Update: Optimized custom variables reprots page"
+    ]
+  },
+  "1.9.24": {
+    "version": "1.9.24",
+    "logs": [
+      "New: Added filter options for sidebar lists (campaigns, networks, etc)",
+      "New: Support For Dynamic Cost for Redirector",
+      "New: Support For Dynamic Cost for Simple/Advanced Landing pages",
+      "New: Easy token entry for t202kw (dynamic keyword), t202ref (Dynamic referer) and t202b (Dynamic Cost)",
+      "Fixed: Filter by landing page on group overview",
+      "Fixed: Charting Display Bug",
+      "Fixed: Bot Detection bug",
+      "Fixed: Empty Array reporting bug",
+      "Fixed: Hourly breakdow display fixed",
+      "Fixed: MYSQl api related bug",
+      "Fixed: Cleaned up some unused code",
+      "Update: Removed warning about text ads when generating tracking link",
+      "Update: New user agent detector to detect more browsers etc",
+      "Update: New Geo Ip database for improved location detection",
+      "Update: URL rotator removed from step 3",
+      "Update: 1-click upgrade alerts user if they are missing settings to make it work"
+    ]
+  },
+  "1.9.23": {
+    "version": "1.9.23",
+    "logs": [
+      "Fixes: Bug fixed with direct links"
+    ]
+  },
+  "1.9.22": {
+    "version": "1.9.22",
+    "logs": [
+      "New: Separate tables on Account Overview for Campaigns and Landing pages",
+      "New: Support for dynamic bid amount via t202b= variable",
+      "New: Progress bar for DNI integrations so you see how much time is left for caching offers",
+      "Fixed: Filtering and results count on visitor tab works better",
+      "Fixed: Users on strict mode for mysql had errors with setup and using the software",
+      "Fixed: Resized text ad preview",
+      "Fixed: User gets redirected to correct page when logged out of mobile view",
+      "Fixed: CTR is correct on mobile view",
+      "Fixed: Long GCLID values were being cut short",
+      "Fixed: Filtering in overview and charts",
+      "Fixed: Undefined index error for cloaked links",
+      "Fixed: Deleted custom variables were still showing on step 8",
+      "Fixed: Page title on step 8 wasn't showing correctly in the browser",
+      "Update: New indexes for c1-c4 tables when doing a new install. This will make everything faster",
+      "Update: New indexes for custom variables table",
+      "Update: New favicon next to DNI networks in step 3"
+    ]
+  },
+  "1.9.21": {
+    "version": "1.9.21",
+    "logs": [
+      "Fixes: Bug fixes after upgrading and DNI ping back"
+    ]
+  },
+  "1.9.20": {
+    "version": "1.9.20",
+    "logs": [
+      "New: Direct Network Integration listing have description and icons"
+    ]
+  },
+  "1.9.19": {
+    "version": "1.9.19",
+    "logs": [
+      "New: Direct Network Integration",
+      "New: Remember me feature",
+      "New: [[timestamp]] token",
+      "New: Check for Mcrypt on setup of Prosper202",
+      "New: Check for Mcrypt before user can setup Clickbank Integration",
+      "Fixed: Checks for writable folder uses exact directory needed",
+      "Fixed: Undefined constant error fixed in rotator",
+      "Fixed: Default Landing page in rotator",
+      "Fixed: Ability to show ISP data with comma in name"
+    ]
+  },
+  "1.9.18": {
+    "version": "1.9.18",
+    "logs": [
+      "New: Two-way communications with WP Plugin",
+      "Fixed: Auto upgrade fixes",
+      "Fixed: Keyword and Referer Filter work now",
+      "Fixed: Rotator shows all landing pages"
+    ]
+  },
+  "1.9.17": {
+    "version": "1.9.17",
+    "logs": [
+      "New: Two-way communications with WP Plugin",
+      "Fixed: Get Advanced Landing page code bug fixed",
+      "Fixed: Redirector wasn't shoing all landing pages",
+      "Fixed: Auto upgrade doesn't show an error"
+    ]
+  },
+  "1.9.16": {
+    "version": "1.9.16",
+    "logs": [
+      "New: After login you will be redirected to the page you were trying to look at",
+      "Fixed: Landing page bug tracking fixed"
+    ]
+  },
+  "1.9.15": {
+    "version": "1.9.15",
+    "logs": [
+      "New: Support for installing Prosper202 in a subdirectory",
+      "New: Support for Official Prosper202 Wordpress Plugin",
+      "New: ISP And Carrier information available in download report",
+      "New: [[referer]] & [[referrer]] token support for all locations that accept tokens",
+      "New: Landing page setup page now includes easy token insertion buttons",
+      "Update: Spyview loads multiple times faster",
+      "Update: Visitor loads multiple times faster",
+      "Fixed: Pagnination improvments",
+      "Fixed: Bug in modal window display",
+      "Fixed: For splittesting you can use both ALL or all as values",
+      "Fixed: Bug with utm_source and utm_mediam being stored in wrong location",
+      "Fixed: Bug in referer report that made it return too many results",
+      "Fixed: Bug where pixels were not deleting correctly on step 1"
+    ]
+  },
+  "1.9.14": {
+    "version": "1.9.14",
+    "logs": [
+      "Fixed: Universal Smart Pixel setup was overwriting pixel urls",
+      "Fixed: ISP and Carrier Detection for the redirector tracks better"
+    ]
+  },
+  "1.9.13": {
+    "version": "1.9.13",
+    "logs": [
+      "New: Universal Smart Pixel Can Fire Multiple Types of Pixels",
+      "Fixed: Results count on spyview is more accurate",
+      "Fixed: Tooltips display better",
+      "Fixed: Filters in spyview do not show sql errors",
+      "Fixed: IP Address Detection is improved"
+    ]
+  },
+  "1.9.12": {
+    "version": "1.9.12",
+    "logs": [
+      "New: Visitor View and Spy View Reports run faster",
+      "New: Ability To Split-Test offers on landing pages",
+      "New: Ability to detecit correct ip address when using firewall or loadbalancer",
+      "New: Raw pixel option in Universal Smart Pixel now allows tokens to be set",
+      "Fixed: Deleted campaigns do now show landing pages in redirector",
+      "Fixed: Daily email reports showed wrong numbers",
+      "Fixed: Link to Overview fixed"
+    ]
+  },
+  "1.9.11": {
+    "version": "1.9.11",
+    "logs": [
+      "Fixed: Reporting API did check for correct encoding",
+      "Fixed: Added Missing Include File",
+      "Fixed: Mobile site shows correct data",
+      "Fixed: Fixed problem with filtering by keyword",
+      "Fixed: Rotator caused issues with saving updates when modifiying existing rules",
+      "Fixed: Improved method of checking for partitions support",
+      "Fixed: Missing link to login page if Prosper202 is already installed",
+      "Fixed: Graph data displays better when set to show by hours"
+    ]
+  },
+  "1.9.10": {
+    "version": "1.9.10",
+    "logs": [
+      "New: Autocomplete for Traffic Sources",
+      "New: Autocomplete for Categories and affiliate networks",
+      "New: Check to see if server meets requirements before new installation",
+      "New: Export to excel for in custom variable report",
+      "New: Improved upgrade speed for older users",
+      "New: Improved DataEngine imports for upgrades",
+      "New: Applebot detection",
+      "New: VIP Perks survey shows only new questions",
+      "New: On new installs, 202_site_urls table is more efficient",
+      "Fixed: Missing header added to auto upgrade file",
+      "Fixed: Display long keywords better in visitor and spy view",
+      "Fixed: Mobile site shows correct data",
+      "Fixed: Simple landing pages pickup t202kw as the keyword",
+      "Fixed: Deleted clicks get deleted from DataEngine as well",
+      "Fixed: Custom variables get picked up on the landing page",
+      "Fixed: Custom variables get added when generating links for landing pages"
+    ]
+  },
+  "1.9.9": {
+    "version": "1.9.9",
+    "logs": [
+      "New: Prosper202 Pro Logo",
+      "Updated:Smart redirector supports 'all' tag",
+      "Updated: Smart Rotator renamed to Smart Redirector",
+      "Fixed: Daily emails not sent if no data",
+      "Fixed: Smart Redirector for split-testing",
+      "Fixed: Clickbank ISN reporting tracks sales",
+      "Fixed: More efficient click deletion code"
+    ]
+  },
+  "1.9.8": {
+    "version": "1.9.8",
+    "logs": [
+      "New: Bot Filter Database",
+      "Fixed: Rotator redirections",
+      "Fixed: Removed Auto Monetizer Place Holder",
+      "Fixed: Landing pages passes url variables",
+      "Fixed: Removed API keys section",
+      "Fixed: Daily email can now be set to never without error"
+    ]
+  },
+  "1.9.7": {
+    "version": "1.9.7",
+    "logs": [
+      "New: Daily Email Reports",
+      "New: Loading indicator for data",
+      "Improved: Faster account overview loading",
+      "Fixed: Bing Devex Keyword bug fix",
+      "Fixed: Referer Search bug",
+      "Fixed: IP search bug",
+      "Fixed: Column sort bug"
+    ]
+  },
+  "1.9.6": {
+    "version": "1.9.6",
+    "logs": [
+      "New: Split-testing functionality",
+      "New: Automatic cron jobs without needing to manually set it up",
+      "Improved: Bootstrap latest version",
+      "Improved: Jquery latest version",
+      "Improved: Data engine performance, reduction in cpu loads",
+      "Improved: Clickbank ISN support v6 of the api",
+      "Fixed: utm_source was being assigned to the keyword "
+    ]
+  },
+  "1.9.5": {
+    "version": "1.9.5",
+    "logs": [
+      "New: Full user role implementation. with restrictions on what can be done in your p202",
+      "New: You can clone an existing landing page",
+      "New: Ability to dynamically displays ISP, Device, Postal code on landing page",
+      "New: Ability to to set cloaking option. You can either blank the referrer or show you Prosper202 Pro domain only",
+      "New: Auto upgrade Prosper202 Pro for any updates that don't modify the database in any way.",
+      "New: Slack Integration Phase 2 all actions performed in your P202 will be sent to a slack channel named Prosper202",
+      "New: Before you could only display one Dynamic Content Segment on the page, now you can have as many as you want.",
+      "New: Unlimited custom variables and tokens",
+      "New: Campaign overview shows overview like what we had in non Pro version of Prosper202",
+      "New: Status page in admin section for cron jobs. This will let you know when the last cron was run and help to debug when the job isn't setup correctly",
+      "New: GCLID and utm variables will show in downloaded report in the visitors tab",
+      "Improved: Parallel processing of conversion old data into new faster format",
+      "Improved: Improved more efficient way to update data engine that uses less server resources",
+      "Improved: For new installations the maximum payout amount for a campaign is now $100,000 instead of $999",
+      "Fixed: Deleted or deactivated users can't login",
+      "Fixed:Geo location for when location can't be found works better",
+      "Fixed: Mobile filtering works better",
+      "Fixed: Illegal offset error when creating tracking links",
+      "Fixed: PPc Network didn't auto select when editing a existing link",
+      "Fixed: Slack notifications when editing tracking link",
+      "Fixed: Better support for when user doesn't have ISP database from maxmind",
+      "Fixed: Manual download link for Pro links to correct page",
+      "Fixed: Campaign overview shows multiple advanced landing pages better",
+      "Fixed: Bug showing php code at the bottom of visitors page",
+      "Fixed: When downloading reports the entire report will download instead of just what you see on screen",
+      "Fixed: Updating CPC works better",
+      "Fixed: Bug that prevent keywords from filtering correctly"
+    ]
+  },
+  "1.9.4": {
+    "version": "1.9.4",
+    "logs": [
+      "New: Easy Display of Geo(Country, Region, City, Country Code), Keyword, C1-C4, All utm variable, Browser type, OS on your landing page",
+      "New: [[country]], [[country_code]], [[region]], [[city]] tokens for step 3, and postbacks",
+      "New: HTML5 Charts for account overview with ability to chart multiple data points on a campaign basis.",
+      "New: Ability to add users to your Prosper202 account. Each person get's their own username and password.",
+      "New: Slack Integration Phase 1: Soon All important changes and notifications will be posted to the slack channel of your choice",
+      "Updated: On new installations keywords can be up to 150 characters instead of 50",
+      "Fixed: Display and Formatting bug for Firefox",
+      "Fixed: Bug on landing page campaigns was showing wrong referer information",
+      "Fixed: EPC on account overview was calculated incorrectly",
+      "Fixed: Custom date ranges increase in hourly increments"
+    ]
+  },
+  "1.9.3": {
+    "version": "1.9.3",
+    "logs": [
+      "New: Group by device type in group overview",
+      "New: Track cost by CPA",
+      "New: Group overview is much faster and powered by the new DataEngine",
+      "New: Conversion logs to see more details conversion pixels and postback fires",
+      "New: Updated GeoIp Database for more accurate geo location",
+      "New: Updated UI Library",
+      "New: Updated UserAgent Parser to detect more browsers and bots",
+      "New: Ability to edit your tracking links after they have been created",
+      "New: Prosper202 will now automatically import your old clicks into the new DataEngine Format",
+      "New: Filter by referer",
+      "Fixed: Bug in how leads were counted in campaign overview is fixed",
+      "Fixed: Excel Report download feature re-added",
+      "Fixed: Device type filtering bug in group overview fixed",
+      "Fixed: IP address filtering bug in reports fixed",
+      "Improved: Landing page names display better on the reports"
+    ]
+  },
+  "1.9.2": {
+    "version": "1.9.2",
+    "logs": [
+      "Improved: Copied Campaigns have (Copy) Appended to the campaigns name so you can tell you are in the process of copying the campaign"
+    ]
+  },
+  "1.9.1": {
+    "version": "1.9.1",
+    "logs": [
+      "New: Ability to copy an existing campaign to create a new one.",
+      "New: UTM variables are available in group overview.",
+      "New: Device type is available in group overview.",
+      "Updated: Text field for landing page url has be change to text field.",
+      "Updated: Rotator ui updated and new monetizer placeholder added.",
+      "Fixed: You can now sort reports by clicking the header..",
+      "Fixed: DataEngine now updates for actions done on the update tab."
+    ]
+  },
+  "1.9.0": {
+    "version": "1.9.0",
+    "logs": [
+      "New: DataEngine fast new reporting engine for Prosper202 Pro.",
+      "New: Meta Referer set to origin for Cloaking.",
+      "New: Tokens for utm variables.",
+      "New: Support for google gclid and utm variables.",
+      "New: Prosper202 App Store.",
+      "New: Ability to set your own referer via t202ref=.",
+      "Improved: C1-4 variables can now store up to 350 characters.",
+      "Improved: Better more accurate firing of conversion pixels.",
+      "Improved: Ability to pass in subid for image and iframe pixels."
+    ]
+  },
+  "1.8.11": {
+    "version": "1.8.11",
+    "logs": [
+      "Fixed Bug: Filtering via keyword, ip, or referer doesn't cause an error",
+      "Fixed Bug: 1-Click Update correctly finds new update",
+      "Update: Landing pages track traffic better via finger printing",
+      "Update: Improved browser detection",
+      "Update: Improved GEO Detection",
+      "Update: ClickBank IPN support for version 6"
+    ]
+  },
+  "1.8.10": {
+    "version": "1.8.10",
+    "logs": [
+      "Fixed Bug: Advanced landing pages showed a query error when using built in outbound link.",
+      "Update: Templates now use UTF 8."
+    ]
+  },
+  "1.8.9": {
+    "version": "1.8.9",
+    "logs": [
+      "Fixed Bug: On Admin Screen, if you had a lot of clicks you would see an out of memory error.",
+      "Fixed Bug: Debug code removed from code.",
+      "Improved: Better query for url look ups.",
+      "Improved: Device finger printing to redirect users when cookies are removed."
+    ]
+  },
+  "1.8.8": {
+    "version": "1.8.8",
+    "logs": [
+      "Fixed bug: Outbound clicks on ALP were not being recorded in database.",
+      "Fixed bug: Campaign not showing for rotators.",
+      "Fixed typo: On Advanced Landing Page setup.",
+      "Fixed typo: Text Ads setup."
+    ]
+  },
+  "1.8.7": {
+    "version": "1.8.7",
+    "logs": [
+      "Fixed bug: Cookie error for landing pages. Where subids were not being passed.",
+      "Fixed bug: Prosper202 didn't notice an auto updated system initially.",
+      "Fixed bug: Versions were not being compared correctly for changelogs"
+    ]
+  },
+  "1.8.6": {
+    "version": "1.8.6",
+    "logs": [
+      "Fixed bug: Error messages where set_time_limit is not allowed",
+      "Fixed typo: Landing page screen"
+    ]
+  },
+  "1.8.5": {
+    "version": "1.8.5",
+    "logs": [
+      "New: Prosper202 will pass extra variables from your tracking links on to the campaign link. This makes it easier to pre-pop offers",
+      "New: Improved support for new traffic sources",
+      "New: Minor speed improvement for users with large databases",
+      "Added: Missing Robots.txt.",
+      "Fixed bug: Javascript on the pixel page",
+      "Fixed bug: formula for payout.",
+      "Fixed formatting for the iframe pixel"
+    ]
+  },
+  "1.8.4": {
+    "version": "1.8.4",
+    "logs": [
+      "Internet Explorer cookie javascript issue fixed.",
+      "New redesigned Rotator.",
+      "Old tables migrated to InnoDB."
+    ]
+  },
+  "1.8.3.3": {
+    "version": "1.8.3.3",
+    "logs": [
+      "Group Overview MySQL error",
+      "Fixed memory problem",
+      "Internet Explorer Detector",
+      "Simple Landing page javascript code conflict with jQuery"
+    ]
+  },
+  "1.8.3.2": {
+    "version": "1.8.3.2",
+    "logs": [
+      "SSL bug fixed",
+      "Global Post Back bug fixed",
+      "Setup wizard tweaked"
+    ]
+  },
+  "1.8.3.1": {
+    "version": "1.8.3.1",
+    "logs": [
+      "Check if geoIP model exist",
+      "Some code tweaks"
+    ]
+  }
+}
