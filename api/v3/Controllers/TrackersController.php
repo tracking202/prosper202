@@ -51,7 +51,7 @@ class TrackersController extends Controller
             'data' => [
                 'tracker_id'        => $id,
                 'tracker_id_public' => $publicId,
-                'direct_url'        => $baseUrl . '/tracking202/redirect/go.php?t202id=' . $publicId,
+                'direct_url'        => $baseUrl . '/tracking202/redirect/dl.php?t202id=' . $publicId,
                 'tracking_params'   => '?t202id=' . $publicId . '&t202kw={keyword}&c1={c1}&c2={c2}&c3={c3}&c4={c4}',
             ],
         ];
