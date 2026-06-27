@@ -532,7 +532,7 @@ final class MiscTables
                 `updated_at` int(11) NOT NULL,
                 PRIMARY KEY (`event_id`),
                 KEY `user_date` (`user_id`, `event_date`),
-                KEY `user_name` (`user_id`, `event_name`),
+                KEY `user_name` (`user_id`, `event_name`(191)),
                 KEY `user_recurrence` (`user_id`, `recurrence`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Calendar events for forecast adjustment (holidays, promos, anomalies)'"
         );

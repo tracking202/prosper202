@@ -3578,15 +3578,20 @@ class UPGRADE
                 `updated_at` int(11) NOT NULL,
                 PRIMARY KEY (`event_id`),
                 KEY `user_date` (`user_id`, `event_date`),
-                KEY `user_name` (`user_id`, `event_name`),
+                KEY `user_name` (`user_id`, `event_name`(191)),
                 KEY `user_recurrence` (`user_id`, `recurrence`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Calendar events for forecast adjustment (holidays, promos, anomalies)'";
             $result = _upgrade_query($sql);
 
             if ($result !== false) {
-                $sql = "UPDATE 202_version SET version='1.9.64'";
-                $result = _upgrade_query($sql);
-                $prosper202_version = '1.9.64';
+                // Only advance the in-memory version if the row actually persisted,
+                // so a failed UPDATE doesn't desync runtime/DB version; the next run
+                // re-enters this block (CREATE is IF NOT EXISTS) and retries.
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.64'") !== false) {
+                    $prosper202_version = '1.9.64';
+                } else {
+                    error_log('Prosper202 upgrade: created 202_forecast_events but failed to persist version 1.9.64; leaving version at 1.9.63 so the next run retries.');
+                }
             } else {
                 error_log('Prosper202 upgrade: failed to create 202_forecast_events; leaving version at 1.9.63 so the next run retries.');
             }
