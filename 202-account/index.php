@@ -5,11 +5,41 @@ AUTH::require_user();
 
 $strProtocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
 
+// Get Started checklist progress. Each step is checked off once the user has
+// done it, and the whole card is hidden once all three are complete (it's no
+// longer relevant). Caching is disabled so the state reflects the user's
+// actions immediately rather than up to the cache TTL later.
+$gs_user_id = (int) ($_SESSION['user_own_id'] ?? $_SESSION['user_id'] ?? 0);
+$gs_count = static function (string $sql): int {
+    $row = memcache_mysql_fetch_assoc($sql, 0);
+    return is_array($row) ? (int) ($row['c'] ?? 0) : 0;
+};
+// Join each child count to its parent table and require the parent to be active:
+// deleting a traffic source / category only soft-deletes the parent row, leaving
+// orphaned account/campaign rows behind. Without these joins those orphans would
+// still mark the step complete (or hide the whole card) for a user who no longer
+// has a usable source/category, instead of prompting them to recreate it.
+$gs_has_traffic  = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_ppc_accounts a JOIN 202_ppc_networks n ON a.ppc_network_id = n.ppc_network_id WHERE a.user_id=" . $gs_user_id . " AND a.ppc_account_deleted='0' AND n.ppc_network_deleted='0'") > 0;
+$gs_has_campaign = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_aff_campaigns c JOIN 202_aff_networks n ON c.aff_network_id = n.aff_network_id WHERE c.user_id=" . $gs_user_id . " AND c.aff_campaign_deleted='0' AND n.aff_network_deleted='0'") > 0;
+$gs_has_tracker  = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_trackers WHERE user_id=" . $gs_user_id) > 0;
+$gs_all_done = $gs_has_traffic && $gs_has_campaign && $gs_has_tracker;
+
 template_top();  ?>
 
 <div class="row home">
 	<div class="col-xs-7">
 		<div class="row">
+			<?php if (!$gs_all_done) {
+				// Render a completed step as a struck-through, checked-off item; a
+				// pending step keeps its actionable link.
+				$gs_step = static function (bool $done, string $href, string $label, string $tail): void {
+					if ($done) {
+						echo '<li style="color:#999;"><span class="glyphicon glyphicon-ok" style="color:#5cb85c;" aria-hidden="true"></span> <s>' . $label . '</s> ' . $tail . '</li>';
+					} else {
+						echo '<li><a href="' . $href . '">' . $label . '</a> ' . $tail . '</li>';
+					}
+				};
+			?>
 			<div class="col-xs-12" id="p202-getting-started" style="display:none;">
 				<h6 class="h6-home">Get Started <span class="glyphicon glyphicon-flag home-icons"></span>
 					<a href="#" id="p202-gs-dismiss" class="pull-right" style="text-decoration:none;color:#999;" title="Dismiss">&times;</a>
@@ -17,9 +47,9 @@ template_top();  ?>
 				<div style="padding: 5px 0 12px;">
 					<small>Three steps to your first tracking link:</small>
 					<ol style="margin-top: 6px;">
-						<li><a href="<?php echo get_absolute_url(); ?>tracking202/setup/ppc_accounts.php">Add a traffic source</a> &mdash; where your clicks come from</li>
-						<li><a href="<?php echo get_absolute_url(); ?>tracking202/setup/aff_campaigns.php">Create a campaign</a> &mdash; the offer you promote</li>
-						<li><a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_trackers.php">Generate a tracking link</a> and put it in your traffic source</li>
+						<?php $gs_step($gs_has_traffic, get_absolute_url() . 'tracking202/setup/ppc_accounts.php', 'Add a traffic source', '&mdash; where your clicks come from'); ?>
+						<?php $gs_step($gs_has_campaign, get_absolute_url() . 'tracking202/setup/aff_campaigns.php', 'Create a campaign', '&mdash; the offer you promote'); ?>
+						<?php $gs_step($gs_has_tracker, get_absolute_url() . 'tracking202/setup/get_trackers.php', 'Generate a tracking link', 'and put it in your traffic source'); ?>
 					</ol>
 					<small>Prefer hands-free? Ask Claude to <strong>&ldquo;onboard Prosper202&rdquo;</strong> and it will set this up for you.</small>
 				</div>
@@ -43,6 +73,7 @@ template_top();  ?>
 				} catch (err) {}
 			})();
 			</script>
+			<?php } ?>
 			<?php if (isset($_SESSION['user_pref_ad_settings']) && $_SESSION['user_pref_ad_settings'] != 'hide_all') { ?>
 				<div class="col-xs-12">
 					<h6 class="h6-home">Special Offers <span class="glyphicon glyphicon-tags home-icons"></span></h6>
@@ -54,7 +85,7 @@ template_top();  ?>
 		</div>
 	</div>
 
-	<div class="col-xs-5">
+	<div class="col-xs-5 pull-right">
 		<div class="row">
 			<div class="col-xs-12 apps">
 				<h6 class="h6-home">My Applications <span class="glyphicon glyphicon-folder-open home-icons"></span></h6>
