@@ -80,7 +80,7 @@ template_top();  ?>
 		</div>
 	</div>
 
-	<div class="col-xs-5">
+	<div class="col-xs-5 pull-right">
 		<div class="row">
 			<div class="col-xs-12 apps">
 				<h6 class="h6-home">My Applications <span class="glyphicon glyphicon-folder-open home-icons"></span></h6>
