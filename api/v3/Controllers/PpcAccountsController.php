@@ -20,4 +20,12 @@ class PpcAccountsController extends Controller
             'ppc_account_default' => ['type' => 'i'],
         ];
     }
+
+    #[\Override]
+    protected function beforeCreate(array $payload): array
+    {
+        return [
+            'ppc_account_time' => ['type' => 'i', 'value' => time()],
+        ];
+    }
 }

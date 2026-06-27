@@ -18,4 +18,12 @@ class PpcNetworksController extends Controller
             'ppc_network_name' => ['type' => 's', 'required' => true, 'max_length' => 255],
         ];
     }
+
+    #[\Override]
+    protected function beforeCreate(array $payload): array
+    {
+        return [
+            'ppc_network_time' => ['type' => 'i', 'value' => time()],
+        ];
+    }
 }
