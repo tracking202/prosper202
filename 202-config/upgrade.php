@@ -311,7 +311,7 @@ if (!empty($version_error)) {
 				<?php } ?>
 				<?php if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) { ?>
 					<div class="form-group">
-						Google Chrome 80+ requires all landing pages to be HTTPS, or your tracking won't work. Can Prosper202 automatically upgrade your old landing page URLs to HTTPS?<br />
+						Modern browsers require landing pages to be served over HTTPS, or your tracking won't work. Can Prosper202 automatically upgrade your old landing page URLs to HTTPS?<br />
 						<br></br>
 						<div class="form-group">
 							<label for="lp_ssl" class="radio-inline" style="line-height:1.3">

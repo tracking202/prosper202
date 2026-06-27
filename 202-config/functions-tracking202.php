@@ -3025,40 +3025,34 @@ function rotator_data($query, $type)
 
 function changelog(): array
 {
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php');
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Execute
-    $result = curl_exec($ch);
+    // Release notes are bundled with the build (202-config/changelogs.json) so the
+    // upgrade screen never depends on a remote endpoint that can be stale, slow, or
+    // offline. The file is an object keyed by version, each entry { version, logs[] }.
+    $changelog_file = __DIR__ . '/changelogs.json';
 
-    // close connection
-    curl_close($ch);
+    if (!is_readable($changelog_file)) {
+        return [];
+    }
 
-    return json_decode($result, true);
+    $result = file_get_contents($changelog_file);
+    if ($result === false) {
+        return [];
+    }
+
+    $decoded = json_decode($result, true);
+    // Fail safe with an empty list rather than returning null and triggering a
+    // TypeError against the declared : array return type.
+    if (!is_array($decoded)) {
+        return [];
+    }
+
+    return $decoded;
 }
 
 function changelogPremium(): array
 {
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php');
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Execute
-    $result = curl_exec($ch);
-
-    // close connection
-    curl_close($ch);
-
-    return json_decode($result, true);
+    // Premium and paid share the same bundled release notes.
+    return changelog();
 }
 
 function callAutoCron($endpoint)
