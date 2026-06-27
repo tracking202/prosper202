@@ -68,6 +68,18 @@
 .setup-nav-link .glyphicon {
     font-size: 12px;
     opacity: 0.85;
+    /* Bootstrap's base .glyphicon adds position:relative; top:1px, which pushes
+       every nav icon 1px below the label's optical center. Cancel it and tighten
+       the line box so the icons sit centered on the text. */
+    top: 0;
+    line-height: 1;
+}
+
+/* The Glyphicons "console" glyph (Get LP Code) is drawn ~1px lower inside its
+   em-box than the other icons, so it looks dropped relative to the row. Nudge it
+   up so the icon row optically aligns. */
+.setup-nav-link .glyphicon-console {
+    top: -1px;
 }
 
 .setup-nav-link.active .glyphicon {
