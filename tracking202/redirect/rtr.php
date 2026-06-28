@@ -139,7 +139,11 @@ if (isset ( $_GET ['t202b'] ) && $rotator_row['user_pref_dynamic_bid'] == '1') {
     }
 } 
 
-$default = false;
+// When the rotator has no rules, the loop below never runs and would leave
+// $default false, dropping the click with a blank response. Default to the
+// rotator's default destination in that case; with rules present the loop
+// decides (a non-matching rule sets $default = true).
+$default = empty($rule_row);
 
 foreach ($rule_row as $rule) {
 	
@@ -345,6 +349,20 @@ foreach ($rule_row as $rule) {
 }
 
 if ($default == true) {
+	// The rotator default may be a campaign, a raw URL, or a landing page.
+	// redirect_process() resolves a campaign via aff_campaign_id (set by the
+	// default_campaign JOIN). For URL/LP defaults aff_campaign_id is null, and
+	// without an explicit type its synthetic default (type='url', redirect_url='')
+	// would resolve to an empty location and drop the click — so set the fields.
+	if (empty($rotator_row['aff_campaign_id'])) {
+		if (!empty($rotator_row['default_url'])) {
+			$rotator_row['type'] = 'url';
+			$rotator_row['redirect_url'] = $rotator_row['default_url'];
+		} elseif (!empty($rotator_row['default_lp'])) {
+			$rotator_row['type'] = 'lp';
+			// landing_page_url is already selected via the default_lp JOIN.
+		}
+	}
 	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
 	
 		if ($usedCachedRedirect==true) { 
