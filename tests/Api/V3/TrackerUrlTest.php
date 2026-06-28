@@ -97,6 +97,43 @@ class TrackerUrlTest extends TestCase
         $this->assertSame('http://localhost:8000/lander?t202id=555', $url);
     }
 
+    public function testUnresolvableLandingPageFallsBackToDlPhp(): void
+    {
+        // landing_page_id is set but the URL couldn't be resolved (deleted /
+        // not owned) — must not emit a broken "http://?t202id=" link.
+        $url = TrackersController::buildDirectUrl(self::BASE, 555, [
+            'rotator_id'       => 0,
+            'landing_page_id'  => 12,
+            'landing_page_url' => '',
+        ]);
+
+        $this->assertSame(self::BASE . '/tracking202/redirect/dl.php?t202id=555', $url);
+    }
+
+    public function testUnresolvableLandingPageFallsBackToRotator(): void
+    {
+        $url = TrackersController::buildDirectUrl(self::BASE, 555, [
+            'rotator_id'       => 4,
+            'landing_page_id'  => 12,
+            'landing_page_url' => '',
+        ]);
+
+        $this->assertSame(self::BASE . '/tracking202/redirect/rtr.php?t202id=555', $url);
+    }
+
+    public function testMalformedLandingPageUrlFallsBackToDlPhp(): void
+    {
+        // A value with no host (parse_url yields no host) is not a usable
+        // landing page URL; fall back rather than build garbage.
+        $url = TrackersController::buildDirectUrl(self::BASE, 555, [
+            'rotator_id'       => 0,
+            'landing_page_id'  => 12,
+            'landing_page_url' => 'not-a-real-url',
+        ]);
+
+        $this->assertSame(self::BASE . '/tracking202/redirect/dl.php?t202id=555', $url);
+    }
+
     public function testBaseUrlTrailingSlashDoesNotDoubleUp(): void
     {
         $url = TrackersController::buildDirectUrl(self::BASE . '/', 555, [

@@ -79,7 +79,14 @@ class TrackersController extends Controller
     public static function buildDirectUrl(string $baseUrl, int $publicId, array $tracker): string
     {
         if ((int)($tracker['landing_page_id'] ?? 0) > 0) {
-            return self::buildLandingPageUrl((string)($tracker['landing_page_url'] ?? ''), $publicId);
+            // A tracker can reference a landing page that no longer resolves
+            // (deleted, or not owned by this user — the table has no FK). When
+            // the URL can't be built, fall through to the redirect handler
+            // instead of emitting a broken "http://?t202id=..." link.
+            $lpUrl = self::buildLandingPageUrl((string)($tracker['landing_page_url'] ?? ''), $publicId);
+            if ($lpUrl !== '') {
+                return $lpUrl;
+            }
         }
 
         $handler = (int)($tracker['rotator_id'] ?? 0) > 0 ? 'rtr.php' : 'dl.php';
@@ -89,12 +96,21 @@ class TrackersController extends Controller
     /**
      * Append t202id to a landing page URL, preserving any existing query string
      * and fragment. Matches the parse_url handling in generate_tracking_link.php.
+     * Returns an empty string when the URL is missing or unparseable, so the
+     * caller can fall back to a redirect-handler URL.
      */
     private static function buildLandingPageUrl(string $landingPageUrl, int $publicId): string
     {
-        $parsed = parse_url($landingPageUrl);
+        if (trim($landingPageUrl) === '') {
+            return '';
+        }
 
-        $host = ($parsed['host'] ?? '');
+        $parsed = parse_url($landingPageUrl);
+        if ($parsed === false || empty($parsed['host'])) {
+            return '';
+        }
+
+        $host = $parsed['host'];
         if (!empty($parsed['port'])) {
             $host .= ':' . $parsed['port'];
         }
