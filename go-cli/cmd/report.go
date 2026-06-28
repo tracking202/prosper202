@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"strings"
+
 	"p202/internal/api"
 
 	"github.com/spf13/cobra"
@@ -78,7 +80,31 @@ var reportBreakdownCmd = &cobra.Command{
 			return err
 		}
 		params := collectReportParams(cmd)
-		for _, f := range []string{"breakdown", "sort", "sort_dir", "limit", "offset"} {
+
+		// Accept the analytics shorthand's friendly flags for consistency:
+		// --group-by aliases --breakdown, --sort-dir aliases --sort_dir, and
+		// dimension aliases (e.g. lp -> landing_page) are honored.
+		breakdown := getStringFlagOrDefault(cmd, "report", "breakdown")
+		if breakdown == "" {
+			breakdown, _ = cmd.Flags().GetString("group-by")
+		}
+		breakdown = strings.ToLower(strings.TrimSpace(breakdown))
+		if mapped, ok := analyticsGroupByAliases[breakdown]; ok {
+			breakdown = mapped
+		}
+		if breakdown != "" {
+			params["breakdown"] = breakdown
+		}
+
+		sortDir := getStringFlagOrDefault(cmd, "report", "sort_dir")
+		if sortDir == "" {
+			sortDir, _ = cmd.Flags().GetString("sort-dir")
+		}
+		if sortDir != "" {
+			params["sort_dir"] = sortDir
+		}
+
+		for _, f := range []string{"sort", "limit", "offset"} {
 			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 				params[f] = v
 			}
@@ -164,9 +190,11 @@ func init() {
 	addMultiProfileFlags(reportSummaryCmd)
 
 	addReportFilters(reportBreakdownCmd)
-	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension: campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, browser, platform, device, isp, text_ad")
+	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension: campaign, aff_network, ppc_account, ppc_network, landing_page (alias: lp), keyword, country, city, browser, platform, device, isp, text_ad")
+	reportBreakdownCmd.Flags().String("group-by", "", "Alias for --breakdown (matches `analytics --group-by`)")
 	reportBreakdownCmd.Flags().StringP("sort", "s", "", "Sort by: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
 	reportBreakdownCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	reportBreakdownCmd.Flags().String("sort-dir", "", "Alias for --sort_dir (matches `analytics --sort-dir`)")
 	reportBreakdownCmd.Flags().StringP("limit", "l", "", "Max results")
 	reportBreakdownCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 
