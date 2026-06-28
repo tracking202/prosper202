@@ -44,17 +44,96 @@ class TrackersController extends Controller
     {
         $tracker = $this->get($id);
         $row = $tracker['data'];
-        $publicId = $row['tracker_id_public'];
+        $publicId = (int)$row['tracker_id_public'];
         $baseUrl = $this->getBaseUrl();
+
+        // A landing-page tracker promotes the landing page's own URL, so resolve
+        // it here; direct-link and rotator trackers don't need it.
+        if ((int)($row['landing_page_id'] ?? 0) > 0) {
+            $row['landing_page_url'] = $this->getLandingPageUrl((int)$row['landing_page_id']);
+        }
 
         return [
             'data' => [
                 'tracker_id'        => $id,
                 'tracker_id_public' => $publicId,
-                'direct_url'        => $baseUrl . '/tracking202/redirect/dl.php?t202id=' . $publicId,
+                'direct_url'        => self::buildDirectUrl($baseUrl, $publicId, $row),
                 'tracking_params'   => '?t202id=' . $publicId . '&t202kw={keyword}&c1={c1}&c2={c2}&c3={c3}&c4={c4}',
             ],
         ];
+    }
+
+    /**
+     * Pick the promoted tracking URL for a tracker based on its type, mirroring
+     * the UI link generator (tracking202/ajax/generate_tracking_link.php):
+     *   - landing-page tracker -> the landing page's own URL + ?t202id=
+     *   - rotator tracker       -> rtr.php
+     *   - direct-link tracker   -> dl.php
+     *
+     * Landing page takes precedence over rotator, matching get_trackers.php which
+     * checks landing_page_id first.
+     *
+     * @param array<string,mixed> $tracker Tracker row; needs rotator_id, landing_page_id,
+     *                                      and landing_page_url when landing_page_id > 0.
+     */
+    public static function buildDirectUrl(string $baseUrl, int $publicId, array $tracker): string
+    {
+        if ((int)($tracker['landing_page_id'] ?? 0) > 0) {
+            // A tracker can reference a landing page that no longer resolves
+            // (deleted, or not owned by this user — the table has no FK). When
+            // the URL can't be built, fall through to the redirect handler
+            // instead of emitting a broken "http://?t202id=..." link.
+            $lpUrl = self::buildLandingPageUrl((string)($tracker['landing_page_url'] ?? ''), $publicId);
+            if ($lpUrl !== '') {
+                return $lpUrl;
+            }
+        }
+
+        $handler = (int)($tracker['rotator_id'] ?? 0) > 0 ? 'rtr.php' : 'dl.php';
+        return rtrim($baseUrl, '/') . '/tracking202/redirect/' . $handler . '?t202id=' . $publicId;
+    }
+
+    /**
+     * Append t202id to a landing page URL, preserving any existing query string
+     * and fragment. Matches the parse_url handling in generate_tracking_link.php.
+     * Returns an empty string when the URL is missing or unparseable, so the
+     * caller can fall back to a redirect-handler URL.
+     */
+    private static function buildLandingPageUrl(string $landingPageUrl, int $publicId): string
+    {
+        if (trim($landingPageUrl) === '') {
+            return '';
+        }
+
+        $parsed = parse_url($landingPageUrl);
+        if ($parsed === false || empty($parsed['host'])) {
+            return '';
+        }
+
+        $host = $parsed['host'];
+        if (!empty($parsed['port'])) {
+            $host .= ':' . $parsed['port'];
+        }
+        $url = ($parsed['scheme'] ?? 'http') . '://' . $host . ($parsed['path'] ?? '') . '?';
+        if (!empty($parsed['query'])) {
+            $url .= $parsed['query'] . '&';
+        }
+        $url .= 't202id=' . $publicId;
+        if (!empty($parsed['fragment'])) {
+            $url .= '#' . $parsed['fragment'];
+        }
+        return $url;
+    }
+
+    private function getLandingPageUrl(int $landingPageId): string
+    {
+        $stmt = $this->prepare('SELECT landing_page_url FROM 202_landing_pages WHERE landing_page_id = ? AND user_id = ? LIMIT 1');
+        $this->bind($stmt, 'ii', $landingPageId, $this->userId);
+        $this->execute($stmt, 'Failed to query landing page URL');
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (string)($row['landing_page_url'] ?? '');
     }
 
     private function getBaseUrl(): string
