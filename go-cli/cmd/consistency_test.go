@@ -4,8 +4,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // report breakdown should accept the same friendly flags as the analytics
@@ -220,5 +224,37 @@ func TestRotatorRuleUpdatePositionalStillWorks(t *testing.T) {
 	}
 	if !strings.HasSuffix(gotPath, "/rotators/4/rules/15") {
 		t.Errorf("path = %q, want suffix %q", gotPath, "/rotators/4/rules/15")
+	}
+}
+
+// TestVisibleFlagsAreKebabCase walks the whole command tree and asserts every
+// visible flag name is kebab-case. The global normalizer canonicalizes names
+// to kebab and keeps the snake_case spelling working, so this stays true as new
+// commands are added.
+func TestVisibleFlagsAreKebabCase(t *testing.T) {
+	kebab := regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.Hidden {
+				return
+			}
+			if !kebab.MatchString(f.Name) {
+				t.Errorf("%s: flag --%s is not kebab-case", c.CommandPath(), f.Name)
+			}
+		})
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(rootCmd)
+}
+
+func TestFlagNameNormalizerInterchangesDashAndUnderscore(t *testing.T) {
+	if got := string(normalizeFlagName(nil, "aff_campaign_id")); got != "aff-campaign-id" {
+		t.Errorf("normalize(aff_campaign_id) = %q, want aff-campaign-id", got)
+	}
+	if got := string(normalizeFlagName(nil, "sort-dir")); got != "sort-dir" {
+		t.Errorf("normalize(sort-dir) = %q, want sort-dir", got)
 	}
 }

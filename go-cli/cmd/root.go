@@ -71,7 +71,16 @@ func SetVersion(version string) {
 	rootCmd.Version = version
 }
 
+// normalizeFlagName makes '-' and '_' interchangeable in every flag name, so
+// --aff-campaign-id and --aff_campaign_id (and --sort-dir / --sort_dir) refer to
+// the same flag. Names canonicalize to kebab-case (what help displays); the
+// snake_case API-style spelling keeps working everywhere.
+func normalizeFlagName(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+	return pflag.NormalizedName(strings.ReplaceAll(name, "_", "-"))
+}
+
 func init() {
+	rootCmd.SetGlobalNormalizationFunc(normalizeFlagName)
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output raw JSON instead of tables")
 	rootCmd.PersistentFlags().BoolVar(&csvOutput, "csv", false, "Output as CSV instead of tables")
 	rootCmd.PersistentFlags().BoolVarP(&quietOutput, "quiet", "q", false, "Print only ids, one per line (for scripting)")

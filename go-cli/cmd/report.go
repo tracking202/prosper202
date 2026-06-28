@@ -99,10 +99,8 @@ var reportBreakdownCmd = &cobra.Command{
 			params["breakdown"] = breakdown
 		}
 
+		// --sort-dir is accepted via the global flag normalizer (- == _).
 		sortDir, _ := cmd.Flags().GetString("sort_dir")
-		if sortDir == "" {
-			sortDir, _ = cmd.Flags().GetString("sort-dir")
-		}
 		if sortDir == "" {
 			sortDir = getConfigDefault("report", "sort_dir")
 		}
@@ -204,7 +202,6 @@ func init() {
 	reportBreakdownCmd.Flags().String("group-by", "", "Alias for --breakdown (matches `analytics --group-by`)")
 	reportBreakdownCmd.Flags().StringP("sort", "s", "", "Sort by: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
 	reportBreakdownCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
-	reportBreakdownCmd.Flags().String("sort-dir", "", "Alias for --sort_dir (matches `analytics --sort-dir`)")
 	reportBreakdownCmd.Flags().StringP("limit", "l", "", "Max results")
 	reportBreakdownCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	reportBreakdownCmd.Flags().Float64("min-clicks", 0, "Only rows with at least N clicks")

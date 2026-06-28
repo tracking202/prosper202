@@ -152,19 +152,17 @@ func applyReportSort(cmd *cobra.Command, params map[string]string) {
 	if sort != "" {
 		params["sort"] = resolveMetric(sort)
 	}
+	// --sort_dir and --sort-dir resolve to the same flag via the global name
+	// normalizer (- and _ are interchangeable everywhere).
 	dir := getStringFlagOrDefault(cmd, "report", "sort_dir")
-	if dir == "" {
-		dir, _ = cmd.Flags().GetString("sort-dir")
-	}
 	if dir != "" {
 		params["sort_dir"] = dir
 	}
 }
 
-// addSortFlags registers --sort / --sort_dir and the --sort-dir alias on a
-// report subcommand so the sort vocabulary is identical everywhere.
+// addSortFlags registers --sort and --sort_dir on a report subcommand. The
+// global flag normalizer makes --sort-dir an accepted spelling automatically.
 func addSortFlags(cmd *cobra.Command, sortHelp string) {
 	cmd.Flags().StringP("sort", "s", "", sortHelp)
-	cmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
-	cmd.Flags().String("sort-dir", "", "Alias for --sort_dir")
+	cmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC (also --sort-dir)")
 }
