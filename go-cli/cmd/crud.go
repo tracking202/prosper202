@@ -668,6 +668,7 @@ func init() {
 				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
 				{Name: "ppc_account_id", QueryKey: "filter[ppc_account_id]", Desc: "Filter by PPC account ID"},
 				{Name: "landing_page_id", QueryKey: "filter[landing_page_id]", Desc: "Filter by landing page ID"},
+				{Name: "rotator_id", QueryKey: "filter[rotator_id]", Desc: "Filter by rotator ID"},
 			},
 		},
 		{

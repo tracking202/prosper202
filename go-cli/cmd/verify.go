@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"p202/internal/api"
@@ -353,8 +354,152 @@ var rotatorCheckCmd = &cobra.Command{
 	},
 }
 
+var rotatorTraceCmd = &cobra.Command{
+	Use:   "trace <rotator_id>",
+	Short: "Show the trackers that feed a rotator and where it routes",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		raw, err := c.Get("rotators/"+args[0], nil)
+		if err != nil {
+			return err
+		}
+		var rot struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &rot); err != nil {
+			return err
+		}
+		trk, err := c.Get("trackers", map[string]string{"filter[rotator_id]": args[0]})
+		if err != nil {
+			return err
+		}
+		var tr struct {
+			Data []map[string]interface{} `json:"data"`
+		}
+		_ = json.Unmarshal(trk, &tr)
+
+		fmt.Fprintf(os.Stderr, "Rotator %s %q — default %s, %d rule(s), fed by %d tracker(s)\n",
+			args[0], fmt.Sprintf("%v", rot.Data["name"]), defaultDest(rot.Data),
+			len(asSlice(rot.Data["rules"])), len(tr.Data))
+		rows := make([]map[string]interface{}, 0, len(tr.Data))
+		for _, t := range tr.Data {
+			rows = append(rows, map[string]interface{}{
+				"tracker_id":        normalizeID(t["tracker_id"]),
+				"tracker_id_public": normalizeID(t["tracker_id_public"]),
+				"ppc_account_id":    normalizeID(t["ppc_account_id"]),
+				"click_cpc":         t["click_cpc"],
+			})
+		}
+		render(rowsToJSON(rows))
+		return nil
+	},
+}
+
+func asSlice(v interface{}) []interface{} {
+	s, _ := v.([]interface{})
+	return s
+}
+
+// resolveTrackerLink fetches and follows a tracker's link, returning status and
+// destination (used by tracker test and tracker check).
+func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest string) {
+	urlData, err := c.Get("trackers/"+id+"/url", nil)
+	if err != nil {
+		return "ERR", err.Error()
+	}
+	var resp struct {
+		Data struct {
+			DirectURL string `json:"direct_url"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(urlData, &resp) != nil || resp.Data.DirectURL == "" {
+		return "ERR", "no link"
+	}
+	link := resp.Data.DirectURL
+	if !strings.HasPrefix(link, "http") {
+		scheme := "http"
+		if prof, _, perr := config.LoadProfileWithName(profileName); perr == nil && strings.HasPrefix(prof.URL, "https") {
+			scheme = "https"
+		}
+		link = scheme + "://" + link
+	}
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, _ := http.NewRequest("GET", link+"&t202kw=test", nil)
+	if ip, ok := geoIPs[strings.ToUpper(geo)]; ok {
+		req.Header.Set("X-Forwarded-For", ip)
+	}
+	if ua, ok := deviceUAs[strings.ToLower(device)]; ok {
+		req.Header.Set("User-Agent", ua)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return "ERR", err.Error()
+	}
+	defer res.Body.Close()
+	loc := res.Header.Get("Location")
+	if loc == "" {
+		return fmt.Sprintf("%d", res.StatusCode), "(blank — click dropped!)"
+	}
+	return fmt.Sprintf("%d", res.StatusCode), loc
+}
+
+var trackerCheckCmd = &cobra.Command{
+	Use:   "check [tracker_id]",
+	Short: "Resolve tracker links and flag blank/dropped destinations",
+	Long:  "Exits non-zero if any checked tracker resolves to a blank Location or a non-3xx status.",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		var ids []string
+		if len(args) == 1 {
+			ids = append(ids, args[0])
+		} else {
+			list, err := c.Get("trackers", map[string]string{"limit": "500"})
+			if err != nil {
+				return err
+			}
+			var resp struct {
+				Data []map[string]interface{} `json:"data"`
+			}
+			_ = json.Unmarshal(list, &resp)
+			for _, t := range resp.Data {
+				ids = append(ids, fmt.Sprintf("%v", normalizeID(t["tracker_id"])))
+			}
+		}
+		rows := make([]map[string]interface{}, 0, len(ids))
+		failed := 0
+		for _, id := range ids {
+			status, dest := resolveTrackerLink(c, id, "", "")
+			ok := strings.HasPrefix(status, "3")
+			if !ok {
+				failed++
+			}
+			rows = append(rows, map[string]interface{}{
+				"tracker_id":  id,
+				"status":      status,
+				"destination": dest,
+			})
+		}
+		render(rowsToJSON(rows))
+		if failed > 0 {
+			return partialFailureError("%d tracker(s) did not resolve to a redirect", failed)
+		}
+		return nil
+	},
+}
+
 func init() {
-	rotatorCmd.AddCommand(rotatorCheckCmd)
+	rotatorCmd.AddCommand(rotatorCheckCmd, rotatorTraceCmd)
+	if tc := findChildCommand("tracker"); tc != nil {
+		tc.AddCommand(trackerCheckCmd)
+	}
 	rotatorTestCmd.Flags().String("geo", "", "Comma-separated country codes to evaluate (default: a tier-1+rest sample)")
 	rotatorTestCmd.Flags().Bool("explain", false, "Show per-criteria pass/fail for each geo")
 	rotatorCmd.AddCommand(rotatorTestCmd)
