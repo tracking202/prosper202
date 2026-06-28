@@ -14,6 +14,11 @@ import (
 
 var jsonOutput bool
 var csvOutput bool
+var quietOutput bool
+var ndjsonOutput bool
+var wideOutput bool
+var rawHeaders bool
+var fieldsFlag string
 var profileName string
 var groupName string
 
@@ -66,6 +71,11 @@ func SetVersion(version string) {
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output raw JSON instead of tables")
 	rootCmd.PersistentFlags().BoolVar(&csvOutput, "csv", false, "Output as CSV instead of tables")
+	rootCmd.PersistentFlags().BoolVarP(&quietOutput, "quiet", "q", false, "Print only ids, one per line (for scripting)")
+	rootCmd.PersistentFlags().BoolVar(&ndjsonOutput, "ndjson", false, "Output newline-delimited JSON (one row per line)")
+	rootCmd.PersistentFlags().BoolVar(&wideOutput, "wide", false, "Show all columns at full width (no truncation)")
+	rootCmd.PersistentFlags().BoolVar(&rawHeaders, "raw-headers", false, "Use raw API field names as table headers")
+	rootCmd.PersistentFlags().StringVar(&fieldsFlag, "fields", "", "Comma-separated columns to show, in order")
 	rootCmd.PersistentFlags().StringVar(&profileName, "profile", "", "Use a named configuration profile")
 	rootCmd.PersistentFlags().StringVar(&groupName, "group", "", "Use a tag group of profiles for multi-profile commands")
 }

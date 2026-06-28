@@ -10,22 +10,73 @@ import (
 	"text/tabwriter"
 )
 
+// Opts controls how a response is rendered. The zero value renders a human
+// table to stdout; flags select JSON/CSV/quiet/ndjson and column shaping.
+type Opts struct {
+	JSON       bool
+	CSV        bool
+	Quiet      bool     // id-only: one id per line, no header (for scripting)
+	NDJSON     bool     // newline-delimited JSON, one row per line
+	Wide       bool     // show all columns (no width cap)
+	RawHeaders bool     // keep raw API keys as headers instead of friendly names
+	Fields     []string // explicit column selection (in order)
+}
+
+// friendlyHeaders maps raw API field names to human-readable column headers.
+var friendlyHeaders = map[string]string{
+	"total_clicks":         "Clicks",
+	"total_click_throughs": "Clickthroughs",
+	"total_leads":          "Conversions",
+	"total_income":         "Revenue",
+	"total_cost":           "Cost",
+	"total_net":            "Profit",
+	"roi":                  "ROI %",
+	"epc":                  "EPC",
+	"cpa":                  "CPA",
+	"avg_cpc":              "Avg CPC",
+	"conv_rate":            "Conv %",
+	"breakeven_cpc":        "Breakeven CPC",
+	"margin":               "Margin",
+}
+
+// metricOrder is the fixed business sequence for metric columns so the row
+// label stays left and numbers read in a consistent order across commands.
+var metricOrder = []string{
+	"name", "keyword",
+	"total_clicks", "total_click_throughs", "total_leads", "conv_rate",
+	"total_income", "total_cost", "total_net", "roi", "epc", "cpa", "avg_cpc",
+	"breakeven_cpc", "margin", "verdict", "bucket", "reason",
+}
+
+const maxColWidth = 42 // cap wide columns unless --wide
+
 // Render outputs API response data as either raw JSON or a formatted table.
+// Retained for the many existing call sites; delegates to RenderWith.
 func Render(data []byte, jsonMode bool) {
-	if jsonMode {
-		var parsed interface{}
-		if json.Unmarshal(data, &parsed) == nil {
-			pretty, err := json.MarshalIndent(parsed, "", "  ")
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
-				os.Stdout.Write(data)
-				return
-			}
-			fmt.Println(string(pretty))
-		} else {
-			os.Stdout.Write(data)
-			fmt.Println()
-		}
+	RenderWith(data, Opts{JSON: jsonMode})
+}
+
+// RenderCSV outputs API response data as CSV. Retained for call sites.
+func RenderCSV(data []byte) {
+	RenderWith(data, Opts{CSV: true})
+}
+
+// RenderWith renders data according to opts.
+func RenderWith(data []byte, opts Opts) {
+	if opts.Quiet {
+		renderQuiet(data)
+		return
+	}
+	if opts.NDJSON {
+		renderNDJSON(data)
+		return
+	}
+	if opts.JSON {
+		renderJSON(data)
+		return
+	}
+	if opts.CSV {
+		renderCSVData(data, opts)
 		return
 	}
 
@@ -38,12 +89,12 @@ func Render(data []byte, jsonMode bool) {
 
 	switch v := parsed.(type) {
 	case []interface{}:
-		renderTable(v)
+		renderTable(v, opts)
 	case map[string]interface{}:
 		if items, ok := v["data"].([]interface{}); ok {
-			renderTable(items)
+			renderTable(items, opts)
 			if pg, ok := v["pagination"].(map[string]interface{}); ok {
-				renderPagination(pg, jsonMode)
+				renderPagination(pg)
 			}
 		} else if inner, ok := v["data"].(map[string]interface{}); ok {
 			renderObject(inner)
@@ -55,44 +106,143 @@ func Render(data []byte, jsonMode bool) {
 	}
 }
 
-// RenderCSV outputs API response data as CSV.
-func RenderCSV(data []byte) {
+func renderJSON(data []byte) {
 	var parsed interface{}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		os.Stdout.Write(data)
-		if len(data) == 0 || data[len(data)-1] != '\n' {
-			fmt.Println()
+	if json.Unmarshal(data, &parsed) == nil {
+		pretty, err := json.MarshalIndent(parsed, "", "  ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
+			os.Stdout.Write(data)
+			return
 		}
+		fmt.Println(string(pretty))
 		return
 	}
+	os.Stdout.Write(data)
+	fmt.Println()
+}
 
-	switch v := parsed.(type) {
-	case []interface{}:
-		renderTableCSV(v)
-	case map[string]interface{}:
-		if items, ok := v["data"].([]interface{}); ok {
-			renderTableCSV(items)
-		} else if inner, ok := v["data"].(map[string]interface{}); ok {
-			renderObjectCSV(inner)
-		} else {
-			renderObjectCSV(v)
-		}
-	default:
-		os.Stdout.Write(data)
-		if len(data) == 0 || data[len(data)-1] != '\n' {
-			fmt.Println()
+// renderQuiet prints one id per row (no header) for scripting pipelines.
+func renderQuiet(data []byte) {
+	for _, obj := range rowsOf(data) {
+		if id := idOf(obj); id != "" {
+			fmt.Println(id)
 		}
 	}
 }
 
-// Success prints a success message for void operations (delete, etc).
-func Success(format string, args ...interface{}) {
-	fmt.Printf(format+"\n", args...)
+// renderNDJSON prints one compact JSON object per row.
+func renderNDJSON(data []byte) {
+	for _, obj := range rowsOf(data) {
+		if b, err := json.Marshal(obj); err == nil {
+			fmt.Println(string(b))
+		}
+	}
 }
 
-func renderTable(items []interface{}) {
+// rowsOf extracts the list of row objects from any of the response shapes.
+func rowsOf(data []byte) []map[string]interface{} {
+	var parsed interface{}
+	if json.Unmarshal(data, &parsed) != nil {
+		return nil
+	}
+	var items []interface{}
+	switch v := parsed.(type) {
+	case []interface{}:
+		items = v
+	case map[string]interface{}:
+		if arr, ok := v["data"].([]interface{}); ok {
+			items = arr
+		} else if inner, ok := v["data"].(map[string]interface{}); ok {
+			return []map[string]interface{}{inner}
+		} else {
+			return []map[string]interface{}{v}
+		}
+	}
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, it := range items {
+		if obj, ok := it.(map[string]interface{}); ok {
+			out = append(out, obj)
+		}
+	}
+	return out
+}
+
+// idOf returns the best identifier field for a row (id, or a known primary key).
+func idOf(obj map[string]interface{}) string {
+	for _, k := range []string{"id", "aff_campaign_id", "tracker_id", "ppc_account_id",
+		"aff_network_id", "ppc_network_id", "landing_page_id", "text_ad_id", "conv_id",
+		"rotator_id", "user_id", "click_id"} {
+		if v, ok := obj[k]; ok {
+			return formatValue(v)
+		}
+	}
+	return ""
+}
+
+// Success prints a success message for void operations (delete, etc) to stderr
+// so it does not corrupt piped data on stdout.
+func Success(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+// orderColumns returns the display column order: id first, then the configured
+// business sequence for known fields, then remaining keys alphabetically.
+func orderColumns(keys []string, opts Opts) []string {
+	if len(opts.Fields) > 0 {
+		present := map[string]bool{}
+		for _, k := range keys {
+			present[k] = true
+		}
+		out := make([]string, 0, len(opts.Fields))
+		for _, f := range opts.Fields {
+			if present[f] {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
+
+	has := map[string]bool{}
+	for _, k := range keys {
+		has[k] = true
+	}
+	used := map[string]bool{}
+	ordered := make([]string, 0, len(keys))
+
+	if has["id"] {
+		ordered = append(ordered, "id")
+		used["id"] = true
+	}
+	for _, k := range metricOrder {
+		if has[k] && !used[k] {
+			ordered = append(ordered, k)
+			used[k] = true
+		}
+	}
+	rest := make([]string, 0)
+	for _, k := range keys {
+		if !used[k] {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	return append(ordered, rest...)
+}
+
+func headerFor(key string, raw bool) string {
+	if raw {
+		return key
+	}
+	if h, ok := friendlyHeaders[key]; ok {
+		return h
+	}
+	return key
+}
+
+func renderTable(items []interface{}, opts Opts) {
 	if len(items) == 0 {
-		fmt.Println("No results.")
+		fmt.Fprintln(os.Stderr, "No results.")
 		return
 	}
 
@@ -104,28 +254,33 @@ func renderTable(items []interface{}) {
 			}
 		}
 	}
-
 	keys := make([]string, 0, len(keySet))
 	for k := range keySet {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
-
-	// Move "id" to front if present
-	for i, k := range keys {
-		if k == "id" {
-			keys = append([]string{"id"}, append(keys[:i], keys[i+1:]...)...)
-			break
-		}
-	}
+	keys = orderColumns(keys, opts)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
-	fmt.Fprintln(w, strings.Join(keys, "\t"))
+	headers := make([]string, len(keys))
+	for i, k := range keys {
+		headers[i] = truncate(headerFor(k, opts.RawHeaders), opts.Wide)
+	}
+	fmt.Fprintln(w, strings.Join(headers, "\t"))
 
+	// Separator sized to each column's display width (header vs widest value),
+	// so the underline spans the full column instead of just the key length.
 	seps := make([]string, len(keys))
 	for i, k := range keys {
-		seps[i] = strings.Repeat("-", len(k))
+		width := len([]rune(headers[i]))
+		for _, item := range items {
+			obj, _ := item.(map[string]interface{})
+			cell := truncate(formatValue(obj[k]), opts.Wide)
+			if n := len([]rune(cell)); n > width {
+				width = n
+			}
+		}
+		seps[i] = strings.Repeat("-", width)
 	}
 	fmt.Fprintln(w, strings.Join(seps, "\t"))
 
@@ -136,12 +291,22 @@ func renderTable(items []interface{}) {
 		}
 		vals := make([]string, len(keys))
 		for i, k := range keys {
-			vals[i] = formatValue(obj[k])
+			vals[i] = truncate(formatValue(obj[k]), opts.Wide)
 		}
 		fmt.Fprintln(w, strings.Join(vals, "\t"))
 	}
-
 	w.Flush()
+}
+
+func truncate(s string, wide bool) string {
+	if wide {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= maxColWidth {
+		return s
+	}
+	return string(r[:maxColWidth-1]) + "…"
 }
 
 func renderObject(obj map[string]interface{}) {
@@ -158,7 +323,9 @@ func renderObject(obj map[string]interface{}) {
 	w.Flush()
 }
 
-func renderPagination(pg map[string]interface{}, jsonMode bool) {
+// renderPagination writes the page summary and the truncation warning to
+// stderr, keeping stdout strictly data.
+func renderPagination(pg map[string]interface{}) {
 	parts := []string{}
 	if total, ok := pg["total"]; ok {
 		parts = append(parts, fmt.Sprintf("Total: %v", total))
@@ -170,11 +337,7 @@ func renderPagination(pg map[string]interface{}, jsonMode bool) {
 		parts = append(parts, fmt.Sprintf("Offset: %v", offset))
 	}
 	if len(parts) > 0 {
-		fmt.Printf("\n%s\n", strings.Join(parts, " | "))
-	}
-
-	if jsonMode {
-		return
+		fmt.Fprintf(os.Stderr, "%s\n", strings.Join(parts, " | "))
 	}
 
 	total, hasTotal := numericValue(pg["total"])
@@ -186,7 +349,6 @@ func renderPagination(pg map[string]interface{}, jsonMode bool) {
 	if !hasOffset {
 		offset = 0
 	}
-
 	shown := limit
 	if offset+limit > total {
 		shown = total - offset
@@ -222,8 +384,8 @@ func numericValue(raw interface{}) (float64, bool) {
 			return 0, false
 		}
 		var parsed float64
-		_, err := fmt.Sscanf(v, "%f", &parsed)
-		if err != nil {
+		n, err := fmt.Sscanf(v, "%f", &parsed)
+		if err != nil || n != 1 {
 			return 0, false
 		}
 		return parsed, true
@@ -232,11 +394,38 @@ func numericValue(raw interface{}) (float64, bool) {
 	}
 }
 
-func renderTableCSV(items []interface{}) {
+func renderCSVData(data []byte, opts Opts) {
+	var parsed interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		os.Stdout.Write(data)
+		if len(data) == 0 || data[len(data)-1] != '\n' {
+			fmt.Println()
+		}
+		return
+	}
+	switch v := parsed.(type) {
+	case []interface{}:
+		renderTableCSV(v, opts)
+	case map[string]interface{}:
+		if items, ok := v["data"].([]interface{}); ok {
+			renderTableCSV(items, opts)
+		} else if inner, ok := v["data"].(map[string]interface{}); ok {
+			renderObjectCSV(inner)
+		} else {
+			renderObjectCSV(v)
+		}
+	default:
+		os.Stdout.Write(data)
+		if len(data) == 0 || data[len(data)-1] != '\n' {
+			fmt.Println()
+		}
+	}
+}
+
+func renderTableCSV(items []interface{}, opts Opts) {
 	if len(items) == 0 {
 		return
 	}
-
 	keySet := map[string]bool{}
 	for _, item := range items {
 		if obj, ok := item.(map[string]interface{}); ok {
@@ -245,27 +434,21 @@ func renderTableCSV(items []interface{}) {
 			}
 		}
 	}
-
 	keys := make([]string, 0, len(keySet))
 	for k := range keySet {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
-
-	// Move "id" to front if present.
-	for i, k := range keys {
-		if k == "id" {
-			keys = append([]string{"id"}, append(keys[:i], keys[i+1:]...)...)
-			break
-		}
-	}
+	keys = orderColumns(keys, opts)
 
 	writer := csv.NewWriter(os.Stdout)
-	if err := writer.Write(keys); err != nil {
+	headers := make([]string, len(keys))
+	for i, k := range keys {
+		headers[i] = headerFor(k, opts.RawHeaders)
+	}
+	if err := writer.Write(headers); err != nil {
 		fmt.Fprintln(os.Stderr, "Error writing CSV header:", err)
 		return
 	}
-
 	for _, item := range items {
 		obj, ok := item.(map[string]interface{})
 		if !ok {
@@ -280,7 +463,6 @@ func renderTableCSV(items []interface{}) {
 			return
 		}
 	}
-
 	writer.Flush()
 	if err := writer.Error(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error finalizing CSV output:", err)
@@ -299,14 +481,12 @@ func renderObjectCSV(obj map[string]interface{}) {
 		fmt.Fprintln(os.Stderr, "Error writing CSV header:", err)
 		return
 	}
-
 	for _, k := range keys {
 		if err := writer.Write([]string{k, formatValue(obj[k])}); err != nil {
 			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
 			return
 		}
 	}
-
 	writer.Flush()
 	if err := writer.Error(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error finalizing CSV output:", err)

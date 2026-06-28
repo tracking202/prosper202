@@ -4107,12 +4107,12 @@ func TestConversionDeleteBulkIdsReturnsErrorOnPartialFailure(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("conversion", "delete", "--ids=1,2", "--force")
+	_, stderr, err := executeCommand("conversion", "delete", "--ids=1,2", "--force")
 	if err == nil {
 		t.Fatal("expected partial failure error for bulk delete")
 	}
-	if !strings.Contains(stdout, "Deleted 1 of 2 conversions.") {
-		t.Fatalf("unexpected summary output:\n%s", stdout)
+	if !strings.Contains(stderr, "Deleted 1 of 2 conversions.") {
+		t.Fatalf("unexpected summary output:\n%s", stderr)
 	}
 	if len(deletePaths) != 2 {
 		t.Fatalf("expected 2 delete calls, got %d", len(deletePaths))
