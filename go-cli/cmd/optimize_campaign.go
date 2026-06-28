@@ -51,6 +51,11 @@ var campaignOptimizeCmd = &cobra.Command{
 		// 2. Rank other offers by EPC over the same period (the salvage candidates).
 		portParams := collectReportParams(cmd)
 		portParams["breakdown"] = "campaign"
+		// The backend defaults to limit=50 sorted by clicks; raise the limit and
+		// sort by revenue so a high-EPC salvage offer isn't missed on page 1.
+		portParams["limit"] = "500"
+		portParams["sort"] = "total_income"
+		portParams["sort_dir"] = "DESC"
 		offers, _ := fetchBreakdownRows(c, portParams)
 		type cand struct {
 			name string

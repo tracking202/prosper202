@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"p202/internal/api"
 	"p202/internal/config"
@@ -91,8 +92,11 @@ var conversionSimulateCmd = &cobra.Command{
 		}
 
 		// 2. Fire a click and capture the subid from the redirect.
-		noRedir := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		clickRes, err := noRedir.Get(link + "&t202kw=simulate")
+		sep := "?"
+		if strings.Contains(link, "?") {
+			sep = "&"
+		}
+		clickRes, err := probeClient().Get(link + sep + "t202kw=simulate")
 		if err != nil {
 			return fmt.Errorf("click request failed: %w", err)
 		}
@@ -106,7 +110,7 @@ var conversionSimulateCmd = &cobra.Command{
 
 		// 3. Fire the real S2S postback (gpb.php).
 		pbURL := fmt.Sprintf("%s/tracking202/static/gpb.php?amount=%s&subid=%s", base, payout, subid)
-		pbRes, err := http.Get(pbURL)
+		pbRes, err := (&http.Client{Timeout: 15 * time.Second}).Get(pbURL)
 		if err != nil {
 			return fmt.Errorf("postback request failed: %w", err)
 		}

@@ -62,3 +62,46 @@ func TestRotatorIssues(t *testing.T) {
 		t.Errorf("rotator with a default should be OK, got %v", rotatorIssues(ok))
 	}
 }
+
+func TestRotatorDestinationEmptyCriteriaMatches(t *testing.T) {
+	// rtr.php treats a rule with no criteria as a match.
+	data := map[string]interface{}{
+		"default_campaign": 90007.0,
+		"rules": []interface{}{
+			map[string]interface{}{
+				"rule_name": "catch-all", "status": 1.0,
+				"criteria":  []interface{}{},
+				"redirects": []interface{}{map[string]interface{}{"redirect_campaign": 90008.0}},
+			},
+		},
+	}
+	if _, dest, _ := rotatorDestination(data, "BR"); dest != "campaign 90008" {
+		t.Errorf("empty-criteria rule should match any geo, got %q", dest)
+	}
+}
+
+func TestRotatorDestinationMultiCountryValue(t *testing.T) {
+	data := map[string]interface{}{
+		"default_campaign": 90007.0,
+		"rules": []interface{}{
+			map[string]interface{}{
+				"rule_name": "tier1", "status": 1.0,
+				"criteria":  []interface{}{map[string]interface{}{"type": "country", "statement": "is", "value": "United States(US),Canada(CA)"}},
+				"redirects": []interface{}{map[string]interface{}{"redirect_campaign": 90008.0}},
+			},
+		},
+	}
+	if _, dest, _ := rotatorDestination(data, "CA"); dest != "campaign 90008" {
+		t.Errorf("CA should match a US,CA rule, got %q", dest)
+	}
+	if _, dest, _ := rotatorDestination(data, "BR"); dest != "campaign 90007" {
+		t.Errorf("BR should fall to default, got %q", dest)
+	}
+}
+
+func TestCountryCodesFromValue(t *testing.T) {
+	got := countryCodesFromValue("United States(US),Canada(CA)")
+	if len(got) != 2 || got[0] != "US" || got[1] != "CA" {
+		t.Errorf("countryCodesFromValue = %v, want [US CA]", got)
+	}
+}

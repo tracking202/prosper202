@@ -6,12 +6,32 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"p202/internal/api"
 	"p202/internal/config"
 
 	"github.com/spf13/cobra"
 )
+
+// probeClient is the HTTP client used to resolve tracking links: it follows no
+// redirects (so we read the Location header) and has a timeout so a stalled
+// host can't hang the command.
+func probeClient() *http.Client {
+	return &http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// appendTrackingKW appends the test keyword param using the correct separator
+// whether or not the link already has a query string.
+func appendTrackingKW(link string) string {
+	if strings.Contains(link, "?") {
+		return link + "&t202kw=test"
+	}
+	return link + "?t202kw=test"
+}
 
 // geoIPs maps an ISO country code to a representative public IP, used to spoof
 // the visitor's geo (via X-Forwarded-For) for tracker test.
@@ -36,8 +56,8 @@ var deviceUAs = map[string]string{
 	"tablet":  "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
 }
 
-// countryCodeFromValue extracts the ISO code from a criteria value formatted as
-// "United States(US)" -> "US".
+// countryCodeFromValue extracts the ISO code from a single criteria token
+// formatted as "United States(US)" -> "US".
 func countryCodeFromValue(v string) string {
 	open := strings.LastIndex(v, "(")
 	closeP := strings.LastIndex(v, ")")
@@ -45,6 +65,28 @@ func countryCodeFromValue(v string) string {
 		return strings.ToUpper(strings.TrimSpace(v[open+1 : closeP]))
 	}
 	return strings.ToUpper(strings.TrimSpace(v))
+}
+
+// countryCodesFromValue parses a criteria value into the set of country codes,
+// mirroring rtr.php which splits the value on commas (a rule criterion may list
+// several countries, e.g. "United States(US),Canada(CA)").
+func countryCodesFromValue(v string) []string {
+	out := []string{}
+	for _, tok := range strings.Split(v, ",") {
+		if tok = strings.TrimSpace(tok); tok != "" {
+			out = append(out, countryCodeFromValue(tok))
+		}
+	}
+	return out
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // rotatorDestination resolves which destination a visitor from geo hits, by
@@ -64,28 +106,46 @@ func rotatorDestination(data map[string]interface{}, geo string) (rule, dest str
 		}
 		crits, _ := r["criteria"].([]interface{})
 		matched := true
+		unsupported := ""
 		for _, ci := range crits {
 			cr, _ := ci.(map[string]interface{})
 			ctype, _ := cr["type"].(string)
 			stmt, _ := cr["statement"].(string)
 			val, _ := cr["value"].(string)
 			ok := true
-			if ctype == "country" {
-				cc := countryCodeFromValue(val)
+			switch {
+			case strings.EqualFold(strings.TrimSpace(val), "ALL"):
+				ok = true // catch-all criterion matches any visitor
+				explain = append(explain, fmt.Sprintf("rule %q: %s ALL -> true", r["rule_name"], stmt))
+			case ctype == "country":
+				codes := countryCodesFromValue(val)
+				inList := contains(codes, geo)
 				if stmt == "is_not" {
-					ok = geo != cc
+					ok = !inList
 				} else {
-					ok = geo == cc
+					ok = inList
 				}
-				explain = append(explain, fmt.Sprintf("rule %q: country %s %s -> %v", r["rule_name"], stmt, cc, ok))
+				explain = append(explain, fmt.Sprintf("rule %q: country %s %s -> %v", r["rule_name"], stmt, strings.Join(codes, ","), ok))
+			default:
+				// device/browser/platform/ip/region/city criteria can't be
+				// evaluated locally. Don't silently treat them as a match — flag
+				// the rule as unverified so the result is never over-claimed.
+				unsupported = ctype
+				explain = append(explain, fmt.Sprintf("rule %q: %s criteria can't be evaluated locally — use `tracker test`", r["rule_name"], ctype))
 			}
 			if !ok {
 				matched = false
 				break
 			}
 		}
-		if matched && len(crits) > 0 {
-			return fmt.Sprintf("%v", r["rule_name"]), redirectDest(r["redirects"]), explain
+		// rtr.php treats a rule with zero criteria as a match (the criteria loop
+		// runs zero times and count==count holds), so do the same.
+		if matched {
+			dest := redirectDest(r["redirects"])
+			if unsupported != "" {
+				dest += fmt.Sprintf(" (unverified: %s criteria)", unsupported)
+			}
+			return fmt.Sprintf("%v", r["rule_name"]), dest, explain
 		}
 	}
 	return "(default)", defaultDest(data), explain
@@ -209,10 +269,13 @@ var trackerTestCmd = &cobra.Command{
 		}
 		device, _ := cmd.Flags().GetString("device")
 
-		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client := probeClient()
 		rows := make([]map[string]interface{}, 0, len(geos))
 		for _, g := range geos {
-			req, _ := http.NewRequest("GET", link+"&t202kw=test", nil)
+			req, reqErr := http.NewRequest("GET", appendTrackingKW(link), nil)
+			if reqErr != nil {
+				return fmt.Errorf("building request: %w", reqErr)
+			}
 			if g != "" {
 				if ip, ok := geoIPs[strings.ToUpper(g)]; ok {
 					req.Header.Set("X-Forwarded-For", ip)
@@ -427,8 +490,11 @@ func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest str
 		}
 		link = scheme + "://" + link
 	}
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	req, _ := http.NewRequest("GET", link+"&t202kw=test", nil)
+	client := probeClient()
+	req, reqErr := http.NewRequest("GET", appendTrackingKW(link), nil)
+	if reqErr != nil {
+		return "ERR", reqErr.Error()
+	}
 	if ip, ok := geoIPs[strings.ToUpper(geo)]; ok {
 		req.Header.Set("X-Forwarded-For", ip)
 	}

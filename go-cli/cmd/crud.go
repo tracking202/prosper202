@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -69,12 +70,14 @@ func normalizeID(v interface{}) interface{} {
 // it resolves id as a public id and retries with the internal id.
 func getWithPublicFallback(c *api.Client, entity crudEntity, id string, forcePublic bool) ([]byte, error) {
 	if forcePublic {
-		if internal := resolvePublicID(c, entity, id); internal != "" {
-			id = internal
+		internal := resolvePublicID(c, entity, id)
+		if internal == "" {
+			return nil, validationError("no %s found with public %s=%s", entity.Name, entity.PublicIDField, id)
 		}
+		return c.Get(entity.Endpoint+"/"+internal, nil)
 	}
 	data, err := c.Get(entity.Endpoint+"/"+id, nil)
-	if err != nil && !forcePublic && isNotFoundErr(err) {
+	if err != nil && isNotFoundErr(err) {
 		if internal := resolvePublicID(c, entity, id); internal != "" {
 			return c.Get(entity.Endpoint+"/"+internal, nil)
 		}
@@ -82,8 +85,14 @@ func getWithPublicFallback(c *api.Client, entity crudEntity, id string, forcePub
 	return data, err
 }
 
+// isNotFoundErr reports whether err is a 404 from the API, preferring the
+// structured status over substring matching.
 func isNotFoundErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "404")
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Status == 404
+	}
+	return false
 }
 
 // deleteArgsValidator allows zero positional args when --ids is set, else one.

@@ -125,10 +125,17 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	}
 
 	// --history is the canonical flag; --period/--days are accepted aliases so
-	// the time-window flag name is consistent with the report commands.
-	history := firstFlag(cmd, "history", "period", "days")
-	if history == "" {
-		history = "last90"
+	// the time-window flag name is consistent with the report commands. Because
+	// --history carries a non-empty default, only an *explicitly set* alias must
+	// win — so resolve by Changed(), not by the default value.
+	history := "last90"
+	for _, name := range []string{"history", "period", "days"} {
+		if cmd.Flags().Changed(name) {
+			if v, _ := cmd.Flags().GetString(name); strings.TrimSpace(v) != "" {
+				history = strings.TrimSpace(v)
+				break
+			}
+		}
 	}
 
 	// reports/timeseries returns at most 2000 buckets ordered oldest-first,
