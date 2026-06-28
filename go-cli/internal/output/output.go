@@ -42,10 +42,11 @@ var friendlyHeaders = map[string]string{
 // metricOrder is the fixed business sequence for metric columns so the row
 // label stays left and numbers read in a consistent order across commands.
 var metricOrder = []string{
-	"name", "keyword",
+	"geo", "device", "name", "keyword",
 	"total_clicks", "total_click_throughs", "total_leads", "conv_rate",
 	"total_income", "total_cost", "total_net", "roi", "epc", "cpa", "avg_cpc",
 	"breakeven_cpc", "margin", "verdict", "bucket", "reason",
+	"matched_rule", "status", "destination", "criteria",
 }
 
 const maxColWidth = 42 // cap wide columns unless --wide
