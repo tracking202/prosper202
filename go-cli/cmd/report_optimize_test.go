@@ -67,3 +67,26 @@ func TestResolveDimensionAndMetric(t *testing.T) {
 		t.Error("clicks should map to total_clicks")
 	}
 }
+
+func TestParseHaving(t *testing.T) {
+	f, op, v, ok := parseHaving("roi<0")
+	if !ok || f != "roi" || op != "<" || v != 0 {
+		t.Errorf("parseHaving(roi<0) = %q %q %v %v", f, op, v, ok)
+	}
+	f, op, _, ok = parseHaving("profit>=5")
+	if !ok || f != "total_net" || op != ">=" { // profit -> total_net alias
+		t.Errorf("parseHaving(profit>=5) field/op = %q %q", f, op)
+	}
+	if _, _, _, ok := parseHaving(""); ok {
+		t.Error("empty having should not parse")
+	}
+}
+
+func TestCompareNum(t *testing.T) {
+	if !compareNum(-5, "<", 0) || compareNum(5, "<", 0) {
+		t.Error("< comparison wrong")
+	}
+	if !compareNum(0, "=", 0) || !compareNum(3, ">=", 3) {
+		t.Error("=/>= comparison wrong")
+	}
+}

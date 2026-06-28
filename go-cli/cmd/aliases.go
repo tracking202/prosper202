@@ -1,10 +1,86 @@
 package cmd
 
 import (
+	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// applyBreakdownFilters post-filters breakdown rows client-side by --min-clicks,
+// --min-cost, --zero-leads, and --having (FIELD OP VALUE). Returns the original
+// bytes unchanged when no filter is set or the payload can't be parsed.
+func applyBreakdownFilters(cmd *cobra.Command, data []byte) []byte {
+	minClicks, _ := cmd.Flags().GetFloat64("min-clicks")
+	minCost, _ := cmd.Flags().GetFloat64("min-cost")
+	zeroLeads, _ := cmd.Flags().GetBool("zero-leads")
+	having, _ := cmd.Flags().GetString("having")
+	if minClicks == 0 && minCost == 0 && !zeroLeads && strings.TrimSpace(having) == "" {
+		return data
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if json.Unmarshal(data, &resp) != nil {
+		return data
+	}
+	field, op, want, hasHaving := parseHaving(having)
+
+	out := make([]map[string]interface{}, 0, len(resp.Data))
+	for _, r := range resp.Data {
+		if minClicks > 0 && toFloat(r["total_clicks"]) < minClicks {
+			continue
+		}
+		if minCost > 0 && toFloat(r["total_cost"]) < minCost {
+			continue
+		}
+		if zeroLeads && !(toFloat(r["total_cost"]) > 0 && toFloat(r["total_leads"]) == 0) {
+			continue
+		}
+		if hasHaving && !compareNum(toFloat(r[field]), op, want) {
+			continue
+		}
+		out = append(out, r)
+	}
+	b, _ := json.Marshal(map[string]interface{}{"data": out})
+	return b
+}
+
+func parseHaving(s string) (field, op string, value float64, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", "", 0, false
+	}
+	for _, o := range []string{">=", "<=", "!=", "=", ">", "<"} {
+		if i := strings.Index(s, o); i > 0 {
+			field = strings.TrimSpace(s[:i])
+			v, err := strconv.ParseFloat(strings.TrimSpace(s[i+len(o):]), 64)
+			if err != nil {
+				return "", "", 0, false
+			}
+			return resolveMetric(field), o, v, true
+		}
+	}
+	return "", "", 0, false
+}
+
+func compareNum(a float64, op string, b float64) bool {
+	switch op {
+	case ">":
+		return a > b
+	case "<":
+		return a < b
+	case ">=":
+		return a >= b
+	case "<=":
+		return a <= b
+	case "!=":
+		return a != b
+	default: // "="
+		return a == b
+	}
+}
 
 // dimensionAliases maps short/friendly breakdown dimension names to the API
 // field the backend expects. Identity entries are accepted as-is.

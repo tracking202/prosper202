@@ -119,7 +119,7 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
+		render(applyBreakdownFilters(cmd, data))
 		return nil
 	},
 }
@@ -195,6 +195,10 @@ func init() {
 	reportBreakdownCmd.Flags().String("sort-dir", "", "Alias for --sort_dir (matches `analytics --sort-dir`)")
 	reportBreakdownCmd.Flags().StringP("limit", "l", "", "Max results")
 	reportBreakdownCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	reportBreakdownCmd.Flags().Float64("min-clicks", 0, "Only rows with at least N clicks")
+	reportBreakdownCmd.Flags().Float64("min-cost", 0, "Only rows with at least $N cost")
+	reportBreakdownCmd.Flags().Bool("zero-leads", false, "Only rows with cost > 0 and zero conversions (pure waste)")
+	reportBreakdownCmd.Flags().String("having", "", "Post-filter rows: FIELD OP VALUE (e.g. 'total_leads=0', 'roi<0')")
 
 	addReportFilters(reportTimeseriesCmd)
 	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")
