@@ -461,11 +461,9 @@ func renderTableCSV(items []interface{}, opts Opts) {
 	keys = orderColumns(keys, opts)
 
 	writer := csv.NewWriter(os.Stdout)
-	headers := make([]string, len(keys))
-	for i, k := range keys {
-		headers[i] = headerFor(k, opts.RawHeaders)
-	}
-	if err := writer.Write(headers); err != nil {
+	// CSV headers stay raw field names — CSV is machine-facing and scripts key
+	// on stable column names. The human table uses the friendly names.
+	if err := writer.Write(keys); err != nil {
 		fmt.Fprintln(os.Stderr, "Error writing CSV header:", err)
 		return
 	}

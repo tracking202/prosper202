@@ -23,8 +23,12 @@ var campaignOptimizeCmd = &cobra.Command{
 		}
 		id := args[0]
 
-		// 1. This campaign's totals + payout.
-		payout, _ := fetchCampaignPayout(c, id)
+		// 1. This campaign's totals + payout. Surface a bad campaign id here
+		// rather than silently optimizing with payout 0.
+		payout, err := fetchCampaignPayout(c, id)
+		if err != nil {
+			return err
+		}
 		params := collectReportParams(cmd)
 		params["aff_campaign_id"] = id
 		sumRaw, err := c.Get("reports/summary", params)
