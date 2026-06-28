@@ -217,6 +217,14 @@ var rotatorRuleCreateCmd = &cobra.Command{
 				return fmt.Errorf("invalid --criteria_json: %w", err)
 			}
 			body["criteria"] = criteria
+		} else if code, _ := cmd.Flags().GetString("country"); code != "" {
+			// Sugar: build a country criterion from an ISO code so the caller
+			// never has to know the exact "Name(CC)" value string.
+			value := countryCriteriaValue(code)
+			if value == "" {
+				return validationError("unknown country code %q (see `rotator criteria-values --search ...`); or use --criteria_json", code)
+			}
+			body["criteria"] = []map[string]string{{"type": "country", "statement": "is", "value": value}}
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
@@ -224,6 +232,9 @@ var rotatorRuleCreateCmd = &cobra.Command{
 				return fmt.Errorf("invalid --redirects_json: %w", err)
 			}
 			body["redirects"] = redirects
+		} else if camp, _ := cmd.Flags().GetString("redirect-campaign"); camp != "" {
+			// Sugar: a single-campaign redirect at full weight.
+			body["redirects"] = []map[string]string{{"redirect_campaign": camp, "weight": "100", "name": "to campaign " + camp}}
 		}
 		data, err := c.Post("rotators/"+args[0]+"/rules", body)
 		if err != nil {
@@ -387,8 +398,10 @@ func init() {
 
 	rotatorRuleCreateCmd.Flags().String("rule_name", "", "Rule name (required)")
 	rotatorRuleCreateCmd.Flags().String("splittest", "", "Enable split test (0|1)")
-	rotatorRuleCreateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"US"}]`)
-	rotatorRuleCreateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_url":"...","weight":"50","name":"A"}]`)
+	rotatorRuleCreateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"United States(US)"}]`)
+	rotatorRuleCreateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_campaign":"90008","weight":"100","name":"A"}]`)
+	rotatorRuleCreateCmd.Flags().String("country", "", "Sugar: ISO country code (e.g. US) -> a country `is` criterion; avoids hand-writing --criteria_json")
+	rotatorRuleCreateCmd.Flags().String("redirect-campaign", "", "Sugar: redirect to this campaign id at full weight; avoids hand-writing --redirects_json")
 
 	rotatorRuleDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	rotatorRuleDeleteCmd.Flags().String("ids", "", "Comma-separated rule IDs to delete in bulk")
