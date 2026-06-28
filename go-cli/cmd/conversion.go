@@ -27,8 +27,14 @@ var conversionListCmd = &cobra.Command{
 			return err
 		}
 		params := map[string]string{}
-		flags := []string{"campaign_id", "time_from", "time_to"}
-		for _, f := range flags {
+		// Accept --aff_campaign_id (the name every other command uses); fall back
+		// to the legacy --campaign_id spelling.
+		if v, _ := cmd.Flags().GetString("aff_campaign_id"); v != "" {
+			params["campaign_id"] = v
+		} else if v, _ := cmd.Flags().GetString("campaign_id"); v != "" {
+			params["campaign_id"] = v
+		}
+		for _, f := range []string{"time_from", "time_to"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				params[f] = v
 			}
@@ -187,7 +193,9 @@ func init() {
 	conversionListCmd.Flags().StringP("limit", "l", "", "Max results")
 	conversionListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	conversionListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
-	conversionListCmd.Flags().String("campaign_id", "", "Filter by campaign ID")
+	conversionListCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")
+	conversionListCmd.Flags().String("campaign_id", "", "Legacy alias for --aff_campaign_id")
+	_ = conversionListCmd.Flags().MarkHidden("campaign_id")
 	conversionListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	conversionListCmd.Flags().String("time_to", "", "End timestamp (unix)")
 

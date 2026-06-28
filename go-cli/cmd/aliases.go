@@ -1,6 +1,10 @@
 package cmd
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/spf13/cobra"
+)
 
 // dimensionAliases maps short/friendly breakdown dimension names to the API
 // field the backend expects. Identity entries are accepted as-is.
@@ -47,4 +51,29 @@ func resolveMetric(m string) string {
 		return mapped
 	}
 	return m
+}
+
+// applyReportSort reads --sort (honoring metric aliases) and the sort direction
+// (--sort_dir or its --sort-dir alias) into params, so every report subcommand
+// accepts the same friendly names regardless of casing.
+func applyReportSort(cmd *cobra.Command, params map[string]string) {
+	sort := getStringFlagOrDefault(cmd, "report", "sort")
+	if sort != "" {
+		params["sort"] = resolveMetric(sort)
+	}
+	dir := getStringFlagOrDefault(cmd, "report", "sort_dir")
+	if dir == "" {
+		dir, _ = cmd.Flags().GetString("sort-dir")
+	}
+	if dir != "" {
+		params["sort_dir"] = dir
+	}
+}
+
+// addSortFlags registers --sort / --sort_dir and the --sort-dir alias on a
+// report subcommand so the sort vocabulary is identical everywhere.
+func addSortFlags(cmd *cobra.Command, sortHelp string) {
+	cmd.Flags().StringP("sort", "s", "", sortHelp)
+	cmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	cmd.Flags().String("sort-dir", "", "Alias for --sort_dir")
 }

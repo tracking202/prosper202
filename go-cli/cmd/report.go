@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"strings"
-
 	"p202/internal/api"
 
 	"github.com/spf13/cobra"
@@ -93,10 +91,7 @@ var reportBreakdownCmd = &cobra.Command{
 		if breakdown == "" {
 			breakdown = getConfigDefault("report", "breakdown")
 		}
-		breakdown = strings.ToLower(strings.TrimSpace(breakdown))
-		if mapped, ok := analyticsGroupByAliases[breakdown]; ok {
-			breakdown = mapped
-		}
+		breakdown = resolveDimension(breakdown)
 		if breakdown != "" {
 			params["breakdown"] = breakdown
 		}
@@ -112,7 +107,10 @@ var reportBreakdownCmd = &cobra.Command{
 			params["sort_dir"] = sortDir
 		}
 
-		for _, f := range []string{"sort", "limit", "offset"} {
+		if v := getStringFlagOrDefault(cmd, "report", "sort"); v != "" {
+			params["sort"] = resolveMetric(v)
+		}
+		for _, f := range []string{"limit", "offset"} {
 			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 				params[f] = v
 			}
@@ -156,11 +154,7 @@ var reportWeekpartCmd = &cobra.Command{
 			return err
 		}
 		params := collectReportParams(cmd)
-		for _, f := range []string{"sort", "sort_dir"} {
-			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
-				params[f] = v
-			}
-		}
+		applyReportSort(cmd, params)
 		data, err := c.Get("reports/weekpart", params)
 		if err != nil {
 			return err
@@ -179,11 +173,7 @@ var reportDaypartCmd = &cobra.Command{
 			return err
 		}
 		params := collectReportParams(cmd)
-		for _, f := range []string{"sort", "sort_dir"} {
-			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
-				params[f] = v
-			}
-		}
+		applyReportSort(cmd, params)
 		data, err := c.Get("reports/daypart", params)
 		if err != nil {
 			return err
@@ -210,12 +200,10 @@ func init() {
 	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")
 
 	addReportFilters(reportDaypartCmd)
-	reportDaypartCmd.Flags().StringP("sort", "s", "", "Sort by: hour_of_day, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa")
-	reportDaypartCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	addSortFlags(reportDaypartCmd, "Sort by: hour_of_day, clicks, conversions, revenue, cost, profit, roi, epc, conv_rate, cpa, avg_cpc (friendly aliases ok)")
 
 	addReportFilters(reportWeekpartCmd)
-	reportWeekpartCmd.Flags().StringP("sort", "s", "", "Sort by: day_of_week, total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
-	reportWeekpartCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	addSortFlags(reportWeekpartCmd, "Sort by: day_of_week, clicks, conversions, revenue, cost, profit, roi, epc, conv_rate (friendly aliases ok)")
 
 	reportCmd.AddCommand(reportSummaryCmd, reportBreakdownCmd, reportTimeseriesCmd, reportDaypartCmd, reportWeekpartCmd)
 	rootCmd.AddCommand(reportCmd)
