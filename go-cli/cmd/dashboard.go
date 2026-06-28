@@ -45,7 +45,7 @@ func init() {
 	dashboardCmd.Flags().StringP("period", "p", "", "Period: today, yesterday, last7, last30, last90")
 	dashboardCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	dashboardCmd.Flags().String("time_to", "", "End timestamp (unix)")
-	dashboardCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")
+	dashboardCmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
 	dashboardCmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	dashboardCmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
 	dashboardCmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")

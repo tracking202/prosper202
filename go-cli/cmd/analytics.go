@@ -161,7 +161,7 @@ func init() {
 	analyticsCmd.Flags().String("sort-dir", "", "Sort direction: ASC or DESC")
 	analyticsCmd.Flags().StringP("limit", "l", "", "Max results")
 	analyticsCmd.Flags().StringP("offset", "o", "", "Pagination offset")
-	analyticsCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")
+	analyticsCmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
 	analyticsCmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	analyticsCmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
 	analyticsCmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")

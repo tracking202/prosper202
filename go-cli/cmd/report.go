@@ -29,7 +29,7 @@ func addReportFilters(cmd *cobra.Command) {
 	cmd.Flags().StringP("period", "p", "", "Period: today, yesterday, last7, last30, last90")
 	cmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	cmd.Flags().String("time_to", "", "End timestamp (unix)")
-	cmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")
+	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
 	cmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	cmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
 	cmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
