@@ -86,6 +86,68 @@ func isNotFoundErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "404")
 }
 
+// deleteArgsValidator allows zero positional args when --ids is set, else one.
+func deleteArgsValidator(cmd *cobra.Command, args []string) error {
+	if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
+		return cobra.MaximumNArgs(0)(cmd, args)
+	}
+	return cobra.ExactArgs(1)(cmd, args)
+}
+
+// bulkOrSingleDelete deletes one id (positional) or many (--ids), honoring
+// --force, against endpoint/<id>. Shared so every delete has the same bulk
+// semantics. noun is used in confirmation and summary messages.
+func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return err
+	}
+	force, _ := cmd.Flags().GetBool("force")
+	idsFlag, _ := cmd.Flags().GetString("ids")
+	args := cmd.Flags().Args()
+
+	if strings.TrimSpace(idsFlag) != "" {
+		ids, perr := parseIDList(idsFlag)
+		if perr != nil {
+			return perr
+		}
+		if len(ids) == 0 {
+			return fmt.Errorf("--ids requires at least one ID")
+		}
+		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+		deleted, failed := 0, 0
+		for _, id := range ids {
+			if err := c.Delete(endpoint + "/" + id); err != nil {
+				failed++
+				fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", noun, id, err)
+				continue
+			}
+			deleted++
+		}
+		output.Success("Deleted %d of %d %ss.", deleted, len(ids), noun)
+		if failed > 0 {
+			return partialFailureError("failed to delete %d %ss", failed, noun)
+		}
+		return nil
+	}
+
+	if len(args) != 1 {
+		return fmt.Errorf("provide a single id or use --ids")
+	}
+	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
+		fmt.Fprintln(os.Stderr, "Cancelled.")
+		return nil
+	}
+	if err := c.Delete(endpoint + "/" + args[0]); err != nil {
+		return err
+	}
+	output.Success("%s %s deleted.", capitalize(noun), args[0])
+	return nil
+}
+
 func getLongHelp(entity crudEntity) string {
 	if entity.PublicIDField == "" {
 		return ""

@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"p202/internal/api"
-	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -139,23 +138,10 @@ var attrModelUpdateCmd = &cobra.Command{
 
 var attrModelDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
-	Short: "Delete an attribution model and all related data",
-	Args:  cobra.ExactArgs(1),
+	Short: "Delete an attribution model; supports --ids for bulk",
+	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete attribution model %s and all related data?", args[0]) {
-			fmt.Println("Cancelled.")
-			return nil
-		}
-		if err := c.Delete("attribution/models/" + args[0]); err != nil {
-			return err
-		}
-		output.Success("Attribution model %s deleted.", args[0])
-		return nil
+		return bulkOrSingleDelete(cmd, "attribution/models", "attribution model")
 	},
 }
 
@@ -256,6 +242,7 @@ func init() {
 	attrModelUpdateCmd.Flags().String("is_default", "", "1=default, 0=not")
 
 	attrModelDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	attrModelDeleteCmd.Flags().String("ids", "", "Comma-separated model IDs to delete in bulk")
 
 	attrModelCmd.AddCommand(attrModelListCmd, attrModelGetCmd, attrModelCreateCmd, attrModelUpdateCmd, attrModelDeleteCmd)
 

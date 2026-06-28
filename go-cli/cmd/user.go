@@ -152,28 +152,10 @@ var userUpdateCmd = &cobra.Command{
 
 var userDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
-	Short: "Delete a user (soft-delete)",
-	Args:  cobra.ExactArgs(1),
+	Short: "Delete a user (soft-delete); supports --ids for bulk",
+	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Delete user %s? [y/N] ", args[0])
-			var answer string
-			fmt.Scanln(&answer)
-			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-		}
-		if err := c.Delete("users/" + args[0]); err != nil {
-			return err
-		}
-		output.Success("User %s deleted.", args[0])
-		return nil
+		return bulkOrSingleDelete(cmd, "users", "user")
 	},
 }
 
@@ -501,6 +483,7 @@ func init() {
 	userUpdateCmd.Flags().String("user_active", "", "1=active, 0=inactive")
 
 	userDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	userDeleteCmd.Flags().String("ids", "", "Comma-separated user IDs to delete in bulk")
 
 	// Role flags
 	userRoleAssignCmd.Flags().String("role_id", "", "Role ID (alternative to the second positional arg)")
