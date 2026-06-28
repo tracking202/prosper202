@@ -77,6 +77,9 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := rejectMultiProfile(cmd); err != nil {
+			return err
+		}
 		params := collectReportParams(cmd)
 
 		// Accept the analytics shorthand's friendly flags for consistency:
@@ -132,6 +135,9 @@ var reportTimeseriesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := rejectMultiProfile(cmd); err != nil {
+			return err
+		}
 		params := collectReportParams(cmd)
 		if v := getStringFlagOrDefault(cmd, "report", "interval"); v != "" {
 			params["interval"] = v
@@ -153,6 +159,9 @@ var reportWeekpartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := rejectMultiProfile(cmd); err != nil {
+			return err
+		}
 		params := collectReportParams(cmd)
 		applyReportSort(cmd, params)
 		data, err := c.Get("reports/weekpart", params)
@@ -170,6 +179,9 @@ var reportDaypartCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
+			return err
+		}
+		if err := rejectMultiProfile(cmd); err != nil {
 			return err
 		}
 		params := collectReportParams(cmd)

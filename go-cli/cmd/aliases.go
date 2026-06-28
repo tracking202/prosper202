@@ -8,6 +8,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// rejectMultiProfile errors when --group/--profiles is set on a command that
+// does not fan out across profiles, instead of silently returning one profile's
+// data (which would be wrong numbers in a multi-profile/client report).
+func rejectMultiProfile(cmd *cobra.Command) error {
+	if groupName != "" {
+		return validationError("--group is not supported here (only `report summary` aggregates across profiles); run per-profile with --profile, or use `exec`")
+	}
+	if cmd.Flags().Lookup("profiles") != nil {
+		if v, _ := cmd.Flags().GetString("profiles"); v != "" {
+			return validationError("--profiles is not supported by this command; use `report summary` or `exec`")
+		}
+	}
+	return nil
+}
+
 // applyBreakdownFilters post-filters breakdown rows client-side by --min-clicks,
 // --min-cost, --zero-leads, and --having (FIELD OP VALUE). Returns the original
 // bytes unchanged when no filter is set or the payload can't be parsed.
