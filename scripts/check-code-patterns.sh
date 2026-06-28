@@ -18,7 +18,7 @@ add_violation() {
     local pattern="$2"
     local fix="$3"
     violations+="  - ${file}: ${pattern} -> ${fix}"$'\n'
-    ((violation_count++))
+    violation_count=$((violation_count + 1))
 }
 
 # Check if there are modified PHP files
@@ -159,7 +159,7 @@ if [ -x "$phpstan_bin" ] || [ -f "$phpstan_bin" ]; then
                 while IFS= read -r line; do
                     [ -n "$line" ] && violations+="    $line"$'\n'
                 done <<< "$error_lines"
-                ((violation_count++))
+                violation_count=$((violation_count + 1))
             fi
         fi
     fi
