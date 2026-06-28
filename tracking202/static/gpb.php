@@ -29,7 +29,7 @@ if(array_key_exists('subid',$_GET) && is_numeric($_GET['subid'])) {
 
 if (!$mysql['click_id']) {
 	//ok grab the last click from this ip_id
-	$mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
+	$mysql['ip_address'] = $db->real_escape_string((string)($_SERVER['REMOTE_ADDR'] ?? ''));
 	$daysago = time() - 2592000; // 30 days ago
 	$click_sql1 = "	SELECT 	202_clicks.click_id
 					FROM 		202_clicks
@@ -44,8 +44,8 @@ if (!$mysql['click_id']) {
 	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
 	$click_row1 = $click_result1->fetch_assoc();
 
-	$mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
-	$mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id']);
+	$mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
+	$mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
 
 } else {
 	$click_sql1 = "	SELECT 	ppc_account_id
@@ -53,7 +53,7 @@ if (!$mysql['click_id']) {
 					WHERE 	click_id='".$mysql['click_id']."'";
 	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
 	$click_row1 = $click_result1->fetch_assoc();
-	$mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id']);				
+	$mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));				
 }
 
 if(!$mysql['click_id']){
@@ -116,25 +116,25 @@ $cvar_sql_row = $cvar_sql_result->fetch_assoc();
 if (!$cvar_sql_row) {
 	p202RespondJsonError(404, 'Click data not found');
 }
-$mysql['t202kw'] = $db->real_escape_string($cvar_sql_row['keyword']);
-$mysql['c1'] = $db->real_escape_string($cvar_sql_row['c1']);
-$mysql['c2'] = $db->real_escape_string($cvar_sql_row['c2']);
-$mysql['c3'] = $db->real_escape_string($cvar_sql_row['c3']);
-$mysql['c4'] = $db->real_escape_string($cvar_sql_row['c4']);
-$mysql['gclid'] = $db->real_escape_string($cvar_sql_row['gclid']);
-$mysql['utm_source'] = $db->real_escape_string($cvar_sql_row['utm_source']);
-$mysql['utm_medium'] = $db->real_escape_string($cvar_sql_row['utm_medium']);
-$mysql['utm_campaign'] = $db->real_escape_string($cvar_sql_row['utm_campaign']);
-$mysql['utm_term'] = $db->real_escape_string($cvar_sql_row['utm_term']);
-$mysql['utm_content'] = $db->real_escape_string($cvar_sql_row['utm_content']);
-$mysql['click_user_id'] = $db->real_escape_string($cvar_sql_row['user_id']);
-$mysql['campaign_id'] = $db->real_escape_string($cvar_sql_row['aff_campaign_id']);
-$mysql['payout'] = $db->real_escape_string($cvar_sql_row['click_payout']);
-$mysql['cpc'] = $db->real_escape_string($cvar_sql_row['click_cpc']);
-$mysql['click_cpa'] = $db->real_escape_string($cvar_sql_row['click_cpa']);
-$mysql['click_lead'] = $db->real_escape_string($cvar_sql_row['click_lead']);
-$mysql['click_time'] = $db->real_escape_string($cvar_sql_row['click_time']);
-$mysql['referer'] = urlencode((string) $db->real_escape_string($cvar_sql_row['site_url_address']));
+$mysql['t202kw'] = $db->real_escape_string((string)($cvar_sql_row['keyword'] ?? ''));
+$mysql['c1'] = $db->real_escape_string((string)($cvar_sql_row['c1'] ?? ''));
+$mysql['c2'] = $db->real_escape_string((string)($cvar_sql_row['c2'] ?? ''));
+$mysql['c3'] = $db->real_escape_string((string)($cvar_sql_row['c3'] ?? ''));
+$mysql['c4'] = $db->real_escape_string((string)($cvar_sql_row['c4'] ?? ''));
+$mysql['gclid'] = $db->real_escape_string((string)($cvar_sql_row['gclid'] ?? ''));
+$mysql['utm_source'] = $db->real_escape_string((string)($cvar_sql_row['utm_source'] ?? ''));
+$mysql['utm_medium'] = $db->real_escape_string((string)($cvar_sql_row['utm_medium'] ?? ''));
+$mysql['utm_campaign'] = $db->real_escape_string((string)($cvar_sql_row['utm_campaign'] ?? ''));
+$mysql['utm_term'] = $db->real_escape_string((string)($cvar_sql_row['utm_term'] ?? ''));
+$mysql['utm_content'] = $db->real_escape_string((string)($cvar_sql_row['utm_content'] ?? ''));
+$mysql['click_user_id'] = $db->real_escape_string((string)($cvar_sql_row['user_id'] ?? ''));
+$mysql['campaign_id'] = $db->real_escape_string((string)($cvar_sql_row['aff_campaign_id'] ?? ''));
+$mysql['payout'] = $db->real_escape_string((string)($cvar_sql_row['click_payout'] ?? ''));
+$mysql['cpc'] = $db->real_escape_string((string)($cvar_sql_row['click_cpc'] ?? ''));
+$mysql['click_cpa'] = $db->real_escape_string((string)($cvar_sql_row['click_cpa'] ?? ''));
+$mysql['click_lead'] = $db->real_escape_string((string)($cvar_sql_row['click_lead'] ?? ''));
+$mysql['click_time'] = $db->real_escape_string((string)($cvar_sql_row['click_time'] ?? ''));
+$mysql['referer'] = urlencode((string) $db->real_escape_string((string)($cvar_sql_row['site_url_address'] ?? '')));
 
 if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
 	$mysql['use_pixel_payout'] = 1;
@@ -169,7 +169,7 @@ $account_id_sql="SELECT 202_clicks.ppc_account_id
 
 $account_id_result = $db->query($account_id_sql);
 $account_id_row = $account_id_result->fetch_assoc();
-$mysql['ppc_account_id'] = $db->real_escape_string($account_id_row['ppc_account_id']);
+$mysql['ppc_account_id'] = $db->real_escape_string((string)($account_id_row['ppc_account_id'] ?? ''));
 
 if($mysql['ppc_account_id']){
 	$pixel_sql='SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels WHERE 202_ppc_account_pixels.ppc_account_id='.$mysql['ppc_account_id'];
@@ -177,11 +177,11 @@ if($mysql['ppc_account_id']){
 	$pixel_result = $db->query($pixel_sql);
 
 	$pixel_result_row = $pixel_result->fetch_assoc();
-	$mysql['pixel_type_id'] = $db->real_escape_string($pixel_result_row['pixel_type_id']);
+	$mysql['pixel_type_id'] = $db->real_escape_string((string)($pixel_result_row['pixel_type_id'] ?? ''));
 	if ($mysql['pixel_type_id'] == 5) {
 		$mysql['pixel_code'] = stripslashes((string) $pixel_result_row['pixel_code']);
 	}else{
-		$mysql['pixel_code'] = $db->real_escape_string($pixel_result_row['pixel_code']);
+		$mysql['pixel_code'] = $db->real_escape_string((string)($pixel_result_row['pixel_code'] ?? ''));
 	}
 
 	//get the list of pixel urls
