@@ -259,6 +259,6 @@ func rowDedupeKey(endpoint string, row map[string]interface{}) string {
 }
 
 func init() {
-	exportCmd.Flags().StringP("output", "o", "", "Output file path")
+	exportCmd.Flags().StringP("output", "O", "", "Output file path (-O; -o is reserved for --offset)")
 	rootCmd.AddCommand(exportCmd)
 }

@@ -32,6 +32,29 @@ func captureStdout(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
+// captureStderr captures everything written to os.Stderr during fn().
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error: %v", err)
+	}
+	os.Stderr = w
+
+	fn()
+
+	w.Close()
+	os.Stderr = oldStderr
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	r.Close()
+
+	return buf.String()
+}
+
 func TestRenderJSONModePrettyPrints(t *testing.T) {
 	input := `{"id":1,"name":"test"}`
 	out := captureStdout(t, func() {
@@ -142,8 +165,11 @@ func TestRenderTableWithDataAndPagination(t *testing.T) {
 	out := captureStdout(t, func() {
 		Render([]byte(input), false)
 	})
+	errOut := captureStderr(t, func() {
+		Render([]byte(input), false)
+	})
 
-	// Should render the data table
+	// Should render the data table to stdout
 	if !strings.Contains(out, "Item 1") {
 		t.Errorf("should contain 'Item 1', got:\n%s", out)
 	}
@@ -151,15 +177,15 @@ func TestRenderTableWithDataAndPagination(t *testing.T) {
 		t.Errorf("should contain 'Item 2', got:\n%s", out)
 	}
 
-	// Should render pagination info
-	if !strings.Contains(out, "Total: 50") {
-		t.Errorf("should contain 'Total: 50', got:\n%s", out)
+	// Pagination info goes to stderr
+	if !strings.Contains(errOut, "Total: 50") {
+		t.Errorf("stderr should contain 'Total: 50', got:\n%s", errOut)
 	}
-	if !strings.Contains(out, "Limit: 10") {
-		t.Errorf("should contain 'Limit: 10', got:\n%s", out)
+	if !strings.Contains(errOut, "Limit: 10") {
+		t.Errorf("stderr should contain 'Limit: 10', got:\n%s", errOut)
 	}
-	if !strings.Contains(out, "Offset: 0") {
-		t.Errorf("should contain 'Offset: 0', got:\n%s", out)
+	if !strings.Contains(errOut, "Offset: 0") {
+		t.Errorf("stderr should contain 'Offset: 0', got:\n%s", errOut)
 	}
 }
 
@@ -215,28 +241,30 @@ func TestRenderSingleObjectWrappedInData(t *testing.T) {
 
 func TestRenderEmptyArray(t *testing.T) {
 	input := `[]`
-	out := captureStdout(t, func() {
+	// "No results." goes to stderr so stdout stays strictly data.
+	out := captureStderr(t, func() {
 		Render([]byte(input), false)
 	})
 
 	if !strings.Contains(out, "No results.") {
-		t.Errorf("empty array should show 'No results.', got:\n%s", out)
+		t.Errorf("empty array should show 'No results.' on stderr, got:\n%s", out)
 	}
 }
 
 func TestRenderEmptyDataArray(t *testing.T) {
 	input := `{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`
-	out := captureStdout(t, func() {
+	out := captureStderr(t, func() {
 		Render([]byte(input), false)
 	})
 
 	if !strings.Contains(out, "No results.") {
-		t.Errorf("empty data array should show 'No results.', got:\n%s", out)
+		t.Errorf("empty data array should show 'No results.' on stderr, got:\n%s", out)
 	}
 }
 
 func TestSuccess(t *testing.T) {
-	out := captureStdout(t, func() {
+	// Success messages go to stderr so they don't corrupt piped data.
+	out := captureStderr(t, func() {
 		Success("Campaign %s deleted.", "42")
 	})
 
@@ -247,7 +275,7 @@ func TestSuccess(t *testing.T) {
 }
 
 func TestSuccessNoArgs(t *testing.T) {
-	out := captureStdout(t, func() {
+	out := captureStderr(t, func() {
 		Success("Operation completed.")
 	})
 
@@ -397,12 +425,12 @@ func TestRenderTableMissingFieldsInSomeRows(t *testing.T) {
 func TestRenderPaginationPartialFields(t *testing.T) {
 	// pagination with only some fields present
 	input := `{"data":[{"id":1}],"pagination":{"total":10}}`
-	out := captureStdout(t, func() {
+	out := captureStderr(t, func() {
 		Render([]byte(input), false)
 	})
 
 	if !strings.Contains(out, "Total: 10") {
-		t.Errorf("should contain 'Total: 10', got:\n%s", out)
+		t.Errorf("should contain 'Total: 10' on stderr, got:\n%s", out)
 	}
 	// Should NOT contain "Limit" since limit is not present
 	lines := strings.Split(out, "\n")
@@ -417,5 +445,87 @@ func TestRenderPaginationPartialFields(t *testing.T) {
 	}
 	if !paginationFound {
 		t.Error("pagination line with 'Total:' not found")
+	}
+}
+
+func TestRenderQuietIdOnly(t *testing.T) {
+	input := `{"data":[{"aff_campaign_id":90008,"name":"A"},{"aff_campaign_id":90010,"name":"B"}]}`
+	out := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{Quiet: true})
+	})
+	if strings.TrimSpace(out) != "90008\n90010" {
+		t.Errorf("quiet output = %q, want two ids one per line", out)
+	}
+}
+
+func TestRenderFieldsSelection(t *testing.T) {
+	input := `[{"id":1,"name":"A","total_net":5,"roi":10}]`
+	out := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{Fields: []string{"id", "roi"}, RawHeaders: true})
+	})
+	if !strings.Contains(out, "roi") || strings.Contains(out, "name") {
+		t.Errorf("fields selection should include roi, exclude name, got:\n%s", out)
+	}
+}
+
+func TestRenderFriendlyHeaders(t *testing.T) {
+	input := `[{"id":1,"total_net":5}]`
+	out := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{})
+	})
+	if !strings.Contains(out, "Profit") {
+		t.Errorf("total_net should render as friendly header 'Profit', got:\n%s", out)
+	}
+	rawOut := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{RawHeaders: true})
+	})
+	if !strings.Contains(rawOut, "total_net") {
+		t.Errorf("--raw-headers should keep 'total_net', got:\n%s", rawOut)
+	}
+}
+
+func TestRenderSeparatorSpansColumnWidth(t *testing.T) {
+	// The dash separator under a wide value column must span the value width,
+	// not just the (short) header length.
+	input := `[{"id":1,"name":"A Very Long Campaign Name Here"}]`
+	out := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{})
+	})
+	var sepLine string
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, "----") {
+			sepLine = ln
+		}
+	}
+	// "name" header is 4 chars but the value is long; separator must be wider.
+	dashes := strings.Count(sepLine, "-")
+	if dashes < len("A Very Long Campaign Name Here") {
+		t.Errorf("separator should span the widest cell, got %d dashes in %q", dashes, sepLine)
+	}
+}
+
+func TestRenderNDJSON(t *testing.T) {
+	input := `{"data":[{"id":1},{"id":2}]}`
+	out := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{NDJSON: true})
+	})
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "\"id\":1") {
+		t.Errorf("ndjson should emit one compact object per line, got:\n%s", out)
+	}
+}
+
+func TestTrimLongDecimal(t *testing.T) {
+	cases := map[string]string{
+		"0.288613861":   "0.2886",
+		"-54.807953180": "-54.808",
+		"2.20":          "2.20",   // <=4 decimals untouched
+		"90008":         "90008",  // integer untouched
+		"Bing - Search": "Bing - Search",
+	}
+	for in, want := range cases {
+		if got := trimLongDecimal(in); got != want {
+			t.Errorf("trimLongDecimal(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

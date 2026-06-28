@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -24,12 +25,147 @@ type crudField struct {
 }
 
 type crudEntity struct {
-	Name       string
-	Aliases    []string
-	Plural     string
-	Endpoint   string
-	Fields     []crudField
-	ListParams []crudField
+	Name          string
+	Aliases       []string
+	Plural        string
+	Endpoint      string
+	Fields        []crudField
+	ListParams    []crudField
+	IDField       string // internal primary-key field (e.g. aff_campaign_id)
+	PublicIDField string // public-facing id field (e.g. aff_campaign_id_public)
+}
+
+// resolvePublicID treats id as a public id and returns the matching internal id
+// by filtering the list endpoint on the entity's PublicIDField. Returns "" when
+// the entity has no public-id mapping or no unique match is found.
+func resolvePublicID(c *api.Client, entity crudEntity, id string) string {
+	if entity.PublicIDField == "" || entity.IDField == "" {
+		return ""
+	}
+	data, err := c.Get(entity.Endpoint, map[string]string{"filter[" + entity.PublicIDField + "]": id})
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if json.Unmarshal(data, &resp) != nil || len(resp.Data) != 1 {
+		return ""
+	}
+	if v, ok := resp.Data[0][entity.IDField]; ok {
+		return fmt.Sprintf("%v", normalizeID(v))
+	}
+	return ""
+}
+
+// normalizeID renders a numeric id without a trailing ".0".
+func normalizeID(v interface{}) interface{} {
+	if f, ok := v.(float64); ok && f == float64(int64(f)) {
+		return int64(f)
+	}
+	return v
+}
+
+// getWithPublicFallback fetches entity/<id>; on a 404 (or when forcePublic),
+// it resolves id as a public id and retries with the internal id.
+func getWithPublicFallback(c *api.Client, entity crudEntity, id string, forcePublic bool) ([]byte, error) {
+	if forcePublic {
+		internal := resolvePublicID(c, entity, id)
+		if internal == "" {
+			return nil, validationError("no %s found with public %s=%s", entity.Name, entity.PublicIDField, id)
+		}
+		return c.Get(entity.Endpoint+"/"+internal, nil)
+	}
+	data, err := c.Get(entity.Endpoint+"/"+id, nil)
+	if err != nil && isNotFoundErr(err) {
+		if internal := resolvePublicID(c, entity, id); internal != "" {
+			return c.Get(entity.Endpoint+"/"+internal, nil)
+		}
+	}
+	return data, err
+}
+
+// isNotFoundErr reports whether err is a 404 from the API, preferring the
+// structured status over substring matching.
+func isNotFoundErr(err error) bool {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Status == 404
+	}
+	return false
+}
+
+// deleteArgsValidator allows zero positional args when --ids is set, else one.
+func deleteArgsValidator(cmd *cobra.Command, args []string) error {
+	if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
+		return cobra.MaximumNArgs(0)(cmd, args)
+	}
+	return cobra.ExactArgs(1)(cmd, args)
+}
+
+// bulkOrSingleDelete deletes one id (positional) or many (--ids), honoring
+// --force, against endpoint/<id>. Shared so every delete has the same bulk
+// semantics. noun is used in confirmation and summary messages.
+func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return err
+	}
+	force, _ := cmd.Flags().GetBool("force")
+	idsFlag, _ := cmd.Flags().GetString("ids")
+	args := cmd.Flags().Args()
+
+	if strings.TrimSpace(idsFlag) != "" {
+		ids, perr := parseIDList(idsFlag)
+		if perr != nil {
+			return perr
+		}
+		if len(ids) == 0 {
+			return fmt.Errorf("--ids requires at least one ID")
+		}
+		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+		deleted, failed := 0, 0
+		for _, id := range ids {
+			if err := c.Delete(endpoint + "/" + id); err != nil {
+				failed++
+				fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", noun, id, err)
+				continue
+			}
+			deleted++
+		}
+		output.Success("Deleted %d of %d %ss.", deleted, len(ids), noun)
+		if failed > 0 {
+			return partialFailureError("failed to delete %d %ss", failed, noun)
+		}
+		return nil
+	}
+
+	if len(args) != 1 {
+		return fmt.Errorf("provide a single id or use --ids")
+	}
+	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
+		fmt.Fprintln(os.Stderr, "Cancelled.")
+		return nil
+	}
+	if err := c.Delete(endpoint + "/" + args[0]); err != nil {
+		return err
+	}
+	output.Success("%s %s deleted.", capitalize(noun), args[0])
+	return nil
+}
+
+func getLongHelp(entity crudEntity) string {
+	if entity.PublicIDField == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"Get a %s by id. Accepts the internal %s (from `%s list`). If you pass the\n"+
+			"public %s (the value in tracking links / the UI), it is resolved automatically;\n"+
+			"use --public to force the public lookup.",
+		entity.Name, entity.IDField, entity.Name, entity.PublicIDField)
 }
 
 type fkResolutionSpec struct {
@@ -355,6 +491,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	getCmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: fmt.Sprintf("Get a %s by ID", entity.Name),
+		Long:  getLongHelp(entity),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("get", entity.Endpoint)
@@ -363,13 +500,17 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := c.Get(entity.Endpoint+"/"+args[0], nil)
+			forcePublic, _ := cmd.Flags().GetBool("public")
+			data, err := getWithPublicFallback(c, entity, args[0], forcePublic)
 			if err != nil {
 				return err
 			}
 			render(data)
 			return nil
 		},
+	}
+	if entity.PublicIDField != "" {
+		getCmd.Flags().Bool("public", false, fmt.Sprintf("Treat the id as the public %s", entity.PublicIDField))
 	}
 
 	// create
@@ -581,6 +722,8 @@ func init() {
 			Name:     "tracker",
 			Plural:   "trackers (tracking links that tie a traffic source to a campaign and landing page)",
 			Endpoint: "trackers",
+			IDField:  "tracker_id",
+			PublicIDField: "tracker_id_public",
 			Fields: []crudField{
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
 				{Name: "ppc_account_id", Desc: "PPC account ID"},
@@ -596,6 +739,7 @@ func init() {
 				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
 				{Name: "ppc_account_id", QueryKey: "filter[ppc_account_id]", Desc: "Filter by PPC account ID"},
 				{Name: "landing_page_id", QueryKey: "filter[landing_page_id]", Desc: "Filter by landing page ID"},
+				{Name: "rotator_id", QueryKey: "filter[rotator_id]", Desc: "Filter by rotator ID"},
 			},
 		},
 		{
@@ -715,13 +859,22 @@ func init() {
 		getURLCmd := &cobra.Command{
 			Use:   "get-url <id>",
 			Short: "Get tracking URL for a tracker",
-			Args:  cobra.ExactArgs(1),
+			Long: "Accepts the internal tracker_id (from `tracker list`). If you pass the\n" +
+				"public tracker_id_public (the value in the tracking link), it is resolved\n" +
+				"automatically.",
+			Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				c, err := api.NewFromConfig()
 				if err != nil {
 					return err
 				}
-				data, err := c.Get("trackers/"+args[0]+"/url", nil)
+				id := args[0]
+				data, err := c.Get("trackers/"+id+"/url", nil)
+				if err != nil && isNotFoundErr(err) {
+					if internal := resolvePublicID(c, trackerEntity, id); internal != "" {
+						data, err = c.Get("trackers/"+internal+"/url", nil)
+					}
+				}
 				if err != nil {
 					return err
 				}

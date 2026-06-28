@@ -124,17 +124,25 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		return validationError("unsupported interval %q. Choose from: %s", interval, strings.Join(forecast.ValidIntervals(), ", "))
 	}
 
-	history, _ := cmd.Flags().GetString("history")
-	history = strings.TrimSpace(history)
-	if history == "" {
-		history = "last90"
+	// --history is the canonical flag; --period/--days are accepted aliases so
+	// the time-window flag name is consistent with the report commands. Because
+	// --history carries a non-empty default, only an *explicitly set* alias must
+	// win — so resolve by Changed(), not by the default value.
+	history := "last90"
+	for _, name := range []string{"history", "period", "days"} {
+		if cmd.Flags().Changed(name) {
+			if v, _ := cmd.Flags().GetString(name); strings.TrimSpace(v) != "" {
+				history = strings.TrimSpace(v)
+				break
+			}
+		}
 	}
 
 	// reports/timeseries returns at most 2000 buckets ordered oldest-first,
 	// so hourly windows longer than last30 (720 buckets) would silently drop
 	// the most recent hours — the ones forecasts anchor on.
 	if interval == "hour" {
-		if !cmd.Flags().Changed("history") {
+		if !cmd.Flags().Changed("history") && !cmd.Flags().Changed("period") && !cmd.Flags().Changed("days") {
 			history = "last30"
 		} else {
 			switch history {
@@ -797,7 +805,9 @@ func init() {
 	forecastCmd.Flags().String("method", "auto", "Forecasting method: auto, linear, sma, wma, holtwinters")
 	forecastCmd.Flags().IntP("horizon", "n", 7, "Number of periods to forecast forward")
 	forecastCmd.Flags().StringP("interval", "i", "day", "Forecast granularity: hour, day, week, month")
-	forecastCmd.Flags().String("history", "last90", "Historical data period: today, yesterday, last7, last30, last90")
+	forecastCmd.Flags().String("history", "last90", "Historical data period: today, yesterday, last7, last30, last90 (aliases: --period, --days)")
+	forecastCmd.Flags().String("period", "", "Alias of --history")
+	forecastCmd.Flags().String("days", "", "Alias of --history")
 	forecastCmd.Flags().Int("window", 0, "SMA/WMA window size (0 = auto-select)")
 	forecastCmd.Flags().Bool("seasonal", false, "Apply day-of-week seasonal adjustment from weekpart data")
 	forecastCmd.Flags().Float64("confidence", 0.95, "Confidence level for prediction bounds (0.80, 0.90, 0.95, 0.99)")

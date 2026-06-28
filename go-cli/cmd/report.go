@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"strings"
-
 	"p202/internal/api"
 
 	"github.com/spf13/cobra"
@@ -31,7 +29,7 @@ func addReportFilters(cmd *cobra.Command) {
 	cmd.Flags().StringP("period", "p", "", "Period: today, yesterday, last7, last30, last90")
 	cmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	cmd.Flags().String("time_to", "", "End timestamp (unix)")
-	cmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")
+	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
 	cmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	cmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
 	cmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
@@ -79,6 +77,9 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := rejectMultiProfile(cmd); err != nil {
+			return err
+		}
 		params := collectReportParams(cmd)
 
 		// Accept the analytics shorthand's friendly flags for consistency:
@@ -93,18 +94,13 @@ var reportBreakdownCmd = &cobra.Command{
 		if breakdown == "" {
 			breakdown = getConfigDefault("report", "breakdown")
 		}
-		breakdown = strings.ToLower(strings.TrimSpace(breakdown))
-		if mapped, ok := analyticsGroupByAliases[breakdown]; ok {
-			breakdown = mapped
-		}
+		breakdown = resolveDimension(breakdown)
 		if breakdown != "" {
 			params["breakdown"] = breakdown
 		}
 
+		// --sort-dir is accepted via the global flag normalizer (- == _).
 		sortDir, _ := cmd.Flags().GetString("sort_dir")
-		if sortDir == "" {
-			sortDir, _ = cmd.Flags().GetString("sort-dir")
-		}
 		if sortDir == "" {
 			sortDir = getConfigDefault("report", "sort_dir")
 		}
@@ -112,7 +108,10 @@ var reportBreakdownCmd = &cobra.Command{
 			params["sort_dir"] = sortDir
 		}
 
-		for _, f := range []string{"sort", "limit", "offset"} {
+		if v := getStringFlagOrDefault(cmd, "report", "sort"); v != "" {
+			params["sort"] = resolveMetric(v)
+		}
+		for _, f := range []string{"limit", "offset"} {
 			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 				params[f] = v
 			}
@@ -121,7 +120,7 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
+		render(applyBreakdownFilters(cmd, data))
 		return nil
 	},
 }
@@ -132,6 +131,9 @@ var reportTimeseriesCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
+			return err
+		}
+		if err := rejectMultiProfile(cmd); err != nil {
 			return err
 		}
 		params := collectReportParams(cmd)
@@ -155,12 +157,11 @@ var reportWeekpartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		params := collectReportParams(cmd)
-		for _, f := range []string{"sort", "sort_dir"} {
-			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
-				params[f] = v
-			}
+		if err := rejectMultiProfile(cmd); err != nil {
+			return err
 		}
+		params := collectReportParams(cmd)
+		applyReportSort(cmd, params)
 		data, err := c.Get("reports/weekpart", params)
 		if err != nil {
 			return err
@@ -178,12 +179,11 @@ var reportDaypartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		params := collectReportParams(cmd)
-		for _, f := range []string{"sort", "sort_dir"} {
-			if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
-				params[f] = v
-			}
+		if err := rejectMultiProfile(cmd); err != nil {
+			return err
 		}
+		params := collectReportParams(cmd)
+		applyReportSort(cmd, params)
 		data, err := c.Get("reports/daypart", params)
 		if err != nil {
 			return err
@@ -202,20 +202,21 @@ func init() {
 	reportBreakdownCmd.Flags().String("group-by", "", "Alias for --breakdown (matches `analytics --group-by`)")
 	reportBreakdownCmd.Flags().StringP("sort", "s", "", "Sort by: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
 	reportBreakdownCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
-	reportBreakdownCmd.Flags().String("sort-dir", "", "Alias for --sort_dir (matches `analytics --sort-dir`)")
 	reportBreakdownCmd.Flags().StringP("limit", "l", "", "Max results")
 	reportBreakdownCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	reportBreakdownCmd.Flags().Float64("min-clicks", 0, "Only rows with at least N clicks")
+	reportBreakdownCmd.Flags().Float64("min-cost", 0, "Only rows with at least $N cost")
+	reportBreakdownCmd.Flags().Bool("zero-leads", false, "Only rows with cost > 0 and zero conversions (pure waste)")
+	reportBreakdownCmd.Flags().String("having", "", "Post-filter rows: FIELD OP VALUE (e.g. 'total_leads=0', 'roi<0')")
 
 	addReportFilters(reportTimeseriesCmd)
 	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")
 
 	addReportFilters(reportDaypartCmd)
-	reportDaypartCmd.Flags().StringP("sort", "s", "", "Sort by: hour_of_day, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa")
-	reportDaypartCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	addSortFlags(reportDaypartCmd, "Sort by: hour_of_day, clicks, conversions, revenue, cost, profit, roi, epc, conv_rate, cpa, avg_cpc (friendly aliases ok)")
 
 	addReportFilters(reportWeekpartCmd)
-	reportWeekpartCmd.Flags().StringP("sort", "s", "", "Sort by: day_of_week, total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
-	reportWeekpartCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	addSortFlags(reportWeekpartCmd, "Sort by: day_of_week, clicks, conversions, revenue, cost, profit, roi, epc, conv_rate (friendly aliases ok)")
 
 	reportCmd.AddCommand(reportSummaryCmd, reportBreakdownCmd, reportTimeseriesCmd, reportDaypartCmd, reportWeekpartCmd)
 	rootCmd.AddCommand(reportCmd)

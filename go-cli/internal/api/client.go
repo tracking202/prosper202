@@ -88,6 +88,33 @@ func ErrorCategory(err error) string {
 	return ""
 }
 
+// HintFor returns an actionable recovery hint for an error, or "" when there is
+// nothing useful to add. It augments — never replaces — the error message.
+func HintFor(err error) string {
+	if err == nil {
+		return ""
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch {
+		case apiErr.Status == 401 || apiErr.Status == 403:
+			return "Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong."
+		case apiErr.Status == 404:
+			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
+		case apiErr.Status == 422 && len(apiErr.FieldErrors) > 0:
+			return "Fix the field(s) listed above and retry."
+		}
+		return ""
+	}
+	var reqErr *RequestError
+	if errors.As(err, &reqErr) {
+		if reqErr.Kind == "network" {
+			return "Check the server URL (`p202 config get`) and that the instance is reachable."
+		}
+	}
+	return ""
+}
+
 func NewFromConfig() (*Client, error) {
 	profile, _, err := config.LoadProfileWithName("")
 	if err != nil {

@@ -14,6 +14,11 @@ import (
 
 var jsonOutput bool
 var csvOutput bool
+var quietOutput bool
+var ndjsonOutput bool
+var wideOutput bool
+var rawHeaders bool
+var fieldsFlag string
 var profileName string
 var groupName string
 
@@ -55,6 +60,9 @@ func Execute() {
 		} else {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
+		if hint := api.HintFor(err); hint != "" {
+			fmt.Fprintf(os.Stderr, "Hint: %s\n", hint)
+		}
 		os.Exit(exitCodeForError(err))
 	}
 }
@@ -63,9 +71,23 @@ func SetVersion(version string) {
 	rootCmd.Version = version
 }
 
+// normalizeFlagName makes '-' and '_' interchangeable in every flag name, so
+// --aff-campaign-id and --aff_campaign_id (and --sort-dir / --sort_dir) refer to
+// the same flag. Names canonicalize to kebab-case (what help displays); the
+// snake_case API-style spelling keeps working everywhere.
+func normalizeFlagName(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+	return pflag.NormalizedName(strings.ReplaceAll(name, "_", "-"))
+}
+
 func init() {
+	rootCmd.SetGlobalNormalizationFunc(normalizeFlagName)
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output raw JSON instead of tables")
 	rootCmd.PersistentFlags().BoolVar(&csvOutput, "csv", false, "Output as CSV instead of tables")
+	rootCmd.PersistentFlags().BoolVarP(&quietOutput, "quiet", "q", false, "Print only ids, one per line (for scripting)")
+	rootCmd.PersistentFlags().BoolVar(&ndjsonOutput, "ndjson", false, "Output newline-delimited JSON (one row per line)")
+	rootCmd.PersistentFlags().BoolVar(&wideOutput, "wide", false, "Show all columns at full width (no truncation)")
+	rootCmd.PersistentFlags().BoolVar(&rawHeaders, "raw-headers", false, "Use raw API field names as table headers")
+	rootCmd.PersistentFlags().StringVar(&fieldsFlag, "fields", "", "Comma-separated columns to show, in order")
 	rootCmd.PersistentFlags().StringVar(&profileName, "profile", "", "Use a named configuration profile")
 	rootCmd.PersistentFlags().StringVar(&groupName, "group", "", "Use a tag group of profiles for multi-profile commands")
 }

@@ -47,10 +47,8 @@ var diffCmd = &cobra.Command{
 			}
 		}
 
-		fromProfile, _ := cmd.Flags().GetString("from")
-		toProfile, _ := cmd.Flags().GetString("to")
-		fromProfile = strings.TrimSpace(fromProfile)
-		toProfile = strings.TrimSpace(toProfile)
+		fromProfile := firstFlag(cmd, "from", "source")
+		toProfile := firstFlag(cmd, "to", "target")
 		if fromProfile == "" || toProfile == "" {
 			return fmt.Errorf("--from and --to are required")
 		}
@@ -628,10 +626,10 @@ func loadProfileConnection(profileName string) (map[string]interface{}, error) {
 }
 
 func init() {
-	diffCmd.Flags().String("from", "", "Source profile name")
-	diffCmd.Flags().String("to", "", "Target profile name")
-	_ = diffCmd.MarkFlagRequired("from")
-	_ = diffCmd.MarkFlagRequired("to")
+	diffCmd.Flags().String("from", "", "Source profile name (alias: --source)")
+	diffCmd.Flags().String("to", "", "Target profile name (alias: --target)")
+	diffCmd.Flags().String("source", "", "Source profile (alias of --from)")
+	diffCmd.Flags().String("target", "", "Target profile (alias of --to)")
 
 	rootCmd.AddCommand(diffCmd)
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -171,10 +172,17 @@ func defaultExecProfileRunner(call execCall) execResult {
 	args = append(args, call.SubArgs...)
 
 	command := osexec.Command(executable, args...)
-	output, err := command.CombinedOutput()
+	// Capture stdout and stderr into distinct buffers so per-profile JSON on
+	// stdout parses cleanly and stderr (warnings, hints) is reported separately
+	// instead of being mixed in by CombinedOutput().
+	var stdoutBuf, stderrBuf bytes.Buffer
+	command.Stdout = &stdoutBuf
+	command.Stderr = &stderrBuf
+	err = command.Run()
 	result := execResult{
 		Profile: call.Profile,
-		Stdout:  string(output),
+		Stdout:  stdoutBuf.String(),
+		Stderr:  stderrBuf.String(),
 	}
 	if err == nil {
 		return result
