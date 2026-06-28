@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 )
@@ -292,11 +293,29 @@ func renderTable(items []interface{}, opts Opts) {
 		}
 		vals := make([]string, len(keys))
 		for i, k := range keys {
-			vals[i] = truncate(formatValue(obj[k]), opts.Wide)
+			vals[i] = truncate(trimLongDecimal(formatValue(obj[k])), opts.Wide)
 		}
 		fmt.Fprintln(w, strings.Join(vals, "\t"))
 	}
 	w.Flush()
+}
+
+// trimLongDecimal shortens noisy long-decimal numeric strings (e.g. the API's
+// "0.288613861" or "-54.807953180") to 4 decimal places for the human table,
+// trimming trailing zeros. Non-numeric strings and integers pass through. Only
+// applied to the table view; JSON/CSV keep the raw values for machine consumers.
+func trimLongDecimal(s string) string {
+	dot := strings.IndexByte(s, '.')
+	if dot < 0 || len(s)-dot-1 <= 4 {
+		return s
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return s
+	}
+	out := strconv.FormatFloat(f, 'f', 4, 64)
+	out = strings.TrimRight(out, "0")
+	return strings.TrimRight(out, ".")
 }
 
 func truncate(s string, wide bool) string {

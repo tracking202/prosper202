@@ -514,3 +514,18 @@ func TestRenderNDJSON(t *testing.T) {
 		t.Errorf("ndjson should emit one compact object per line, got:\n%s", out)
 	}
 }
+
+func TestTrimLongDecimal(t *testing.T) {
+	cases := map[string]string{
+		"0.288613861":   "0.2886",
+		"-54.807953180": "-54.808",
+		"2.20":          "2.20",   // <=4 decimals untouched
+		"90008":         "90008",  // integer untouched
+		"Bing - Search": "Bing - Search",
+	}
+	for in, want := range cases {
+		if got := trimLongDecimal(in); got != want {
+			t.Errorf("trimLongDecimal(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
