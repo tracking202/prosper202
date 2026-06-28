@@ -260,7 +260,101 @@ func mustString(cmd *cobra.Command, name string) string {
 	return v
 }
 
+// rotatorIssues returns config problems for a single rotator's data.
+func rotatorIssues(d map[string]interface{}) []string {
+	var issues []string
+	rules, _ := d["rules"].([]interface{})
+	activeRules := 0
+	for _, ri := range rules {
+		r, _ := ri.(map[string]interface{})
+		if toFloat(r["status"]) == 1 {
+			activeRules++
+		}
+		if reds, _ := r["redirects"].([]interface{}); len(reds) == 0 {
+			issues = append(issues, fmt.Sprintf("rule %q has no redirect", r["rule_name"]))
+		}
+	}
+	hasDefault := defaultDest(d) != "(none)"
+	if activeRules == 0 && !hasDefault {
+		issues = append(issues, "no active rules and no default — every click is dropped")
+	}
+	return issues
+}
+
+var rotatorCheckCmd = &cobra.Command{
+	Use:   "check [rotator_id]",
+	Short: "Health-check rotators: flag missing defaults, ruleless rotators, empty rules",
+	Long:  "Exits non-zero if any checked rotator has a configuration problem, so it can gate a deploy.",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		var datas []map[string]interface{}
+		if len(args) == 1 {
+			raw, err := c.Get("rotators/"+args[0], nil)
+			if err != nil {
+				return err
+			}
+			var resp struct {
+				Data map[string]interface{} `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				return err
+			}
+			datas = append(datas, resp.Data)
+		} else {
+			list, err := c.Get("rotators", map[string]string{"limit": "500"})
+			if err != nil {
+				return err
+			}
+			var resp struct {
+				Data []map[string]interface{} `json:"data"`
+			}
+			if err := json.Unmarshal(list, &resp); err != nil {
+				return err
+			}
+			for _, r := range resp.Data {
+				full, err := c.Get(fmt.Sprintf("rotators/%v", normalizeID(r["id"])), nil)
+				if err != nil {
+					continue
+				}
+				var fr struct {
+					Data map[string]interface{} `json:"data"`
+				}
+				if json.Unmarshal(full, &fr) == nil {
+					datas = append(datas, fr.Data)
+				}
+			}
+		}
+
+		rows := make([]map[string]interface{}, 0, len(datas))
+		failed := 0
+		for _, d := range datas {
+			issues := rotatorIssues(d)
+			status := "OK"
+			if len(issues) > 0 {
+				status = "ISSUES"
+				failed++
+			}
+			rows = append(rows, map[string]interface{}{
+				"id":     normalizeID(d["id"]),
+				"name":   d["name"],
+				"status": status,
+				"reason": strings.Join(issues, "; "),
+			})
+		}
+		render(rowsToJSON(rows))
+		if failed > 0 {
+			return partialFailureError("%d rotator(s) have configuration issues", failed)
+		}
+		return nil
+	},
+}
+
 func init() {
+	rotatorCmd.AddCommand(rotatorCheckCmd)
 	rotatorTestCmd.Flags().String("geo", "", "Comma-separated country codes to evaluate (default: a tier-1+rest sample)")
 	rotatorTestCmd.Flags().Bool("explain", false, "Show per-criteria pass/fail for each geo")
 	rotatorCmd.AddCommand(rotatorTestCmd)

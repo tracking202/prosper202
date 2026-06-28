@@ -49,3 +49,16 @@ func TestRotatorDestinationInactiveRuleSkipped(t *testing.T) {
 		t.Errorf("paused US rule should be skipped -> default, got %q", dest)
 	}
 }
+
+func TestRotatorIssues(t *testing.T) {
+	// no rules and no default -> flagged
+	bad := map[string]interface{}{"rules": []interface{}{}}
+	if len(rotatorIssues(bad)) == 0 {
+		t.Error("ruleless rotator with no default should be flagged")
+	}
+	// has default campaign -> OK
+	ok := map[string]interface{}{"default_campaign": 90007.0, "rules": []interface{}{}}
+	if len(rotatorIssues(ok)) != 0 {
+		t.Errorf("rotator with a default should be OK, got %v", rotatorIssues(ok))
+	}
+}
