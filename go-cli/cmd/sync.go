@@ -97,10 +97,8 @@ var syncStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show sync status and drift summary between profiles",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fromProfile, _ := cmd.Flags().GetString("from")
-		toProfile, _ := cmd.Flags().GetString("to")
-		fromProfile = strings.TrimSpace(fromProfile)
-		toProfile = strings.TrimSpace(toProfile)
+		fromProfile := firstFlag(cmd, "from", "source")
+		toProfile := firstFlag(cmd, "to", "target")
 		if fromProfile == "" || toProfile == "" {
 			return fmt.Errorf("--from and --to are required")
 		}
@@ -181,10 +179,8 @@ var syncHistoryCmd = &cobra.Command{
 	Use:   "history",
 	Short: "Show sync history between profiles",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fromProfile, _ := cmd.Flags().GetString("from")
-		toProfile, _ := cmd.Flags().GetString("to")
-		fromProfile = strings.TrimSpace(fromProfile)
-		toProfile = strings.TrimSpace(toProfile)
+		fromProfile := firstFlag(cmd, "from", "source")
+		toProfile := firstFlag(cmd, "to", "target")
 		if fromProfile == "" || toProfile == "" {
 			return fmt.Errorf("--from and --to are required")
 		}
@@ -477,10 +473,8 @@ func runSyncProfiles(entities []string, fromProfile, toProfile string, opts sync
 }
 
 func readSyncFlags(cmd *cobra.Command) (syncOptions, string, string, error) {
-	fromProfile, _ := cmd.Flags().GetString("from")
-	toProfile, _ := cmd.Flags().GetString("to")
-	fromProfile = strings.TrimSpace(fromProfile)
-	toProfile = strings.TrimSpace(toProfile)
+	fromProfile := firstFlag(cmd, "from", "source")
+	toProfile := firstFlag(cmd, "to", "target")
 	if fromProfile == "" || toProfile == "" {
 		return syncOptions{}, "", "", fmt.Errorf("--from and --to are required")
 	}
@@ -656,13 +650,24 @@ func collectEntityIDs(entity string, rows []map[string]interface{}) map[string]b
 }
 
 func addSyncFlags(cmd *cobra.Command) {
-	cmd.Flags().String("from", "", "Source profile name")
-	cmd.Flags().String("to", "", "Target profile name")
+	cmd.Flags().String("from", "", "Source profile name (alias: --source)")
+	cmd.Flags().String("to", "", "Target profile name (alias: --target)")
+	cmd.Flags().String("source", "", "Source profile name (alias of --from)")
+	cmd.Flags().String("target", "", "Target profile name (alias of --to)")
 	cmd.Flags().Bool("dry-run", false, "Show sync actions without writing")
 	cmd.Flags().Bool("skip-errors", false, "Continue processing after record-level failures")
 	cmd.Flags().Bool("force-update", false, "Update mismatched target records")
-	_ = cmd.MarkFlagRequired("from")
-	_ = cmd.MarkFlagRequired("to")
+}
+
+// firstFlag returns the first non-empty value among the given flag names, so a
+// flag and its alias (e.g. --from / --source) resolve to one value.
+func firstFlag(cmd *cobra.Command, names ...string) string {
+	for _, n := range names {
+		if v, _ := cmd.Flags().GetString(n); strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOptions) (bool, error) {
