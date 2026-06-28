@@ -24,12 +24,77 @@ type crudField struct {
 }
 
 type crudEntity struct {
-	Name       string
-	Aliases    []string
-	Plural     string
-	Endpoint   string
-	Fields     []crudField
-	ListParams []crudField
+	Name          string
+	Aliases       []string
+	Plural        string
+	Endpoint      string
+	Fields        []crudField
+	ListParams    []crudField
+	IDField       string // internal primary-key field (e.g. aff_campaign_id)
+	PublicIDField string // public-facing id field (e.g. aff_campaign_id_public)
+}
+
+// resolvePublicID treats id as a public id and returns the matching internal id
+// by filtering the list endpoint on the entity's PublicIDField. Returns "" when
+// the entity has no public-id mapping or no unique match is found.
+func resolvePublicID(c *api.Client, entity crudEntity, id string) string {
+	if entity.PublicIDField == "" || entity.IDField == "" {
+		return ""
+	}
+	data, err := c.Get(entity.Endpoint, map[string]string{"filter[" + entity.PublicIDField + "]": id})
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if json.Unmarshal(data, &resp) != nil || len(resp.Data) != 1 {
+		return ""
+	}
+	if v, ok := resp.Data[0][entity.IDField]; ok {
+		return fmt.Sprintf("%v", normalizeID(v))
+	}
+	return ""
+}
+
+// normalizeID renders a numeric id without a trailing ".0".
+func normalizeID(v interface{}) interface{} {
+	if f, ok := v.(float64); ok && f == float64(int64(f)) {
+		return int64(f)
+	}
+	return v
+}
+
+// getWithPublicFallback fetches entity/<id>; on a 404 (or when forcePublic),
+// it resolves id as a public id and retries with the internal id.
+func getWithPublicFallback(c *api.Client, entity crudEntity, id string, forcePublic bool) ([]byte, error) {
+	if forcePublic {
+		if internal := resolvePublicID(c, entity, id); internal != "" {
+			id = internal
+		}
+	}
+	data, err := c.Get(entity.Endpoint+"/"+id, nil)
+	if err != nil && !forcePublic && isNotFoundErr(err) {
+		if internal := resolvePublicID(c, entity, id); internal != "" {
+			return c.Get(entity.Endpoint+"/"+internal, nil)
+		}
+	}
+	return data, err
+}
+
+func isNotFoundErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "404")
+}
+
+func getLongHelp(entity crudEntity) string {
+	if entity.PublicIDField == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"Get a %s by id. Accepts the internal %s (from `%s list`). If you pass the\n"+
+			"public %s (the value in tracking links / the UI), it is resolved automatically;\n"+
+			"use --public to force the public lookup.",
+		entity.Name, entity.IDField, entity.Name, entity.PublicIDField)
 }
 
 type fkResolutionSpec struct {
@@ -355,6 +420,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	getCmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: fmt.Sprintf("Get a %s by ID", entity.Name),
+		Long:  getLongHelp(entity),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("get", entity.Endpoint)
@@ -363,13 +429,17 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := c.Get(entity.Endpoint+"/"+args[0], nil)
+			forcePublic, _ := cmd.Flags().GetBool("public")
+			data, err := getWithPublicFallback(c, entity, args[0], forcePublic)
 			if err != nil {
 				return err
 			}
 			render(data)
 			return nil
 		},
+	}
+	if entity.PublicIDField != "" {
+		getCmd.Flags().Bool("public", false, fmt.Sprintf("Treat the id as the public %s", entity.PublicIDField))
 	}
 
 	// create
@@ -581,6 +651,8 @@ func init() {
 			Name:     "tracker",
 			Plural:   "trackers (tracking links that tie a traffic source to a campaign and landing page)",
 			Endpoint: "trackers",
+			IDField:  "tracker_id",
+			PublicIDField: "tracker_id_public",
 			Fields: []crudField{
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
 				{Name: "ppc_account_id", Desc: "PPC account ID"},
@@ -715,13 +787,22 @@ func init() {
 		getURLCmd := &cobra.Command{
 			Use:   "get-url <id>",
 			Short: "Get tracking URL for a tracker",
-			Args:  cobra.ExactArgs(1),
+			Long: "Accepts the internal tracker_id (from `tracker list`). If you pass the\n" +
+				"public tracker_id_public (the value in the tracking link), it is resolved\n" +
+				"automatically.",
+			Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				c, err := api.NewFromConfig()
 				if err != nil {
 					return err
 				}
-				data, err := c.Get("trackers/"+args[0]+"/url", nil)
+				id := args[0]
+				data, err := c.Get("trackers/"+id+"/url", nil)
+				if err != nil && isNotFoundErr(err) {
+					if internal := resolvePublicID(c, trackerEntity, id); internal != "" {
+						data, err = c.Get("trackers/"+internal+"/url", nil)
+					}
+				}
 				if err != nil {
 					return err
 				}
