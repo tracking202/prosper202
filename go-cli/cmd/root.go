@@ -60,6 +60,9 @@ func Execute() {
 		} else {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
+		if hint := api.HintFor(err); hint != "" {
+			fmt.Fprintf(os.Stderr, "Hint: %s\n", hint)
+		}
 		os.Exit(exitCodeForError(err))
 	}
 }

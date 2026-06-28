@@ -463,3 +463,18 @@ func TestRequestErrorCarriesCategory(t *testing.T) {
 		t.Fatalf("unexpected error format: %q", reqErr.Error())
 	}
 }
+
+func TestHintFor(t *testing.T) {
+	if h := HintFor(&APIError{Status: 404}); h == "" {
+		t.Error("404 should produce a hint")
+	}
+	if h := HintFor(&APIError{Status: 401}); h == "" {
+		t.Error("401 should produce a hint")
+	}
+	if h := HintFor(&APIError{Status: 200}); h != "" {
+		t.Error("200 should produce no hint")
+	}
+	if h := HintFor(nil); h != "" {
+		t.Error("nil should produce no hint")
+	}
+}
