@@ -83,10 +83,15 @@ var reportBreakdownCmd = &cobra.Command{
 
 		// Accept the analytics shorthand's friendly flags for consistency:
 		// --group-by aliases --breakdown, --sort-dir aliases --sort_dir, and
-		// dimension aliases (e.g. lp -> landing_page) are honored.
-		breakdown := getStringFlagOrDefault(cmd, "report", "breakdown")
+		// dimension aliases (e.g. lp -> landing_page) are honored. An explicitly
+		// passed flag (canonical or alias) must win over a configured default,
+		// so the aliases are read before falling back to getConfigDefault.
+		breakdown, _ := cmd.Flags().GetString("breakdown")
 		if breakdown == "" {
 			breakdown, _ = cmd.Flags().GetString("group-by")
+		}
+		if breakdown == "" {
+			breakdown = getConfigDefault("report", "breakdown")
 		}
 		breakdown = strings.ToLower(strings.TrimSpace(breakdown))
 		if mapped, ok := analyticsGroupByAliases[breakdown]; ok {
@@ -96,9 +101,12 @@ var reportBreakdownCmd = &cobra.Command{
 			params["breakdown"] = breakdown
 		}
 
-		sortDir := getStringFlagOrDefault(cmd, "report", "sort_dir")
+		sortDir, _ := cmd.Flags().GetString("sort_dir")
 		if sortDir == "" {
 			sortDir, _ = cmd.Flags().GetString("sort-dir")
+		}
+		if sortDir == "" {
+			sortDir = getConfigDefault("report", "sort_dir")
 		}
 		if sortDir != "" {
 			params["sort_dir"] = sortDir

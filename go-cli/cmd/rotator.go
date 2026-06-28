@@ -309,14 +309,10 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 var rotatorRuleUpdateCmd = &cobra.Command{
 	Use:   "rule-update <rotator_id> <rule_id>",
 	Short: "Update a routing rule on a redirector/rotator",
-	Args: func(cmd *cobra.Command, args []string) error {
-		// Accept the rule id as a second positional OR via --rule_id, matching
-		// the flag-flexible style of rule-delete (--ids).
-		if ruleID, _ := cmd.Flags().GetString("rule_id"); strings.TrimSpace(ruleID) != "" {
-			return cobra.ExactArgs(1)(cmd, args)
-		}
-		return cobra.ExactArgs(2)(cmd, args)
-	},
+	// Accept the rule id as a second positional OR via --rule_id, matching the
+	// flag-flexible style of rule-delete. RangeArgs(1,2) allows either form
+	// (and both together); the positional wins and is resolved in RunE.
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
