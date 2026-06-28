@@ -309,11 +309,25 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 var rotatorRuleUpdateCmd = &cobra.Command{
 	Use:   "rule-update <rotator_id> <rule_id>",
 	Short: "Update a routing rule on a redirector/rotator",
-	Args:  cobra.ExactArgs(2),
+	// Accept the rule id as a second positional OR via --rule_id, matching the
+	// flag-flexible style of rule-delete. RangeArgs(1,2) allows either form
+	// (and both together); the positional wins and is resolved in RunE.
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
+		}
+
+		ruleID := ""
+		if len(args) >= 2 {
+			ruleID = args[1]
+		} else {
+			ruleID, _ = cmd.Flags().GetString("rule_id")
+		}
+		ruleID = strings.TrimSpace(ruleID)
+		if ruleID == "" {
+			return fmt.Errorf("rule id is required (pass it as the second argument or via --rule_id)")
 		}
 
 		body := map[string]interface{}{}
@@ -344,7 +358,7 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 			return fmt.Errorf("no fields specified; pass at least one flag to update")
 		}
 
-		data, err := c.Put("rotators/"+args[0]+"/rules/"+args[1], body)
+		data, err := c.Put("rotators/"+args[0]+"/rules/"+ruleID, body)
 		if err != nil {
 			return err
 		}
@@ -379,6 +393,7 @@ func init() {
 	rotatorRuleDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	rotatorRuleDeleteCmd.Flags().String("ids", "", "Comma-separated rule IDs to delete in bulk")
 
+	rotatorRuleUpdateCmd.Flags().String("rule_id", "", "Rule ID (alternative to the second positional arg)")
 	rotatorRuleUpdateCmd.Flags().String("rule_name", "", "Rule name")
 	rotatorRuleUpdateCmd.Flags().String("splittest", "", "Enable split test (0|1)")
 	rotatorRuleUpdateCmd.Flags().String("status", "", "Rule status (0|1)")
