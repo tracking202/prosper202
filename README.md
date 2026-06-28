@@ -322,6 +322,11 @@ make build
 composer install
 ```
 
+Working on the Docker stack, CI, or release tooling itself? See
+**[`build/README.md`](build/README.md)** — a standalone contributor reference for
+the image, the three compose stacks (dev / staging / test-install), the entrypoint
+and config-writing scripts, and how a container boots.
+
 ### Running Tests
 
 ```bash
@@ -373,7 +378,7 @@ process — versioning, tagging, CI, local builds, and troubleshooting — see
 - `bin/` - Entry scripts (`p202`)
 - `tracking202/` - Main tracking application (redirects, setup, reporting)
 - `202-cronjobs/` - Background job processing
-- `build/` - Docker and build configuration
+- `build/` - Docker, CI, and release tooling (see [`build/README.md`](build/README.md) for the contributor reference)
 - `tests/` - PHPUnit test suite
 
 ## License
