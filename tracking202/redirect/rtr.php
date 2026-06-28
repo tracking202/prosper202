@@ -139,7 +139,11 @@ if (isset ( $_GET ['t202b'] ) && $rotator_row['user_pref_dynamic_bid'] == '1') {
     }
 } 
 
-$default = false;
+// When the rotator has no rules, the loop below never runs and would leave
+// $default false, dropping the click with a blank response. Default to the
+// rotator's default destination in that case; with rules present the loop
+// decides (a non-matching rule sets $default = true).
+$default = empty($rule_row);
 
 foreach ($rule_row as $rule) {
 	
