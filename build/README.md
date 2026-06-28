@@ -48,8 +48,8 @@ on first boot, so the setup wizard opens with the database step already done.
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | The single app image, `prosper202-web` (`php:8.3-apache` base). Installs `mysqli`, `pdo`, `pdo_mysql`, Composer, and `mod_rewrite`. Bakes the app in via `COPY . .` and a `composer install --no-dev` for image-only (no-volume) use; the dev compose stack mounts the source over the top and lets the entrypoint install deps instead. The `memcached` PECL extension is intentionally commented out to avoid build failures on platforms where it won't compile. |
-| `php/conf.d/error-reporting.ini` | Dev-only PHP overrides — `display_errors = On`, `error_reporting = E_ALL`, errors to stderr (`/proc/self/fd/2`) so they land in `docker compose logs`. Mounted into the container; **never ship this to production**, where errors should be logged, not displayed. |
+| `../Dockerfile` (repo root) | The app image, `prosper202-web` (`php:8.3-apache` base). This is the **only** Dockerfile the stacks build — the dev compose uses `build: .`, which resolves to the root `Dockerfile`, not anything under `build/`. Installs `mysqli`, `pdo_mysql`, `opcache`, and the `memcached` extension (used by `202-config/connect.php`), pulls Composer via `COPY --from=composer:2`, and writes an Apache conf that enables `mod_rewrite` **and denies dotfiles** (`.env`, `.git`, …) so the bind-mounted checkout can't leak them under the document root. It does **not** `COPY` the application in — source arrives via the compose bind mount and the entrypoint installs dependencies at boot. |
+| `php/conf.d/error-reporting.ini` | Dev-only PHP overrides — `display_errors = On`, `error_reporting = E_ALL`, errors to stderr (`/proc/self/fd/2`) so they land in `docker compose logs`. The dev compose mounts this read-only into the container; **never ship it to production**, where errors should be logged, not displayed. |
 
 ### Scripts (`scripts/`)
 
@@ -75,22 +75,102 @@ on first boot, so the setup wizard opens with the database step already done.
 All three mount the working tree at `/var/www/html`, so source edits are live
 without a rebuild. They live at the **repo root**, not in `build/`.
 
-| Stack | File | App port | DB | Use it for |
-|-------|------|----------|----|------------|
-| **Dev** (default) | `docker-compose.yaml` | `8000` | `db` (volume `db_data`), memcached, cron, optional phpMyAdmin | Day-to-day development. Generates `202-config.php` from `.env`. |
-| **Staging** | `docker-compose.staging.yml` | `8001` | `db2` on host `13307` | A second long-lived instance alongside dev (e.g. comparing behavior). Uses `staging-config.php` + `P202_URL_MAP`. |
-| **Test-install** | `docker-compose.test-install.yml` | `8002` | `db-test` on host `13308` | Exercising the install/upgrade path against a clean DB. Uses `test-install-config.php`. |
+| Stack | Compose file | Tracked? | App port | DB | Use it for |
+|-------|------|------|----------|----|------------|
+| **Dev** (default) | `docker-compose.yaml` | ✅ committed | `8000` | `db` (volume `db_data`), memcached, cron, optional phpMyAdmin | Day-to-day development. Generates `202-config.php` from `.env`. |
+| **Staging** | `docker-compose.staging.yml` | ⬇️ local (gitignored) | `8001` | `db2` on host `13307` | A second long-lived instance alongside dev (e.g. comparing behavior). Uses `staging-config.php` + `P202_URL_MAP`. |
+| **Test-install** | `docker-compose.test-install.yml` | ⬇️ local (gitignored) | `8002` | `db-test` on host `13308` | Exercising the install/upgrade path against a clean DB. Uses `test-install-config.php`. |
 
-Run a non-default stack with `-f`:
+Only the **dev** stack ships in the repo — `docker compose up -d` just works.
+The staging and test-install compose files are intentionally gitignored
+(`.gitignore`: "local overrides only"), so a fresh clone won't have them. Both
+reference the `prosper202-web:dev` image, so build it once from the dev stack
+(`docker compose build web`) before bringing either up. To use a stack, save its
+YAML at the repo root and run `docker compose -f <file> up -d`.
 
-```bash
-docker compose -f docker-compose.test-install.yml up -d   # → http://localhost:8002
-docker compose -f docker-compose.staging.yml up -d          # → http://localhost:8001
+<details>
+<summary><strong>docker-compose.test-install.yml</strong> → http://localhost:8002</summary>
+
+```yaml
+services:
+  db-test:
+    image: mysql:8.1.0
+    restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=192M
+      - --innodb-log-buffer-size=16M
+      - --max_connections=50
+      - --table_open_cache=192
+      - --performance_schema=OFF
+    ports:
+      - "13308:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: prosper202_test_install
+    volumes:
+      - ./mysql_data_test_install:/var/lib/mysql
+  web-test:
+    image: prosper202-web:dev
+    restart: unless-stopped
+    ports:
+      - "8002:80"
+    depends_on:
+      - db-test
+    volumes:
+      - ./:/var/www/html
+      - ./build/test-install-config.php:/var/www/html/202-config.php
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - APACHE_DOCUMENT_ROOT=/var/www/html
+      - APP_ENV=development
 ```
 
-The staging and test-install stacks reference the `prosper202-web:dev` image. Build
-it once from the dev stack (`docker compose build web`) or tag your image to match
-before bringing them up.
+`build/test-install-config.php` is committed, so this stack works as soon as you
+save the YAML above.
+</details>
+
+<details>
+<summary><strong>docker-compose.staging.yml</strong> → http://localhost:8001</summary>
+
+```yaml
+services:
+  db2:
+    image: mysql:8.1.0
+    restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=192M
+      - --innodb-log-buffer-size=16M
+      - --max_connections=50
+      - --table_open_cache=192
+      - --performance_schema=OFF
+    ports:
+      - "13307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: prosper202_staging
+    volumes:
+      - ./mysql_data_staging:/var/lib/mysql
+  web2:
+    image: prosper202-web:dev
+    restart: unless-stopped
+    ports:
+      - "8001:80"
+    depends_on:
+      - db2
+    volumes:
+      - ./:/var/www/html
+      - ./build/staging-config.php:/var/www/html/202-config.php
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - APACHE_DOCUMENT_ROOT=/var/www/html
+      - P202_URL_MAP=localhost:8000=web:80,localhost:8001=web2:80
+```
+
+Also `cp build/staging-config.sample.php build/staging-config.php` first (see the
+file table above).
+</details>
 
 ---
 
@@ -113,7 +193,7 @@ it never lands in a commit.
 
 ```
 docker compose up
-   └─ web service builds/uses prosper202-web image (Dockerfile)
+   └─ web service builds/uses prosper202-web image (root ./Dockerfile, via build: .)
         └─ ENTRYPOINT docker-entrypoint.sh
              ├─ composer install   (if vendor/ missing; dev vs --no-dev by APP_ENV)
              ├─ php write-config.php → writes 202-config.php from env  (skipped if it exists)
