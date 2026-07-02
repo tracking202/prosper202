@@ -198,10 +198,12 @@ final class AttributionTables
                 `pixel_type` int(11) unsigned NOT NULL,
                 `user_agent` text NOT NULL,
                 `deleted` tinyint(4) NOT NULL DEFAULT '0',
+                `customer_id` bigint(20) unsigned DEFAULT NULL,
                 PRIMARY KEY (`conv_id`),
                 UNIQUE KEY `uniq_click_transaction` (`click_id`,`transaction_id`),
                 KEY `user_id` (`user_id`),
-                KEY `campaign_id` (`campaign_id`)
+                KEY `campaign_id` (`campaign_id`),
+                KEY `customer_id` (`customer_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

@@ -86,7 +86,12 @@ if (is_numeric($mysql['click_id'])) {
 		return;
 	}
 
-        if (!$cpa_row['click_lead']) {
+        // Record when the click has not converted yet, OR when the pixel
+        // carries a transaction id: a distinct txid is a repeat purchase from
+        // the same click (LTV), while a replayed txid is safely de-duplicated
+        // by p202RecordConversion. Without a txid a retry cannot be told apart
+        // from a repeat, so the legacy one-conversion-per-click gate stands.
+        if (!$cpa_row['click_lead'] || p202ExtractTransactionId($_GET) !== '') {
 
                 $mysql['campaign_id'] = $db->real_escape_string((string) ($cpa_row['aff_campaign_id'] ?? ''));
                 $mysql['click_user_id'] = $db->real_escape_string((string) ($cpa_row['user_id'] ?? ''));
@@ -139,7 +144,9 @@ if (is_numeric($mysql['click_id'])) {
 			(string) ($cpa_row['click_cpa'] ?? ''),
 			$mysql['use_pixel_payout'] == 1,
 			($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
-			p202ExtractTransactionId($_GET)
+			p202ExtractTransactionId($_GET),
+			p202ExtractCustomer($_GET),
+			p202ExtractItems($_GET)
 		);
 		} catch (\Throwable $conversionError) {
 			error_log('gpx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());

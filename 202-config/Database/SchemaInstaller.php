@@ -12,6 +12,7 @@ use Prosper202\Database\Tables\ClickTables;
 use Prosper202\Database\Tables\TrackingTables;
 use Prosper202\Database\Tables\CampaignTables;
 use Prosper202\Database\Tables\AttributionTables;
+use Prosper202\Database\Tables\LtvTables;
 use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
@@ -53,6 +54,7 @@ final class SchemaInstaller
             $this->createTrackingTables();
             $this->createCampaignTables();
             $this->createAttributionTables();
+            $this->createLtvTables();
             $this->createRotatorTables();
             $this->createAdNetworkTables();
             $this->createMiscTables();
@@ -124,6 +126,14 @@ final class SchemaInstaller
     public function createAttributionTables(): void
     {
         $this->createTablesFromDefinitions(AttributionTables::getDefinitions());
+    }
+
+    /**
+     * Create LTV tables (customer identity, revenue ledger, subscriptions).
+     */
+    public function createLtvTables(): void
+    {
+        $this->createTablesFromDefinitions(LtvTables::getDefinitions());
     }
 
     /**

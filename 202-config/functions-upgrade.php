@@ -3597,10 +3597,68 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.64', '>')) {
+        if ($prosper202_version == '1.9.64') {
 
-            $prosper202_version = '1.9.64';
+            // LTV feature: customer identity/CRM, alias resolution, custom
+            // fields, unified revenue ledger, products/line items,
+            // subscriptions, integrations and webhooks. Table DDL comes from
+            // LtvTables::getDefinitions() — the same definitions the fresh
+            // installer uses — so this block cannot drift from it. Everything
+            // here is idempotent (CREATE IF NOT EXISTS; ALTERs guarded by
+            // SHOW COLUMNS/INDEX), so a partial failure safely retries on the
+            // next run.
+            $ltv_ok = true;
+
+            foreach (\Prosper202\Database\Tables\LtvTables::getDefinitions() as $ltv_definition) {
+                if (_upgrade_query($ltv_definition->createStatement) === false) {
+                    $ltv_ok = false;
+                    error_log('Prosper202 upgrade: failed to create ' . $ltv_definition->tableName);
+                }
+            }
+
+            // Nullable ADD COLUMN with no backfill runs as ALGORITHM=INSTANT on
+            // MySQL 8.0; the index additions build INPLACE (online).
+            $ltv_alters = [
+                ['202_conversion_logs', 'customer_id', 'column',
+                    "ALTER TABLE `202_conversion_logs` ADD COLUMN `customer_id` bigint(20) unsigned DEFAULT NULL"],
+                ['202_conversion_logs', 'customer_id', 'index',
+                    "ALTER TABLE `202_conversion_logs` ADD KEY `customer_id` (`customer_id`)"],
+                ['202_clicks_tracking', 'customer_id', 'column',
+                    "ALTER TABLE `202_clicks_tracking` ADD COLUMN `customer_id` bigint(20) unsigned DEFAULT NULL"],
+                ['202_clicks_tracking', 'customer_id', 'index',
+                    "ALTER TABLE `202_clicks_tracking` ADD KEY `customer_id` (`customer_id`)"],
+                ['202_users_pref', 'user_ltv_customer_cparam', 'column',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_customer_cparam` tinyint(1) unsigned NOT NULL DEFAULT '0'"],
+            ];
+            foreach ($ltv_alters as [$ltv_table, $ltv_name, $ltv_kind, $ltv_sql]) {
+                $check_sql = $ltv_kind === 'index'
+                    ? "SHOW INDEX FROM `{$ltv_table}` WHERE Key_name = '{$ltv_name}'"
+                    : "SHOW COLUMNS FROM `{$ltv_table}` LIKE '{$ltv_name}'";
+                $check = _upgrade_query($check_sql);
+                $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+                if (!$exists && _upgrade_query($ltv_sql) === false) {
+                    $ltv_ok = false;
+                    error_log("Prosper202 upgrade: failed LTV alter on {$ltv_table} ({$ltv_kind} {$ltv_name})");
+                }
+            }
+
+            if ($ltv_ok) {
+                // Only advance the version once every DDL statement succeeded,
+                // so a partial failure re-enters this block on the next run.
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.65'") !== false) {
+                    $prosper202_version = '1.9.65';
+                } else {
+                    error_log('Prosper202 upgrade: LTV schema created but failed to persist version 1.9.65; leaving version at 1.9.64 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: LTV schema incomplete; leaving version at 1.9.64 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.65', '>')) {
+
+            $prosper202_version = '1.9.65';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

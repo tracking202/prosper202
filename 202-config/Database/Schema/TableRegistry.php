@@ -96,6 +96,19 @@ final class TableRegistry
     public const string CONVERSION_LOGS = '202_conversion_logs';
     public const string CONVERSION_TOUCHPOINTS = '202_conversion_touchpoints';
 
+    // LTV tables (customer identity, revenue ledger, subscriptions)
+    public const string CUSTOMERS = '202_customers';
+    public const string CUSTOMER_ALIASES = '202_customer_aliases';
+    public const string CUSTOMER_FIELDS = '202_customer_fields';
+    public const string CUSTOMER_FIELD_VALUES = '202_customer_field_values';
+    public const string REVENUE_EVENTS = '202_revenue_events';
+    public const string REVENUE_LINE_ITEMS = '202_revenue_line_items';
+    public const string PRODUCTS = '202_products';
+    public const string SUBSCRIPTIONS = '202_subscriptions';
+    public const string LTV_INTEGRATIONS = '202_ltv_integrations';
+    public const string LTV_WEBHOOKS = '202_ltv_webhooks';
+    public const string LTV_WEBHOOK_DELIVERIES = '202_ltv_webhook_deliveries';
+
     // Rotator tables
     public const string ROTATORS = '202_rotators';
     public const string ROTATOR_RULES = '202_rotator_rules';

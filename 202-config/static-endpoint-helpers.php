@@ -142,6 +142,90 @@ if (!function_exists('p202ExtractTransactionId')) {
     }
 }
 
+if (!function_exists('p202ExtractCustomer')) {
+    /**
+     * Pull the LTV customer reference from a request array so the conversion
+     * can be attributed to a persistent customer. Networks/carts pass their
+     * stable id (merchant customer id, ESP hash, hashed email) as `cust`
+     * (aliases: customer_ref, customer_id) with an optional `cust_type`.
+     *
+     * Returns [] when absent; otherwise keys customer_ref / customer_ref_type
+     * ready to merge into the MysqlConversionRepository::record() payload.
+     *
+     * @param array<string,mixed> $source Typically $_GET.
+     * @return array{customer_ref?: string, customer_ref_type?: string}
+     */
+    function p202ExtractCustomer(array $source): array
+    {
+        $ref = '';
+        foreach (['cust', 'customer_ref', 'customer_id'] as $key) {
+            if (array_key_exists($key, $source) && is_scalar($source[$key])) {
+                $value = trim((string) $source[$key]);
+                if ($value !== '') {
+                    $ref = $value;
+                    break;
+                }
+            }
+        }
+        if ($ref === '') {
+            return [];
+        }
+
+        $out = ['customer_ref' => $ref];
+        foreach (['cust_type', 'customer_ref_type'] as $key) {
+            if (array_key_exists($key, $source) && is_scalar($source[$key])) {
+                $type = trim((string) $source[$key]);
+                if ($type !== '') {
+                    $out['customer_ref_type'] = $type;
+                    break;
+                }
+            }
+        }
+
+        return $out;
+    }
+}
+
+if (!function_exists('p202ExtractItems')) {
+    /**
+     * Pull a single product line item from pixel/postback query params
+     * (`sku` and/or `product_id`, optional `product_name`, `qty`,
+     * `unit_price`). Pixels carry at most one product; multi-line orders go
+     * through the authenticated V3 API. Returns [] when no product params
+     * are present.
+     *
+     * @param array<string,mixed> $source Typically $_GET.
+     * @return list<array<string,mixed>>
+     */
+    function p202ExtractItems(array $source): array
+    {
+        $sku = isset($source['sku']) && is_scalar($source['sku']) ? trim((string) $source['sku']) : '';
+        $productId = isset($source['product_id']) && is_scalar($source['product_id']) ? trim((string) $source['product_id']) : '';
+        if ($sku === '' && $productId === '') {
+            return [];
+        }
+
+        $item = [];
+        if ($productId !== '') {
+            $item['external_product_id'] = $productId;
+        }
+        if ($sku !== '') {
+            $item['sku'] = $sku;
+        }
+        if (isset($source['product_name']) && is_scalar($source['product_name']) && trim((string) $source['product_name']) !== '') {
+            $item['name'] = trim((string) $source['product_name']);
+        }
+        if (isset($source['qty']) && is_numeric($source['qty'])) {
+            $item['quantity'] = (float) $source['qty'];
+        }
+        if (isset($source['unit_price']) && is_numeric($source['unit_price'])) {
+            $item['unit_price'] = (float) $source['unit_price'];
+        }
+
+        return [$item];
+    }
+}
+
 if (!function_exists('p202RecordConversion')) {
     /**
      * Record a conversion atomically and idempotently for the legacy static
@@ -157,6 +241,10 @@ if (!function_exists('p202RecordConversion')) {
      * @param array<string,int|float|string> $log Conversion_logs column values.
      *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
      *        time_difference, ip, pixel_type, user_agent, click_payout.
+     * @param array{customer_ref?: string, customer_ref_type?: string} $customer
+     *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
+     * @param list<array<string,mixed>> $items Product line items for the
+     *        revenue ledger event (see p202ExtractItems); [] = none.
      * @return array{conv_id:int, duplicate:bool} conv_id is 0 only when the source
      *         click no longer exists (no orphan row is written).
      */
@@ -166,7 +254,9 @@ if (!function_exists('p202RecordConversion')) {
         string $clickCpa,
         bool $usePixelPayout,
         string $clickPayout,
-        string $transactionId = ''
+        string $transactionId = '',
+        array $customer = [],
+        array $items = []
     ): array {
         $clickId = (int) ($log['click_id'] ?? 0);
         if ($clickId <= 0) {
@@ -194,6 +284,19 @@ if (!function_exists('p202RecordConversion')) {
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
         ];
+
+        // LTV: customer identity + product line items ride the same
+        // transactional write (customer upsert, ledger event, line items and
+        // rollup bump commit together with the conversion).
+        if (!empty($customer['customer_ref'])) {
+            $data['customer_ref'] = (string) $customer['customer_ref'];
+            if (!empty($customer['customer_ref_type'])) {
+                $data['customer_ref_type'] = (string) $customer['customer_ref_type'];
+            }
+        }
+        if ($items !== []) {
+            $data['items'] = $items;
+        }
 
         $result = $repo->record(
             (int) ($log['user_id'] ?? 0),

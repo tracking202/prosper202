@@ -280,7 +280,9 @@ if (is_numeric($mysql['click_id'])) {
 			(string) ($cvar_sql_row['click_cpa'] ?? ''),
 			$mysql['use_pixel_payout'] == 1,
 			($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
-			p202ExtractTransactionId($_GET)
+			p202ExtractTransactionId($_GET),
+			p202ExtractCustomer($_GET),
+			p202ExtractItems($_GET)
 		);
 		} catch (\Throwable $conversionError) {
 			error_log('gpb: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
