@@ -579,6 +579,7 @@
               <li <?php if ($navigation[3] == 'browsers.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/analyze/browsers.php">Browsers</a></li>
               <li <?php if ($navigation[3] == 'platforms.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/analyze/platforms.php">Platforms</a></li>
               <li <?php if ($navigation[3] == 'variables.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/analyze/variables.php">Custom Variables</a></li>
+              <li <?php if ($navigation[3] == 'ltv.php') { echo 'class="active"'; } ?>><a href="<?php echo get_absolute_url();?>tracking202/analyze/ltv.php">Customer LTV</a></li>
           <?php } ?>
 
 
