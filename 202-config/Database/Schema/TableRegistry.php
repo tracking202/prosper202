@@ -111,6 +111,7 @@ final class TableRegistry
     public const string PERSONALIZATION_TOKENS = '202_personalization_tokens';
     public const string OFFER_TRANSITIONS = '202_offer_transitions';
     public const string ENGAGEMENT_EVENTS = '202_engagement_events';
+    public const string COMPANIES = '202_companies';
 
     // Rotator tables
     public const string ROTATORS = '202_rotators';

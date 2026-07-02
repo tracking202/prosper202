@@ -167,6 +167,23 @@ final class MysqlCustomerRepository
     }
 
     /**
+     * Remove one alias from a customer. Scoped to (user, customer) so a
+     * stale/foreign alias_id cannot unlink someone else's identity. The
+     * customer record itself is untouched — only the resolution mapping goes.
+     */
+    public function deleteAlias(int $userId, int $customerId, int $aliasId): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            'DELETE FROM 202_customer_aliases
+             WHERE alias_id = ? AND customer_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'iii', [$aliasId, $customerId, $userId]);
+        if ($this->conn->executeUpdate($stmt) === 0) {
+            throw new RuntimeException('Alias not found on this customer');
+        }
+    }
+
+    /**
      * Insert a revenue ledger event. Returns [event_id, inserted]; on an
      * idempotent replay (same conv_id, or same user+idempotency_key) the
      * existing event's id is returned with inserted = false and NOTHING else

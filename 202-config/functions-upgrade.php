@@ -3740,10 +3740,41 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.69', '>')) {
+        if ($prosper202_version == '1.9.69') {
 
-            $prosper202_version = '1.9.69';
+            // Company (ABM account) entity + customer attachment + tunable
+            // engagement-score weights. Every step is idempotent so a partial
+            // failure retries cleanly on the next run.
+            $companies_definition = \Prosper202\Database\Tables\LtvTables::companies();
+            $companies_ok = _upgrade_query($companies_definition->createStatement) !== false;
+
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_customers` LIKE 'company_id'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $company_col_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_customers` ADD COLUMN `company_id` bigint(20) unsigned DEFAULT NULL AFTER `company`, ADD KEY `user_company` (`user_id`,`company_id`)"
+            ) !== false;
+
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'user_ltv_score_weights'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $weights_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_score_weights` varchar(100) NOT NULL DEFAULT ''"
+            ) !== false;
+
+            if ($companies_ok && $company_col_ok && $weights_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.70'") !== false) {
+                    $prosper202_version = '1.9.70';
+                } else {
+                    error_log('Prosper202 upgrade: company schema created but failed to persist version 1.9.70; leaving version at 1.9.69 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: company/score-weight schema incomplete; leaving version at 1.9.69 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.70', '>')) {
+
+            $prosper202_version = '1.9.70';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

@@ -38,7 +38,7 @@ final class MysqlCustomerCrmRepository
         $eventLimit = max(1, min(200, $eventLimit));
         $stmt = $this->conn->prepareRead(
             'SELECT customer_id, merged_into_customer_id, primary_ref, first_name, last_name, email,
-                    phone, company, address_line1, address_line2, city, region, postal_code, country,
+                    phone, company, company_id, address_line1, address_line2, city, region, postal_code, country,
                     first_seen_time, last_activity_time, first_click_id,
                     order_count, total_revenue, refunded_amount, active_subscription_count, mrr,
                     status, created_at, updated_at
@@ -51,7 +51,7 @@ final class MysqlCustomerCrmRepository
         }
 
         $stmt = $this->conn->prepareRead(
-            'SELECT alias_type, alias_value, created_at FROM 202_customer_aliases
+            'SELECT alias_id, alias_type, alias_value, created_at FROM 202_customer_aliases
              WHERE customer_id = ? AND user_id = ? ORDER BY alias_id ASC'
         );
         $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
@@ -134,6 +134,7 @@ final class MysqlCustomerCrmRepository
         $customerId = $this->resolveTarget($userId, $payload, $now);
 
         $this->applyCrmFields($userId, $customerId, $payload, $now);
+        $this->syncCompanyLink($userId, $customerId, $payload, $now);
 
         if (isset($payload['aliases'])) {
             if (!is_array($payload['aliases'])) {
@@ -282,7 +283,7 @@ final class MysqlCustomerCrmRepository
                 "UPDATE 202_customers
                  SET primary_ref = CONCAT('erased:', customer_id),
                      first_name = NULL, last_name = NULL, email = NULL, email_hash = NULL,
-                     phone = NULL, company = NULL, address_line1 = NULL, address_line2 = NULL,
+                     phone = NULL, company = NULL, company_id = NULL, address_line1 = NULL, address_line2 = NULL,
                      city = NULL, region = NULL, postal_code = NULL, country = NULL,
                      status = 'anonymized', updated_at = ?
                  WHERE customer_id = ? AND user_id = ?"
@@ -407,6 +408,71 @@ final class MysqlCustomerCrmRepository
             'UPDATE 202_customers SET ' . implode(', ', $sets) . ' WHERE customer_id = ? AND user_id = ?'
         );
         $this->conn->bind($stmt, $types, $binds);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * Keep the company entity attachment in step with the CRM write:
+     *  - a non-empty company name resolves/creates the 202_companies row and
+     *    stamps company_id (race-safe upsert);
+     *  - an explicitly emptied company detaches;
+     *  - a customer saved with an email but no company auto-attaches to the
+     *    account's company whose domain matches the email domain.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function syncCompanyLink(int $userId, int $customerId, array $payload, int $now): void
+    {
+        $companies = new MysqlCompanyRepository($this->conn);
+
+        if (array_key_exists('company', $payload)) {
+            $name = $payload['company'] !== null ? trim((string) $payload['company']) : '';
+            if ($name !== '') {
+                $companyId = $companies->resolveOrCreate($userId, $name, $now);
+                if ($companyId > 0) {
+                    $stmt = $this->conn->prepareWrite(
+                        'UPDATE 202_customers SET company_id = ? WHERE customer_id = ? AND user_id = ?'
+                    );
+                    $this->conn->bind($stmt, 'iii', [$companyId, $customerId, $userId]);
+                    $this->conn->executeUpdate($stmt);
+                }
+                return;
+            }
+
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_customers SET company_id = NULL WHERE customer_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+            $this->conn->executeUpdate($stmt);
+            return;
+        }
+
+        // No company in the payload: try domain auto-attach when an email is
+        // present and the customer is not already attached anywhere.
+        $email = isset($payload['email']) ? trim((string) $payload['email']) : '';
+        if ($email === '') {
+            return;
+        }
+        $domain = MysqlCompanyRepository::domainFromEmail($email);
+        if ($domain === null) {
+            return;
+        }
+        $company = $companies->findByDomain($userId, $domain);
+        if ($company === null) {
+            return;
+        }
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
+             WHERE customer_id = ? AND user_id = ? AND company_id IS NULL
+               AND (company IS NULL OR company = '')"
+        );
+        $this->conn->bind($stmt, 'isiii', [
+            (int) $company['company_id'],
+            (string) $company['name'],
+            $now,
+            $customerId,
+            $userId,
+        ]);
         $this->conn->executeUpdate($stmt);
     }
 

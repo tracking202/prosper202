@@ -169,6 +169,25 @@ try {
     }
     echo "offer transitions: {$transitionRows} pairs rebuilt\n";
 
+    // ---------- 3b. Company entity linking ----------
+    // Attach customers that carry a company string but no company_id (rows
+    // predating the entity, or written by paths that only set the string).
+    // Chunked per user and idempotent; each pass converges.
+    $companyUsers = $run(
+        "SELECT DISTINCT user_id FROM 202_customers
+         WHERE company IS NOT NULL AND company <> '' AND company_id IS NULL
+           AND merged_into_customer_id IS NULL"
+    );
+    $companiesLinked = 0;
+    if ($companyUsers instanceof mysqli_result) {
+        $conn = $conn ?? new \Prosper202\Database\Connection($db);
+        $companies = new \Prosper202\Ltv\MysqlCompanyRepository($conn);
+        while ($userRow = $companyUsers->fetch_assoc()) {
+            $companiesLinked += $companies->linkUnlinkedCustomers((int) $userRow['user_id'], 2000);
+        }
+    }
+    echo "company linking: {$companiesLinked} customers attached\n";
+
     // ---------- 4. Personalization token purge ----------
     // Tokens past their replay window are dead weight holding sealed PII
     // snapshots; remove them.

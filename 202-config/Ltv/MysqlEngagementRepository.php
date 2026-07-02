@@ -210,8 +210,9 @@ final class MysqlEngagementRepository
 
         $rows = $this->conn->fetchAll($stmt);
         $now = time();
+        $weights = $this->scoreWeights($userId);
         foreach ($rows as &$row) {
-            $row['engagement_score'] = self::engagementScore($row, $now);
+            $row['engagement_score'] = self::engagementScore($row, $now, $weights);
         }
         unset($row);
 
@@ -219,21 +220,114 @@ final class MysqlEngagementRepository
     }
 
     /**
+     * Default engagement-score component weights (points each component can
+     * contribute; they sum to 100). Tunable per account via the
+     * user_ltv_score_weights pref.
+     */
+    public const DEFAULT_SCORE_WEIGHTS = [
+        'volume' => 40,
+        'time' => 20,
+        'scroll' => 15,
+        'video' => 15,
+        'recency' => 10,
+    ];
+
+    /**
+     * Parse + validate a score-weights pref string like
+     * "volume:40,time:20,scroll:15,video:15,recency:10". Strict contract:
+     * every component must be present, each an integer 0-100, and the total
+     * exactly 100 (so the score keeps meaning "out of 100"). Empty string
+     * means account defaults. Anything else throws — a malformed pref must
+     * be rejected at save time, never silently reinterpreted.
+     *
+     * @return array<string, int>
+     */
+    public static function parseScoreWeights(string $raw): array
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return self::DEFAULT_SCORE_WEIGHTS;
+        }
+
+        $weights = [];
+        foreach (explode(',', $raw) as $entry) {
+            $parts = explode(':', trim($entry), 2);
+            if (count($parts) !== 2) {
+                throw new \RuntimeException('Score weights must look like volume:40,time:20,scroll:15,video:15,recency:10');
+            }
+            $key = trim($parts[0]);
+            $value = trim($parts[1]);
+            if (!array_key_exists($key, self::DEFAULT_SCORE_WEIGHTS)) {
+                throw new \RuntimeException(
+                    'Unknown score component "' . $key . '"; expected: ' . implode(', ', array_keys(self::DEFAULT_SCORE_WEIGHTS))
+                );
+            }
+            if (isset($weights[$key])) {
+                throw new \RuntimeException('Score component "' . $key . '" is listed twice');
+            }
+            if (preg_match('/^\d{1,3}$/', $value) !== 1 || (int) $value > 100) {
+                throw new \RuntimeException('Score component "' . $key . '" must be an integer 0-100');
+            }
+            $weights[$key] = (int) $value;
+        }
+
+        if (count($weights) !== count(self::DEFAULT_SCORE_WEIGHTS)) {
+            throw new \RuntimeException(
+                'All score components are required: ' . implode(', ', array_keys(self::DEFAULT_SCORE_WEIGHTS))
+            );
+        }
+        if (array_sum($weights) !== 100) {
+            throw new \RuntimeException('Score weights must sum to exactly 100 (got ' . array_sum($weights) . ')');
+        }
+
+        return $weights;
+    }
+
+    /**
+     * The account's configured weights. An empty pref means defaults; a
+     * corrupted value (only reachable by editing the DB directly — the
+     * settings UI validates on save) is logged and defaulted rather than
+     * taking every report down.
+     *
+     * @return array<string, int>
+     */
+    public function scoreWeights(int $userId): array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT user_ltv_score_weights FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'i', [$userId]);
+        $row = $this->conn->fetchOne($stmt);
+
+        try {
+            return self::parseScoreWeights((string) ($row['user_ltv_score_weights'] ?? ''));
+        } catch (\RuntimeException $e) {
+            error_log('ltv score weights invalid for user ' . $userId . ': ' . $e->getMessage());
+
+            return self::DEFAULT_SCORE_WEIGHTS;
+        }
+    }
+
+    /**
      * Deterministic engagement score, 0-100, computed from a window's
-     * aggregates. Explainable by construction:
-     *   volume:  up to 40 pts — 4 pts per engagement (clicks+events) per contact
+     * aggregates. Explainable by construction (defaults shown; weights are
+     * per-account tunable):
+     *   volume:  up to 40 pts — (weight/10) pts per engagement per contact
      *   time:    up to 20 pts — avg visible time on page vs a 5-minute ceiling
      *   scroll:  up to 15 pts — avg scroll depth percentage
      *   video:   up to 15 pts — avg video completion percentage
-     *   recency: 10 pts within 7 days, 5 within 30, else 0
+     *   recency: 10 pts within 7 days, half within 30, else 0
      *
      * @param array<string, mixed> $aggregates keys: engagements, contacts
      *        (default 1), avg_time_on_page, avg_scroll_depth, avg_video_pct,
      *        last_activity
+     * @param array<string, int>|null $weights component weights summing to
+     *        100 (see parseScoreWeights); null = defaults
      */
-    public static function engagementScore(array $aggregates, ?int $now = null): int
+    public static function engagementScore(array $aggregates, ?int $now = null, ?array $weights = null): int
     {
         $now = $now ?? time();
+        $w = $weights ?? self::DEFAULT_SCORE_WEIGHTS;
         $contacts = max(1, (int) ($aggregates['contacts'] ?? 1));
         $engagements = (float) ($aggregates['engagements'] ?? 0);
         $avgTime = (float) ($aggregates['avg_time_on_page'] ?? 0);
@@ -241,16 +335,25 @@ final class MysqlEngagementRepository
         $avgVideo = (float) ($aggregates['avg_video_pct'] ?? 0);
         $lastActivity = (int) ($aggregates['last_activity'] ?? 0);
 
-        $score = min(40.0, ($engagements / $contacts) * 4.0)
-            + min(20.0, ($avgTime / 300.0) * 20.0)
-            + min(15.0, ($avgScroll / 100.0) * 15.0)
-            + min(15.0, ($avgVideo / 100.0) * 15.0);
+        $volumeMax = (float) ($w['volume'] ?? 40);
+        $timeMax = (float) ($w['time'] ?? 20);
+        $scrollMax = (float) ($w['scroll'] ?? 15);
+        $videoMax = (float) ($w['video'] ?? 15);
+        $recencyMax = (float) ($w['recency'] ?? 10);
+
+        // The volume ceiling is reached at 10 engagements per contact, the
+        // time ceiling at a 5-minute average — same saturation points
+        // regardless of how the weights are tuned.
+        $score = min($volumeMax, ($engagements / $contacts) * ($volumeMax / 10.0))
+            + min($timeMax, ($avgTime / 300.0) * $timeMax)
+            + min($scrollMax, ($avgScroll / 100.0) * $scrollMax)
+            + min($videoMax, ($avgVideo / 100.0) * $videoMax);
 
         $age = $now - $lastActivity;
         if ($lastActivity > 0 && $age <= 7 * 86400) {
-            $score += 10.0;
+            $score += $recencyMax;
         } elseif ($lastActivity > 0 && $age <= 30 * 86400) {
-            $score += 5.0;
+            $score += $recencyMax / 2.0;
         }
 
         return (int) round(min(100.0, max(0.0, $score)));

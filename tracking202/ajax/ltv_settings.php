@@ -88,12 +88,34 @@ try {
                         }
                         $p13nFields = ltv_settings_validate_p13n_fields((string) ($_POST['p13n_fields'] ?? ''));
 
+                        // Engagement-score weights: five inputs -> canonical
+                        // pref string, validated by the same parser the read
+                        // path uses. All-defaults stores '' (follow future
+                        // default changes automatically).
+                        $weightInput = [];
+                        foreach (array_keys(\Prosper202\Ltv\MysqlEngagementRepository::DEFAULT_SCORE_WEIGHTS) as $component) {
+                            $value = trim((string) ($_POST['weight_' . $component] ?? ''));
+                            if (preg_match('/^\d{1,3}$/', $value) !== 1) {
+                                throw new \RuntimeException('Score weight "' . $component . '" must be an integer 0-100.');
+                            }
+                            $weightInput[$component] = (int) $value;
+                        }
+                        $weightsPref = '';
+                        if ($weightInput !== \Prosper202\Ltv\MysqlEngagementRepository::DEFAULT_SCORE_WEIGHTS) {
+                            $pairs = [];
+                            foreach ($weightInput as $component => $value) {
+                                $pairs[] = $component . ':' . $value;
+                            }
+                            $weightsPref = implode(',', $pairs);
+                            \Prosper202\Ltv\MysqlEngagementRepository::parseScoreWeights($weightsPref);
+                        }
+
                         $stmt = $conn->prepareWrite(
                             'UPDATE 202_users_pref
-                             SET user_ltv_customer_cparam = ?, user_ltv_personalization_fields = ?
+                             SET user_ltv_customer_cparam = ?, user_ltv_personalization_fields = ?, user_ltv_score_weights = ?
                              WHERE user_id = ?'
                         );
-                        $conn->bind($stmt, 'isi', [$cparam, $p13nFields, $userId]);
+                        $conn->bind($stmt, 'issi', [$cparam, $p13nFields, $weightsPref, $userId]);
                         $conn->executeUpdate($stmt);
                         $notice = 'Settings saved.';
                         break;
@@ -176,16 +198,29 @@ try {
 
     // ---- Current state (always re-read after any write) ----
     $stmt = $conn->prepareRead(
-        'SELECT user_ltv_customer_cparam, user_ltv_personalization_fields
+        'SELECT user_ltv_customer_cparam, user_ltv_personalization_fields, user_ltv_score_weights
          FROM 202_users_pref WHERE user_id = ? LIMIT 1'
     );
     $conn->bind($stmt, 'i', [$userId]);
     $prefs = $conn->fetchOne($stmt) ?? [];
     $cparamValue = (int) ($prefs['user_ltv_customer_cparam'] ?? 0);
     $p13nValue = (string) ($prefs['user_ltv_personalization_fields'] ?? '');
+    try {
+        $weightValues = \Prosper202\Ltv\MysqlEngagementRepository::parseScoreWeights(
+            (string) ($prefs['user_ltv_score_weights'] ?? '')
+        );
+    } catch (\RuntimeException) {
+        $weightValues = \Prosper202\Ltv\MysqlEngagementRepository::DEFAULT_SCORE_WEIGHTS;
+    }
 
     $fieldDefinitions = $fieldsRepo->list($userId);
     $webhooks = $webhooksRepo->list($userId);
+
+    // Read-only delivery log for one endpoint (no CSRF needed — no write).
+    $deliveryLogWebhookId = (int) ($_POST['show_deliveries'] ?? 0);
+    $deliveryLog = $deliveryLogWebhookId > 0
+        ? $webhooksRepo->recentDeliveries($userId, $deliveryLogWebhookId, 25)
+        : [];
 
     $stmt = $conn->prepareRead(
         'SELECT integration_id, provider, name, status, created_at
@@ -258,6 +293,20 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                             Email, phone and address are never eligible.</small></th>
                         <td><input type="text" class="form-control" name="p13n_fields" maxlength="500"
                             value="<?php echo $esc($p13nValue); ?>" placeholder="e.g. first_name, rec:next_offer"></td>
+                    </tr>
+                    <tr>
+                        <th>Engagement score weights
+                            <br><small class="text-muted">Points each component contributes; must total exactly 100.
+                            Volume saturates at 10 engagements/contact, time at a 5-minute average.</small></th>
+                        <td class="form-inline">
+                            <?php foreach ($weightValues as $component => $value) { ?>
+                                <label style="margin-right: 12px;"><?php echo $esc(ucfirst((string) $component)); ?>
+                                    <input type="number" class="form-control input-sm" style="width: 70px;"
+                                        name="weight_<?php echo $esc($component); ?>" min="0" max="100"
+                                        value="<?php echo (int) $value; ?>">
+                                </label>
+                            <?php } ?>
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -346,6 +395,8 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                         </td>
                         <td><?php echo $when($webhook['created_at'] ?? 0); ?></td>
                         <td class="text-right">
+                            <button type="button" class="btn btn-xs btn-default"
+                                onclick="ltvWebhookLog(<?php echo (int) $webhook['webhook_id']; ?>);">Log</button>
                             <button type="button" class="btn btn-xs btn-danger"
                                 onclick="ltvSettingsDelete('delete_webhook', 'webhook_id', <?php echo (int) $webhook['webhook_id']; ?>, 'Delete this webhook and its delivery history?');">Delete</button>
                         </td>
@@ -366,6 +417,35 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
             <button type="button" class="btn btn-default" onclick="ltvSettingsSubmit('ltv-webhook-form');">Register Webhook</button>
         </form>
         <small class="text-muted">HTTPS only; hosts resolving to private or reserved addresses are rejected. The signing secret is shown once after registration.</small>
+
+        <?php if ($deliveryLogWebhookId > 0) { ?>
+            <h6 style="margin-top: 15px;">Delivery Log <small>webhook #<?php echo $deliveryLogWebhookId; ?>, most recent 25</small></h6>
+            <table class="table table-bordered">
+                <thead>
+                    <tr><th>#</th><th>Event</th><th>Status</th><th>Attempts</th><th>Last HTTP</th><th>Next Retry</th><th>Queued</th><th>Updated</th></tr>
+                </thead>
+                <tbody>
+                    <?php if ($deliveryLog === []) { ?>
+                        <tr><td colspan="8"><em>No deliveries recorded for this webhook yet.</em></td></tr>
+                    <?php } ?>
+                    <?php foreach ($deliveryLog as $delivery) {
+                        $deliveryStatus = (string) ($delivery['status'] ?? '');
+                    ?>
+                        <tr>
+                            <td><?php echo (int) $delivery['delivery_id']; ?></td>
+                            <td><?php echo $esc($delivery['event_name'] ?? ''); ?></td>
+                            <td class="<?php echo $deliveryStatus === 'failed' ? 'text-danger' : ($deliveryStatus === 'delivered' ? 'text-success' : ''); ?>">
+                                <?php echo $esc($deliveryStatus); ?></td>
+                            <td><?php echo (int) ($delivery['attempts'] ?? 0); ?></td>
+                            <td><?php echo ($delivery['last_status_code'] ?? null) !== null ? (int) $delivery['last_status_code'] : '—'; ?></td>
+                            <td><?php echo $deliveryStatus === 'pending' ? date('M j, g:ia', (int) ($delivery['next_attempt_at'] ?? 0)) : '—'; ?></td>
+                            <td><?php echo $when($delivery['created_at'] ?? 0); ?></td>
+                            <td><?php echo $when($delivery['updated_at'] ?? 0); ?></td>
+                        </tr>
+                    <?php } ?>
+                </tbody>
+            </table>
+        <?php } ?>
     </div>
 </div>
 
@@ -411,6 +491,11 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
     function ltvSettingsSubmit(formId) {
         var element = $('#m-content');
         $.post('<?php echo $selfUrl; ?>', $('#' + formId).serialize())
+            .done(function(data) { element.html(data).css('opacity', '1'); });
+    }
+    function ltvWebhookLog(webhookId) {
+        var element = $('#m-content');
+        $.post('<?php echo $selfUrl; ?>', { show_deliveries: webhookId })
             .done(function(data) { element.html(data).css('opacity', '1'); });
     }
     function ltvSettingsDelete(action, idField, id, message) {

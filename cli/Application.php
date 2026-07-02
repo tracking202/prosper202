@@ -48,6 +48,10 @@ class Application extends ConsoleApplication
         $this->add(new Commands\LtvBreakdownCommand());
         $this->add(new Commands\LtvMrrCommand());
         $this->add(new Commands\LtvPredictCommand());
+        $this->add(new Commands\LtvAbmCommand());
+        $this->add(new Commands\LtvEngagementCommand());
+        $this->add(new Commands\LtvSubscriptionsCommand());
+        $this->add(new Commands\LtvCompaniesCommand());
 
         // --- Rotators ---
         $this->add(new Commands\RotatorListCommand());

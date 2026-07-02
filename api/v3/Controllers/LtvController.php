@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\LtvQuery;
+use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
 use Prosper202\Ltv\MysqlCustomerFieldRepository;
 use Prosper202\Ltv\MysqlCustomerRepository;
@@ -515,6 +516,119 @@ class LtvController
     {
         $this->wrap(function () use ($webhookId): void {
             $this->webhooks->delete($this->userId, $webhookId);
+        });
+    }
+
+    // ── Companies (ABM accounts) ─────────────────────────────────────
+
+    public function listCompanies(array $params): array
+    {
+        return $this->wrap(function () use ($params): array {
+            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
+            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $result = (new MysqlCompanyRepository($this->conn))->listWithRollups($this->userId, $limit, $offset);
+
+            return [
+                'data' => $result['rows'],
+                'pagination' => ['total' => $result['total'], 'limit' => $limit, 'offset' => $offset],
+            ];
+        });
+    }
+
+    public function createCompany(array $payload): array
+    {
+        $name = trim((string) ($payload['name'] ?? ''));
+        if ($name === '') {
+            throw new ValidationException('name is required', ['name' => 'Required']);
+        }
+
+        return $this->wrap(function () use ($payload, $name): array {
+            $companies = new MysqlCompanyRepository($this->conn);
+            $companyId = $companies->resolveOrCreate($this->userId, $name);
+            if (isset($payload['domain']) && trim((string) $payload['domain']) !== '') {
+                $companies->setDomain($this->userId, $companyId, (string) $payload['domain']);
+            }
+
+            return ['data' => ['company_id' => $companyId]];
+        });
+    }
+
+    public function patchCompany(int $companyId, array $payload): array
+    {
+        if (!array_key_exists('name', $payload) && !array_key_exists('domain', $payload)) {
+            throw new ValidationException('Nothing to update — supply name and/or domain', []);
+        }
+
+        $companies = new MysqlCompanyRepository($this->conn);
+        if ($this->wrap(fn (): ?array => $companies->get($this->userId, $companyId)) === null) {
+            throw new NotFoundException('Company not found');
+        }
+
+        return $this->wrap(function () use ($companies, $companyId, $payload): array {
+            if (array_key_exists('name', $payload)) {
+                $companies->rename($this->userId, $companyId, (string) $payload['name']);
+            }
+            if (array_key_exists('domain', $payload)) {
+                $domain = $payload['domain'] !== null ? (string) $payload['domain'] : null;
+                $companies->setDomain($this->userId, $companyId, $domain);
+            }
+
+            return ['data' => $companies->get($this->userId, $companyId)];
+        });
+    }
+
+    public function mergeCompany(int $companyId, array $payload): array
+    {
+        $sourceId = (int) ($payload['source_company_id'] ?? 0);
+        if ($sourceId <= 0) {
+            throw new ValidationException('source_company_id is required', ['source_company_id' => 'Required']);
+        }
+
+        return $this->wrap(function () use ($companyId, $sourceId): array {
+            $companies = new MysqlCompanyRepository($this->conn);
+            $companies->merge($this->userId, $sourceId, $companyId);
+
+            return ['data' => $companies->get($this->userId, $companyId)];
+        });
+    }
+
+    public function deleteCompany(int $companyId): void
+    {
+        $companies = new MysqlCompanyRepository($this->conn);
+        if ($this->wrap(fn (): ?array => $companies->get($this->userId, $companyId)) === null) {
+            throw new NotFoundException('Company not found');
+        }
+        $this->wrap(function () use ($companies, $companyId): void {
+            $companies->delete($this->userId, $companyId);
+        });
+    }
+
+    // ── Subscriptions: account-wide read ─────────────────────────────
+
+    public function listSubscriptions(array $params): array
+    {
+        return $this->wrap(function () use ($params): array {
+            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
+            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $status = isset($params['status']) && trim((string) $params['status']) !== ''
+                ? trim((string) $params['status'])
+                : null;
+            $result = $this->subscriptions->listForUser($this->userId, $status, $limit, $offset);
+
+            return [
+                'data' => $result['rows'],
+                'pagination' => ['total' => $result['total'], 'limit' => $limit, 'offset' => $offset],
+            ];
+        });
+    }
+
+    public function deleteCustomerAlias(int $customerId, int $aliasId): void
+    {
+        $this->wrap(function () use ($customerId, $aliasId): void {
+            if (!$this->customers->customerBelongsToUser($customerId, $this->userId)) {
+                throw new \RuntimeException('Customer not found for this account');
+            }
+            $this->customers->deleteAlias($this->userId, $customerId, $aliasId);
         });
     }
 

@@ -363,6 +363,49 @@ final class MysqlSubscriptionRepository
     }
 
     /**
+     * Account-wide subscription list, optionally filtered by status, joined
+     * to the owning customer for display. Newest lifecycle activity first.
+     *
+     * @return array{rows: list<array<string, mixed>>, total: int}
+     */
+    public function listForUser(int $userId, ?string $status = null, int $limit = 50, int $offset = 0): array
+    {
+        $statuses = ['trialing', 'active', 'past_due', 'paused', 'canceled'];
+        if ($status !== null && $status !== '' && !in_array($status, $statuses, true)) {
+            throw new RuntimeException('status must be one of: ' . implode(', ', $statuses));
+        }
+        $statusWhere = ($status !== null && $status !== '') ? ' AND s.status = ?' : '';
+
+        $sql = 'SELECT s.subscription_id, s.external_sub_id, s.plan_name, s.amount, s.currency,
+                       s.billing_interval, s.billing_interval_count, s.status, s.mrr,
+                       s.started_at, s.current_period_end, s.canceled_at,
+                       s.customer_id, c.first_name, c.last_name, c.email, c.company
+                FROM 202_subscriptions s
+                LEFT JOIN 202_customers c ON c.customer_id = s.customer_id AND c.user_id = s.user_id
+                WHERE s.user_id = ?' . $statusWhere . '
+                ORDER BY s.updated_at DESC, s.subscription_id DESC
+                LIMIT ? OFFSET ?';
+        $stmt = $this->conn->prepareRead($sql);
+        if ($statusWhere !== '') {
+            $this->conn->bind($stmt, 'isii', [$userId, $status, max(1, $limit), max(0, $offset)]);
+        } else {
+            $this->conn->bind($stmt, 'iii', [$userId, max(1, $limit), max(0, $offset)]);
+        }
+        $rows = $this->conn->fetchAll($stmt);
+
+        $countSql = 'SELECT COUNT(*) AS total FROM 202_subscriptions s WHERE s.user_id = ?' . $statusWhere;
+        $countStmt = $this->conn->prepareRead($countSql);
+        if ($statusWhere !== '') {
+            $this->conn->bind($countStmt, 'is', [$userId, $status]);
+        } else {
+            $this->conn->bind($countStmt, 'i', [$userId]);
+        }
+        $count = $this->conn->fetchOne($countStmt);
+
+        return ['rows' => $rows, 'total' => (int) ($count['total'] ?? 0)];
+    }
+
+    /**
      * @param mixed $requested
      */
     private function validateCurrency(int $userId, mixed $requested): string

@@ -40,7 +40,35 @@ final class LtvTables
             self::personalizationTokens(),
             self::offerTransitions(),
             self::engagementEvents(),
+            self::companies(),
         ];
+    }
+
+    /**
+     * First-class company (ABM account) records. Customers attach via
+     * 202_customers.company_id; the legacy free-text 202_customers.company
+     * column is kept in sync (renames rewrite it) so string-grouped reports
+     * keep working for rows that predate the entity. normalized_name is the
+     * lowercased, whitespace-collapsed form that dedups "Acme" / "acme ";
+     * domain enables auto-attach from a new customer's email domain.
+     */
+    public static function companies(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::COMPANIES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::COMPANIES . "` (
+                `company_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `name` varchar(255) NOT NULL,
+                `normalized_name` varchar(191) NOT NULL,
+                `domain` varchar(191) DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`company_id`),
+                UNIQUE KEY `uniq_user_name` (`user_id`,`normalized_name`),
+                KEY `user_domain` (`user_id`,`domain`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
     }
 
     /**
@@ -150,6 +178,7 @@ final class LtvTables
                 `email_hash` binary(32) DEFAULT NULL,
                 `phone` varchar(50) DEFAULT NULL,
                 `company` varchar(255) DEFAULT NULL,
+                `company_id` bigint(20) unsigned DEFAULT NULL,
                 `address_line1` varchar(255) DEFAULT NULL,
                 `address_line2` varchar(255) DEFAULT NULL,
                 `city` varchar(100) DEFAULT NULL,
@@ -171,7 +200,8 @@ final class LtvTables
                 KEY `user_email_hash` (`user_id`,`email_hash`),
                 KEY `user_last_activity` (`user_id`,`last_activity_time`),
                 KEY `user_first_click` (`user_id`,`first_click_id`),
-                KEY `merged_into` (`merged_into_customer_id`)
+                KEY `merged_into` (`merged_into_customer_id`),
+                KEY `user_company` (`user_id`,`company_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

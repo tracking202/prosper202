@@ -197,6 +197,28 @@ final class MysqlWebhookRepository
     }
 
     /**
+     * Delivery history for one endpoint, newest first — the operator-facing
+     * log behind the settings UI (attempt counts, last status codes, backoff
+     * schedule). Response bodies are already stored truncated.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function recentDeliveries(int $userId, int $webhookId, int $limit = 25): array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT delivery_id, event_name, status, attempts, last_status_code,
+                    next_attempt_at, created_at, updated_at
+             FROM 202_ltv_webhook_deliveries
+             WHERE webhook_id = ? AND user_id = ?
+             ORDER BY delivery_id DESC
+             LIMIT ?'
+        );
+        $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
+
+        return $this->conn->fetchAll($stmt);
+    }
+
+    /**
      * Dispatch-side: claim due pending deliveries (joined to their endpoint).
      *
      * @return list<array<string, mixed>>

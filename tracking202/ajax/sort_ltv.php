@@ -45,6 +45,7 @@ try {
         $breakdown = $ltv->breakdown($query, $by, 25, 0);
     }
     $customers = $ltv->customers($query, 'total_revenue', 'DESC', $limit, $offset);
+    $predict = $ltv->predict($query);
 } catch (\Throwable $e) {
     // Most likely cause: the LTV schema has not been installed yet.
     error_log('sort_ltv: ' . $e->getMessage());
@@ -104,6 +105,37 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
     </div>
 </div>
 
+<!-- Predictive LTV (deterministic projection; inputs + caps shown) -->
+<div class="row" style="margin-top: 10px;">
+    <div class="col-xs-12">
+        <h6>Predicted LTV <small>deterministic projection from this range's realized data</small></h6>
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                    <th>Predicted LTV / Customer</th>
+                    <th>Subscriber Pool Value</th>
+                    <th>AOV Input</th>
+                    <th>Repeat Rate Input</th>
+                    <th>Monthly Churn Input</th>
+                    <th>Guards Applied</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>$<?php echo $money($predict['predicted_ltv_per_customer'] ?? 0); ?></td>
+                    <td>$<?php echo $money($predict['predicted_subscriber_pool_value'] ?? 0); ?></td>
+                    <td>$<?php echo $money($predict['inputs']['aov'] ?? 0); ?></td>
+                    <td><?php echo number_format(((float) ($predict['inputs']['repeat_rate'] ?? 0)) * 100, 1); ?>%</td>
+                    <td><?php echo number_format(((float) ($predict['inputs']['monthly_churn_rate'] ?? 0)) * 100, 2); ?>%</td>
+                    <td><small><?php echo ($predict['caps_applied'] ?? []) !== []
+                        ? $esc(implode(', ', array_map(strval(...), (array) $predict['caps_applied'])))
+                        : '—'; ?></small></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 <!-- LTV by acquisition dimension / product -->
 <div class="row" style="margin-top: 10px;">
     <div class="col-xs-8">
@@ -118,6 +150,18 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
     <div class="col-xs-4 text-right">
         <a href="<?php echo get_absolute_url(); ?>tracking202/analyze/ltv_download.php" target="_blank">
             <i class="fa fa-download"></i> Download Customers
+        </a>
+        &nbsp;&nbsp;
+        <a href="#" onclick="ltvPartial('ltv_subscriptions'); return false;">
+            <i class="fa fa-refresh"></i> Subscriptions
+        </a>
+        &nbsp;&nbsp;
+        <a href="#" onclick="ltvPartial('ltv_products'); return false;">
+            <i class="fa fa-shopping-cart"></i> Products
+        </a>
+        &nbsp;&nbsp;
+        <a href="#" onclick="ltvPartial('ltv_companies'); return false;">
+            <i class="fa fa-building"></i> Companies
         </a>
         &nbsp;&nbsp;
         <a href="#" onclick="ltvSettings(); return false;">
@@ -296,8 +340,11 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
         });
     }
     function ltvSettings() {
+        ltvPartial('ltv_settings');
+    }
+    function ltvPartial(name) {
         var element = $('#m-content');
-        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_settings.php', {})
+        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/' + name + '.php', {})
             .done(function(data) {
                 element.html(data);
                 element.css('opacity', '1');

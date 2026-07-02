@@ -223,6 +223,8 @@ try {
         $r->get('/mrr',            fn() => $crud($cls)->mrr());
         $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
         $r->get('/products',       fn() => $crud($cls)->products($queryParams));
+        $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
+        $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
         $r->get('/fields',         fn() => $crud($cls)->fieldsList());
         $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
         $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
@@ -240,6 +242,11 @@ try {
         $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer((int)$ctx['id'], $payload));
         $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer((int)$ctx['id'])));
         $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias((int)$ctx['id'], $payload));
+        $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias((int)$ctx['id'], (int)$ctx['aliasId'])));
+        $r->post('/companies',                fn() => ['_status' => 201] + $crud($cls)->createCompany($payload));
+        $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany((int)$ctx['id'], $payload));
+        $r->post('/companies/{id}/merge',     fn($ctx) => $crud($cls)->mergeCompany((int)$ctx['id'], $payload));
+        $r->delete('/companies/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCompany((int)$ctx['id'])));
         $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
         $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
         $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
@@ -447,7 +454,7 @@ try {
             'clicks'        => '/clicks',
             'conversions'   => '/conversions',
             'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
-            'ltv'           => '/ltv/{summary|customers|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
+            'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
             'rotators'      => '/rotators',
             'attribution'   => '/attribution/models',
             'users'         => '/users',

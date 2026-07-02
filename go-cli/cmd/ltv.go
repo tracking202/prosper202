@@ -133,6 +133,107 @@ var ltvPredictCmd = &cobra.Command{
 	},
 }
 
+var ltvAbmCmd = &cobra.Command{
+	Use:   "abm",
+	Short: "ABM account view — companies ranked by engagement with scores, depth metrics, revenue and MRR",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		for _, f := range []string{"days", "limit", "offset"} {
+			if v := getStringFlagOrDefault(cmd, "ltv", f); v != "" {
+				params[f] = v
+			}
+		}
+		path := "ltv/abm"
+		if company := getStringFlagOrDefault(cmd, "ltv", "company"); company != "" {
+			params["name"] = company
+			path = "ltv/abm/company"
+		}
+		data, err := c.Get(path, params)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var ltvEngagementCmd = &cobra.Command{
+	Use:   "engagement <customer-id>",
+	Short: "One customer's engagement — browsing, instrumented events, and the suggested next offer",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		if v := getStringFlagOrDefault(cmd, "ltv", "days"); v != "" {
+			params["days"] = v
+		}
+		engagement, err := c.Get(fmt.Sprintf("ltv/customers/%s/engagement", args[0]), params)
+		if err != nil {
+			return err
+		}
+		render(engagement)
+		nextOffer, err := c.Get(fmt.Sprintf("ltv/customers/%s/next-offer", args[0]), nil)
+		if err != nil {
+			return err
+		}
+		render(nextOffer)
+		return nil
+	},
+}
+
+var ltvSubscriptionsCmd = &cobra.Command{
+	Use:   "subscriptions",
+	Short: "Account-wide subscription list joined to customers, filterable by lifecycle status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		for _, f := range []string{"status", "limit", "offset"} {
+			if v := getStringFlagOrDefault(cmd, "ltv", f); v != "" {
+				params[f] = v
+			}
+		}
+		data, err := c.Get("ltv/subscriptions", params)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var ltvCompaniesCmd = &cobra.Command{
+	Use:   "companies",
+	Short: "Company (ABM account) entities with live contact/revenue rollups",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		for _, f := range []string{"limit", "offset"} {
+			if v := getStringFlagOrDefault(cmd, "ltv", f); v != "" {
+				params[f] = v
+			}
+		}
+		data, err := c.Get("ltv/companies", params)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
 func init() {
 	addLtvTimeFilters(ltvSummaryCmd)
 
@@ -150,6 +251,21 @@ func init() {
 	addLtvTimeFilters(ltvPredictCmd)
 	ltvPredictCmd.Flags().StringP("by", "b", "", "Also project per cohort: campaign, ppc_account, landing_page")
 
-	ltvCmd.AddCommand(ltvSummaryCmd, ltvCustomersCmd, ltvBreakdownCmd, ltvMrrCmd, ltvPredictCmd)
+	ltvAbmCmd.Flags().StringP("company", "c", "", "Drill into one company by name")
+	ltvAbmCmd.Flags().StringP("days", "d", "", "Engagement window in days (default 90, max 365)")
+	ltvAbmCmd.Flags().StringP("limit", "l", "", "Rows per page (max 500)")
+	ltvAbmCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+
+	ltvEngagementCmd.Flags().StringP("days", "d", "", "Engagement window in days (default 90, max 365)")
+
+	ltvSubscriptionsCmd.Flags().StringP("status", "s", "", "Filter: trialing, active, past_due, paused, canceled")
+	ltvSubscriptionsCmd.Flags().StringP("limit", "l", "", "Rows per page (max 500)")
+	ltvSubscriptionsCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+
+	ltvCompaniesCmd.Flags().StringP("limit", "l", "", "Rows per page (max 500)")
+	ltvCompaniesCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+
+	ltvCmd.AddCommand(ltvSummaryCmd, ltvCustomersCmd, ltvBreakdownCmd, ltvMrrCmd, ltvPredictCmd,
+		ltvAbmCmd, ltvEngagementCmd, ltvSubscriptionsCmd, ltvCompaniesCmd)
 	rootCmd.AddCommand(ltvCmd)
 }

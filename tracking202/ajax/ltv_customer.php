@@ -75,6 +75,43 @@ try {
         }
     }
 
+    // ---- Alias add/remove (CSRF-gated identity edits) ----
+    if ($action === 'add_alias' && $customerId > 0) {
+        if (!AUTH::check_csrf_token()) {
+            $saveError = 'Your session token was invalid — please try again.';
+        } else {
+            try {
+                $owner = $conn->transaction(fn (): int => $customersRepo->addAlias(
+                    $userId,
+                    $customerId,
+                    (string) ($_POST['alias_type'] ?? 'custom'),
+                    (string) ($_POST['alias_value'] ?? ''),
+                    time()
+                ));
+                if ($owner !== $customerId) {
+                    $saveError = 'That identity already belongs to customer #' . $owner
+                        . ' — merge the two records instead of re-pointing the alias.';
+                } else {
+                    $saved = true;
+                }
+            } catch (\RuntimeException $aliasError) {
+                $saveError = $aliasError->getMessage();
+            }
+        }
+    }
+    if ($action === 'delete_alias' && $customerId > 0) {
+        if (!AUTH::check_csrf_token()) {
+            $saveError = 'Your session token was invalid — please try again.';
+        } else {
+            try {
+                $customersRepo->deleteAlias($userId, $customerId, (int) ($_POST['alias_id'] ?? 0));
+                $saved = true;
+            } catch (\RuntimeException $aliasError) {
+                $saveError = $aliasError->getMessage();
+            }
+        }
+    }
+
     // ---- Save (CSRF-gated write) ----
     if ($action === 'save' && $customerId > 0) {
         if (!AUTH::check_csrf_token()) {
@@ -122,7 +159,9 @@ try {
         $engagementEvents = $engagementRepo->customerEvents($userId, $customerId, 90, 25);
         $nextOffer = (new \Prosper202\Ltv\MysqlRecommendationRepository($conn))->nextOffer($userId, $customerId);
         $engagementScore = \Prosper202\Ltv\MysqlEngagementRepository::engagementScore(
-            $engagementRepo->customerEngagementAggregates($userId, $customerId, 90)
+            $engagementRepo->customerEngagementAggregates($userId, $customerId, 90),
+            null,
+            $engagementRepo->scoreWeights($userId)
         );
     }
 } catch (\Throwable $e) {
@@ -420,21 +459,35 @@ $addressParts = array_filter([
         <h6>Linked Identities</h6>
         <table class="table table-bordered">
             <thead>
-                <tr><th>Type</th><th>Value</th><th>Linked</th></tr>
+                <tr><th>Type</th><th>Value</th><th>Linked</th><th></th></tr>
             </thead>
             <tbody>
                 <?php if (($customer['aliases'] ?? []) === []) { ?>
-                    <tr><td colspan="3"><em>No aliases recorded.</em></td></tr>
+                    <tr><td colspan="4"><em>No aliases recorded.</em></td></tr>
                 <?php } ?>
                 <?php foreach (($customer['aliases'] ?? []) as $alias) { ?>
                     <tr>
                         <td><?php echo $esc($alias['alias_type'] ?? ''); ?></td>
                         <td><?php echo $esc(mb_strimwidth((string) ($alias['alias_value'] ?? ''), 0, 60, '…')); ?></td>
                         <td><?php echo $when($alias['created_at'] ?? 0); ?></td>
+                        <td class="text-right">
+                            <button type="button" class="btn btn-xs btn-danger"
+                                onclick="ltvAliasDelete(<?php echo (int) $customer['customer_id']; ?>, <?php echo (int) ($alias['alias_id'] ?? 0); ?>);"
+                                title="Unlink this identity">&times;</button>
+                        </td>
                     </tr>
                 <?php } ?>
             </tbody>
         </table>
+        <form id="ltv-alias-form" class="form-inline" onsubmit="return false;">
+            <select class="form-control input-sm" id="ltv-alias-type">
+                <?php foreach (['custom', 'email_md5', 'email_sha256', 'esp_id', 'merchant_id'] as $aliasType) { ?>
+                    <option value="<?php echo $aliasType; ?>"><?php echo $aliasType; ?></option>
+                <?php } ?>
+            </select>
+            <input type="text" class="form-control input-sm" id="ltv-alias-value" maxlength="255" placeholder="Identity value (hash, id, ...)">
+            <button type="button" class="btn btn-sm btn-default" onclick="ltvAliasAdd(<?php echo (int) $customer['customer_id']; ?>);">Link Identity</button>
+        </form>
     </div>
 </div>
 
@@ -622,6 +675,26 @@ $addressParts = array_filter([
         $.post('<?php echo $selfUrl; ?>', {
             customer_id: customerId,
             action: 'erase',
+            token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
+        }).done(function(data) { element.html(data).css('opacity', '1'); });
+    }
+    function ltvAliasAdd(customerId) {
+        var element = $('#m-content');
+        $.post('<?php echo $selfUrl; ?>', {
+            customer_id: customerId,
+            action: 'add_alias',
+            alias_type: $('#ltv-alias-type').val(),
+            alias_value: $('#ltv-alias-value').val(),
+            token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
+        }).done(function(data) { element.html(data).css('opacity', '1'); });
+    }
+    function ltvAliasDelete(customerId, aliasId) {
+        if (!window.confirm('Unlink this identity? Future events using it will create or match a different customer.')) { return; }
+        var element = $('#m-content');
+        $.post('<?php echo $selfUrl; ?>', {
+            customer_id: customerId,
+            action: 'delete_alias',
+            alias_id: aliasId,
             token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
         }).done(function(data) { element.html(data).css('opacity', '1'); });
     }

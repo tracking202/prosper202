@@ -162,6 +162,26 @@ try {
         echo "  202_users_pref.user_ltv_personalization_fields already exists — skipping\n";
     }
 
+    if (!ltv_column_exists($db, '202_customers', 'company_id')) {
+        ltv_run(
+            $db,
+            'ALTER TABLE `202_customers` ADD COLUMN `company_id` bigint(20) unsigned DEFAULT NULL AFTER `company`, ADD KEY `user_company` (`user_id`,`company_id`)',
+            'add 202_customers.company_id'
+        );
+    } else {
+        echo "  202_customers.company_id already exists — skipping\n";
+    }
+
+    if (!ltv_column_exists($db, '202_users_pref', 'user_ltv_score_weights')) {
+        ltv_run(
+            $db,
+            "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_score_weights` varchar(100) NOT NULL DEFAULT ''",
+            'add 202_users_pref.user_ltv_score_weights'
+        );
+    } else {
+        echo "  202_users_pref.user_ltv_score_weights already exists — skipping\n";
+    }
+
     // --- 3. Verify ---
     echo "\nVerifying...\n";
     $allOk = true;
@@ -179,6 +199,8 @@ try {
         ['202_clicks_tracking', 'customer_id'],
         ['202_users_pref', 'user_ltv_customer_cparam'],
         ['202_users_pref', 'user_ltv_personalization_fields'],
+        ['202_users_pref', 'user_ltv_score_weights'],
+        ['202_customers', 'company_id'],
     ] as [$table, $column]) {
         if (ltv_column_exists($db, $table, $column)) {
             echo "  ✓ {$table}.{$column}\n";

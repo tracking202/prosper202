@@ -157,6 +157,67 @@ final class EngagementEventTest extends TestCase
         );
     }
 
+    public function testParseScoreWeightsStrictContract(): void
+    {
+        self::assertSame(
+            MysqlEngagementRepository::DEFAULT_SCORE_WEIGHTS,
+            MysqlEngagementRepository::parseScoreWeights(''),
+            'empty pref means account defaults'
+        );
+        self::assertSame(
+            ['volume' => 60, 'time' => 10, 'scroll' => 10, 'video' => 10, 'recency' => 10],
+            MysqlEngagementRepository::parseScoreWeights('volume:60, time:10, scroll:10, video:10, recency:10')
+        );
+
+        $invalid = [
+            'volume:60',                                            // missing components
+            'volume:60,time:10,scroll:10,video:10,recency:20',      // sums to 110
+            'volume:40,time:20,scroll:15,video:15,recency:10,bogus:0', // unknown key
+            'volume:40,volume:0,time:20,scroll:15,video:15,recency:10', // duplicate
+            'volume:abc,time:20,scroll:15,video:15,recency:10',     // non-integer
+        ];
+        foreach ($invalid as $raw) {
+            try {
+                MysqlEngagementRepository::parseScoreWeights($raw);
+                self::fail('Expected rejection for ' . var_export($raw, true));
+            } catch (\RuntimeException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function testEngagementScoreHonorsCustomWeights(): void
+    {
+        $now = 1700000000;
+        $volumeOnly = ['volume' => 100, 'time' => 0, 'scroll' => 0, 'video' => 0, 'recency' => 0];
+
+        // 5 engagements/contact = half the 10-per-contact saturation point.
+        self::assertSame(50, MysqlEngagementRepository::engagementScore(
+            ['engagements' => 5, 'contacts' => 1],
+            $now,
+            $volumeOnly
+        ));
+        // Fully weighted on recency: within 7 days = full points, within 30 = half.
+        $recencyOnly = ['volume' => 0, 'time' => 0, 'scroll' => 0, 'video' => 0, 'recency' => 100];
+        self::assertSame(100, MysqlEngagementRepository::engagementScore(['last_activity' => $now - 86400], $now, $recencyOnly));
+        self::assertSame(50, MysqlEngagementRepository::engagementScore(['last_activity' => $now - 20 * 86400], $now, $recencyOnly));
+    }
+
+    public function testScoreWeightsReadDefaultsOnInvalidPref(): void
+    {
+        $read = new FakeMysqliConnection();
+        $read->whenQueryContainsReturnRows('user_ltv_score_weights', [[
+            'user_ltv_score_weights' => 'garbage-not-a-weights-string',
+        ]]);
+        $repo = new MysqlEngagementRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        self::assertSame(
+            MysqlEngagementRepository::DEFAULT_SCORE_WEIGHTS,
+            $repo->scoreWeights(7),
+            'a corrupted pref must not take reports down'
+        );
+    }
+
     public function testCustomerEngagementAggregatesCombinesClicksAndEvents(): void
     {
         $read = new FakeMysqliConnection();
