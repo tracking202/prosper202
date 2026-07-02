@@ -121,6 +121,64 @@ final class EngagementEventTest extends TestCase
         self::assertStringContainsString('ORDER BY occurred_at DESC', $queries[0]->sql);
     }
 
+    public function testEngagementScoreIsDeterministicAndBounded(): void
+    {
+        $now = 1700000000;
+
+        // No activity at all -> 0.
+        self::assertSame(0, MysqlEngagementRepository::engagementScore([], $now));
+
+        // Everything maxed (10 engagements/contact, 5-min avg time, full
+        // scroll + video, activity today) -> exactly 100, never above.
+        self::assertSame(100, MysqlEngagementRepository::engagementScore([
+            'engagements' => 50, 'contacts' => 2,
+            'avg_time_on_page' => 900.0, 'avg_scroll_depth' => 100.0, 'avg_video_pct' => 100.0,
+            'last_activity' => $now,
+        ], $now));
+
+        // Component math: 5 engagements / 1 contact = 20 volume pts,
+        // 150s avg time = 10 pts, 50% scroll = 7.5 pts, no video,
+        // last activity 10 days ago = 5 recency pts -> round(42.5) = 43.
+        self::assertSame(43, MysqlEngagementRepository::engagementScore([
+            'engagements' => 5, 'contacts' => 1,
+            'avg_time_on_page' => 150.0, 'avg_scroll_depth' => 50.0,
+            'last_activity' => $now - 10 * 86400,
+        ], $now));
+
+        // Recency tiers: within 7 days adds 10, past 30 days adds nothing.
+        self::assertSame(10, MysqlEngagementRepository::engagementScore(['last_activity' => $now - 86400], $now));
+        self::assertSame(0, MysqlEngagementRepository::engagementScore(['last_activity' => $now - 31 * 86400], $now));
+
+        // Same inputs, same output — the score is a pure function.
+        $aggregates = ['engagements' => 7, 'contacts' => 3, 'avg_time_on_page' => 60.0, 'last_activity' => $now - 3 * 86400];
+        self::assertSame(
+            MysqlEngagementRepository::engagementScore($aggregates, $now),
+            MysqlEngagementRepository::engagementScore($aggregates, $now)
+        );
+    }
+
+    public function testCustomerEngagementAggregatesCombinesClicksAndEvents(): void
+    {
+        $read = new FakeMysqliConnection();
+        $read->whenQueryContainsReturnRows('FROM 202_clicks_tracking ct', [
+            ['clicks' => 4, 'last_click' => 1700000100],
+        ]);
+        $read->whenQueryContainsReturnRows('FROM 202_engagement_events', [
+            ['events' => 3, 'last_event' => 1700000500,
+             'avg_time_on_page' => 120.0, 'avg_scroll_depth' => 80.0, 'avg_video_pct' => null],
+        ]);
+        $repo = new MysqlEngagementRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        $aggregates = $repo->customerEngagementAggregates(7, 501, 90);
+
+        self::assertSame(7.0, (float) $aggregates['engagements'], 'clicks + events both count as engagement volume');
+        self::assertSame(1, (int) $aggregates['contacts'], 'a single customer is one contact');
+        self::assertSame(1700000500, (int) $aggregates['last_activity'], 'most recent of last click / last event');
+        self::assertSame(120.0, (float) $aggregates['avg_time_on_page']);
+        self::assertSame(80.0, (float) $aggregates['avg_scroll_depth']);
+        self::assertSame(0.0, (float) ($aggregates['avg_video_pct'] ?? 0));
+    }
+
     public function testAbmBreakdownCountsCustomEventsInEngagements(): void
     {
         $read = new FakeMysqliConnection();

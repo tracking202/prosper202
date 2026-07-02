@@ -170,7 +170,10 @@ final class MysqlEngagementRepository
                     COALESCE(eng.clicks, 0) + COALESCE(ev.events, 0) AS engagements,
                     COALESCE(ev.events, 0) AS custom_events,
                     eng.top_campaign_name,
-                    ev.top_event_name
+                    ev.top_event_name,
+                    COALESCE(ev.avg_time_on_page, 0) AS avg_time_on_page,
+                    COALESCE(ev.avg_scroll_depth, 0) AS avg_scroll_depth,
+                    COALESCE(ev.avg_video_pct, 0) AS avg_video_pct
              FROM 202_customers cu
              LEFT JOIN (
                  SELECT cu2.company AS company, COUNT(*) AS clicks,
@@ -185,7 +188,10 @@ final class MysqlEngagementRepository
              ) eng ON eng.company = cu.company
              LEFT JOIN (
                  SELECT cu3.company AS company, COUNT(*) AS events,
-                        SUBSTRING_INDEX(GROUP_CONCAT(ee.event_name ORDER BY ee.occurred_at DESC SEPARATOR ','), ',', 1) AS top_event_name
+                        SUBSTRING_INDEX(GROUP_CONCAT(ee.event_name ORDER BY ee.occurred_at DESC SEPARATOR ','), ',', 1) AS top_event_name,
+                        AVG(CASE WHEN ee.event_name = 'time_on_page' THEN ee.event_value END) AS avg_time_on_page,
+                        AVG(CASE WHEN ee.event_name = 'scroll_depth' THEN ee.event_value END) AS avg_scroll_depth,
+                        AVG(CASE WHEN ee.event_name = 'video_viewed' THEN ee.event_value END) AS avg_video_pct
                  FROM 202_customers cu3
                  JOIN 202_engagement_events ee ON ee.customer_id = cu3.customer_id
                     AND ee.user_id = cu3.user_id AND ee.occurred_at >= ?
@@ -195,13 +201,99 @@ final class MysqlEngagementRepository
              ) ev ON ev.company = cu.company
              WHERE cu.user_id = ? AND cu.company IS NOT NULL AND cu.company <> ''
                AND cu.merged_into_customer_id IS NULL
-             GROUP BY cu.company, eng.clicks, eng.top_campaign_name, ev.events, ev.top_event_name
+             GROUP BY cu.company, eng.clicks, eng.top_campaign_name, ev.events, ev.top_event_name,
+                      ev.avg_time_on_page, ev.avg_scroll_depth, ev.avg_video_pct
              ORDER BY engagements DESC, total_revenue DESC
              LIMIT ? OFFSET ?"
         );
         $this->conn->bind($stmt, 'iiiiiii', [$since, $userId, $since, $userId, $userId, $limit, $offset]);
 
-        return $this->conn->fetchAll($stmt);
+        $rows = $this->conn->fetchAll($stmt);
+        $now = time();
+        foreach ($rows as &$row) {
+            $row['engagement_score'] = self::engagementScore($row, $now);
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    /**
+     * Deterministic engagement score, 0-100, computed from a window's
+     * aggregates. Explainable by construction:
+     *   volume:  up to 40 pts — 4 pts per engagement (clicks+events) per contact
+     *   time:    up to 20 pts — avg visible time on page vs a 5-minute ceiling
+     *   scroll:  up to 15 pts — avg scroll depth percentage
+     *   video:   up to 15 pts — avg video completion percentage
+     *   recency: 10 pts within 7 days, 5 within 30, else 0
+     *
+     * @param array<string, mixed> $aggregates keys: engagements, contacts
+     *        (default 1), avg_time_on_page, avg_scroll_depth, avg_video_pct,
+     *        last_activity
+     */
+    public static function engagementScore(array $aggregates, ?int $now = null): int
+    {
+        $now = $now ?? time();
+        $contacts = max(1, (int) ($aggregates['contacts'] ?? 1));
+        $engagements = (float) ($aggregates['engagements'] ?? 0);
+        $avgTime = (float) ($aggregates['avg_time_on_page'] ?? 0);
+        $avgScroll = (float) ($aggregates['avg_scroll_depth'] ?? 0);
+        $avgVideo = (float) ($aggregates['avg_video_pct'] ?? 0);
+        $lastActivity = (int) ($aggregates['last_activity'] ?? 0);
+
+        $score = min(40.0, ($engagements / $contacts) * 4.0)
+            + min(20.0, ($avgTime / 300.0) * 20.0)
+            + min(15.0, ($avgScroll / 100.0) * 15.0)
+            + min(15.0, ($avgVideo / 100.0) * 15.0);
+
+        $age = $now - $lastActivity;
+        if ($lastActivity > 0 && $age <= 7 * 86400) {
+            $score += 10.0;
+        } elseif ($lastActivity > 0 && $age <= 30 * 86400) {
+            $score += 5.0;
+        }
+
+        return (int) round(min(100.0, max(0.0, $score)));
+    }
+
+    /**
+     * One customer's depth aggregates for scoring: engagement volume plus
+     * averages of the auto-instrumented metrics in the window.
+     *
+     * @return array<string, mixed>
+     */
+    public function customerEngagementAggregates(int $userId, int $customerId, int $days = 90): array
+    {
+        $since = time() - max(1, $days) * 86400;
+
+        $clickStmt = $this->conn->prepareRead(
+            'SELECT COUNT(*) AS clicks, MAX(c.click_time) AS last_click
+             FROM 202_clicks_tracking ct
+             JOIN 202_clicks c ON c.click_id = ct.click_id
+             WHERE ct.customer_id = ? AND c.user_id = ? AND c.click_time >= ?'
+        );
+        $this->conn->bind($clickStmt, 'iii', [$customerId, $userId, $since]);
+        $clicks = $this->conn->fetchOne($clickStmt) ?? [];
+
+        $eventStmt = $this->conn->prepareRead(
+            "SELECT COUNT(*) AS events, MAX(occurred_at) AS last_event,
+                    AVG(CASE WHEN event_name = 'time_on_page' THEN event_value END) AS avg_time_on_page,
+                    AVG(CASE WHEN event_name = 'scroll_depth' THEN event_value END) AS avg_scroll_depth,
+                    AVG(CASE WHEN event_name = 'video_viewed' THEN event_value END) AS avg_video_pct
+             FROM 202_engagement_events
+             WHERE user_id = ? AND customer_id = ? AND occurred_at >= ?"
+        );
+        $this->conn->bind($eventStmt, 'iii', [$userId, $customerId, $since]);
+        $events = $this->conn->fetchOne($eventStmt) ?? [];
+
+        return [
+            'contacts' => 1,
+            'engagements' => (int) ($clicks['clicks'] ?? 0) + (int) ($events['events'] ?? 0),
+            'avg_time_on_page' => (float) ($events['avg_time_on_page'] ?? 0),
+            'avg_scroll_depth' => (float) ($events['avg_scroll_depth'] ?? 0),
+            'avg_video_pct' => (float) ($events['avg_video_pct'] ?? 0),
+            'last_activity' => max((int) ($clicks['last_click'] ?? 0), (int) ($events['last_event'] ?? 0)),
+        ];
     }
 
     /**

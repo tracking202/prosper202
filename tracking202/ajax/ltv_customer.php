@@ -38,6 +38,43 @@ try {
     $fieldsRepo = new \Prosper202\Ltv\MysqlCustomerFieldRepository($conn);
     $crm = new \Prosper202\Ltv\MysqlCustomerCrmRepository($conn, $customersRepo, $fieldsRepo);
 
+    // ---- Erase (CSRF-gated, destructive: PII removed, ledger kept) ----
+    if ($action === 'erase' && $customerId > 0) {
+        if (!AUTH::check_csrf_token()) {
+            $saveError = 'Your session token was invalid — please try again.';
+        } else {
+            try {
+                $crm->erase($userId, $customerId);
+                echo '<div class="row" style="margin-bottom: 10px;"><div class="col-xs-12">'
+                    . '<a href="#" onclick="loadContent(\'' . get_absolute_url() . 'tracking202/ajax/sort_ltv.php\', null); return false;">&laquo; Back to Customer LTV</a>'
+                    . '</div></div>'
+                    . '<div class="alert alert-success">Customer erased: personal data, aliases, custom fields and '
+                    . 'personalization tokens removed. Revenue totals were kept for reporting integrity.</div>';
+                return;
+            } catch (\RuntimeException $eraseError) {
+                $saveError = $eraseError->getMessage();
+            }
+        }
+    }
+
+    // ---- Merge (CSRF-gated: another customer merges INTO this one) ----
+    if ($action === 'merge' && $customerId > 0) {
+        if (!AUTH::check_csrf_token()) {
+            $saveError = 'Your session token was invalid — please try again.';
+        } else {
+            $sourceId = (int) ($_POST['source_customer_id'] ?? 0);
+            try {
+                if ($sourceId <= 0) {
+                    throw new \RuntimeException('Enter the customer # to merge into this record.');
+                }
+                $crm->merge($userId, $sourceId, $customerId);
+                $saved = true; // fall through to render the refreshed detail
+            } catch (\RuntimeException $mergeError) {
+                $saveError = $mergeError->getMessage();
+            }
+        }
+    }
+
     // ---- Save (CSRF-gated write) ----
     if ($action === 'save' && $customerId > 0) {
         if (!AUTH::check_csrf_token()) {
@@ -78,11 +115,15 @@ try {
     $engagement = [];
     $engagementEvents = [];
     $nextOffer = null;
+    $engagementScore = 0;
     if ($customer !== null) {
         $engagementRepo = new \Prosper202\Ltv\MysqlEngagementRepository($conn);
         $engagement = $engagementRepo->customerEngagement($userId, $customerId, 90);
         $engagementEvents = $engagementRepo->customerEvents($userId, $customerId, 90, 25);
         $nextOffer = (new \Prosper202\Ltv\MysqlRecommendationRepository($conn))->nextOffer($userId, $customerId);
+        $engagementScore = \Prosper202\Ltv\MysqlEngagementRepository::engagementScore(
+            $engagementRepo->customerEngagementAggregates($userId, $customerId, 90)
+        );
     }
 } catch (\Throwable $e) {
     error_log('ltv_customer: ' . $e->getMessage());
@@ -91,6 +132,7 @@ try {
     $engagement = [];
     $engagementEvents = [];
     $nextOffer = null;
+    $engagementScore = 0;
 }
 ?>
 
@@ -299,8 +341,15 @@ $addressParts = array_filter([
         </h6>
     </div>
     <div class="col-xs-4 text-right">
+        <span style="margin-right: 10px;">Engagement Score: <strong><?php echo (int) $engagementScore; ?></strong>/100</span>
         <button type="button" class="btn btn-sm btn-default" onclick="ltvCustomerEdit(<?php echo (int) $customer['customer_id']; ?>);">
             <i class="fa fa-pencil"></i> Edit Customer
+        </button>
+        <button type="button" class="btn btn-sm btn-default" onclick="ltvCustomerMerge(<?php echo (int) $customer['customer_id']; ?>);" title="Merge another customer record into this one">
+            <i class="fa fa-compress"></i> Merge
+        </button>
+        <button type="button" class="btn btn-sm btn-danger" onclick="ltvCustomerErase(<?php echo (int) $customer['customer_id']; ?>);" title="Erase personal data (GDPR); revenue totals are kept">
+            <i class="fa fa-eraser"></i> Erase
         </button>
     </div>
 </div>
@@ -555,5 +604,25 @@ $addressParts = array_filter([
         var element = $('#m-content');
         $.post('<?php echo $selfUrl; ?>', { customer_id: customerId, view: 'edit' })
             .done(function(data) { element.html(data).css('opacity', '1'); });
+    }
+    function ltvCustomerMerge(customerId) {
+        var sourceId = window.prompt('Merge which customer # INTO this record?\n\nThe other record\'s aliases, revenue, conversions and subscriptions will be re-pointed here, and it will be excluded from reports.');
+        if (!sourceId || !/^\d+$/.test(sourceId.trim())) { return; }
+        var element = $('#m-content');
+        $.post('<?php echo $selfUrl; ?>', {
+            customer_id: customerId,
+            action: 'merge',
+            source_customer_id: sourceId.trim(),
+            token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
+        }).done(function(data) { element.html(data).css('opacity', '1'); });
+    }
+    function ltvCustomerErase(customerId) {
+        if (!window.confirm('Erase this customer\'s personal data?\n\nName, contact info, custom fields, aliases and personalization tokens will be deleted. Revenue totals are kept for reporting. This cannot be undone.')) { return; }
+        var element = $('#m-content');
+        $.post('<?php echo $selfUrl; ?>', {
+            customer_id: customerId,
+            action: 'erase',
+            token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
+        }).done(function(data) { element.html(data).css('opacity', '1'); });
     }
 </script>

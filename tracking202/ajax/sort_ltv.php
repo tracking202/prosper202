@@ -119,6 +119,10 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
         <a href="<?php echo get_absolute_url(); ?>tracking202/analyze/ltv_download.php" target="_blank">
             <i class="fa fa-download"></i> Download Customers
         </a>
+        &nbsp;&nbsp;
+        <a href="#" onclick="ltvSettings(); return false;">
+            <i class="fa fa-cog"></i> Settings
+        </a>
     </div>
 </div>
 <div class="row">
@@ -128,8 +132,11 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                 <tr>
                     <?php if ($by === 'abm') { ?>
                         <th>Company</th>
+                        <th>Score</th>
                         <th>Contacts</th>
                         <th>Engagements (90d)</th>
+                        <th>Avg Time</th>
+                        <th>Avg Scroll</th>
                         <th>Top Interest</th>
                         <th>Top Event</th>
                         <th>Revenue</th>
@@ -156,14 +163,20 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
             </thead>
             <tbody>
                 <?php if ($breakdown === []) { ?>
-                    <tr><td colspan="8"><em>No data for this range.</em></td></tr>
+                    <tr><td colspan="<?php echo $by === 'abm' ? 11 : ($by === 'product' ? 6 : 8); ?>"><em>No data for this range.</em></td></tr>
                 <?php } ?>
                 <?php foreach ($breakdown as $row) { ?>
                     <tr>
                         <?php if ($by === 'abm') { ?>
-                            <td><?php echo $esc($row['company'] ?? ''); ?></td>
+                            <td style="cursor: pointer;" onclick="ltvCompany(this.getAttribute('data-company'));"
+                                data-company="<?php echo $esc($row['company'] ?? ''); ?>" title="View account detail">
+                                <a href="#" onclick="return false;"><?php echo $esc($row['company'] ?? ''); ?></a>
+                            </td>
+                            <td><strong><?php echo (int) ($row['engagement_score'] ?? 0); ?></strong>/100</td>
                             <td><?php echo number_format((int) ($row['contacts'] ?? 0)); ?></td>
                             <td><?php echo number_format((int) ($row['engagements'] ?? 0)); ?></td>
+                            <td><?php echo ((float) ($row['avg_time_on_page'] ?? 0)) > 0 ? number_format((float) $row['avg_time_on_page']) . 's' : '—'; ?></td>
+                            <td><?php echo ((float) ($row['avg_scroll_depth'] ?? 0)) > 0 ? number_format((float) $row['avg_scroll_depth']) . '%' : '—'; ?></td>
                             <td><?php echo $esc($row['top_campaign_name'] ?? '') ?: '—'; ?></td>
                             <td><?php echo $esc($row['top_event_name'] ?? '') ?: '—'; ?></td>
                             <td>$<?php echo $money($row['total_revenue'] ?? 0); ?></td>
@@ -272,6 +285,23 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
             element.html(data);
             element.css('opacity', '1');
         });
+    }
+    function ltvCompany(company) {
+        var element = $('#m-content');
+        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_company.php', {
+            company: company
+        }).done(function(data) {
+            element.html(data);
+            element.css('opacity', '1');
+        });
+    }
+    function ltvSettings() {
+        var element = $('#m-content');
+        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_settings.php', {})
+            .done(function(data) {
+                element.html(data);
+                element.css('opacity', '1');
+            });
     }
     $('#ltv-by-select').on('change', function() { ltvLoad(0); });
 
