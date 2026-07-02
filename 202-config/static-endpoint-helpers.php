@@ -362,11 +362,20 @@ if (!function_exists('p202RecordConversion')) {
         // LTV: customer identity + product line items ride the same
         // transactional write (customer upsert, ledger event, line items and
         // rollup bump commit together with the conversion).
+        if (!empty($customer['customer_id'])) {
+            $data['customer_id'] = (int) $customer['customer_id'];
+        }
         if (!empty($customer['customer_ref'])) {
             $data['customer_ref'] = (string) $customer['customer_ref'];
             if (!empty($customer['customer_ref_type'])) {
                 $data['customer_ref_type'] = (string) $customer['customer_ref_type'];
             }
+        }
+        if (!empty($customer['customer_crm']) && is_array($customer['customer_crm'])) {
+            // CRM fields (name/email/company/...) are applied on customer
+            // CREATE by the writer; dropping them here would silently lose
+            // caller-supplied identity data.
+            $data['customer_crm'] = $customer['customer_crm'];
         }
         if ($items !== []) {
             $data['items'] = $items;
