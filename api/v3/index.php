@@ -209,6 +209,50 @@ try {
         $r->get('/weekpart',   fn() => $crud($cls)->weekpart($queryParams));
     });
 
+    // ── LTV: reads (ltv:read) ───────────────────────────────────────
+    $router->group('/ltv', function (Router $r) use ($crud, &$queryParams) {
+        $cls = \Api\V3\Controllers\LtvController::class;
+        $r->get('/summary',        fn() => $crud($cls)->summary($queryParams));
+        $r->get('/customers',      fn() => $crud($cls)->customers($queryParams));
+        $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail((int)$ctx['id']));
+        $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
+        $r->get('/mrr',            fn() => $crud($cls)->mrr());
+        $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
+        $r->get('/products',       fn() => $crud($cls)->products($queryParams));
+        $r->get('/fields',         fn() => $crud($cls)->fieldsList());
+        $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
+        $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
+    }, [
+        static function () use ($auth): void {
+            $auth->requireScope('ltv:read');
+        },
+    ]);
+
+    // ── LTV: CRM + inbound integration writes (ltv:write) ──────────
+    $router->group('/ltv', function (Router $r) use ($crud, &$payload) {
+        $cls = \Api\V3\Controllers\LtvController::class;
+        $r->post('/customers',                fn() => ['_status' => 201] + $crud($cls)->upsertCustomer($payload));
+        $r->patch('/customers/{id}',          fn($ctx) => $crud($cls)->patchCustomer((int)$ctx['id'], $payload));
+        $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer((int)$ctx['id'], $payload));
+        $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer((int)$ctx['id'])));
+        $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias((int)$ctx['id'], $payload));
+        $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
+        $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
+        $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent((string)$ctx['ref'], $payload));
+        $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
+        $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
+        $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField((int)$ctx['id'], $payload));
+        $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField((int)$ctx['id'])));
+        $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
+        $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook((int)$ctx['id'])));
+        $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
+        $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration((int)$ctx['id'])));
+    }, [
+        static function () use ($auth): void {
+            $auth->requireScope('ltv:write');
+        },
+    ]);
+
     // ── API capabilities ────────────────────────────────────────────
     $router->get('/capabilities', fn() => (new \Api\V3\Controllers\CapabilitiesController($db, $userId))->capabilities());
 
@@ -398,6 +442,7 @@ try {
             'clicks'        => '/clicks',
             'conversions'   => '/conversions',
             'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
+            'ltv'           => '/ltv/{summary|customers|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
             'rotators'      => '/rotators',
             'attribution'   => '/attribution/models',
             'users'         => '/users',
