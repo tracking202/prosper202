@@ -113,6 +113,17 @@ try {
         }
     }
 
+    $countStmt = $conn->prepareRead('SELECT COUNT(*) AS total FROM 202_products WHERE user_id = ?');
+    $conn->bind($countStmt, 'i', [$userId]);
+    $totalProducts = (int) ($conn->fetchOne($countStmt)['total'] ?? 0);
+
+    // Deleting the last product on the final page would leave the posted
+    // offset past the end — snap back to the last real page instead of
+    // rendering a misleading empty state.
+    if ($offset >= $totalProducts) {
+        $offset = $totalProducts > 0 ? (int) (floor(($totalProducts - 1) / $limit) * $limit) : 0;
+    }
+
     $stmt = $conn->prepareRead(
         'SELECT p.product_id, p.external_product_id, p.sku, p.name, p.price, p.currency,
                 p.created_at, p.updated_at,
@@ -132,10 +143,6 @@ try {
     );
     $conn->bind($stmt, 'iiii', [$userId, $userId, $limit, $offset]);
     $products = $conn->fetchAll($stmt);
-
-    $countStmt = $conn->prepareRead('SELECT COUNT(*) AS total FROM 202_products WHERE user_id = ?');
-    $conn->bind($countStmt, 'i', [$userId]);
-    $totalProducts = (int) ($conn->fetchOne($countStmt)['total'] ?? 0);
 } catch (\Throwable $e) {
     error_log('ltv_products: ' . $e->getMessage());
     echo '<div class="alert alert-warning">Product data is unavailable. Run the LTV migration if you have not yet.</div>';
