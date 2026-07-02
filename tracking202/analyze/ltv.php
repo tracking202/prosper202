@@ -21,7 +21,17 @@ template_top('Customer Lifetime Value'); ?>
 <?php display_calendar(get_absolute_url() . 'tracking202/ajax/sort_ltv.php', true, false, true, false, false, false); ?>
 
 <script type="text/javascript">
+<?php $deepLinkCustomerId = (int) ($_GET['customer_id'] ?? 0); ?>
+<?php if ($deepLinkCustomerId > 0) { ?>
+	// Deep link straight to a customer detail (?customer_id=N)
+	$.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
+		customer_id: <?php echo $deepLinkCustomerId; ?>
+	}).done(function(data) {
+		$('#m-content').html(data).css('opacity', '1');
+	});
+<?php } else { ?>
 	loadContent('<?php echo get_absolute_url(); ?>tracking202/ajax/sort_ltv.php', null);
+<?php } ?>
 </script>
 
 <?php template_bottom(); ?>

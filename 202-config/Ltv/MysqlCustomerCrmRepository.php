@@ -27,13 +27,15 @@ final class MysqlCustomerCrmRepository
     }
 
     /**
-     * Full customer detail: record + aliases + custom-field values + recent
-     * ledger events (with line items).
+     * Full customer detail: record + aliases + custom-field values +
+     * subscriptions + recent ledger events (with line items).
      *
+     * @param int $eventLimit How many recent revenue events to include.
      * @return array<string, mixed>|null
      */
-    public function get(int $userId, int $customerId): ?array
+    public function get(int $userId, int $customerId, int $eventLimit = 20): ?array
     {
+        $eventLimit = max(1, min(200, $eventLimit));
         $stmt = $this->conn->prepareRead(
             'SELECT customer_id, merged_into_customer_id, primary_ref, first_name, last_name, email,
                     phone, company, address_line1, address_line2, city, region, postal_code, country,
@@ -75,13 +77,24 @@ final class MysqlCustomerCrmRepository
         $customer['custom_fields'] = $customFields;
 
         $stmt = $this->conn->prepareRead(
+            'SELECT subscription_id, external_sub_id, plan_name, status, amount, currency,
+                    billing_interval, billing_interval_count, mrr,
+                    started_at, current_period_start, current_period_end, canceled_at
+             FROM 202_subscriptions
+             WHERE customer_id = ? AND user_id = ?
+             ORDER BY subscription_id DESC'
+        );
+        $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+        $customer['subscriptions'] = $this->conn->fetchAll($stmt);
+
+        $stmt = $this->conn->prepareRead(
             'SELECT event_id, event_type, amount, currency, occurred_at, source,
                     conv_id, subscription_id, click_id, external_ref, transaction_id
              FROM 202_revenue_events
              WHERE customer_id = ? AND user_id = ?
-             ORDER BY occurred_at DESC, event_id DESC LIMIT 20'
+             ORDER BY occurred_at DESC, event_id DESC LIMIT ?'
         );
-        $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+        $this->conn->bind($stmt, 'iii', [$customerId, $userId, $eventLimit]);
         $events = $this->conn->fetchAll($stmt);
 
         if ($events !== []) {

@@ -196,7 +196,8 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                         $displayName = (string) $c['company'];
                     }
                 ?>
-                    <tr>
+                    <tr style="cursor: pointer;" onclick="ltvCustomer(<?php echo (int) $c['customer_id']; ?>);"
+                        title="View customer detail">
                         <td title="<?php echo $esc($c['primary_ref'] ?? ''); ?>">
                             <?php echo $esc(mb_strimwidth((string) ($c['primary_ref'] ?? ('#' . $c['customer_id'])), 0, 40, '…')); ?>
                         </td>
@@ -230,6 +231,15 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
         $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/sort_ltv.php', {
             offset: offset,
             ltv_by: $('#ltv-by-select').val()
+        }).done(function(data) {
+            element.html(data);
+            element.css('opacity', '1');
+        });
+    }
+    function ltvCustomer(customerId) {
+        var element = $('#m-content');
+        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
+            customer_id: customerId
         }).done(function(data) {
             element.html(data);
             element.css('opacity', '1');
