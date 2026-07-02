@@ -66,7 +66,8 @@ final class MysqlPersonalizationRepository
                 continue;
             }
             if (in_array($entry, self::ALLOWED_CRM_FIELDS, true)
-                || (str_starts_with($entry, 'cf:') && strlen($entry) > 3)) {
+                || (str_starts_with($entry, 'cf:') && strlen($entry) > 3)
+                || $entry === 'rec:next_offer') {
                 $fields[] = $entry;
             }
         }
@@ -292,6 +293,19 @@ final class MysqlPersonalizationRepository
                     if ($value !== '') {
                         $payload[$column] = $value;
                     }
+                }
+            }
+        }
+
+        // Next-offer recommendation (opt-in via 'rec:next_offer'): the
+        // suggestion is computed at seal time and frozen into the snapshot
+        // like every other field — replays keep showing the same offer.
+        if (in_array('rec:next_offer', $fields, true)) {
+            $recommendation = (new MysqlRecommendationRepository($this->conn))->nextOffer($userId, $customerId);
+            if ($recommendation !== null && $recommendation['name'] !== '') {
+                $payload['next_offer_name'] = $recommendation['name'];
+                if ($recommendation['url'] !== '') {
+                    $payload['next_offer_url'] = $recommendation['url'];
                 }
             }
         }

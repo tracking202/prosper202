@@ -74,10 +74,19 @@ try {
 
     $customer = $customerId > 0 ? $crm->get($userId, $customerId, 50) : null;
     $fieldDefinitions = $customer !== null ? $fieldsRepo->list($userId) : [];
+
+    $engagement = [];
+    $nextOffer = null;
+    if ($customer !== null) {
+        $engagement = (new \Prosper202\Ltv\MysqlEngagementRepository($conn))->customerEngagement($userId, $customerId, 90);
+        $nextOffer = (new \Prosper202\Ltv\MysqlRecommendationRepository($conn))->nextOffer($userId, $customerId);
+    }
 } catch (\Throwable $e) {
     error_log('ltv_customer: ' . $e->getMessage());
     $customer = null;
     $fieldDefinitions = [];
+    $engagement = [];
+    $nextOffer = null;
 }
 ?>
 
@@ -369,6 +378,44 @@ $addressParts = array_filter([
                         <td><?php echo $esc($alias['alias_type'] ?? ''); ?></td>
                         <td><?php echo $esc(mb_strimwidth((string) ($alias['alias_value'] ?? ''), 0, 60, '…')); ?></td>
                         <td><?php echo $when($alias['created_at'] ?? 0); ?></td>
+                    </tr>
+                <?php } ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Suggested next offer + engagement -->
+<div class="row">
+    <div class="col-sm-6">
+        <h6>Suggested Next Offer</h6>
+        <?php if ($nextOffer === null) { ?>
+            <p class="text-muted"><em>Not enough conversion history yet to suggest an offer.</em></p>
+        <?php } else { ?>
+            <p>
+                <strong><?php echo $esc($nextOffer['name']); ?></strong>
+                <small>(campaign #<?php echo (int) $nextOffer['campaign_id']; ?>)</small><br>
+                <small class="text-muted">Based on what customers with similar purchases converted on next.</small>
+            </p>
+        <?php } ?>
+    </div>
+    <div class="col-sm-6">
+        <h6>Engagement <small>(last 90 days)</small></h6>
+        <table class="table table-bordered table-hover">
+            <thead>
+                <tr><th>Campaign</th><th>Landing Page</th><th>Views</th><th>Conv.</th><th>Last Seen</th></tr>
+            </thead>
+            <tbody>
+                <?php if ($engagement === []) { ?>
+                    <tr><td colspan="5"><em>No tracked browsing in this window.</em></td></tr>
+                <?php } ?>
+                <?php foreach ($engagement as $row) { ?>
+                    <tr>
+                        <td><?php echo $esc($row['campaign_name'] ?? ('#' . ($row['campaign_id'] ?? ''))); ?></td>
+                        <td><?php echo $esc($row['landing_page'] ?? '') ?: '—'; ?></td>
+                        <td><?php echo number_format((int) ($row['clicks'] ?? 0)); ?></td>
+                        <td><?php echo number_format((int) ($row['conversions'] ?? 0)); ?></td>
+                        <td><?php echo $when($row['last_seen'] ?? 0); ?></td>
                     </tr>
                 <?php } ?>
             </tbody>

@@ -269,9 +269,14 @@ var utm_campaign = t202GetVar('utm_campaign');
 		for (var i = 0; i < els.length; i++) {
 			var field = els[i].getAttribute('name').substring('t202p13n_'.length);
 			var val = payload ? payload[field] : null;
-			if (typeof val === 'string' && val !== '') {
-				els[i].textContent = val; // textContent: values can never run as HTML
+			if (typeof val !== 'string' || val === '') { continue; }
+			if (field === 'next_offer_url' && els[i].tagName === 'A') {
+				// Offer links become real hrefs — but only for http(s) URLs,
+				// so a payload value can never smuggle a javascript: scheme.
+				if (/^https?:\/\//i.test(val)) { els[i].href = val; }
+				continue;
 			}
+			els[i].textContent = val; // textContent: values can never run as HTML
 		}
 		try {
 			document.dispatchEvent(new CustomEvent('t202personalization', { detail: window.t202Personalization }));

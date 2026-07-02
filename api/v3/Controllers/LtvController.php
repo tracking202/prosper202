@@ -127,6 +127,66 @@ class LtvController
         });
     }
 
+    public function customerEngagement(int $customerId, array $params): array
+    {
+        $this->requireCustomer($customerId);
+
+        return $this->wrap(function () use ($customerId, $params): array {
+            $days = max(1, min(365, (int) ($params['days'] ?? 90)));
+            $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
+
+            return [
+                'data' => $engagement->customerEngagement($this->userId, $customerId, $days),
+                'window_days' => $days,
+            ];
+        });
+    }
+
+    public function customerNextOffer(int $customerId): array
+    {
+        $this->requireCustomer($customerId);
+
+        return $this->wrap(function () use ($customerId): array {
+            $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($this->conn);
+
+            return ['data' => $recommendations->nextOffer($this->userId, $customerId)];
+        });
+    }
+
+    public function abm(array $params): array
+    {
+        return $this->wrap(function () use ($params): array {
+            $days = max(1, min(365, (int) ($params['days'] ?? 90)));
+            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
+            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
+
+            return [
+                'data' => $engagement->abmBreakdown($this->userId, $days, $limit, $offset),
+                'window_days' => $days,
+            ];
+        });
+    }
+
+    public function abmCompany(array $params): array
+    {
+        $company = trim((string) ($params['name'] ?? ''));
+        if ($company === '') {
+            throw new ValidationException('name is required', ['name' => 'The company to drill into']);
+        }
+
+        return $this->wrap(function () use ($company, $params): array {
+            $days = max(1, min(365, (int) ($params['days'] ?? 90)));
+            $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
+
+            return [
+                'data' => $engagement->abmCompanyDetail($this->userId, $company, $days),
+                'company' => $company,
+                'window_days' => $days,
+            ];
+        });
+    }
+
     public function fieldsList(): array
     {
         return $this->wrap(function (): array {

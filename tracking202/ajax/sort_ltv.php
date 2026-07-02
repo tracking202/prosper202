@@ -22,6 +22,7 @@ $allowedDimensions = [
     'ppc_account' => 'Traffic Source',
     'landing_page' => 'Landing Page',
     'product' => 'Product',
+    'abm' => 'Company (ABM)',
 ];
 $by = isset($_POST['ltv_by']) && isset($allowedDimensions[(string) $_POST['ltv_by']])
     ? (string) $_POST['ltv_by']
@@ -37,7 +38,12 @@ try {
 
     $summary = $ltv->summary($query);
     $mrr = $ltv->mrr($userId);
-    $breakdown = $ltv->breakdown($query, $by, 25, 0);
+    if ($by === 'abm') {
+        // ABM: engagement-based account rollup over the last 90 days.
+        $breakdown = (new \Prosper202\Ltv\MysqlEngagementRepository($conn))->abmBreakdown($userId, 90, 25, 0);
+    } else {
+        $breakdown = $ltv->breakdown($query, $by, 25, 0);
+    }
     $customers = $ltv->customers($query, 'total_revenue', 'DESC', $limit, $offset);
 } catch (\Throwable $e) {
     // Most likely cause: the LTV schema has not been installed yet.
@@ -120,14 +126,24 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
         <table class="table table-bordered table-hover" id="ltv-breakdown-table">
             <thead>
                 <tr>
-                    <th><?php echo $esc($allowedDimensions[$by]); ?></th>
-                    <th>Customers</th>
-                    <?php if ($by === 'product') { ?>
+                    <?php if ($by === 'abm') { ?>
+                        <th>Company</th>
+                        <th>Contacts</th>
+                        <th>Engagements (90d)</th>
+                        <th>Top Interest</th>
+                        <th>Revenue</th>
+                        <th>MRR</th>
+                        <th>Last Activity</th>
+                    <?php } elseif ($by === 'product') { ?>
+                        <th><?php echo $esc($allowedDimensions[$by]); ?></th>
+                        <th>Customers</th>
                         <th>Orders</th>
                         <th>Units</th>
                         <th>Revenue</th>
                         <th>Revenue / Customer</th>
                     <?php } else { ?>
+                        <th><?php echo $esc($allowedDimensions[$by]); ?></th>
+                        <th>Customers</th>
                         <th>Orders</th>
                         <th>Revenue</th>
                         <th>Avg LTV</th>
@@ -143,14 +159,24 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                 <?php } ?>
                 <?php foreach ($breakdown as $row) { ?>
                     <tr>
-                        <td><?php echo $esc($row['name'] ?? ('#' . ($row['id'] ?? ''))); ?></td>
-                        <td><?php echo number_format((int) ($row['customers'] ?? 0)); ?></td>
-                        <?php if ($by === 'product') { ?>
+                        <?php if ($by === 'abm') { ?>
+                            <td><?php echo $esc($row['company'] ?? ''); ?></td>
+                            <td><?php echo number_format((int) ($row['contacts'] ?? 0)); ?></td>
+                            <td><?php echo number_format((int) ($row['engagements'] ?? 0)); ?></td>
+                            <td><?php echo $esc($row['top_campaign_name'] ?? '') ?: '—'; ?></td>
+                            <td>$<?php echo $money($row['total_revenue'] ?? 0); ?></td>
+                            <td>$<?php echo $money($row['mrr'] ?? 0); ?></td>
+                            <td data-sort="<?php echo (int) ($row['last_activity'] ?? 0); ?>"><?php echo ((int) ($row['last_activity'] ?? 0)) > 0 ? date('M j, Y', (int) $row['last_activity']) : '—'; ?></td>
+                        <?php } elseif ($by === 'product') { ?>
+                            <td><?php echo $esc($row['name'] ?? ('#' . ($row['id'] ?? ''))); ?></td>
+                            <td><?php echo number_format((int) ($row['customers'] ?? 0)); ?></td>
                             <td><?php echo number_format((int) ($row['orders'] ?? 0)); ?></td>
                             <td><?php echo number_format((float) ($row['units'] ?? 0), 1); ?></td>
                             <td>$<?php echo $money($row['total_revenue'] ?? 0); ?></td>
                             <td>$<?php echo $money($row['avg_revenue_per_customer'] ?? 0); ?></td>
                         <?php } else { ?>
+                            <td><?php echo $esc($row['name'] ?? ('#' . ($row['id'] ?? ''))); ?></td>
+                            <td><?php echo number_format((int) ($row['customers'] ?? 0)); ?></td>
                             <td><?php echo number_format((int) ($row['total_orders'] ?? 0)); ?></td>
                             <td>$<?php echo $money($row['total_revenue'] ?? 0); ?></td>
                             <td>$<?php echo $money($row['avg_ltv'] ?? 0); ?></td>

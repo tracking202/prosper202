@@ -257,13 +257,33 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
                 ? (int) $_COOKIE['tracking202subid']
                 : 0;
 
+            // Engagement (ABM): whenever the visitor resolves to a known
+            // customer — through any explicit signal — stamp this pageview's
+            // click so browsing behavior becomes per-customer queryable, and
+            // touch the customer's activity recency. Stamping is independent
+            // of whether a new token gets minted below.
+            $engagementCustomerId = $repo->resolveVisitorCustomer($userId, $get, $cookieClickId, true);
+            if ($engagementCustomerId !== null && $clickId > 0) {
+                $customers = new \Prosper202\Ltv\MysqlCustomerRepository($conn);
+                $customers->stampClickCustomer($clickId, $engagementCustomerId);
+                $touch = $conn->prepareWrite(
+                    'UPDATE 202_customers SET last_activity_time = GREATEST(last_activity_time, ?), updated_at = ?
+                     WHERE customer_id = ? AND user_id = ?'
+                );
+                $now = time();
+                $conn->bind($touch, 'iiii', [$now, $now, $engagementCustomerId, $userId]);
+                $conn->executeUpdate($touch);
+            }
+
             // The LP tells us via the beacon whether it already holds a token
             // (its cookie lives on the LP domain, invisible to this request).
             // If it does, only a fresh EXPLICIT identity signal justifies
             // re-minting — repeat pageviews within a visit reuse one token.
             $pageHasToken = isset($get['p13n_have']) && (string) $get['p13n_have'] === '1';
 
-            $customerId = $repo->resolveVisitorCustomer($userId, $get, $cookieClickId, !$pageHasToken);
+            $customerId = $pageHasToken
+                ? $repo->resolveVisitorCustomer($userId, $get, $cookieClickId, false)
+                : $engagementCustomerId;
             if ($customerId === null) {
                 return '';
             }

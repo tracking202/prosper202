@@ -3688,10 +3688,26 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.66', '>')) {
+        if ($prosper202_version == '1.9.66') {
 
-            $prosper202_version = '1.9.66';
+            // Next-offer recommendations: transition-count table, rebuilt from
+            // the revenue ledger by ltv_maintenance. Idempotent create.
+            $transitions_definition = \Prosper202\Database\Tables\LtvTables::offerTransitions();
+            if (_upgrade_query($transitions_definition->createStatement) !== false) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.67'") !== false) {
+                    $prosper202_version = '1.9.67';
+                } else {
+                    error_log('Prosper202 upgrade: created 202_offer_transitions but failed to persist version 1.9.67; leaving version at 1.9.66 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to create 202_offer_transitions; leaving version at 1.9.66 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.67', '>')) {
+
+            $prosper202_version = '1.9.67';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

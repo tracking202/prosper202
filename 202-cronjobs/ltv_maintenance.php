@@ -151,7 +151,25 @@ try {
     echo "rollup reconcile: {$reconciled} customer rows corrected"
         . ($fullSweep ? ' (full sweep)' : ' (48h dirty window)') . "\n";
 
-    // ---------- 3. Personalization token purge ----------
+    // ---------- 3. Offer-transition rebuild (next-offer recommendations) ----------
+    // Rebuild "converted on A -> later converted on B" counts per account
+    // from the revenue ledger. Small result set (campaigns x campaigns), so a
+    // full per-user rebuild each run keeps it simple and drift-free.
+    $usersResult = $run(
+        "SELECT DISTINCT user_id FROM 202_revenue_events
+         WHERE source IN ('conversion','import')"
+    );
+    $transitionRows = 0;
+    if ($usersResult instanceof mysqli_result) {
+        $conn = new \Prosper202\Database\Connection($db);
+        $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($conn);
+        while ($userRow = $usersResult->fetch_assoc()) {
+            $transitionRows += $recommendations->rebuildTransitions((int) $userRow['user_id'], $now);
+        }
+    }
+    echo "offer transitions: {$transitionRows} pairs rebuilt\n";
+
+    // ---------- 4. Personalization token purge ----------
     // Tokens past their replay window are dead weight holding sealed PII
     // snapshots; remove them.
     $stmt = $db->prepare('DELETE FROM 202_personalization_tokens WHERE replay_until < ?');

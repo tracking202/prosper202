@@ -38,7 +38,32 @@ final class LtvTables
             self::ltvWebhooks(),
             self::ltvWebhookDeliveries(),
             self::personalizationTokens(),
+            self::offerTransitions(),
         ];
+    }
+
+    /**
+     * Account-scoped offer-transition counts ("customers who converted on A
+     * later converted on B"), rebuilt from the revenue ledger by the
+     * ltv_maintenance cronjob. Drives the deterministic next-offer
+     * recommendation.
+     */
+    public static function offerTransitions(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::OFFER_TRANSITIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::OFFER_TRANSITIONS . "` (
+                `transition_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `from_campaign_id` mediumint(8) unsigned NOT NULL,
+                `to_campaign_id` mediumint(8) unsigned NOT NULL,
+                `transition_count` int(10) unsigned NOT NULL DEFAULT '0',
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`transition_id`),
+                UNIQUE KEY `uniq_transition` (`user_id`,`from_campaign_id`,`to_campaign_id`),
+                KEY `from_lookup` (`user_id`,`from_campaign_id`,`transition_count`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
     }
 
     /**

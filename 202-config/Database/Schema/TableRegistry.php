@@ -109,6 +109,7 @@ final class TableRegistry
     public const string LTV_WEBHOOKS = '202_ltv_webhooks';
     public const string LTV_WEBHOOK_DELIVERIES = '202_ltv_webhook_deliveries';
     public const string PERSONALIZATION_TOKENS = '202_personalization_tokens';
+    public const string OFFER_TRANSITIONS = '202_offer_transitions';
 
     // Rotator tables
     public const string ROTATORS = '202_rotators';

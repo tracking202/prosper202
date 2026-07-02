@@ -215,6 +215,10 @@ try {
         $r->get('/summary',        fn() => $crud($cls)->summary($queryParams));
         $r->get('/customers',      fn() => $crud($cls)->customers($queryParams));
         $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail((int)$ctx['id']));
+        $r->get('/customers/{id}/engagement', fn($ctx) => $crud($cls)->customerEngagement((int)$ctx['id'], $queryParams));
+        $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer((int)$ctx['id']));
+        $r->get('/abm',            fn() => $crud($cls)->abm($queryParams));
+        $r->get('/abm/company',    fn() => $crud($cls)->abmCompany($queryParams));
         $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
         $r->get('/mrr',            fn() => $crud($cls)->mrr());
         $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
