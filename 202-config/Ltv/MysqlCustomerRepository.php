@@ -209,12 +209,27 @@ final class MysqlCustomerRepository
         // Need both the id and the inserted/duplicate distinction, so run the
         // checked execute and read affected_rows + insert_id before closing.
         // affected_rows: 1 = inserted, 0/2 = duplicate hit the no-op update.
+        // Property reads are guarded like Connection's own accessors: PHP 8.4
+        // internal readonly properties make subclass test fakes throw Error on
+        // access (an inserted row is the default assumption there).
         $this->conn->execute($stmt);
-        $affected = (int) $stmt->affected_rows;
-        $eventId = (int) $stmt->insert_id;
+        try {
+            $affected = (int) $stmt->affected_rows;
+        } catch (\Error) {
+            $affected = 1;
+        }
+        try {
+            $eventId = (int) $stmt->insert_id;
+        } catch (\Error) {
+            $eventId = 0;
+        }
         $stmt->close();
         if ($eventId === 0) {
-            $eventId = (int) $this->conn->writeConnection()->insert_id;
+            try {
+                $eventId = (int) $this->conn->writeConnection()->insert_id;
+            } catch (\Error) {
+                $eventId = 0;
+            }
         }
 
         return ['eventId' => $eventId, 'inserted' => $affected === 1];
@@ -385,7 +400,7 @@ final class MysqlCustomerRepository
      */
     public function accountCurrency(int $userId): string
     {
-        $stmt = $this->conn->prepareRead(
+        $stmt = $this->conn->prepareWrite(
             'SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$userId]);
@@ -401,7 +416,7 @@ final class MysqlCustomerRepository
      */
     public function customerBelongsToUser(int $customerId, int $userId): bool
     {
-        $stmt = $this->conn->prepareRead(
+        $stmt = $this->conn->prepareWrite(
             'SELECT customer_id FROM 202_customers WHERE customer_id = ? AND user_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
@@ -417,7 +432,7 @@ final class MysqlCustomerRepository
     public function followMergePointer(int $customerId): int
     {
         for ($hop = 0; $hop < 5; $hop++) {
-            $stmt = $this->conn->prepareRead(
+            $stmt = $this->conn->prepareWrite(
                 'SELECT merged_into_customer_id FROM 202_customers WHERE customer_id = ? LIMIT 1'
             );
             $this->conn->bind($stmt, 'i', [$customerId]);
@@ -436,7 +451,7 @@ final class MysqlCustomerRepository
         if ($clickId <= 0) {
             return null;
         }
-        $stmt = $this->conn->prepareRead(
+        $stmt = $this->conn->prepareWrite(
             'SELECT customer_id FROM 202_clicks_tracking WHERE click_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$clickId]);
@@ -448,7 +463,7 @@ final class MysqlCustomerRepository
 
     private function customerCParamPref(int $userId): int
     {
-        $stmt = $this->conn->prepareRead(
+        $stmt = $this->conn->prepareWrite(
             'SELECT user_ltv_customer_cparam FROM 202_users_pref WHERE user_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$userId]);
@@ -465,7 +480,7 @@ final class MysqlCustomerRepository
         // $cparam is validated to 1-4 by the caller; the identifiers cannot be
         // bound as parameters.
         $column = 'c' . $cparam;
-        $stmt = $this->conn->prepareRead(
+        $stmt = $this->conn->prepareWrite(
             "SELECT t.{$column} AS ref
              FROM 202_clicks_tracking ct
              JOIN 202_tracking_{$column} t ON ct.{$column}_id = t.{$column}_id

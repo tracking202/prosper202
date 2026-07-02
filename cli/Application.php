@@ -42,6 +42,13 @@ class Application extends ConsoleApplication
         $this->add(new Commands\ReportDaypartCommand());
         $this->add(new Commands\ReportWeekpartCommand());
 
+        // --- LTV ---
+        $this->add(new Commands\LtvSummaryCommand());
+        $this->add(new Commands\LtvCustomersCommand());
+        $this->add(new Commands\LtvBreakdownCommand());
+        $this->add(new Commands\LtvMrrCommand());
+        $this->add(new Commands\LtvPredictCommand());
+
         // --- Rotators ---
         $this->add(new Commands\RotatorListCommand());
         $this->add(new Commands\RotatorGetCommand());
