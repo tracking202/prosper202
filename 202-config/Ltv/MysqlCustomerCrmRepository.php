@@ -264,6 +264,14 @@ final class MysqlCustomerCrmRepository
             $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
             $this->conn->executeUpdate($stmt);
 
+            // Personalization tokens hold sealed PII snapshots — erasure must
+            // reach them too.
+            $stmt = $this->conn->prepareWrite(
+                'DELETE FROM 202_personalization_tokens WHERE customer_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+            $this->conn->executeUpdate($stmt);
+
             $stmt = $this->conn->prepareWrite(
                 'DELETE FROM 202_customer_field_values WHERE customer_id = ? AND user_id = ?'
             );

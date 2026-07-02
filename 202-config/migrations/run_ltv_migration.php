@@ -142,6 +142,16 @@ try {
         echo "  202_users_pref.user_ltv_customer_cparam already exists — skipping\n";
     }
 
+    if (!ltv_column_exists($db, '202_users_pref', 'user_ltv_personalization_fields')) {
+        ltv_run(
+            $db,
+            "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_personalization_fields` varchar(500) NOT NULL DEFAULT ''",
+            'add 202_users_pref.user_ltv_personalization_fields'
+        );
+    } else {
+        echo "  202_users_pref.user_ltv_personalization_fields already exists — skipping\n";
+    }
+
     // --- 3. Verify ---
     echo "\nVerifying...\n";
     $allOk = true;
@@ -158,6 +168,7 @@ try {
         ['202_conversion_logs', 'customer_id'],
         ['202_clicks_tracking', 'customer_id'],
         ['202_users_pref', 'user_ltv_customer_cparam'],
+        ['202_users_pref', 'user_ltv_personalization_fields'],
     ] as [$table, $column]) {
         if (ltv_column_exists($db, $table, $column)) {
             echo "  ✓ {$table}.{$column}\n";

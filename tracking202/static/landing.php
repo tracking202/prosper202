@@ -199,7 +199,11 @@ var utm_campaign = t202GetVar('utm_campaign');
 		"utm_campaign=" + t202Enc(utm_campaign),
 		"referer=" + t202Enc(referer),
 		"resolution=" + t202Enc(resolution),
-		"language=" + t202Enc(language)
+		"language=" + t202Enc(language),
+		// Personalization: tell the tracker whether this page already holds a
+		// token cookie, so repeat pageviews within a visit reuse it instead of
+		// minting a fresh one each time.
+		"p13n_have=" + (readCookie('tracking202p13n') ? '1' : '0')
 	];
 	for (var i = 0; i < customVarNames.length; i++) {
 		parts.push(customVarNames[i] + "=" + t202Enc(customVarValues[i]));
@@ -237,6 +241,69 @@ var utm_campaign = t202GetVar('utm_campaign');
 		var val = t202DataObj[name];
 		el.textContent = (val !== undefined && val !== null && val !== '') ? val : (el.getAttribute('t202Default') || '');
 	}
+})();
+
+// --- Customer personalization (privacy-preserving, graceful by design) ---
+// Elements opt in with name="t202p13n_<field>" (e.g. t202p13n_first_name) and
+// an optional t202Default attribute. Defaults render IMMEDIATELY; if the
+// visitor carries a valid personalization token cookie (minted server-side at
+// redirect for known customers only), the matching fields are overwritten
+// once the payload arrives. Any failure — no cookie, expired token, network
+// error, timeout — simply leaves the default copy in place. textContent only,
+// never HTML.
+(function() {
+	window.t202Personalization = {};
+
+	var els = document.querySelectorAll('[name^="t202p13n_"]');
+	if (els.length === 0) { return; }
+
+	// 1. Defaults first: the page is always complete, personalized or not.
+	for (var i = 0; i < els.length; i++) {
+		if (!els[i].textContent) {
+			els[i].textContent = els[i].getAttribute('t202Default') || '';
+		}
+	}
+
+	function applyPayload(payload) {
+		window.t202Personalization = payload || {};
+		for (var i = 0; i < els.length; i++) {
+			var field = els[i].getAttribute('name').substring('t202p13n_'.length);
+			var val = payload ? payload[field] : null;
+			if (typeof val === 'string' && val !== '') {
+				els[i].textContent = val; // textContent: values can never run as HTML
+			}
+		}
+		try {
+			document.dispatchEvent(new CustomEvent('t202personalization', { detail: window.t202Personalization }));
+		} catch (e) { /* older browsers: the data object is still available */ }
+	}
+
+	function redeem(token) {
+		try {
+			var xhr = new XMLHttpRequest();
+			xhr.open('POST', "<?php echo $baseUrl; ?>tracking202/static/p13n.php", true);
+			xhr.timeout = 3000;
+			xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+			xhr.onload = function() {
+				if (xhr.status !== 200) { return; }
+				try {
+					var payload = JSON.parse(xhr.responseText);
+					if (payload && typeof payload === 'object') { applyPayload(payload); }
+				} catch (e) { /* malformed response: defaults stay */ }
+			};
+			xhr.send('token=' + t202Enc(token));
+		} catch (e) { /* personalization is best-effort; defaults stay */ }
+	}
+
+	// On the very first pageview the token cookie arrives asynchronously via
+	// the record.php beacon response, so poll briefly before giving up. The
+	// defaults are already rendered — a late token only upgrades the copy.
+	var attempts = 0;
+	(function waitForToken() {
+		var token = readCookie('tracking202p13n');
+		if (token) { redeem(token); return; }
+		if (++attempts < 8) { setTimeout(waitForToken, 400); }
+	})();
 })();
 
 })();

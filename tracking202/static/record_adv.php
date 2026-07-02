@@ -6,6 +6,7 @@ header("Expires: -1");
 
 include_once(substr(__DIR__, 0, -19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
+include_once(substr(__DIR__, 0, -19) . '/202-config/static-endpoint-helpers.php');
 
 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
@@ -431,6 +432,8 @@ createCookie('tracking202subid',subid,0);
 
 var pci = <?php echo json_encode((string) $click_id_public); ?>;
 createCookie('tracking202pci',pci,0);
+
+<?php echo p202MintPersonalizationCookieJs($db, (int) ($tracker_row['user_id'] ?? 0), $_GET, (int) $click_id); ?>
 
 }
 

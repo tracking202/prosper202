@@ -37,7 +37,39 @@ final class LtvTables
             self::ltvIntegrations(),
             self::ltvWebhooks(),
             self::ltvWebhookDeliveries(),
+            self::personalizationTokens(),
         ];
+    }
+
+    /**
+     * Landing-page personalization tokens: random bearer capabilities minted
+     * at redirect time for cookie-verified customers. The raw token is never
+     * stored — only its SHA-256. On first redemption the response payload is
+     * sealed into `snapshot`; replays return the snapshot verbatim until
+     * replay_until, so a leaked token can never reveal anything beyond what
+     * the visitor already saw.
+     */
+    public static function personalizationTokens(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::PERSONALIZATION_TOKENS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::PERSONALIZATION_TOKENS . "` (
+                `p13n_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `token_hash` binary(32) NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `customer_id` bigint(20) unsigned NOT NULL,
+                `click_id` bigint(20) unsigned DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `first_use_deadline` int(10) unsigned NOT NULL,
+                `replay_until` int(10) unsigned NOT NULL,
+                `redeemed_at` int(10) unsigned DEFAULT NULL,
+                `snapshot` text DEFAULT NULL,
+                PRIMARY KEY (`p13n_id`),
+                UNIQUE KEY `uniq_token_hash` (`token_hash`),
+                KEY `customer_lookup` (`customer_id`),
+                KEY `purge_sweep` (`replay_until`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
     }
 
     /**

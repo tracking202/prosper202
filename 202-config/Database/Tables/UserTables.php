@@ -133,6 +133,7 @@ final class UserTables
                 `user_pref_ad_settings` varchar(11) NOT NULL DEFAULT 'show_all',
                 `ipqs_api_key` varchar(250) DEFAULT NULL,
                 `user_ltv_customer_cparam` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `user_ltv_personalization_fields` varchar(500) NOT NULL DEFAULT '',
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

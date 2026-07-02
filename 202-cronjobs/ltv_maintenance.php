@@ -150,6 +150,22 @@ try {
 
     echo "rollup reconcile: {$reconciled} customer rows corrected"
         . ($fullSweep ? ' (full sweep)' : ' (48h dirty window)') . "\n";
+
+    // ---------- 3. Personalization token purge ----------
+    // Tokens past their replay window are dead weight holding sealed PII
+    // snapshots; remove them.
+    $stmt = $db->prepare('DELETE FROM 202_personalization_tokens WHERE replay_until < ?');
+    if ($stmt === false) {
+        throw new RuntimeException('prepare failed: ' . $db->error);
+    }
+    $stmt->bind_param('i', $now);
+    if (!$stmt->execute()) {
+        $stmt->close();
+        throw new RuntimeException('personalization purge failed: ' . $db->error);
+    }
+    $purged = $stmt->affected_rows;
+    $stmt->close();
+    echo "personalization purge: {$purged} expired tokens removed\n";
 } catch (Throwable $e) {
     fwrite(STDERR, 'ltv_maintenance failed: ' . $e->getMessage() . "\n");
     error_log('ltv_maintenance failed: ' . $e->getMessage());

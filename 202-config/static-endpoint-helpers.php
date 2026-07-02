@@ -226,6 +226,60 @@ if (!function_exists('p202ExtractItems')) {
     }
 }
 
+if (!function_exists('p202MintPersonalizationCookieJs')) {
+    /**
+     * LTV landing-page personalization: mint a token for a visitor who
+     * resolves to a known customer through an EXPLICIT signal (cust/c-param
+     * alias from the beacon params, or a prior click already stamped with a
+     * customer — never IP guessing) and return the JS statement that stores
+     * it as a FIRST-PARTY cookie on the landing page's own domain (the same
+     * createCookie() delivery record_simple/record_adv already use for the
+     * subid — the tracker and the LP are usually different domains, so a
+     * Set-Cookie header here would be invisible to the LP's JS).
+     *
+     * Returns '' when personalization is disabled, the visitor is unknown,
+     * or anything fails — the beacon response must never break.
+     *
+     * @param array<string,mixed> $get The beacon's $_GET (carries c1-c4/cust).
+     */
+    function p202MintPersonalizationCookieJs(mysqli $db, int $userId, array $get, int $clickId): string
+    {
+        try {
+            $conn = new \Prosper202\Database\Connection($db);
+            $repo = new \Prosper202\Ltv\MysqlPersonalizationRepository($conn);
+            if ($repo->allowedFields($userId) === []) {
+                return '';
+            }
+
+            // The beacon request hits the tracking domain, so the request
+            // cookies are the tracker's own: the prior click's subid.
+            $cookieClickId = isset($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])
+                ? (int) $_COOKIE['tracking202subid']
+                : 0;
+
+            // The LP tells us via the beacon whether it already holds a token
+            // (its cookie lives on the LP domain, invisible to this request).
+            // If it does, only a fresh EXPLICIT identity signal justifies
+            // re-minting — repeat pageviews within a visit reuse one token.
+            $pageHasToken = isset($get['p13n_have']) && (string) $get['p13n_have'] === '1';
+
+            $customerId = $repo->resolveVisitorCustomer($userId, $get, $cookieClickId, !$pageHasToken);
+            if ($customerId === null) {
+                return '';
+            }
+
+            $token = $repo->mint($userId, $customerId, $clickId, time());
+
+            // 30-day LP-domain cookie; token is base64url so json_encode
+            // yields a clean JS string literal.
+            return 'createCookie(\'tracking202p13n\',' . json_encode($token) . ',30);';
+        } catch (\Throwable $e) {
+            error_log('p202MintPersonalizationCookieJs failed: ' . $e->getMessage());
+            return '';
+        }
+    }
+}
+
 if (!function_exists('p202RecordConversion')) {
     /**
      * Record a conversion atomically and idempotently for the legacy static

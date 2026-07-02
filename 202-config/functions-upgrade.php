@@ -3655,10 +3655,43 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.65', '>')) {
+        if ($prosper202_version == '1.9.65') {
 
-            $prosper202_version = '1.9.65';
+            // Landing-page personalization: token table (DDL shared with the
+            // fresh installer via LtvTables) + per-user field-allowlist pref.
+            // Idempotent, same retry semantics as the 1.9.64 LTV block.
+            $p13n_ok = true;
+
+            $p13n_definition = \Prosper202\Database\Tables\LtvTables::personalizationTokens();
+            if (_upgrade_query($p13n_definition->createStatement) === false) {
+                $p13n_ok = false;
+                error_log('Prosper202 upgrade: failed to create ' . $p13n_definition->tableName);
+            }
+
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'user_ltv_personalization_fields'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            if (!$exists && _upgrade_query(
+                "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_personalization_fields` varchar(500) NOT NULL DEFAULT ''"
+            ) === false) {
+                $p13n_ok = false;
+                error_log('Prosper202 upgrade: failed to add 202_users_pref.user_ltv_personalization_fields');
+            }
+
+            if ($p13n_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.66'") !== false) {
+                    $prosper202_version = '1.9.66';
+                } else {
+                    error_log('Prosper202 upgrade: personalization schema created but failed to persist version 1.9.66; leaving version at 1.9.65 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: personalization schema incomplete; leaving version at 1.9.65 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.66', '>')) {
+
+            $prosper202_version = '1.9.66';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }
