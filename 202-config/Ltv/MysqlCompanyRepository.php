@@ -113,9 +113,11 @@ final class MysqlCompanyRepository
 
     /**
      * Strict create for the API surface: an existing company with the same
-     * normalized name is a CONFLICT, never a silent mutation, and the whole
-     * operation (row + optional domain) is one transaction — a rejected
-     * domain must not leave the company row behind.
+     * normalized name is a CompanyConflictException, never a silent mutation.
+     * A single plain INSERT (no ODKU) carries the validated domain, so the
+     * unique key — not a racy pre-check — is what enforces the contract:
+     * a concurrent duplicate surfaces as a conflict, and a rejected domain
+     * can never leave a company row behind.
      */
     public function create(int $userId, string $name, ?string $domain = null): int
     {
@@ -123,9 +125,11 @@ final class MysqlCompanyRepository
         if ($name === '') {
             throw new RuntimeException('Company name must not be empty');
         }
+        // Friendly fast-path message with the existing id; the unique key
+        // below still catches the race this check cannot.
         $existing = $this->findByName($userId, $name);
         if ($existing !== null) {
-            throw new RuntimeException(
+            throw new CompanyConflictException(
                 'Company "' . $name . '" already exists (#' . (int) $existing['company_id']
                 . '); use PATCH /ltv/companies/' . (int) $existing['company_id'] . ' to modify it'
             );
@@ -142,18 +146,93 @@ final class MysqlCompanyRepository
             }
         }
 
-        return $this->conn->transaction(function () use ($userId, $name, $normalizedDomain): int {
-            $companyId = $this->resolveOrCreate($userId, $name);
-            if ($normalizedDomain !== null && $companyId > 0) {
-                $stmt = $this->conn->prepareWrite(
-                    'UPDATE 202_companies SET domain = ?, updated_at = ? WHERE company_id = ? AND user_id = ?'
-                );
-                $this->conn->bind($stmt, 'siii', [$normalizedDomain, time(), $companyId, $userId]);
-                $this->conn->executeUpdate($stmt);
-            }
+        $now = time();
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_companies (user_id, name, normalized_name, domain, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        $this->conn->bind($stmt, 'isssii', [
+            $userId,
+            $name,
+            self::normalizeName($name),
+            $normalizedDomain,
+            $now,
+            $now,
+        ]);
 
-            return $companyId;
-        });
+        try {
+            return $this->conn->executeInsert($stmt);
+        } catch (RuntimeException $e) {
+            $message = $e->getMessage();
+            if (str_contains($message, 'Duplicate entry') || str_contains($message, '[errno 1062]')) {
+                throw new CompanyConflictException(
+                    'Company "' . $name . '" already exists; use PATCH to modify it'
+                );
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Attach one customer to its company — THE single implementation shared
+     * by CRM saves and ingest-time creation, so the two paths cannot drift:
+     *  - a non-empty name resolves/creates the entity and stamps company_id
+     *    plus the ENTITY's stored name (not the caller's raw string), keeping
+     *    string-grouped reports and entity views equal;
+     *  - otherwise an email's domain auto-attaches ONLY a strictly-NULL
+     *    company (never attached, never explicitly detached).
+     * Failure policy (swallow vs propagate) belongs to the caller.
+     */
+    public function attachCustomer(int $userId, int $customerId, string $companyName, string $email, int $now): void
+    {
+        $companyName = self::canonicalName($companyName);
+
+        if ($companyName !== '') {
+            $entity = $this->findByName($userId, $companyName);
+            if ($entity === null) {
+                $companyId = $this->resolveOrCreate($userId, $companyName, $now);
+                $entityName = $companyName;
+            } else {
+                $companyId = (int) $entity['company_id'];
+                $entityName = (string) $entity['name'];
+            }
+            if ($companyId <= 0) {
+                return;
+            }
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
+                 WHERE customer_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'isiii', [$companyId, $entityName, $now, $customerId, $userId]);
+            $this->conn->executeUpdate($stmt);
+            return;
+        }
+
+        $email = trim($email);
+        if ($email === '') {
+            return;
+        }
+        $domain = self::domainFromEmail($email);
+        if ($domain === null) {
+            return;
+        }
+        $company = $this->findByDomain($userId, $domain);
+        if ($company === null) {
+            return;
+        }
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
+             WHERE customer_id = ? AND user_id = ? AND company_id IS NULL
+               AND company IS NULL'
+        );
+        $this->conn->bind($stmt, 'isiii', [
+            (int) $company['company_id'],
+            (string) $company['name'],
+            $now,
+            $customerId,
+            $userId,
+        ]);
+        $this->conn->executeUpdate($stmt);
     }
 
     /**
@@ -419,16 +498,27 @@ final class MysqlCompanyRepository
             );
         }
 
+        // Unstamped legacy rows may hold UNCANONICAL strings (pre-fix
+        // writers only trimmed), so exact SQL equality would miss them —
+        // compare the normalized forms in PHP over the distinct strings.
         $strayStmt = $this->conn->prepareWrite(
-            'SELECT COUNT(*) AS c FROM 202_customers
-             WHERE user_id = ? AND company_id IS NULL AND company = ?
-               AND merged_into_customer_id IS NULL'
+            "SELECT company, COUNT(*) AS c FROM 202_customers
+             WHERE user_id = ? AND company_id IS NULL
+               AND company IS NOT NULL AND company <> ''
+               AND merged_into_customer_id IS NULL
+             GROUP BY company"
         );
-        $this->conn->bind($strayStmt, 'is', [$userId, (string) $company['name']]);
-        $stray = $this->conn->fetchOne($strayStmt);
-        if (((int) ($stray['c'] ?? 0)) > 0) {
+        $this->conn->bind($strayStmt, 'i', [$userId]);
+        $targetNormalized = self::normalizeName((string) $company['name']);
+        $strayCount = 0;
+        foreach ($this->conn->fetchAll($strayStmt) as $strayRow) {
+            if (self::normalizeName((string) $strayRow['company']) === $targetNormalized) {
+                $strayCount += (int) $strayRow['c'];
+            }
+        }
+        if ($strayCount > 0) {
             throw new RuntimeException(
-                'Company has ' . (int) $stray['c'] . ' customer(s) pending entity linking;'
+                'Company has ' . $strayCount . ' customer(s) pending entity linking;'
                 . ' run the maintenance cron (202-cronjobs/ltv_maintenance.php) and retry'
             );
         }
@@ -462,23 +552,62 @@ final class MysqlCompanyRepository
         $pending = $this->conn->fetchAll($stmt);
 
         $linked = 0;
+        $entities = [];
         foreach ($pending as $row) {
             $canonical = self::canonicalName((string) $row['company']);
             if ($canonical === '') {
                 continue; // whitespace-only string — nothing to link
             }
-            $companyId = $this->resolveOrCreate($userId, $canonical);
-            if ($companyId <= 0) {
+            // Resolve once per distinct name; stamp the ENTITY's stored name
+            // so case/truncation variants of one company converge on a single
+            // string for the string-grouped reports.
+            $normalized = self::normalizeName($canonical);
+            if (!isset($entities[$normalized])) {
+                $entity = $this->findByName($userId, $canonical);
+                if ($entity === null) {
+                    $entities[$normalized] = ['id' => $this->resolveOrCreate($userId, $canonical), 'name' => $canonical];
+                } else {
+                    $entities[$normalized] = ['id' => (int) $entity['company_id'], 'name' => (string) $entity['name']];
+                }
+            }
+            if ($entities[$normalized]['id'] <= 0) {
                 continue;
             }
             $update = $this->conn->prepareWrite(
                 'UPDATE 202_customers SET company_id = ?, company = ?
                  WHERE customer_id = ? AND user_id = ? AND company_id IS NULL'
             );
-            $this->conn->bind($update, 'isii', [$companyId, $canonical, (int) $row['customer_id'], $userId]);
+            $this->conn->bind($update, 'isii', [
+                $entities[$normalized]['id'],
+                $entities[$normalized]['name'],
+                (int) $row['customer_id'],
+                $userId,
+            ]);
             $linked += $this->conn->executeUpdate($update);
         }
 
         return $linked;
+    }
+
+    /**
+     * Converge attached customers' legacy company strings onto their entity's
+     * stored name — repairs rows stamped before string canonicalization
+     * existed and any drift a partial write left behind (including a NULL
+     * string next to a set company_id). One set-based statement, safe to run
+     * every maintenance pass.
+     *
+     * @return int rows corrected
+     */
+    public function reconcileAttachedStrings(): int
+    {
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_customers c
+             JOIN 202_companies co ON co.company_id = c.company_id AND co.user_id = c.user_id
+             SET c.company = co.name, c.updated_at = ?
+             WHERE c.company IS NULL OR c.company <> co.name'
+        );
+        $this->conn->bind($stmt, 'i', [time()]);
+
+        return $this->conn->executeUpdate($stmt);
     }
 }

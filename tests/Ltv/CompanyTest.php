@@ -256,9 +256,21 @@ final class CompanyTest extends TestCase
 
         $crm->upsert(7, ['customer_id' => 501, 'company' => '']);
 
-        $detaches = $write->statementsContaining("SET company_id = NULL, company = ''");
-        self::assertCount(1, $detaches, "explicit detach must record the '' marker, not plain NULL");
+        // The IF writes the '' marker only on a TRUE detach (company_id was
+        // set); a never-attached customer keeps NULL and stays eligible for
+        // domain auto-attach, and an existing marker is preserved.
+        $detaches = $write->statementsContaining("SET company = IF(company_id IS NULL, company, '')");
+        self::assertCount(1, $detaches, 'detach must be marker-guarded, not unconditional');
         self::assertContains(501, $detaches[0]->boundValues);
+        self::assertStringContainsString('company_id = NULL', $detaches[0]->sql);
+
+        // applyCrmFields must not touch the company column — it would
+        // clobber the marker on every save carrying an empty company field.
+        foreach ($write->statementsContaining('UPDATE 202_customers SET') as $update) {
+            if (str_contains($update->sql, 'first_name')) {
+                self::assertStringNotContainsString('company = ?', $update->sql);
+            }
+        }
     }
 
     public function testCrmUpsertDoesNotAttachWhenNoDomainMatches(): void
@@ -278,18 +290,104 @@ final class CompanyTest extends TestCase
         self::assertCount(0, $write->statementsContaining("company IS NULL OR company = ''"));
     }
 
+    public function testStrictCreateIsSingleInsertAndConflictsAreTyped(): void
+    {
+        $write = new FakeMysqliConnection();
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $repo->create(7, 'Acme Corp', 'ACME.com');
+
+        $inserts = $write->statementsContaining('INSERT INTO 202_companies');
+        self::assertCount(1, $inserts, 'strict create is one plain INSERT — the unique key arbitrates races');
+        self::assertStringNotContainsString('ON DUPLICATE KEY', $inserts[0]->sql, 'ODKU would silently adopt a concurrent row');
+        self::assertSame('isssii', $inserts[0]->boundTypes);
+        self::assertContains('acme.com', $inserts[0]->boundValues, 'domain rides the same INSERT — no second statement');
+        self::assertCount(0, $write->statementsContaining('UPDATE 202_companies SET domain'));
+
+        // Existing name → typed conflict, no INSERT attempted.
+        $write2 = new FakeMysqliConnection();
+        $write2->whenQueryContainsReturnRows('normalized_name = ? LIMIT 1', [
+            ['company_id' => 9, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
+        ]);
+        $repo2 = new MysqlCompanyRepository(new Connection($write2, new FakeMysqliConnection()));
+        try {
+            $repo2->create(7, 'ACME  Corp');
+            self::fail('existing name must conflict');
+        } catch (\Prosper202\Ltv\CompanyConflictException) {
+            $this->addToAssertionCount(1);
+        }
+        self::assertCount(0, $write2->statementsContaining('INSERT INTO 202_companies'));
+    }
+
+    public function testAttachCustomerStampsEntityNameNotCallerString(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('normalized_name = ? LIMIT 1', [
+            ['company_id' => 4, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
+        ]);
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        // Caller string differs in case; the stamp must use the entity's
+        // stored name so string-grouped reports converge on one bucket.
+        $repo->attachCustomer(7, 501, 'ACME CORP', '', 1700000000);
+
+        self::assertCount(0, $write->statementsContaining('INSERT INTO 202_companies'), 'existing entity: no insert');
+        $stamps = $write->statementsContaining('UPDATE 202_customers SET company_id = ?, company = ?');
+        self::assertCount(1, $stamps);
+        self::assertSame('isiii', $stamps[0]->boundTypes);
+        self::assertContains('Acme Corp', $stamps[0]->boundValues, 'entity name, not the caller casing');
+        self::assertContains(4, $stamps[0]->boundValues);
+    }
+
+    public function testReconcileAttachedStringsConvergesOntoEntityNames(): void
+    {
+        $write = new FakeMysqliConnection();
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $repo->reconcileAttachedStrings();
+
+        $updates = $write->statementsContaining('JOIN 202_companies co ON co.company_id = c.company_id');
+        self::assertCount(1, $updates);
+        self::assertStringContainsString('SET c.company = co.name', $updates[0]->sql);
+        self::assertStringContainsString('c.company IS NULL OR c.company <> co.name', $updates[0]->sql, 'must also repair NULL-string-with-id partial writes');
+    }
+
+    public function testDeleteStrayGuardMatchesUncanonicalLegacyStrings(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('SELECT company_id, name, normalized_name', [
+            ['company_id' => 2, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
+        ]);
+        // Zero ATTACHED customers, but one unstamped legacy row whose string
+        // is uncanonical (inner double space) — exact SQL equality would miss
+        // it; the normalized PHP comparison must not.
+        $write->whenQueryContainsReturnRows('SELECT COUNT(*) AS c FROM 202_customers WHERE company_id', [
+            ['c' => 0],
+        ]);
+        $write->whenQueryContainsReturnRows('GROUP BY company', [
+            ['company' => 'Acme  Corp', 'c' => 3],
+            ['company' => 'Unrelated Inc', 'c' => 5],
+        ]);
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('pending entity linking');
+        $repo->delete(7, 2);
+    }
+
     public function testDeleteAliasIsScopedAndRejectsUnknown(): void
     {
         $write = new FakeMysqliConnection();
         $repo = new MysqlCustomerRepository(new Connection($write, new FakeMysqliConnection()));
 
         // The fake reports 0 affected rows — exactly the unknown/foreign
-        // alias case — so the guard must throw, and the DELETE must be
-        // scoped to (alias, customer, user).
+        // alias case — so the guard must throw the TYPED not-found (the only
+        // thing callers may map to 404; DB failures are plain
+        // RuntimeException and must never read as "already deleted").
         try {
             $repo->deleteAlias(7, 501, 33);
             self::fail('unknown alias must be rejected');
-        } catch (\RuntimeException) {
+        } catch (\Prosper202\Ltv\RecordNotFoundException) {
             $this->addToAssertionCount(1);
         }
 

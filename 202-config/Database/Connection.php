@@ -130,11 +130,49 @@ final class Connection
             } catch (\Error) {
                 $error = '(unknown)';
             }
+            try {
+                $errno = (int) $stmt->errno;
+            } catch (\Error) {
+                $errno = 0;
+            }
             unset($this->boundValues[spl_object_id($stmt)]);
             $stmt->close();
-            throw new RuntimeException('MySQL execute failed: ' . $error);
+            // The errno tag makes error-class detection (deadlock, duplicate
+            // key, unknown column) locale-independent — the message text
+            // follows the server's lc_messages setting.
+            throw new RuntimeException(
+                'MySQL execute failed: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
+            );
         }
         unset($this->boundValues[spl_object_id($stmt)]);
+    }
+
+    /**
+     * True when the throwable (or anything in its previous-chain) is a MySQL
+     * deadlock (1213) or lock-wait timeout (1205) — the retryable lock
+     * errors. Works across both mysqli reporting modes this codebase runs
+     * under: STRICT|ERROR paths surface mysqli_sql_exception with the errno
+     * as its code; STRICT-only paths surface this class's RuntimeException,
+     * detected via the [errno N] tag with an English-message fallback for
+     * exceptions raised before the tag existed.
+     */
+    public static function isRetryableLockError(Throwable $e): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if ($current instanceof \mysqli_sql_exception) {
+                $code = (int) $current->getCode();
+                if ($code === 1213 || $code === 1205) {
+                    return true;
+                }
+            }
+            $message = $current->getMessage();
+            if (str_contains($message, '[errno 1213]') || str_contains($message, '[errno 1205]')
+                || str_contains($message, 'Deadlock found') || str_contains($message, 'Lock wait timeout')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -259,7 +297,14 @@ final class Connection
                 } catch (\Error) {
                     $error = '(unknown)';
                 }
-                throw new RuntimeException('Unable to commit transaction: ' . $error);
+                try {
+                    $errno = (int) $this->write->errno;
+                } catch (\Error) {
+                    $errno = 0;
+                }
+                throw new RuntimeException(
+                    'Unable to commit transaction: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
+                );
             }
 
             return $result;
@@ -300,7 +345,14 @@ final class Connection
             } catch (\Error) {
                 $error = '(unknown)';
             }
-            throw new RuntimeException('Failed to prepare MySQL statement: ' . $error);
+            try {
+                $errno = (int) $connection->errno;
+            } catch (\Error) {
+                $errno = 0;
+            }
+            throw new RuntimeException(
+                'Failed to prepare MySQL statement: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
+            );
         }
 
         return $stmt;

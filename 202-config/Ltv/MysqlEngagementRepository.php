@@ -293,20 +293,31 @@ final class MysqlEngagementRepository
      */
     public function scoreWeights(int $userId): array
     {
-        // The whole read is inside the guard: on a DB that predates the
-        // user_ltv_score_weights column (code deployed before the 1.9.70
-        // upgrade ran), the prepare fails — reports must degrade to default
-        // weights, not go down.
         try {
             $stmt = $this->conn->prepareRead(
                 'SELECT user_ltv_score_weights FROM 202_users_pref WHERE user_id = ? LIMIT 1'
             );
             $this->conn->bind($stmt, 'i', [$userId]);
             $row = $this->conn->fetchOne($stmt);
+        } catch (\RuntimeException $e) {
+            // Only the deploy window degrades to defaults: code at 1.9.70
+            // with the pref column not yet added (unknown column / 1054).
+            // Every other DB failure must surface — silently-wrong scores
+            // would mask a real outage.
+            $message = $e->getMessage();
+            if (str_contains($message, 'Unknown column') || str_contains($message, '[errno 1054]')) {
+                error_log('ltv score weights column missing for user ' . $userId
+                    . ' (run the 1.9.70 upgrade; using defaults): ' . $message);
 
+                return self::DEFAULT_SCORE_WEIGHTS;
+            }
+            throw $e;
+        }
+
+        try {
             return self::parseScoreWeights((string) ($row['user_ltv_score_weights'] ?? ''));
         } catch (\RuntimeException $e) {
-            error_log('ltv score weights unavailable for user ' . $userId . ' (using defaults): ' . $e->getMessage());
+            error_log('ltv score weights invalid for user ' . $userId . ' (using defaults): ' . $e->getMessage());
 
             return self::DEFAULT_SCORE_WEIGHTS;
         }

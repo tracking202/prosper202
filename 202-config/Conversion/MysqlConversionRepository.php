@@ -296,26 +296,13 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
-     * True for MySQL deadlock (1213) / lock wait timeout (1205), whether
-     * surfaced as a mysqli_sql_exception or wrapped in the Connection's
-     * RuntimeException message.
+     * True for MySQL deadlock (1213) / lock wait timeout (1205). The
+     * detection logic lives once on Connection so every ingest path applies
+     * the same rules.
      */
     private static function isRetryableLockError(Throwable $e): bool
     {
-        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
-            if ($current instanceof \mysqli_sql_exception) {
-                $code = (int) $current->getCode();
-                if ($code === 1213 || $code === 1205) {
-                    return true;
-                }
-            }
-            $message = $current->getMessage();
-            if (str_contains($message, 'Deadlock found') || str_contains($message, 'Lock wait timeout')) {
-                return true;
-            }
-        }
-
-        return false;
+        return Connection::isRetryableLockError($e);
     }
 
     private function applyStandardClickUpdate(int $clickId, float $payout, int $userId): void

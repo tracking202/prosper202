@@ -63,6 +63,53 @@ final class AccountViewsTest extends TestCase
         $repo->listForUser(7, 'bogus');
     }
 
+    public function testIntegrationListFlagsUndecodableConfig(): void
+    {
+        $read = new FakeMysqliConnection();
+        $read->whenQueryContainsReturnRows('FROM 202_ltv_integrations', [
+            ['integration_id' => 1, 'provider' => 'shopify', 'name' => 'Store', 'config' => '{"key":"v"}',
+             'status' => 'active', 'created_at' => 1, 'updated_at' => 1],
+            ['integration_id' => 2, 'provider' => 'aweber', 'name' => 'List', 'config' => '{broken',
+             'status' => 'active', 'created_at' => 1, 'updated_at' => 1],
+        ]);
+        $repo = new \Prosper202\Ltv\MysqlIntegrationRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        $rows = $repo->list(7);
+
+        self::assertSame(['key' => 'v'], $rows[0]['config']);
+        self::assertFalse(array_key_exists('config_invalid', $rows[0]), 'valid config carries no flag');
+        self::assertNull($rows[1]['config']);
+        self::assertTrue((bool) ($rows[1]['config_invalid'] ?? false), 'corrupt JSON must be flagged, not silently null');
+    }
+
+    public function testConnectionLockErrorDetectionCoversErrnoTagsAndMessages(): void
+    {
+        self::assertTrue(Connection::isRetryableLockError(
+            new \RuntimeException('MySQL execute failed: quelque chose [errno 1213]')
+        ), 'errno tag detection must be locale-independent');
+        self::assertTrue(Connection::isRetryableLockError(
+            new \RuntimeException('MySQL execute failed: Lock wait timeout exceeded')
+        ));
+        self::assertTrue(Connection::isRetryableLockError(
+            new \RuntimeException('outer', 0, new \RuntimeException('inner [errno 1205]'))
+        ), 'previous-chain must be walked');
+        self::assertFalse(Connection::isRetryableLockError(
+            new \RuntimeException('MySQL execute failed: Duplicate entry [errno 1062]')
+        ));
+    }
+
+    public function testScoreWeightsRethrowsNonSchemaDbFailures(): void
+    {
+        $read = new FakeMysqliConnection();
+        $read->whenQueryContainsExecuteReturns('user_ltv_score_weights', false);
+        $repo = new \Prosper202\Ltv\MysqlEngagementRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        // A generic DB failure (not the missing-column deploy window) must
+        // surface — silently-wrong default scores would mask an outage.
+        $this->expectException(\RuntimeException::class);
+        $repo->scoreWeights(7);
+    }
+
     public function testWebhookDeliveryLogScopedNewestFirst(): void
     {
         $read = new FakeMysqliConnection();

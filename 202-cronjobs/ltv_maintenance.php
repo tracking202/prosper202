@@ -155,19 +155,31 @@ try {
     // Rebuild "converted on A -> later converted on B" counts per account
     // from the revenue ledger. Small result set (campaigns x campaigns), so a
     // full per-user rebuild each run keeps it simple and drift-free.
-    $usersResult = $run(
-        "SELECT DISTINCT user_id FROM 202_revenue_events
-         WHERE source IN ('conversion','import')"
-    );
-    $transitionRows = 0;
-    if ($usersResult instanceof mysqli_result) {
-        $conn = new \Prosper202\Database\Connection($db);
-        $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($conn);
-        while ($userRow = $usersResult->fetch_assoc()) {
-            $transitionRows += $recommendations->rebuildTransitions((int) $userRow['user_id'], $now);
+    // Isolated: this section needs 1.9.67 schema (202_offer_transitions); on
+    // a DB stranded between 1.9.66 and 1.9.67 it must not block the sections
+    // after it — in particular the personalization PII purge (whose table
+    // exists from 1.9.66). Sections 1-2 need only the 1.9.64 foundation; if
+    // THEY fail for schema reasons the tokens table doesn't exist either, so
+    // they can stay under the outer guard.
+    try {
+        $usersResult = $run(
+            "SELECT DISTINCT user_id FROM 202_revenue_events
+             WHERE source IN ('conversion','import')"
+        );
+        $transitionRows = 0;
+        if ($usersResult instanceof mysqli_result) {
+            $conn = new \Prosper202\Database\Connection($db);
+            $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($conn);
+            while ($userRow = $usersResult->fetch_assoc()) {
+                $transitionRows += $recommendations->rebuildTransitions((int) $userRow['user_id'], $now);
+            }
         }
+        echo "offer transitions: {$transitionRows} pairs rebuilt\n";
+    } catch (Throwable $transitionError) {
+        fwrite(STDERR, 'offer-transition rebuild failed (continuing with remaining maintenance): '
+            . $transitionError->getMessage() . "\n");
+        error_log('ltv_maintenance offer transitions failed: ' . $transitionError->getMessage());
     }
-    echo "offer transitions: {$transitionRows} pairs rebuilt\n";
 
     // ---------- 3b. Company entity linking ----------
     // Attach customers that carry a company string but no company_id (rows
@@ -183,14 +195,17 @@ try {
                AND merged_into_customer_id IS NULL"
         );
         $companiesLinked = 0;
+        $conn = $conn ?? new \Prosper202\Database\Connection($db);
+        $companies = new \Prosper202\Ltv\MysqlCompanyRepository($conn);
         if ($companyUsers instanceof mysqli_result) {
-            $conn = $conn ?? new \Prosper202\Database\Connection($db);
-            $companies = new \Prosper202\Ltv\MysqlCompanyRepository($conn);
             while ($userRow = $companyUsers->fetch_assoc()) {
                 $companiesLinked += $companies->linkUnlinkedCustomers((int) $userRow['user_id'], 2000);
             }
         }
-        echo "company linking: {$companiesLinked} customers attached\n";
+        // Converge attached strings onto the entity names: repairs rows
+        // stamped before string canonicalization and any partial-write drift.
+        $stringsFixed = $companies->reconcileAttachedStrings();
+        echo "company linking: {$companiesLinked} customers attached, {$stringsFixed} strings converged\n";
     } catch (Throwable $companyError) {
         fwrite(STDERR, 'company linking failed (continuing with remaining maintenance): '
             . $companyError->getMessage() . "\n");

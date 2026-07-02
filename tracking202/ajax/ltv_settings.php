@@ -445,7 +445,11 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                         <td><?php echo (int) $integration['integration_id']; ?></td>
                         <td><code><?php echo $esc($integration['provider']); ?></code></td>
                         <td><?php echo $esc($integration['name'] ?? ''); ?></td>
-                        <td><?php echo $esc($integration['status'] ?? ''); ?></td>
+                        <td><?php echo $esc($integration['status'] ?? ''); ?>
+                            <?php if (!empty($integration['config_invalid'])) { ?>
+                                <span class="text-danger" title="The stored configuration is not valid JSON; re-save it via the API.">&#9888; config unreadable</span>
+                            <?php } ?>
+                        </td>
                         <td><?php echo $when($integration['created_at'] ?? 0); ?></td>
                         <td class="text-right">
                             <button type="button" class="btn btn-xs btn-danger"

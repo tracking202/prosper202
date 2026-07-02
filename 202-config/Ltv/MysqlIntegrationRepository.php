@@ -31,7 +31,19 @@ final class MysqlIntegrationRepository
         $rows = $this->conn->fetchAll($stmt);
         foreach ($rows as &$row) {
             if (isset($row['config']) && is_string($row['config'])) {
-                $row['config'] = json_decode($row['config'], true);
+                $decoded = json_decode($row['config'], true);
+                if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+                    // Corrupt stored JSON must be visible, not presented as
+                    // "no config set" (CLAUDE.md: no silent data loss).
+                    error_log(
+                        'LTV integration #' . (int) ($row['integration_id'] ?? 0)
+                        . ' has undecodable config JSON: ' . json_last_error_msg()
+                    );
+                    $row['config'] = null;
+                    $row['config_invalid'] = true;
+                } else {
+                    $row['config'] = $decoded;
+                }
             }
         }
         unset($row);
@@ -78,7 +90,9 @@ final class MysqlIntegrationRepository
         );
         $this->conn->bind($stmt, 'ii', [$integrationId, $userId]);
         if ($this->conn->executeUpdate($stmt) === 0) {
-            throw new RuntimeException('Integration not found');
+            // Typed so callers map exactly this to 404; DB failures above
+            // throw plain RuntimeException and must not read as "gone".
+            throw new RecordNotFoundException('Integration not found');
         }
     }
 }

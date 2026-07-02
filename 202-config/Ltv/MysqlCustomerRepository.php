@@ -93,7 +93,8 @@ final class MysqlCustomerRepository
         string $aliasValue,
         array $crm,
         ?int $firstClickId,
-        int $now
+        int $now,
+        bool $stampCompany = true
     ): int {
         $aliasValue = trim($aliasValue);
         if ($aliasValue === '') {
@@ -123,7 +124,11 @@ final class MysqlCustomerRepository
         $affected = $this->conn->executeUpdate($stmt);
 
         if ($affected === 1) {
-            $this->stampCompanyOnCreate($userId, $newCustomerId, $crm, $now);
+            if ($stampCompany) {
+                // Callers that run syncCompanyLink right after (the CRM
+                // upsert) pass false to avoid doing this work twice.
+                $this->stampCompanyOnCreate($userId, $newCustomerId, $crm, $now);
+            }
             return $newCustomerId;
         }
 
@@ -180,7 +185,10 @@ final class MysqlCustomerRepository
         );
         $this->conn->bind($stmt, 'iii', [$aliasId, $customerId, $userId]);
         if ($this->conn->executeUpdate($stmt) === 0) {
-            throw new RuntimeException('Alias not found on this customer');
+            // Typed so callers can map exactly this to a 404 — a DB failure
+            // above throws a plain RuntimeException and must NOT read as
+            // "already deleted".
+            throw new RecordNotFoundException('Alias not found on this customer');
         }
     }
 
@@ -580,12 +588,15 @@ final class MysqlCustomerRepository
     }
 
     /**
-     * Attach a freshly created customer to its company entity: resolve the
-     * company row for a supplied name, or auto-attach by email domain when no
-     * name was given. Runs ONLY on creation, so it can never override a later
+     * Attach a freshly created customer to its company entity via the shared
+     * MysqlCompanyRepository::attachCustomer() (name resolve, or email-domain
+     * auto-attach). Runs ONLY on creation, so it can never override a later
      * explicit detach. Failures are logged, never fatal — company linkage is
      * auxiliary to ingest (the maintenance sweep converges any misses), and a
-     * companies-table problem must not fail conversion recording.
+     * companies-table problem must not fail conversion recording. Lock errors
+     * are the exception to the exception: they roll back the ENTIRE enclosing
+     * ingest transaction server-side, so they must propagate for the caller's
+     * retry — swallowing one would commit a hollowed-out transaction.
      *
      * @param array<string, mixed> $crm
      */
@@ -598,53 +609,11 @@ final class MysqlCustomerRepository
         }
 
         try {
-            $companies = new MysqlCompanyRepository($this->conn);
-
-            if ($companyName !== '') {
-                $companyId = $companies->resolveOrCreate($userId, $companyName, $now);
-                if ($companyId <= 0) {
-                    return;
-                }
-                $stmt = $this->conn->prepareWrite(
-                    'UPDATE 202_customers SET company_id = ? WHERE customer_id = ? AND user_id = ?'
-                );
-                $this->conn->bind($stmt, 'iii', [$companyId, $customerId, $userId]);
-                $this->conn->executeUpdate($stmt);
-                return;
-            }
-
-            $domain = MysqlCompanyRepository::domainFromEmail($email);
-            if ($domain === null) {
-                return;
-            }
-            $company = $companies->findByDomain($userId, $domain);
-            if ($company === null) {
-                return;
-            }
-            $stmt = $this->conn->prepareWrite(
-                'UPDATE 202_customers SET company_id = ?, company = ?
-                 WHERE customer_id = ? AND user_id = ? AND company_id IS NULL AND company IS NULL'
-            );
-            $this->conn->bind($stmt, 'isii', [
-                (int) $company['company_id'],
-                (string) $company['name'],
-                $customerId,
-                $userId,
-            ]);
-            $this->conn->executeUpdate($stmt);
+            (new MysqlCompanyRepository($this->conn))
+                ->attachCustomer($userId, $customerId, $companyName, $email, $now);
         } catch (RuntimeException $e) {
-            // Lock errors roll back the ENTIRE enclosing ingest transaction
-            // server-side — they must propagate so the caller's retry runs;
-            // swallowing one here would commit a hollowed-out transaction.
-            for ($current = $e; $current !== null; $current = $current->getPrevious()) {
-                if ($current instanceof \mysqli_sql_exception
-                    && in_array((int) $current->getCode(), [1213, 1205], true)) {
-                    throw $e;
-                }
-                $message = $current->getMessage();
-                if (str_contains($message, 'Deadlock found') || str_contains($message, 'Lock wait timeout')) {
-                    throw $e;
-                }
+            if (Connection::isRetryableLockError($e)) {
+                throw $e;
             }
             error_log('LTV company stamp skipped for customer ' . $customerId . ': ' . $e->getMessage());
         }

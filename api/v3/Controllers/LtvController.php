@@ -13,8 +13,10 @@ use Prosper202\Ltv\LtvQuery;
 use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
 use Prosper202\Ltv\MysqlCustomerFieldRepository;
+use Prosper202\Ltv\CompanyConflictException;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Ltv\MysqlIntegrationRepository;
+use Prosper202\Ltv\RecordNotFoundException;
 use Prosper202\Ltv\MysqlLtvRepository;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
@@ -544,24 +546,21 @@ class LtvController
             throw new ValidationException('name is required', ['name' => 'Required']);
         }
 
-        $companies = new MysqlCompanyRepository($this->conn);
-        $existing = $this->wrap(fn (): ?array => $companies->findByName($this->userId, $name));
-        if ($existing !== null) {
-            throw new ConflictException(
-                'Company already exists',
-                ['company_id' => (int) $existing['company_id'], 'name' => (string) $existing['name']]
-            );
-        }
-
-        return $this->wrap(function () use ($companies, $payload, $name): array {
-            // create() validates the domain BEFORE inserting and runs both
-            // writes in one transaction — a rejected domain never leaves a
-            // company row behind.
+        return $this->wrap(function () use ($payload, $name): array {
+            // create() owns the conflict check (typed, and race-proof via the
+            // unique key on the single INSERT) and validates the domain
+            // before inserting — a rejected domain never leaves a row behind.
             $domain = isset($payload['domain']) && trim((string) $payload['domain']) !== ''
                 ? (string) $payload['domain']
                 : null;
 
-            return ['data' => ['company_id' => $companies->create($this->userId, $name, $domain)]];
+            try {
+                $companyId = (new MysqlCompanyRepository($this->conn))->create($this->userId, $name, $domain);
+            } catch (CompanyConflictException $e) {
+                throw new ConflictException($e->getMessage());
+            }
+
+            return ['data' => ['company_id' => $companyId]];
         });
     }
 
@@ -643,9 +642,10 @@ class LtvController
         $this->wrap(function () use ($customerId, $aliasId): void {
             try {
                 $this->customers->deleteAlias($this->userId, $customerId, $aliasId);
-            } catch (\RuntimeException) {
-                // Missing resources are 404s here, matching every sibling
-                // customer endpoint (wrap would report a misleading 422).
+            } catch (RecordNotFoundException) {
+                // ONLY the typed zero-rows case is a 404, matching sibling
+                // endpoints; a DB failure during the DELETE must surface as
+                // an error, never as "already deleted".
                 throw new NotFoundException('Alias not found on this customer');
             }
         });
@@ -681,7 +681,9 @@ class LtvController
         $this->wrap(function () use ($integrationId): void {
             try {
                 (new MysqlIntegrationRepository($this->conn))->delete($this->userId, $integrationId);
-            } catch (\RuntimeException) {
+            } catch (RecordNotFoundException) {
+                // ONLY the typed zero-rows case is a 404; a DB failure must
+                // surface as an error, never as "already deleted".
                 throw new NotFoundException('Integration not found');
             }
         });

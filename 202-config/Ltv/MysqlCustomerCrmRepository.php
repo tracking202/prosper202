@@ -358,7 +358,9 @@ final class MysqlCustomerCrmRepository
         }
 
         return $this->conn->transaction(
-            fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now)
+            // stampCompany: false — upsert() runs syncCompanyLink right
+            // after, which performs the same attachment once.
+            fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now, false)
         );
     }
 
@@ -378,17 +380,17 @@ final class MysqlCustomerCrmRepository
             if (!array_key_exists($column, $payload)) {
                 continue;
             }
-            $value = $payload[$column];
-            $trimmed = $value !== null && trim((string) $value) !== '' ? trim((string) $value) : null;
-            if ($column === 'company' && $trimmed !== null) {
-                // Stored in canonical form so the string always compares equal
-                // to the company entity's name (drill-downs match by string).
-                $trimmed = MysqlCompanyRepository::canonicalName($trimmed);
-                $trimmed = $trimmed !== '' ? $trimmed : null;
+            if ($column === 'company') {
+                // The company string is owned by syncCompanyLink: it writes
+                // the entity's canonical name on attach and the '' detach
+                // marker on clear. Writing it here would clobber the marker
+                // on every save that carries an empty company field.
+                continue;
             }
+            $value = $payload[$column];
             $sets[] = "{$column} = ?";
             $types .= 's';
-            $binds[] = $trimmed;
+            $binds[] = $value !== null && trim((string) $value) !== '' ? trim((string) $value) : null;
         }
 
         if (array_key_exists('email', $payload)) {
@@ -423,15 +425,18 @@ final class MysqlCustomerCrmRepository
     }
 
     /**
-     * Keep the company entity attachment in step with the CRM write:
-     *  - a non-empty company name resolves/creates the 202_companies row and
-     *    stamps company_id (race-safe upsert);
-     *  - an explicitly emptied company detaches AND leaves company = '' as a
-     *    "detached" marker (distinct from never-attached NULL) so domain
-     *    auto-attach can never silently undo an operator's detach;
-     *  - a customer saved with an email but no company auto-attaches to the
-     *    account's company whose domain matches the email domain — but ONLY
-     *    when company is strictly NULL (never attached, never detached).
+     * Keep the company entity attachment in step with the CRM write. This
+     * method OWNS the customers.company column (applyCrmFields skips it):
+     *  - a non-empty company name attaches via the shared
+     *    MysqlCompanyRepository::attachCustomer() — company_id plus the
+     *    entity's canonical name are stamped together;
+     *  - an emptied company detaches; the '' "detached" marker is written
+     *    ONLY when the customer was actually attached (a true detach), so a
+     *    routine save with a blank company field on a never-attached
+     *    customer does not silently opt them out of future auto-attach;
+     *  - a payload with an email but no company key auto-attaches by email
+     *    domain — only when company is strictly NULL (never attached, never
+     *    detached).
      *
      * @param array<string, mixed> $payload
      */
@@ -444,23 +449,20 @@ final class MysqlCustomerCrmRepository
                 ? MysqlCompanyRepository::canonicalName((string) $payload['company'])
                 : '';
             if ($name !== '') {
-                $companyId = $companies->resolveOrCreate($userId, $name, $now);
-                if ($companyId > 0) {
-                    $stmt = $this->conn->prepareWrite(
-                        'UPDATE 202_customers SET company_id = ? WHERE customer_id = ? AND user_id = ?'
-                    );
-                    $this->conn->bind($stmt, 'iii', [$companyId, $customerId, $userId]);
-                    $this->conn->executeUpdate($stmt);
-                }
+                $companies->attachCustomer($userId, $customerId, $name, '', $now);
                 return;
             }
 
-            // Explicit detach: company = '' (not NULL) records the operator's
-            // decision so the auto-attach below never reverses it.
+            // Detach. The IF keeps the marker semantics honest: an attached
+            // customer gets '' (explicit detach, blocks re-attach); a
+            // never-attached one keeps NULL (still auto-attach eligible);
+            // an already-detached one keeps its '' marker.
             $stmt = $this->conn->prepareWrite(
-                "UPDATE 202_customers SET company_id = NULL, company = '' WHERE customer_id = ? AND user_id = ?"
+                "UPDATE 202_customers
+                 SET company = IF(company_id IS NULL, company, ''), company_id = NULL, updated_at = ?
+                 WHERE customer_id = ? AND user_id = ?"
             );
-            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+            $this->conn->bind($stmt, 'iii', [$now, $customerId, $userId]);
             $this->conn->executeUpdate($stmt);
             return;
         }
@@ -471,27 +473,7 @@ final class MysqlCustomerCrmRepository
         if ($email === '') {
             return;
         }
-        $domain = MysqlCompanyRepository::domainFromEmail($email);
-        if ($domain === null) {
-            return;
-        }
-        $company = $companies->findByDomain($userId, $domain);
-        if ($company === null) {
-            return;
-        }
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
-             WHERE customer_id = ? AND user_id = ? AND company_id IS NULL
-               AND company IS NULL'
-        );
-        $this->conn->bind($stmt, 'isiii', [
-            (int) $company['company_id'],
-            (string) $company['name'],
-            $now,
-            $customerId,
-            $userId,
-        ]);
-        $this->conn->executeUpdate($stmt);
+        $companies->attachCustomer($userId, $customerId, '', $email, $now);
     }
 
     /**
