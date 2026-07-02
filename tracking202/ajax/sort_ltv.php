@@ -131,6 +131,7 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                         <th>Contacts</th>
                         <th>Engagements (90d)</th>
                         <th>Top Interest</th>
+                        <th>Top Event</th>
                         <th>Revenue</th>
                         <th>MRR</th>
                         <th>Last Activity</th>
@@ -164,6 +165,7 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                             <td><?php echo number_format((int) ($row['contacts'] ?? 0)); ?></td>
                             <td><?php echo number_format((int) ($row['engagements'] ?? 0)); ?></td>
                             <td><?php echo $esc($row['top_campaign_name'] ?? '') ?: '—'; ?></td>
+                            <td><?php echo $esc($row['top_event_name'] ?? '') ?: '—'; ?></td>
                             <td>$<?php echo $money($row['total_revenue'] ?? 0); ?></td>
                             <td>$<?php echo $money($row['mrr'] ?? 0); ?></td>
                             <td data-sort="<?php echo (int) ($row['last_activity'] ?? 0); ?>"><?php echo ((int) ($row['last_activity'] ?? 0)) > 0 ? date('M j, Y', (int) $row['last_activity']) : '—'; ?></td>

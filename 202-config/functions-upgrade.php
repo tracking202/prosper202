@@ -3704,10 +3704,25 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.67', '>')) {
+        if ($prosper202_version == '1.9.67') {
 
-            $prosper202_version = '1.9.67';
+            // Manually instrumented ABM/engagement events. Idempotent create.
+            $events_definition = \Prosper202\Database\Tables\LtvTables::engagementEvents();
+            if (_upgrade_query($events_definition->createStatement) !== false) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.68'") !== false) {
+                    $prosper202_version = '1.9.68';
+                } else {
+                    error_log('Prosper202 upgrade: created 202_engagement_events but failed to persist version 1.9.68; leaving version at 1.9.67 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to create 202_engagement_events; leaving version at 1.9.67 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.68', '>')) {
+
+            $prosper202_version = '1.9.68';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

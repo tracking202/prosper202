@@ -76,9 +76,12 @@ try {
     $fieldDefinitions = $customer !== null ? $fieldsRepo->list($userId) : [];
 
     $engagement = [];
+    $engagementEvents = [];
     $nextOffer = null;
     if ($customer !== null) {
-        $engagement = (new \Prosper202\Ltv\MysqlEngagementRepository($conn))->customerEngagement($userId, $customerId, 90);
+        $engagementRepo = new \Prosper202\Ltv\MysqlEngagementRepository($conn);
+        $engagement = $engagementRepo->customerEngagement($userId, $customerId, 90);
+        $engagementEvents = $engagementRepo->customerEvents($userId, $customerId, 90, 25);
         $nextOffer = (new \Prosper202\Ltv\MysqlRecommendationRepository($conn))->nextOffer($userId, $customerId);
     }
 } catch (\Throwable $e) {
@@ -86,6 +89,7 @@ try {
     $customer = null;
     $fieldDefinitions = [];
     $engagement = [];
+    $engagementEvents = [];
     $nextOffer = null;
 }
 ?>
@@ -420,6 +424,24 @@ $addressParts = array_filter([
                 <?php } ?>
             </tbody>
         </table>
+
+        <?php if ($engagementEvents !== []) { ?>
+            <h6>Instrumented Events <small>(last 90 days)</small></h6>
+            <table class="table table-bordered table-hover">
+                <thead>
+                    <tr><th>Event</th><th>Source</th><th>When</th></tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($engagementEvents as $event) { ?>
+                        <tr>
+                            <td><?php echo $esc($event['event_name'] ?? ''); ?></td>
+                            <td><?php echo $esc($event['source'] ?? ''); ?></td>
+                            <td><?php echo $when($event['occurred_at'] ?? 0); ?></td>
+                        </tr>
+                    <?php } ?>
+                </tbody>
+            </table>
+        <?php } ?>
     </div>
 </div>
 

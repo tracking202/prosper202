@@ -237,6 +237,39 @@ final class MysqlPersonalizationRepository
     }
 
     /**
+     * Resolve a raw token to its customer, for WRITE-side use (site event
+     * instrumentation). Unlike redeem(), sealing does not matter here —
+     * recording an event is not a data read, so any token still inside its
+     * replay window proves "this browser belongs to customer X".
+     *
+     * @return array{userId: int, customerId: int, clickId: int|null}|null
+     */
+    public function customerForToken(string $rawToken, int $now): ?array
+    {
+        $rawToken = trim($rawToken);
+        if (strlen($rawToken) < 40 || strlen($rawToken) > 64 || preg_match('/^[A-Za-z0-9_\-]+$/', $rawToken) !== 1) {
+            return null;
+        }
+        $tokenHash = hash('sha256', $rawToken, true);
+
+        $stmt = $this->conn->prepareRead(
+            'SELECT user_id, customer_id, click_id, replay_until
+             FROM 202_personalization_tokens WHERE token_hash = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 's', [$tokenHash]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null || $now > (int) $row['replay_until']) {
+            return null;
+        }
+
+        return [
+            'userId' => (int) $row['user_id'],
+            'customerId' => (int) $row['customer_id'],
+            'clickId' => $row['click_id'] !== null ? (int) $row['click_id'] : null,
+        ];
+    }
+
+    /**
      * Delete rows past their replay window (ltv_maintenance sweep).
      */
     public function purgeExpired(int $now): int

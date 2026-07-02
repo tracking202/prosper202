@@ -136,8 +136,43 @@ class LtvController
             $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
 
             return [
-                'data' => $engagement->customerEngagement($this->userId, $customerId, $days),
+                'data' => [
+                    'browsing' => $engagement->customerEngagement($this->userId, $customerId, $days),
+                    'events' => $engagement->customerEvents($this->userId, $customerId, $days),
+                ],
                 'window_days' => $days,
+            ];
+        });
+    }
+
+    /**
+     * Manually instrument an ABM engagement event from a server-side
+     * integration ("demo_requested", "pricing_viewed", ...).
+     */
+    public function recordEngagementEvent(array $payload): array
+    {
+        $eventName = trim((string) ($payload['event'] ?? $payload['event_name'] ?? ''));
+        if ($eventName === '') {
+            throw new ValidationException('event is required', ['event' => 'The event name to record']);
+        }
+
+        return $this->wrap(function () use ($payload, $eventName): array {
+            $now = time();
+            $customerId = $this->resolveCustomerFromPayload($payload, $now);
+
+            $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
+            $eventId = $engagement->recordEvent(
+                $this->userId,
+                $customerId,
+                $eventName,
+                'api',
+                null,
+                isset($payload['occurred_at']) ? (int) $payload['occurred_at'] : null
+            );
+
+            return [
+                '_status' => 201,
+                'data' => ['engagement_id' => $eventId, 'customer_id' => $customerId],
             ];
         });
     }

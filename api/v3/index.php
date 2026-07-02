@@ -241,6 +241,7 @@ try {
         $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer((int)$ctx['id'])));
         $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias((int)$ctx['id'], $payload));
         $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
+        $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
         $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
         $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent((string)$ctx['ref'], $payload));
         $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));

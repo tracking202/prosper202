@@ -22,6 +22,96 @@ final class MysqlEngagementRepository
     }
 
     /**
+     * Record a manually instrumented engagement event ("pricing_viewed",
+     * "demo_requested", ...). Event names are normalized to a strict slug —
+     * an invalid name throws, it is never silently mangled into something
+     * else (CLAUDE.md #4).
+     *
+     * @return int engagement_id
+     */
+    public function recordEvent(
+        int $userId,
+        int $customerId,
+        string $eventName,
+        string $source = 'api',
+        ?int $clickId = null,
+        ?int $occurredAt = null
+    ): int {
+        $eventName = self::normalizeEventName($eventName);
+        if (!in_array($source, ['api', 'site'], true)) {
+            throw new \RuntimeException('event source must be api or site');
+        }
+        $now = time();
+        $occurredAt = $occurredAt !== null && $occurredAt > 0 ? $occurredAt : $now;
+
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_engagement_events
+                (user_id, customer_id, event_name, source, click_id, occurred_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
+        $this->conn->bind($stmt, 'iissiii', [
+            $userId,
+            $customerId,
+            $eventName,
+            $source,
+            $clickId !== null && $clickId > 0 ? $clickId : null,
+            $occurredAt,
+            $now,
+        ]);
+        $eventId = $this->conn->executeInsert($stmt);
+
+        // Engagement recency: manual events count as activity too.
+        $touch = $this->conn->prepareWrite(
+            'UPDATE 202_customers SET last_activity_time = GREATEST(last_activity_time, ?), updated_at = ?
+             WHERE customer_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($touch, 'iiii', [$occurredAt, $now, $customerId, $userId]);
+        $this->conn->executeUpdate($touch);
+
+        return $eventId;
+    }
+
+    /**
+     * Normalize an event name to a strict lowercase slug (a-z, 0-9, _ . -),
+     * 1-64 chars. Throws on anything that does not survive normalization
+     * intact enough to be meaningful.
+     */
+    public static function normalizeEventName(string $eventName): string
+    {
+        $normalized = strtolower(trim($eventName));
+        $normalized = (string) preg_replace('/\s+/', '_', $normalized);
+        if ($normalized === '' || strlen($normalized) > 64
+            || preg_match('/^[a-z0-9_.\-]+$/', $normalized) !== 1) {
+            throw new \RuntimeException(
+                'Invalid event name; use 1-64 chars of a-z, 0-9, underscore, dot or dash'
+            );
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * A customer's recent manually instrumented events, newest first.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function customerEvents(int $userId, int $customerId, int $days = 90, int $limit = 50): array
+    {
+        $since = time() - max(1, $days) * 86400;
+
+        $stmt = $this->conn->prepareRead(
+            'SELECT event_name, source, occurred_at, click_id
+             FROM 202_engagement_events
+             WHERE user_id = ? AND customer_id = ? AND occurred_at >= ?
+             ORDER BY occurred_at DESC, engagement_id DESC
+             LIMIT ?'
+        );
+        $this->conn->bind($stmt, 'iiii', [$userId, $customerId, $since, $limit]);
+
+        return $this->conn->fetchAll($stmt);
+    }
+
+    /**
      * What one customer has been browsing: campaigns (and their landing
      * pages) with click counts and recency, newest first.
      *
@@ -54,8 +144,9 @@ final class MysqlEngagementRepository
 
     /**
      * ABM account rollup: customers grouped by non-empty CRM company —
-     * contacts, engagement volume/recency in the window, revenue, MRR, and
-     * each account's most-browsed campaign.
+     * contacts, engagement volume/recency in the window (tracked-link clicks
+     * PLUS manually instrumented events), revenue, MRR, each account's
+     * most-browsed campaign, and its most frequent custom event.
      *
      * @return list<array<string, mixed>>
      */
@@ -69,8 +160,10 @@ final class MysqlEngagementRepository
                     COALESCE(SUM(cu.total_revenue), 0) AS total_revenue,
                     COALESCE(SUM(cu.mrr), 0) AS mrr,
                     MAX(cu.last_activity_time) AS last_activity,
-                    COALESCE(eng.clicks, 0) AS engagements,
-                    eng.top_campaign_name
+                    COALESCE(eng.clicks, 0) + COALESCE(ev.events, 0) AS engagements,
+                    COALESCE(ev.events, 0) AS custom_events,
+                    eng.top_campaign_name,
+                    ev.top_event_name
              FROM 202_customers cu
              LEFT JOIN (
                  SELECT cu2.company AS company, COUNT(*) AS clicks,
@@ -83,13 +176,23 @@ final class MysqlEngagementRepository
                    AND cu2.merged_into_customer_id IS NULL
                  GROUP BY cu2.company
              ) eng ON eng.company = cu.company
+             LEFT JOIN (
+                 SELECT cu3.company AS company, COUNT(*) AS events,
+                        SUBSTRING_INDEX(GROUP_CONCAT(ee.event_name ORDER BY ee.occurred_at DESC SEPARATOR ','), ',', 1) AS top_event_name
+                 FROM 202_customers cu3
+                 JOIN 202_engagement_events ee ON ee.customer_id = cu3.customer_id
+                    AND ee.user_id = cu3.user_id AND ee.occurred_at >= ?
+                 WHERE cu3.user_id = ? AND cu3.company IS NOT NULL AND cu3.company <> ''
+                   AND cu3.merged_into_customer_id IS NULL
+                 GROUP BY cu3.company
+             ) ev ON ev.company = cu.company
              WHERE cu.user_id = ? AND cu.company IS NOT NULL AND cu.company <> ''
                AND cu.merged_into_customer_id IS NULL
-             GROUP BY cu.company, eng.clicks, eng.top_campaign_name
+             GROUP BY cu.company, eng.clicks, eng.top_campaign_name, ev.events, ev.top_event_name
              ORDER BY engagements DESC, total_revenue DESC
              LIMIT ? OFFSET ?"
         );
-        $this->conn->bind($stmt, 'iiiii', [$since, $userId, $userId, $limit, $offset]);
+        $this->conn->bind($stmt, 'iiiiiii', [$since, $userId, $since, $userId, $userId, $limit, $offset]);
 
         return $this->conn->fetchAll($stmt);
     }

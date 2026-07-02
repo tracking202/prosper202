@@ -243,6 +243,25 @@ var utm_campaign = t202GetVar('utm_campaign');
 	}
 })();
 
+// --- Manual ABM event instrumentation ---
+// Pages call t202Track('pricing_viewed') to record an engagement event for
+// the recognized customer. Authenticated by the personalization token cookie
+// (a random bearer capability — no enumerable id is ever exposed); a visitor
+// without a token is simply not tracked. Fire-and-forget: never throws,
+// never blocks the page.
+window.t202Track = function(eventName) {
+	try {
+		if (typeof eventName !== 'string' || eventName === '') { return; }
+		var token = readCookie('tracking202p13n');
+		if (!token) { return; }
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', "<?php echo $baseUrl; ?>tracking202/static/p13n_event.php", true);
+		xhr.timeout = 3000;
+		xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+		xhr.send('token=' + t202Enc(token) + '&event=' + t202Enc(eventName));
+	} catch (e) { /* instrumentation is best-effort */ }
+};
+
 // --- Customer personalization (privacy-preserving, graceful by design) ---
 // Elements opt in with name="t202p13n_<field>" (e.g. t202p13n_first_name) and
 // an optional t202Default attribute. Defaults render IMMEDIATELY; if the

@@ -39,7 +39,36 @@ final class LtvTables
             self::ltvWebhookDeliveries(),
             self::personalizationTokens(),
             self::offerTransitions(),
+            self::engagementEvents(),
         ];
+    }
+
+    /**
+     * Manually instrumented ABM/engagement events ("pricing_viewed",
+     * "whitepaper_downloaded", "demo_requested", ...) tied to a customer.
+     * Written by the authenticated /ltv/events API (source 'api') and by the
+     * public token-authenticated site beacon (source 'site' — the
+     * personalization token proves the browser belongs to the customer
+     * without exposing any enumerable id).
+     */
+    public static function engagementEvents(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ENGAGEMENT_EVENTS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ENGAGEMENT_EVENTS . "` (
+                `engagement_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `customer_id` bigint(20) unsigned NOT NULL,
+                `event_name` varchar(64) NOT NULL,
+                `source` enum('api','site') NOT NULL DEFAULT 'api',
+                `click_id` bigint(20) unsigned DEFAULT NULL,
+                `occurred_at` int(10) unsigned NOT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`engagement_id`),
+                KEY `customer_time` (`user_id`,`customer_id`,`occurred_at`),
+                KEY `event_lookup` (`user_id`,`event_name`,`occurred_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
     }
 
     /**
