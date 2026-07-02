@@ -142,7 +142,9 @@ final class MysqlWebhookRepository
         );
         $this->conn->bind($stmt, 'ii', [$webhookId, $userId]);
         if ($this->conn->executeUpdate($stmt) === 0) {
-            throw new RuntimeException('Webhook not found');
+            // Typed so callers map exactly this to 404; DB failures above
+            // throw plain RuntimeException and must not read as "gone".
+            throw new RecordNotFoundException('Webhook not found');
         }
     }
 

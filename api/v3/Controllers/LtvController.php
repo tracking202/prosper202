@@ -482,7 +482,11 @@ class LtvController
     public function updateField(int $fieldId, array $payload): array
     {
         $this->wrap(function () use ($fieldId, $payload): void {
-            $this->fields->update($this->userId, $fieldId, $payload);
+            try {
+                $this->fields->update($this->userId, $fieldId, $payload);
+            } catch (RecordNotFoundException) {
+                throw new NotFoundException('Field not found');
+            }
         });
 
         return $this->fieldsList();
@@ -491,7 +495,11 @@ class LtvController
     public function deleteField(int $fieldId): void
     {
         $this->wrap(function () use ($fieldId): void {
-            $this->fields->delete($this->userId, $fieldId);
+            try {
+                $this->fields->delete($this->userId, $fieldId);
+            } catch (RecordNotFoundException) {
+                throw new NotFoundException('Field not found');
+            }
         });
     }
 
@@ -519,7 +527,11 @@ class LtvController
     public function deleteWebhook(int $webhookId): void
     {
         $this->wrap(function () use ($webhookId): void {
-            $this->webhooks->delete($this->userId, $webhookId);
+            try {
+                $this->webhooks->delete($this->userId, $webhookId);
+            } catch (RecordNotFoundException) {
+                throw new NotFoundException('Webhook not found');
+            }
         });
     }
 

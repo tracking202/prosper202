@@ -482,7 +482,10 @@ $addressParts = array_filter([
                 // From the repo constant so new alias types appear here
                 // automatically; subid stays excluded — those are minted by
                 // the click pipeline, not typed by hand.
-                foreach (array_diff(\Prosper202\Ltv\MysqlCustomerRepository::ALIAS_TYPES, ['subid']) as $aliasType) { ?>
+                foreach (array_merge(
+                    ['custom'],
+                    array_diff(\Prosper202\Ltv\MysqlCustomerRepository::ALIAS_TYPES, ['subid', 'custom'])
+                ) as $aliasType) { ?>
                     <option value="<?php echo $esc($aliasType); ?>"><?php echo $esc($aliasType); ?></option>
                 <?php } ?>
             </select>

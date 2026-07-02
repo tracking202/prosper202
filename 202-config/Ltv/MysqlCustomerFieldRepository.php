@@ -112,7 +112,7 @@ final class MysqlCustomerFieldRepository
     {
         $field = $this->findById($userId, $fieldId);
         if ($field === null) {
-            throw new RuntimeException('Field not found');
+            throw new RecordNotFoundException('Field not found');
         }
 
         $sets = [];
@@ -174,7 +174,7 @@ final class MysqlCustomerFieldRepository
     public function delete(int $userId, int $fieldId): void
     {
         if ($this->findById($userId, $fieldId) === null) {
-            throw new RuntimeException('Field not found');
+            throw new RecordNotFoundException('Field not found');
         }
 
         $this->conn->transaction(function () use ($userId, $fieldId): void {
