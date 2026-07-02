@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-include_once(substr(__DIR__, 0, -17) . '/202-config/connect2.php');
+include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 AUTH::set_timezone($_SESSION['user_timezone']);
@@ -25,13 +25,9 @@ try {
     if ($company !== '') {
         $conn = new \Prosper202\Database\Connection($db);
         $engagementRepo = new \Prosper202\Ltv\MysqlEngagementRepository($conn);
+        // Rows arrive scored: abmCompanyDetail aggregates clicks + events per
+        // contact set-based and attaches engagement_score itself.
         $contacts = $engagementRepo->abmCompanyDetail($userId, $company, 90);
-        $weights = $engagementRepo->scoreWeights($userId);
-        foreach ($contacts as &$contact) {
-            $aggregates = $engagementRepo->customerEngagementAggregates($userId, (int) $contact['customer_id'], 90);
-            $contact['engagement_score'] = \Prosper202\Ltv\MysqlEngagementRepository::engagementScore($aggregates, null, $weights);
-        }
-        unset($contact);
     }
 } catch (\Throwable $e) {
     error_log('ltv_company: ' . $e->getMessage());

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
@@ -13,6 +14,7 @@ use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
 use Prosper202\Ltv\MysqlCustomerFieldRepository;
 use Prosper202\Ltv\MysqlCustomerRepository;
+use Prosper202\Ltv\MysqlIntegrationRepository;
 use Prosper202\Ltv\MysqlLtvRepository;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
@@ -542,14 +544,24 @@ class LtvController
             throw new ValidationException('name is required', ['name' => 'Required']);
         }
 
-        return $this->wrap(function () use ($payload, $name): array {
-            $companies = new MysqlCompanyRepository($this->conn);
-            $companyId = $companies->resolveOrCreate($this->userId, $name);
-            if (isset($payload['domain']) && trim((string) $payload['domain']) !== '') {
-                $companies->setDomain($this->userId, $companyId, (string) $payload['domain']);
-            }
+        $companies = new MysqlCompanyRepository($this->conn);
+        $existing = $this->wrap(fn (): ?array => $companies->findByName($this->userId, $name));
+        if ($existing !== null) {
+            throw new ConflictException(
+                'Company already exists',
+                ['company_id' => (int) $existing['company_id'], 'name' => (string) $existing['name']]
+            );
+        }
 
-            return ['data' => ['company_id' => $companyId]];
+        return $this->wrap(function () use ($companies, $payload, $name): array {
+            // create() validates the domain BEFORE inserting and runs both
+            // writes in one transaction — a rejected domain never leaves a
+            // company row behind.
+            $domain = isset($payload['domain']) && trim((string) $payload['domain']) !== ''
+                ? (string) $payload['domain']
+                : null;
+
+            return ['data' => ['company_id' => $companies->create($this->userId, $name, $domain)]];
         });
     }
 
@@ -565,13 +577,16 @@ class LtvController
         }
 
         return $this->wrap(function () use ($companies, $companyId, $payload): array {
+            // Single atomic update: name and domain are validated together
+            // up front, then applied in one transaction — no partial apply.
+            $changes = [];
             if (array_key_exists('name', $payload)) {
-                $companies->rename($this->userId, $companyId, (string) $payload['name']);
+                $changes['name'] = (string) $payload['name'];
             }
             if (array_key_exists('domain', $payload)) {
-                $domain = $payload['domain'] !== null ? (string) $payload['domain'] : null;
-                $companies->setDomain($this->userId, $companyId, $domain);
+                $changes['domain'] = $payload['domain'] !== null ? (string) $payload['domain'] : null;
             }
+            $companies->update($this->userId, $companyId, $changes);
 
             return ['data' => $companies->get($this->userId, $companyId)];
         });
@@ -624,72 +639,49 @@ class LtvController
 
     public function deleteCustomerAlias(int $customerId, int $aliasId): void
     {
+        $this->requireCustomer($customerId);
         $this->wrap(function () use ($customerId, $aliasId): void {
-            if (!$this->customers->customerBelongsToUser($customerId, $this->userId)) {
-                throw new \RuntimeException('Customer not found for this account');
+            try {
+                $this->customers->deleteAlias($this->userId, $customerId, $aliasId);
+            } catch (\RuntimeException) {
+                // Missing resources are 404s here, matching every sibling
+                // customer endpoint (wrap would report a misleading 422).
+                throw new NotFoundException('Alias not found on this customer');
             }
-            $this->customers->deleteAlias($this->userId, $customerId, $aliasId);
         });
     }
 
     public function listIntegrations(): array
     {
-        return $this->wrap(function (): array {
-            $stmt = $this->conn->prepareRead(
-                'SELECT integration_id, provider, name, config, status, created_at, updated_at
-                 FROM 202_ltv_integrations WHERE user_id = ? ORDER BY integration_id ASC'
-            );
-            $this->conn->bind($stmt, 'i', [$this->userId]);
-            $rows = $this->conn->fetchAll($stmt);
-            foreach ($rows as &$row) {
-                if (isset($row['config']) && is_string($row['config'])) {
-                    $row['config'] = json_decode($row['config'], true);
-                }
-            }
-            unset($row);
-
-            return ['data' => $rows];
-        });
+        return $this->wrap(fn (): array => [
+            'data' => (new MysqlIntegrationRepository($this->conn))->list($this->userId),
+        ]);
     }
 
     public function createIntegration(array $payload): array
     {
-        $provider = strtolower(trim((string) ($payload['provider'] ?? '')));
-        if ($provider === '' || preg_match('/^[a-z0-9_\-]{1,50}$/', $provider) !== 1) {
-            throw new ValidationException('provider is required (a-z, 0-9, dash/underscore)', ['provider' => 'Required']);
-        }
-        $name = trim((string) ($payload['name'] ?? $provider));
-        $config = null;
-        if (isset($payload['config'])) {
-            if (!is_array($payload['config'])) {
-                throw new ValidationException('config must be an object', ['config' => 'Must be an object']);
-            }
-            $config = json_encode($payload['config']);
-            if ($config === false) {
-                throw new ValidationException('config could not be encoded', ['config' => 'Invalid content']);
-            }
+        if (isset($payload['config']) && !is_array($payload['config'])) {
+            throw new ValidationException('config must be an object', ['config' => 'Must be an object']);
         }
 
-        return $this->wrap(function () use ($provider, $name, $config): array {
-            $now = time();
-            $stmt = $this->conn->prepareWrite(
-                "INSERT INTO 202_ltv_integrations (user_id, provider, name, config, api_key_id, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, NULL, 'active', ?, ?)"
+        return $this->wrap(function () use ($payload): array {
+            $integrationId = (new MysqlIntegrationRepository($this->conn))->create(
+                $this->userId,
+                (string) ($payload['provider'] ?? ''),
+                (string) ($payload['name'] ?? ''),
+                isset($payload['config']) && is_array($payload['config']) ? $payload['config'] : null
             );
-            $this->conn->bind($stmt, 'isssii', [$this->userId, $provider, $name, $config, $now, $now]);
 
-            return ['data' => ['integration_id' => $this->conn->executeInsert($stmt)]];
+            return ['data' => ['integration_id' => $integrationId]];
         });
     }
 
     public function deleteIntegration(int $integrationId): void
     {
         $this->wrap(function () use ($integrationId): void {
-            $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_ltv_integrations WHERE integration_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, 'ii', [$integrationId, $this->userId]);
-            if ($this->conn->executeUpdate($stmt) === 0) {
+            try {
+                (new MysqlIntegrationRepository($this->conn))->delete($this->userId, $integrationId);
+            } catch (\RuntimeException) {
                 throw new NotFoundException('Integration not found');
             }
         });
@@ -828,7 +820,7 @@ class LtvController
     {
         try {
             return $fn();
-        } catch (ValidationException | NotFoundException | DatabaseException $e) {
+        } catch (ValidationException | NotFoundException | ConflictException | DatabaseException $e) {
             throw $e;
         } catch (\RuntimeException $e) {
             throw new ValidationException($e->getMessage());

@@ -123,6 +123,7 @@ final class MysqlCustomerRepository
         $affected = $this->conn->executeUpdate($stmt);
 
         if ($affected === 1) {
+            $this->stampCompanyOnCreate($userId, $newCustomerId, $crm, $now);
             return $newCustomerId;
         }
 
@@ -540,6 +541,11 @@ final class MysqlCustomerRepository
 
         $str = static function (string $key) use ($crm): ?string {
             $value = isset($crm[$key]) ? trim((string) $crm[$key]) : '';
+            if ($key === 'company' && $value !== '') {
+                // Canonical form keeps the string equal to the company
+                // entity's name (drill-downs match by string).
+                $value = MysqlCompanyRepository::canonicalName($value);
+            }
             return $value !== '' ? $value : null;
         };
 
@@ -571,6 +577,77 @@ final class MysqlCustomerRepository
         }
 
         return $customerId;
+    }
+
+    /**
+     * Attach a freshly created customer to its company entity: resolve the
+     * company row for a supplied name, or auto-attach by email domain when no
+     * name was given. Runs ONLY on creation, so it can never override a later
+     * explicit detach. Failures are logged, never fatal — company linkage is
+     * auxiliary to ingest (the maintenance sweep converges any misses), and a
+     * companies-table problem must not fail conversion recording.
+     *
+     * @param array<string, mixed> $crm
+     */
+    private function stampCompanyOnCreate(int $userId, int $customerId, array $crm, int $now): void
+    {
+        $companyName = isset($crm['company']) ? MysqlCompanyRepository::canonicalName((string) $crm['company']) : '';
+        $email = isset($crm['email']) ? trim((string) $crm['email']) : '';
+        if ($companyName === '' && $email === '') {
+            return;
+        }
+
+        try {
+            $companies = new MysqlCompanyRepository($this->conn);
+
+            if ($companyName !== '') {
+                $companyId = $companies->resolveOrCreate($userId, $companyName, $now);
+                if ($companyId <= 0) {
+                    return;
+                }
+                $stmt = $this->conn->prepareWrite(
+                    'UPDATE 202_customers SET company_id = ? WHERE customer_id = ? AND user_id = ?'
+                );
+                $this->conn->bind($stmt, 'iii', [$companyId, $customerId, $userId]);
+                $this->conn->executeUpdate($stmt);
+                return;
+            }
+
+            $domain = MysqlCompanyRepository::domainFromEmail($email);
+            if ($domain === null) {
+                return;
+            }
+            $company = $companies->findByDomain($userId, $domain);
+            if ($company === null) {
+                return;
+            }
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_customers SET company_id = ?, company = ?
+                 WHERE customer_id = ? AND user_id = ? AND company_id IS NULL AND company IS NULL'
+            );
+            $this->conn->bind($stmt, 'isii', [
+                (int) $company['company_id'],
+                (string) $company['name'],
+                $customerId,
+                $userId,
+            ]);
+            $this->conn->executeUpdate($stmt);
+        } catch (RuntimeException $e) {
+            // Lock errors roll back the ENTIRE enclosing ingest transaction
+            // server-side — they must propagate so the caller's retry runs;
+            // swallowing one here would commit a hollowed-out transaction.
+            for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+                if ($current instanceof \mysqli_sql_exception
+                    && in_array((int) $current->getCode(), [1213, 1205], true)) {
+                    throw $e;
+                }
+                $message = $current->getMessage();
+                if (str_contains($message, 'Deadlock found') || str_contains($message, 'Lock wait timeout')) {
+                    throw $e;
+                }
+            }
+            error_log('LTV company stamp skipped for customer ' . $customerId . ': ' . $e->getMessage());
+        }
     }
 
     private function normalizeAliasType(?string $type): string

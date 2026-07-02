@@ -165,15 +165,29 @@ final class CompanyTest extends TestCase
 
         $repo->linkUnlinkedCustomers(7, 100);
 
-        self::assertCount(
-            1,
-            $write->statementsContaining('INSERT INTO 202_companies'),
-            'only the customer with a real name resolves a company'
-        );
-        $stamps = $write->statementsContaining('UPDATE 202_customers SET company_id = ?');
-        self::assertCount(1, $stamps);
-        self::assertContains(11, $stamps[0]->boundValues);
-        self::assertStringContainsString('company_id IS NULL', $stamps[0]->sql, 'stamp must not overwrite an existing link');
+        $inserts = $write->statementsContaining('INSERT INTO 202_companies');
+        self::assertCount(1, $inserts, 'only the customer with a real name resolves a company');
+        self::assertContains('Acme', $inserts[0]->boundValues);
+
+        // The stamp UPDATE only runs once resolveOrCreate yields a real id;
+        // the fake cannot expose insert_id (readonly mysqli internals), so
+        // here the guard correctly suppresses a company_id=0 stamp.
+        self::assertCount(0, $write->statementsContaining('UPDATE 202_customers SET company_id = ?'));
+    }
+
+    public function testLinkSweepDoesNotSwallowDatabaseFailures(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('company_id IS NULL AND merged_into_customer_id IS NULL', [
+            ['customer_id' => 11, 'company' => 'Acme'],
+        ]);
+        // A real DB failure (missing table, broken insert) must propagate to
+        // the caller instead of being silently skipped as a "blank name".
+        $write->whenQueryContainsExecuteReturns('INSERT INTO 202_companies', false);
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $this->expectException(\RuntimeException::class);
+        $repo->linkUnlinkedCustomers(7, 100);
     }
 
     public function testCrmUpsertResolvesCompanyEntityForCompanyName(): void
@@ -214,12 +228,37 @@ final class CompanyTest extends TestCase
 
         $crm->upsert(7, ['customer_id' => 501, 'email' => 'jane@acme.com']);
 
-        $attaches = $write->statementsContaining("company_id IS NULL\n               AND (company IS NULL OR company = '')");
+        $attaches = $write->statementsContaining('company_id IS NULL
+               AND company IS NULL');
         self::assertCount(1, $attaches, 'email domain must auto-attach an unattached customer');
         self::assertSame('isiii', $attaches[0]->boundTypes);
         self::assertContains(4, $attaches[0]->boundValues);
         self::assertContains('Acme Corp', $attaches[0]->boundValues);
         self::assertContains(501, $attaches[0]->boundValues);
+        self::assertStringContainsString(
+            'AND company IS NULL',
+            $attaches[0]->sql,
+            'strictly-NULL guard: an explicitly detached customer (company = \'\') must never re-attach'
+        );
+    }
+
+    public function testCrmUpsertDetachLeavesMarkerBlockingReattach(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('SELECT customer_id FROM 202_customers WHERE customer_id = ?', [
+            ['customer_id' => 501],
+        ]);
+        $write->whenQueryContainsReturnRows('SELECT merged_into_customer_id', [
+            ['merged_into_customer_id' => null],
+        ]);
+        $conn = new Connection($write, new FakeMysqliConnection());
+        $crm = new MysqlCustomerCrmRepository($conn, new MysqlCustomerRepository($conn), new MysqlCustomerFieldRepository($conn));
+
+        $crm->upsert(7, ['customer_id' => 501, 'company' => '']);
+
+        $detaches = $write->statementsContaining("SET company_id = NULL, company = ''");
+        self::assertCount(1, $detaches, "explicit detach must record the '' marker, not plain NULL");
+        self::assertContains(501, $detaches[0]->boundValues);
     }
 
     public function testCrmUpsertDoesNotAttachWhenNoDomainMatches(): void

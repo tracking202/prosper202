@@ -27,10 +27,11 @@ $error = null;
 $newWebhookSecret = null;
 
 /**
- * Validate the personalization-allowlist pref the same way the redeem path
- * parses it (MysqlPersonalizationRepository::allowedFields), but REJECT
- * unknown entries instead of silently dropping them — a typo the user never
- * sees would otherwise just make personalization mysteriously not work.
+ * Validate the personalization-allowlist pref against the SAME grammar the
+ * redeem path uses (MysqlPersonalizationRepository::isAllowedEntry — one
+ * shared source of truth), but REJECT unknown entries instead of silently
+ * dropping them — a typo the user never sees would otherwise just make
+ * personalization mysteriously not work.
  *
  * @return string normalized comma-separated list
  */
@@ -51,9 +52,7 @@ function ltv_settings_validate_p13n_fields(string $raw): string
         if ($entry === '') {
             continue;
         }
-        if (in_array($entry, \Prosper202\Ltv\MysqlPersonalizationRepository::ALLOWED_CRM_FIELDS, true)
-            || $entry === 'rec:next_offer'
-            || (str_starts_with($entry, 'cf:') && preg_match('/^cf:[a-z0-9_]{1,64}$/', $entry) === 1)) {
+        if (\Prosper202\Ltv\MysqlPersonalizationRepository::isAllowedEntry($entry)) {
             $valid[] = $entry;
         } else {
             $invalid[] = $entry;
@@ -74,6 +73,7 @@ try {
     $conn = new \Prosper202\Database\Connection($db);
     $fieldsRepo = new \Prosper202\Ltv\MysqlCustomerFieldRepository($conn);
     $webhooksRepo = new \Prosper202\Ltv\MysqlWebhookRepository($conn);
+    $integrationsRepo = new \Prosper202\Ltv\MysqlIntegrationRepository($conn);
 
     if ($action !== '') {
         if (!AUTH::check_csrf_token()) {
@@ -158,32 +158,16 @@ try {
                         break;
 
                     case 'add_integration':
-                        $provider = strtolower(trim((string) ($_POST['integration_provider'] ?? '')));
-                        if ($provider === '' || preg_match('/^[a-z0-9_\-]{1,50}$/', $provider) !== 1) {
-                            throw new \RuntimeException('Provider is required (a-z, 0-9, dash/underscore, max 50 chars).');
-                        }
-                        $name = trim((string) ($_POST['integration_name'] ?? ''));
-                        if ($name === '') {
-                            $name = $provider;
-                        }
-                        $now = time();
-                        $stmt = $conn->prepareWrite(
-                            "INSERT INTO 202_ltv_integrations (user_id, provider, name, config, api_key_id, status, created_at, updated_at)
-                             VALUES (?, ?, ?, NULL, NULL, 'active', ?, ?)"
+                        $integrationsRepo->create(
+                            $userId,
+                            (string) ($_POST['integration_provider'] ?? ''),
+                            (string) ($_POST['integration_name'] ?? '')
                         );
-                        $conn->bind($stmt, 'issii', [$userId, $provider, $name, $now, $now]);
-                        $conn->executeInsert($stmt);
                         $notice = 'Integration added.';
                         break;
 
                     case 'delete_integration':
-                        $stmt = $conn->prepareWrite(
-                            'DELETE FROM 202_ltv_integrations WHERE integration_id = ? AND user_id = ?'
-                        );
-                        $conn->bind($stmt, 'ii', [(int) ($_POST['integration_id'] ?? 0), $userId]);
-                        if ($conn->executeUpdate($stmt) === 0) {
-                            throw new \RuntimeException('Integration not found.');
-                        }
+                        $integrationsRepo->delete($userId, (int) ($_POST['integration_id'] ?? 0));
                         $notice = 'Integration deleted.';
                         break;
 
@@ -222,12 +206,7 @@ try {
         ? $webhooksRepo->recentDeliveries($userId, $deliveryLogWebhookId, 25)
         : [];
 
-    $stmt = $conn->prepareRead(
-        'SELECT integration_id, provider, name, status, created_at
-         FROM 202_ltv_integrations WHERE user_id = ? ORDER BY integration_id ASC'
-    );
-    $conn->bind($stmt, 'i', [$userId]);
-    $integrations = $conn->fetchAll($stmt);
+    $integrations = $integrationsRepo->list($userId);
 } catch (\Throwable $e) {
     error_log('ltv_settings: ' . $e->getMessage());
     echo '<div class="alert alert-danger">LTV settings could not be loaded. '

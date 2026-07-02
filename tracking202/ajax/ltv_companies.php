@@ -44,12 +44,13 @@ try {
                         break;
 
                     case 'update_company':
-                        // Name first, then domain — the first failure stops
-                        // and reports, so a rename error is never masked by a
-                        // successful domain write.
-                        $companyId = (int) ($_POST['company_id'] ?? 0);
-                        $companiesRepo->rename($userId, $companyId, (string) ($_POST['company_name'] ?? ''));
-                        $companiesRepo->setDomain($userId, $companyId, (string) ($_POST['company_domain'] ?? ''));
+                        // One atomic update: name and domain are validated
+                        // together before anything commits, so a rejected
+                        // domain can never leave a half-applied rename.
+                        $companiesRepo->update($userId, (int) ($_POST['company_id'] ?? 0), [
+                            'name' => (string) ($_POST['company_name'] ?? ''),
+                            'domain' => (string) ($_POST['company_domain'] ?? ''),
+                        ]);
                         $notice = 'Company updated. Customers with matching email domains will auto-attach.';
                         break;
 

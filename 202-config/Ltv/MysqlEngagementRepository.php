@@ -293,16 +293,20 @@ final class MysqlEngagementRepository
      */
     public function scoreWeights(int $userId): array
     {
-        $stmt = $this->conn->prepareRead(
-            'SELECT user_ltv_score_weights FROM 202_users_pref WHERE user_id = ? LIMIT 1'
-        );
-        $this->conn->bind($stmt, 'i', [$userId]);
-        $row = $this->conn->fetchOne($stmt);
-
+        // The whole read is inside the guard: on a DB that predates the
+        // user_ltv_score_weights column (code deployed before the 1.9.70
+        // upgrade ran), the prepare fails — reports must degrade to default
+        // weights, not go down.
         try {
+            $stmt = $this->conn->prepareRead(
+                'SELECT user_ltv_score_weights FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+            );
+            $this->conn->bind($stmt, 'i', [$userId]);
+            $row = $this->conn->fetchOne($stmt);
+
             return self::parseScoreWeights((string) ($row['user_ltv_score_weights'] ?? ''));
         } catch (\RuntimeException $e) {
-            error_log('ltv score weights invalid for user ' . $userId . ': ' . $e->getMessage());
+            error_log('ltv score weights unavailable for user ' . $userId . ' (using defaults): ' . $e->getMessage());
 
             return self::DEFAULT_SCORE_WEIGHTS;
         }
@@ -406,24 +410,48 @@ final class MysqlEngagementRepository
      */
     public function abmCompanyDetail(int $userId, string $company, int $days = 90): array
     {
-        $since = time() - max(1, $days) * 86400;
+        $now = time();
+        $since = $now - max(1, $days) * 86400;
 
+        // One set-based query: clicks and instrumented events are aggregated
+        // per customer in the window so each row carries the full score
+        // inputs — no per-contact follow-up queries.
         $stmt = $this->conn->prepareRead(
             "SELECT cu.customer_id, cu.first_name, cu.last_name, cu.email,
                     cu.order_count, cu.total_revenue, cu.mrr, cu.last_activity_time,
-                    COALESCE(eng.clicks, 0) AS engagements
+                    COALESCE(eng.clicks, 0) + COALESCE(ev.events, 0) AS engagements,
+                    COALESCE(ev.avg_time_on_page, 0) AS avg_time_on_page,
+                    COALESCE(ev.avg_scroll_depth, 0) AS avg_scroll_depth,
+                    COALESCE(ev.avg_video_pct, 0) AS avg_video_pct,
+                    GREATEST(COALESCE(eng.last_click, 0), COALESCE(ev.last_event, 0)) AS last_activity
              FROM 202_customers cu
              LEFT JOIN (
-                 SELECT ct.customer_id, COUNT(*) AS clicks
+                 SELECT ct.customer_id, COUNT(*) AS clicks, MAX(c.click_time) AS last_click
                  FROM 202_clicks_tracking ct
                  JOIN 202_clicks c ON c.click_id = ct.click_id AND c.click_time >= ?
                  GROUP BY ct.customer_id
              ) eng ON eng.customer_id = cu.customer_id
+             LEFT JOIN (
+                 SELECT ee.customer_id, COUNT(*) AS events, MAX(ee.occurred_at) AS last_event,
+                        AVG(CASE WHEN ee.event_name = 'time_on_page' THEN ee.event_value END) AS avg_time_on_page,
+                        AVG(CASE WHEN ee.event_name = 'scroll_depth' THEN ee.event_value END) AS avg_scroll_depth,
+                        AVG(CASE WHEN ee.event_name = 'video_viewed' THEN ee.event_value END) AS avg_video_pct
+                 FROM 202_engagement_events ee
+                 WHERE ee.user_id = ? AND ee.occurred_at >= ?
+                 GROUP BY ee.customer_id
+             ) ev ON ev.customer_id = cu.customer_id
              WHERE cu.user_id = ? AND cu.company = ? AND cu.merged_into_customer_id IS NULL
              ORDER BY engagements DESC, cu.total_revenue DESC"
         );
-        $this->conn->bind($stmt, 'iis', [$since, $userId, $company]);
+        $this->conn->bind($stmt, 'iiiis', [$since, $userId, $since, $userId, $company]);
+        $rows = $this->conn->fetchAll($stmt);
 
-        return $this->conn->fetchAll($stmt);
+        $weights = $this->scoreWeights($userId);
+        foreach ($rows as &$row) {
+            $row['engagement_score'] = self::engagementScore($row, $now, $weights);
+        }
+        unset($row);
+
+        return $rows;
     }
 }

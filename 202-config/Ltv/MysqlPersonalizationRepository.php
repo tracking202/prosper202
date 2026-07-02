@@ -65,14 +65,25 @@ final class MysqlPersonalizationRepository
             if ($entry === '') {
                 continue;
             }
-            if (in_array($entry, self::ALLOWED_CRM_FIELDS, true)
-                || (str_starts_with($entry, 'cf:') && strlen($entry) > 3)
-                || $entry === 'rec:next_offer') {
+            if (self::isAllowedEntry($entry)) {
                 $fields[] = $entry;
             }
         }
 
         return array_values(array_unique($fields));
+    }
+
+    /**
+     * The single source of truth for the allowlist grammar, shared by this
+     * parser and the settings UI's save-time validation so the two can never
+     * drift. cf: keys use the exact charset MysqlCustomerFieldRepository
+     * enforces at field creation, so nothing valid is excluded.
+     */
+    public static function isAllowedEntry(string $entry): bool
+    {
+        return in_array($entry, self::ALLOWED_CRM_FIELDS, true)
+            || $entry === 'rec:next_offer'
+            || preg_match('/^cf:[a-z0-9_]{1,64}$/', $entry) === 1;
     }
 
     /**

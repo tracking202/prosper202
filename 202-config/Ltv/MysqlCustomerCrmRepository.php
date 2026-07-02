@@ -222,10 +222,14 @@ final class MysqlCustomerCrmRepository
                 $this->conn->executeUpdate($stmt);
             }
 
-            // Mark the source as merged (terminal pointer) and zero its cache.
+            // Mark the source as merged (terminal pointer), zero its cache and
+            // detach it from its company — merged rows are excluded from every
+            // report, so a lingering company_id would only block company
+            // deletion while being invisible in the rollups.
             $stmt = $this->conn->prepareWrite(
                 "UPDATE 202_customers
                  SET merged_into_customer_id = ?, status = 'merged',
+                     company = NULL, company_id = NULL,
                      order_count = 0, total_revenue = 0, refunded_amount = 0,
                      active_subscription_count = 0, mrr = 0, updated_at = ?
                  WHERE customer_id = ? AND user_id = ?"
@@ -375,9 +379,16 @@ final class MysqlCustomerCrmRepository
                 continue;
             }
             $value = $payload[$column];
+            $trimmed = $value !== null && trim((string) $value) !== '' ? trim((string) $value) : null;
+            if ($column === 'company' && $trimmed !== null) {
+                // Stored in canonical form so the string always compares equal
+                // to the company entity's name (drill-downs match by string).
+                $trimmed = MysqlCompanyRepository::canonicalName($trimmed);
+                $trimmed = $trimmed !== '' ? $trimmed : null;
+            }
             $sets[] = "{$column} = ?";
             $types .= 's';
-            $binds[] = $value !== null && trim((string) $value) !== '' ? trim((string) $value) : null;
+            $binds[] = $trimmed;
         }
 
         if (array_key_exists('email', $payload)) {
@@ -415,9 +426,12 @@ final class MysqlCustomerCrmRepository
      * Keep the company entity attachment in step with the CRM write:
      *  - a non-empty company name resolves/creates the 202_companies row and
      *    stamps company_id (race-safe upsert);
-     *  - an explicitly emptied company detaches;
+     *  - an explicitly emptied company detaches AND leaves company = '' as a
+     *    "detached" marker (distinct from never-attached NULL) so domain
+     *    auto-attach can never silently undo an operator's detach;
      *  - a customer saved with an email but no company auto-attaches to the
-     *    account's company whose domain matches the email domain.
+     *    account's company whose domain matches the email domain — but ONLY
+     *    when company is strictly NULL (never attached, never detached).
      *
      * @param array<string, mixed> $payload
      */
@@ -426,7 +440,9 @@ final class MysqlCustomerCrmRepository
         $companies = new MysqlCompanyRepository($this->conn);
 
         if (array_key_exists('company', $payload)) {
-            $name = $payload['company'] !== null ? trim((string) $payload['company']) : '';
+            $name = $payload['company'] !== null
+                ? MysqlCompanyRepository::canonicalName((string) $payload['company'])
+                : '';
             if ($name !== '') {
                 $companyId = $companies->resolveOrCreate($userId, $name, $now);
                 if ($companyId > 0) {
@@ -439,8 +455,10 @@ final class MysqlCustomerCrmRepository
                 return;
             }
 
+            // Explicit detach: company = '' (not NULL) records the operator's
+            // decision so the auto-attach below never reverses it.
             $stmt = $this->conn->prepareWrite(
-                'UPDATE 202_customers SET company_id = NULL WHERE customer_id = ? AND user_id = ?'
+                "UPDATE 202_customers SET company_id = NULL, company = '' WHERE customer_id = ? AND user_id = ?"
             );
             $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
             $this->conn->executeUpdate($stmt);
@@ -448,7 +466,7 @@ final class MysqlCustomerCrmRepository
         }
 
         // No company in the payload: try domain auto-attach when an email is
-        // present and the customer is not already attached anywhere.
+        // present and the customer has never been attached (or detached).
         $email = isset($payload['email']) ? trim((string) $payload['email']) : '';
         if ($email === '') {
             return;
@@ -462,9 +480,9 @@ final class MysqlCustomerCrmRepository
             return;
         }
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
+            'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
              WHERE customer_id = ? AND user_id = ? AND company_id IS NULL
-               AND (company IS NULL OR company = '')"
+               AND company IS NULL'
         );
         $this->conn->bind($stmt, 'isiii', [
             (int) $company['company_id'],
