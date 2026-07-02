@@ -35,26 +35,33 @@ final class MysqlEngagementRepository
         string $eventName,
         string $source = 'api',
         ?int $clickId = null,
-        ?int $occurredAt = null
+        ?int $occurredAt = null,
+        ?float $eventValue = null
     ): int {
         $eventName = self::normalizeEventName($eventName);
         if (!in_array($source, ['api', 'site'], true)) {
             throw new \RuntimeException('event source must be api or site');
+        }
+        if ($eventValue !== null) {
+            // Depth metrics: seconds on page, scroll/video percentages.
+            // Client-supplied, so clamp defensively to the column's range.
+            $eventValue = max(0.0, min(999999999.999, $eventValue));
         }
         $now = time();
         $occurredAt = $occurredAt !== null && $occurredAt > 0 ? $occurredAt : $now;
 
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_engagement_events
-                (user_id, customer_id, event_name, source, click_id, occurred_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)'
+                (user_id, customer_id, event_name, source, click_id, event_value, occurred_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $this->conn->bind($stmt, 'iissiii', [
+        $this->conn->bind($stmt, 'iissidii', [
             $userId,
             $customerId,
             $eventName,
             $source,
             $clickId !== null && $clickId > 0 ? $clickId : null,
+            $eventValue,
             $occurredAt,
             $now,
         ]);
@@ -100,7 +107,7 @@ final class MysqlEngagementRepository
         $since = time() - max(1, $days) * 86400;
 
         $stmt = $this->conn->prepareRead(
-            'SELECT event_name, source, occurred_at, click_id
+            'SELECT event_name, source, event_value, occurred_at, click_id
              FROM 202_engagement_events
              WHERE user_id = ? AND customer_id = ? AND occurred_at >= ?
              ORDER BY occurred_at DESC, engagement_id DESC

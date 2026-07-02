@@ -244,23 +244,122 @@ var utm_campaign = t202GetVar('utm_campaign');
 })();
 
 // --- Manual ABM event instrumentation ---
-// Pages call t202Track('pricing_viewed') to record an engagement event for
-// the recognized customer. Authenticated by the personalization token cookie
+// Pages call t202Track('pricing_viewed') — optionally with a numeric value,
+// e.g. t202Track('video_viewed', 75) — to record an engagement event for the
+// recognized customer. Authenticated by the personalization token cookie
 // (a random bearer capability — no enumerable id is ever exposed); a visitor
 // without a token is simply not tracked. Fire-and-forget: never throws,
 // never blocks the page.
-window.t202Track = function(eventName) {
+var t202EventUrl = "<?php echo $baseUrl; ?>tracking202/static/p13n_event.php";
+
+function t202EventBody(eventName, value) {
+	var body = 'token=' + t202Enc(readCookie('tracking202p13n') || '') + '&event=' + t202Enc(eventName);
+	if (typeof value === 'number' && isFinite(value)) {
+		body += '&value=' + t202Enc(String(Math.round(value * 1000) / 1000));
+	}
+	return body;
+}
+
+window.t202Track = function(eventName, value) {
 	try {
 		if (typeof eventName !== 'string' || eventName === '') { return; }
-		var token = readCookie('tracking202p13n');
-		if (!token) { return; }
+		if (!readCookie('tracking202p13n')) { return; }
 		var xhr = new XMLHttpRequest();
-		xhr.open('POST', "<?php echo $baseUrl; ?>tracking202/static/p13n_event.php", true);
+		xhr.open('POST', t202EventUrl, true);
 		xhr.timeout = 3000;
 		xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-		xhr.send('token=' + t202Enc(token) + '&event=' + t202Enc(eventName));
+		xhr.send(t202EventBody(eventName, value));
 	} catch (e) { /* instrumentation is best-effort */ }
 };
+
+// Reliable delivery during page teardown (XHR is not): used by the
+// time-on-page metric below.
+function t202TrackBeacon(eventName, value) {
+	try {
+		if (!readCookie('tracking202p13n')) { return; }
+		var body = t202EventBody(eventName, value);
+		if (navigator.sendBeacon) {
+			navigator.sendBeacon(t202EventUrl, new Blob([body], { type: 'application/x-www-form-urlencoded' }));
+		} else {
+			var xhr = new XMLHttpRequest();
+			xhr.open('POST', t202EventUrl, false); // sync as a last resort during unload
+			xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+			xhr.send(body);
+		}
+	} catch (e) { /* best-effort */ }
+}
+
+// Track how much of a video element gets watched: fires video_viewed once
+// per 25/50/75/95 percent threshold. Pages can call t202TrackVideo(el)
+// explicitly; every <video> present at snippet load is wired automatically.
+window.t202TrackVideo = function(videoEl) {
+	try {
+		if (!videoEl || typeof videoEl.addEventListener !== 'function') { return; }
+		var fired = {};
+		videoEl.addEventListener('timeupdate', function() {
+			if (!videoEl.duration || !isFinite(videoEl.duration)) { return; }
+			var pct = (videoEl.currentTime / videoEl.duration) * 100;
+			var thresholds = [25, 50, 75, 95];
+			for (var i = 0; i < thresholds.length; i++) {
+				if (pct >= thresholds[i] && !fired[thresholds[i]]) {
+					fired[thresholds[i]] = true;
+					window.t202Track('video_viewed', thresholds[i]);
+				}
+			}
+		});
+	} catch (e) { /* best-effort */ }
+};
+
+// --- Automatic engagement depth metrics (recognized visitors only) ---
+// Bounded by design: scroll depth fires at most 4 events per page, video
+// progress at most 4 per video, time on page exactly 1. The senders no-op
+// without the token cookie (which arrives asynchronously on the first
+// pageview), so listeners attach unconditionally and check at fire time —
+// unknown visitors cost a cookie read per threshold, no network.
+(function() {
+	// Scroll depth: 25/50/75/100 percent, each once.
+	var scrollFired = {};
+	function onScroll() {
+		try {
+			var doc = document.documentElement;
+			var scrollable = (doc.scrollHeight - doc.clientHeight);
+			var pct = scrollable > 0 ? ((window.pageYOffset || doc.scrollTop) / scrollable) * 100 : 100;
+			var thresholds = [25, 50, 75, 100];
+			for (var i = 0; i < thresholds.length; i++) {
+				if (pct >= thresholds[i] && !scrollFired[thresholds[i]]) {
+					scrollFired[thresholds[i]] = true;
+					window.t202Track('scroll_depth', thresholds[i]);
+				}
+			}
+		} catch (e) { /* best-effort */ }
+	}
+	window.addEventListener('scroll', onScroll, { passive: true });
+
+	// Time on page: accumulate VISIBLE seconds, send once on teardown.
+	var visibleSince = document.hidden ? null : Date.now();
+	var visibleTotal = 0;
+	var timeSent = false;
+	document.addEventListener('visibilitychange', function() {
+		if (document.hidden) {
+			if (visibleSince !== null) { visibleTotal += Date.now() - visibleSince; visibleSince = null; }
+		} else if (visibleSince === null) {
+			visibleSince = Date.now();
+		}
+	});
+	window.addEventListener('pagehide', function() {
+		if (timeSent) { return; }
+		timeSent = true;
+		if (visibleSince !== null) { visibleTotal += Date.now() - visibleSince; }
+		var seconds = Math.min(3600, Math.round(visibleTotal / 1000));
+		if (seconds > 0) { t202TrackBeacon('time_on_page', seconds); }
+	});
+
+	// Auto-wire progress tracking for every video present at load.
+	try {
+		var videos = document.querySelectorAll('video');
+		for (var v = 0; v < videos.length; v++) { window.t202TrackVideo(videos[v]); }
+	} catch (e) { /* best-effort */ }
+})();
 
 // --- Customer personalization (privacy-preserving, graceful by design) ---
 // Elements opt in with name="t202p13n_<field>" (e.g. t202p13n_first_name) and

@@ -429,12 +429,25 @@ $addressParts = array_filter([
             <h6>Instrumented Events <small>(last 90 days)</small></h6>
             <table class="table table-bordered table-hover">
                 <thead>
-                    <tr><th>Event</th><th>Source</th><th>When</th></tr>
+                    <tr><th>Event</th><th>Value</th><th>Source</th><th>When</th></tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($engagementEvents as $event) { ?>
+                    <?php foreach ($engagementEvents as $event) {
+                        $eventName = (string) ($event['event_name'] ?? '');
+                        $eventValue = $event['event_value'] ?? null;
+                        // Friendly units for the auto-instrumented depth metrics.
+                        $valueLabel = '—';
+                        if ($eventValue !== null) {
+                            $valueLabel = match ($eventName) {
+                                'time_on_page' => number_format((float) $eventValue) . 's',
+                                'scroll_depth', 'video_viewed' => number_format((float) $eventValue) . '%',
+                                default => rtrim(rtrim(number_format((float) $eventValue, 3), '0'), '.'),
+                            };
+                        }
+                    ?>
                         <tr>
-                            <td><?php echo $esc($event['event_name'] ?? ''); ?></td>
+                            <td><?php echo $esc($eventName); ?></td>
+                            <td><?php echo $esc($valueLabel); ?></td>
                             <td><?php echo $esc($event['source'] ?? ''); ?></td>
                             <td><?php echo $when($event['occurred_at'] ?? 0); ?></td>
                         </tr>

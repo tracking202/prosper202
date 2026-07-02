@@ -42,7 +42,7 @@ final class EngagementEventTest extends TestCase
 
         $inserts = $write->statementsContaining('INSERT INTO 202_engagement_events');
         self::assertCount(1, $inserts);
-        self::assertSame('iissiii', $inserts[0]->boundTypes);
+        self::assertSame('iissidii', $inserts[0]->boundTypes);
         self::assertContains('demo_requested', $inserts[0]->boundValues, 'name must be normalized');
         self::assertContains('site', $inserts[0]->boundValues);
         self::assertContains(12345, $inserts[0]->boundValues);
@@ -50,6 +50,25 @@ final class EngagementEventTest extends TestCase
 
         $touches = $write->statementsContaining('UPDATE 202_customers SET last_activity_time');
         self::assertCount(1, $touches, 'manual events must count as customer activity');
+    }
+
+    public function testRecordEventStoresAndClampsDepthValues(): void
+    {
+        $write = new FakeMysqliConnection();
+        $repo = new MysqlEngagementRepository(new Connection($write, new FakeMysqliConnection()));
+
+        // Normal depth value passes through.
+        $repo->recordEvent(7, 501, 'scroll_depth', 'site', null, null, 75.0);
+        // Client-supplied garbage is clamped, never rejected (the beacon must
+        // stay a silent no-oracle endpoint) and never negative.
+        $repo->recordEvent(7, 501, 'time_on_page', 'site', null, null, -50.0);
+        $repo->recordEvent(7, 501, 'video_viewed', 'site', null, null, 9e12);
+
+        $inserts = $write->statementsContaining('INSERT INTO 202_engagement_events');
+        self::assertCount(3, $inserts);
+        self::assertContains(75.0, $inserts[0]->boundValues);
+        self::assertContains(0.0, $inserts[1]->boundValues, 'negative values clamp to zero');
+        self::assertContains(999999999.999, $inserts[2]->boundValues, 'oversized values clamp to the column range');
     }
 
     public function testRecordEventRejectsUnknownSource(): void

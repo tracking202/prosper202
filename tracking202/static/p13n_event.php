@@ -54,13 +54,21 @@ try {
 
     $resolved = $tokens->customerForToken($token, time());
     if ($resolved !== null) {
+        // Optional numeric value for depth metrics (seconds on page, scroll
+        // or video percentage). Non-numeric input means no value, never junk.
+        $eventValue = isset($_POST['value']) && is_numeric($_POST['value'])
+            ? (float) $_POST['value']
+            : null;
+
         $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($conn);
         $engagement->recordEvent(
             $resolved['userId'],
             $resolved['customerId'],
             $eventName,
             'site',
-            $resolved['clickId']
+            $resolved['clickId'],
+            null,
+            $eventValue
         );
     }
 } catch (\Throwable $e) {

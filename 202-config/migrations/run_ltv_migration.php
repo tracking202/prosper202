@@ -142,6 +142,16 @@ try {
         echo "  202_users_pref.user_ltv_customer_cparam already exists — skipping\n";
     }
 
+    if (!ltv_column_exists($db, '202_engagement_events', 'event_value')) {
+        ltv_run(
+            $db,
+            'ALTER TABLE `202_engagement_events` ADD COLUMN `event_value` decimal(12,3) DEFAULT NULL AFTER `click_id`',
+            'add 202_engagement_events.event_value'
+        );
+    } else {
+        echo "  202_engagement_events.event_value already exists — skipping\n";
+    }
+
     if (!ltv_column_exists($db, '202_users_pref', 'user_ltv_personalization_fields')) {
         ltv_run(
             $db,

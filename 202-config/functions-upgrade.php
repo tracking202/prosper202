@@ -3719,10 +3719,31 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.68', '>')) {
+        if ($prosper202_version == '1.9.68') {
 
-            $prosper202_version = '1.9.68';
+            // Engagement depth metrics (time on page, scroll depth, video
+            // progress): events gain an optional numeric value. Guarded ALTER.
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_engagement_events` LIKE 'event_value'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $value_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_engagement_events` ADD COLUMN `event_value` decimal(12,3) DEFAULT NULL AFTER `click_id`"
+            ) !== false;
+
+            if ($value_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.69'") !== false) {
+                    $prosper202_version = '1.9.69';
+                } else {
+                    error_log('Prosper202 upgrade: added event_value but failed to persist version 1.9.69; leaving version at 1.9.68 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to add 202_engagement_events.event_value; leaving version at 1.9.68 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.69', '>')) {
+
+            $prosper202_version = '1.9.69';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

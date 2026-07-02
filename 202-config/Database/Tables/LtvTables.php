@@ -62,6 +62,7 @@ final class LtvTables
                 `event_name` varchar(64) NOT NULL,
                 `source` enum('api','site') NOT NULL DEFAULT 'api',
                 `click_id` bigint(20) unsigned DEFAULT NULL,
+                `event_value` decimal(12,3) DEFAULT NULL,
                 `occurred_at` int(10) unsigned NOT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`engagement_id`),

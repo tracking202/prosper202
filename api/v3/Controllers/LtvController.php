@@ -160,6 +160,14 @@ class LtvController
             $now = time();
             $customerId = $this->resolveCustomerFromPayload($payload, $now);
 
+            $eventValue = null;
+            if (array_key_exists('value', $payload) && $payload['value'] !== null) {
+                if (!is_numeric($payload['value'])) {
+                    throw new ValidationException('value must be numeric', ['value' => 'Seconds, percentage, or other metric']);
+                }
+                $eventValue = (float) $payload['value'];
+            }
+
             $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
             $eventId = $engagement->recordEvent(
                 $this->userId,
@@ -167,7 +175,8 @@ class LtvController
                 $eventName,
                 'api',
                 null,
-                isset($payload['occurred_at']) ? (int) $payload['occurred_at'] : null
+                isset($payload['occurred_at']) ? (int) $payload['occurred_at'] : null,
+                $eventValue
             );
 
             return [
