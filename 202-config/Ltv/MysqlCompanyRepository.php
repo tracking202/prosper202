@@ -163,8 +163,9 @@ final class MysqlCompanyRepository
         try {
             return $this->conn->executeInsert($stmt);
         } catch (RuntimeException $e) {
-            $message = $e->getMessage();
-            if (str_contains($message, 'Duplicate entry') || str_contains($message, '[errno 1062]')) {
+            // Locale-independent duplicate-key detection (the unique key
+            // firing under a concurrent create).
+            if (Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
                 throw new CompanyConflictException(
                     'Company "' . $name . '" already exists; use PATCH to modify it'
                 );

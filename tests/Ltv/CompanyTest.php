@@ -256,10 +256,11 @@ final class CompanyTest extends TestCase
 
         $crm->upsert(7, ['customer_id' => 501, 'company' => '']);
 
-        // The IF writes the '' marker only on a TRUE detach (company_id was
-        // set); a never-attached customer keeps NULL and stays eligible for
-        // domain auto-attach, and an existing marker is preserved.
-        $detaches = $write->statementsContaining("SET company = IF(company_id IS NULL, company, '')");
+        // Only a pristine row (no company_id AND no string) keeps NULL and
+        // stays auto-attach eligible; attached rows, unstamped ingest
+        // strings, and existing markers all become/stay '' — the operator's
+        // clear must never be reversed by the sweep or auto-attach.
+        $detaches = $write->statementsContaining("SET company = IF(company_id IS NULL AND company IS NULL, NULL, '')");
         self::assertCount(1, $detaches, 'detach must be marker-guarded, not unconditional');
         self::assertContains(501, $detaches[0]->boundValues);
         self::assertStringContainsString('company_id = NULL', $detaches[0]->sql);

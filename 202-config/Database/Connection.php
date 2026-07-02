@@ -158,16 +158,27 @@ final class Connection
      */
     public static function isRetryableLockError(Throwable $e): bool
     {
+        return self::isMysqlError($e, 1213, 'Deadlock found')
+            || self::isMysqlError($e, 1205, 'Lock wait timeout');
+    }
+
+    /**
+     * True when the throwable (or anything in its previous-chain) is the
+     * given MySQL error, detected locale-independently: mysqli_sql_exception
+     * carries the errno as its code (STRICT|ERROR reporting paths), this
+     * class's RuntimeException carries the [errno N] tag (STRICT-only
+     * paths), and the English message fragment covers exceptions raised
+     * before the tag existed.
+     */
+    public static function isMysqlError(Throwable $e, int $errno, string $englishFragment): bool
+    {
         for ($current = $e; $current !== null; $current = $current->getPrevious()) {
-            if ($current instanceof \mysqli_sql_exception) {
-                $code = (int) $current->getCode();
-                if ($code === 1213 || $code === 1205) {
-                    return true;
-                }
+            if ($current instanceof \mysqli_sql_exception && (int) $current->getCode() === $errno) {
+                return true;
             }
             $message = $current->getMessage();
-            if (str_contains($message, '[errno 1213]') || str_contains($message, '[errno 1205]')
-                || str_contains($message, 'Deadlock found') || str_contains($message, 'Lock wait timeout')) {
+            if (str_contains($message, '[errno ' . $errno . ']')
+                || ($englishFragment !== '' && str_contains($message, $englishFragment))) {
                 return true;
             }
         }

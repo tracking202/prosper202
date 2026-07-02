@@ -453,13 +453,16 @@ final class MysqlCustomerCrmRepository
                 return;
             }
 
-            // Detach. The IF keeps the marker semantics honest: an attached
-            // customer gets '' (explicit detach, blocks re-attach); a
-            // never-attached one keeps NULL (still auto-attach eligible);
-            // an already-detached one keeps its '' marker.
+            // Detach. The IF keeps the marker semantics honest: only a
+            // pristine row (no company_id AND no string) keeps NULL and
+            // stays auto-attach eligible; everything else — attached,
+            // unstamped ingest string awaiting the linking sweep, or an
+            // existing marker — becomes/stays '' so the operator's clear is
+            // never silently reversed by the sweep or domain auto-attach.
             $stmt = $this->conn->prepareWrite(
                 "UPDATE 202_customers
-                 SET company = IF(company_id IS NULL, company, ''), company_id = NULL, updated_at = ?
+                 SET company = IF(company_id IS NULL AND company IS NULL, NULL, ''),
+                     company_id = NULL, updated_at = ?
                  WHERE customer_id = ? AND user_id = ?"
             );
             $this->conn->bind($stmt, 'iii', [$now, $customerId, $userId]);

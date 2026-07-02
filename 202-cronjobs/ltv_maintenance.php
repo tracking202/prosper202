@@ -215,10 +215,15 @@ try {
                     throw new RuntimeException('company-link probe failed: ' . $db->error);
                 }
                 $probeResult = $probe->get_result();
-                $hasPending = $probeResult instanceof mysqli_result && $probeResult->num_rows > 0;
-                if ($probeResult instanceof mysqli_result) {
-                    $probeResult->free();
+                if (!($probeResult instanceof mysqli_result)) {
+                    // false here is a transport failure, not an empty result
+                    // (a SELECT always yields a result set) — surfacing beats
+                    // silently skipping this user's linking backlog.
+                    $probe->close();
+                    throw new RuntimeException('company-link probe result failed: ' . $db->error);
                 }
+                $hasPending = $probeResult->num_rows > 0;
+                $probeResult->free();
                 if ($hasPending) {
                     $companiesLinked += $companies->linkUnlinkedCustomers($probeUserId, 2000);
                 }

@@ -304,10 +304,9 @@ final class MysqlEngagementRepository
             // with the pref column not yet added (unknown column / 1054).
             // Every other DB failure must surface — silently-wrong scores
             // would mask a real outage.
-            $message = $e->getMessage();
-            if (str_contains($message, 'Unknown column') || str_contains($message, '[errno 1054]')) {
+            if (Connection::isMysqlError($e, 1054, 'Unknown column')) {
                 error_log('ltv score weights column missing for user ' . $userId
-                    . ' (run the 1.9.70 upgrade; using defaults): ' . $message);
+                    . ' (run the 1.9.70 upgrade; using defaults): ' . $e->getMessage());
 
                 return self::DEFAULT_SCORE_WEIGHTS;
             }
