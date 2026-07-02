@@ -1364,6 +1364,26 @@ function loadContent(page, offset, order){
 		});
 }
 
+// POST a payload and swap the response into #m-content. Unlike bare
+// $.post().done() copies, a failed request restores the panel and tells the
+// user instead of leaving the page dimmed with no feedback.
+function loadContentPost(page, payload) {
+	var element = $('#m-content');
+	$.post(page, payload || {})
+		.done(function(data) {
+			element.html(data);
+			element.css('opacity', '1');
+		})
+		.fail(function(xhr) {
+			element.css('opacity', '1');
+			element.prepend(
+				'<div class="alert alert-danger">The request failed ('
+				+ (xhr && xhr.status ? 'HTTP ' + xhr.status : 'network error')
+				+ '). Your session may have expired &mdash; reload the page and try again.</div>'
+			);
+		});
+}
+
 function createCookie(name,value,days) {
 	if (days) {
 		var date = new Date();

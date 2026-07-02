@@ -16,8 +16,9 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 $userId = (int) $_SESSION['user_id'];
 $action = (string) ($_POST['action'] ?? '');
 
-$esc = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
-$when = static fn (mixed $ts): string => ((int) $ts) > 0 ? date('M j, Y', (int) $ts) : '—';
+require_once __DIR__ . '/ltv_helpers.php';
+$esc = p202_ltv_esc(...);
+$when = p202_ltv_when(...);
 
 $backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_settings.php';
@@ -472,14 +473,10 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
 
 <script type="text/javascript">
     function ltvSettingsSubmit(formId) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', $('#' + formId).serialize())
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        loadContentPost('<?php echo $selfUrl; ?>', $('#' + formId).serialize());
     }
     function ltvWebhookLog(webhookId) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', { show_deliveries: webhookId })
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        loadContentPost('<?php echo $selfUrl; ?>', { show_deliveries: webhookId });
     }
     function ltvSettingsDelete(action, idField, id, message) {
         if (!window.confirm(message)) { return; }
@@ -488,8 +485,6 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
             token: <?php echo json_encode($csrfToken); ?>
         };
         payload[idField] = id;
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', payload)
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        loadContentPost('<?php echo $selfUrl; ?>', payload);
     }
 </script>

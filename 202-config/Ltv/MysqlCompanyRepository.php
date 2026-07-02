@@ -413,23 +413,6 @@ final class MysqlCompanyRepository
     }
 
     /**
-     * Rename a company (see update() for the invariants).
-     */
-    public function rename(int $userId, int $companyId, string $newName): void
-    {
-        $this->update($userId, $companyId, ['name' => $newName]);
-    }
-
-    /**
-     * Set (or clear, with null/'') the company's auto-attach email domain
-     * (see update() for the invariants).
-     */
-    public function setDomain(int $userId, int $companyId, ?string $domain): void
-    {
-        $this->update($userId, $companyId, ['domain' => $domain]);
-    }
-
-    /**
      * Merge source into target: attached customers repoint (their legacy
      * company string follows the target's name), the target inherits the
      * source's domain if it has none, and the source row is deleted — nothing

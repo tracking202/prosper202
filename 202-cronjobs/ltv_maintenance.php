@@ -189,18 +189,41 @@ try {
     // its failure must never block the sections after it — in particular the
     // personalization PII purge below, which ran fine on older schemas.
     try {
-        $companyUsers = $run(
-            "SELECT DISTINCT user_id FROM 202_customers
-             WHERE company IS NOT NULL AND company <> '' AND company_id IS NULL
-               AND merged_into_customer_id IS NULL"
-        );
         $companiesLinked = 0;
         $conn = $conn ?? new \Prosper202\Database\Connection($db);
         $companies = new \Prosper202\Ltv\MysqlCompanyRepository($conn);
+        // Per-user existence probes ride the (user_id, company_id) index; a
+        // single global DISTINCT over the predicate would full-scan the
+        // multi-tenant customers table on every run, even in steady state.
+        $companyUsers = $run('SELECT user_id FROM 202_users_pref');
         if ($companyUsers instanceof mysqli_result) {
-            while ($userRow = $companyUsers->fetch_assoc()) {
-                $companiesLinked += $companies->linkUnlinkedCustomers((int) $userRow['user_id'], 2000);
+            $probe = $db->prepare(
+                "SELECT 1 FROM 202_customers
+                 WHERE user_id = ? AND company_id IS NULL
+                   AND company IS NOT NULL AND company <> ''
+                   AND merged_into_customer_id IS NULL
+                 LIMIT 1"
+            );
+            if ($probe === false) {
+                throw new RuntimeException('prepare failed: ' . $db->error);
             }
+            while ($userRow = $companyUsers->fetch_assoc()) {
+                $probeUserId = (int) $userRow['user_id'];
+                $probe->bind_param('i', $probeUserId);
+                if (!$probe->execute()) {
+                    $probe->close();
+                    throw new RuntimeException('company-link probe failed: ' . $db->error);
+                }
+                $probeResult = $probe->get_result();
+                $hasPending = $probeResult instanceof mysqli_result && $probeResult->num_rows > 0;
+                if ($probeResult instanceof mysqli_result) {
+                    $probeResult->free();
+                }
+                if ($hasPending) {
+                    $companiesLinked += $companies->linkUnlinkedCustomers($probeUserId, 2000);
+                }
+            }
+            $probe->close();
         }
         // Converge attached strings onto the entity names: repairs rows
         // stamped before string canonicalization and any partial-write drift.

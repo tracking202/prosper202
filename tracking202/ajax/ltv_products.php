@@ -15,10 +15,13 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 
 $userId = (int) $_SESSION['user_id'];
 $action = (string) ($_POST['action'] ?? '');
+$offset = max(0, (int) ($_POST['offset'] ?? 0));
+$limit = 50;
 
-$money = static fn (mixed $v): string => number_format((float) $v, 2);
-$esc = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
-$when = static fn (mixed $ts): string => ((int) $ts) > 0 ? date('M j, Y', (int) $ts) : '—';
+require_once __DIR__ . '/ltv_helpers.php';
+$money = p202_ltv_money(...);
+$esc = p202_ltv_esc(...);
+$when = p202_ltv_when(...);
 
 $backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_products.php';
@@ -125,10 +128,14 @@ try {
          ) li ON li.product_id = p.product_id
          WHERE p.user_id = ?
          ORDER BY revenue DESC, p.product_id ASC
-         LIMIT 200'
+         LIMIT ? OFFSET ?'
     );
-    $conn->bind($stmt, 'ii', [$userId, $userId]);
+    $conn->bind($stmt, 'iiii', [$userId, $userId, $limit, $offset]);
     $products = $conn->fetchAll($stmt);
+
+    $countStmt = $conn->prepareRead('SELECT COUNT(*) AS total FROM 202_products WHERE user_id = ?');
+    $conn->bind($countStmt, 'i', [$userId]);
+    $totalProducts = (int) ($conn->fetchOne($countStmt)['total'] ?? 0);
 } catch (\Throwable $e) {
     error_log('ltv_products: ' . $e->getMessage());
     echo '<div class="alert alert-warning">Product data is unavailable. Run the LTV migration if you have not yet.</div>';
@@ -147,7 +154,7 @@ $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['produ
 
 <div class="row" style="margin-bottom: 15px;">
     <div class="col-xs-12">
-        <h6>Product Catalog <small><?php echo count($products); ?> product(s) — created automatically from order line items</small></h6>
+        <h6>Product Catalog <small><?php echo number_format($totalProducts); ?> product(s) — created automatically from order line items</small></h6>
     </div>
 </div>
 
@@ -223,32 +230,39 @@ $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['produ
                 <?php } ?>
             </tbody>
         </table>
+
+        <div class="text-center">
+            <?php if ($offset > 0) { ?>
+                <a href="#" onclick="ltvProductsLoad(<?php echo max(0, $offset - $limit); ?>); return false;">&laquo; Previous</a>
+            <?php } ?>
+            <?php if ($offset + $limit < $totalProducts) { ?>
+                &nbsp;<a href="#" onclick="ltvProductsLoad(<?php echo $offset + $limit; ?>); return false;">Next &raquo;</a>
+            <?php } ?>
+        </div>
     </div>
 </div>
 
 <script type="text/javascript">
+    function ltvProductsLoad(offset) {
+        loadContentPost('<?php echo $selfUrl; ?>', { offset: offset });
+    }
     function ltvProductsReload() {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {})
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        ltvProductsLoad(<?php echo $offset; ?>);
     }
     function ltvProductEdit(productId) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', { edit: productId })
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        loadContentPost('<?php echo $selfUrl; ?>', { edit: productId, offset: <?php echo $offset; ?> });
     }
     function ltvProductSave(productId) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', $('#ltv-product-row-' + productId).find('input').serialize())
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        loadContentPost('<?php echo $selfUrl; ?>',
+            $('#ltv-product-row-' + productId).find('input').serialize() + '&offset=<?php echo $offset; ?>');
     }
     function ltvProductDelete(productId) {
         if (!window.confirm('Delete this product? Only possible when no order line items reference it.')) { return; }
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             action: 'delete_product',
             product_id: productId,
+            offset: <?php echo $offset; ?>,
             token: <?php echo json_encode($csrfToken); ?>
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
 </script>

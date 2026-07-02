@@ -207,6 +207,20 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         ];
     }
 
+    /**
+     * Account projection from ALREADY-COMPUTED aggregates — for callers (the
+     * dashboard) that just ran summary() and mrr() and must not pay for the
+     * same aggregate queries twice in one render.
+     *
+     * @param array<string, mixed> $summary a summary() result
+     * @param array<string, mixed> $mrr an mrr() result
+     * @return array<string, mixed>
+     */
+    public function predictFromComputed(array $summary, array $mrr): array
+    {
+        return $this->predictFromAggregates($summary, $mrr, 'account');
+    }
+
     public function predict(LtvQuery $query, ?string $breakdownType = null): array
     {
         $account = $this->predictFromAggregates(

@@ -14,9 +14,10 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 $userId = (int) $_SESSION['user_id'];
 $company = isset($_POST['company']) && is_scalar($_POST['company']) ? trim((string) $_POST['company']) : '';
 
-$money = static fn (mixed $v): string => number_format((float) $v, 2);
-$esc = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
-$when = static fn (mixed $ts): string => ((int) $ts) > 0 ? date('M j, Y', (int) $ts) : '—';
+require_once __DIR__ . '/ltv_helpers.php';
+$money = p202_ltv_money(...);
+$esc = p202_ltv_esc(...);
+$when = p202_ltv_when(...);
 
 $backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 
@@ -89,12 +90,8 @@ try {
 
 <script type="text/javascript">
     function ltvCompanyCustomer(customerId) {
-        var element = $('#m-content');
-        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
+        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
             customer_id: customerId
-        }).done(function(data) {
-            element.html(data);
-            element.css('opacity', '1');
         });
     }
 </script>

@@ -84,7 +84,7 @@ final class CompanyTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('merge the two companies');
-        $repo->rename(7, 2, 'Initech');
+        $repo->update(7, 2, ['name' => 'Initech']);
     }
 
     public function testRenameRewritesEntityAndAttachedCustomers(): void
@@ -95,7 +95,7 @@ final class CompanyTest extends TestCase
         ]);
         $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
 
-        $repo->rename(7, 2, '  Initech   Global ');
+        $repo->update(7, 2, ['name' => '  Initech   Global ']);
 
         $companyUpdates = $write->statementsContaining('UPDATE 202_companies SET name');
         self::assertCount(1, $companyUpdates);

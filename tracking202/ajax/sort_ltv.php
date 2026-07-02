@@ -28,8 +28,9 @@ $by = isset($_POST['ltv_by']) && isset($allowedDimensions[(string) $_POST['ltv_b
     ? (string) $_POST['ltv_by']
     : 'campaign';
 
-$money = static fn (mixed $v): string => number_format((float) $v, 2);
-$esc = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+require_once __DIR__ . '/ltv_helpers.php';
+$money = p202_ltv_money(...);
+$esc = p202_ltv_esc(...);
 
 try {
     $conn = new \Prosper202\Database\Connection($db);
@@ -45,7 +46,9 @@ try {
         $breakdown = $ltv->breakdown($query, $by, 25, 0);
     }
     $customers = $ltv->customers($query, 'total_revenue', 'DESC', $limit, $offset);
-    $predict = $ltv->predict($query);
+    // Reuse the aggregates computed above — predict($query) would re-run
+    // the same summary and MRR queries in the hottest LTV render.
+    $predict = $ltv->predictFromComputed($summary, $mrr);
 } catch (\Throwable $e) {
     // Most likely cause: the LTV schema has not been installed yet.
     error_log('sort_ltv: ' . $e->getMessage());
@@ -312,43 +315,26 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 
 <script type="text/javascript">
     function ltvLoad(offset) {
-        var element = $('#m-content');
-        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/sort_ltv.php', {
+        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/sort_ltv.php', {
             offset: offset,
             ltv_by: $('#ltv-by-select').val()
-        }).done(function(data) {
-            element.html(data);
-            element.css('opacity', '1');
         });
     }
     function ltvCustomer(customerId) {
-        var element = $('#m-content');
-        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
+        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
             customer_id: customerId
-        }).done(function(data) {
-            element.html(data);
-            element.css('opacity', '1');
         });
     }
     function ltvCompany(company) {
-        var element = $('#m-content');
-        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_company.php', {
+        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_company.php', {
             company: company
-        }).done(function(data) {
-            element.html(data);
-            element.css('opacity', '1');
         });
     }
     function ltvSettings() {
         ltvPartial('ltv_settings');
     }
     function ltvPartial(name) {
-        var element = $('#m-content');
-        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/' + name + '.php', {})
-            .done(function(data) {
-                element.html(data);
-                element.css('opacity', '1');
-            });
+        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/' + name + '.php', {});
     }
     $('#ltv-by-select').on('change', function() { ltvLoad(0); });
 

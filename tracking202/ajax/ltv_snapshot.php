@@ -13,7 +13,8 @@ AUTH::set_timezone($_SESSION['user_timezone']);
  */
 
 $userId = (int) $_SESSION['user_id'];
-$money = static fn (mixed $v): string => number_format((float) $v, 2);
+require_once __DIR__ . '/ltv_helpers.php';
+$money = p202_ltv_money(...);
 
 try {
     $conn = new \Prosper202\Database\Connection($db);

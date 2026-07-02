@@ -22,9 +22,10 @@ $customerId = (int) ($_POST['customer_id'] ?? $_GET['customer_id'] ?? 0);
 $mode = (string) ($_POST['view'] ?? '');
 $action = (string) ($_POST['action'] ?? '');
 
-$money = static fn (mixed $v): string => number_format((float) $v, 2);
-$esc = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
-$when = static fn (mixed $ts): string => ((int) $ts) > 0 ? date('M j, Y g:ia', (int) $ts) : '—';
+require_once __DIR__ . '/ltv_helpers.php';
+$money = p202_ltv_money(...);
+$esc = p202_ltv_esc(...);
+$when = static fn (mixed $ts): string => p202_ltv_when($ts, true);
 
 $backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_customer.php';
@@ -344,14 +345,10 @@ $cfValue = static function (array $field) use ($fromPost, $customer): string {
 
     <script type="text/javascript">
         function ltvCustomerView(customerId) {
-            var element = $('#m-content');
-            $.post('<?php echo $selfUrl; ?>', { customer_id: customerId })
-                .done(function(data) { element.html(data).css('opacity', '1'); });
+            loadContentPost('<?php echo $selfUrl; ?>', { customer_id: customerId });
         }
         function ltvCustomerSave() {
-            var element = $('#m-content');
-            $.post('<?php echo $selfUrl; ?>', $('#ltv-customer-edit-form').serialize())
-                .done(function(data) { element.html(data).css('opacity', '1'); });
+            loadContentPost('<?php echo $selfUrl; ?>', $('#ltv-customer-edit-form').serialize());
         }
     </script>
 
@@ -481,8 +478,12 @@ $addressParts = array_filter([
         </table>
         <form id="ltv-alias-form" class="form-inline" onsubmit="return false;">
             <select class="form-control input-sm" id="ltv-alias-type">
-                <?php foreach (['custom', 'email_md5', 'email_sha256', 'esp_id', 'merchant_id'] as $aliasType) { ?>
-                    <option value="<?php echo $aliasType; ?>"><?php echo $aliasType; ?></option>
+                <?php
+                // From the repo constant so new alias types appear here
+                // automatically; subid stays excluded — those are minted by
+                // the click pipeline, not typed by hand.
+                foreach (array_diff(\Prosper202\Ltv\MysqlCustomerRepository::ALIAS_TYPES, ['subid']) as $aliasType) { ?>
+                    <option value="<?php echo $esc($aliasType); ?>"><?php echo $esc($aliasType); ?></option>
                 <?php } ?>
             </select>
             <input type="text" class="form-control input-sm" id="ltv-alias-value" maxlength="255" placeholder="Identity value (hash, id, ...)">
@@ -654,48 +655,42 @@ $addressParts = array_filter([
 
 <script type="text/javascript">
     function ltvCustomerEdit(customerId) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', { customer_id: customerId, view: 'edit' })
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        loadContentPost('<?php echo $selfUrl; ?>', { customer_id: customerId, view: 'edit' });
     }
     function ltvCustomerMerge(customerId) {
         var sourceId = window.prompt('Merge which customer # INTO this record?\n\nThe other record\'s aliases, revenue, conversions and subscriptions will be re-pointed here, and it will be excluded from reports.');
         if (!sourceId || !/^\d+$/.test(sourceId.trim())) { return; }
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             customer_id: customerId,
             action: 'merge',
             source_customer_id: sourceId.trim(),
             token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     function ltvCustomerErase(customerId) {
         if (!window.confirm('Erase this customer\'s personal data?\n\nName, contact info, custom fields, aliases and personalization tokens will be deleted. Revenue totals are kept for reporting. This cannot be undone.')) { return; }
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             customer_id: customerId,
             action: 'erase',
             token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     function ltvAliasAdd(customerId) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             customer_id: customerId,
             action: 'add_alias',
             alias_type: $('#ltv-alias-type').val(),
             alias_value: $('#ltv-alias-value').val(),
             token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     function ltvAliasDelete(customerId, aliasId) {
         if (!window.confirm('Unlink this identity? Future events using it will create or match a different customer.')) { return; }
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             customer_id: customerId,
             action: 'delete_alias',
             alias_id: aliasId,
             token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
 </script>

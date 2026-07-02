@@ -18,9 +18,10 @@ $action = (string) ($_POST['action'] ?? '');
 $offset = max(0, (int) ($_POST['offset'] ?? 0));
 $limit = 50;
 
-$money = static fn (mixed $v): string => number_format((float) $v, 2);
-$esc = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
-$when = static fn (mixed $ts): string => ((int) $ts) > 0 ? date('M j, Y', (int) $ts) : '—';
+require_once __DIR__ . '/ltv_helpers.php';
+$money = p202_ltv_money(...);
+$esc = p202_ltv_esc(...);
+$when = p202_ltv_when(...);
 
 $backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_companies.php';
@@ -192,60 +193,51 @@ if ($error !== null && $action === 'update_company') {
 
 <script type="text/javascript">
     function ltvCompaniesLoad(offset) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', { offset: offset })
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        loadContentPost('<?php echo $selfUrl; ?>', { offset: offset });
     }
     function ltvCompanyEdit(companyId) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', { edit: companyId, offset: <?php echo $offset; ?> })
-            .done(function(data) { element.html(data).css('opacity', '1'); });
+        loadContentPost('<?php echo $selfUrl; ?>', { edit: companyId, offset: <?php echo $offset; ?> });
     }
     function ltvCompanySave(companyId) {
-        var element = $('#m-content');
         var row = $('#ltv-company-row-' + companyId);
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             action: 'update_company',
             token: row.find('input[name=token]').val(),
             company_id: companyId,
             company_name: row.find('input[name=company_name]').val(),
             company_domain: row.find('input[name=company_domain]').val()
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     function ltvCompanyAdd() {
         var name = $('#ltv-new-company').val();
         if (!name || !name.trim()) { return; }
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             action: 'add_company',
             company_name: name.trim(),
             token: <?php echo json_encode($csrfToken); ?>
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     function ltvCompanyMerge(companyId) {
         var sourceId = window.prompt('Merge which company # INTO this one?\n\nIts contacts move here (their company name is rewritten) and the other company is removed.');
         if (!sourceId || !/^\d+$/.test(sourceId.trim())) { return; }
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             action: 'merge_company',
             company_id: companyId,
             source_company_id: sourceId.trim(),
             token: <?php echo json_encode($csrfToken); ?>
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     function ltvCompanyDelete(companyId) {
         if (!window.confirm('Delete this company? Only possible when no customers are attached.')) { return; }
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             action: 'delete_company',
             company_id: companyId,
             token: <?php echo json_encode($csrfToken); ?>
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     function ltvCompanyView(company) {
-        var element = $('#m-content');
-        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_company.php', {
+        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_company.php', {
             company: company
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
 </script>

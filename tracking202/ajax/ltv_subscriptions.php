@@ -22,9 +22,10 @@ $status = isset($_POST['status']) && array_key_exists((string) $_POST['status'],
     ? (string) $_POST['status']
     : '';
 
-$money = static fn (mixed $v): string => number_format((float) $v, 2);
-$esc = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
-$when = static fn (mixed $ts): string => ((int) $ts) > 0 ? date('M j, Y', (int) $ts) : '—';
+require_once __DIR__ . '/ltv_helpers.php';
+$money = p202_ltv_money(...);
+$esc = p202_ltv_esc(...);
+$when = p202_ltv_when(...);
 
 $backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_subscriptions.php';
@@ -162,17 +163,15 @@ try {
 
 <script type="text/javascript">
     function ltvSubsLoad(offset) {
-        var element = $('#m-content');
-        $.post('<?php echo $selfUrl; ?>', {
+        loadContentPost('<?php echo $selfUrl; ?>', {
             offset: offset,
             status: $('#ltv-sub-status').val()
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     function ltvSubCustomer(customerId) {
-        var element = $('#m-content');
-        $.post('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
+        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
             customer_id: customerId
-        }).done(function(data) { element.html(data).css('opacity', '1'); });
+        });
     }
     $('#ltv-sub-status').on('change', function() { ltvSubsLoad(0); });
 </script>
