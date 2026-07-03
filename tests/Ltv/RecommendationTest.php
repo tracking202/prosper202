@@ -17,26 +17,68 @@ use Tests\Support\FakeMysqliConnection;
  */
 final class RecommendationTest extends TestCase
 {
-    public function testNextOfferPicksTopTransitionExcludingConvertedCampaigns(): void
+    private const NOW = 1700000000;
+
+    /**
+     * Wire a read fake with a conversion history, transition rows, and
+     * campaign baselines (buyers / avg first-order value).
+     *
+     * @param list<array<string, mixed>> $transitions
+     * @param list<array<string, mixed>> $baselines
+     */
+    private function readFake(array $transitions, array $baselines, int $totalBuyers = 100): FakeMysqliConnection
     {
         $read = new FakeMysqliConnection();
-        // Customer converted on campaign 10 (latest) and 5.
-        $read->whenQueryContainsReturnRows('GROUP BY cl.campaign_id', [
+        // Customer converted on campaign 10 (latest) and 5. Needles are
+        // unique per query (first matching needle wins in the fake).
+        $read->whenQueryContainsReturnRows('ORDER BY last_at DESC', [
             ['campaign_id' => 10, 'last_at' => 1700000200],
             ['campaign_id' => 5, 'last_at' => 1700000100],
         ]);
-        // Top transition from campaign 10 -> campaign 22.
-        $read->whenQueryContainsReturnRows('FROM 202_offer_transitions', [
-            ['campaign_id' => 22, 'name' => 'Offer B', 'url' => 'https://example.com/offer-b'],
-        ]);
+        $read->whenQueryContainsReturnRows('FROM 202_offer_transitions', $transitions);
+        $read->whenQueryContainsReturnRows('AS total_buyers', [['total_buyers' => $totalBuyers]]);
+        $read->whenQueryContainsReturnRows('AS avg_value', $baselines);
+
+        return $read;
+    }
+
+    /** @return array<string, mixed> */
+    private function transitionRow(int $to, string $name, int $transitions, int $adjacent, int $fromCustomers, ?int $lastSeen = null): array
+    {
+        return [
+            'from_campaign_id' => 10, 'to_campaign_id' => $to,
+            'transition_count' => $transitions, 'adjacent_count' => $adjacent,
+            'from_customers' => $fromCustomers, 'last_seen_at' => $lastSeen ?? self::NOW,
+            'name' => $name, 'url' => 'https://example.com/' . $to,
+        ];
+    }
+
+    public function testNextOfferCorrectsForPopularityWithLift(): void
+    {
+        // Campaign 22 has more raw transitions (10 of 100) but 80% of ALL
+        // buyers convert on it anyway — no real association. Campaign 23 has
+        // fewer transitions (6 of 100) but 6x its base rate. Raw-count
+        // ranking picks 22; lift-corrected confidence must pick 23.
+        $read = $this->readFake(
+            [
+                $this->transitionRow(22, 'Popular Anyway', 10, 10, 100),
+                $this->transitionRow(23, 'Real Follow-on', 6, 6, 100),
+            ],
+            [
+                ['campaign_id' => 22, 'buyers' => 80, 'avg_value' => null],
+                ['campaign_id' => 23, 'buyers' => 6, 'avg_value' => null],
+            ]
+        );
 
         $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
-        $offer = $repo->nextOffer(7, 501);
+        $offer = $repo->nextOffer(7, 501, self::NOW);
 
         self::assertNotNull($offer);
-        self::assertSame(22, $offer['campaign_id']);
-        self::assertSame('Offer B', $offer['name']);
-        self::assertSame('https://example.com/offer-b', $offer['url']);
+        self::assertSame(23, $offer['campaign_id'], 'lift must beat raw popularity');
+        self::assertSame('transition', $offer['why']['basis']);
+        self::assertSame('propensity', $offer['why']['ranked_by'], 'no revenue data -> propensity ranking');
+        self::assertSame(6, $offer['why']['direct_transitions']);
+        self::assertSame([10], $offer['why']['based_on_campaigns']);
 
         // The transition lookup must exclude campaigns already converted on.
         $lookups = $read->statementsContaining('FROM 202_offer_transitions');
@@ -44,6 +86,110 @@ final class RecommendationTest extends TestCase
         self::assertStringContainsString('NOT IN', $lookups[0]->sql);
         self::assertContains(10, $lookups[0]->boundValues);
         self::assertContains(5, $lookups[0]->boundValues);
+    }
+
+    public function testNextOfferPrefersDirectFollowOnsOverEventualOnes(): void
+    {
+        // Same volume, same base rates: 22's transitions were all IMMEDIATE
+        // next purchases, 23's all happened eventually, elsewhere along the
+        // journey. Direct adjacency must win.
+        $read = $this->readFake(
+            [
+                $this->transitionRow(22, 'Direct Next', 4, 4, 100),
+                $this->transitionRow(23, 'Eventually', 4, 0, 100),
+            ],
+            [
+                ['campaign_id' => 22, 'buyers' => 5, 'avg_value' => null],
+                ['campaign_id' => 23, 'buyers' => 5, 'avg_value' => null],
+            ]
+        );
+
+        $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
+        $offer = $repo->nextOffer(7, 501, self::NOW);
+
+        self::assertNotNull($offer);
+        self::assertSame(22, $offer['campaign_id'], 'adjacent transitions outweigh eventual ones');
+    }
+
+    public function testNextOfferDecaysStaleTransitions(): void
+    {
+        // Identical statistics, but 23's last transition happened two years
+        // ago — a funnel that stopped working fades instead of ruling.
+        $read = $this->readFake(
+            [
+                $this->transitionRow(22, 'Fresh', 5, 5, 100, self::NOW),
+                $this->transitionRow(23, 'Stale', 5, 5, 100, self::NOW - 2 * 31536000),
+            ],
+            [
+                ['campaign_id' => 22, 'buyers' => 5, 'avg_value' => null],
+                ['campaign_id' => 23, 'buyers' => 5, 'avg_value' => null],
+            ]
+        );
+
+        $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
+        $offer = $repo->nextOffer(7, 501, self::NOW);
+
+        self::assertNotNull($offer);
+        self::assertSame(22, $offer['campaign_id'], 'recency decay must demote stale funnels');
+    }
+
+    public function testNextOfferRanksByExpectedValueWhenRevenueKnown(): void
+    {
+        // 23 converts better, but 22's average first order is worth 20x —
+        // with revenue data present the ranking optimizes expected value,
+        // not raw propensity.
+        $read = $this->readFake(
+            [
+                $this->transitionRow(22, 'High Ticket', 5, 5, 100),
+                $this->transitionRow(23, 'Cheap Upsell', 10, 10, 100),
+            ],
+            [
+                ['campaign_id' => 22, 'buyers' => 5, 'avg_value' => 200.0],
+                ['campaign_id' => 23, 'buyers' => 10, 'avg_value' => 10.0],
+            ]
+        );
+
+        $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
+        $offer = $repo->nextOffer(7, 501, self::NOW);
+
+        self::assertNotNull($offer);
+        self::assertSame(22, $offer['campaign_id'], 'expected value must outrank raw propensity');
+        self::assertSame('expected_value', $offer['why']['ranked_by']);
+        self::assertSame(200.0, $offer['why']['avg_order_value']);
+        self::assertGreaterThan(0, $offer['why']['expected_value']);
+    }
+
+    public function testWilsonLowerBoundBasics(): void
+    {
+        // Same proportion, more evidence -> higher lower bound.
+        $small = MysqlRecommendationRepository::wilsonLowerBound(2.0, 10);
+        $large = MysqlRecommendationRepository::wilsonLowerBound(20.0, 100);
+        self::assertLessThan($large, $small);
+        self::assertSame(0.0, MysqlRecommendationRepository::wilsonLowerBound(0.0, 0));
+        self::assertGreaterThan(0.9, MysqlRecommendationRepository::wilsonLowerBound(1000.0, 1000));
+    }
+
+    public function testOneLuckyTransitionLosesToAConsistentPattern(): void
+    {
+        // A single perfect 1-of-1 transition must not outrank 6-of-20 —
+        // the scorer's skeptical prior (one pseudo-failure) replaces a
+        // brittle hard support threshold. Lift is equal for both (capped).
+        $read = $this->readFake(
+            [
+                $this->transitionRow(22, 'Lucky Once', 1, 1, 1),
+                $this->transitionRow(23, 'Consistent', 6, 6, 20),
+            ],
+            [
+                ['campaign_id' => 22, 'buyers' => 5, 'avg_value' => null],
+                ['campaign_id' => 23, 'buyers' => 5, 'avg_value' => null],
+            ]
+        );
+
+        $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
+        $offer = $repo->nextOffer(7, 501, self::NOW);
+
+        self::assertNotNull($offer);
+        self::assertSame(23, $offer['campaign_id'], 'a consistent pattern beats a single lucky customer');
     }
 
     public function testNextOfferFallsBackToAccountTopCampaign(): void

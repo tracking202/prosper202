@@ -101,10 +101,16 @@ final class LtvTables
     }
 
     /**
-     * Account-scoped offer-transition counts ("customers who converted on A
-     * later converted on B"), rebuilt from the revenue ledger by the
+     * Account-scoped offer-transition statistics ("customers who converted on
+     * A later converted on B"), rebuilt from the revenue ledger by the
      * ltv_maintenance cronjob. Drives the deterministic next-offer
-     * recommendation.
+     * recommendation:
+     *   transition_count — distinct customers who converted on A then EVER on B
+     *   adjacent_count   — subset whose very next distinct campaign was B
+     *   from_customers   — distinct customers who converted on A at all
+     *                      (the denominator for transition confidence)
+     *   last_seen_at     — most recent B-conversion among those transitions
+     *                      (drives recency decay in the scorer)
      */
     public static function offerTransitions(): SchemaDefinition
     {
@@ -116,6 +122,9 @@ final class LtvTables
                 `from_campaign_id` mediumint(8) unsigned NOT NULL,
                 `to_campaign_id` mediumint(8) unsigned NOT NULL,
                 `transition_count` int(10) unsigned NOT NULL DEFAULT '0',
+                `adjacent_count` int(10) unsigned NOT NULL DEFAULT '0',
+                `from_customers` int(10) unsigned NOT NULL DEFAULT '0',
+                `last_seen_at` int(10) unsigned NOT NULL DEFAULT '0',
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`transition_id`),
                 UNIQUE KEY `uniq_transition` (`user_id`,`from_campaign_id`,`to_campaign_id`),

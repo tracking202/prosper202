@@ -89,6 +89,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
             '202_customers', '202_customer_aliases', '202_customer_fields', '202_customer_field_values',
             '202_revenue_events', '202_revenue_line_items', '202_products', '202_subscriptions',
             '202_companies', '202_personalization_tokens', '202_engagement_events',
+            '202_offer_transitions', '202_aff_campaigns',
         ] as $table) {
             self::$db->query('TRUNCATE TABLE ' . $table);
         }
@@ -673,6 +674,68 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame($first['data']['event_id'], $replay['data']['event_id']);
         self::assertSame($first['data']['customer_id'], $replay['data']['customer_id'], 'the ORIGINAL owner is reported');
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'), 'a replay must not mint identity');
+    }
+
+    public function testNextOfferRebuildAndScoringEndToEnd(): void
+    {
+        foreach ([[7, 'Offer A'], [8, 'Offer B'], [9, 'Offer C'], [10, 'Offer D']] as [$id, $name]) {
+            self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id={$id}, user_id=1,
+                aff_campaign_name='{$name}', aff_campaign_url='https://example.com/offer-{$id}'");
+        }
+
+        // Purchase journeys (campaign comes from the conversion log):
+        //  c1: A then B            (A->B adjacent)
+        //  c2: A then C then B     (A->C and C->B adjacent, A->B eventual)
+        //  c3: A then D, D voided  (deleted sales must leave no transitions)
+        $buy = function (int $clickId, string $ref, int $campaignId, int $convTime, string $tx): int {
+            $this->insertClick($clickId);
+            $log = $this->log($clickId);
+            $log['campaign_id'] = (string) $campaignId;
+            $log['conv_time'] = $convTime;
+            $result = p202RecordConversion(self::$db, $log, '', true, '10.0', $tx, ['customer_ref' => $ref], []);
+
+            return (int) $result['conv_id'];
+        };
+        $buy(7000, 'no-c1', 7, 1700000100, 'NO-1');
+        $buy(7001, 'no-c1', 8, 1700000200, 'NO-2');
+        $buy(7002, 'no-c2', 7, 1700000100, 'NO-3');
+        $buy(7003, 'no-c2', 9, 1700000200, 'NO-4');
+        $buy(7004, 'no-c2', 8, 1700000300, 'NO-5');
+        $buy(7005, 'no-c3', 7, 1700000100, 'NO-6');
+        $voidedConv = $buy(7006, 'no-c3', 10, 1700000200, 'NO-7');
+        (new \Prosper202\Conversion\MysqlConversionRepository(self::$conn))->softDelete($voidedConv, 1);
+
+        $repo = new \Prosper202\Ltv\MysqlRecommendationRepository(self::$conn);
+        self::assertGreaterThan(0, $repo->rebuildTransitions(1, 1700001000));
+
+        // A->B: c1 direct + c2 eventual (C sits between); everyone bought A.
+        $ab = $this->row('SELECT * FROM 202_offer_transitions WHERE from_campaign_id=7 AND to_campaign_id=8');
+        self::assertSame(2, (int) $ab['transition_count']);
+        self::assertSame(1, (int) $ab['adjacent_count'], "c2's A->B went through C — eventual, not adjacent");
+        self::assertSame(3, (int) $ab['from_customers']);
+        self::assertSame(1700000300, (int) $ab['last_seen_at']);
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_offer_transitions WHERE to_campaign_id=10'), 'voided sales feed no transitions');
+
+        // c3 converted only on A (their D purchase was voided): both B and C
+        // qualify; B wins on blended confidence x lift x value.
+        $customerId = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='no-c3'");
+        $offer = $repo->nextOffer(1, $customerId, 1700001000);
+        self::assertNotNull($offer);
+        self::assertSame(8, $offer['campaign_id']);
+        self::assertSame('Offer B', $offer['name']);
+        self::assertSame('https://example.com/offer-8', $offer['url']);
+        self::assertSame('transition', $offer['why']['basis']);
+        self::assertSame(1, $offer['why']['direct_transitions']);
+        self::assertSame(1, $offer['why']['eventual_transitions']);
+        self::assertSame([7], $offer['why']['based_on_campaigns']);
+        self::assertSame('expected_value', $offer['why']['ranked_by'], 'purchases carry amounts, so ranking is by expected value');
+        self::assertSame(10.0, (float) $offer['why']['avg_order_value']);
+
+        // A customer who bought everything transitionable falls back to the
+        // account's top campaign minus their history — here: nothing new.
+        $c2 = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='no-c2'");
+        $fallback = $repo->nextOffer(1, $c2, 1700001000);
+        self::assertNull($fallback, 'c2 already bought A, B and C — nothing left to suggest');
     }
 
     public function testCanceledSubscriptionInsertCountsTowardChurn(): void

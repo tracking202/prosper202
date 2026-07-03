@@ -504,7 +504,20 @@ $addressParts = array_filter([
             <p>
                 <strong><?php echo $esc($nextOffer['name']); ?></strong>
                 <small>(campaign #<?php echo (int) $nextOffer['campaign_id']; ?>)</small><br>
-                <small class="text-muted">Based on what customers with similar purchases converted on next.</small>
+                <?php $why = $nextOffer['why'] ?? null; ?>
+                <?php if (is_array($why) && ($why['basis'] ?? '') === 'transition') { ?>
+                    <small class="text-muted">
+                        Based on <?php echo (int) $why['direct_transitions']; ?> direct
+                        and <?php echo (int) $why['eventual_transitions']; ?> eventual follow-on purchase(s)
+                        from campaign(s) #<?php echo $esc(implode(', #', array_map(strval(...), (array) $why['based_on_campaigns']))); ?>
+                        &middot; score <?php echo number_format((float) $why['score'], 3); ?><?php
+                        if ((float) ($why['avg_order_value'] ?? 0) > 0) { ?>
+                            &middot; avg order $<?php echo $money($why['avg_order_value']); ?><?php
+                        } ?>
+                    </small>
+                <?php } else { ?>
+                    <small class="text-muted">This customer's history has no usable transitions yet &mdash; showing the account's top-converting campaign they haven't bought.</small>
+                <?php } ?>
             </p>
         <?php } ?>
     </div>
