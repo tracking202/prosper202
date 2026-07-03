@@ -115,9 +115,18 @@ final class CompanyTest extends TestCase
         $write->whenQueryContainsReturnRows('SELECT company_id, name, normalized_name', [
             ['company_id' => 2, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
         ]);
+        // In-transaction lock re-read: both rows still present.
+        $write->whenQueryContainsReturnRows('ORDER BY company_id FOR UPDATE', [
+            ['company_id' => 2, 'name' => 'Acme Corp', 'domain' => null],
+            ['company_id' => 5, 'name' => 'Old Co', 'domain' => null],
+        ]);
         $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
 
         $repo->merge(7, 5, 2);
+
+        $locks = $write->statementsContaining('ORDER BY company_id FOR UPDATE');
+        self::assertCount(1, $locks, 'concurrent merges must serialize on locked company rows');
+        self::assertSame([2, 5, 7], $locks[0]->boundValues, 'ids locked in ascending order, then user scope');
 
         $repoints = $write->statementsContaining('UPDATE 202_customers SET company_id = ?, company = ?');
         self::assertCount(1, $repoints);

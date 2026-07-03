@@ -568,4 +568,39 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame(30.0, (float) $all[0]['total_revenue']);
         self::assertSame(2, (int) $all[0]['customers']);
     }
+
+    public function testApiFilterValuesCoerceByFieldType(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $fields = new MysqlCustomerFieldRepository(self::$conn);
+
+        $fields->create(1, ['field_key' => 'signup', 'label' => 'Signup', 'field_type' => 'date']);
+        $fields->create(1, ['field_key' => 'vip', 'label' => 'VIP', 'field_type' => 'boolean']);
+        $signup = $fields->findByKey(1, 'signup');
+        $vip = $fields->findByKey(1, 'vip');
+
+        $early = $crm->upsert(1, ['customer_ref' => 'coerce-early']);
+        $late = $crm->upsert(1, ['customer_ref' => 'coerce-late']);
+        $fields->setValue(1, $early, $signup, '2025-03-01');
+        $fields->setValue(1, $late, $signup, '2026-06-15');
+        $fields->setValue(1, $late, $vip, 'true');
+
+        // Through the REAL controller: a date string filter must compare as a
+        // Unix timestamp (a blind float cast would read '2026-01-01' as 2026
+        // and match everyone), and 'true' must compare as the stored 1.0.
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $filtered = $controller->summary(['cf.signup.min' => '2026-01-01']);
+        self::assertSame(1, (int) $filtered['data']['customers'], 'only the 2026 signup matches');
+
+        $vips = $controller->summary(['cf.vip' => 'true']);
+        self::assertSame(1, (int) $vips['data']['customers'], "'true' must match the stored boolean 1.0");
+
+        try {
+            $controller->summary(['cf.vip' => 'maybe']);
+            self::fail('an unparseable boolean filter must be rejected, not silently coerced');
+        } catch (\Api\V3\Exception\ValidationException) {
+            $this->addToAssertionCount(1);
+        }
+    }
 }

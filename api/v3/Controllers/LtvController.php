@@ -765,7 +765,7 @@ class LtvController
                 'fieldId' => (int) $field['field_id'],
                 'column' => $column,
                 'op' => $op,
-                'value' => $column === 'value_text' ? (string) $value : (float) $value,
+                'value' => $column === 'value_text' ? (string) $value : $this->coerceFilterValue($type, $key, $value),
             ];
         }
 
@@ -774,6 +774,48 @@ class LtvController
         } catch (\RuntimeException $e) {
             throw new ValidationException($e->getMessage());
         }
+    }
+
+    /**
+     * Coerce a cf.* filter value with the SAME rules custom-field writes use
+     * (MysqlCustomerFieldRepository::coerce): a date filter string must become
+     * the stored Unix timestamp and a boolean must become 1/0 — a blind float
+     * cast would quietly compare '2026-01-01' as 2026 and 'true' as 0,
+     * returning the wrong cohort.
+     */
+    private function coerceFilterValue(string $fieldType, string $paramKey, mixed $value): float
+    {
+        if ($fieldType === 'boolean') {
+            $normalized = strtolower(trim((string) $value));
+            if (!in_array($normalized, ['0', '1', 'true', 'false', 'yes', 'no'], true)) {
+                throw new ValidationException(
+                    'Boolean filter expects 0/1/true/false/yes/no',
+                    [$paramKey => 'Invalid boolean value']
+                );
+            }
+            return in_array($normalized, ['1', 'true', 'yes'], true) ? 1.0 : 0.0;
+        }
+        if ($fieldType === 'date') {
+            if (is_numeric($value)) {
+                return (float) $value;
+            }
+            $parsed = strtotime(trim((string) $value));
+            if ($parsed === false) {
+                throw new ValidationException(
+                    'Date filter expects a unix timestamp or a parseable date string',
+                    [$paramKey => 'Invalid date value']
+                );
+            }
+            return (float) $parsed;
+        }
+        if (!is_numeric($value)) {
+            throw new ValidationException(
+                'Number filter expects a numeric value',
+                [$paramKey => 'Invalid number value']
+            );
+        }
+
+        return (float) $value;
     }
 
     /**

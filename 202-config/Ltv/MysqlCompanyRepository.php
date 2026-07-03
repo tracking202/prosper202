@@ -447,8 +447,28 @@ final class MysqlCompanyRepository
         }
 
         $now = time();
-        $targetName = (string) $target['name'];
-        $this->conn->transaction(function () use ($userId, $sourceCompanyId, $targetCompanyId, $targetName, $source, $target, $now): void {
+        $this->conn->transaction(function () use ($userId, $sourceCompanyId, $targetCompanyId, $now): void {
+            // Lock both rows in ascending id order and re-read them: two
+            // concurrent merges of the same pair (either direction) would
+            // otherwise both pass the prechecks, each delete its own source,
+            // and repoint contacts at a row the other merge just removed.
+            $lockIds = [$sourceCompanyId, $targetCompanyId];
+            sort($lockIds);
+            $lockStmt = $this->conn->prepareWrite(
+                'SELECT company_id, name, domain FROM 202_companies
+                 WHERE company_id IN (?, ?) AND user_id = ?
+                 ORDER BY company_id FOR UPDATE'
+            );
+            $this->conn->bind($lockStmt, 'iii', [$lockIds[0], $lockIds[1], $userId]);
+            $locked = [];
+            foreach ($this->conn->fetchAll($lockStmt) as $row) {
+                $locked[(int) $row['company_id']] = $row;
+            }
+            if (!isset($locked[$sourceCompanyId], $locked[$targetCompanyId])) {
+                throw new RuntimeException('Company was merged or deleted concurrently; retry the merge');
+            }
+            $targetName = (string) $locked[$targetCompanyId]['name'];
+
             $stmt = $this->conn->prepareWrite(
                 'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
                  WHERE company_id = ? AND user_id = ?'
@@ -465,11 +485,11 @@ final class MysqlCompanyRepository
             $this->conn->bind($stmt, 'ii', [$sourceCompanyId, $userId]);
             $this->conn->executeUpdate($stmt);
 
-            if (($target['domain'] ?? null) === null && ($source['domain'] ?? null) !== null) {
+            if ($locked[$targetCompanyId]['domain'] === null && $locked[$sourceCompanyId]['domain'] !== null) {
                 $stmt = $this->conn->prepareWrite(
                     'UPDATE 202_companies SET domain = ?, updated_at = ? WHERE company_id = ? AND user_id = ?'
                 );
-                $this->conn->bind($stmt, 'siii', [(string) $source['domain'], $now, $targetCompanyId, $userId]);
+                $this->conn->bind($stmt, 'siii', [(string) $locked[$sourceCompanyId]['domain'], $now, $targetCompanyId, $userId]);
                 $this->conn->executeUpdate($stmt);
             }
         });

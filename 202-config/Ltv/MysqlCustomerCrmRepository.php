@@ -194,7 +194,35 @@ final class MysqlCustomerCrmRepository
         }
 
         $now = time();
-        $this->conn->transaction(function () use ($userId, $sourceId, $terminalTarget, $now): void {
+        $this->conn->transaction(function () use ($userId, $sourceId, $targetId, $terminalTarget, $now): void {
+            // Lock every involved customer row in ascending id order and
+            // re-validate: two concurrent merges of the same pair (either
+            // direction) would otherwise both pass the prechecks above and
+            // mark each side as merged into the other — a pointer cycle that
+            // removes both customers from every report.
+            $lockIds = array_values(array_unique([$sourceId, $targetId, $terminalTarget]));
+            sort($lockIds);
+            $placeholders = implode(', ', array_fill(0, count($lockIds), '?'));
+            $lockStmt = $this->conn->prepareWrite(
+                "SELECT customer_id, merged_into_customer_id FROM 202_customers
+                 WHERE customer_id IN ({$placeholders}) AND user_id = ?
+                 ORDER BY customer_id FOR UPDATE"
+            );
+            $this->conn->bind($lockStmt, str_repeat('i', count($lockIds)) . 'i', array_merge($lockIds, [$userId]));
+            $locked = [];
+            foreach ($this->conn->fetchAll($lockStmt) as $row) {
+                $locked[(int) $row['customer_id']] = $row;
+            }
+            if (!isset($locked[$sourceId], $locked[$terminalTarget])) {
+                throw new RuntimeException('Both customers must exist and belong to this account');
+            }
+            if ($locked[$sourceId]['merged_into_customer_id'] !== null) {
+                throw new RuntimeException('Source customer was already merged by a concurrent request');
+            }
+            if ($locked[$terminalTarget]['merged_into_customer_id'] !== null) {
+                throw new RuntimeException('Target customer was merged concurrently; retry the merge');
+            }
+
             // Custom-field values first: target's existing value wins on
             // conflict (UNIQUE customer_id+field_id), source leftovers dropped.
             $stmt = $this->conn->prepareWrite(
