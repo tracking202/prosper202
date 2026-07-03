@@ -346,6 +346,33 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_subscriptions'), 'still one subscription');
     }
 
+    public function testCustomerDetailEventsCarrySubscriptionPlanName(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+
+        $customerId = $crm->upsert(1, ['customer_ref' => 'plan-name-1']);
+        $subs->upsert(1, ['external_sub_id' => 'SUB-PLAN', 'plan_name' => 'Scale Plan (Monthly)', 'amount' => 299.0, 'customer_id' => $customerId]);
+        $subscriptionId = (int) $this->scalar("SELECT subscription_id FROM 202_subscriptions WHERE external_sub_id='SUB-PLAN'");
+
+        // A renewal from the subscription and a direct one-off purchase.
+        $customers->insertRevenueEvent(1, $customerId, [
+            'event_type' => 'renewal', 'amount' => 299.0, 'currency' => 'USD',
+            'occurred_at' => 1700000200, 'source' => 'subscription',
+            'subscription_id' => $subscriptionId, 'idempotency_key' => 'plan-renewal-1',
+        ], 1700000200);
+        $customers->insertRevenueEvent(1, $customerId, [
+            'event_type' => 'purchase', 'amount' => 10.0, 'currency' => 'USD',
+            'occurred_at' => 1700000100, 'source' => 'api', 'idempotency_key' => 'plan-direct-1',
+        ], 1700000100);
+
+        $events = $crm->get(1, $customerId)['recent_events'];
+        self::assertCount(2, $events);
+        self::assertSame('Scale Plan (Monthly)', $events[0]['plan_name'], 'subscription-sourced events resolve their plan');
+        self::assertNull($events[1]['plan_name'], 'direct purchases keep flowing with a NULL plan');
+    }
+
     public function testWebhookDeliveryClaimPreventsDoubleSend(): void
     {
         self::$db->query('TRUNCATE TABLE 202_ltv_webhooks');

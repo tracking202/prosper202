@@ -634,7 +634,10 @@ $addressParts = array_filter([
                         </td>
                         <td>
                             <?php if (($event['items'] ?? []) === []) { ?>
-                                —
+                                <?php // No SKU line items — a subscription-sourced event shows its plan. ?>
+                                <?php echo ($event['plan_name'] ?? null) !== null && $event['plan_name'] !== ''
+                                    ? $esc($event['plan_name'])
+                                    : '—'; ?>
                             <?php } else { ?>
                                 <?php foreach ($event['items'] as $item) { ?>
                                     <div>

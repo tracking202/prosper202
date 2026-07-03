@@ -87,12 +87,17 @@ final class MysqlCustomerCrmRepository
         $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
         $customer['subscriptions'] = $this->conn->fetchAll($stmt);
 
+        // LEFT join: only subscription-sourced events carry a subscription_id;
+        // direct purchases keep flowing through with plan_name = NULL.
         $stmt = $this->conn->prepareRead(
-            'SELECT event_id, event_type, amount, currency, occurred_at, source,
-                    conv_id, subscription_id, click_id, external_ref, transaction_id
-             FROM 202_revenue_events
-             WHERE customer_id = ? AND user_id = ?
-             ORDER BY occurred_at DESC, event_id DESC LIMIT ?'
+            'SELECT re.event_id, re.event_type, re.amount, re.currency, re.occurred_at, re.source,
+                    re.conv_id, re.subscription_id, re.click_id, re.external_ref, re.transaction_id,
+                    s.plan_name
+             FROM 202_revenue_events re
+             LEFT JOIN 202_subscriptions s
+                    ON s.subscription_id = re.subscription_id AND s.user_id = re.user_id
+             WHERE re.customer_id = ? AND re.user_id = ?
+             ORDER BY re.occurred_at DESC, re.event_id DESC LIMIT ?'
         );
         $this->conn->bind($stmt, 'iii', [$customerId, $userId, $eventLimit]);
         $events = $this->conn->fetchAll($stmt);
