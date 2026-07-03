@@ -364,4 +364,133 @@ final class LtvDatabaseIntegrationTest extends TestCase
         // After the claim window lapses (crashed worker), it is claimable again.
         self::assertTrue($repo->claimDelivery($deliveryId, 1700000100 + 301));
     }
+
+    public function testNegativePayoutConversionLedgersAsAdjustment(): void
+    {
+        $this->insertClick(5000);
+        $log = $this->log(5000);
+        $log['click_payout'] = '-7.5';
+        p202RecordConversion(self::$db, $log, '', true, '-7.5', 'NEG-1', ['customer_ref' => 'neg-1'], []);
+
+        $event = $this->row('SELECT event_type, amount FROM 202_revenue_events LIMIT 1');
+        self::assertSame('adjustment', $event['event_type'], 'a negative payout must not ledger as a purchase');
+        self::assertSame(-7.5, (float) $event['amount']);
+        $c = $this->row("SELECT order_count, total_revenue FROM 202_customers WHERE primary_ref='neg-1'");
+        self::assertSame(0, (int) $c['order_count'], 'negative money never counts an order');
+        self::assertSame(-7.5, (float) $c['total_revenue']);
+    }
+
+    public function testSoftDeleteNetsLineItemsOutOfProductRevenue(): void
+    {
+        $this->insertClick(5100);
+        $res = p202RecordConversion(self::$db, $this->log(5100), '', true, '10.0', 'DEL-1', ['customer_ref' => 'del-1'], [
+            ['sku' => 'SKU-D', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 5.0, 'amount' => 10.0],
+        ]);
+        $convId = (int) $res['conv_id'];
+
+        $repo = new \Prosper202\Conversion\MysqlConversionRepository(self::$conn);
+        $repo->softDelete($convId, 1);
+
+        $c = $this->row("SELECT order_count, total_revenue FROM 202_customers WHERE primary_ref='del-1'");
+        self::assertSame(0, (int) $c['order_count']);
+        self::assertSame(0.0, (float) $c['total_revenue']);
+        // The void event carries mirrored negated items, so product revenue
+        // and units net to zero exactly like the customer totals.
+        self::assertSame(2, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_line_items'));
+        self::assertSame(0.0, (float) $this->scalar('SELECT COALESCE(SUM(amount),0) FROM 202_revenue_line_items'));
+
+        // Idempotent: a second delete adds nothing.
+        $repo->softDelete($convId, 1);
+        self::assertSame(2, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_line_items'));
+    }
+
+    public function testRefundLineItemsStoreNegativeAmounts(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $customerId = $customers->resolveOrCreateByAlias(1, 'custom', 'refund-items', [], null, 1700000000);
+
+        $event = $customers->insertRevenueEvent(1, $customerId, [
+            'event_type' => 'refund', 'amount' => -12.0, 'currency' => 'USD',
+            'occurred_at' => 1700000000, 'source' => 'api', 'idempotency_key' => 'ref-li-1',
+        ], 1700000000);
+        // The caller sent the item POSITIVE (unit price x quantity) — the
+        // event's negative amount decides the stored sign.
+        $customers->insertLineItems(1, $event['eventId'], [
+            ['sku' => 'SKU-R', 'name' => 'Widget', 'quantity' => 1, 'unit_price' => 12.0, 'amount' => 12.0],
+        ], 'USD', 1700000000, -12.0);
+
+        self::assertSame(-12.0, (float) $this->scalar('SELECT SUM(amount) FROM 202_revenue_line_items WHERE event_id=' . (int) $event['eventId']));
+    }
+
+    public function testPersonalizationMintRespectsAliasType(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $merchant = $customers->resolveOrCreateByAlias(1, 'merchant_id', '123', [], null, 1700000000);
+        $custom = $customers->resolveOrCreateByAlias(1, 'custom', '123', [], null, 1700000000);
+        self::assertNotSame($merchant, $custom, 'the same value under different types is two identities');
+
+        $p13n = new \Prosper202\Ltv\MysqlPersonalizationRepository(self::$conn);
+        self::assertSame($merchant, $p13n->resolveVisitorCustomer(1, ['cust' => '123', 'cust_type' => 'merchant_id'], 0, true));
+        self::assertSame($custom, $p13n->resolveVisitorCustomer(1, ['cust' => '123'], 0, true), 'untyped refs default to custom, like ingest');
+        self::assertNull($p13n->resolveVisitorCustomer(1, ['cust' => '123', 'cust_type' => 'bogus'], 0, true), 'unknown types resolve nobody');
+    }
+
+    public function testCompanyDomainIsUniquePerAccountAndMergeInheritsSafely(): void
+    {
+        $companies = new MysqlCompanyRepository(self::$conn);
+
+        // The invariant lives in the schema, not just the preflight checks.
+        $idx = $this->row("SHOW INDEX FROM 202_companies WHERE Key_name='uniq_user_domain'");
+        self::assertNotNull($idx, 'uniq_user_domain key must exist');
+        self::assertSame(0, (int) $idx['Non_unique']);
+
+        $withDomain = $companies->create(1, 'Domain Co', 'unique-dom.example.com');
+        try {
+            $companies->create(1, 'Other Co', 'unique-dom.example.com');
+            self::fail('a second company may not claim the same domain');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('already belongs', $e->getMessage());
+        }
+
+        // Merge into a domain-less target: the source row must be deleted
+        // BEFORE the target inherits its domain, or the unique key fires.
+        $target = $companies->create(1, 'Target Co');
+        $companies->merge(1, $withDomain, $target);
+        self::assertSame('unique-dom.example.com', $this->scalar('SELECT domain FROM 202_companies WHERE company_id=' . $target));
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_companies WHERE company_id=' . $withDomain));
+    }
+
+    public function testProductBreakdownHonorsCustomFieldFilters(): void
+    {
+        $this->insertClick(5200);
+        $this->insertClick(5201);
+        p202RecordConversion(self::$db, $this->log(5200), '', true, '10.0', 'CF-A', ['customer_ref' => 'cf-a'], [
+            ['sku' => 'SKU-CF', 'name' => 'Widget', 'quantity' => 1, 'unit_price' => 10.0, 'amount' => 10.0],
+        ]);
+        $logB = $this->log(5201);
+        $logB['click_payout'] = '20.0';
+        p202RecordConversion(self::$db, $logB, '', true, '20.0', 'CF-B', ['customer_ref' => 'cf-b'], [
+            ['sku' => 'SKU-CF', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 10.0, 'amount' => 20.0],
+        ]);
+
+        $fields = new MysqlCustomerFieldRepository(self::$conn);
+        $fieldId = $fields->create(1, ['field_key' => 'tier', 'label' => 'Tier', 'field_type' => 'number']);
+        $field = $fields->findByKey(1, 'tier');
+        $customerA = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='cf-a'");
+        $fields->setValue(1, $customerA, $field, 5);
+
+        $ltv = new \Prosper202\Ltv\MysqlLtvRepository(self::$conn);
+        $filtered = $ltv->breakdown(new \Prosper202\Ltv\LtvQuery(1, null, null, [
+            ['fieldId' => $fieldId, 'column' => 'value_number', 'op' => '=', 'value' => 5],
+        ]), 'product', 50, 0);
+
+        self::assertCount(1, $filtered);
+        self::assertSame(10.0, (float) $filtered[0]['total_revenue'], "only the cohort customer's items count");
+        self::assertSame(1, (int) $filtered[0]['customers']);
+
+        // Unfiltered still sees both buyers.
+        $all = $ltv->breakdown(new \Prosper202\Ltv\LtvQuery(1), 'product', 50, 0);
+        self::assertSame(30.0, (float) $all[0]['total_revenue']);
+        self::assertSame(2, (int) $all[0]['customers']);
+    }
 }

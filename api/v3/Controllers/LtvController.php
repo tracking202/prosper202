@@ -393,7 +393,7 @@ class LtvController
                 if ($event['inserted']) {
                     $this->customers->applyEventToRollups($this->userId, $customerId, $eventType, $amount, $occurredAt, $now);
                     if ($items !== []) {
-                        $this->customers->insertLineItems($this->userId, $event['eventId'], $items, $currency, $now);
+                        $this->customers->insertLineItems($this->userId, $event['eventId'], $items, $currency, $now, $amount);
                     }
                 }
 

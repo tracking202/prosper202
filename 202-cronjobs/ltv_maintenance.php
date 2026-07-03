@@ -63,6 +63,35 @@ $run = function (string $sql) use ($db): mysqli_result|bool {
 
 try {
     // ---------- 1. Subscription lifecycle sweep ----------
+    // Collect the owners of subscriptions about to age out FIRST: their
+    // cached mrr/active_subscription_count must be recomputed right after
+    // the sweep, because a lapsed subscriber's last_activity_time is
+    // typically their last renewal — outside the reconcile dirty window
+    // below, which would leave churned MRR on the books until a --full run.
+    $sweepCustomerIds = [];
+    $idStmt = $db->prepare(
+        "SELECT DISTINCT customer_id FROM 202_subscriptions
+         WHERE (status = 'active' AND (current_period_end + grace_days * 86400) < ?)
+            OR (status = 'past_due' AND (current_period_end + (grace_days + 30) * 86400) < ?)"
+    );
+    if ($idStmt === false) {
+        throw new RuntimeException('prepare failed: ' . $db->error);
+    }
+    $idStmt->bind_param('ii', $now, $now);
+    if (!$idStmt->execute()) {
+        $idStmt->close();
+        throw new RuntimeException('sweep owner select failed: ' . $db->error);
+    }
+    $idResult = $idStmt->get_result();
+    if ($idResult === false) {
+        $idStmt->close();
+        throw new RuntimeException('sweep owner fetch failed: ' . $db->error);
+    }
+    while (($idRow = $idResult->fetch_assoc()) !== null) {
+        $sweepCustomerIds[] = (int) $idRow['customer_id'];
+    }
+    $idStmt->close();
+
     // active -> past_due once the paid-through period plus grace has lapsed
     // with no renewal (a renewal event pushes current_period_end forward).
     $stmt = $db->prepare(
@@ -98,7 +127,28 @@ try {
     $canceled = $stmt->affected_rows;
     $stmt->close();
 
-    echo "subscription sweep: {$pastDue} -> past_due, {$canceled} -> canceled\n";
+    // Refresh the swept owners' subscription rollups immediately (chunked;
+    // only mrr/active_subscription_count change on a status flip).
+    $sweepRefreshed = 0;
+    foreach (array_chunk($sweepCustomerIds, 500) as $chunk) {
+        $in = implode(',', array_map('intval', $chunk));
+        $run("UPDATE 202_customers c
+            LEFT JOIN (
+                SELECT customer_id,
+                    SUM(CASE WHEN status = 'active' THEN mrr ELSE 0 END) AS mrr,
+                    SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_subs
+                FROM 202_subscriptions
+                WHERE customer_id IN ({$in})
+                GROUP BY customer_id
+            ) s ON s.customer_id = c.customer_id
+            SET c.mrr = COALESCE(s.mrr, 0),
+                c.active_subscription_count = COALESCE(s.active_subs, 0),
+                c.updated_at = {$now}
+            WHERE c.customer_id IN ({$in})");
+        $sweepRefreshed += $db->affected_rows;
+    }
+
+    echo "subscription sweep: {$pastDue} -> past_due, {$canceled} -> canceled, {$sweepRefreshed} owner rollups refreshed\n";
 
     // ---------- 2. Rollup reconciliation ----------
     // Chunk over customer_id so the UPDATE ... JOIN never scans the whole

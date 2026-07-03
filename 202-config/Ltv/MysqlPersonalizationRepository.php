@@ -111,9 +111,16 @@ final class MysqlPersonalizationRepository
             }
         }
         if ($ref !== '') {
-            $found = $this->lookupAliasAnyType($userId, $ref);
-            if ($found !== null) {
-                return $found;
+            // The lookup must be typed exactly like ingest's alias creation
+            // (default 'custom'): the same value can exist under different
+            // alias types for DIFFERENT customers, and an untyped match
+            // could seal another customer's CRM fields into the token.
+            $type = $this->aliasTypeFromRequest($get);
+            if ($type !== null) {
+                $found = $this->lookupAlias($userId, $type, $ref);
+                if ($found !== null) {
+                    return $found;
+                }
             }
         }
 
@@ -121,7 +128,8 @@ final class MysqlPersonalizationRepository
         if ($cparam >= 1 && $cparam <= 4) {
             $key = 'c' . $cparam;
             if (isset($get[$key]) && is_scalar($get[$key]) && trim((string) $get[$key]) !== '') {
-                $found = $this->lookupAliasAnyType($userId, trim((string) $get[$key]));
+                // Ingest registers c-param fallback refs as 'custom' aliases.
+                $found = $this->lookupAlias($userId, 'custom', trim((string) $get[$key]));
                 if ($found !== null) {
                     return $found;
                 }
@@ -384,7 +392,26 @@ final class MysqlPersonalizationRepository
         return $payload;
     }
 
-    private function lookupAliasAnyType(int $userId, string $ref): ?int
+    /**
+     * The alias type the request declares for its cust/customer_ref value,
+     * mirroring ingest's default ('custom' when absent). Unlike the
+     * authenticated API this is a public beacon, so an unknown type resolves
+     * nothing (null) instead of throwing — the response stays uniform.
+     */
+    private function aliasTypeFromRequest(array $get): ?string
+    {
+        foreach (['cust_type', 'customer_ref_type'] as $key) {
+            if (isset($get[$key]) && is_scalar($get[$key]) && trim((string) $get[$key]) !== '') {
+                $type = strtolower(trim((string) $get[$key]));
+
+                return in_array($type, MysqlCustomerRepository::ALIAS_TYPES, true) ? $type : null;
+            }
+        }
+
+        return 'custom';
+    }
+
+    private function lookupAlias(int $userId, string $type, string $ref): ?int
     {
         if ($ref === '' || strlen($ref) > 255) {
             return null;
@@ -392,9 +419,9 @@ final class MysqlPersonalizationRepository
         $hash = hash('sha256', $ref, true);
         $stmt = $this->conn->prepareRead(
             'SELECT customer_id FROM 202_customer_aliases
-             WHERE user_id = ? AND alias_hash = ? LIMIT 1'
+             WHERE user_id = ? AND alias_type = ? AND alias_hash = ? LIMIT 1'
         );
-        $this->conn->bind($stmt, 'is', [$userId, $hash]);
+        $this->conn->bind($stmt, 'iss', [$userId, $type, $hash]);
         $row = $this->conn->fetchOne($stmt);
         if ($row === null) {
             return null;

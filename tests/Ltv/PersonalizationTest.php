@@ -167,4 +167,31 @@ final class PersonalizationTest extends TestCase
 
         self::assertSame(501, $repo->resolveVisitorCustomer(7, ['cust' => 'nobody-knows-this'], 12345));
     }
+
+    public function testResolveVisitorCustomerLookupIsAliasTyped(): void
+    {
+        // The same alias VALUE can belong to different customers under
+        // different types — an untyped lookup could seal someone else's CRM
+        // data into a token. The query must carry the declared type, and an
+        // unknown type must not fall back to an untyped match.
+        $read = new FakeMysqliConnection();
+        $repo = new MysqlPersonalizationRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        $repo->resolveVisitorCustomer(7, ['cust' => '123', 'cust_type' => 'merchant_id'], 0);
+        $lookups = $read->statementsContaining('FROM 202_customer_aliases');
+        self::assertCount(1, $lookups);
+        self::assertStringContainsString('alias_type = ?', $lookups[0]->sql);
+        self::assertSame('iss', $lookups[0]->boundTypes);
+        self::assertContains('merchant_id', $lookups[0]->boundValues);
+
+        $untyped = new FakeMysqliConnection();
+        $repo = new MysqlPersonalizationRepository(new Connection(new FakeMysqliConnection(), $untyped));
+        $repo->resolveVisitorCustomer(7, ['cust' => '123'], 0);
+        self::assertContains('custom', $untyped->statementsContaining('FROM 202_customer_aliases')[0]->boundValues, 'untyped refs default to custom, mirroring ingest');
+
+        $bogus = new FakeMysqliConnection();
+        $repo = new MysqlPersonalizationRepository(new Connection(new FakeMysqliConnection(), $bogus));
+        self::assertNull($repo->resolveVisitorCustomer(7, ['cust' => '123', 'cust_type' => 'nonsense'], 0));
+        self::assertCount(0, $bogus->statementsContaining('FROM 202_customer_aliases'), 'unknown types must not query at all');
+    }
 }

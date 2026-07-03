@@ -163,11 +163,14 @@ final class MysqlCompanyRepository
         try {
             return $this->conn->executeInsert($stmt);
         } catch (RuntimeException $e) {
-            // Locale-independent duplicate-key detection (the unique key
-            // firing under a concurrent create).
+            // Locale-independent duplicate-key detection (one of the unique
+            // keys firing under a concurrent create). The key name in the
+            // error tells us which contract was violated.
             if (Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
                 throw new CompanyConflictException(
-                    'Company "' . $name . '" already exists; use PATCH to modify it'
+                    str_contains($e->getMessage(), 'uniq_user_domain')
+                        ? 'Domain ' . (string) $normalizedDomain . ' already belongs to another company'
+                        : 'Company "' . $name . '" already exists; use PATCH to modify it'
                 );
             }
             throw $e;
@@ -373,44 +376,57 @@ final class MysqlCompanyRepository
         }
 
         $now = time();
-        $this->conn->transaction(function () use ($userId, $companyId, $newName, $normalized, $setDomain, $normalizedDomain, $now): void {
-            $sets = [];
-            $types = '';
-            $binds = [];
-            if ($newName !== null) {
-                $sets[] = 'name = ?';
-                $types .= 's';
-                $binds[] = $newName;
-                $sets[] = 'normalized_name = ?';
-                $types .= 's';
-                $binds[] = $normalized;
-            }
-            if ($setDomain) {
-                $sets[] = 'domain = ?';
-                $types .= 's';
-                $binds[] = $normalizedDomain;
-            }
-            $sets[] = 'updated_at = ?';
-            $types .= 'iii';
-            $binds[] = $now;
-            $binds[] = $companyId;
-            $binds[] = $userId;
+        try {
+            $this->conn->transaction(function () use ($userId, $companyId, $newName, $normalized, $setDomain, $normalizedDomain, $now): void {
+                $sets = [];
+                $types = '';
+                $binds = [];
+                if ($newName !== null) {
+                    $sets[] = 'name = ?';
+                    $types .= 's';
+                    $binds[] = $newName;
+                    $sets[] = 'normalized_name = ?';
+                    $types .= 's';
+                    $binds[] = $normalized;
+                }
+                if ($setDomain) {
+                    $sets[] = 'domain = ?';
+                    $types .= 's';
+                    $binds[] = $normalizedDomain;
+                }
+                $sets[] = 'updated_at = ?';
+                $types .= 'iii';
+                $binds[] = $now;
+                $binds[] = $companyId;
+                $binds[] = $userId;
 
-            $stmt = $this->conn->prepareWrite(
-                'UPDATE 202_companies SET ' . implode(', ', $sets) . ' WHERE company_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, $types, $binds);
-            $this->conn->executeUpdate($stmt);
-
-            if ($newName !== null) {
                 $stmt = $this->conn->prepareWrite(
-                    'UPDATE 202_customers SET company = ?, updated_at = ?
-                     WHERE company_id = ? AND user_id = ?'
+                    'UPDATE 202_companies SET ' . implode(', ', $sets) . ' WHERE company_id = ? AND user_id = ?'
                 );
-                $this->conn->bind($stmt, 'siii', [$newName, $now, $companyId, $userId]);
+                $this->conn->bind($stmt, $types, $binds);
                 $this->conn->executeUpdate($stmt);
+
+                if ($newName !== null) {
+                    $stmt = $this->conn->prepareWrite(
+                        'UPDATE 202_customers SET company = ?, updated_at = ?
+                         WHERE company_id = ? AND user_id = ?'
+                    );
+                    $this->conn->bind($stmt, 'siii', [$newName, $now, $companyId, $userId]);
+                    $this->conn->executeUpdate($stmt);
+                }
+            });
+        } catch (RuntimeException $e) {
+            // A concurrent create/patch can slip past the preflight checks;
+            // the unique keys (name, domain) are the real arbiter.
+            if (Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
+                throw new RuntimeException(
+                    str_contains($e->getMessage(), 'uniq_user_domain')
+                        ? 'Domain ' . (string) $normalizedDomain . ' already belongs to another company'
+                        : 'Another company already uses that name; merge the two companies instead of renaming'
+                );
             }
-        });
+            throw $e;
+        }
     }
 
     /**
@@ -440,6 +456,15 @@ final class MysqlCompanyRepository
             $this->conn->bind($stmt, 'isiii', [$targetCompanyId, $targetName, $now, $sourceCompanyId, $userId]);
             $this->conn->executeUpdate($stmt);
 
+            // Delete the source BEFORE the target inherits its domain: the
+            // unique (user_id, domain) key would otherwise fire while both
+            // rows momentarily hold the same domain.
+            $stmt = $this->conn->prepareWrite(
+                'DELETE FROM 202_companies WHERE company_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ii', [$sourceCompanyId, $userId]);
+            $this->conn->executeUpdate($stmt);
+
             if (($target['domain'] ?? null) === null && ($source['domain'] ?? null) !== null) {
                 $stmt = $this->conn->prepareWrite(
                     'UPDATE 202_companies SET domain = ?, updated_at = ? WHERE company_id = ? AND user_id = ?'
@@ -447,12 +472,6 @@ final class MysqlCompanyRepository
                 $this->conn->bind($stmt, 'siii', [(string) $source['domain'], $now, $targetCompanyId, $userId]);
                 $this->conn->executeUpdate($stmt);
             }
-
-            $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_companies WHERE company_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, 'ii', [$sourceCompanyId, $userId]);
-            $this->conn->executeUpdate($stmt);
         });
     }
 

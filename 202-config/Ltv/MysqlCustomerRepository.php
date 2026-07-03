@@ -29,7 +29,7 @@ final class MysqlCustomerRepository
     public const ALIAS_TYPES = ['email_md5', 'email_sha256', 'esp_id', 'merchant_id', 'subid', 'custom'];
 
     /** Event types that count as an order in the rollup cache. */
-    private const ORDER_EVENT_TYPES = ['purchase', 'renewal', 'one_time'];
+    public const ORDER_EVENT_TYPES = ['purchase', 'renewal', 'one_time'];
 
     public function __construct(private Connection $conn)
     {
@@ -394,9 +394,14 @@ final class MysqlCustomerRepository
      * Attach product line items to a ledger event. Malformed items throw —
      * a rejected order must be visible, never silently truncated.
      *
+     * $eventAmount is the parent ledger event's (signed) amount: on a
+     * negative-money event (refund/chargeback/adjustment) every line amount
+     * is stored negative, whichever sign the caller supplied, so product
+     * revenue sums net out the same way customer revenue does.
+     *
      * @param list<array<string, mixed>> $items
      */
-    public function insertLineItems(int $userId, int $eventId, array $items, string $currency, int $now): void
+    public function insertLineItems(int $userId, int $eventId, array $items, string $currency, int $now, float $eventAmount = 0.0): void
     {
         foreach ($items as $index => $item) {
             if (!is_array($item)) {
@@ -410,6 +415,9 @@ final class MysqlCustomerRepository
             $amount = isset($item['amount']) && $item['amount'] !== null
                 ? (float) $item['amount']
                 : ($unitPrice !== null ? $unitPrice * $quantity : 0.0);
+            if ($eventAmount < 0) {
+                $amount = -abs($amount);
+            }
 
             $productId = $this->upsertProduct($userId, $item, $currency, $now);
             $sku = trim((string) ($item['sku'] ?? ''));

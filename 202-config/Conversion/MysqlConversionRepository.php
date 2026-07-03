@@ -218,8 +218,14 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             // transaction: the conversion and its ledger event commit together.
             if ($customerId !== null) {
                 $currency = $this->customers->accountCurrency($userId);
+                // A negative payout is a correction (some networks push
+                // reversals through the same pixel/postback). Ledger it as an
+                // adjustment: recording it as a "purchase" would bump
+                // order_count while draining revenue, corrupting LTV/AOV.
+                // The conversion row itself still records exactly as before.
+                $eventType = $payout < 0 ? 'adjustment' : 'purchase';
                 $ledger = $this->customers->insertRevenueEvent($userId, $customerId, [
-                    'event_type' => 'purchase',
+                    'event_type' => $eventType,
                     'amount' => $payout,
                     'currency' => $currency,
                     'occurred_at' => $convTime,
@@ -230,10 +236,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 ], $convTime);
 
                 if ($ledger['inserted']) {
-                    $this->customers->applyEventToRollups($userId, $customerId, 'purchase', $payout, $convTime, $convTime);
+                    $this->customers->applyEventToRollups($userId, $customerId, $eventType, $payout, $convTime, $convTime);
                     $items = $data['items'] ?? [];
                     if (is_array($items) && $items !== []) {
-                        $this->customers->insertLineItems($userId, $ledger['eventId'], $items, $currency, $convTime);
+                        $this->customers->insertLineItems($userId, $ledger['eventId'], $items, $currency, $convTime, $payout);
                     }
                 }
 
@@ -373,8 +379,25 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             ], $now);
 
             if ($void['inserted']) {
-                // Reverse the purchase: one fewer order, revenue back out.
-                $this->customers->adjustRollups($userId, $customerId, -1, -(float) $event['amount'], 0.0, $now, $now);
+                // Reverse the sale: revenue back out, and one fewer order —
+                // but only if the voided event actually counted as an order
+                // (a negative-payout conversion was ledgered as an adjustment
+                // and never bumped order_count).
+                $orderDelta = in_array((string) $event['event_type'], MysqlCustomerRepository::ORDER_EVENT_TYPES, true) ? -1 : 0;
+                $this->customers->adjustRollups($userId, $customerId, $orderDelta, -(float) $event['amount'], 0.0, $now, $now);
+
+                // Mirror the sale's line items negated onto the void event so
+                // product revenue/unit reports net the deleted conversion out,
+                // exactly like the customer totals do.
+                $itemsStmt = $this->conn->prepareWrite(
+                    'INSERT INTO 202_revenue_line_items
+                        (user_id, event_id, product_id, sku, product_name, quantity, unit_price, amount, created_at)
+                     SELECT user_id, ?, product_id, sku, product_name, quantity, unit_price, -amount, ?
+                     FROM 202_revenue_line_items WHERE event_id = ?'
+                );
+                $this->conn->bind($itemsStmt, 'iii', [$void['eventId'], $now, (int) $event['event_id']]);
+                $this->conn->execute($itemsStmt);
+                $itemsStmt->close();
             }
         };
 

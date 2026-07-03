@@ -322,9 +322,18 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
      */
     private function productBreakdown(LtvQuery $query, int $limit, int $offset): array
     {
+        // Custom-field filters describe a CUSTOMER cohort; when present the
+        // line items must be scoped to that cohort's (not-merged) customers,
+        // not summed account-wide. Joins render before the WHERE clause, so
+        // their binds come first.
+        [$cfJoins, $cfTypes, $cfBinds] = $this->customFieldJoins($query);
+        $customerJoin = $cfJoins !== ''
+            ? "\n            INNER JOIN 202_customers c ON c.customer_id = re.customer_id AND c.user_id = li.user_id AND c.merged_into_customer_id IS NULL" . $cfJoins
+            : '';
+
         $where = ['li.user_id = ?'];
-        $types = 'i';
-        $binds = [$query->userId];
+        $types = $cfTypes . 'i';
+        $binds = array_merge($cfBinds, [$query->userId]);
         if ($query->timeFrom !== null) {
             $where[] = 're.occurred_at >= ?';
             $types .= 'i';
@@ -350,7 +359,7 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
                      ELSE 0 END AS avg_revenue_per_customer
             FROM 202_revenue_line_items li
             INNER JOIN 202_revenue_events re ON re.event_id = li.event_id
-            INNER JOIN 202_products p ON p.product_id = li.product_id
+            INNER JOIN 202_products p ON p.product_id = li.product_id{$customerJoin}
             {$whereClause}
             GROUP BY p.product_id, name, p.sku
             ORDER BY total_revenue DESC
@@ -376,20 +385,7 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
     {
         // Placeholders bind in SQL text order: the custom-field JOINs render
         // before the WHERE clause, so their params must come first.
-        $joins = '';
-        $joinTypes = '';
-        $joinBinds = [];
-        foreach ($query->customFieldFilters as $i => $filter) {
-            // column/op are validated against allowlists in LtvQuery; only the
-            // value is bound.
-            $alias = 'cfv' . $i;
-            $joins .= " INNER JOIN 202_customer_field_values {$alias}
-                ON {$alias}.customer_id = c.customer_id AND {$alias}.field_id = ?
-                AND {$alias}.{$filter['column']} {$filter['op']} ?";
-            $joinTypes .= 'i' . ($filter['column'] === 'value_text' ? 's' : 'd');
-            $joinBinds[] = (int) $filter['fieldId'];
-            $joinBinds[] = $filter['column'] === 'value_text' ? (string) $filter['value'] : (float) $filter['value'];
-        }
+        [$joins, $joinTypes, $joinBinds] = $this->customFieldJoins($query);
 
         $where = ['c.user_id = ?', 'c.merged_into_customer_id IS NULL'];
         $whereTypes = 'i';
@@ -411,5 +407,30 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             $joinTypes . $whereTypes,
             array_merge($joinBinds, $whereBinds),
         ];
+    }
+
+    /**
+     * The up-to-3 custom-field filter joins against the `c` customers alias.
+     * column/op are validated against allowlists in LtvQuery; only the value
+     * is bound.
+     *
+     * @return array{0: string, 1: string, 2: list<mixed>} join SQL, bind types, binds
+     */
+    private function customFieldJoins(LtvQuery $query): array
+    {
+        $joins = '';
+        $types = '';
+        $binds = [];
+        foreach ($query->customFieldFilters as $i => $filter) {
+            $alias = 'cfv' . $i;
+            $joins .= " INNER JOIN 202_customer_field_values {$alias}
+                ON {$alias}.customer_id = c.customer_id AND {$alias}.field_id = ?
+                AND {$alias}.{$filter['column']} {$filter['op']} ?";
+            $types .= 'i' . ($filter['column'] === 'value_text' ? 's' : 'd');
+            $binds[] = (int) $filter['fieldId'];
+            $binds[] = $filter['column'] === 'value_text' ? (string) $filter['value'] : (float) $filter['value'];
+        }
+
+        return [$joins, $types, $binds];
     }
 }

@@ -66,7 +66,7 @@ final class LtvTables
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`company_id`),
                 UNIQUE KEY `uniq_user_name` (`user_id`,`normalized_name`),
-                KEY `user_domain` (`user_id`,`domain`)
+                UNIQUE KEY `uniq_user_domain` (`user_id`,`domain`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

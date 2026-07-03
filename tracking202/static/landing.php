@@ -200,6 +200,12 @@ var utm_campaign = t202GetVar('utm_campaign');
 		"referer=" + t202Enc(referer),
 		"resolution=" + t202Enc(resolution),
 		"language=" + t202Enc(language),
+		// Customer identity: an LP URL that names the visitor (email links
+		// carrying ?cust=...) is the explicit signal the tracker needs to
+		// stamp engagement and mint a personalization token on the very
+		// first pageview — without this the ref never reaches record.php.
+		"cust=" + t202Enc(t202GetVar('cust') || t202GetVar('customer_ref')),
+		"cust_type=" + t202Enc(t202GetVar('cust_type') || t202GetVar('customer_ref_type')),
 		// Personalization: tell the tracker whether this page already holds a
 		// token cookie, so repeat pageviews within a visit reuse it instead of
 		// minting a fresh one each time.
