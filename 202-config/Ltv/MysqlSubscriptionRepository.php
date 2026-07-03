@@ -85,7 +85,7 @@ final class MysqlSubscriptionRepository
         // Trials do not collect money yet, so they carry no MRR.
         $mrr = $status === 'trialing' ? 0.0 : self::normalizeMrr($amount, $interval, $intervalCount);
 
-        [$subscriptionId, $customerId] = $this->conn->transaction(function () use (
+        $write = fn (): array => $this->conn->transaction(function () use (
             $userId,
             $payload,
             $externalSubId,
@@ -109,8 +109,13 @@ final class MysqlSubscriptionRepository
 
             // An upsert may MOVE the subscription to a different customer;
             // capture the previous owner so their rollups get corrected too.
+            // FOR UPDATE serializes concurrent upserts of the same sub (like
+            // recordEvent's lock): the second writer blocks here until the
+            // first commits, then reads the owner IT actually displaces —
+            // an unlocked read would let both see the same stale owner and
+            // leave an intermediate owner's MRR rollup never refreshed.
             $prevStmt = $this->conn->prepareWrite(
-                'SELECT customer_id FROM 202_subscriptions WHERE user_id = ? AND external_sub_id = ? LIMIT 1'
+                'SELECT customer_id FROM 202_subscriptions WHERE user_id = ? AND external_sub_id = ? LIMIT 1 FOR UPDATE'
             );
             $this->conn->bind($prevStmt, 'is', [$userId, $externalSubId]);
             $previous = $this->conn->fetchOne($prevStmt);
@@ -175,6 +180,18 @@ final class MysqlSubscriptionRepository
 
             return [$subscriptionId, $customerId];
         });
+
+        try {
+            [$subscriptionId, $customerId] = $write();
+        } catch (\Throwable $e) {
+            if (!Connection::isRetryableLockError($e)) {
+                throw $e;
+            }
+            // Two concurrent FIRST-TIME upserts of the same external_sub_id
+            // can deadlock on the FOR UPDATE gap + insert-intention locks;
+            // the retry sees the winner's committed row and updates it.
+            [$subscriptionId, $customerId] = $write();
+        }
 
         return ['subscriptionId' => $subscriptionId, 'customerId' => $customerId];
     }

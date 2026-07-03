@@ -262,4 +262,26 @@ final class LtvIngestTest extends TestCase
         self::assertCount(0, $write->statementsContaining('INSERT INTO 202_revenue_events'));
         self::assertCount(0, $write->statementsContaining('UPDATE 202_conversion_logs SET deleted = 1'));
     }
+
+    public function testSubscriptionUpsertLocksThePreviousOwnerRow(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('SELECT customer_id FROM 202_customer_aliases', [['customer_id' => 501]]);
+        $write->whenQueryContainsReturnRows('SELECT merged_into_customer_id FROM 202_customers', [['merged_into_customer_id' => null]]);
+
+        $conn = new Connection($write, new FakeMysqliConnection());
+        $repo = new \Prosper202\Ltv\MysqlSubscriptionRepository($conn, new MysqlCustomerRepository($conn));
+
+        try {
+            $repo->upsert(7, ['external_sub_id' => 'SUB-LOCK', 'amount' => 30.0, 'customer_ref' => 'lock-1']);
+        } catch (\RuntimeException) {
+            // PHP 8.4 readonly statement props keep the fake from yielding an
+            // insert id, so the upsert cannot complete here; the owner read
+            // happens first and its lock shape is what's under test.
+        }
+
+        $ownerReads = $write->statementsContaining('external_sub_id = ? LIMIT 1 FOR UPDATE');
+        self::assertCount(1, $ownerReads, 'the previous-owner read must lock the row so concurrent reassignments serialize');
+        self::assertSame([7, 'SUB-LOCK'], $ownerReads[0]->boundValues);
+    }
 }

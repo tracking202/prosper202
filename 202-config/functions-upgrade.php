@@ -3771,10 +3771,43 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.70', '>')) {
+        if ($prosper202_version == '1.9.70') {
 
-            $prosper202_version = '1.9.70';
+            // Next-offer v2 statistics: installs that created
+            // 202_offer_transitions at 1.9.67 predate the adjacent_count /
+            // from_customers / last_seen_at columns (the shared CREATE TABLE
+            // IF NOT EXISTS is a no-op on the existing table). Guarded ALTERs,
+            // matching the LtvTables definition; the ltv_maintenance rebuild
+            // repopulates the values on its next run.
+            $stats_ok = true;
+            foreach ([
+                ['adjacent_count', "ADD COLUMN `adjacent_count` int(10) unsigned NOT NULL DEFAULT '0' AFTER `transition_count`"],
+                ['from_customers', "ADD COLUMN `from_customers` int(10) unsigned NOT NULL DEFAULT '0' AFTER `adjacent_count`"],
+                ['last_seen_at', "ADD COLUMN `last_seen_at` int(10) unsigned NOT NULL DEFAULT '0' AFTER `from_customers`"],
+            ] as [$stats_column, $stats_alter]) {
+                $check = _upgrade_query("SHOW COLUMNS FROM `202_offer_transitions` LIKE '" . $stats_column . "'");
+                $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+                if (!$exists && _upgrade_query('ALTER TABLE `202_offer_transitions` ' . $stats_alter) === false) {
+                    $stats_ok = false;
+                    break;
+                }
+            }
+
+            if ($stats_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.71'") !== false) {
+                    $prosper202_version = '1.9.71';
+                } else {
+                    error_log('Prosper202 upgrade: added offer-transition stats columns but failed to persist version 1.9.71; leaving version at 1.9.70 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to add 202_offer_transitions stats columns; leaving version at 1.9.70 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.71', '>')) {
+
+            $prosper202_version = '1.9.71';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

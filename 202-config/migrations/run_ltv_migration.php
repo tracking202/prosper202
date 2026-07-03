@@ -182,6 +182,22 @@ try {
         echo "  202_users_pref.user_ltv_score_weights already exists — skipping\n";
     }
 
+    // Next-offer v2 statistics on 202_offer_transitions: installs that
+    // created the table before these columns existed need guarded ALTERs
+    // (the shared CREATE TABLE IF NOT EXISTS is a no-op on the old shape).
+    // The ltv_maintenance rebuild repopulates the values on its next run.
+    foreach ([
+        ['adjacent_count', "ADD COLUMN `adjacent_count` int(10) unsigned NOT NULL DEFAULT '0' AFTER `transition_count`"],
+        ['from_customers', "ADD COLUMN `from_customers` int(10) unsigned NOT NULL DEFAULT '0' AFTER `adjacent_count`"],
+        ['last_seen_at', "ADD COLUMN `last_seen_at` int(10) unsigned NOT NULL DEFAULT '0' AFTER `from_customers`"],
+    ] as [$column, $alter]) {
+        if (!ltv_column_exists($db, '202_offer_transitions', $column)) {
+            ltv_run($db, 'ALTER TABLE `202_offer_transitions` ' . $alter, "add 202_offer_transitions.{$column}");
+        } else {
+            echo "  202_offer_transitions.{$column} already exists — skipping\n";
+        }
+    }
+
     // --- 3. Verify ---
     echo "\nVerifying...\n";
     $allOk = true;
@@ -201,6 +217,9 @@ try {
         ['202_users_pref', 'user_ltv_personalization_fields'],
         ['202_users_pref', 'user_ltv_score_weights'],
         ['202_customers', 'company_id'],
+        ['202_offer_transitions', 'adjacent_count'],
+        ['202_offer_transitions', 'from_customers'],
+        ['202_offer_transitions', 'last_seen_at'],
     ] as [$table, $column]) {
         if (ltv_column_exists($db, $table, $column)) {
             echo "  ✓ {$table}.{$column}\n";

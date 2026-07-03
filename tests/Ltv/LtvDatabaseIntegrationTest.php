@@ -676,6 +676,67 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'), 'a replay must not mint identity');
     }
 
+    public function testConcurrentIdempotencyRaceLoserRollsBackIdentity(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $winnerId = $customers->resolveOrCreateByAlias(1, 'custom', 'race-winner', [], null, 1700000000);
+
+        // A second PROCESS plays the concurrent winner: it inserts the RACE-1
+        // event and holds its transaction open, so the loser's precheck can't
+        // see the row while the unique-key insert must wait behind its lock —
+        // the only ordering that reaches the lost-race branch.
+        $script = tempnam(sys_get_temp_dir(), 'p202race');
+        $marker = $script . '.lock';
+        $child = <<<'CHILD'
+<?php
+mysqli_report(MYSQLI_REPORT_STRICT);
+$db = mysqli_connect(
+    (string) getenv('P202_TEST_DB_HOST'),
+    (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+    (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+    (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+    (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+);
+$db->query("SET SESSION sql_mode=''");
+$db->begin_transaction();
+$db->query("INSERT INTO 202_revenue_events
+    (user_id, customer_id, event_type, amount, currency, occurred_at, source, idempotency_key, created_at)
+    VALUES (1, WINNER_ID, 'purchase', 20, 'USD', 1700000000, 'api', 'RACE-1', 1700000000)");
+touch($argv[1]); // signal the parent: the row lock is held
+usleep(1500000); // hold it long enough for the loser to block on the key
+$db->commit();
+CHILD;
+        file_put_contents($script, str_replace('WINNER_ID', (string) $winnerId, $child));
+
+        $proc = proc_open(PHP_BINARY . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($marker), [], $pipes);
+        if ($proc === false) {
+            self::fail('failed to spawn the winner process');
+        }
+        $deadline = microtime(true) + 5.0;
+        while (!file_exists($marker) && microtime(true) < $deadline) {
+            usleep(20000);
+        }
+        if (!file_exists($marker)) {
+            self::fail('the winner process never took the row lock');
+        }
+
+        // The loser carries a BRAND-NEW ref: precheck misses (winner is
+        // uncommitted), identity gets resolved, the insert blocks, loses,
+        // and the whole transaction must roll back — reporting the winner.
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $result = $controller->recordRevenue(['customer_ref' => 'race-loser', 'amount' => 5.0, 'idempotency_key' => 'RACE-1']);
+        proc_close($proc);
+        @unlink($script);
+        @unlink($marker);
+
+        self::assertSame(200, $result['_status']);
+        self::assertTrue($result['data']['duplicate']);
+        self::assertSame($winnerId, $result['data']['customer_id'], 'the loser must report the winner as the owner');
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customers WHERE primary_ref = 'race-loser'"), 'the losing identity must roll back');
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customer_aliases WHERE alias_value = 'race-loser'"));
+        self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_revenue_events WHERE idempotency_key = 'RACE-1'"));
+    }
+
     public function testAliasTypesNormalizeOnEveryResolutionPath(): void
     {
         $customers = new MysqlCustomerRepository(self::$conn);

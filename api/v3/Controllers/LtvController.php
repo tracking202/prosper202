@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\LostIdempotencyRaceException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Prosper202\Database\Connection;
@@ -400,52 +401,65 @@ class LtvController
                 ? trim((string) $payload['idempotency_key'])
                 : null;
 
-            $result = $this->conn->transaction(function () use ($eventType, $amount, $currency, $occurredAt, $payload, $items, $now, $idempotencyKey): array {
-                // Idempotent replay FIRST: a replay carrying a different (or
-                // brand-new) customer_ref must return the original event and
-                // its owner, not resolve/create a customer for a write that
-                // will never happen.
-                if ($idempotencyKey !== null) {
-                    $existing = $this->customers->findEventByIdempotencyKey($this->userId, $idempotencyKey);
-                    if ($existing !== null) {
-                        return ['eventId' => $existing['event_id'], 'inserted' => false, 'customerId' => $existing['customer_id']];
+            try {
+                $result = $this->conn->transaction(function () use ($eventType, $amount, $currency, $occurredAt, $payload, $items, $now, $idempotencyKey): array {
+                    // Idempotent replay FIRST: a replay carrying a different
+                    // (or brand-new) customer_ref must return the original
+                    // event and its owner, not resolve/create a customer for
+                    // a write that will never happen.
+                    if ($idempotencyKey !== null) {
+                        $existing = $this->customers->findEventByIdempotencyKey($this->userId, $idempotencyKey);
+                        if ($existing !== null) {
+                            return ['eventId' => $existing['event_id'], 'inserted' => false, 'customerId' => $existing['customer_id']];
+                        }
                     }
+
+                    // Identity creation happens INSIDE this transaction: if a
+                    // later step rejects the payload (e.g. a malformed line
+                    // item), the new customer/alias rolls back with it instead
+                    // of surviving as an orphan zero-revenue record.
+                    $customerId = $this->resolveCustomerFromPayload($payload, $now, true);
+                    $event = $this->customers->insertRevenueEvent($this->userId, $customerId, [
+                        'event_type' => $eventType,
+                        'amount' => $amount,
+                        'currency' => $currency,
+                        'occurred_at' => $occurredAt,
+                        'source' => 'api',
+                        'external_ref' => isset($payload['external_ref']) ? (string) $payload['external_ref'] : null,
+                        'transaction_id' => isset($payload['transaction_id']) ? (string) $payload['transaction_id'] : null,
+                        'idempotency_key' => isset($payload['idempotency_key']) && trim((string) $payload['idempotency_key']) !== ''
+                            ? trim((string) $payload['idempotency_key'])
+                            : null,
+                    ], $now);
+
+                    if ($event['inserted']) {
+                        $this->customers->applyEventToRollups($this->userId, $customerId, $eventType, $amount, $occurredAt, $now);
+                        if ($items !== []) {
+                            $this->customers->insertLineItems($this->userId, $event['eventId'], $items, $currency, $now, $amount);
+                        }
+                    } elseif ($idempotencyKey !== null) {
+                        // Lost a concurrent race on the key: abort so the
+                        // identity this request resolved rolls back with the
+                        // transaction — committing it would leave an orphan
+                        // zero-revenue customer/alias the caller never asked
+                        // for.
+                        throw new LostIdempotencyRaceException();
+                    }
+
+                    return $event + ['customerId' => $customerId];
+                });
+            } catch (LostIdempotencyRaceException) {
+                // The rolled-back transaction's snapshot may predate the
+                // winner's commit; this fresh autocommit read sees it.
+                $existing = $this->customers->findEventByIdempotencyKey($this->userId, (string) $idempotencyKey);
+                if ($existing === null) {
+                    throw new ConflictException(
+                        'A concurrent request with the same idempotency_key is in progress; retry to fetch its result',
+                        ['idempotency_key' => 'Duplicate in flight']
+                    );
                 }
-
-                // Identity creation happens INSIDE this transaction: if a
-                // later step rejects the payload (e.g. a malformed line
-                // item), the new customer/alias rolls back with it instead
-                // of surviving as an orphan zero-revenue record.
-                $customerId = $this->resolveCustomerFromPayload($payload, $now, true);
-                $event = $this->customers->insertRevenueEvent($this->userId, $customerId, [
-                    'event_type' => $eventType,
-                    'amount' => $amount,
-                    'currency' => $currency,
-                    'occurred_at' => $occurredAt,
-                    'source' => 'api',
-                    'external_ref' => isset($payload['external_ref']) ? (string) $payload['external_ref'] : null,
-                    'transaction_id' => isset($payload['transaction_id']) ? (string) $payload['transaction_id'] : null,
-                    'idempotency_key' => isset($payload['idempotency_key']) && trim((string) $payload['idempotency_key']) !== ''
-                        ? trim((string) $payload['idempotency_key'])
-                        : null,
-                ], $now);
-
-                if ($event['inserted']) {
-                    $this->customers->applyEventToRollups($this->userId, $customerId, $eventType, $amount, $occurredAt, $now);
-                    if ($items !== []) {
-                        $this->customers->insertLineItems($this->userId, $event['eventId'], $items, $currency, $now, $amount);
-                    }
-                } elseif ($idempotencyKey !== null) {
-                    // Lost a concurrent race on the key: report the winner's
-                    // owner, not the customer this request resolved.
-                    $existing = $this->customers->findEventByIdempotencyKey($this->userId, $idempotencyKey);
-                    if ($existing !== null) {
-                        $customerId = $existing['customer_id'];
-                    }
-                }
-
-                return $event + ['customerId' => $customerId];
-            });
+                $result = ['eventId' => $existing['event_id'], 'inserted' => false, 'customerId' => $existing['customer_id']];
+            }
 
             if ($result['inserted']) {
                 $this->enqueueEvent('revenue.recorded', [
