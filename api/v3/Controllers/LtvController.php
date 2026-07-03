@@ -382,7 +382,22 @@ class LtvController
                 throw new ValidationException('items must be an array', ['items' => 'Must be an array of line items']);
             }
 
-            $result = $this->conn->transaction(function () use ($eventType, $amount, $currency, $occurredAt, $payload, $items, $now): array {
+            $idempotencyKey = isset($payload['idempotency_key']) && trim((string) $payload['idempotency_key']) !== ''
+                ? trim((string) $payload['idempotency_key'])
+                : null;
+
+            $result = $this->conn->transaction(function () use ($eventType, $amount, $currency, $occurredAt, $payload, $items, $now, $idempotencyKey): array {
+                // Idempotent replay FIRST: a replay carrying a different (or
+                // brand-new) customer_ref must return the original event and
+                // its owner, not resolve/create a customer for a write that
+                // will never happen.
+                if ($idempotencyKey !== null) {
+                    $existing = $this->customers->findEventByIdempotencyKey($this->userId, $idempotencyKey);
+                    if ($existing !== null) {
+                        return ['eventId' => $existing['event_id'], 'inserted' => false, 'customerId' => $existing['customer_id']];
+                    }
+                }
+
                 // Identity creation happens INSIDE this transaction: if a
                 // later step rejects the payload (e.g. a malformed line
                 // item), the new customer/alias rolls back with it instead
@@ -405,6 +420,13 @@ class LtvController
                     $this->customers->applyEventToRollups($this->userId, $customerId, $eventType, $amount, $occurredAt, $now);
                     if ($items !== []) {
                         $this->customers->insertLineItems($this->userId, $event['eventId'], $items, $currency, $now, $amount);
+                    }
+                } elseif ($idempotencyKey !== null) {
+                    // Lost a concurrent race on the key: report the winner's
+                    // owner, not the customer this request resolved.
+                    $existing = $this->customers->findEventByIdempotencyKey($this->userId, $idempotencyKey);
+                    if ($existing !== null) {
+                        $customerId = $existing['customer_id'];
                     }
                 }
 

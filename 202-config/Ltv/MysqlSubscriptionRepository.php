@@ -85,11 +85,9 @@ final class MysqlSubscriptionRepository
         // Trials do not collect money yet, so they carry no MRR.
         $mrr = $status === 'trialing' ? 0.0 : self::normalizeMrr($amount, $interval, $intervalCount);
 
-        $customerId = $this->resolveCustomer($userId, $payload, $now);
-
-        $subscriptionId = $this->conn->transaction(function () use (
+        [$subscriptionId, $customerId] = $this->conn->transaction(function () use (
             $userId,
-            $customerId,
+            $payload,
             $externalSubId,
             $planName,
             $amount,
@@ -103,7 +101,12 @@ final class MysqlSubscriptionRepository
             $periodEnd,
             $graceDays,
             $now
-        ): int {
+        ): array {
+            // Identity creation inside the same transaction: a failed
+            // subscription write must roll the fresh customer/alias back
+            // with it, never leave an orphan zero-MRR record.
+            $customerId = $this->resolveCustomer($userId, $payload, $now, true);
+
             // An upsert may MOVE the subscription to a different customer;
             // capture the previous owner so their rollups get corrected too.
             $prevStmt = $this->conn->prepareWrite(
@@ -118,7 +121,7 @@ final class MysqlSubscriptionRepository
                      billing_interval, billing_interval_count, status, mrr,
                      started_at, current_period_start, current_period_end, grace_days,
                      canceled_at, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE
                     subscription_id = LAST_INSERT_ID(subscription_id),
                     customer_id = VALUES(customer_id),
@@ -131,14 +134,16 @@ final class MysqlSubscriptionRepository
                     current_period_start = VALUES(current_period_start),
                     current_period_end = VALUES(current_period_end),
                     grace_days = VALUES(grace_days),
-                    canceled_at = IF(VALUES(status) = 'canceled', COALESCE(canceled_at, VALUES(updated_at)), NULL),
+                    canceled_at = IF(VALUES(status) = 'canceled', COALESCE(canceled_at, VALUES(canceled_at), VALUES(updated_at)), NULL),
                     updated_at = VALUES(updated_at)"
             );
             // user_id(i) customer_id(i) external_sub_id(s) plan_name(s) amount(d)
             // currency(s) billing_interval(s) billing_interval_count(i) status(s)
             // mrr(d) started_at(i) period_start(i) period_end(i) grace_days(i)
-            // created_at(i) updated_at(i)
-            $this->conn->bind($stmt, 'iissdssisdiiiiii', [
+            // canceled_at(i) created_at(i) updated_at(i)
+            // A first-time INSERT arriving already canceled must carry
+            // canceled_at — mrr()'s trailing-churn window filters on it.
+            $this->conn->bind($stmt, 'iissdssisdiiiiiii', [
                 $userId,
                 $customerId,
                 $externalSubId,
@@ -153,6 +158,7 @@ final class MysqlSubscriptionRepository
                 $periodStart,
                 $periodEnd,
                 $graceDays,
+                $status === 'canceled' ? $now : null,
                 $now,
                 $now,
             ]);
@@ -167,7 +173,7 @@ final class MysqlSubscriptionRepository
                 $this->refreshCustomerSubscriptionRollups($userId, (int) $previous['customer_id'], $now);
             }
 
-            return $subscriptionId;
+            return [$subscriptionId, $customerId];
         });
 
         return ['subscriptionId' => $subscriptionId, 'customerId' => $customerId];
@@ -360,7 +366,7 @@ final class MysqlSubscriptionRepository
     /**
      * @param array<string, mixed> $payload
      */
-    private function resolveCustomer(int $userId, array $payload, int $now): int
+    private function resolveCustomer(int $userId, array $payload, int $now, bool $inTransaction = false): int
     {
         $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
         if ($explicitId > 0) {
@@ -377,9 +383,12 @@ final class MysqlSubscriptionRepository
         $refType = isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : 'custom';
         $crm = isset($payload['customer_crm']) && is_array($payload['customer_crm']) ? $payload['customer_crm'] : [];
 
-        return $this->conn->transaction(
-            fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now)
-        );
+        $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now);
+
+        // upsert() passes true so a failed subscription write rolls the
+        // fresh customer/alias back with it (Connection::transaction does
+        // not nest).
+        return $inTransaction ? $resolve() : $this->conn->transaction($resolve);
     }
 
     /**

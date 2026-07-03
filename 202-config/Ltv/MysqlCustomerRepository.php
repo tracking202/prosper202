@@ -193,6 +193,28 @@ final class MysqlCustomerRepository
     }
 
     /**
+     * The existing ledger event for a caller idempotency key, if any —
+     * checked BEFORE resolving identity on API ingest, so a replay carrying
+     * a new customer_ref returns the original event's owner instead of
+     * minting an orphan customer.
+     *
+     * @return array{event_id: int, customer_id: int}|null
+     */
+    public function findEventByIdempotencyKey(int $userId, string $idempotencyKey): ?array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT event_id, customer_id FROM 202_revenue_events
+             WHERE user_id = ? AND idempotency_key = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'is', [$userId, $idempotencyKey]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return $row !== null
+            ? ['event_id' => (int) $row['event_id'], 'customer_id' => (int) $row['customer_id']]
+            : null;
+    }
+
+    /**
      * Reject a negative amount on an order-type event: applyEventToRollups
      * counts purchases/renewals/one_time as orders, so a signed refund sent
      * under the wrong event type would inflate order_count while draining

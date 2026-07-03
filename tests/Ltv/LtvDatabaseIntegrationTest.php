@@ -657,4 +657,37 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame(201, $ok['_status']);
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'));
     }
+
+    public function testIdempotentReplayDoesNotMintNewIdentity(): void
+    {
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $first = $controller->recordRevenue(['customer_ref' => 'idem-a', 'amount' => 10.0, 'idempotency_key' => 'IDEM-1']);
+        self::assertSame(201, $first['_status']);
+
+        // Same key, DIFFERENT brand-new ref: the replay must return the
+        // original event and its owner, and must not create a customer for
+        // a write that never happens.
+        $replay = $controller->recordRevenue(['customer_ref' => 'idem-b', 'amount' => 10.0, 'idempotency_key' => 'IDEM-1']);
+        self::assertSame(200, $replay['_status']);
+        self::assertTrue($replay['data']['duplicate']);
+        self::assertSame($first['data']['event_id'], $replay['data']['event_id']);
+        self::assertSame($first['data']['customer_id'], $replay['data']['customer_id'], 'the ORIGINAL owner is reported');
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'), 'a replay must not mint identity');
+    }
+
+    public function testCanceledSubscriptionInsertCountsTowardChurn(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+        $customerId = $crm->upsert(1, ['customer_ref' => 'import-cancel']);
+
+        // A first-time import of an ALREADY-canceled subscription must stamp
+        // canceled_at, or the trailing-churn window never sees it.
+        $subs->upsert(1, ['external_sub_id' => 'SUB-CANCELED', 'amount' => 20.0, 'status' => 'canceled', 'customer_id' => $customerId]);
+        self::assertNotNull($this->scalar("SELECT canceled_at FROM 202_subscriptions WHERE external_sub_id='SUB-CANCELED'"));
+
+        $mrr = (new \Prosper202\Ltv\MysqlLtvRepository(self::$conn))->mrr(1);
+        self::assertSame(1, (int) $mrr['churn_inputs']['canceled_in_window']);
+    }
 }
