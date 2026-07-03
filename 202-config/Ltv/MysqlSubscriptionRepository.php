@@ -208,7 +208,9 @@ final class MysqlSubscriptionRepository
      * @param array<string, mixed> $payload Optional: amount (defaults to the
      *        subscription amount for renewal), occurred_at, idempotency_key,
      *        transaction_id, current_period_end (renewal).
-     * @return array{eventId: int|null, inserted: bool, subscriptionId: int, customerId: int}
+     * @return array{eventId: int|null, inserted: bool, changed: bool, subscriptionId: int, customerId: int}
+     *         `changed` is false for idempotent replays (duplicate
+     *         renewal/refund keys, repeat cancels) — nothing was modified.
      */
     public function recordEvent(int $userId, string $externalSubId, string $eventType, array $payload): array
     {
@@ -238,8 +240,12 @@ final class MysqlSubscriptionRepository
             $customerId = (int) $sub['customer_id'];
             $eventId = null;
             $inserted = false;
+            $changed = false;
 
             if ($eventType === 'cancel') {
+                // A repeat cancel is an idempotent no-op — report it as
+                // unchanged so callers (webhooks) don't re-notify.
+                $changed = ((string) $sub['status']) !== 'canceled';
                 $upd = $this->conn->prepareWrite(
                     "UPDATE 202_subscriptions
                      SET status = 'canceled', canceled_at = COALESCE(canceled_at, ?), updated_at = ?
@@ -275,6 +281,9 @@ final class MysqlSubscriptionRepository
                 ], $now);
                 $eventId = $event['eventId'];
                 $inserted = $event['inserted'];
+                // Money events only change state when the ledger insert is
+                // new; an idempotent replay leaves everything untouched.
+                $changed = $inserted;
 
                 if ($inserted) {
                     $this->customers->applyEventToRollups(
@@ -321,6 +330,7 @@ final class MysqlSubscriptionRepository
             return [
                 'eventId' => $eventId,
                 'inserted' => $inserted,
+                'changed' => $changed,
                 'subscriptionId' => $subscriptionId,
                 'customerId' => $customerId,
             ];

@@ -514,11 +514,15 @@ class LtvController
             throw new DatabaseException('Subscription event failed: ' . $e->getMessage(), $e);
         }
 
-        $this->enqueueEvent('subscription.changed', [
-            'subscription_id' => $result['subscriptionId'],
-            'customer_id' => $result['customerId'],
-            'action' => $eventType,
-        ]);
+        // Idempotent replays (duplicate renewal/refund keys, repeat cancels)
+        // change nothing — notifying downstream would duplicate side effects.
+        if (!empty($result['changed'])) {
+            $this->enqueueEvent('subscription.changed', [
+                'subscription_id' => $result['subscriptionId'],
+                'customer_id' => $result['customerId'],
+                'action' => $eventType,
+            ]);
+        }
 
         return ['data' => $result];
     }

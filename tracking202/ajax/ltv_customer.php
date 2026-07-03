@@ -499,7 +499,7 @@ $addressParts = array_filter([
     <div class="col-sm-6">
         <h6>Suggested Next Offer</h6>
         <?php if ($nextOffer === null) { ?>
-            <p class="text-muted"><em>Not enough conversion history yet to suggest an offer.</em></p>
+            <p class="text-muted"><em>Not enough data yet to suggest an offer &mdash; no usable purchase history, tracked browsing, or recent account conversions.</em></p>
         <?php } else { ?>
             <p>
                 <strong><?php echo $esc($nextOffer['name']); ?></strong>
@@ -515,8 +515,14 @@ $addressParts = array_filter([
                             &middot; avg order $<?php echo $money($why['avg_order_value']); ?><?php
                         } ?>
                     </small>
+                <?php } elseif (is_array($why) && ($why['basis'] ?? '') === 'engagement') { ?>
+                    <small class="text-muted">
+                        They've been browsing this offer but haven't bought:
+                        <?php echo (int) ($why['clicks'] ?? 0); ?> tracked visit(s), last seen
+                        <?php echo $esc(date('M j, Y', (int) ($why['last_engaged_at'] ?? 0))); ?>.
+                    </small>
                 <?php } else { ?>
-                    <small class="text-muted">This customer's history has no usable transitions yet &mdash; showing the account's top-converting campaign they haven't bought.</small>
+                    <small class="text-muted">No purchase or browsing signal for this customer yet &mdash; showing the account's top-converting live campaign of the last <?php echo (int) (is_array($why) ? ($why['window_days'] ?? 180) : 180); ?> days they haven't bought.</small>
                 <?php } ?>
             </p>
         <?php } ?>

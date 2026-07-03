@@ -257,6 +257,35 @@ final class MysqlCustomerCrmRepository
                 $this->conn->executeUpdate($stmt);
             }
 
+            // The target absorbs the source's acquisition and recency BEFORE
+            // the source is zeroed: the merged revenue must attribute to the
+            // EARLIEST acquisition click/time (breakdowns and cohorts key on
+            // it) and the freshest last_activity_time (reconcile dirty window
+            // and the customer list sort key). Assignment order matters —
+            // first_click_id's CASE reads first_seen_time, so it must be
+            // assigned first (MySQL applies SET left to right).
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_customers t
+                 JOIN 202_customers s ON s.customer_id = ? AND s.user_id = t.user_id
+                 SET t.first_click_id = CASE
+                         WHEN t.first_click_id IS NULL THEN s.first_click_id
+                         WHEN s.first_click_id IS NOT NULL
+                              AND s.first_seen_time > 0
+                              AND (t.first_seen_time = 0 OR s.first_seen_time < t.first_seen_time)
+                         THEN s.first_click_id
+                         ELSE t.first_click_id END,
+                     t.first_seen_time = CASE
+                         WHEN s.first_seen_time > 0
+                              AND (t.first_seen_time = 0 OR s.first_seen_time < t.first_seen_time)
+                         THEN s.first_seen_time
+                         ELSE t.first_seen_time END,
+                     t.last_activity_time = GREATEST(t.last_activity_time, s.last_activity_time),
+                     t.updated_at = ?
+                 WHERE t.customer_id = ? AND t.user_id = ?'
+            );
+            $this->conn->bind($stmt, 'iiii', [$sourceId, $now, $terminalTarget, $userId]);
+            $this->conn->executeUpdate($stmt);
+
             // Mark the source as merged (terminal pointer), zero its cache and
             // detach it from its company — merged rows are excluded from every
             // report, so a lingering company_id would only block company

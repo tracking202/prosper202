@@ -33,8 +33,19 @@ use Prosper202\Database\Connection;
  *
  * Candidates are ranked by expected value (score × B's average first-order
  * revenue) when revenue data exists, by score alone otherwise; ties break on
- * campaign_id. Fallback for customers the model cannot place stays the
- * account's top-converting campaign, minus what they already bought.
+ * campaign_id.
+ *
+ * Cold start (v3): most customers have no conversion-linked history at all —
+ * revenue arrives via /ltv/revenue or subscriptions, or the account is young —
+ * so customers without usable transitions fall through a tiered chain instead
+ * of one global pick:
+ *   1. transition evidence (above);
+ *   2. the customer's OWN engagement: the campaign they most recently browsed
+ *      (customer-stamped clicks / acquisition click) but never bought;
+ *   3. the account's top-converting campaign of the RECENT window — never a
+ *      deleted campaign, never one whose conversions all predate the window;
+ *   4. null — the UI says "not enough data" rather than suggesting something
+ *      stale or misleading.
  */
 final class MysqlRecommendationRepository
 {
@@ -52,6 +63,13 @@ final class MysqlRecommendationRepository
 
     /** Transition staleness half-life, seconds (1 year). */
     private const DECAY_HALF_LIFE = 31536000;
+
+    /**
+     * Account-top fallback only counts conversions this recent (180 days), so
+     * a retired or test campaign that dominated all-time counts can never be
+     * the generic suggestion.
+     */
+    private const FALLBACK_WINDOW = 15552000;
 
     public function __construct(private Connection $conn)
     {
@@ -73,9 +91,19 @@ final class MysqlRecommendationRepository
             }
         }
 
-        // 2. Fallback: the account's top-converting campaign the customer
-        //    hasn't bought yet.
-        return $this->topAccountCampaign($userId, $converted);
+        // 2. The customer's own engagement: the campaign they most recently
+        //    browsed (stamped clicks / acquisition click) but never bought —
+        //    a subscription-only or API-revenue customer still gets a pick
+        //    grounded in THEIR behavior, not the account average.
+        $candidate = $this->engagedCampaignInterest($userId, $customerId, $converted);
+        if ($candidate !== null) {
+            return $candidate;
+        }
+
+        // 3. Fallback: the account's top RECENTLY-converting live campaign
+        //    the customer hasn't bought yet; null when the account has no
+        //    recent signal at all (the UI says so instead of guessing).
+        return $this->topAccountCampaign($userId, $converted, $now);
     }
 
     /**
@@ -191,6 +219,7 @@ final class MysqlRecommendationRepository
                     ac.aff_campaign_name AS name, ac.aff_campaign_url AS url
              FROM 202_offer_transitions ot
              JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = ot.to_campaign_id
+                AND ac.aff_campaign_deleted = 0
              WHERE ot.user_id = ? AND ot.from_campaign_id IN ({$sourcePlaceholders}) {$notIn}"
         );
         $this->conn->bind(
@@ -360,26 +389,83 @@ final class MysqlRecommendationRepository
     }
 
     /**
+     * The campaign this customer most recently BROWSED but never bought:
+     * customer-stamped clicks (beacon/conversion stamping) plus the
+     * acquisition click, live campaigns only. This is the cold-start signal
+     * for the majority of customers — the ones whose revenue arrives via
+     * /ltv/revenue, subscriptions or imports and who therefore have no
+     * conversion-linked history for the transition model.
+     *
+     * @param list<int> $exclude Campaigns already converted on.
+     * @return array{campaign_id: int, name: string, url: string, why: array<string, mixed>}|null
+     */
+    private function engagedCampaignInterest(int $userId, int $customerId, array $exclude): ?array
+    {
+        [$notIn, $types, $binds] = $this->excludeClause($exclude, 's.campaign_id');
+
+        $stmt = $this->conn->prepareRead(
+            "SELECT s.campaign_id, ac.aff_campaign_name AS name, ac.aff_campaign_url AS url,
+                    COUNT(*) AS clicks, MAX(s.click_time) AS last_at
+             FROM (
+                 SELECT ck.aff_campaign_id AS campaign_id, ck.click_time
+                 FROM 202_clicks_tracking ct
+                 JOIN 202_clicks ck ON ck.click_id = ct.click_id AND ck.user_id = ?
+                 WHERE ct.customer_id = ?
+                 UNION ALL
+                 SELECT ck.aff_campaign_id, ck.click_time
+                 FROM 202_customers c
+                 JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = ?
+                 WHERE c.customer_id = ? AND c.user_id = ?
+             ) s
+             JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = s.campaign_id
+                AND ac.aff_campaign_deleted = 0
+             WHERE 1 = 1 {$notIn}
+             GROUP BY s.campaign_id, ac.aff_campaign_name, ac.aff_campaign_url
+             ORDER BY last_at DESC, s.campaign_id ASC
+             LIMIT 1"
+        );
+        $this->conn->bind(
+            $stmt,
+            'iiiii' . $types,
+            array_merge([$userId, $customerId, $userId, $customerId, $userId], $binds)
+        );
+        $row = $this->conn->fetchOne($stmt);
+
+        return $this->hydrate($row, $row !== null ? [
+            'basis' => 'engagement',
+            'clicks' => (int) $row['clicks'],
+            'last_engaged_at' => (int) $row['last_at'],
+        ] : null);
+    }
+
+    /**
      * @param list<int> $exclude
      * @return array{campaign_id: int, name: string, url: string}|null
      */
-    private function topAccountCampaign(int $userId, array $exclude): ?array
+    private function topAccountCampaign(int $userId, array $exclude, int $now): ?array
     {
         [$notIn, $types, $binds] = $this->excludeClause($exclude, 'cl.campaign_id');
 
+        // Live campaigns with conversions INSIDE the window only: an all-time
+        // ranking would resurface whatever legacy/test campaign once
+        // dominated, which is worse than admitting there is no signal.
         $stmt = $this->conn->prepareRead(
             "SELECT cl.campaign_id, ac.aff_campaign_name AS name, ac.aff_campaign_url AS url
              FROM 202_conversion_logs cl
              JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id
-             WHERE cl.user_id = ? AND cl.deleted = 0 {$notIn}
+                AND ac.aff_campaign_deleted = 0
+             WHERE cl.user_id = ? AND cl.deleted = 0 AND cl.conv_time >= ? {$notIn}
              GROUP BY cl.campaign_id, ac.aff_campaign_name, ac.aff_campaign_url
              ORDER BY COUNT(*) DESC, cl.campaign_id ASC
              LIMIT 1"
         );
-        $this->conn->bind($stmt, 'i' . $types, array_merge([$userId], $binds));
+        $this->conn->bind($stmt, 'ii' . $types, array_merge([$userId, $now - self::FALLBACK_WINDOW], $binds));
         $row = $this->conn->fetchOne($stmt);
 
-        return $this->hydrate($row, $row !== null ? ['basis' => 'account_top'] : null);
+        return $this->hydrate($row, $row !== null ? [
+            'basis' => 'account_top_recent',
+            'window_days' => (int) (self::FALLBACK_WINDOW / 86400),
+        ] : null);
     }
 
     /**

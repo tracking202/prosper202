@@ -202,11 +202,45 @@ final class RecommendationTest extends TestCase
         ]);
 
         $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
-        $offer = $repo->nextOffer(7, 501);
+        $offer = $repo->nextOffer(7, 501, 1700000000);
 
         self::assertNotNull($offer);
         self::assertSame(33, $offer['campaign_id']);
         self::assertSame('Top Seller', $offer['name']);
+        self::assertSame('account_top_recent', $offer['why']['basis'] ?? null);
+
+        // The generic pick must never resurface a deleted campaign or one
+        // whose conversions all predate the recency window.
+        $queries = $read->statementsContaining('FROM 202_conversion_logs cl');
+        self::assertCount(1, $queries);
+        self::assertStringContainsString('aff_campaign_deleted = 0', $queries[0]->sql);
+        self::assertStringContainsString('cl.conv_time >= ?', $queries[0]->sql);
+        self::assertContains(1700000000 - 15552000, $queries[0]->boundValues, 'window start = now - 180 days');
+    }
+
+    public function testNextOfferUsesCustomerBrowsingWhenNoPurchaseHistory(): void
+    {
+        $read = new FakeMysqliConnection();
+        // No conversions, but the customer's stamped clicks show live
+        // interest in campaign 44 — that beats any account-wide pick.
+        $read->whenQueryContainsReturnRows('FROM 202_clicks_tracking ct', [
+            ['campaign_id' => 44, 'name' => 'Browsed Offer', 'url' => 'https://example.com/browsed',
+             'clicks' => 3, 'last_at' => 1699990000],
+        ]);
+
+        $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
+        $offer = $repo->nextOffer(7, 501, 1700000000);
+
+        self::assertNotNull($offer);
+        self::assertSame(44, $offer['campaign_id']);
+        self::assertSame('engagement', $offer['why']['basis'] ?? null);
+        self::assertSame(3, $offer['why']['clicks'] ?? null);
+        self::assertSame(1699990000, $offer['why']['last_engaged_at'] ?? null);
+
+        $queries = $read->statementsContaining('FROM 202_clicks_tracking ct');
+        self::assertCount(1, $queries);
+        self::assertStringContainsString('aff_campaign_deleted = 0', $queries[0]->sql, 'deleted campaigns are never suggested');
+        self::assertStringContainsString('first_click_id', $queries[0]->sql, 'the acquisition click also counts as interest');
     }
 
     public function testNextOfferStripsNonHttpUrls(): void

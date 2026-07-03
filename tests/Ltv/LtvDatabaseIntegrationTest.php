@@ -302,12 +302,25 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::$db->query("INSERT INTO 202_engagement_events SET user_id=1, customer_id=$srcId, event_name='pricing_viewed', source='api', occurred_at=1700000000, created_at=1700000000");
         self::$db->query("INSERT INTO 202_personalization_tokens SET token_hash=UNHEX(SHA2('t',256)), user_id=1, customer_id=$srcId, created_at=1700000000, first_use_deadline=1700003600, replay_until=1702592000");
 
+        // Pin acquisition/recency so the propagation is deterministic: the
+        // SOURCE was acquired first and was active most recently.
+        self::$db->query("UPDATE 202_customers SET first_seen_time=1600000000, first_click_id=3000, last_activity_time=1710000000 WHERE customer_id=$srcId");
+        self::$db->query("UPDATE 202_customers SET first_seen_time=1650000000, first_click_id=3001, last_activity_time=1705000000 WHERE customer_id=$dstId");
+
         $customers = new MysqlCustomerRepository(self::$conn);
         $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
         $crm->merge(1, $srcId, $dstId);
 
         self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_engagement_events WHERE customer_id=$dstId"), 'engagement history follows the merge');
         self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_personalization_tokens WHERE customer_id=$dstId"), 'personalization tokens follow the merge');
+
+        // The target inherits the earliest acquisition (click + time) and the
+        // freshest activity, so merged revenue attributes to the real
+        // acquisition campaign/cohort and recency stays live.
+        $dstAcq = $this->row("SELECT first_seen_time, first_click_id, last_activity_time FROM 202_customers WHERE customer_id=$dstId");
+        self::assertSame(1600000000, (int) $dstAcq['first_seen_time'], 'earliest acquisition time wins');
+        self::assertSame(3000, (int) $dstAcq['first_click_id'], 'acquisition click follows the earlier first-seen');
+        self::assertSame(1710000000, (int) $dstAcq['last_activity_time'], 'freshest activity wins');
 
         // Ledger re-parented, target reconciled from the ledger, source zeroed
         // and detached — so its (now empty) company is deletable.
@@ -491,11 +504,26 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame(0.0, (float) $this->scalar("SELECT mrr FROM 202_subscriptions WHERE external_sub_id='SUB-TRIAL'"), 'trials carry no MRR');
 
         // First paid renewal converts the trial: active AND carrying MRR.
-        $subs->recordEvent(1, 'SUB-TRIAL', 'renewal', ['idempotency_key' => 'trial-renew-1']);
+        $first = $subs->recordEvent(1, 'SUB-TRIAL', 'renewal', ['idempotency_key' => 'trial-renew-1']);
+        self::assertTrue($first['inserted']);
+        self::assertTrue($first['changed']);
         $row = $this->row("SELECT status, mrr FROM 202_subscriptions WHERE external_sub_id='SUB-TRIAL'");
         self::assertSame('active', $row['status']);
         self::assertSame(30.0, (float) $row['mrr'], 'conversion from trial must set the recurring figure');
         self::assertSame(30.0, (float) $this->scalar("SELECT mrr FROM 202_customers WHERE customer_id=$customerId"), 'customer rollup sees the converted MRR');
+
+        // A billing-system retry of the same renewal is an idempotent no-op
+        // and must report changed=false so no webhook re-fires.
+        $replay = $subs->recordEvent(1, 'SUB-TRIAL', 'renewal', ['idempotency_key' => 'trial-renew-1']);
+        self::assertFalse($replay['inserted']);
+        self::assertFalse($replay['changed'], 'a replayed renewal changes nothing downstream');
+        self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_revenue_events WHERE subscription_id IS NOT NULL"), 'one ledger event for one renewal');
+
+        // Same for cancel: the first one changes state, the repeat does not.
+        $cancel = $subs->recordEvent(1, 'SUB-TRIAL', 'cancel', []);
+        self::assertTrue($cancel['changed']);
+        $again = $subs->recordEvent(1, 'SUB-TRIAL', 'cancel', []);
+        self::assertFalse($again['changed'], 'a repeat cancel is a no-op');
     }
 
     public function testPersonalizationMintRespectsAliasType(): void
@@ -884,6 +912,45 @@ CHILD;
         $c2 = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='no-c2'");
         $fallback = $repo->nextOffer(1, $c2, 1700001000);
         self::assertNull($fallback, 'c2 already bought A, B and C — nothing left to suggest');
+    }
+
+    public function testNextOfferColdStartTiersForCustomersWithoutConversionHistory(): void
+    {
+        self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id=7, user_id=1,
+            aff_campaign_name='Offer A', aff_campaign_url='https://example.com/a'");
+
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $recs = new \Prosper202\Ltv\MysqlRecommendationRepository(self::$conn);
+
+        // The majority case: revenue arrives via API/subscriptions, so there
+        // is no conversion-linked history — but the customer's stamped clicks
+        // show live interest in campaign 7.
+        $browser = $crm->upsert(1, ['customer_ref' => 'cold-browser']);
+        $this->insertClick(9100, 0.0);
+        self::$db->query("INSERT INTO 202_clicks_tracking SET click_id=9100, c1_id=0, c2_id=0, c3_id=0, c4_id=0, customer_id=$browser");
+
+        $offer = $recs->nextOffer(1, $browser, 1700000100);
+        self::assertNotNull($offer);
+        self::assertSame(7, $offer['campaign_id']);
+        self::assertSame('engagement', $offer['why']['basis'] ?? null, 'their own browsing beats the account average');
+
+        // No signal at all -> the account's top campaign of the RECENT window.
+        $blank = $crm->upsert(1, ['customer_ref' => 'cold-blank']);
+        self::$db->query('INSERT INTO 202_conversion_logs SET click_id=9101, user_id=1, campaign_id=7, conv_time=1700000000, deleted=0');
+        $offer = $recs->nextOffer(1, $blank, 1700000100);
+        self::assertNotNull($offer);
+        self::assertSame(7, $offer['campaign_id']);
+        self::assertSame('account_top_recent', $offer['why']['basis'] ?? null);
+
+        // ...but never a stale one: when every conversion predates the
+        // window, the honest answer is null ("not enough data"), not a
+        // retired campaign.
+        self::assertNull($recs->nextOffer(1, $blank, 1700000100 + 200 * 86400), 'no recent signal means no suggestion');
+
+        // Deleted campaigns are invisible to every tier, browsing included.
+        self::$db->query('UPDATE 202_aff_campaigns SET aff_campaign_deleted=1 WHERE aff_campaign_id=7');
+        self::assertNull($recs->nextOffer(1, $browser, 1700000100), 'a deleted campaign must never be suggested');
     }
 
     public function testCanceledSubscriptionInsertCountsTowardChurn(): void
