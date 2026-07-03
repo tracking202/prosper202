@@ -63,8 +63,13 @@ $backfillEvent = function (array $row, int $customerId) use ($conn, $customers):
 
     return $conn->transaction(function () use ($conn, $customers, $row, $customerId, $userId, $convId, $convTime, $payout, $deleted): bool {
         $currency = $customers->accountCurrency($userId);
+        // Mirror live ingest: a negative historical payout is a correction
+        // and must not import as an order — recording it as a 'purchase'
+        // would inflate order_count while draining revenue, and a later
+        // full reconcile would preserve the bad count.
+        $eventType = $payout < 0 ? 'adjustment' : 'purchase';
         $event = $customers->insertRevenueEvent($userId, $customerId, [
-            'event_type' => 'purchase',
+            'event_type' => $eventType,
             'amount' => $payout,
             'currency' => $currency,
             'occurred_at' => $convTime,
@@ -76,18 +81,20 @@ $backfillEvent = function (array $row, int $customerId) use ($conn, $customers):
         ], time());
 
         if ($event['inserted'] && !$deleted) {
-            $customers->applyEventToRollups($userId, $customerId, 'purchase', $payout, $convTime, time());
+            $customers->applyEventToRollups($userId, $customerId, $eventType, $payout, $convTime, time());
         }
         if ($event['inserted'] && $deleted) {
-            // Soft-deleted conversion: import both the purchase and its void so
-            // the ledger's SUM stays correct without touching rollups.
+            // Soft-deleted conversion: import both the sale and its void so
+            // the ledger's SUM stays correct without touching rollups. The
+            // 'void:' prefix counts -1 order in the reconcile jobs, so only
+            // order-type originals may carry it (matching softDelete()).
             $customers->insertRevenueEvent($userId, $customerId, [
                 'event_type' => 'adjustment',
                 'amount' => -$payout,
                 'currency' => $currency,
                 'occurred_at' => $convTime,
                 'source' => 'import',
-                'external_ref' => 'void:conv:' . $convId,
+                'external_ref' => ($eventType === 'purchase' ? 'void:conv:' : 'void-nc:conv:') . $convId,
                 'idempotency_key' => 'void:conv:' . $convId,
             ], time());
         }

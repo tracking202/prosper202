@@ -368,31 +368,33 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             }
 
             $now = time();
+            // Only an order-type event may subtract an order — a voided
+            // negative-payout conversion was ledgered as an adjustment and
+            // never bumped order_count. The external_ref PREFIX encodes this
+            // for the reconcile jobs ('void:' counts -1 order, 'void-nc:'
+            // does not); the idempotency key stays identical either way so a
+            // repeated delete can never double-void.
+            $voidedAnOrder = in_array((string) $event['event_type'], MysqlCustomerRepository::ORDER_EVENT_TYPES, true);
             $void = $this->customers->insertRevenueEvent($userId, $customerId, [
                 'event_type' => 'adjustment',
                 'amount' => -(float) $event['amount'],
                 'currency' => (string) $event['currency'],
                 'occurred_at' => $now,
                 'source' => 'conversion',
-                'external_ref' => 'void:conv:' . $id,
+                'external_ref' => ($voidedAnOrder ? 'void:conv:' : 'void-nc:conv:') . $id,
                 'idempotency_key' => 'void:conv:' . $id,
             ], $now);
 
             if ($void['inserted']) {
-                // Reverse the sale: revenue back out, and one fewer order —
-                // but only if the voided event actually counted as an order
-                // (a negative-payout conversion was ledgered as an adjustment
-                // and never bumped order_count).
-                $orderDelta = in_array((string) $event['event_type'], MysqlCustomerRepository::ORDER_EVENT_TYPES, true) ? -1 : 0;
-                $this->customers->adjustRollups($userId, $customerId, $orderDelta, -(float) $event['amount'], 0.0, $now, $now);
+                $this->customers->adjustRollups($userId, $customerId, $voidedAnOrder ? -1 : 0, -(float) $event['amount'], 0.0, $now, $now);
 
-                // Mirror the sale's line items negated onto the void event so
-                // product revenue/unit reports net the deleted conversion out,
-                // exactly like the customer totals do.
+                // Mirror the sale's line items negated (amount AND quantity)
+                // onto the void event so product revenue/unit reports net the
+                // deleted conversion out, exactly like the customer totals do.
                 $itemsStmt = $this->conn->prepareWrite(
                     'INSERT INTO 202_revenue_line_items
                         (user_id, event_id, product_id, sku, product_name, quantity, unit_price, amount, created_at)
-                     SELECT user_id, ?, product_id, sku, product_name, quantity, unit_price, -amount, ?
+                     SELECT user_id, ?, product_id, sku, product_name, -quantity, unit_price, -amount, ?
                      FROM 202_revenue_line_items WHERE event_id = ?'
                 );
                 $this->conn->bind($itemsStmt, 'iii', [$void['eventId'], $now, (int) $event['event_id']]);

@@ -24,6 +24,8 @@ declare(strict_types=1);
  *   refunded_amount = SUM(-amount) over refund/chargeback events
  *   order_count     = COUNT(purchase|renewal|one_time)
  *                   - COUNT(adjustment with external_ref 'void:%')
+ *                     (voids of NON-order events carry 'void-nc:%' instead,
+ *                     so they never subtract an order that was never counted)
  *   mrr / active_subscription_count = from subscriptions with status='active'
  *
  * Options:

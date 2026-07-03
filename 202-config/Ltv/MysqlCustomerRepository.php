@@ -396,8 +396,9 @@ final class MysqlCustomerRepository
      *
      * $eventAmount is the parent ledger event's (signed) amount: on a
      * negative-money event (refund/chargeback/adjustment) every line amount
-     * is stored negative, whichever sign the caller supplied, so product
-     * revenue sums net out the same way customer revenue does.
+     * AND quantity is stored negative, whichever sign the caller supplied,
+     * so product revenue and unit sums both net out the same way customer
+     * revenue does.
      *
      * @param list<array<string, mixed>> $items
      */
@@ -417,6 +418,7 @@ final class MysqlCustomerRepository
                 : ($unitPrice !== null ? $unitPrice * $quantity : 0.0);
             if ($eventAmount < 0) {
                 $amount = -abs($amount);
+                $quantity = -$quantity;
             }
 
             $productId = $this->upsertProduct($userId, $item, $currency, $now);

@@ -395,16 +395,34 @@ final class LtvDatabaseIntegrationTest extends TestCase
     public function testNegativePayoutConversionLedgersAsAdjustment(): void
     {
         $this->insertClick(5000);
+        $this->insertClick(5001);
         $log = $this->log(5000);
         $log['click_payout'] = '-7.5';
         p202RecordConversion(self::$db, $log, '', true, '-7.5', 'NEG-1', ['customer_ref' => 'neg-1'], []);
 
-        $event = $this->row('SELECT event_type, amount FROM 202_revenue_events LIMIT 1');
-        self::assertSame('adjustment', $event['event_type'], 'a negative payout must not ledger as a purchase');
+        $event = $this->row("SELECT conv_id, event_type, amount FROM 202_revenue_events WHERE event_type='adjustment' LIMIT 1");
+        self::assertNotNull($event, 'a negative payout must not ledger as a purchase');
         self::assertSame(-7.5, (float) $event['amount']);
-        $c = $this->row("SELECT order_count, total_revenue FROM 202_customers WHERE primary_ref='neg-1'");
+        $c = $this->row("SELECT customer_id, order_count, total_revenue FROM 202_customers WHERE primary_ref='neg-1'");
         self::assertSame(0, (int) $c['order_count'], 'negative money never counts an order');
         self::assertSame(-7.5, (float) $c['total_revenue']);
+        $customerId = (int) $c['customer_id'];
+
+        // A real purchase for the same customer, then void the negative
+        // conversion: its 'void-nc:' marker must not subtract the real order
+        // — neither on the immediate path nor when reconciled from scratch.
+        p202RecordConversion(self::$db, $this->log(5001), '', true, '10.0', 'NEG-REAL', ['customer_ref' => 'neg-1'], []);
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        (new \Prosper202\Conversion\MysqlConversionRepository(self::$conn))->softDelete((int) $event['conv_id'], 1);
+
+        self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_revenue_events WHERE external_ref LIKE 'void-nc:conv:%'"), 'a non-order void carries the void-nc marker');
+        self::assertSame(1, (int) $this->scalar("SELECT order_count FROM 202_customers WHERE customer_id=$customerId"), 'the real order survives the void');
+
+        $crm->reconcileCustomer(1, $customerId, 1700001000);
+        $after = $this->row("SELECT order_count, total_revenue FROM 202_customers WHERE customer_id=$customerId");
+        self::assertSame(1, (int) $after['order_count'], 'ledger reconcile must agree with the live path');
+        self::assertSame(10.0, (float) $after['total_revenue'], 'the voided negative payout nets out');
     }
 
     public function testSoftDeleteNetsLineItemsOutOfProductRevenue(): void
@@ -421,10 +439,20 @@ final class LtvDatabaseIntegrationTest extends TestCase
         $c = $this->row("SELECT order_count, total_revenue FROM 202_customers WHERE primary_ref='del-1'");
         self::assertSame(0, (int) $c['order_count']);
         self::assertSame(0.0, (float) $c['total_revenue']);
-        // The void event carries mirrored negated items, so product revenue
-        // and units net to zero exactly like the customer totals.
+        // The void event carries mirrored negated items (amount AND
+        // quantity), so product revenue and units net to zero exactly like
+        // the customer totals.
         self::assertSame(2, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_line_items'));
         self::assertSame(0.0, (float) $this->scalar('SELECT COALESCE(SUM(amount),0) FROM 202_revenue_line_items'));
+        self::assertSame(0.0, (float) $this->scalar('SELECT COALESCE(SUM(quantity),0) FROM 202_revenue_line_items'));
+
+        // The product report agrees: units/revenue netted, and the void
+        // event is not counted as another order.
+        $breakdown = (new \Prosper202\Ltv\MysqlLtvRepository(self::$conn))->breakdown(new \Prosper202\Ltv\LtvQuery(1), 'product', 50, 0);
+        self::assertCount(1, $breakdown);
+        self::assertSame(1, (int) $breakdown[0]['orders'], 'the void adjustment is not an order');
+        self::assertSame(0.0, (float) $breakdown[0]['units']);
+        self::assertSame(0.0, (float) $breakdown[0]['total_revenue']);
 
         // Idempotent: a second delete adds nothing.
         $repo->softDelete($convId, 1);
@@ -441,12 +469,32 @@ final class LtvDatabaseIntegrationTest extends TestCase
             'occurred_at' => 1700000000, 'source' => 'api', 'idempotency_key' => 'ref-li-1',
         ], 1700000000);
         // The caller sent the item POSITIVE (unit price x quantity) — the
-        // event's negative amount decides the stored sign.
+        // event's negative amount decides the stored sign of amount AND
+        // quantity, so unit sums net like revenue sums.
         $customers->insertLineItems(1, $event['eventId'], [
             ['sku' => 'SKU-R', 'name' => 'Widget', 'quantity' => 1, 'unit_price' => 12.0, 'amount' => 12.0],
         ], 'USD', 1700000000, -12.0);
 
         self::assertSame(-12.0, (float) $this->scalar('SELECT SUM(amount) FROM 202_revenue_line_items WHERE event_id=' . (int) $event['eventId']));
+        self::assertSame(-1.0, (float) $this->scalar('SELECT SUM(quantity) FROM 202_revenue_line_items WHERE event_id=' . (int) $event['eventId']));
+    }
+
+    public function testTrialSubscriptionGainsMrrOnFirstRenewal(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+
+        $customerId = $crm->upsert(1, ['customer_ref' => 'trial-1']);
+        $subs->upsert(1, ['external_sub_id' => 'SUB-TRIAL', 'amount' => 30.0, 'status' => 'trialing', 'customer_id' => $customerId]);
+        self::assertSame(0.0, (float) $this->scalar("SELECT mrr FROM 202_subscriptions WHERE external_sub_id='SUB-TRIAL'"), 'trials carry no MRR');
+
+        // First paid renewal converts the trial: active AND carrying MRR.
+        $subs->recordEvent(1, 'SUB-TRIAL', 'renewal', ['idempotency_key' => 'trial-renew-1']);
+        $row = $this->row("SELECT status, mrr FROM 202_subscriptions WHERE external_sub_id='SUB-TRIAL'");
+        self::assertSame('active', $row['status']);
+        self::assertSame(30.0, (float) $row['mrr'], 'conversion from trial must set the recurring figure');
+        self::assertSame(30.0, (float) $this->scalar("SELECT mrr FROM 202_customers WHERE customer_id=$customerId"), 'customer rollup sees the converted MRR');
     }
 
     public function testPersonalizationMintRespectsAliasType(): void

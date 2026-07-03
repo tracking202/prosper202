@@ -265,7 +265,10 @@ final class MysqlSubscriptionRepository
 
                     if (!$isRefund) {
                         // A renewal extends the paid-through period and clears
-                        // past_due/paused back to active.
+                        // past_due/paused back to active. MRR is recomputed
+                        // here too: a trial row was stored with mrr = 0, and
+                        // flipping it active without setting mrr would keep
+                        // the converted subscriber reporting zero MRR.
                         $newPeriodEnd = isset($payload['current_period_end'])
                             ? (int) $payload['current_period_end']
                             : self::advancePeriod(
@@ -273,13 +276,18 @@ final class MysqlSubscriptionRepository
                                 (string) $sub['billing_interval'],
                                 (int) $sub['billing_interval_count']
                             );
+                        $mrr = self::normalizeMrr(
+                            (float) $sub['amount'],
+                            (string) $sub['billing_interval'],
+                            (int) $sub['billing_interval_count']
+                        );
                         $upd = $this->conn->prepareWrite(
                             "UPDATE 202_subscriptions
-                             SET status = 'active', current_period_start = ?, current_period_end = ?,
+                             SET status = 'active', mrr = ?, current_period_start = ?, current_period_end = ?,
                                  canceled_at = NULL, updated_at = ?
                              WHERE subscription_id = ?"
                         );
-                        $this->conn->bind($upd, 'iiii', [$occurredAt, $newPeriodEnd, $now, $subscriptionId]);
+                        $this->conn->bind($upd, 'diiii', [$mrr, $occurredAt, $newPeriodEnd, $now, $subscriptionId]);
                         $this->conn->executeUpdate($upd);
                     }
                 }

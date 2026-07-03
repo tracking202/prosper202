@@ -306,7 +306,9 @@ final class MysqlCustomerCrmRepository
 
     /**
      * Recompute one customer's cached rollups from the ledger and
-     * subscriptions (same definitions as the ltv_maintenance sweep).
+     * subscriptions (same definitions as the ltv_maintenance sweep). Voids
+     * of non-order events carry a 'void-nc:%' external_ref, so only voids of
+     * real orders subtract from the order count here.
      */
     public function reconcileCustomer(int $userId, int $customerId, int $now): void
     {

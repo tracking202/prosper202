@@ -351,7 +351,8 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
                 COALESCE(p.name, p.sku, p.external_product_id) AS name,
                 p.sku,
                 COUNT(DISTINCT re.customer_id) AS customers,
-                COUNT(DISTINCT re.event_id) AS orders,
+                COUNT(DISTINCT CASE WHEN re.event_type IN ('purchase','renewal','one_time')
+                                    THEN re.event_id END) AS orders,
                 COALESCE(SUM(li.quantity), 0) AS units,
                 COALESCE(SUM(li.amount), 0) AS total_revenue,
                 CASE WHEN COUNT(DISTINCT re.customer_id) > 0
