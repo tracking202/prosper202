@@ -23,7 +23,6 @@ $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
 
-$backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_products.php';
 
 $notice = null;
@@ -155,7 +154,7 @@ $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['produ
 
 <div class="row" style="margin-bottom: 10px;">
     <div class="col-xs-12">
-        <a href="#" onclick="loadContent('<?php echo $backUrl; ?>', null); return false;">&laquo; Back to Customer LTV</a>
+        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
     </div>
 </div>
 
@@ -251,13 +250,13 @@ $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['produ
 
 <script type="text/javascript">
     function ltvProductsLoad(offset) {
-        loadContentPost('<?php echo $selfUrl; ?>', { offset: offset });
+        ltvNav('products', { offset: offset });
     }
     function ltvProductsReload() {
         ltvProductsLoad(<?php echo $offset; ?>);
     }
     function ltvProductEdit(productId) {
-        loadContentPost('<?php echo $selfUrl; ?>', { edit: productId, offset: <?php echo $offset; ?> });
+        ltvNav('products', { edit: productId, offset: <?php echo $offset; ?> });
     }
     function ltvProductSave(productId) {
         loadContentPost('<?php echo $selfUrl; ?>',

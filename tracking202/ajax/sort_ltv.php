@@ -155,19 +155,19 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
             <i class="fa fa-download"></i> Download Customers
         </a>
         &nbsp;&nbsp;
-        <a href="#" onclick="ltvPartial('ltv_subscriptions'); return false;">
+        <a href="#" onclick="ltvNav('subscriptions'); return false;">
             <i class="fa fa-refresh"></i> Subscriptions
         </a>
         &nbsp;&nbsp;
-        <a href="#" onclick="ltvPartial('ltv_products'); return false;">
+        <a href="#" onclick="ltvNav('products'); return false;">
             <i class="fa fa-shopping-cart"></i> Products
         </a>
         &nbsp;&nbsp;
-        <a href="#" onclick="ltvPartial('ltv_companies'); return false;">
+        <a href="#" onclick="ltvNav('companies'); return false;">
             <i class="fa fa-building"></i> Companies
         </a>
         &nbsp;&nbsp;
-        <a href="#" onclick="ltvSettings(); return false;">
+        <a href="#" onclick="ltvNav('settings'); return false;">
             <i class="fa fa-cog"></i> Settings
         </a>
     </div>
@@ -315,26 +315,16 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 
 <script type="text/javascript">
     function ltvLoad(offset) {
-        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/sort_ltv.php', {
+        ltvNav('report', {
             offset: offset,
             ltv_by: $('#ltv-by-select').val()
         });
     }
     function ltvCustomer(customerId) {
-        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
-            customer_id: customerId
-        });
+        ltvNav('customer', { customer_id: customerId });
     }
     function ltvCompany(company) {
-        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_company.php', {
-            company: company
-        });
-    }
-    function ltvSettings() {
-        ltvPartial('ltv_settings');
-    }
-    function ltvPartial(name) {
-        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/' + name + '.php', {});
+        ltvNav('company', { company: company });
     }
     $('#ltv-by-select').on('change', function() { ltvLoad(0); });
 

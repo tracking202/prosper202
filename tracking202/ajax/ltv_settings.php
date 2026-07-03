@@ -20,7 +20,6 @@ require_once __DIR__ . '/ltv_helpers.php';
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
 
-$backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_settings.php';
 
 $notice = null;
@@ -220,7 +219,7 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
 
 <div class="row" style="margin-bottom: 10px;">
     <div class="col-xs-12">
-        <a href="#" onclick="loadContent('<?php echo $backUrl; ?>', null); return false;">&laquo; Back to Customer LTV</a>
+        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
     </div>
 </div>
 
@@ -476,7 +475,7 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
         loadContentPost('<?php echo $selfUrl; ?>', $('#' + formId).serialize());
     }
     function ltvWebhookLog(webhookId) {
-        loadContentPost('<?php echo $selfUrl; ?>', { show_deliveries: webhookId });
+        ltvNav('settings', { show_deliveries: webhookId });
     }
     function ltvSettingsDelete(action, idField, id, message) {
         if (!window.confirm(message)) { return; }

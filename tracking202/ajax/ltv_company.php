@@ -19,8 +19,6 @@ $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
 
-$backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
-
 $contacts = [];
 try {
     if ($company !== '') {
@@ -38,7 +36,7 @@ try {
 
 <div class="row" style="margin-bottom: 10px;">
     <div class="col-xs-12">
-        <a href="#" onclick="loadContent('<?php echo $backUrl; ?>', null); return false;">&laquo; Back to Customer LTV</a>
+        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
     </div>
 </div>
 
@@ -90,8 +88,6 @@ try {
 
 <script type="text/javascript">
     function ltvCompanyCustomer(customerId) {
-        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
-            customer_id: customerId
-        });
+        ltvNav('customer', { customer_id: customerId });
     }
 </script>

@@ -23,7 +23,6 @@ $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
 
-$backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_companies.php';
 
 $notice = null;
@@ -91,7 +90,7 @@ if ($error !== null && $action === 'update_company') {
 
 <div class="row" style="margin-bottom: 10px;">
     <div class="col-xs-12">
-        <a href="#" onclick="loadContent('<?php echo $backUrl; ?>', null); return false;">&laquo; Back to Customer LTV</a>
+        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
     </div>
 </div>
 
@@ -193,10 +192,10 @@ if ($error !== null && $action === 'update_company') {
 
 <script type="text/javascript">
     function ltvCompaniesLoad(offset) {
-        loadContentPost('<?php echo $selfUrl; ?>', { offset: offset });
+        ltvNav('companies', { offset: offset });
     }
     function ltvCompanyEdit(companyId) {
-        loadContentPost('<?php echo $selfUrl; ?>', { edit: companyId, offset: <?php echo $offset; ?> });
+        ltvNav('companies', { edit: companyId, offset: <?php echo $offset; ?> });
     }
     function ltvCompanySave(companyId) {
         var row = $('#ltv-company-row-' + companyId);
@@ -236,8 +235,6 @@ if ($error !== null && $action === 'update_company') {
         });
     }
     function ltvCompanyView(company) {
-        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_company.php', {
-            company: company
-        });
+        ltvNav('company', { company: company });
     }
 </script>

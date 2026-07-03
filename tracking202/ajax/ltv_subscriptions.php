@@ -27,7 +27,6 @@ $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
 
-$backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_subscriptions.php';
 
 try {
@@ -46,7 +45,7 @@ try {
 
 <div class="row" style="margin-bottom: 10px;">
     <div class="col-xs-12">
-        <a href="#" onclick="loadContent('<?php echo $backUrl; ?>', null); return false;">&laquo; Back to Customer LTV</a>
+        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
     </div>
 </div>
 
@@ -163,15 +162,13 @@ try {
 
 <script type="text/javascript">
     function ltvSubsLoad(offset) {
-        loadContentPost('<?php echo $selfUrl; ?>', {
+        ltvNav('subscriptions', {
             offset: offset,
             status: $('#ltv-sub-status').val()
         });
     }
     function ltvSubCustomer(customerId) {
-        loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/ltv_customer.php', {
-            customer_id: customerId
-        });
+        ltvNav('customer', { customer_id: customerId });
     }
     $('#ltv-sub-status').on('change', function() { ltvSubsLoad(0); });
 </script>

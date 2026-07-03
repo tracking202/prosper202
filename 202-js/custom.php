@@ -1384,6 +1384,110 @@ function loadContentPost(page, payload) {
 		});
 }
 
+// ── LTV section history routing ──────────────────────────────────────
+// The LTV views are AJAX partials swapped into #m-content, so without URL
+// state the browser can't bookmark a view and back/forward do nothing.
+// ltvNav() renders a view AND records it in the address bar as
+// analyze/ltv.php?view=..., the popstate handler re-renders on
+// back/forward, and ltv.php seeds the initial view from its query string.
+// Only navigation goes through here — mutating posts (saves, deletes,
+// merges) still call loadContentPost directly, so a bookmarked URL can
+// never replay a mutation.
+var ltvViewPartials = {
+	report: 'sort_ltv',
+	customer: 'ltv_customer',
+	company: 'ltv_company',
+	companies: 'ltv_companies',
+	products: 'ltv_products',
+	subscriptions: 'ltv_subscriptions',
+	settings: 'ltv_settings'
+};
+var ltvPageUrl = '<?php echo get_absolute_url(); ?>tracking202/analyze/ltv.php';
+
+function ltvIsLtvPage() {
+	var a = document.createElement('a');
+	a.href = ltvPageUrl;
+	return window.location.pathname === a.pathname;
+}
+
+function ltvRender(view, params) {
+	var partial = ltvViewPartials[view] || ltvViewPartials.report;
+	loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/' + partial + '.php', params || {});
+}
+
+function ltvUrl(view, params) {
+	var query = [];
+	if (view !== 'report') {
+		query.push('view=' + encodeURIComponent(view));
+	}
+	$.each(params || {}, function(key, value) {
+		// Zero/empty values are the defaults everywhere in this section
+		// (offset 0, no status filter) — leave them out of bookmarks.
+		if (value === undefined || value === null || value === '' || value === 0 || value === '0') { return; }
+		query.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+	});
+	return ltvPageUrl + (query.length ? '?' + query.join('&') : '');
+}
+
+function ltvNav(view, params, replace) {
+	params = params || {};
+	if (!ltvViewPartials[view]) { view = 'report'; }
+	// Partials can only render inside ltv.php's #m-content; from anywhere
+	// else (e.g. a dashboard widget) follow the deep link as a page load.
+	if (!ltvIsLtvPage()) {
+		window.location.href = ltvUrl(view, params);
+		return;
+	}
+	ltvRender(view, params);
+	if (window.history && window.history.pushState) {
+		var url = ltvUrl(view, params);
+		// Re-clicking the current view refreshes it without stacking a
+		// duplicate history entry the user would have to Back through.
+		var method = (replace || window.location.href === url) ? 'replaceState' : 'pushState';
+		window.history[method]({ ltvView: view, ltvParams: params }, '', url);
+	}
+}
+
+function ltvParseQuery() {
+	var params = {};
+	var search = window.location.search.replace(/^\?/, '');
+	if (search === '') { return params; }
+	var decode = function(str) {
+		try {
+			return decodeURIComponent(str.replace(/\+/g, '%20'));
+		} catch (e) {
+			return ''; // malformed escape in a hand-edited URL
+		}
+	};
+	var pairs = search.split('&');
+	for (var i = 0; i < pairs.length; i++) {
+		if (pairs[i] === '') { continue; }
+		var eq = pairs[i].indexOf('=');
+		var key = decode(eq === -1 ? pairs[i] : pairs[i].substring(0, eq));
+		if (key === '') { continue; }
+		params[key] = decode(eq === -1 ? '' : pairs[i].substring(eq + 1));
+	}
+	return params;
+}
+
+function ltvViewFromLocation() {
+	var params = ltvParseQuery();
+	// ?customer_id=N without a view is the legacy deep-link form.
+	var view = params.view || (params.customer_id ? 'customer' : 'report');
+	delete params.view;
+	return { view: view, params: params };
+}
+
+window.addEventListener('popstate', function(event) {
+	if (!ltvIsLtvPage()) { return; }
+	if (event.state && event.state.ltvView) {
+		ltvRender(event.state.ltvView, event.state.ltvParams || {});
+	} else {
+		var target = ltvViewFromLocation();
+		ltvRender(target.view, target.params);
+	}
+});
+
 function createCookie(name,value,days) {
 	if (days) {
 		var date = new Date();

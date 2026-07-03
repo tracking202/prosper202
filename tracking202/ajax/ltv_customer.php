@@ -11,7 +11,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 /**
  * Customer detail partial for the LTV report. Three modes:
  *   default          — read-only detail view with an Edit button
- *   view=edit        — edit form (CRM fields + all defined custom fields)
+ *   mode=edit        — edit form (CRM fields + all defined custom fields)
  *   action=save      — CSRF-checked save via MysqlCustomerCrmRepository::upsert(),
  *                      then the detail view again (or the form + error message
  *                      with the entered values preserved on validation failure)
@@ -19,7 +19,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 
 $userId = (int) $_SESSION['user_id'];
 $customerId = (int) ($_POST['customer_id'] ?? $_GET['customer_id'] ?? 0);
-$mode = (string) ($_POST['view'] ?? '');
+$mode = (string) ($_POST['mode'] ?? '');
 $action = (string) ($_POST['action'] ?? '');
 
 require_once __DIR__ . '/ltv_helpers.php';
@@ -27,7 +27,6 @@ $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = static fn (mixed $ts): string => p202_ltv_when($ts, true);
 
-$backUrl = get_absolute_url() . 'tracking202/ajax/sort_ltv.php';
 $selfUrl = get_absolute_url() . 'tracking202/ajax/ltv_customer.php';
 
 $saveError = null;
@@ -47,7 +46,7 @@ try {
             try {
                 $crm->erase($userId, $customerId);
                 echo '<div class="row" style="margin-bottom: 10px;"><div class="col-xs-12">'
-                    . '<a href="#" onclick="loadContent(\'' . get_absolute_url() . 'tracking202/ajax/sort_ltv.php\', null); return false;">&laquo; Back to Customer LTV</a>'
+                    . '<a href="#" onclick="ltvNav(\'report\'); return false;">&laquo; Back to Customer LTV</a>'
                     . '</div></div>'
                     . '<div class="alert alert-success">Customer erased: personal data, aliases, custom fields and '
                     . 'personalization tokens removed. Revenue totals were kept for reporting integrity.</div>';
@@ -178,7 +177,7 @@ try {
 
 <div class="row" style="margin-bottom: 10px;">
     <div class="col-xs-12">
-        <a href="#" onclick="loadContent('<?php echo $backUrl; ?>', null); return false;">&laquo; Back to Customer LTV</a>
+        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
     </div>
 </div>
 
@@ -345,7 +344,7 @@ $cfValue = static function (array $field) use ($fromPost, $customer): string {
 
     <script type="text/javascript">
         function ltvCustomerView(customerId) {
-            loadContentPost('<?php echo $selfUrl; ?>', { customer_id: customerId });
+            ltvNav('customer', { customer_id: customerId });
         }
         function ltvCustomerSave() {
             loadContentPost('<?php echo $selfUrl; ?>', $('#ltv-customer-edit-form').serialize());
@@ -658,7 +657,7 @@ $addressParts = array_filter([
 
 <script type="text/javascript">
     function ltvCustomerEdit(customerId) {
-        loadContentPost('<?php echo $selfUrl; ?>', { customer_id: customerId, view: 'edit' });
+        ltvNav('customer', { customer_id: customerId, mode: 'edit' });
     }
     function ltvCustomerMerge(customerId) {
         var sourceId = window.prompt('Merge which customer # INTO this record?\n\nThe other record\'s aliases, revenue, conversions and subscriptions will be re-pointed here, and it will be excluded from reports.');
