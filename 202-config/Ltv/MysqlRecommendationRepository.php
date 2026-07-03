@@ -60,14 +60,16 @@ final class MysqlRecommendationRepository
             // customer, each campaign conversion that happened before a
             // conversion on a different campaign contributes one (from, to)
             // pair. Campaign comes from the conversion the ledger event points
-            // at; order events only (positive money, conversion/import source).
+            // at; order events only (positive money, conversion/import source),
+            // and never soft-deleted conversions — an operator voiding a bad
+            // sale must also remove it from the recommendation history.
             $ins = $this->conn->prepareWrite(
                 "INSERT INTO 202_offer_transitions (user_id, from_campaign_id, to_campaign_id, transition_count, updated_at)
                  SELECT ?, a.campaign_id, b.campaign_id, COUNT(DISTINCT a.customer_id), ?
                  FROM (
                      SELECT re.customer_id, cl.campaign_id, MIN(re.occurred_at) AS first_at
                      FROM 202_revenue_events re
-                     JOIN 202_conversion_logs cl ON cl.conv_id = re.conv_id
+                     JOIN 202_conversion_logs cl ON cl.conv_id = re.conv_id AND cl.deleted = 0
                      WHERE re.user_id = ? AND re.source IN ('conversion','import')
                        AND re.event_type IN ('purchase','one_time') AND re.amount >= 0
                      GROUP BY re.customer_id, cl.campaign_id
@@ -75,7 +77,7 @@ final class MysqlRecommendationRepository
                  JOIN (
                      SELECT re.customer_id, cl.campaign_id, MIN(re.occurred_at) AS first_at
                      FROM 202_revenue_events re
-                     JOIN 202_conversion_logs cl ON cl.conv_id = re.conv_id
+                     JOIN 202_conversion_logs cl ON cl.conv_id = re.conv_id AND cl.deleted = 0
                      WHERE re.user_id = ? AND re.source IN ('conversion','import')
                        AND re.event_type IN ('purchase','one_time') AND re.amount >= 0
                      GROUP BY re.customer_id, cl.campaign_id
@@ -107,7 +109,7 @@ final class MysqlRecommendationRepository
         $stmt = $this->conn->prepareRead(
             "SELECT cl.campaign_id, MAX(re.occurred_at) AS last_at
              FROM 202_revenue_events re
-             JOIN 202_conversion_logs cl ON cl.conv_id = re.conv_id
+             JOIN 202_conversion_logs cl ON cl.conv_id = re.conv_id AND cl.deleted = 0
              WHERE re.user_id = ? AND re.customer_id = ?
                AND re.source IN ('conversion','import')
                AND re.event_type IN ('purchase','one_time') AND re.amount >= 0

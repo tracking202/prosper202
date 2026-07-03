@@ -163,8 +163,9 @@ class LtvController
 
         return $this->wrap(function () use ($payload, $eventName): array {
             $now = time();
-            $customerId = $this->resolveCustomerFromPayload($payload, $now);
 
+            // Validate BEFORE resolving: a rejected payload must not create
+            // identity rows.
             $eventValue = null;
             if (array_key_exists('value', $payload) && $payload['value'] !== null) {
                 if (!is_numeric($payload['value'])) {
@@ -173,16 +174,23 @@ class LtvController
                 $eventValue = (float) $payload['value'];
             }
 
-            $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
-            $eventId = $engagement->recordEvent(
-                $this->userId,
-                $customerId,
-                $eventName,
-                'api',
-                null,
-                isset($payload['occurred_at']) ? (int) $payload['occurred_at'] : null,
-                $eventValue
-            );
+            // One transaction: a failed event insert rolls the (possibly
+            // fresh) customer/alias back with it.
+            [$eventId, $customerId] = $this->conn->transaction(function () use ($payload, $eventName, $eventValue, $now): array {
+                $customerId = $this->resolveCustomerFromPayload($payload, $now, true);
+                $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
+                $eventId = $engagement->recordEvent(
+                    $this->userId,
+                    $customerId,
+                    $eventName,
+                    'api',
+                    null,
+                    isset($payload['occurred_at']) ? (int) $payload['occurred_at'] : null,
+                    $eventValue
+                );
+
+                return [$eventId, $customerId];
+            });
 
             return [
                 '_status' => 201,
@@ -374,9 +382,12 @@ class LtvController
                 throw new ValidationException('items must be an array', ['items' => 'Must be an array of line items']);
             }
 
-            $customerId = $this->resolveCustomerFromPayload($payload, $now);
-
-            $result = $this->conn->transaction(function () use ($customerId, $eventType, $amount, $currency, $occurredAt, $payload, $items, $now): array {
+            $result = $this->conn->transaction(function () use ($eventType, $amount, $currency, $occurredAt, $payload, $items, $now): array {
+                // Identity creation happens INSIDE this transaction: if a
+                // later step rejects the payload (e.g. a malformed line
+                // item), the new customer/alias rolls back with it instead
+                // of surviving as an orphan zero-revenue record.
+                $customerId = $this->resolveCustomerFromPayload($payload, $now, true);
                 $event = $this->customers->insertRevenueEvent($this->userId, $customerId, [
                     'event_type' => $eventType,
                     'amount' => $amount,
@@ -397,13 +408,13 @@ class LtvController
                     }
                 }
 
-                return $event;
+                return $event + ['customerId' => $customerId];
             });
 
             if ($result['inserted']) {
                 $this->enqueueEvent('revenue.recorded', [
                     'event_id' => $result['eventId'],
-                    'customer_id' => $customerId,
+                    'customer_id' => $result['customerId'],
                     'event_type' => $eventType,
                     'amount' => $amount,
                     'currency' => $currency,
@@ -414,7 +425,7 @@ class LtvController
                 '_status' => $result['inserted'] ? 201 : 200,
                 'data' => [
                     'event_id' => $result['eventId'],
-                    'customer_id' => $customerId,
+                    'customer_id' => $result['customerId'],
                     'duplicate' => !$result['inserted'],
                 ],
             ];
@@ -821,7 +832,7 @@ class LtvController
     /**
      * @param array<string, mixed> $payload
      */
-    private function resolveCustomerFromPayload(array $payload, int $now): int
+    private function resolveCustomerFromPayload(array $payload, int $now, bool $inTransaction = false): int
     {
         $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
         if ($explicitId > 0) {
@@ -841,9 +852,12 @@ class LtvController
         $refType = isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : 'custom';
         $crm = isset($payload['customer_crm']) && is_array($payload['customer_crm']) ? $payload['customer_crm'] : [];
 
-        return $this->conn->transaction(
-            fn (): int => $this->customers->resolveOrCreateByAlias($this->userId, $refType, $ref, $crm, null, $now)
-        );
+        $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($this->userId, $refType, $ref, $crm, null, $now);
+
+        // Callers already inside a transaction (revenue/engagement ingest)
+        // pass true so identity creation rolls back with the rest of their
+        // write — Connection::transaction does not nest.
+        return $inTransaction ? $resolve() : $this->conn->transaction($resolve);
     }
 
     private function requireCustomer(int $customerId): void

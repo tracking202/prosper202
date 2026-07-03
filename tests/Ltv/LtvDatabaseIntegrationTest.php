@@ -629,4 +629,32 @@ final class LtvDatabaseIntegrationTest extends TestCase
         // Neither rejected attempt may leave a conversion behind.
         self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_conversion_logs'));
     }
+
+    public function testRejectedRevenuePayloadRollsBackFreshIdentity(): void
+    {
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+
+        // A brand-new customer_ref with a malformed line item: the request
+        // must fail AND the just-created customer/alias must roll back with
+        // it — no orphan zero-revenue records.
+        try {
+            $controller->recordRevenue([
+                'customer_ref' => 'orphan-check-1',
+                'amount' => 25.0,
+                'items' => [['sku' => 'SKU-O', 'name' => 'Widget', 'quantity' => 0, 'unit_price' => 25.0]],
+            ]);
+            self::fail('a non-positive line-item quantity must be rejected');
+        } catch (\Api\V3\Exception\ValidationException) {
+            $this->addToAssertionCount(1);
+        }
+
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'), 'identity creation must roll back with the rejected write');
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_customer_aliases'));
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_events'));
+
+        // The happy path still creates everything.
+        $ok = $controller->recordRevenue(['customer_ref' => 'orphan-check-1', 'amount' => 25.0, 'idempotency_key' => 'ok-1']);
+        self::assertSame(201, $ok['_status']);
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'));
+    }
 }
