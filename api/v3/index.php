@@ -220,6 +220,7 @@ try {
         $r->get('/abm',            fn() => $crud($cls)->abm($queryParams));
         $r->get('/abm/company',    fn() => $crud($cls)->abmCompany($queryParams));
         $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
+        $r->get('/cohorts',        fn() => $crud($cls)->cohorts($queryParams));
         $r->get('/mrr',            fn() => $crud($cls)->mrr());
         $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
         $r->get('/products',       fn() => $crud($cls)->products($queryParams));

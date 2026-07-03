@@ -95,11 +95,11 @@ final class LtvDatabaseIntegrationTest extends TestCase
         }
     }
 
-    private function insertClick(int $clickId, float $payout = 10.0): void
+    private function insertClick(int $clickId, float $payout = 10.0, float $cpc = 0.0): void
     {
         $db = self::$db;
-        $db->query("INSERT INTO 202_clicks SET click_id=$clickId, user_id=1, aff_campaign_id=7, click_payout=$payout, click_cpc=0, click_lead=0, click_time=1700000000");
-        $db->query("INSERT INTO 202_clicks_spy SET click_id=$clickId, user_id=1, aff_campaign_id=7, click_payout=$payout, click_cpc=0, click_lead=0, click_time=1700000000");
+        $db->query("INSERT INTO 202_clicks SET click_id=$clickId, user_id=1, aff_campaign_id=7, click_payout=$payout, click_cpc=$cpc, click_lead=0, click_time=1700000000");
+        $db->query("INSERT INTO 202_clicks_spy SET click_id=$clickId, user_id=1, aff_campaign_id=7, click_payout=$payout, click_cpc=$cpc, click_lead=0, click_time=1700000000");
     }
 
     /** @return array<string, mixed> */
@@ -674,6 +674,70 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame($first['data']['event_id'], $replay['data']['event_id']);
         self::assertSame($first['data']['customer_id'], $replay['data']['customer_id'], 'the ORIGINAL owner is reported');
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'), 'a replay must not mint identity');
+    }
+
+    public function testCacSegmentsSearchAndCohortsEndToEnd(): void
+    {
+        self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id=7, user_id=1,
+            aff_campaign_name='Offer A', aff_campaign_url='https://example.com/a'");
+
+        // Four \$2.50 clicks on campaign 7; two convert into customers.
+        $this->insertClick(8000, 20.0, 2.5);
+        $this->insertClick(8001, 10.0, 2.5);
+        $this->insertClick(8002, 0.0, 2.5);
+        $this->insertClick(8003, 0.0, 2.5);
+        $log = $this->log(8000);
+        $log['click_payout'] = '20.0';
+        p202RecordConversion(self::$db, $log, '', true, '20.0', 'CAC-1', [
+            'customer_ref' => 'cac-1', 'customer_crm' => ['first_name' => 'Jane', 'last_name' => 'Doe'],
+        ], []);
+        p202RecordConversion(self::$db, $this->log(8001), '', true, '10.0', 'CAC-2', ['customer_ref' => 'cac-2'], []);
+
+        $ltv = new \Prosper202\Ltv\MysqlLtvRepository(self::$conn);
+
+        // LTV:CAC — $10 ad spend acquired 2 customers worth $30 lifetime:
+        // CAC $5, 3.0x return per ad dollar.
+        $rows = $ltv->breakdown(new \Prosper202\Ltv\LtvQuery(1), 'campaign', 50, 0);
+        self::assertCount(1, $rows);
+        self::assertSame(10.0, (float) $rows[0]['spend']);
+        self::assertSame(5.0, (float) $rows[0]['cac']);
+        self::assertSame(3.0, (float) $rows[0]['ltv_cac']);
+
+        // Search matches name (also ref/email/company); misses return empty.
+        $found = $ltv->customers(new \Prosper202\Ltv\LtvQuery(1), 'total_revenue', 'DESC', 50, 0, 'jane');
+        self::assertSame(1, $found['total']);
+        self::assertSame('cac-1', $found['rows'][0]['primary_ref']);
+        self::assertSame(0, $ltv->customers(new \Prosper202\Ltv\LtvQuery(1), 'total_revenue', 'DESC', 50, 0, 'zzz-nobody')['total']);
+
+        // Segments: one active subscriber, one past-due (= at risk).
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+        $c1 = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='cac-1'");
+        $c2 = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='cac-2'");
+        $subs->upsert(1, ['external_sub_id' => 'SEG-ACTIVE', 'amount' => 30.0, 'customer_id' => $c1]);
+        $subs->upsert(1, ['external_sub_id' => 'SEG-DUE', 'amount' => 20.0, 'status' => 'past_due', 'customer_id' => $c2]);
+
+        self::assertSame(1, $ltv->customers(new \Prosper202\Ltv\LtvQuery(1), 'total_revenue', 'DESC', 50, 0, null, 'subscribers')['total']);
+        $atRisk = $ltv->customers(new \Prosper202\Ltv\LtvQuery(1), 'total_revenue', 'DESC', 50, 0, null, 'at_risk');
+        self::assertSame(1, $atRisk['total']);
+        self::assertSame('cac-2', $atRisk['rows'][0]['primary_ref']);
+        self::assertSame(0, $ltv->customers(new \Prosper202\Ltv\LtvQuery(1), 'total_revenue', 'DESC', 50, 0, null, 'repeat')['total']);
+
+        // Cohorts: both acquired Nov 2023; $30 lands in month 0, a later $15
+        // repeat purchase 40 days on lands in month 1.
+        self::$db->query('UPDATE 202_customers SET first_seen_time=1700000000');
+        $customers->insertRevenueEvent(1, $c1, [
+            'event_type' => 'purchase', 'amount' => 15.0, 'currency' => 'USD',
+            'occurred_at' => 1700000100 + 40 * 86400, 'source' => 'api', 'idempotency_key' => 'cohort-m1',
+        ], 1700000100);
+        $cohorts = $ltv->cohorts(1, 6, 1702000000);
+        self::assertCount(1, $cohorts);
+        self::assertSame('2023-11', $cohorts[0]['cohort_month']);
+        self::assertSame(2, (int) $cohorts[0]['customers']);
+        self::assertSame(30.0, (float) $cohorts[0]['m0']);
+        self::assertSame(15.0, (float) $cohorts[0]['m1']);
+        self::assertSame(45.0, (float) $cohorts[0]['total_revenue']);
+        self::assertSame(22.5, (float) $cohorts[0]['ltv_per_customer']);
     }
 
     public function testNextOfferRebuildAndScoringEndToEnd(): void

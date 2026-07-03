@@ -15,11 +15,21 @@ interface LtvRepositoryInterface
     public function summary(LtvQuery $query): array;
 
     /**
-     * Per-customer listing with rollups.
+     * Per-customer listing with rollups. $search matches ref, email, company
+     * or full name (LIKE metacharacters escaped); $segment restricts to an
+     * allowlisted behavioral segment ('repeat', 'subscribers', 'at_risk').
      *
      * @return array{rows: list<array<string, mixed>>, total: int}
      */
-    public function customers(LtvQuery $query, string $sortBy, string $sortDir, int $limit, int $offset): array;
+    public function customers(
+        LtvQuery $query,
+        string $sortBy,
+        string $sortDir,
+        int $limit,
+        int $offset,
+        ?string $search = null,
+        ?string $segment = null
+    ): array;
 
     /**
      * Realized LTV grouped by acquisition dimension (campaign, ppc_account,
@@ -29,6 +39,14 @@ interface LtvRepositoryInterface
      * @return list<array<string, mixed>>
      */
     public function breakdown(LtvQuery $query, string $breakdownType, int $limit, int $offset): array;
+
+    /**
+     * LTV maturation by acquisition cohort: customers grouped by first-seen
+     * month with revenue bucketed by months since acquisition.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function cohorts(int $userId, int $months = 6, ?int $now = null): array;
 
     /**
      * Subscription economics: active MRR/ARR, status counts, and the

@@ -25,23 +25,38 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
                        INNER JOIN 202_aff_campaigns ref ON ref.aff_campaign_id = ck.aff_campaign_id',
             'id' => 'ref.aff_campaign_id',
             'name' => 'ref.aff_campaign_name',
+            'spend_col' => 'aff_campaign_id',
         ],
         'ppc_account' => [
             'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id
                        INNER JOIN 202_ppc_accounts ref ON ref.ppc_account_id = ck.ppc_account_id',
             'id' => 'ref.ppc_account_id',
             'name' => 'ref.ppc_account_name',
+            'spend_col' => 'ppc_account_id',
         ],
         'landing_page' => [
             'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id
                        INNER JOIN 202_landing_pages ref ON ref.landing_page_id = ck.landing_page_id',
             'id' => 'ref.landing_page_id',
             'name' => 'ref.landing_page_url',
+            'spend_col' => 'landing_page_id',
         ],
     ];
 
     private const CUSTOMER_SORTS = [
         'total_revenue', 'order_count', 'last_activity_time', 'first_seen_time', 'mrr',
+    ];
+
+    /**
+     * Actionable customer segments. Each is a self-contained WHERE fragment
+     * against the `c` alias — code-owned SQL, never user input.
+     */
+    private const CUSTOMER_SEGMENTS = [
+        'repeat' => 'c.order_count >= 2',
+        'subscribers' => 'c.active_subscription_count > 0',
+        'at_risk' => "EXISTS (SELECT 1 FROM 202_subscriptions s
+                      WHERE s.customer_id = c.customer_id AND s.user_id = c.user_id
+                        AND s.status = 'past_due')",
     ];
 
     /** predict() guards — documented in every response. */
@@ -83,14 +98,42 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         return $row ?? [];
     }
 
-    public function customers(LtvQuery $query, string $sortBy, string $sortDir, int $limit, int $offset): array
-    {
+    public function customers(
+        LtvQuery $query,
+        string $sortBy,
+        string $sortDir,
+        int $limit,
+        int $offset,
+        ?string $search = null,
+        ?string $segment = null
+    ): array {
         if (!in_array($sortBy, self::CUSTOMER_SORTS, true)) {
             $sortBy = 'total_revenue';
         }
         $sortDir = strtoupper($sortDir) === 'ASC' ? 'ASC' : 'DESC';
 
         [$joins, $where, $types, $binds] = $this->buildCustomerScope($query);
+
+        $search = $search !== null ? trim($search) : '';
+        if ($search !== '') {
+            // Escape LIKE metacharacters so a literal "50%" searches for
+            // "50%", then match ref, email, company or full name.
+            $term = '%' . addcslashes($search, '%_\\') . '%';
+            $where .= " AND (c.primary_ref LIKE ? OR c.email LIKE ? OR c.company LIKE ?
+                        OR CONCAT(COALESCE(c.first_name, ''), ' ', COALESCE(c.last_name, '')) LIKE ?)";
+            $types .= 'ssss';
+            array_push($binds, $term, $term, $term, $term);
+        }
+
+        $segment = $segment !== null ? trim($segment) : '';
+        if ($segment !== '') {
+            if (!isset(self::CUSTOMER_SEGMENTS[$segment])) {
+                throw new RuntimeException(
+                    'Invalid segment: ' . $segment . ' (expected ' . implode(', ', array_keys(self::CUSTOMER_SEGMENTS)) . ')'
+                );
+            }
+            $where .= ' AND ' . self::CUSTOMER_SEGMENTS[$segment];
+        }
 
         $countStmt = $this->conn->prepareRead("SELECT COUNT(*) AS total FROM 202_customers c {$joins} {$where}");
         $this->conn->bind($countStmt, $types, $binds);
@@ -132,6 +175,31 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
 
         [$joins, $where, $types, $binds] = $this->buildCustomerScope($query);
 
+        // Ad spend for the SAME dimension and window, from the click log —
+        // this is what turns LTV into a scaling decision: cac = spend per
+        // acquired customer, ltv_cac = revenue returned per ad dollar. The
+        // spend subquery renders before the scope joins, so its binds come
+        // first.
+        $spendWhere = 'user_id = ?';
+        $spendTypes = 'i';
+        $spendBinds = [$query->userId];
+        if ($query->timeFrom !== null) {
+            $spendWhere .= ' AND click_time >= ?';
+            $spendTypes .= 'i';
+            $spendBinds[] = $query->timeFrom;
+        }
+        if ($query->timeTo !== null) {
+            $spendWhere .= ' AND click_time <= ?';
+            $spendTypes .= 'i';
+            $spendBinds[] = $query->timeTo;
+        }
+        $spendJoin = "LEFT JOIN (
+                SELECT {$bd['spend_col']} AS dim_id, SUM(click_cpc) AS spend
+                FROM 202_clicks
+                WHERE {$spendWhere}
+                GROUP BY {$bd['spend_col']}
+            ) sp ON sp.dim_id = {$bd['id']}";
+
         $sql = "SELECT
                 {$bd['id']} AS id,
                 {$bd['name']} AS name,
@@ -143,23 +211,78 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
                 CASE WHEN SUM(CASE WHEN c.order_count >= 1 THEN 1 ELSE 0 END) > 0
                      THEN SUM(CASE WHEN c.order_count >= 2 THEN 1 ELSE 0 END) / SUM(CASE WHEN c.order_count >= 1 THEN 1 ELSE 0 END)
                      ELSE 0 END AS repeat_rate,
-                COALESCE(SUM(c.mrr), 0) AS mrr
+                COALESCE(SUM(c.mrr), 0) AS mrr,
+                COALESCE(sp.spend, 0) AS spend,
+                CASE WHEN COUNT(*) > 0 THEN COALESCE(sp.spend, 0) / COUNT(*) ELSE 0 END AS cac,
+                CASE WHEN COALESCE(sp.spend, 0) > 0 THEN SUM(c.total_revenue) / sp.spend ELSE 0 END AS ltv_cac
             FROM 202_customers c
             {$bd['join']}
+            {$spendJoin}
             {$joins}
             {$where}
-            GROUP BY {$bd['id']}, {$bd['name']}
+            GROUP BY {$bd['id']}, {$bd['name']}, sp.spend
             ORDER BY total_revenue DESC
             LIMIT ? OFFSET ?";
 
-        $binds[] = $limit;
-        $binds[] = $offset;
-        $types .= 'ii';
+        $binds = array_merge($spendBinds, $binds, [$limit, $offset]);
+        $types = $spendTypes . $types . 'ii';
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
 
         return $this->conn->fetchAll($stmt);
+    }
+
+    /**
+     * LTV maturation by acquisition cohort: customers grouped by the month
+     * they were first seen, with their lifetime revenue bucketed by months
+     * since acquisition. Shows how fast LTV pays back — the number that
+     * decides how aggressively acquisition can be financed.
+     *
+     * @return list<array<string, mixed>> newest cohort first; keys
+     *         cohort_month (Y-m), customers, m0..m4, m5_plus,
+     *         total_revenue, ltv_per_customer
+     */
+    public function cohorts(int $userId, int $months = 6, ?int $now = null): array
+    {
+        $months = max(1, min(24, $months));
+        $now = $now ?? time();
+        $windowStart = strtotime(date('Y-m-01', $now) . ' -' . ($months - 1) . ' months');
+
+        // Bucket = whole months between acquisition and the revenue event
+        // (clamped at 0: idempotent imports can carry occurred_at slightly
+        // before first_seen). LEFT JOIN keeps zero-revenue cohorts visible.
+        $bucket = 'GREATEST(TIMESTAMPDIFF(MONTH, FROM_UNIXTIME(c.first_seen_time), FROM_UNIXTIME(re.occurred_at)), 0)';
+        $stmt = $this->conn->prepareRead(
+            "SELECT DATE_FORMAT(FROM_UNIXTIME(c.first_seen_time), '%Y-%m') AS cohort_month,
+                    COUNT(DISTINCT c.customer_id) AS customers,
+                    COALESCE(SUM(CASE WHEN {$bucket} = 0 THEN re.amount END), 0) AS m0,
+                    COALESCE(SUM(CASE WHEN {$bucket} = 1 THEN re.amount END), 0) AS m1,
+                    COALESCE(SUM(CASE WHEN {$bucket} = 2 THEN re.amount END), 0) AS m2,
+                    COALESCE(SUM(CASE WHEN {$bucket} = 3 THEN re.amount END), 0) AS m3,
+                    COALESCE(SUM(CASE WHEN {$bucket} = 4 THEN re.amount END), 0) AS m4,
+                    COALESCE(SUM(CASE WHEN {$bucket} >= 5 THEN re.amount END), 0) AS m5_plus,
+                    COALESCE(SUM(re.amount), 0) AS total_revenue
+             FROM 202_customers c
+             LEFT JOIN 202_revenue_events re
+                    ON re.customer_id = c.customer_id AND re.user_id = c.user_id
+             WHERE c.user_id = ? AND c.merged_into_customer_id IS NULL
+               AND c.first_seen_time >= ?
+             GROUP BY cohort_month
+             ORDER BY cohort_month DESC"
+        );
+        $this->conn->bind($stmt, 'ii', [$userId, (int) $windowStart]);
+
+        $rows = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $customers = (int) $row['customers'];
+            $row['ltv_per_customer'] = $customers > 0
+                ? round(((float) $row['total_revenue']) / $customers, 5)
+                : 0.0;
+            $rows[] = $row;
+        }
+
+        return $rows;
     }
 
     public function mrr(int $userId): array

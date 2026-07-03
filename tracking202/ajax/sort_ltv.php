@@ -28,6 +28,12 @@ $by = isset($_POST['ltv_by']) && isset($allowedDimensions[(string) $_POST['ltv_b
     ? (string) $_POST['ltv_by']
     : 'campaign';
 
+$search = trim((string) ($_POST['q'] ?? ''));
+$segments = ['' => 'All customers', 'repeat' => 'Repeat buyers', 'subscribers' => 'Active subscribers', 'at_risk' => 'At risk (past-due subs)'];
+$segment = isset($_POST['segment']) && array_key_exists((string) $_POST['segment'], $segments)
+    ? (string) $_POST['segment']
+    : '';
+
 require_once __DIR__ . '/ltv_helpers.php';
 $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
@@ -45,7 +51,8 @@ try {
     } else {
         $breakdown = $ltv->breakdown($query, $by, 25, 0);
     }
-    $customers = $ltv->customers($query, 'total_revenue', 'DESC', $limit, $offset);
+    $customers = $ltv->customers($query, 'total_revenue', 'DESC', $limit, $offset, $search, $segment !== '' ? $segment : null);
+    $cohorts = $ltv->cohorts($userId, 6);
     // Reuse the aggregates computed above — predict($query) would re-run
     // the same summary and MRR queries in the hottest LTV render.
     $predict = $ltv->predictFromComputed($summary, $mrr);
@@ -205,12 +212,15 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                         <th>AOV</th>
                         <th>Repeat Rate</th>
                         <th>MRR</th>
+                        <th>Spend</th>
+                        <th>CAC</th>
+                        <th title="Lifetime revenue returned per ad dollar spent in this range">LTV:CAC</th>
                     <?php } ?>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($breakdown === []) { ?>
-                    <tr><td colspan="<?php echo $by === 'abm' ? 11 : ($by === 'product' ? 6 : 8); ?>"><em>No data for this range.</em></td></tr>
+                    <tr><td colspan="<?php echo $by === 'abm' ? 11 : ($by === 'product' ? 6 : 11); ?>"><em>No data for this range.</em></td></tr>
                 <?php } ?>
                 <?php foreach ($breakdown as $row) { ?>
                     <tr>
@@ -245,7 +255,45 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                             <td>$<?php echo $money($row['aov'] ?? 0); ?></td>
                             <td><?php echo number_format(((float) ($row['repeat_rate'] ?? 0)) * 100, 1); ?>%</td>
                             <td>$<?php echo $money($row['mrr'] ?? 0); ?></td>
+                            <td>$<?php echo $money($row['spend'] ?? 0); ?></td>
+                            <td><?php echo ((float) ($row['spend'] ?? 0)) > 0 ? '$' . $money($row['cac'] ?? 0) : '—'; ?></td>
+                            <?php $ltvCac = (float) ($row['ltv_cac'] ?? 0); ?>
+                            <td style="<?php echo ((float) ($row['spend'] ?? 0)) > 0 ? ($ltvCac >= 3 ? 'color: #3c763d; font-weight: bold;' : ($ltvCac < 1 ? 'color: #a94442;' : '')) : ''; ?>">
+                                <?php echo ((float) ($row['spend'] ?? 0)) > 0 ? number_format($ltvCac, 2) . 'x' : '—'; ?>
+                            </td>
                         <?php } ?>
+                    </tr>
+                <?php } ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- LTV maturation by acquisition cohort -->
+<div class="row" style="margin-top: 10px;">
+    <div class="col-xs-12">
+        <h6>LTV Maturation by Acquisition Cohort <small>revenue by months since first seen (last 6 months, all time ranges)</small></h6>
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                    <th>Cohort</th><th>Customers</th>
+                    <th>Month 0</th><th>Month 1</th><th>Month 2</th><th>Month 3</th><th>Month 4</th><th>Month 5+</th>
+                    <th>Total</th><th>LTV / Customer</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if ($cohorts === []) { ?>
+                    <tr><td colspan="10"><em>No customers acquired in the last 6 months.</em></td></tr>
+                <?php } ?>
+                <?php foreach ($cohorts as $cohort) { ?>
+                    <tr>
+                        <td><?php echo $esc($cohort['cohort_month'] ?? ''); ?></td>
+                        <td><?php echo number_format((int) ($cohort['customers'] ?? 0)); ?></td>
+                        <?php foreach (['m0', 'm1', 'm2', 'm3', 'm4', 'm5_plus'] as $bucket) { ?>
+                            <td><?php echo ((float) ($cohort[$bucket] ?? 0)) != 0.0 ? '$' . $money($cohort[$bucket]) : '—'; ?></td>
+                        <?php } ?>
+                        <td>$<?php echo $money($cohort['total_revenue'] ?? 0); ?></td>
+                        <td><strong>$<?php echo $money($cohort['ltv_per_customer'] ?? 0); ?></strong></td>
                     </tr>
                 <?php } ?>
             </tbody>
@@ -260,6 +308,20 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
             <small>(<?php echo number_format((int) $customers['total']); ?> total; showing
             <?php echo number_format(min($offset + 1, (int) $customers['total'])); ?>&ndash;<?php echo number_format(min($offset + $limit, (int) $customers['total'])); ?>)</small>
         </h6>
+        <div class="form-inline" style="margin-bottom: 8px;">
+            <input type="text" class="form-control input-sm" id="ltv-customer-search" maxlength="255"
+                   placeholder="Search ref, name, email or company" value="<?php echo $esc($search); ?>"
+                   onkeydown="if (event.key === 'Enter') { ltvLoad(0); return false; }">
+            <select id="ltv-segment-select" class="form-control input-sm" onchange="ltvLoad(0);">
+                <?php foreach ($segments as $key => $label) { ?>
+                    <option value="<?php echo $esc($key); ?>" <?php if ($key === $segment) { echo 'selected'; } ?>><?php echo $esc($label); ?></option>
+                <?php } ?>
+            </select>
+            <button type="button" class="btn btn-sm btn-default" onclick="ltvLoad(0);">Search</button>
+            <?php if ($search !== '' || $segment !== '') { ?>
+                <a href="#" onclick="$('#ltv-customer-search').val(''); $('#ltv-segment-select').val(''); ltvLoad(0); return false;">clear</a>
+            <?php } ?>
+        </div>
         <table class="table table-bordered table-hover" id="ltv-customers-table">
             <thead>
                 <tr>
@@ -317,7 +379,9 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
     function ltvLoad(offset) {
         ltvNav('report', {
             offset: offset,
-            ltv_by: $('#ltv-by-select').val()
+            ltv_by: $('#ltv-by-select').val(),
+            q: $('#ltv-customer-search').val(),
+            segment: $('#ltv-segment-select').val()
         });
     }
     function ltvCustomer(customerId) {

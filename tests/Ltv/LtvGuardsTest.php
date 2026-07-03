@@ -60,6 +60,61 @@ final class LtvGuardsTest extends TestCase
         self::assertSame(100, $result['inputs']['customers']);
     }
 
+    public function testCustomerSearchEscapesLikeAndSegmentsAreAllowlisted(): void
+    {
+        $read = new FakeMysqliConnection();
+        $repo = new MysqlLtvRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        $repo->customers(new LtvQuery(7), 'total_revenue', 'DESC', 50, 0, '50%_off', 'subscribers');
+
+        $queries = $read->statementsContaining('ORDER BY c.total_revenue');
+        self::assertCount(1, $queries);
+        self::assertStringContainsString('c.primary_ref LIKE ?', $queries[0]->sql);
+        self::assertStringContainsString('c.active_subscription_count > 0', $queries[0]->sql);
+        self::assertContains('%50\%\_off%', $queries[0]->boundValues, 'LIKE metacharacters must be escaped');
+        self::assertSame('issssii', $queries[0]->boundTypes, 'user + 4 search terms + limit/offset');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('segment');
+        $repo->customers(new LtvQuery(7), 'total_revenue', 'DESC', 50, 0, null, 'bogus');
+    }
+
+    public function testBreakdownJoinsAdSpendForCacInWindow(): void
+    {
+        $read = new FakeMysqliConnection();
+        $repo = new MysqlLtvRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        $repo->breakdown(new LtvQuery(7, 1700000000, 1700086400), 'campaign', 25, 0);
+
+        $queries = $read->statementsContaining('SUM(click_cpc)');
+        self::assertCount(1, $queries);
+        self::assertStringContainsString('ltv_cac', $queries[0]->sql);
+        // Bind order follows SQL text: spend subquery (user, from, to), then
+        // the customer scope (user, from, to), then limit/offset.
+        self::assertSame('iiiiiiii', $queries[0]->boundTypes);
+        self::assertSame([7, 1700000000, 1700086400, 7, 1700000000, 1700086400, 25, 0], $queries[0]->boundValues);
+    }
+
+    public function testCohortsBucketByMonthsSinceAcquisition(): void
+    {
+        $read = new FakeMysqliConnection();
+        $read->whenQueryContainsReturnRows('cohort_month', [[
+            'cohort_month' => '2026-06', 'customers' => 2,
+            'm0' => 30.0, 'm1' => 15.0, 'm2' => 0.0, 'm3' => 0.0, 'm4' => 0.0, 'm5_plus' => 0.0,
+            'total_revenue' => 45.0,
+        ]]);
+        $repo = new MysqlLtvRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        $rows = $repo->cohorts(7, 6, 1767225600);
+        self::assertCount(1, $rows);
+        self::assertSame(22.5, $rows[0]['ltv_per_customer'], 'per-customer LTV is derived from the cohort totals');
+
+        $queries = $read->statementsContaining('TIMESTAMPDIFF(MONTH');
+        self::assertCount(1, $queries);
+        self::assertStringContainsString('merged_into_customer_id IS NULL', $queries[0]->sql);
+        self::assertSame('ii', $queries[0]->boundTypes);
+    }
+
     public function testLtvQueryRejectsMoreThanThreeCustomFieldFilters(): void
     {
         $filter = ['fieldId' => 1, 'column' => 'value_number', 'op' => '>=', 'value' => 1];

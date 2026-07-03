@@ -68,13 +68,27 @@ class LtvController
                 (string) ($params['sort'] ?? 'total_revenue'),
                 (string) ($params['dir'] ?? 'DESC'),
                 $limit,
-                $offset
+                $offset,
+                isset($params['q']) ? (string) $params['q'] : null,
+                isset($params['segment']) ? (string) $params['segment'] : null
             );
 
             return [
                 'data' => $result['rows'],
                 'pagination' => ['total' => $result['total'], 'limit' => $limit, 'offset' => $offset],
             ];
+        });
+    }
+
+    /**
+     * LTV maturation by acquisition cohort (months since first seen).
+     */
+    public function cohorts(array $params): array
+    {
+        return $this->wrap(function () use ($params): array {
+            $months = max(1, min(24, (int) ($params['months'] ?? 6)));
+
+            return ['data' => $this->ltv->cohorts($this->userId, $months), 'months' => $months];
         });
     }
 
