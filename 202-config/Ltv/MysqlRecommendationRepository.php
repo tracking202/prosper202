@@ -71,6 +71,24 @@ final class MysqlRecommendationRepository
      */
     private const FALLBACK_WINDOW = 15552000;
 
+    /**
+     * Fatigue defaults: abandon a suggestion for a customer once it has been
+     * shown to them on this many distinct visits, spanning at least this many
+     * days, without a conversion or any fresh engagement with the offer.
+     * Tunable per account via the user_ltv_rec_fatigue pref ("shown,days";
+     * "0" disables); repeated exposure IS how retargeting converts, so the
+     * defaults are deliberately patient.
+     */
+    public const DEFAULT_FATIGUE = ['shown' => 3, 'days' => 21];
+
+    /**
+     * The serving policy stamped onto decision-log rows. Today there is one
+     * deterministic policy; future bandit/MVT policies record their own name
+     * (e.g. 'bandit:thompson', 'mvt:hero-copy-b') so decisions made by
+     * different policies can be compared offline from the same log.
+     */
+    private const SERVING_POLICY = 'default';
+
     public function __construct(private Connection $conn)
     {
     }
@@ -83,27 +101,192 @@ final class MysqlRecommendationRepository
         $now = $now ?? time();
         $converted = $this->convertedCampaigns($userId, $customerId);
 
+        // Fatigue: campaigns this customer has been shown repeatedly (per the
+        // decision log) without buying or re-engaging are abandoned — every
+        // tier below skips them and falls to its runner-up.
+        $suppressed = $this->fatiguedCampaigns($userId, $customerId, $now);
+        $exclude = array_values(array_unique(array_merge($converted, $suppressed)));
+
+        $candidate = null;
+
         // 1. Blend transition evidence from the last few converted campaigns.
         if ($converted !== []) {
-            $candidate = $this->bestTransitionTarget($userId, $converted, $now);
-            if ($candidate !== null) {
-                return $candidate;
-            }
+            $candidate = $this->bestTransitionTarget($userId, $converted, $exclude, $now);
         }
 
         // 2. The customer's own engagement: the campaign they most recently
         //    browsed (stamped clicks / acquisition click) but never bought —
         //    a subscription-only or API-revenue customer still gets a pick
         //    grounded in THEIR behavior, not the account average.
-        $candidate = $this->engagedCampaignInterest($userId, $customerId, $converted);
-        if ($candidate !== null) {
-            return $candidate;
-        }
+        $candidate = $candidate ?? $this->engagedCampaignInterest($userId, $customerId, $exclude);
 
         // 3. Fallback: the account's top RECENTLY-converting live campaign
         //    the customer hasn't bought yet; null when the account has no
         //    recent signal at all (the UI says so instead of guessing).
-        return $this->topAccountCampaign($userId, $converted, $now);
+        $candidate = $candidate ?? $this->topAccountCampaign($userId, $exclude, $now);
+
+        if ($candidate !== null && $suppressed !== []) {
+            // Explainability: the pick skipped these fatigued campaigns.
+            $candidate['why']['suppressed_campaigns'] = $suppressed;
+        }
+
+        return $candidate;
+    }
+
+    /**
+     * Record that a recommendation actually REACHED the customer (sealed
+     * into a landing-page personalization snapshot, or delivered by an API
+     * consumer). One rollup row per (customer, campaign, surface); repeat
+     * exposures increment times_shown. This log is what the fatigue rule —
+     * and any future bandit/MVT policy — learns from.
+     */
+    public function recordImpression(
+        int $userId,
+        int $customerId,
+        int $campaignId,
+        string $surface,
+        string $basis,
+        ?int $now = null
+    ): void {
+        $now = $now ?? time();
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_offer_recommendations
+                (user_id, customer_id, campaign_id, surface, basis, policy,
+                 times_shown, first_shown_at, last_shown_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                times_shown = times_shown + 1,
+                last_shown_at = VALUES(last_shown_at),
+                basis = VALUES(basis),
+                policy = VALUES(policy)'
+        );
+        $this->conn->bind($stmt, 'iiisssii', [
+            $userId, $customerId, $campaignId,
+            substr($surface, 0, 20), substr($basis, 0, 30), self::SERVING_POLICY,
+            $now, $now,
+        ]);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * Parse the per-account fatigue pref ("shown,days"). Empty string means
+     * defaults; "0" (or "0,anything") disables fatigue entirely; garbage
+     * falls back to defaults rather than guessing.
+     *
+     * @return array{shown: int, days: int}|null null = fatigue disabled
+     */
+    public static function parseFatiguePref(string $pref): ?array
+    {
+        $pref = trim($pref);
+        if ($pref === '') {
+            return self::DEFAULT_FATIGUE;
+        }
+        $parts = array_map('trim', explode(',', $pref));
+        if (!ctype_digit($parts[0] ?? '')) {
+            return self::DEFAULT_FATIGUE;
+        }
+        $shown = (int) $parts[0];
+        if ($shown === 0) {
+            return null;
+        }
+        $days = isset($parts[1]) && ctype_digit($parts[1]) ? (int) $parts[1] : self::DEFAULT_FATIGUE['days'];
+
+        return ['shown' => max(1, $shown), 'days' => max(0, $days)];
+    }
+
+    /**
+     * Campaigns to abandon for this customer: shown on >= N distinct visits,
+     * first shown >= D days ago, never converted — UNLESS the customer has
+     * clicked into the campaign since it was last shown (fresh interest
+     * resets the clock; being browsed is the opposite of being ignored).
+     *
+     * @return list<int>
+     */
+    private function fatiguedCampaigns(int $userId, int $customerId, int $now): array
+    {
+        $config = self::parseFatiguePref($this->fatiguePref($userId));
+        if ($config === null) {
+            return [];
+        }
+
+        $stmt = $this->conn->prepareRead(
+            'SELECT campaign_id, SUM(times_shown) AS shown,
+                    MIN(first_shown_at) AS first_at, MAX(last_shown_at) AS last_at
+             FROM 202_offer_recommendations
+             WHERE user_id = ? AND customer_id = ? AND converted_at IS NULL
+             GROUP BY campaign_id
+             HAVING shown >= ? AND first_at <= ?'
+        );
+        $this->conn->bind($stmt, 'iiii', [
+            $userId, $customerId, $config['shown'], $now - $config['days'] * 86400,
+        ]);
+        $rows = $this->conn->fetchAll($stmt);
+        if ($rows === []) {
+            return [];
+        }
+
+        $lastShownByCampaign = [];
+        foreach ($rows as $row) {
+            $lastShownByCampaign[(int) $row['campaign_id']] = (int) $row['last_at'];
+        }
+
+        // Engagement reset: a click into the campaign after it was last
+        // shown means the offer is working on them — keep recommending it.
+        $ids = array_keys($lastShownByCampaign);
+        $placeholders = implode(', ', array_fill(0, count($ids), '?'));
+        $stmt = $this->conn->prepareRead(
+            "SELECT ck.aff_campaign_id AS campaign_id, MAX(ck.click_time) AS last_click
+             FROM 202_clicks_tracking ct
+             JOIN 202_clicks ck ON ck.click_id = ct.click_id AND ck.user_id = ?
+             WHERE ct.customer_id = ? AND ck.aff_campaign_id IN ({$placeholders})
+             GROUP BY ck.aff_campaign_id"
+        );
+        $this->conn->bind($stmt, 'ii' . str_repeat('i', count($ids)), array_merge([$userId, $customerId], $ids));
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $campaignId = (int) $row['campaign_id'];
+            if ((int) $row['last_click'] > $lastShownByCampaign[$campaignId]) {
+                unset($lastShownByCampaign[$campaignId]);
+            }
+        }
+
+        return array_keys($lastShownByCampaign);
+    }
+
+    private function fatiguePref(int $userId): string
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT user_ltv_rec_fatigue FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'i', [$userId]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return (string) ($row['user_ltv_rec_fatigue'] ?? '');
+    }
+
+    /**
+     * Stamp converted_at on decision-log rows whose customer later converted
+     * on the recommended campaign (order events only, deleted conversions
+     * excluded). Run by ltv_maintenance. This is the impression → conversion
+     * reward join a future bandit policy scores on, and it permanently
+     * removes converted offers from fatigue consideration.
+     */
+    public function stampRecommendationConversions(int $userId): int
+    {
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_offer_recommendations r
+             JOIN 202_revenue_events re
+                ON re.user_id = r.user_id AND re.customer_id = r.customer_id
+             JOIN 202_conversion_logs cl
+                ON cl.conv_id = re.conv_id AND cl.deleted = 0 AND cl.campaign_id = r.campaign_id
+             SET r.converted_at = re.occurred_at
+             WHERE r.user_id = ? AND r.converted_at IS NULL
+               AND re.source IN ('conversion','import')
+               AND re.event_type IN ('purchase','one_time') AND re.amount >= 0
+               AND re.occurred_at >= r.first_shown_at"
+        );
+        $this->conn->bind($stmt, 'i', [$userId]);
+
+        return $this->conn->executeUpdate($stmt);
     }
 
     /**
@@ -199,18 +382,20 @@ final class MysqlRecommendationRepository
      * Score every transition target reachable from the customer's recent
      * campaigns and return the best, with its full scoring breakdown.
      *
-     * @param list<int> $converted All converted campaigns, latest first.
+     * @param list<int> $sourceCampaigns Converted campaigns, latest first.
+     * @param list<int> $exclude Targets never to suggest (already converted
+     *        plus fatigue-suppressed).
      * @return array{campaign_id: int, name: string, url: string, why: array<string, mixed>}|null
      */
-    private function bestTransitionTarget(int $userId, array $converted, int $now): ?array
+    private function bestTransitionTarget(int $userId, array $sourceCampaigns, array $exclude, int $now): ?array
     {
-        $sources = array_slice($converted, 0, self::SOURCE_CAMPAIGNS);
+        $sources = array_slice($sourceCampaigns, 0, self::SOURCE_CAMPAIGNS);
         $sourceWeights = [];
         foreach ($sources as $i => $campaignId) {
             $sourceWeights[$campaignId] = self::SOURCE_WEIGHTS[$i];
         }
 
-        [$notIn, $notInTypes, $notInBinds] = $this->excludeClause($converted, 'ot.to_campaign_id');
+        [$notIn, $notInTypes, $notInBinds] = $this->excludeClause($exclude, 'ot.to_campaign_id');
         $sourcePlaceholders = implode(', ', array_fill(0, count($sources), '?'));
 
         $stmt = $this->conn->prepareRead(

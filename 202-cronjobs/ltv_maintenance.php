@@ -219,14 +219,19 @@ try {
              WHERE source IN ('conversion','import')"
         );
         $transitionRows = 0;
+        $recConversions = 0;
         if ($usersResult instanceof mysqli_result) {
             $conn = new \Prosper202\Database\Connection($db);
             $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($conn);
             while ($userRow = $usersResult->fetch_assoc()) {
                 $transitionRows += $recommendations->rebuildTransitions((int) $userRow['user_id'], $now);
+                // Impression -> conversion reward join for the decision log:
+                // converted offers leave fatigue consideration permanently,
+                // and future bandit policies score on exactly this stamp.
+                $recConversions += $recommendations->stampRecommendationConversions((int) $userRow['user_id']);
             }
         }
-        echo "offer transitions: {$transitionRows} pairs rebuilt\n";
+        echo "offer transitions: {$transitionRows} pairs rebuilt; {$recConversions} recommendation conversion(s) stamped\n";
     } catch (Throwable $transitionError) {
         fwrite(STDERR, 'offer-transition rebuild failed (continuing with remaining maintenance): '
             . $transitionError->getMessage() . "\n");

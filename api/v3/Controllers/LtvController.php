@@ -225,6 +225,42 @@ class LtvController
         });
     }
 
+    /**
+     * Log that a next-offer recommendation was DELIVERED to the customer by
+     * an API consumer (email send, external CRM, ...). The LP personalization
+     * surface records itself at seal time; this endpoint is for senders the
+     * tracker cannot see. Feeds the fatigue rule and future bandit policies.
+     */
+    public function recordNextOfferImpression(int $customerId, array $payload): array
+    {
+        $this->requireCustomer($customerId);
+
+        return $this->wrap(function () use ($customerId, $payload): array {
+            $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($this->conn);
+
+            $campaignId = (int) ($payload['campaign_id'] ?? 0);
+            $basis = 'api';
+            if ($campaignId <= 0) {
+                $offer = $recommendations->nextOffer($this->userId, $customerId);
+                if ($offer === null) {
+                    throw new ValidationException(
+                        'No current recommendation to record; pass campaign_id for the offer you delivered',
+                        ['campaign_id' => 'Required when no recommendation is available']
+                    );
+                }
+                $campaignId = (int) $offer['campaign_id'];
+                $basis = (string) ($offer['why']['basis'] ?? 'api');
+            }
+
+            $recommendations->recordImpression($this->userId, $customerId, $campaignId, 'api', $basis);
+
+            return [
+                '_status' => 201,
+                'data' => ['customer_id' => $customerId, 'campaign_id' => $campaignId, 'surface' => 'api'],
+            ];
+        });
+    }
+
     public function abm(array $params): array
     {
         return $this->wrap(function () use ($params): array {

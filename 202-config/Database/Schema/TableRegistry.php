@@ -110,6 +110,7 @@ final class TableRegistry
     public const string LTV_WEBHOOK_DELIVERIES = '202_ltv_webhook_deliveries';
     public const string PERSONALIZATION_TOKENS = '202_personalization_tokens';
     public const string OFFER_TRANSITIONS = '202_offer_transitions';
+    public const string OFFER_RECOMMENDATIONS = '202_offer_recommendations';
     public const string ENGAGEMENT_EVENTS = '202_engagement_events';
     public const string COMPANIES = '202_companies';
 

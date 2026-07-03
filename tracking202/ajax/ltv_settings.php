@@ -110,12 +110,21 @@ try {
                             \Prosper202\Ltv\MysqlEngagementRepository::parseScoreWeights($weightsPref);
                         }
 
+                        // Recommendation fatigue: '' = defaults, '0' = off,
+                        // otherwise "shown,days" — validated by the same
+                        // parser the serving path uses.
+                        $fatiguePref = trim((string) ($_POST['rec_fatigue'] ?? ''));
+                        if ($fatiguePref !== '' && preg_match('/^\d{1,3}(,\d{1,4})?$/', $fatiguePref) !== 1) {
+                            throw new \RuntimeException('Offer fatigue must be empty (defaults), 0 (off), or "times,days" — e.g. 3,21.');
+                        }
+
                         $stmt = $conn->prepareWrite(
                             'UPDATE 202_users_pref
-                             SET user_ltv_customer_cparam = ?, user_ltv_personalization_fields = ?, user_ltv_score_weights = ?
+                             SET user_ltv_customer_cparam = ?, user_ltv_personalization_fields = ?, user_ltv_score_weights = ?,
+                                 user_ltv_rec_fatigue = ?
                              WHERE user_id = ?'
                         );
-                        $conn->bind($stmt, 'issi', [$cparam, $p13nFields, $weightsPref, $userId]);
+                        $conn->bind($stmt, 'isssi', [$cparam, $p13nFields, $weightsPref, $fatiguePref, $userId]);
                         $conn->executeUpdate($stmt);
                         $notice = 'Settings saved.';
                         break;
@@ -182,13 +191,15 @@ try {
 
     // ---- Current state (always re-read after any write) ----
     $stmt = $conn->prepareRead(
-        'SELECT user_ltv_customer_cparam, user_ltv_personalization_fields, user_ltv_score_weights
+        'SELECT user_ltv_customer_cparam, user_ltv_personalization_fields, user_ltv_score_weights, user_ltv_rec_fatigue
          FROM 202_users_pref WHERE user_id = ? LIMIT 1'
     );
     $conn->bind($stmt, 'i', [$userId]);
     $prefs = $conn->fetchOne($stmt) ?? [];
     $cparamValue = (int) ($prefs['user_ltv_customer_cparam'] ?? 0);
     $p13nValue = (string) ($prefs['user_ltv_personalization_fields'] ?? '');
+    $fatigueValue = (string) ($prefs['user_ltv_rec_fatigue'] ?? '');
+    $fatigueDefaults = \Prosper202\Ltv\MysqlRecommendationRepository::DEFAULT_FATIGUE;
     try {
         $weightValues = \Prosper202\Ltv\MysqlEngagementRepository::parseScoreWeights(
             (string) ($prefs['user_ltv_score_weights'] ?? '')
@@ -286,6 +297,17 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                                 </label>
                             <?php } ?>
                         </td>
+                    </tr>
+                    <tr>
+                        <th>Offer fatigue
+                            <br><small class="text-muted">Stop suggesting an offer to a customer after it has been shown
+                            <em>times</em> visits over at least <em>days</em> days without a purchase (a fresh click on
+                            the offer resets it). Format <code>times,days</code>; empty =
+                            <?php echo (int) $fatigueDefaults['shown']; ?>,<?php echo (int) $fatigueDefaults['days']; ?>;
+                            <code>0</code> disables.</small></th>
+                        <td><input type="text" class="form-control input-sm" style="width: 120px;" name="rec_fatigue"
+                            maxlength="20" value="<?php echo $esc($fatigueValue); ?>"
+                            placeholder="<?php echo (int) $fatigueDefaults['shown']; ?>,<?php echo (int) $fatigueDefaults['days']; ?>"></td>
                     </tr>
                 </tbody>
             </table>

@@ -89,7 +89,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
             '202_customers', '202_customer_aliases', '202_customer_fields', '202_customer_field_values',
             '202_revenue_events', '202_revenue_line_items', '202_products', '202_subscriptions',
             '202_companies', '202_personalization_tokens', '202_engagement_events',
-            '202_offer_transitions', '202_aff_campaigns',
+            '202_offer_transitions', '202_offer_recommendations', '202_aff_campaigns',
         ] as $table) {
             self::$db->query('TRUNCATE TABLE ' . $table);
         }
@@ -981,6 +981,84 @@ CHILD;
         // Deleted campaigns are invisible to every tier, browsing included.
         self::$db->query('UPDATE 202_aff_campaigns SET aff_campaign_deleted=1 WHERE aff_campaign_id=7');
         self::assertNull($recs->nextOffer(1, $browser, 1700000100), 'a deleted campaign must never be suggested');
+    }
+
+    public function testRecommendationFatigueLifecycleEndToEnd(): void
+    {
+        foreach ([[7, 'Offer A'], [8, 'Offer B']] as [$id, $name]) {
+            self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id=$id, user_id=1,
+                aff_campaign_name='$name', aff_campaign_url='https://example.com/$id'");
+        }
+
+        $now = 1700000000 + 40 * 86400;
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $recs = new \Prosper202\Ltv\MysqlRecommendationRepository(self::$conn);
+
+        // The customer browses campaign 7 (stamped click) but never buys.
+        $cid = $crm->upsert(1, ['customer_ref' => 'fat-1']);
+        $this->insertClick(9200, 0.0);
+        self::$db->query("INSERT INTO 202_clicks_tracking SET click_id=9200, c1_id=0, c2_id=0, c3_id=0, c4_id=0, customer_id=$cid");
+        // Campaign 8 converts recently, so the account fallback has a target.
+        self::$db->query('INSERT INTO 202_conversion_logs SET click_id=9209, user_id=1, campaign_id=8, conv_time=' . ($now - 10 * 86400) . ', deleted=0');
+
+        $offer = $recs->nextOffer(1, $cid, $now);
+        self::assertSame(7, $offer['campaign_id'] ?? null, 'browsing interest picks campaign 7');
+
+        // Shown on three visits, first 25 days ago: default fatigue (3, 21)
+        // abandons it and the runner-up (recent account top) takes over.
+        foreach ([25, 24, 23] as $daysAgo) {
+            $recs->recordImpression(1, $cid, 7, 'lp', 'engagement', $now - $daysAgo * 86400);
+        }
+        self::assertSame(3, (int) $this->scalar("SELECT times_shown FROM 202_offer_recommendations WHERE customer_id=$cid AND campaign_id=7 AND surface='lp'"));
+
+        $offer = $recs->nextOffer(1, $cid, $now);
+        self::assertSame(8, $offer['campaign_id'] ?? null, 'the fatigued offer is abandoned for the runner-up');
+        self::assertSame('account_top_recent', $offer['why']['basis'] ?? null);
+        self::assertSame([7], $offer['why']['suppressed_campaigns'] ?? null);
+
+        // A fresh click on campaign 7 AFTER it was last shown resets fatigue.
+        $freshTime = $now - 86400;
+        self::$db->query("INSERT INTO 202_clicks SET click_id=9201, user_id=1, aff_campaign_id=7, click_payout=0, click_cpc=0, click_lead=0, click_time=$freshTime");
+        self::$db->query("INSERT INTO 202_clicks_spy SET click_id=9201, user_id=1, aff_campaign_id=7, click_payout=0, click_cpc=0, click_lead=0, click_time=$freshTime");
+        self::$db->query("INSERT INTO 202_clicks_tracking SET click_id=9201, c1_id=0, c2_id=0, c3_id=0, c4_id=0, customer_id=$cid");
+        $offer = $recs->nextOffer(1, $cid, $now);
+        self::assertSame(7, $offer['campaign_id'] ?? null, 'fresh engagement lifts the suppression');
+        self::assertSame('engagement', $offer['why']['basis'] ?? null);
+
+        // API surface: an external sender logs the delivery explicitly.
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $logged = $controller->recordNextOfferImpression($cid, []);
+        self::assertSame(201, $logged['_status']);
+        self::assertSame(7, $logged['data']['campaign_id']);
+        self::assertSame(1, (int) $this->scalar("SELECT times_shown FROM 202_offer_recommendations WHERE customer_id=$cid AND campaign_id=7 AND surface='api'"));
+
+        // They finally buy campaign 7: the maintenance join stamps the
+        // conversion onto the decision log (the bandit reward signal), and
+        // the campaign leaves fatigue consideration for good.
+        $log = $this->log(9201);
+        $log['click_time'] = $freshTime;
+        $log['conv_time'] = $freshTime + 100; // after first_shown_at — the reward window
+        p202RecordConversion(self::$db, $log, '', true, '25.0', 'FAT-1', ['customer_ref' => 'fat-1'], []);
+        self::assertGreaterThan(0, $recs->stampRecommendationConversions(1));
+        self::assertNotNull($this->scalar("SELECT converted_at FROM 202_offer_recommendations WHERE customer_id=$cid AND campaign_id=7 AND surface='lp'"));
+
+        // Fatigue disabled by pref: campaign 7 is the account-top tie-winner
+        // for a signal-less customer, and it carries 3 stale impressions —
+        // with fatigue on it would be suppressed; with the pref at 0 it wins.
+        self::$db->query('INSERT IGNORE INTO 202_users_pref SET user_id=1');
+        self::$db->query("UPDATE 202_users_pref SET user_ltv_rec_fatigue='0' WHERE user_id=1");
+        try {
+            $cid2 = $crm->upsert(1, ['customer_ref' => 'fat-2']);
+            foreach ([25, 24, 23] as $daysAgo) {
+                $recs->recordImpression(1, $cid2, 7, 'lp', 'account_top_recent', $now - $daysAgo * 86400);
+            }
+            $offer = $recs->nextOffer(1, $cid2, $now);
+            self::assertSame(7, $offer['campaign_id'] ?? null, 'pref 0 disables fatigue entirely');
+            self::assertFalse(isset($offer['why']['suppressed_campaigns']), 'nothing is suppressed when fatigue is off');
+        } finally {
+            self::$db->query("UPDATE 202_users_pref SET user_ltv_rec_fatigue='' WHERE user_id=1");
+        }
     }
 
     public function testCanceledSubscriptionInsertCountsTowardChurn(): void

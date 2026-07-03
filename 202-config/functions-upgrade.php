@@ -3804,10 +3804,35 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.71', '>')) {
+        if ($prosper202_version == '1.9.71') {
 
-            $prosper202_version = '1.9.71';
+            // Recommendation decision log (impressions + outcomes per
+            // customer/campaign — feeds the fatigue rule and future
+            // bandit/MVT policies) + the per-account fatigue tuning pref.
+            $recs_definition = \Prosper202\Database\Tables\LtvTables::offerRecommendations();
+            $recs_ok = _upgrade_query($recs_definition->createStatement) !== false;
+
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'user_ltv_rec_fatigue'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $fatigue_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_rec_fatigue` varchar(20) NOT NULL DEFAULT ''"
+            ) !== false;
+
+            if ($recs_ok && $fatigue_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.72'") !== false) {
+                    $prosper202_version = '1.9.72';
+                } else {
+                    error_log('Prosper202 upgrade: created offer-recommendation log but failed to persist version 1.9.72; leaving version at 1.9.71 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: offer-recommendation log/pref incomplete; leaving version at 1.9.71 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.72', '>')) {
+
+            $prosper202_version = '1.9.72';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

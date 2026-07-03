@@ -243,6 +243,7 @@ try {
         $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer((int)$ctx['id'], $payload));
         $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer((int)$ctx['id'])));
         $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias((int)$ctx['id'], $payload));
+        $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression((int)$ctx['id'], $payload));
         $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias((int)$ctx['id'], (int)$ctx['aliasId'])));
         $r->post('/companies',                fn() => ['_status' => 201] + $crud($cls)->createCompany($payload));
         $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany((int)$ctx['id'], $payload));

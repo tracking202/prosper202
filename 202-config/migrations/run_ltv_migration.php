@@ -182,6 +182,16 @@ try {
         echo "  202_users_pref.user_ltv_score_weights already exists — skipping\n";
     }
 
+    if (!ltv_column_exists($db, '202_users_pref', 'user_ltv_rec_fatigue')) {
+        ltv_run(
+            $db,
+            "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_rec_fatigue` varchar(20) NOT NULL DEFAULT ''",
+            'add 202_users_pref.user_ltv_rec_fatigue'
+        );
+    } else {
+        echo "  202_users_pref.user_ltv_rec_fatigue already exists — skipping\n";
+    }
+
     // Next-offer v2 statistics on 202_offer_transitions: installs that
     // created the table before these columns existed need guarded ALTERs
     // (the shared CREATE TABLE IF NOT EXISTS is a no-op on the old shape).
@@ -217,6 +227,7 @@ try {
         ['202_users_pref', 'user_ltv_personalization_fields'],
         ['202_users_pref', 'user_ltv_score_weights'],
         ['202_customers', 'company_id'],
+        ['202_users_pref', 'user_ltv_rec_fatigue'],
         ['202_offer_transitions', 'adjacent_count'],
         ['202_offer_transitions', 'from_customers'],
         ['202_offer_transitions', 'last_seen_at'],

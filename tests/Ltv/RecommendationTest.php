@@ -264,6 +264,81 @@ final class RecommendationTest extends TestCase
         self::assertNull($repo->nextOffer(7, 501));
     }
 
+    public function testParseFatiguePref(): void
+    {
+        self::assertSame(MysqlRecommendationRepository::DEFAULT_FATIGUE, MysqlRecommendationRepository::parseFatiguePref(''));
+        self::assertSame(['shown' => 5, 'days' => 30], MysqlRecommendationRepository::parseFatiguePref('5,30'));
+        self::assertSame(['shown' => 2, 'days' => 21], MysqlRecommendationRepository::parseFatiguePref('2'), 'days default when omitted');
+        self::assertNull(MysqlRecommendationRepository::parseFatiguePref('0'), '0 disables fatigue');
+        self::assertNull(MysqlRecommendationRepository::parseFatiguePref('0,99'));
+        self::assertSame(MysqlRecommendationRepository::DEFAULT_FATIGUE, MysqlRecommendationRepository::parseFatiguePref('garbage'), 'garbage falls back to defaults');
+    }
+
+    public function testRecordImpressionUpsertsTheDecisionLog(): void
+    {
+        $write = new FakeMysqliConnection();
+        $repo = new MysqlRecommendationRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $repo->recordImpression(7, 501, 44, 'lp', 'engagement', 1700000000);
+
+        $inserts = $write->statementsContaining('INSERT INTO 202_offer_recommendations');
+        self::assertCount(1, $inserts);
+        self::assertStringContainsString('times_shown = times_shown + 1', $inserts[0]->sql, 'repeat exposure increments the rollup');
+        self::assertSame('iiisssii', $inserts[0]->boundTypes);
+        self::assertSame([7, 501, 44, 'lp', 'engagement', 'default', 1700000000, 1700000000], $inserts[0]->boundValues);
+    }
+
+    public function testFatigueSuppressesRepeatedlyShownOffersAndFallsToRunnerUp(): void
+    {
+        $read = new FakeMysqliConnection();
+        // Decision log: campaign 44 shown 3x, first shown 25 days ago, never
+        // converted — with default fatigue (3 shows / 21 days) it must be
+        // abandoned. No fresh click on 44 (reset query returns nothing).
+        $read->whenQueryContainsReturnRows('FROM 202_offer_recommendations', [
+            ['campaign_id' => 44, 'shown' => 3, 'first_at' => 1700000000 - 25 * 86400, 'last_at' => 1700000000 - 23 * 86400],
+        ]);
+        // The engagement tier would pick 44 again, but it is suppressed, so
+        // the account fallback (campaign 33) is what survives.
+        $read->whenQueryContainsReturnRows('FROM 202_conversion_logs cl', [
+            ['campaign_id' => 33, 'name' => 'Runner Up', 'url' => 'https://example.com/runner'],
+        ]);
+
+        $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
+        $offer = $repo->nextOffer(7, 501, 1700000000);
+
+        self::assertNotNull($offer);
+        self::assertSame(33, $offer['campaign_id'], 'the fatigued offer is skipped for its runner-up');
+        self::assertSame([44], $offer['why']['suppressed_campaigns'] ?? null, 'the skip is explained');
+
+        // Suppression math travels as binds: threshold count + window start.
+        $queries = $read->statementsContaining('FROM 202_offer_recommendations');
+        self::assertSame([7, 501, 3, 1700000000 - 21 * 86400], $queries[0]->boundValues);
+    }
+
+    public function testFreshClickOnTheOfferResetsFatigue(): void
+    {
+        $read = new FakeMysqliConnection();
+        $read->whenQueryContainsReturnRows('FROM 202_offer_recommendations', [
+            ['campaign_id' => 44, 'shown' => 5, 'first_at' => 1700000000 - 40 * 86400, 'last_at' => 1700000000 - 30 * 86400],
+        ]);
+        // The customer clicked into campaign 44 AFTER it was last shown —
+        // the offer is working on them; keep recommending it.
+        $read->whenQueryContainsReturnRows('AS last_click', [
+            ['campaign_id' => 44, 'last_click' => 1700000000 - 86400],
+        ]);
+        $read->whenQueryContainsReturnRows('UNION ALL', [
+            ['campaign_id' => 44, 'name' => 'Browsed Offer', 'url' => 'https://example.com/browsed',
+             'clicks' => 6, 'last_at' => 1700000000 - 86400],
+        ]);
+
+        $repo = new MysqlRecommendationRepository(new Connection(new FakeMysqliConnection(), $read));
+        $offer = $repo->nextOffer(7, 501, 1700000000);
+
+        self::assertNotNull($offer);
+        self::assertSame(44, $offer['campaign_id'], 'fresh engagement lifts the suppression');
+        self::assertFalse(isset($offer['why']['suppressed_campaigns']), 'nothing was suppressed');
+    }
+
     public function testAllowlistAcceptsNextOfferEntryAndPayloadCarriesIt(): void
     {
         $read = new FakeMysqliConnection();

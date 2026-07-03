@@ -39,9 +39,44 @@ final class LtvTables
             self::ltvWebhookDeliveries(),
             self::personalizationTokens(),
             self::offerTransitions(),
+            self::offerRecommendations(),
             self::engagementEvents(),
             self::companies(),
         ];
+    }
+
+    /**
+     * Recommendation decision log: one rollup row per (user, customer,
+     * campaign, surface) recording how often a next-offer suggestion actually
+     * REACHED the customer (personalization seal, API-delivered sends) and
+     * whether they converted on it afterward. This is the substrate every
+     * serving policy reads: the fatigue rule keys on times_shown/first_shown,
+     * and future bandit/MVT policies get their arm aggregates from the same
+     * rows — SUM(times_shown) and COUNT(converted_at) per campaign are the
+     * Beta(alpha, beta) inputs for Thompson sampling; `policy` records which
+     * serving policy made each decision so policies can be compared offline.
+     */
+    public static function offerRecommendations(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::OFFER_RECOMMENDATIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::OFFER_RECOMMENDATIONS . "` (
+                `rec_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `customer_id` bigint(20) unsigned NOT NULL,
+                `campaign_id` mediumint(8) unsigned NOT NULL,
+                `surface` varchar(20) NOT NULL DEFAULT 'lp',
+                `basis` varchar(30) NOT NULL DEFAULT '',
+                `policy` varchar(30) NOT NULL DEFAULT 'default',
+                `times_shown` int(10) unsigned NOT NULL DEFAULT '1',
+                `first_shown_at` int(10) unsigned NOT NULL,
+                `last_shown_at` int(10) unsigned NOT NULL,
+                `converted_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`rec_id`),
+                UNIQUE KEY `uniq_rec` (`user_id`,`customer_id`,`campaign_id`,`surface`),
+                KEY `arm_aggregates` (`user_id`,`campaign_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
     }
 
     /**

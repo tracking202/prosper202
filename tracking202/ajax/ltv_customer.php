@@ -152,12 +152,27 @@ try {
     $engagement = [];
     $engagementEvents = [];
     $nextOffer = null;
+    $nextOfferShown = null;
     $engagementScore = 0;
     if ($customer !== null) {
         $engagementRepo = new \Prosper202\Ltv\MysqlEngagementRepository($conn);
         $engagement = $engagementRepo->customerEngagement($userId, $customerId, 90);
         $engagementEvents = $engagementRepo->customerEvents($userId, $customerId, 90, 25);
         $nextOffer = (new \Prosper202\Ltv\MysqlRecommendationRepository($conn))->nextOffer($userId, $customerId);
+        $nextOfferShown = null;
+        if ($nextOffer !== null) {
+            // Exposure so far, from the recommendation decision log.
+            $shownStmt = $conn->prepareRead(
+                'SELECT SUM(times_shown) AS shown, MIN(first_shown_at) AS first_at
+                 FROM 202_offer_recommendations
+                 WHERE user_id = ? AND customer_id = ? AND campaign_id = ?'
+            );
+            $conn->bind($shownStmt, 'iii', [$userId, $customerId, (int) $nextOffer['campaign_id']]);
+            $shownRow = $conn->fetchOne($shownStmt);
+            if ($shownRow !== null && (int) ($shownRow['shown'] ?? 0) > 0) {
+                $nextOfferShown = ['shown' => (int) $shownRow['shown'], 'first_at' => (int) $shownRow['first_at']];
+            }
+        }
         $engagementScore = \Prosper202\Ltv\MysqlEngagementRepository::engagementScore(
             $engagementRepo->customerEngagementAggregates($userId, $customerId, 90),
             null,
@@ -171,6 +186,7 @@ try {
     $engagement = [];
     $engagementEvents = [];
     $nextOffer = null;
+    $nextOfferShown = null;
     $engagementScore = 0;
 }
 ?>
@@ -523,6 +539,14 @@ $addressParts = array_filter([
                     </small>
                 <?php } else { ?>
                     <small class="text-muted">No purchase or browsing signal for this customer yet &mdash; showing the account's top-converting live campaign of the last <?php echo (int) (is_array($why) ? ($why['window_days'] ?? 180) : 180); ?> days they haven't bought.</small>
+                <?php } ?>
+                <?php if ($nextOfferShown !== null) { ?>
+                    <br><small class="text-muted">Shown to this customer <?php echo (int) $nextOfferShown['shown']; ?> time(s)
+                    since <?php echo $esc(date('M j, Y', $nextOfferShown['first_at'])); ?>.</small>
+                <?php } ?>
+                <?php if (is_array($why) && !empty($why['suppressed_campaigns'])) { ?>
+                    <br><small class="text-muted">Paused after repeated exposure without purchase:
+                    campaign #<?php echo $esc(implode(', #', array_map(strval(...), (array) $why['suppressed_campaigns']))); ?>.</small>
                 <?php } ?>
             </p>
         <?php } ?>

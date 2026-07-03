@@ -353,11 +353,30 @@ final class MysqlPersonalizationRepository
         // suggestion is computed at seal time and frozen into the snapshot
         // like every other field — replays keep showing the same offer.
         if (in_array('rec:next_offer', $fields, true)) {
-            $recommendation = (new MysqlRecommendationRepository($this->conn))->nextOffer($userId, $customerId);
+            $recommendations = new MysqlRecommendationRepository($this->conn);
+            $recommendation = $recommendations->nextOffer($userId, $customerId);
             if ($recommendation !== null && $recommendation['name'] !== '') {
                 $payload['next_offer_name'] = $recommendation['name'];
                 if ($recommendation['url'] !== '') {
                     $payload['next_offer_url'] = $recommendation['url'];
+                }
+
+                // The seal is the moment the offer actually reaches the
+                // customer (one seal per token = one distinct visit), so this
+                // is where the decision log records the impression — the
+                // fatigue rule and future bandit policies learn from it.
+                // Guarded: the public redeem endpoint must never break over
+                // bookkeeping.
+                try {
+                    $recommendations->recordImpression(
+                        $userId,
+                        $customerId,
+                        (int) $recommendation['campaign_id'],
+                        'lp',
+                        (string) ($recommendation['why']['basis'] ?? '')
+                    );
+                } catch (\Throwable $e) {
+                    error_log('LTV recommendation impression log failed: ' . $e->getMessage());
                 }
             }
         }
