@@ -104,6 +104,14 @@ final class MysqlSubscriptionRepository
             $graceDays,
             $now
         ): int {
+            // An upsert may MOVE the subscription to a different customer;
+            // capture the previous owner so their rollups get corrected too.
+            $prevStmt = $this->conn->prepareWrite(
+                'SELECT customer_id FROM 202_subscriptions WHERE user_id = ? AND external_sub_id = ? LIMIT 1'
+            );
+            $this->conn->bind($prevStmt, 'is', [$userId, $externalSubId]);
+            $previous = $this->conn->fetchOne($prevStmt);
+
             $stmt = $this->conn->prepareWrite(
                 "INSERT INTO 202_subscriptions
                     (user_id, customer_id, external_sub_id, plan_name, amount, currency,
@@ -154,6 +162,10 @@ final class MysqlSubscriptionRepository
             }
 
             $this->refreshCustomerSubscriptionRollups($userId, $customerId, $now);
+            if ($previous !== null && (int) $previous['customer_id'] !== $customerId) {
+                // Reassigned: the old owner must not keep the moved MRR.
+                $this->refreshCustomerSubscriptionRollups($userId, (int) $previous['customer_id'], $now);
+            }
 
             return $subscriptionId;
         });

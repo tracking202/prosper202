@@ -51,6 +51,13 @@ try {
         $url = (string) $delivery['webhook_url'];
         $body = (string) $delivery['payload'];
 
+        // Claim before POSTing: overlapping cron runs both read the same
+        // pending set, but only one worker wins this atomic UPDATE — the
+        // other skips, so endpoints never receive a delivery twice.
+        if (!$repo->claimDelivery($deliveryId, time())) {
+            continue;
+        }
+
         if ((string) $delivery['webhook_status'] !== 'active') {
             // Endpoint was disabled/died after this delivery was queued.
             $repo->recordAttempt($deliveryId, $webhookId, false, null, 'endpoint not active');

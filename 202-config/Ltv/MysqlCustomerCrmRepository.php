@@ -210,6 +210,8 @@ final class MysqlCustomerCrmRepository
                 ['202_revenue_events', 'customer_id', true],
                 ['202_conversion_logs', 'customer_id', true],
                 ['202_subscriptions', 'customer_id', true],
+                ['202_engagement_events', 'customer_id', true],
+                ['202_personalization_tokens', 'customer_id', true],
                 ['202_clicks_tracking', 'customer_id', false],
             ] as [$table, $column, $hasUserId]) {
                 $sql = "UPDATE {$table} SET {$column} = ? WHERE {$column} = ?" . ($hasUserId ? ' AND user_id = ?' : '');

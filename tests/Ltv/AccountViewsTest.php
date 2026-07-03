@@ -110,6 +110,22 @@ final class AccountViewsTest extends TestCase
         $repo->scoreWeights(7);
     }
 
+    public function testClaimDeliveryIsAtomicConditionalUpdate(): void
+    {
+        $write = new FakeMysqliConnection();
+        $repo = new MysqlWebhookRepository(new Connection($write, new FakeMysqliConnection()));
+
+        // The fake reports 0 affected rows — the lost-claim case — so the
+        // dispatcher must be told NOT to post this delivery.
+        self::assertFalse($repo->claimDelivery(9, 1700000000));
+
+        $claims = $write->statementsContaining('SET next_attempt_at = ?');
+        self::assertCount(1, $claims);
+        self::assertSame('iii', $claims[0]->boundTypes);
+        self::assertSame([1700000300, 9, 1700000000], $claims[0]->boundValues, 'claim window, delivery, now');
+        self::assertStringContainsString("status = 'pending' AND next_attempt_at <= ?", $claims[0]->sql, 'only due pending rows are claimable');
+    }
+
     public function testWebhookDeliveryLogScopedNewestFirst(): void
     {
         $read = new FakeMysqliConnection();

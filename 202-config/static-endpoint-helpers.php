@@ -158,7 +158,10 @@ if (!function_exists('p202ExtractCustomer')) {
     function p202ExtractCustomer(array $source): array
     {
         $ref = '';
-        foreach (['cust', 'customer_ref', 'customer_id'] as $key) {
+        // Deliberately NOT 'customer_id': on public pixels that name would be
+        // ambiguous with the authenticated API's internal numeric id (which
+        // carries tenant-ownership checks). External references only here.
+        foreach (['cust', 'customer_ref'] as $key) {
             if (array_key_exists($key, $source) && is_scalar($source[$key])) {
                 $value = trim((string) $source[$key]);
                 if ($value !== '') {

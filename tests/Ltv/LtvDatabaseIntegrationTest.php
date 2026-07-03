@@ -297,9 +297,16 @@ final class LtvDatabaseIntegrationTest extends TestCase
         $companyId = (int) $this->scalar("SELECT company_id FROM 202_customers WHERE customer_id=$srcId");
         self::assertGreaterThan(0, $companyId);
 
+        // Engagement history and personalization tokens must follow the merge.
+        self::$db->query("INSERT INTO 202_engagement_events SET user_id=1, customer_id=$srcId, event_name='pricing_viewed', source='api', occurred_at=1700000000, created_at=1700000000");
+        self::$db->query("INSERT INTO 202_personalization_tokens SET token_hash=UNHEX(SHA2('t',256)), user_id=1, customer_id=$srcId, created_at=1700000000, first_use_deadline=1700003600, replay_until=1702592000");
+
         $customers = new MysqlCustomerRepository(self::$conn);
         $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
         $crm->merge(1, $srcId, $dstId);
+
+        self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_engagement_events WHERE customer_id=$dstId"), 'engagement history follows the merge');
+        self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_personalization_tokens WHERE customer_id=$dstId"), 'personalization tokens follow the merge');
 
         // Ledger re-parented, target reconciled from the ledger, source zeroed
         // and detached — so its (now empty) company is deletable.
@@ -313,5 +320,48 @@ final class LtvDatabaseIntegrationTest extends TestCase
 
         (new MysqlCompanyRepository(self::$conn))->delete(1, $companyId);
         self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_companies WHERE company_id=$companyId"));
+    }
+
+    public function testSubscriptionReassignmentReconcilesBothOwners(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+
+        $aId = $crm->upsert(1, ['customer_ref' => 'sub-owner-a']);
+        $bId = $crm->upsert(1, ['customer_ref' => 'sub-owner-b']);
+
+        $subs->upsert(1, ['external_sub_id' => 'SUB-1', 'amount' => 30.0, 'customer_id' => $aId]);
+        self::assertSame(30.0, (float) $this->scalar("SELECT mrr FROM 202_customers WHERE customer_id=$aId"));
+
+        // Reassign the same subscription to customer B: A must not keep the
+        // moved MRR until a maintenance sweep happens by.
+        $subs->upsert(1, ['external_sub_id' => 'SUB-1', 'amount' => 30.0, 'customer_id' => $bId]);
+        $a = $this->row("SELECT mrr, active_subscription_count FROM 202_customers WHERE customer_id=$aId");
+        $b = $this->row("SELECT mrr, active_subscription_count FROM 202_customers WHERE customer_id=$bId");
+        self::assertSame(0.0, (float) $a['mrr'], 'previous owner is reconciled immediately');
+        self::assertSame(0, (int) $a['active_subscription_count']);
+        self::assertSame(30.0, (float) $b['mrr']);
+        self::assertSame(1, (int) $b['active_subscription_count']);
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_subscriptions'), 'still one subscription');
+    }
+
+    public function testWebhookDeliveryClaimPreventsDoubleSend(): void
+    {
+        self::$db->query('TRUNCATE TABLE 202_ltv_webhooks');
+        self::$db->query('TRUNCATE TABLE 202_ltv_webhook_deliveries');
+        self::$db->query("INSERT INTO 202_ltv_webhook_deliveries
+            SET webhook_id=1, user_id=1, event_name='revenue.recorded', payload='{}',
+                status='pending', attempts=0, next_attempt_at=1700000000, created_at=1700000000, updated_at=1700000000");
+        $deliveryId = (int) $this->scalar('SELECT delivery_id FROM 202_ltv_webhook_deliveries LIMIT 1');
+
+        $repo = new \Prosper202\Ltv\MysqlWebhookRepository(self::$conn);
+
+        // First worker wins the claim; an overlapping worker must lose it.
+        self::assertTrue($repo->claimDelivery($deliveryId, 1700000100));
+        self::assertFalse($repo->claimDelivery($deliveryId, 1700000100), 'second claim within the window must lose');
+
+        // After the claim window lapses (crashed worker), it is claimable again.
+        self::assertTrue($repo->claimDelivery($deliveryId, 1700000100 + 301));
     }
 }

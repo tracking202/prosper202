@@ -221,6 +221,26 @@ final class MysqlWebhookRepository
     }
 
     /**
+     * Dispatch-side: atomically claim ONE due delivery before posting it.
+     * The single-row conditional UPDATE (bump next_attempt_at past now) is
+     * the arbiter under overlapping cron runs: exactly one worker's UPDATE
+     * matches, so a delivery can never be POSTed twice. A worker that
+     * crashes mid-delivery leaves the row pending and it retries after the
+     * claim window lapses.
+     */
+    public function claimDelivery(int $deliveryId, int $now, int $claimSeconds = 300): bool
+    {
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_ltv_webhook_deliveries
+             SET next_attempt_at = ?
+             WHERE delivery_id = ? AND status = 'pending' AND next_attempt_at <= ?"
+        );
+        $this->conn->bind($stmt, 'iii', [$now + $claimSeconds, $deliveryId, $now]);
+
+        return $this->conn->executeUpdate($stmt) === 1;
+    }
+
+    /**
      * Dispatch-side: claim due pending deliveries (joined to their endpoint).
      *
      * @return list<array<string, mixed>>

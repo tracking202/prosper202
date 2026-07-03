@@ -46,8 +46,11 @@ if ($token === '') {
 // personalization down, and the tokens themselves are unguessable.
 try {
     $stateStore = new \Api\V3\Support\ServerStateStore();
-    $ip = (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
-    $ip = trim(explode(',', $ip)[0]);
+    // Key on the IP connect2.php already validated/normalized (it handles
+    // proxy headers and privacy masking) — never raw spoofable headers.
+    $ip = isset($ip_address) && is_object($ip_address) && isset($ip_address->address) && (string) $ip_address->address !== ''
+        ? (string) $ip_address->address
+        : (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
     $rate = $stateStore->consumeRateLimit('p13n:' . $ip, 60, 60);
     if (!$rate['allowed']) {
         $emptyResponse();
