@@ -39,6 +39,27 @@ final class PersonalizationTest extends TestCase
         self::assertContains(1700000000 + 2592000, $inserts[0]->boundValues);
     }
 
+    public function testEngagementStampingRunsWhenPersonalizationIsOff(): void
+    {
+        require_once __DIR__ . '/../../202-config/static-endpoint-helpers.php';
+
+        $fake = new FakeMysqliConnection();
+        // The beacon carries an explicit cust ref that resolves to customer 501.
+        $fake->whenQueryContainsReturnRows('FROM 202_customer_aliases', [['customer_id' => 501]]);
+        $fake->whenQueryContainsReturnRows('merged_into_customer_id', [['merged_into_customer_id' => null]]);
+        // No personalization-fields pref row: the allowlist is empty, so the
+        // account has personalization OFF — but that must only suppress the
+        // token, not the ABM stamping.
+
+        $js = p202MintPersonalizationCookieJs($fake, 7, ['cust' => 'stamp-1'], 999);
+
+        self::assertSame('', $js, 'no token cookie when personalization is off');
+        $stamps = $fake->statementsContaining('INSERT INTO 202_clicks_tracking');
+        self::assertCount(1, $stamps, 'the pageview click must still be stamped for engagement/ABM');
+        self::assertSame([999, 501], $stamps[0]->boundValues);
+        self::assertCount(1, $fake->statementsContaining('last_activity_time = GREATEST'), 'activity recency must still update');
+    }
+
     public function testRedeemRejectsMalformedTokensWithoutTouchingTheDatabase(): void
     {
         $write = new FakeMysqliConnection();

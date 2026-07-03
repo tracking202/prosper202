@@ -676,6 +676,29 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'), 'a replay must not mint identity');
     }
 
+    public function testAliasTypesNormalizeOnEveryResolutionPath(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+
+        // Case variants of an allowlisted type converge on one customer and
+        // one canonical stored type — a literal 'Merchant_ID' row would be
+        // unreachable by conversion and personalization lookups.
+        $a = $customers->resolveOrCreateByAlias(1, 'Merchant_ID', 'norm-1', [], null, 1700000000);
+        $b = $customers->resolveOrCreateByAlias(1, 'merchant_id', 'norm-1', [], null, 1700000000);
+        self::assertSame($a, $b, 'case variants must resolve to the same customer');
+        self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_customer_aliases WHERE alias_value = 'norm-1'"));
+        self::assertSame('merchant_id', (string) $this->scalar("SELECT alias_type FROM 202_customer_aliases WHERE alias_value = 'norm-1'"));
+
+        // Unsupported types are rejected before any identity is minted.
+        try {
+            $customers->resolveOrCreateByAlias(1, 'nonsense', 'norm-2', [], null, 1700000000);
+            self::fail('unsupported alias type must be rejected');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('customer_ref_type', $e->getMessage());
+        }
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customers WHERE primary_ref = 'norm-2'"), 'a rejected type must not mint identity');
+    }
+
     public function testCacSegmentsSearchAndCohortsEndToEnd(): void
     {
         self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id=7, user_id=1,

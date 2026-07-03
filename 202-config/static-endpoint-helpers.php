@@ -250,9 +250,6 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
         try {
             $conn = new \Prosper202\Database\Connection($db);
             $repo = new \Prosper202\Ltv\MysqlPersonalizationRepository($conn);
-            if ($repo->allowedFields($userId) === []) {
-                return '';
-            }
 
             // The beacon request hits the tracking domain, so the request
             // cookies are the tracker's own: the prior click's subid.
@@ -276,6 +273,12 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
                 $now = time();
                 $conn->bind($touch, 'iiii', [$now, $now, $engagementCustomerId, $userId]);
                 $conn->executeUpdate($touch);
+            }
+
+            // An empty allowlist only turns PERSONALIZATION off — the ABM
+            // stamping above must still run, so this gate sits between them.
+            if ($repo->allowedFields($userId) === []) {
+                return '';
             }
 
             // The LP tells us via the beacon whether it already holds a token

@@ -53,8 +53,7 @@ final class MysqlCustomerRepository
     ): ?int {
         // 1. Explicit ref supplied on the pixel/postback/API call.
         if ($customerRef !== null && $customerRef !== '') {
-            $type = $this->normalizeAliasType($customerRefType);
-            return $this->resolveOrCreateByAlias($userId, $type, $customerRef, $crm, $clickId, $now);
+            return $this->resolveOrCreateByAlias($userId, (string) $customerRefType, $customerRef, $crm, $clickId, $now);
         }
 
         // 2. Cached customer on the click (a prior conversion on this subid
@@ -103,6 +102,10 @@ final class MysqlCustomerRepository
         if (strlen($aliasValue) > 255) {
             throw new RuntimeException('Customer reference exceeds 255 characters');
         }
+        // Every resolution path funnels through here, so the allowlist is
+        // enforced once for all of them: a type stored as 'Merchant_ID' would
+        // never match conversion/personalization lookups again.
+        $aliasType = $this->normalizeAliasType($aliasType);
         $aliasHash = hash('sha256', $aliasValue, true);
 
         $existing = $this->aliasCustomerId($userId, $aliasType, $aliasHash);
