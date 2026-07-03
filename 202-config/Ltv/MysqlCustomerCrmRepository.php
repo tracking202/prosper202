@@ -136,41 +136,47 @@ final class MysqlCustomerCrmRepository
     public function upsert(int $userId, array $payload): int
     {
         $now = time();
-        $customerId = $this->resolveTarget($userId, $payload, $now);
 
-        $this->applyCrmFields($userId, $customerId, $payload, $now);
-        $this->syncCompanyLink($userId, $customerId, $payload, $now);
+        // ONE transaction end to end: a payload rejected part-way through —
+        // invalid email, unknown custom field, alias conflict — must roll a
+        // freshly created customer/alias back with it instead of leaving a
+        // committed partial record. Connection::transaction does not nest,
+        // so every step below runs in in-transaction mode.
+        return $this->conn->transaction(function () use ($userId, $payload, $now): int {
+            $customerId = $this->resolveTarget($userId, $payload, $now, true);
 
-        if (isset($payload['aliases'])) {
-            if (!is_array($payload['aliases'])) {
-                throw new RuntimeException('aliases must be an array of {type, value}');
-            }
-            foreach ($payload['aliases'] as $alias) {
-                if (!is_array($alias) || trim((string) ($alias['value'] ?? '')) === '') {
-                    throw new RuntimeException('Each alias requires a non-empty value');
+            $this->applyCrmFields($userId, $customerId, $payload, $now);
+            $this->syncCompanyLink($userId, $customerId, $payload, $now);
+
+            if (isset($payload['aliases'])) {
+                if (!is_array($payload['aliases'])) {
+                    throw new RuntimeException('aliases must be an array of {type, value}');
                 }
-                $owner = $this->conn->transaction(
-                    fn (): int => $this->customers->addAlias(
+                foreach ($payload['aliases'] as $alias) {
+                    if (!is_array($alias) || trim((string) ($alias['value'] ?? '')) === '') {
+                        throw new RuntimeException('Each alias requires a non-empty value');
+                    }
+                    $owner = $this->customers->addAlias(
                         $userId,
                         $customerId,
                         (string) ($alias['type'] ?? 'custom'),
                         (string) $alias['value'],
                         $now
-                    )
-                );
-                if ($owner !== $customerId) {
-                    // First-writer-wins: surfacing beats silent re-pointing.
-                    throw new RuntimeException(
-                        'Alias "' . $alias['value'] . '" already belongs to customer ' . $owner
-                        . '; use POST /ltv/customers/' . $customerId . '/merge to combine records'
                     );
+                    if ($owner !== $customerId) {
+                        // First-writer-wins: surfacing beats silent re-pointing.
+                        throw new RuntimeException(
+                            'Alias "' . $alias['value'] . '" already belongs to customer ' . $owner
+                            . '; use POST /ltv/customers/' . $customerId . '/merge to combine records'
+                        );
+                    }
                 }
             }
-        }
 
-        $this->applyCustomFields($userId, $customerId, $payload);
+            $this->applyCustomFields($userId, $customerId, $payload);
 
-        return $customerId;
+            return $customerId;
+        });
     }
 
     /**
@@ -401,7 +407,7 @@ final class MysqlCustomerCrmRepository
     /**
      * @param array<string, mixed> $payload
      */
-    private function resolveTarget(int $userId, array $payload, int $now): int
+    private function resolveTarget(int $userId, array $payload, int $now, bool $inTransaction = false): int
     {
         $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
         if ($explicitId > 0) {
@@ -423,10 +429,15 @@ final class MysqlCustomerCrmRepository
             }
         }
 
+        // stampCompany: false — upsert() runs syncCompanyLink right after,
+        // which performs the same attachment once.
+        $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now, false);
+        if ($inTransaction) {
+            return $resolve();
+        }
+
         return $this->conn->transaction(
-            // stampCompany: false — upsert() runs syncCompanyLink right
-            // after, which performs the same attachment once.
-            fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now, false)
+            $resolve
         );
     }
 

@@ -765,6 +765,36 @@ CHILD;
         self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_revenue_events WHERE idempotency_key = 'RACE-1'"));
     }
 
+    public function testRejectedCustomerUpsertRollsBackFreshIdentity(): void
+    {
+        $crm = new MysqlCustomerCrmRepository(self::$conn, new MysqlCustomerRepository(self::$conn), new MysqlCustomerFieldRepository(self::$conn));
+
+        // An invalid email is validated AFTER identity resolution — the
+        // freshly created customer/alias must roll back with the rejection.
+        try {
+            $crm->upsert(1, ['customer_ref' => 'atomic-1', 'email' => 'not-an-email']);
+            self::fail('invalid email must be rejected');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('email', $e->getMessage());
+        }
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customers WHERE primary_ref = 'atomic-1'"), 'rejected upsert must not leave a partial customer');
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customer_aliases WHERE alias_value = 'atomic-1'"));
+
+        // Same for an unknown custom field, which is processed last.
+        try {
+            $crm->upsert(1, ['customer_ref' => 'atomic-2', 'custom_fields' => ['no_such_field' => 1]]);
+            self::fail('unknown custom field must be rejected');
+        } catch (\RuntimeException) {
+            $this->addToAssertionCount(1);
+        }
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customers WHERE primary_ref = 'atomic-2'"));
+
+        // The same ref then succeeds cleanly on a valid payload.
+        $id = $crm->upsert(1, ['customer_ref' => 'atomic-1', 'email' => 'jane@example.com']);
+        self::assertGreaterThan(0, $id);
+        self::assertSame('jane@example.com', (string) $this->scalar("SELECT email FROM 202_customers WHERE customer_id = $id"));
+    }
+
     public function testAliasTypesNormalizeOnEveryResolutionPath(): void
     {
         $customers = new MysqlCustomerRepository(self::$conn);
