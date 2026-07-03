@@ -1367,12 +1367,15 @@ function loadContent(page, offset, order){
 // POST a payload and swap the response into #m-content. Unlike bare
 // $.post().done() copies, a failed request restores the panel and tells the
 // user instead of leaving the page dimmed with no feedback.
-function loadContentPost(page, payload) {
+function loadContentPost(page, payload, done) {
 	var element = $('#m-content');
 	$.post(page, payload || {})
 		.done(function(data) {
 			element.html(data);
 			element.css('opacity', '1');
+			// After the partial is in the DOM — scroll restoration needs the
+			// page to have its real height before an offset can be applied.
+			if (done) { done(); }
 		})
 		.fail(function(xhr) {
 			element.css('opacity', '1');
@@ -1410,9 +1413,20 @@ function ltvIsLtvPage() {
 	return window.location.pathname === a.pathname;
 }
 
-function ltvRender(view, params) {
+function ltvRender(view, params, done) {
 	var partial = ltvViewPartials[view] || ltvViewPartials.report;
-	loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/' + partial + '.php', params || {});
+	loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/' + partial + '.php', params || {}, done);
+}
+
+// Record how far down the CURRENT view is scrolled on its own history
+// entry, so Back/Forward can put the user right where they left it. The
+// partials swap in async, which is why the browser's native restoration
+// can't do this (the page has no height yet when it would fire).
+function ltvStampScroll() {
+	if (!(window.history && window.history.replaceState)) { return; }
+	var state = window.history.state || {};
+	state.ltvScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
+	window.history.replaceState(state, '', window.location.href);
 }
 
 function ltvUrl(view, params) {
@@ -1438,7 +1452,13 @@ function ltvNav(view, params, replace) {
 		window.location.href = ltvUrl(view, params);
 		return;
 	}
-	ltvRender(view, params);
+	// Stamp the departing entry's scroll offset before it becomes the Back
+	// target; switching to a DIFFERENT section starts at the top, while
+	// same-view updates (pagination, search, sorting) keep the position.
+	ltvStampScroll();
+	var previousView = (window.history && window.history.state && window.history.state.ltvView) || null;
+	var scrollTop = previousView !== null && previousView !== view;
+	ltvRender(view, params, scrollTop ? function() { window.scrollTo(0, 0); } : null);
 	if (window.history && window.history.pushState) {
 		var url = ltvUrl(view, params);
 		// Re-clicking the current view refreshes it without stacking a
@@ -1480,13 +1500,35 @@ function ltvViewFromLocation() {
 
 window.addEventListener('popstate', function(event) {
 	if (!ltvIsLtvPage()) { return; }
+	// Re-apply the offset stamped on the entry once its partial has
+	// rendered; entries never scrolled (or predating the router) start at
+	// the top.
+	var scrollY = (event.state && typeof event.state.ltvScroll === 'number') ? event.state.ltvScroll : 0;
+	var restore = function() { window.scrollTo(0, scrollY); };
 	if (event.state && event.state.ltvView) {
-		ltvRender(event.state.ltvView, event.state.ltvParams || {});
+		ltvRender(event.state.ltvView, event.state.ltvParams || {}, restore);
 	} else {
 		var target = ltvViewFromLocation();
-		ltvRender(target.view, target.params);
+		ltvRender(target.view, target.params, restore);
 	}
 });
+
+// Keep each entry's stamp current while the user scrolls (debounced —
+// replaceState is rate-limited in some browsers), so Back returns to the
+// LATEST position even after a Back/Forward round trip re-entered the view.
+var ltvScrollStampTimer = null;
+window.addEventListener('scroll', function() {
+	if (!ltvIsLtvPage()) { return; }
+	if (ltvScrollStampTimer) { clearTimeout(ltvScrollStampTimer); }
+	ltvScrollStampTimer = setTimeout(ltvStampScroll, 150);
+});
+
+// The LTV page owns its scroll restoration (content arrives async); the
+// browser's native attempt would fire before the partial exists and pin
+// the page to the top.
+if (window.history && 'scrollRestoration' in window.history && ltvIsLtvPage()) {
+	window.history.scrollRestoration = 'manual';
+}
 
 function createCookie(name,value,days) {
 	if (days) {
