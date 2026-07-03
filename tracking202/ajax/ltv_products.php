@@ -131,10 +131,14 @@ try {
                 COALESCE(li.units, 0) AS units
          FROM 202_products p
          LEFT JOIN (
-            SELECT product_id, SUM(amount) AS revenue, COUNT(DISTINCT event_id) AS orders, SUM(quantity) AS units
-            FROM 202_revenue_line_items
-            WHERE user_id = ? AND product_id IS NOT NULL
-            GROUP BY product_id
+            SELECT li.product_id, SUM(li.amount) AS revenue,
+                   COUNT(DISTINCT CASE WHEN re.event_type IN (\'purchase\',\'renewal\',\'one_time\')
+                                       THEN li.event_id END) AS orders,
+                   SUM(li.quantity) AS units
+            FROM 202_revenue_line_items li
+            INNER JOIN 202_revenue_events re ON re.event_id = li.event_id
+            WHERE li.user_id = ? AND li.product_id IS NOT NULL
+            GROUP BY li.product_id
          ) li ON li.product_id = p.product_id
          WHERE p.user_id = ?
          ORDER BY revenue DESC, p.product_id ASC

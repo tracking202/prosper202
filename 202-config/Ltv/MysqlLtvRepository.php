@@ -223,9 +223,10 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
 
     public function predict(LtvQuery $query, ?string $breakdownType = null): array
     {
+        $accountMrr = $this->mrr($query->userId);
         $account = $this->predictFromAggregates(
             $this->summary($query),
-            $this->mrr($query->userId),
+            $accountMrr,
             'account'
         );
 
@@ -237,11 +238,16 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         foreach ($this->breakdown($query, $breakdownType, 100, 0) as $row) {
             $customers = (int) ($row['customers'] ?? 0);
             if ($customers >= self::MIN_COHORT_SIZE) {
-                // Cohort MRR churn is not tracked per dimension; the cohort
-                // projection uses cohort AOV/repeat-rate with account churn.
+                // Cohort projection: the COHORT's own MRR (a campaign with no
+                // subscribers must not display the account-wide subscriber
+                // pool) combined with account churn — per-dimension churn is
+                // not tracked.
                 $prediction = $this->predictFromAggregates(
                     $row,
-                    $this->mrr($query->userId),
+                    [
+                        'mrr' => (float) ($row['mrr'] ?? 0),
+                        'monthly_churn_rate' => (float) ($accountMrr['monthly_churn_rate'] ?? 0),
+                    ],
                     'cohort'
                 );
             } else {

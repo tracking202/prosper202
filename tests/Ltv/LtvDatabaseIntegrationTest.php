@@ -603,4 +603,30 @@ final class LtvDatabaseIntegrationTest extends TestCase
             $this->addToAssertionCount(1);
         }
     }
+
+    public function testConversionApiMapsLtvValidationErrorsToClientCodes(): void
+    {
+        $this->insertClick(6000);
+        self::$db->query("INSERT INTO 202_clicks_tracking SET click_id=6000, c1_id=0, c2_id=0, c3_id=0, c4_id=0");
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+
+        // Client-correctable payloads get 422/404, not 500.
+        try {
+            $controller->create(['click_id' => 6000, 'transaction_id' => 'T-BADTYPE',
+                'customer_ref' => 'x-1', 'customer_ref_type' => 'nonsense']);
+            self::fail('unknown customer_ref_type must be a validation error');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            self::assertStringContainsString('customer_ref_type', $e->getMessage());
+        }
+
+        try {
+            $controller->create(['click_id' => 6000, 'transaction_id' => 'T-FOREIGN', 'customer_id' => 999999]);
+            self::fail('a foreign customer_id must be a 404');
+        } catch (\Api\V3\Exception\NotFoundException) {
+            $this->addToAssertionCount(1);
+        }
+
+        // Neither rejected attempt may leave a conversion behind.
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_conversion_logs'));
+    }
 }

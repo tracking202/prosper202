@@ -151,6 +151,18 @@ class ConversionsController
             $convId = $repo->create($this->userId, $data);
         } catch (\Prosper202\Conversion\ClickNotFoundException $e) {
             throw new NotFoundException('Click not found or not owned by user');
+        } catch (\mysqli_sql_exception $e) {
+            // A real database failure is a 500 even though it extends
+            // RuntimeException — only repository validation maps to 422 below.
+            throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
+        } catch (\RuntimeException $e) {
+            // Validation-shaped repository errors (unknown customer_ref_type,
+            // malformed line items, foreign customer_id) are client-
+            // correctable — 422/404 like the sibling /ltv endpoints, not 500.
+            if (str_contains($e->getMessage(), 'not found for this account')) {
+                throw new NotFoundException($e->getMessage());
+            }
+            throw new ValidationException($e->getMessage());
         } catch (\Throwable $e) {
             // Preserve the underlying failure for server-side logs via getPrevious().
             throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
