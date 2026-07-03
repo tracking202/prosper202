@@ -88,7 +88,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
             '202_conversion_logs', '202_clicks', '202_clicks_spy', '202_clicks_tracking',
             '202_customers', '202_customer_aliases', '202_customer_fields', '202_customer_field_values',
             '202_revenue_events', '202_revenue_line_items', '202_products', '202_subscriptions',
-            '202_companies', '202_personalization_tokens',
+            '202_companies', '202_personalization_tokens', '202_engagement_events',
         ] as $table) {
             self::$db->query('TRUNCATE TABLE ' . $table);
         }

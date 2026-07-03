@@ -110,6 +110,35 @@ final class AccountViewsTest extends TestCase
         $repo->scoreWeights(7);
     }
 
+    public function testNegativeAmountsRejectedForOrderEvents(): void
+    {
+        foreach (['purchase', 'renewal', 'one_time'] as $orderType) {
+            try {
+                MysqlCustomerRepository::assertAmountSignMatchesType($orderType, -5.0);
+                self::fail("negative {$orderType} must be rejected");
+            } catch (\RuntimeException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+        // Negative money is legitimate for the correction types; positive
+        // order amounts and zero pass untouched.
+        MysqlCustomerRepository::assertAmountSignMatchesType('refund', -5.0);
+        MysqlCustomerRepository::assertAmountSignMatchesType('adjustment', -5.0);
+        MysqlCustomerRepository::assertAmountSignMatchesType('purchase', 10.0);
+        MysqlCustomerRepository::assertAmountSignMatchesType('purchase', 0.0);
+        $this->addToAssertionCount(4);
+    }
+
+    public function testWebhookGuardReturnsValidatedIpsForPinning(): void
+    {
+        // IP-literal host: no DNS involved, the guard must hand back the
+        // validated address so the dispatcher can pin its connection to it.
+        self::assertSame(['8.8.8.8'], MysqlWebhookRepository::assertUrlAllowed('https://8.8.8.8/hook'));
+
+        $this->expectException(\RuntimeException::class);
+        MysqlWebhookRepository::assertUrlAllowed('https://127.0.0.1/hook');
+    }
+
     public function testClaimDeliveryIsAtomicConditionalUpdate(): void
     {
         $write = new FakeMysqliConnection();

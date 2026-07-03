@@ -193,6 +193,22 @@ final class MysqlCustomerRepository
     }
 
     /**
+     * Reject a negative amount on an order-type event: applyEventToRollups
+     * counts purchases/renewals/one_time as orders, so a signed refund sent
+     * under the wrong event type would inflate order_count while draining
+     * revenue. Negative money must arrive as refund/chargeback/adjustment.
+     */
+    public static function assertAmountSignMatchesType(string $eventType, float $amount): void
+    {
+        if ($amount < 0 && in_array($eventType, ['purchase', 'renewal', 'one_time'], true)) {
+            throw new RuntimeException(
+                'amount must not be negative for ' . $eventType
+                . ' events; use refund, chargeback or adjustment for negative money'
+            );
+        }
+    }
+
+    /**
      * Insert a revenue ledger event. Returns [event_id, inserted]; on an
      * idempotent replay (same conv_id, or same user+idempotency_key) the
      * existing event's id is returned with inserted = false and NOTHING else

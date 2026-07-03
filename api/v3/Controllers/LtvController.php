@@ -353,6 +353,10 @@ class LtvController
             if (in_array($eventType, ['refund', 'chargeback'], true) && $amount > 0) {
                 $amount = -$amount; // refunds are stored negative
             }
+            // A negative purchase/one_time would inflate order_count while
+            // draining revenue — negative money must be a refund/chargeback/
+            // adjustment.
+            MysqlCustomerRepository::assertAmountSignMatchesType($eventType, $amount);
 
             $accountCurrency = $this->customers->accountCurrency($this->userId);
             $currency = strtoupper(trim((string) ($payload['currency'] ?? $accountCurrency)));

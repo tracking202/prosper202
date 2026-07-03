@@ -66,12 +66,28 @@ try {
         }
 
         try {
-            MysqlWebhookRepository::assertUrlAllowed($url);
+            $validatedIps = MysqlWebhookRepository::assertUrlAllowed($url);
         } catch (Throwable $guard) {
             $repo->recordAttempt($deliveryId, $webhookId, false, null, 'blocked: ' . $guard->getMessage());
             $failed++;
             continue;
         }
+
+        // Pin the connection to an address the guard just validated —
+        // otherwise curl re-resolves and a DNS-rebinding host could hand it
+        // a private IP the check never saw. Prefer IPv4; TLS host
+        // verification still runs against the hostname's certificate.
+        $pinnedIp = null;
+        foreach ($validatedIps as $candidateIp) {
+            if (filter_var($candidateIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+                $pinnedIp = $candidateIp;
+                break;
+            }
+        }
+        $pinnedIp = $pinnedIp ?? $validatedIps[0];
+        $urlParts = parse_url($url);
+        $pinHost = (string) ($urlParts['host'] ?? '');
+        $pinPort = (int) ($urlParts['port'] ?? 443);
 
         $signature = MysqlWebhookRepository::signature($body, (string) $delivery['webhook_secret']);
 
@@ -99,6 +115,7 @@ try {
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_RESOLVE => [$pinHost . ':' . $pinPort . ':' . $pinnedIp],
         ]);
 
         $responseBody = curl_exec($ch);

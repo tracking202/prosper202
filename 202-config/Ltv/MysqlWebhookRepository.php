@@ -31,9 +31,15 @@ final class MysqlWebhookRepository
      * change between the two): https only, resolvable host, and no
      * private/loopback/link-local/reserved addresses.
      *
+     * Returns the VALIDATED addresses so the dispatcher can pin its
+     * connection to one of them (CURLOPT_RESOLVE) — without pinning, a
+     * DNS-rebinding host could answer the guard with a public IP and give
+     * curl's second lookup a private one.
+     *
+     * @return list<string> the validated IPs for the URL's host
      * @throws RuntimeException with the reason when the URL is not allowed
      */
-    public static function assertUrlAllowed(string $url): void
+    public static function assertUrlAllowed(string $url): array
     {
         $parts = parse_url($url);
         if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || empty($parts['host'])) {
@@ -68,6 +74,8 @@ final class MysqlWebhookRepository
                 throw new RuntimeException('webhook_url resolves to a private or reserved address');
             }
         }
+
+        return array_values($ips);
     }
 
     /**
