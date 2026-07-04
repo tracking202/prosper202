@@ -435,7 +435,8 @@ final class MysqlSubscriptionRepository
         $sql = 'SELECT s.subscription_id, s.external_sub_id, s.plan_name, s.amount, s.currency,
                        s.billing_interval, s.billing_interval_count, s.status, s.mrr,
                        s.started_at, s.current_period_end, s.canceled_at,
-                       s.customer_id, c.first_name, c.last_name, c.email, c.company
+                       s.customer_id, c.first_name, c.last_name, c.email, c.company,
+                       c.total_revenue AS customer_ltv
                 FROM 202_subscriptions s
                 LEFT JOIN 202_customers c ON c.customer_id = s.customer_id AND c.user_id = s.user_id
                 WHERE s.user_id = ?' . $statusWhere . '

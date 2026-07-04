@@ -42,6 +42,7 @@ final class AccountViewsTest extends TestCase
         self::assertCount(1, $queries);
         self::assertSame('iii', $queries[0]->boundTypes, 'no status filter: user, limit, offset');
         self::assertContains(7, $queries[0]->boundValues);
+        self::assertStringContainsString('c.total_revenue AS customer_ltv', $queries[0]->sql, 'each row carries the owning customer\'s lifetime value');
     }
 
     public function testSubscriptionListStatusFilterValidatedAndBound(): void

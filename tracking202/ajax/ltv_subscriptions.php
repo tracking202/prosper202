@@ -105,6 +105,7 @@ try {
                 <tr>
                     <th>Plan</th>
                     <th>Customer</th>
+                    <th title="The customer's lifetime revenue across ALL purchases and subscriptions, net of refunds">Customer LTV</th>
                     <th>Status</th>
                     <th>Amount</th>
                     <th>MRR</th>
@@ -115,7 +116,7 @@ try {
             </thead>
             <tbody>
                 <?php if ($list['rows'] === []) { ?>
-                    <tr><td colspan="8"><em>No subscriptions<?php echo $status !== '' ? ' with this status' : ' recorded yet — push them via POST /api/v3/ltv/subscriptions'; ?>.</em></td></tr>
+                    <tr><td colspan="9"><em>No subscriptions<?php echo $status !== '' ? ' with this status' : ' recorded yet — push them via POST /api/v3/ltv/subscriptions'; ?>.</em></td></tr>
                 <?php } ?>
                 <?php foreach ($list['rows'] as $sub) {
                     $customerName = trim(((string) ($sub['first_name'] ?? '')) . ' ' . ((string) ($sub['last_name'] ?? '')));
@@ -136,6 +137,7 @@ try {
                                 <small class="text-muted">(<?php echo $esc($sub['company']); ?>)</small>
                             <?php } ?>
                         </td>
+                        <td><strong>$<?php echo $money($sub['customer_ltv'] ?? 0); ?></strong></td>
                         <td class="<?php echo $subStatus === 'past_due' ? 'text-danger' : ($subStatus === 'active' ? 'text-success' : ''); ?>">
                             <?php echo $esc($subStatus); ?></td>
                         <td>$<?php echo $money($sub['amount'] ?? 0); ?> /
