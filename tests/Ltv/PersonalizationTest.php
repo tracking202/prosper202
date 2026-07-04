@@ -112,21 +112,127 @@ final class PersonalizationTest extends TestCase
     public function testSealedTokenReplaysSnapshotVerbatimNeverFreshData(): void
     {
         $write = new FakeMysqliConnection();
+        $read = new FakeMysqliConnection();
         $write->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [[
             'p13n_id' => 1, 'user_id' => 7, 'customer_id' => 501,
             'first_use_deadline' => 1700003600, 'replay_until' => 1702592000,
             'redeemed_at' => 1700000100,
             'snapshot' => '{"first_name":"John"}',
         ]]);
+        // The current allowlist still permits the sealed field.
+        $read->whenQueryContainsReturnRows('user_ltv_personalization_fields', [[
+            'user_ltv_personalization_fields' => 'first_name',
+        ]]);
         // Even though the customer's CRM row now says something different...
         $write->whenQueryContainsReturnRows('FROM 202_customers', [['first_name' => 'CHANGED']]);
 
-        $repo = new MysqlPersonalizationRepository(new Connection($write, new FakeMysqliConnection()));
+        $repo = new MysqlPersonalizationRepository(new Connection($write, $read));
         $payload = $repo->redeem(str_repeat('a', 43), 1700100000);
 
         // ...the sealed snapshot wins: nothing new ever comes out of a token.
         self::assertSame(['first_name' => 'John'], $payload);
         self::assertCount(0, $write->statementsContaining('FROM 202_customers'), 'replay must not read live customer data');
+    }
+
+    public function testReplayRespectsTheCurrentAllowlist(): void
+    {
+        $tokenRow = [
+            'p13n_id' => 1, 'user_id' => 7, 'customer_id' => 501,
+            'first_use_deadline' => 1700003600, 'replay_until' => 1702592000,
+            'redeemed_at' => 1700000100,
+            'snapshot' => '{"first_name":"John","city":"Austin"}',
+        ];
+
+        // Field removed from the allowlist: the sealed value stops serving.
+        $write = new FakeMysqliConnection();
+        $read = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [$tokenRow]);
+        $read->whenQueryContainsReturnRows('user_ltv_personalization_fields', [[
+            'user_ltv_personalization_fields' => 'city',
+        ]]);
+        $repo = new MysqlPersonalizationRepository(new Connection($write, $read));
+        self::assertSame(['city' => 'Austin'], $repo->redeem(str_repeat('a', 43), 1700100000), 'revoked fields are filtered out of replays');
+
+        // Allowlist cleared entirely (personalization off): replays go dark.
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [$tokenRow]);
+        $repo = new MysqlPersonalizationRepository(new Connection($write, new FakeMysqliConnection()));
+        self::assertSame([], $repo->redeem(str_repeat('a', 43), 1700100000), 'turning personalization off revokes sealed snapshots immediately');
+    }
+
+    public function testTokenIsUsableStates(): void
+    {
+        $case = static function (?array $row): MysqlPersonalizationRepository {
+            $read = new FakeMysqliConnection();
+            if ($row !== null) {
+                $read->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [$row]);
+            }
+            return new MysqlPersonalizationRepository(new Connection(new FakeMysqliConnection(), $read));
+        };
+        $token = str_repeat('a', 43);
+
+        self::assertTrue($case(['first_use_deadline' => 1700003600, 'replay_until' => 1702592000, 'redeemed_at' => null])
+            ->tokenIsUsable($token, 1700000100), 'unredeemed inside the first-use window');
+        self::assertFalse($case(['first_use_deadline' => 1700003600, 'replay_until' => 1702592000, 'redeemed_at' => null])
+            ->tokenIsUsable($token, 1700010000), 'expired before first use = dead');
+        self::assertTrue($case(['first_use_deadline' => 1700003600, 'replay_until' => 1702592000, 'redeemed_at' => 1700000100])
+            ->tokenIsUsable($token, 1701000000), 'sealed inside the replay window');
+        self::assertFalse($case(['first_use_deadline' => 1700003600, 'replay_until' => 1702592000, 'redeemed_at' => 1700000100])
+            ->tokenIsUsable($token, 1703000000), 'past replay_until = dead');
+        self::assertFalse($case(null)->tokenIsUsable($token, 1700000100), 'unknown token = dead');
+        self::assertFalse($case(null)->tokenIsUsable('not a token', 1700000100), 'malformed = dead without a lookup');
+    }
+
+    public function testDeadPageTokenDoesNotBlockReminting(): void
+    {
+        require_once __DIR__ . '/../../202-config/static-endpoint-helpers.php';
+
+        $fake = new FakeMysqliConnection();
+        // The LP reports a token that expired before first use — dead.
+        $fake->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [[
+            'first_use_deadline' => 1000, 'replay_until' => 2592000, 'redeemed_at' => null,
+        ]]);
+        // The visitor is recognized via the subid cookie's stamped click.
+        $fake->whenQueryContainsReturnRows('FROM 202_clicks_tracking ct', [['customer_id' => 501]]);
+        $fake->whenQueryContainsReturnRows('user_ltv_personalization_fields', [[
+            'user_ltv_personalization_fields' => 'first_name',
+        ]]);
+        $fake->whenQueryContainsReturnRows('FROM 202_customers WHERE customer_id = ? AND user_id = ? LIMIT 1', [['first_name' => 'John']]);
+
+        $_COOKIE['tracking202subid'] = '777';
+        try {
+            $js = p202MintPersonalizationCookieJs($fake, 7, ['p13n_have' => str_repeat('b', 43)], 999);
+        } finally {
+            unset($_COOKIE['tracking202subid']);
+        }
+
+        self::assertStringContainsString('createCookie', $js, 'a dead page token must not suppress the remint');
+        self::assertCount(1, $fake->statementsContaining('INSERT INTO 202_personalization_tokens'), 'a replacement token is minted');
+    }
+
+    public function testUsablePageTokenStillSuppressesRemintWithoutExplicitSignal(): void
+    {
+        require_once __DIR__ . '/../../202-config/static-endpoint-helpers.php';
+
+        $fake = new FakeMysqliConnection();
+        // Sealed and still replayable: the page's token is fine.
+        $fake->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [[
+            'first_use_deadline' => 1000, 'replay_until' => PHP_INT_MAX, 'redeemed_at' => 500,
+        ]]);
+        $fake->whenQueryContainsReturnRows('FROM 202_clicks_tracking ct', [['customer_id' => 501]]);
+        $fake->whenQueryContainsReturnRows('user_ltv_personalization_fields', [[
+            'user_ltv_personalization_fields' => 'first_name',
+        ]]);
+
+        $_COOKIE['tracking202subid'] = '777';
+        try {
+            $js = p202MintPersonalizationCookieJs($fake, 7, ['p13n_have' => str_repeat('c', 43)], 999);
+        } finally {
+            unset($_COOKIE['tracking202subid']);
+        }
+
+        self::assertSame('', $js, 'repeat pageviews within a visit reuse the existing token');
+        self::assertCount(0, $fake->statementsContaining('INSERT INTO 202_personalization_tokens'), 'no needless re-mint');
     }
 
     public function testFirstRedemptionBuildsAllowlistedPayloadAndSeals(): void

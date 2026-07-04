@@ -1041,6 +1041,19 @@ CHILD;
             $replay = $p13n->redeem($token, $now + 60);
             self::assertSame('Offer A', $replay['next_offer_name'] ?? null);
             self::assertSame(1, (int) $this->scalar("SELECT COALESCE(SUM(times_shown), 0) FROM 202_offer_recommendations WHERE customer_id=$cid"), 'replays never add impressions');
+
+            // Operator revocation wins over replay: clearing the allowlist
+            // (personalization off) goes dark immediately; restoring it
+            // brings the sealed snapshot back.
+            self::$db->query("UPDATE 202_users_pref SET user_ltv_personalization_fields='' WHERE user_id=1");
+            self::assertSame([], $p13n->redeem($token, $now + 120), 'turning personalization off revokes sealed snapshots');
+            self::$db->query("UPDATE 202_users_pref SET user_ltv_personalization_fields='rec:next_offer' WHERE user_id=1");
+            $restored = $p13n->redeem($token, $now + 180);
+            self::assertSame('Offer A', $restored['next_offer_name'] ?? null, 're-enabling restores the sealed replay');
+
+            // The winner's sealed token is usable; garbage is not.
+            self::assertTrue($p13n->tokenIsUsable($token, $now + 200));
+            self::assertFalse($p13n->tokenIsUsable(str_repeat('x', 43), $now + 200));
         } finally {
             self::$db->query("UPDATE 202_users_pref SET user_ltv_personalization_fields='' WHERE user_id=1");
         }

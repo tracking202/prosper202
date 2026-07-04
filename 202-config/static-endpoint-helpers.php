@@ -281,11 +281,21 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
                 return '';
             }
 
-            // The LP tells us via the beacon whether it already holds a token
-            // (its cookie lives on the LP domain, invisible to this request).
-            // If it does, only a fresh EXPLICIT identity signal justifies
-            // re-minting — repeat pageviews within a visit reuse one token.
-            $pageHasToken = isset($get['p13n_have']) && (string) $get['p13n_have'] === '1';
+            // The LP reports its token cookie via the beacon (the cookie
+            // lives on the LP domain, invisible to this request). While the
+            // page holds a USABLE token, only a fresh EXPLICIT identity
+            // signal justifies re-minting — repeat pageviews within a visit
+            // reuse one token. A dead token (expired before first use, or
+            // past its replay window) must NOT suppress reminting, or a
+            // cookie-recognized visitor loses personalization until the
+            // 30-day LP cookie drains. Legacy pages send the bare flag '1'
+            // (unknown state): treated as usable, the conservative pre-
+            // validation behavior.
+            $pageToken = isset($get['p13n_have']) ? trim((string) $get['p13n_have']) : '';
+            $pageHasToken = $pageToken !== '' && $pageToken !== '0';
+            if ($pageHasToken && $pageToken !== '1' && !$repo->tokenIsUsable($pageToken, time())) {
+                $pageHasToken = false;
+            }
 
             $customerId = $pageHasToken
                 ? $repo->resolveVisitorCustomer($userId, $get, $cookieClickId, false)

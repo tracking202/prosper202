@@ -212,12 +212,24 @@ final class MysqlPersonalizationRepository
             return [];
         }
 
-        // Sealed: replay the snapshot verbatim. This is the UX guarantee —
-        // reloads and repeat pageviews keep personalizing — and the privacy
-        // guarantee: nothing new can ever come out of this token.
+        // Sealed: replay the snapshot. This is the UX guarantee — reloads
+        // and repeat pageviews keep personalizing — and the privacy
+        // guarantee: nothing new can ever come out of this token. The
+        // operator's CURRENT allowlist still gates the frozen data, though:
+        // clearing the pref (personalization off) or removing a field must
+        // revoke already-sealed PII immediately, not after the 30-day replay
+        // window drains.
         if ($token['redeemed_at'] !== null) {
             $snapshot = json_decode((string) ($token['snapshot'] ?? ''), true);
-            return is_array($snapshot) ? $snapshot : [];
+            if (!is_array($snapshot) || $snapshot === []) {
+                return [];
+            }
+            $fields = $this->allowedFields((int) $token['user_id']);
+            if ($fields === []) {
+                return [];
+            }
+
+            return array_intersect_key($snapshot, self::allowedPayloadKeys($fields));
         }
 
         if ($now > (int) $token['first_use_deadline']) {
@@ -417,6 +429,58 @@ final class MysqlPersonalizationRepository
         }
 
         return $payload;
+    }
+
+    /**
+     * Map allowlist entries to the payload keys they emit, so a replayed
+     * snapshot can be filtered against the CURRENT allowlist: CRM entries
+     * are their own key, 'cf:<key>' emits '<key>', and 'rec:next_offer'
+     * emits next_offer_name / next_offer_url.
+     *
+     * @param list<string> $fields
+     * @return array<string, true>
+     */
+    private static function allowedPayloadKeys(array $fields): array
+    {
+        $keys = [];
+        foreach ($fields as $entry) {
+            if ($entry === 'rec:next_offer') {
+                $keys['next_offer_name'] = true;
+                $keys['next_offer_url'] = true;
+            } elseif (str_starts_with($entry, 'cf:')) {
+                $keys[substr($entry, 3)] = true;
+            } else {
+                $keys[$entry] = true;
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * Whether a raw token is still USABLE: redeemable (unsealed, inside the
+     * first-use window) or replayable (sealed, inside the replay window).
+     * The LP beacon reports its cookie token so a dead one — expired before
+     * first use, or past replay — no longer blocks reminting for a
+     * cookie-recognized visitor until the 30-day cookie drains.
+     */
+    public function tokenIsUsable(string $rawToken, int $now): bool
+    {
+        $rawToken = trim($rawToken);
+        if (strlen($rawToken) < 40 || strlen($rawToken) > 64 || preg_match('/^[A-Za-z0-9_\-]+$/', $rawToken) !== 1) {
+            return false;
+        }
+        $stmt = $this->conn->prepareRead(
+            'SELECT first_use_deadline, replay_until, redeemed_at
+             FROM 202_personalization_tokens WHERE token_hash = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 's', [hash('sha256', $rawToken, true)]);
+        $token = $this->conn->fetchOne($stmt);
+        if ($token === null || $now > (int) $token['replay_until']) {
+            return false;
+        }
+
+        return $token['redeemed_at'] !== null || $now <= (int) $token['first_use_deadline'];
     }
 
     /**
