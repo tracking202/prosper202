@@ -16,7 +16,10 @@ header('Content-Disposition: attachment; filename="customer_ltv.xls"');
 header('Pragma: no-cache');
 header('Expires: 0');
 
-$esc = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+require_once dirname(__DIR__) . '/ajax/ltv_helpers.php';
+// Customer-controlled text is both HTML-escaped AND formula-neutralized:
+// Excel evaluates =/+/-/@-led cells even in an HTML .xls table.
+$esc = static fn (mixed $v): string => htmlspecialchars(p202_ltv_xls_cell($v), ENT_QUOTES, 'UTF-8');
 
 try {
     $conn = new \Prosper202\Database\Connection($db);

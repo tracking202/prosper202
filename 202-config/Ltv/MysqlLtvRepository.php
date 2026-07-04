@@ -341,17 +341,20 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
      */
     public function predictFromComputed(array $summary, array $mrr): array
     {
-        return $this->predictFromAggregates($summary, $mrr, 'account');
+        // The subscriber pool must use the SUMMARY's scoped MRR (the sum over
+        // the queried customers) with account churn — a narrow acquisition
+        // window with no subscribers must not display the whole account's
+        // pool value just because the churn inputs are account-wide.
+        return $this->predictFromAggregates($summary, [
+            'mrr' => (float) ($summary['mrr'] ?? 0),
+            'monthly_churn_rate' => (float) ($mrr['monthly_churn_rate'] ?? 0),
+        ], 'account');
     }
 
     public function predict(LtvQuery $query, ?string $breakdownType = null): array
     {
         $accountMrr = $this->mrr($query->userId);
-        $account = $this->predictFromAggregates(
-            $this->summary($query),
-            $accountMrr,
-            'account'
-        );
+        $account = $this->predictFromComputed($this->summary($query), $accountMrr);
 
         if ($breakdownType === null) {
             return $account;

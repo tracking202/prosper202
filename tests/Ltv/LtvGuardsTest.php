@@ -32,10 +32,12 @@ final class LtvGuardsTest extends TestCase
             'repeat_customers' => 99,
             'purchasing_customers' => 100,
             'repeat_rate' => 0.99,
-            'mrr' => 1000.0,
+            'mrr' => 500.0,
             'active_subscriptions' => 40,
         ]]);
         // mrr(): zero churn (should floor at 1%/mo and then cap at 60x MRR).
+        // The account-wide MRR is DOUBLE the scoped summary's — the pool
+        // projection must use the scoped figure, only churn comes from here.
         $read->whenQueryContainsReturnRows('FROM 202_subscriptions', [[
             'mrr' => 1000.0,
             'active' => 40,
@@ -52,8 +54,9 @@ final class LtvGuardsTest extends TestCase
         self::assertSame('account', $result['basis']);
         // aov 10 / (1 - 0.95) = 200 (capped repeat rate).
         self::assertEqualsWithDelta(200.0, $result['predicted_ltv_per_customer'], 0.001);
-        // mrr 1000 / floor(0.01) = 100000 -> capped at 60 * 1000 = 60000.
-        self::assertEqualsWithDelta(60000.0, $result['predicted_subscriber_pool_value'], 0.001);
+        // SCOPED mrr 500 / floor(0.01) = 50000 -> capped at 60 * 500 = 30000.
+        // (60 * account mrr would be 60000 — the scoped figure must win.)
+        self::assertEqualsWithDelta(30000.0, $result['predicted_subscriber_pool_value'], 0.001);
         self::assertContains('repeat_rate_capped_at_0.95', $result['caps_applied']);
         self::assertContains('churn_floored_at_1pct_monthly', $result['caps_applied']);
         self::assertContains('subscriber_ltv_capped_at_60_months_mrr', $result['caps_applied']);
@@ -165,6 +168,20 @@ final class LtvGuardsTest extends TestCase
                 $this->addToAssertionCount(1);
             }
         }
+    }
+
+    public function testXlsCellsNeutralizeSpreadsheetFormulas(): void
+    {
+        require_once __DIR__ . '/../../tracking202/ajax/ltv_helpers.php';
+
+        self::assertSame("'=HYPERLINK(\"http://evil\")", p202_ltv_xls_cell('=HYPERLINK("http://evil")'));
+        self::assertSame("'+1+2", p202_ltv_xls_cell('+1+2'));
+        self::assertSame("'-2+3", p202_ltv_xls_cell('-2+3'));
+        self::assertSame("'@SUM(A1)", p202_ltv_xls_cell('@SUM(A1)'));
+        self::assertSame("'\tleading-tab", p202_ltv_xls_cell("\tleading-tab"));
+        self::assertSame('Acme Inc', p202_ltv_xls_cell('Acme Inc'), 'ordinary values pass through untouched');
+        self::assertSame('jane@example.com', p202_ltv_xls_cell('jane@example.com'), 'only a LEADING @ is dangerous');
+        self::assertSame('', p202_ltv_xls_cell(''));
     }
 
     public function testWebhookSignatureIsHmacSha256(): void
