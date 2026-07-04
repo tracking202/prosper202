@@ -31,6 +31,17 @@ final class MysqlCustomerRepository
     /** Event types that count as an order in the rollup cache. */
     public const ORDER_EVENT_TYPES = ['purchase', 'renewal', 'one_time'];
 
+    /**
+     * Idempotency-key namespaces the system mints internally: soft-delete
+     * voids ('void:'/'void-nc:'), the historical backfill ('backfill:') and
+     * derived subscription-renewal keys ('sub:'). The ledger's uniqueness is
+     * per (user, key) across ALL sources, so an external caller supplying
+     * e.g. 'void:conv:123' would make the later compensating void of
+     * conversion 123 read as a replay and silently skip — leaving deleted
+     * revenue in LTV totals. External surfaces reject these prefixes.
+     */
+    public const RESERVED_IDEMPOTENCY_PREFIXES = ['void:', 'void-nc:', 'backfill:', 'sub:'];
+
     public function __construct(private Connection $conn)
     {
     }
@@ -667,6 +678,23 @@ final class MysqlCustomerRepository
                 throw $e;
             }
             error_log('LTV company stamp skipped for customer ' . $customerId . ': ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Guard for CALLER-SUPPLIED idempotency keys on the public API surfaces
+     * (/ltv/revenue, subscription events): internal namespaces must not be
+     * squattable. Internal writers build their keys directly and never pass
+     * through this check.
+     */
+    public static function assertExternalIdempotencyKey(string $key): void
+    {
+        foreach (self::RESERVED_IDEMPOTENCY_PREFIXES as $prefix) {
+            if (str_starts_with($key, $prefix)) {
+                throw new RuntimeException(
+                    'idempotency_key prefix "' . $prefix . '" is reserved for internal events; choose a different key'
+                );
+            }
         }
     }
 

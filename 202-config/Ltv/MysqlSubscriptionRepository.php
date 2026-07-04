@@ -262,6 +262,12 @@ final class MysqlSubscriptionRepository
                 $ledgerAmount = $isRefund ? -$amount : $amount;
 
                 $idempotencyKey = trim((string) ($payload['idempotency_key'] ?? ''));
+                if ($idempotencyKey !== '') {
+                    // Caller-supplied keys must not squat the internal
+                    // namespaces (void:/backfill:/sub:) — see the ledger's
+                    // per-(user, key) uniqueness contract.
+                    MysqlCustomerRepository::assertExternalIdempotencyKey($idempotencyKey);
+                }
                 $transactionId = trim((string) ($payload['transaction_id'] ?? ''));
                 if ($idempotencyKey === '' && $transactionId !== '') {
                     // A billing-system transaction id is a natural idempotency key.

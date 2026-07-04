@@ -436,6 +436,12 @@ class LtvController
             $idempotencyKey = isset($payload['idempotency_key']) && trim((string) $payload['idempotency_key']) !== ''
                 ? trim((string) $payload['idempotency_key'])
                 : null;
+            if ($idempotencyKey !== null) {
+                // Reserved internal namespaces (void:/backfill:/sub:) must not
+                // be squattable — a caller-claimed 'void:conv:N' would make a
+                // later soft-delete compensation read as a replay and skip.
+                MysqlCustomerRepository::assertExternalIdempotencyKey($idempotencyKey);
+            }
 
             try {
                 $result = $this->conn->transaction(function () use ($eventType, $amount, $currency, $occurredAt, $payload, $items, $now, $idempotencyKey): array {

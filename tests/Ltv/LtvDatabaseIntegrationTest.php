@@ -795,6 +795,34 @@ CHILD;
         self::assertSame('jane@example.com', (string) $this->scalar("SELECT email FROM 202_customers WHERE customer_id = $id"));
     }
 
+    public function testReservedIdempotencyPrefixesRejectedOnApiSurfaces(): void
+    {
+        // /ltv/revenue: a caller must not be able to pre-claim the key a
+        // future soft-delete void will use — that would swallow the
+        // compensating adjustment and leave deleted revenue in LTV totals.
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        try {
+            $controller->recordRevenue(['customer_ref' => 'reserved-1', 'amount' => 5.0, 'idempotency_key' => 'void:conv:77']);
+            self::fail('reserved key must be rejected');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            self::assertStringContainsString('reserved', $e->getMessage());
+        }
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'), 'rejected before identity resolution');
+
+        // Subscription events take caller keys too — same guard.
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+        $cid = $customers->resolveOrCreateByAlias(1, 'custom', 'reserved-sub', [], null, 1700000000);
+        $subs->upsert(1, ['external_sub_id' => 'SUB-RSV', 'amount' => 10.0, 'customer_id' => $cid]);
+        try {
+            $subs->recordEvent(1, 'SUB-RSV', 'renewal', ['idempotency_key' => 'backfill:conv:3']);
+            self::fail('reserved key must be rejected on subscription events too');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('reserved', $e->getMessage());
+        }
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_events'), 'no renewal was recorded');
+    }
+
     public function testAliasTypesNormalizeOnEveryResolutionPath(): void
     {
         $customers = new MysqlCustomerRepository(self::$conn);

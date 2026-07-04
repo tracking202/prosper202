@@ -7,6 +7,7 @@ namespace Tests\Ltv;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\LtvQuery;
+use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Ltv\MysqlLtvRepository;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
@@ -166,6 +167,24 @@ final class LtvGuardsTest extends TestCase
                 self::fail('Expected rejection for ' . $url);
             } catch (\RuntimeException) {
                 $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function testReservedIdempotencyPrefixesAreRejected(): void
+    {
+        // Ordinary caller keys pass; only the LEADING internal namespaces are
+        // reserved ('subscribe-...' is fine, 'sub:...' is not).
+        MysqlCustomerRepository::assertExternalIdempotencyKey('order-123');
+        MysqlCustomerRepository::assertExternalIdempotencyKey('subscribe-2024');
+        $this->addToAssertionCount(2);
+
+        foreach (['void:conv:5', 'void-nc:conv:5', 'backfill:conv:9', 'sub:1:renewal:tx'] as $key) {
+            try {
+                MysqlCustomerRepository::assertExternalIdempotencyKey($key);
+                self::fail($key . ' must be rejected — it squats an internal namespace');
+            } catch (\RuntimeException $e) {
+                self::assertStringContainsString('reserved', $e->getMessage());
             }
         }
     }
