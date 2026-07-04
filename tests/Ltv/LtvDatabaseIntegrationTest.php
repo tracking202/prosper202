@@ -966,11 +966,17 @@ CHILD;
         self::assertSame('engagement', $offer['why']['basis'] ?? null, 'their own browsing beats the account average');
 
         // No signal at all -> the account's top campaign of the RECENT window.
+        // Campaign 9 has MORE recent conversion rows, but they are negative-
+        // payout corrections — they must neither rank nor qualify it.
         $blank = $crm->upsert(1, ['customer_ref' => 'cold-blank']);
         self::$db->query('INSERT INTO 202_conversion_logs SET click_id=9101, user_id=1, campaign_id=7, conv_time=1700000000, deleted=0');
+        self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id=9, user_id=1,
+            aff_campaign_name='Refund Trap', aff_campaign_url='https://example.com/9'");
+        self::$db->query('INSERT INTO 202_conversion_logs SET click_id=9102, user_id=1, campaign_id=9, conv_time=1700000050, deleted=0, click_payout=-10');
+        self::$db->query('INSERT INTO 202_conversion_logs SET click_id=9103, user_id=1, campaign_id=9, conv_time=1700000060, deleted=0, click_payout=-10');
         $offer = $recs->nextOffer(1, $blank, 1700000100);
         self::assertNotNull($offer);
-        self::assertSame(7, $offer['campaign_id']);
+        self::assertSame(7, $offer['campaign_id'], 'corrections-only campaigns never win the fallback');
         self::assertSame('account_top_recent', $offer['why']['basis'] ?? null);
 
         // ...but never a stale one: when every conversion predates the
@@ -981,6 +987,35 @@ CHILD;
         // Deleted campaigns are invisible to every tier, browsing included.
         self::$db->query('UPDATE 202_aff_campaigns SET aff_campaign_deleted=1 WHERE aff_campaign_id=7');
         self::assertNull($recs->nextOffer(1, $browser, 1700000100), 'a deleted campaign must never be suggested');
+    }
+
+    public function testSealWinnerRecordsExactlyOneImpression(): void
+    {
+        $now = time();
+        self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id=7, user_id=1,
+            aff_campaign_name='Offer A', aff_campaign_url='https://example.com/a'");
+        self::$db->query('INSERT INTO 202_conversion_logs SET click_id=9300, user_id=1, campaign_id=7, conv_time=' . ($now - 86400) . ', deleted=0');
+        self::$db->query('INSERT IGNORE INTO 202_users_pref SET user_id=1');
+        self::$db->query("UPDATE 202_users_pref SET user_ltv_personalization_fields='rec:next_offer' WHERE user_id=1");
+
+        try {
+            $customers = new MysqlCustomerRepository(self::$conn);
+            $cid = $customers->resolveOrCreateByAlias(1, 'custom', 'seal-imp-1', [], null, $now);
+            $p13n = new \Prosper202\Ltv\MysqlPersonalizationRepository(self::$conn);
+            $token = $p13n->mint(1, $cid, 0, $now);
+
+            // Winning the seal records the impression — once.
+            $payload = $p13n->redeem($token, $now);
+            self::assertSame('Offer A', $payload['next_offer_name'] ?? null);
+            self::assertSame(1, (int) $this->scalar("SELECT COALESCE(SUM(times_shown), 0) FROM 202_offer_recommendations WHERE customer_id=$cid"));
+
+            // Sealed replays render the same snapshot without counting again.
+            $replay = $p13n->redeem($token, $now + 60);
+            self::assertSame('Offer A', $replay['next_offer_name'] ?? null);
+            self::assertSame(1, (int) $this->scalar("SELECT COALESCE(SUM(times_shown), 0) FROM 202_offer_recommendations WHERE customer_id=$cid"), 'replays never add impressions');
+        } finally {
+            self::$db->query("UPDATE 202_users_pref SET user_ltv_personalization_fields='' WHERE user_id=1");
+        }
     }
 
     public function testRecommendationFatigueLifecycleEndToEnd(): void

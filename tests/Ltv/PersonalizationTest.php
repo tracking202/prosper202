@@ -167,6 +167,36 @@ final class PersonalizationTest extends TestCase
         self::assertContains('{"first_name":"John","city":"Austin","loyalty_tier":"gold"}', $seals[0]->boundValues);
     }
 
+    public function testSealRaceLoserDoesNotRecordAnImpression(): void
+    {
+        $write = new FakeMysqliConnection();
+        $read = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [[
+            'p13n_id' => 1, 'user_id' => 7, 'customer_id' => 501,
+            'first_use_deadline' => 1700003600, 'replay_until' => 1702592000,
+            'redeemed_at' => null, 'snapshot' => null,
+        ]]);
+        $read->whenQueryContainsReturnRows('user_ltv_personalization_fields', [[
+            'user_ltv_personalization_fields' => 'rec:next_offer',
+        ]]);
+        // The recommendation resolves via the account fallback.
+        $read->whenQueryContainsReturnRows('FROM 202_conversion_logs cl', [
+            ['campaign_id' => 33, 'name' => 'Top Seller', 'url' => 'https://example.com/top'],
+        ]);
+        // The fake statement cannot report affected_rows, so the atomic seal
+        // takes the concurrent-LOSER branch — exactly the path under test.
+        $write->whenQueryContainsReturnRows('SELECT snapshot FROM 202_personalization_tokens', [[
+            'snapshot' => '{"next_offer_name":"Top Seller"}',
+        ]]);
+
+        $repo = new MysqlPersonalizationRepository(new Connection($write, $read));
+        $payload = $repo->redeem(str_repeat('a', 43), 1700000100);
+
+        self::assertSame(['next_offer_name' => 'Top Seller'], $payload, 'the loser renders the winner snapshot');
+        self::assertCount(0, $write->statementsContaining('INSERT INTO 202_offer_recommendations'),
+            'losing the seal race must not count an extra impression — one visit, one impression');
+    }
+
     public function testAllowedFieldsFiltersDisallowedEntries(): void
     {
         $read = new FakeMysqliConnection();

@@ -209,12 +209,15 @@ final class RecommendationTest extends TestCase
         self::assertSame('Top Seller', $offer['name']);
         self::assertSame('account_top_recent', $offer['why']['basis'] ?? null);
 
-        // The generic pick must never resurface a deleted campaign or one
-        // whose conversions all predate the recency window.
+        // The generic pick must never resurface a deleted campaign, one whose
+        // conversions all predate the recency window, or one whose only
+        // recent rows are negative-payout corrections (ingest ledgers those
+        // as adjustments, not orders).
         $queries = $read->statementsContaining('FROM 202_conversion_logs cl');
         self::assertCount(1, $queries);
         self::assertStringContainsString('aff_campaign_deleted = 0', $queries[0]->sql);
         self::assertStringContainsString('cl.conv_time >= ?', $queries[0]->sql);
+        self::assertStringContainsString('cl.click_payout >= 0', $queries[0]->sql);
         self::assertContains(1700000000 - 15552000, $queries[0]->boundValues, 'window start = now - 180 days');
     }
 

@@ -634,12 +634,16 @@ final class MysqlRecommendationRepository
         // Live campaigns with conversions INSIDE the window only: an all-time
         // ranking would resurface whatever legacy/test campaign once
         // dominated, which is worse than admitting there is no signal.
+        // Negative payouts are corrections/reversals (ingest ledgers them as
+        // adjustments, not orders) — they must neither rank nor qualify a
+        // campaign here; zero-payout conversions (leads) still count.
         $stmt = $this->conn->prepareRead(
             "SELECT cl.campaign_id, ac.aff_campaign_name AS name, ac.aff_campaign_url AS url
              FROM 202_conversion_logs cl
              JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id
                 AND ac.aff_campaign_deleted = 0
-             WHERE cl.user_id = ? AND cl.deleted = 0 AND cl.conv_time >= ? {$notIn}
+             WHERE cl.user_id = ? AND cl.deleted = 0 AND cl.conv_time >= ?
+               AND cl.click_payout >= 0 {$notIn}
              GROUP BY cl.campaign_id, ac.aff_campaign_name, ac.aff_campaign_url
              ORDER BY COUNT(*) DESC, cl.campaign_id ASC
              LIMIT 1"

@@ -224,7 +224,8 @@ final class MysqlPersonalizationRepository
             return [];
         }
 
-        $payload = $this->buildPayload((int) $token['user_id'], (int) $token['customer_id']);
+        $impression = null;
+        $payload = $this->buildPayload((int) $token['user_id'], (int) $token['customer_id'], $impression);
         $encoded = json_encode($payload);
         if ($encoded === false) {
             error_log('p13n: failed to encode personalization payload for token ' . (int) $token['p13n_id']);
@@ -250,6 +251,24 @@ final class MysqlPersonalizationRepository
             $row = $this->conn->fetchOne($again);
             $snapshot = json_decode((string) ($row['snapshot'] ?? ''), true);
             return is_array($snapshot) ? $snapshot : [];
+        }
+
+        // Impression bookkeeping ONLY for the request that won the seal: a
+        // concurrent loser renders the same snapshot but is the same visit,
+        // and counting it twice would advance fatigue/bandit stats early.
+        // Guarded: the public endpoint must never break over bookkeeping.
+        if ($impression !== null) {
+            try {
+                (new MysqlRecommendationRepository($this->conn))->recordImpression(
+                    (int) $token['user_id'],
+                    (int) $token['customer_id'],
+                    (int) $impression['campaign_id'],
+                    'lp',
+                    (string) $impression['basis']
+                );
+            } catch (\Throwable $e) {
+                error_log('LTV recommendation impression log failed: ' . $e->getMessage());
+            }
         }
 
         return $payload;
@@ -320,7 +339,7 @@ final class MysqlPersonalizationRepository
      *
      * @return array<string, string>
      */
-    private function buildPayload(int $userId, int $customerId): array
+    private function buildPayload(int $userId, int $customerId, ?array &$impression = null): array
     {
         $fields = $this->allowedFields($userId);
         if ($fields === []) {
@@ -353,31 +372,20 @@ final class MysqlPersonalizationRepository
         // suggestion is computed at seal time and frozen into the snapshot
         // like every other field — replays keep showing the same offer.
         if (in_array('rec:next_offer', $fields, true)) {
-            $recommendations = new MysqlRecommendationRepository($this->conn);
-            $recommendation = $recommendations->nextOffer($userId, $customerId);
+            $recommendation = (new MysqlRecommendationRepository($this->conn))->nextOffer($userId, $customerId);
             if ($recommendation !== null && $recommendation['name'] !== '') {
                 $payload['next_offer_name'] = $recommendation['name'];
                 if ($recommendation['url'] !== '') {
                     $payload['next_offer_url'] = $recommendation['url'];
                 }
 
-                // The seal is the moment the offer actually reaches the
-                // customer (one seal per token = one distinct visit), so this
-                // is where the decision log records the impression — the
-                // fatigue rule and future bandit policies learn from it.
-                // Guarded: the public redeem endpoint must never break over
-                // bookkeeping.
-                try {
-                    $recommendations->recordImpression(
-                        $userId,
-                        $customerId,
-                        (int) $recommendation['campaign_id'],
-                        'lp',
-                        (string) ($recommendation['why']['basis'] ?? '')
-                    );
-                } catch (\Throwable $e) {
-                    error_log('LTV recommendation impression log failed: ' . $e->getMessage());
-                }
+                // Hand the impression back to redeem(): it is recorded only
+                // by the request that WINS the seal (one seal per token = one
+                // distinct visit) — a concurrent loser would double-count.
+                $impression = [
+                    'campaign_id' => (int) $recommendation['campaign_id'],
+                    'basis' => (string) ($recommendation['why']['basis'] ?? ''),
+                ];
             }
         }
 
