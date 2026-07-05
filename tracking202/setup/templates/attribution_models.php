@@ -39,7 +39,6 @@ if ($currentModel) {
 
 template_top('Attribution Models - Setup');
 ?>
-<link rel="stylesheet" href="/202-css/design-system.css">
 
 
 <div class="attribution-setup">
@@ -515,10 +514,10 @@ function validatePositionWeights() {
     align-items: center;
     gap: 16px;
     padding: 24px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-radius: 12px;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
 }
 .setup-page-header__icon {
     display: flex;
@@ -552,18 +551,18 @@ function validatePositionWeights() {
 .panel {
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
 }
 .panel-heading {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc !important;
+    border-bottom: 1px solid #e7e8ea;
     border-radius: 12px 12px 0 0 !important;
     padding: 16px 20px;
 }
 .panel-title {
     font-weight: 600;
     font-size: 15px;
-    color: #1e293b;
+    color: #1f2328;
 }
 .panel-body {
     padding: 24px;
@@ -571,38 +570,38 @@ function validatePositionWeights() {
 
 /* Form Enhancements */
 .form-control {
-    border: 2px solid #e2e8f0;
+    border: 2px solid #e7e8ea;
     border-radius: 8px;
     padding: 10px 14px;
     transition: all 0.2s ease;
 }
 .form-control:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.15);
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.15);
 }
 
 /* Button Enhancements */
 .btn-primary {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
     font-weight: 600;
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);
+    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.25);
     transition: all 0.2s ease;
 }
 .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.35);
+    transform: none;
+    box-shadow: 0 6px 16px rgba(47, 111, 221, 0.35);
 }
 .btn-success {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #217a41;
     border: none;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
 }
 .btn-danger {
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    background: #c9372c;
     border: none;
     border-radius: 8px;
 }
@@ -613,10 +612,10 @@ function validatePositionWeights() {
     overflow: hidden;
 }
 .table > thead > tr > th {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 2px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 2px solid #e7e8ea;
     font-weight: 600;
-    color: #475569;
+    color: #374151;
     text-transform: uppercase;
     font-size: 12px;
     letter-spacing: 0.5px;
@@ -625,10 +624,10 @@ function validatePositionWeights() {
 .table > tbody > tr > td {
     padding: 14px 16px;
     vertical-align: middle;
-    border-color: #f1f5f9;
+    border-color: #f0f1f2;
 }
 .table > tbody > tr:hover {
-    background-color: #f8fafc;
+    background-color: #fafbfc;
 }
 
 /* Setup List Styling */
@@ -643,7 +642,7 @@ function validatePositionWeights() {
     align-items: flex-start;
     justify-content: space-between;
     padding: 14px 16px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid #f0f1f2;
     transition: background-color 0.2s ease;
 }
 
@@ -652,12 +651,12 @@ function validatePositionWeights() {
 }
 
 .setup-list-item:hover {
-    background-color: #f8fafc;
+    background-color: #fafbfc;
 }
 
 .setup-list-item--active {
-    background-color: #e7f3ff;
-    border-left: 4px solid #007bff;
+    background-color: #eaf2fc;
+    border-left: 4px solid #2f6fdd;
     padding-left: 12px;
 }
 
@@ -678,7 +677,7 @@ function validatePositionWeights() {
 .setup-list-meta {
     display: block;
     font-size: 12px;
-    color: #64748b;
+    color: #6b7280;
     margin-top: 4px;
 }
 
@@ -708,44 +707,44 @@ function validatePositionWeights() {
     font-weight: 500;
     text-decoration: none;
     cursor: pointer;
-    border: 1px solid #d1d5db;
-    background-color: #f3f4f6;
+    border: 1px solid #c9cdd3;
+    background-color: #f0f1f2;
     color: #374151;
     transition: all 0.2s ease;
     white-space: nowrap;
 }
 
 .action-edit {
-    border-color: #93c5fd;
-    background-color: #eff6ff;
-    color: #1e40af;
+    border-color: #bcd4f6;
+    background-color: #eaf2fc;
+    color: #2861c4;
 }
 
 .action-edit:hover {
-    background-color: #dbeafe;
-    border-color: #60a5fa;
+    background-color: #eaf2fc;
+    border-color: #2f6fdd;
 }
 
 .action-remove {
-    border-color: #fca5a5;
-    background-color: #fef2f2;
-    color: #991b1b;
+    border-color: #c9372c;
+    background-color: #fdecec;
+    color: #b02a20;
 }
 
 .action-remove:hover {
-    background-color: #fee2e2;
-    border-color: #f87171;
+    background-color: #fdecec;
+    border-color: #c9372c;
 }
 
 .action-default {
-    border-color: #fcd34d;
-    background-color: #fffbeb;
-    color: #92400e;
+    border-color: #b54708;
+    background-color: #fdf3e2;
+    color: #9a3c07;
 }
 
 .action-default:hover {
-    background-color: #fef3c7;
-    border-color: #fbbf24;
+    background-color: #fdf3e2;
+    border-color: #b54708;
 }
 
 .setup-list-inline-form {
@@ -782,7 +781,7 @@ function validatePositionWeights() {
     .guide-description {
         display: inline;
         font-size: 12px;
-        color: #64748b;
+        color: #6b7280;
         margin-left: 6px;
     }
 }

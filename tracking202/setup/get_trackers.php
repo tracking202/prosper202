@@ -40,7 +40,6 @@ if ($showEdit) {
 
 template_top('Get Trackers');  ?>
 
-<link rel="stylesheet" href="/202-css/design-system.css">
 
 <!-- Page Header - Design System -->
 <div class="row" style="margin-bottom: 28px;">
@@ -529,10 +528,10 @@ template_top('Get Trackers');  ?>
     align-items: center;
     gap: 16px;
     padding: 24px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-radius: 12px;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
 }
 .setup-page-header__icon {
     display: flex;
@@ -566,18 +565,18 @@ template_top('Get Trackers');  ?>
 .panel {
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
 }
 .panel-heading {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc !important;
+    border-bottom: 1px solid #e7e8ea;
     border-radius: 12px 12px 0 0 !important;
     padding: 16px 20px;
 }
 .panel-title {
     font-weight: 600;
     font-size: 15px;
-    color: #1e293b;
+    color: #1f2328;
 }
 .panel-body {
     padding: 24px;
@@ -585,32 +584,32 @@ template_top('Get Trackers');  ?>
 
 /* Form Enhancements */
 .form-control {
-    border: 2px solid #e2e8f0;
+    border: 2px solid #e7e8ea;
     border-radius: 8px;
     padding: 10px 14px;
     transition: all 0.2s ease;
 }
 .form-control:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.15);
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.15);
 }
 
 /* Button Enhancements */
 .btn-primary {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
     font-weight: 600;
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);
+    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.25);
     transition: all 0.2s ease;
 }
 .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.35);
+    transform: none;
+    box-shadow: 0 6px 16px rgba(47, 111, 221, 0.35);
 }
 .btn-success {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #217a41;
     border: none;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
@@ -628,19 +627,19 @@ template_top('Get Trackers');  ?>
     flex-wrap: wrap;
     gap: 12px;
     padding: 12px 0;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid #f0f1f2;
     transition: background-color 0.2s ease;
 }
 .setup-list li:last-child {
     border-bottom: none;
 }
 .setup-list li:hover {
-    background-color: #f9fafb;
+    background-color: #fafbfc;
 }
 
 .filter_tracker_display_name {
     font-weight: 600;
-    color: #1e293b;
+    color: #1f2328;
     word-break: break-word;
     font-size: 14px;
     flex: 1 1 100%;
@@ -648,7 +647,7 @@ template_top('Get Trackers');  ?>
 
 .filter_tracker_meta {
     font-size: 12px;
-    color: #64748b;
+    color: #6b7280;
     flex: 1 1 100%;
     margin-top: -8px;
 }
@@ -662,23 +661,23 @@ template_top('Get Trackers');  ?>
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: #007bff;
-    background-color: rgba(0, 123, 255, 0.08);
+    color: #2f6fdd;
+    background-color: rgba(47, 111, 221, 0.08);
     white-space: nowrap;
 }
 
 .list-action:hover {
-    color: #0056b3;
-    background-color: rgba(0, 123, 255, 0.15);
+    color: #2861c4;
+    background-color: rgba(47, 111, 221, 0.15);
 }
 
 .list-action-danger {
-    color: #ef4444;
+    color: #c9372c;
     background-color: rgba(239, 68, 68, 0.08);
 }
 
 .list-action-danger:hover {
-    color: #dc2626;
+    color: #c9372c;
     background-color: rgba(239, 68, 68, 0.15);
 }
 
@@ -686,7 +685,7 @@ template_top('Get Trackers');  ?>
     text-align: center;
     padding: 24px 16px;
     color: #9ca3af;
-    border: 1px dashed #e5e7eb;
+    border: 1px dashed #e7e8ea;
     border-radius: 8px;
     font-size: 14px;
 }

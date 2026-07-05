@@ -109,7 +109,6 @@ if (isset($_GET['delete_rotator_id'])) {
 
 
 template_top('Smart Redirector'); ?>
-<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
 <!-- Page Header - Design System -->
 <div class="row" style="margin-bottom: 28px;">
@@ -451,10 +450,10 @@ template_top('Smart Redirector'); ?>
     align-items: center;
     gap: 16px;
     padding: 24px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-radius: 12px;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
 }
 
 .setup-page-header__icon {
@@ -496,7 +495,7 @@ template_top('Smart Redirector'); ?>
 
 /* Panel Styles - Modern Design */
 .panel-default {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     overflow: hidden;
@@ -509,11 +508,11 @@ template_top('Smart Redirector'); ?>
 }
 
 .panel-heading {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
     padding: 16px 20px;
     font-weight: 600;
-    color: #1e293b;
+    color: #1f2328;
     font-size: 15px;
 }
 
@@ -523,7 +522,7 @@ template_top('Smart Redirector'); ?>
 
 /* Form Elements - Modern Style */
 .form-control {
-    border: 1px solid #cbd5e1;
+    border: 1px solid #c9cdd3;
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 14px;
@@ -531,8 +530,8 @@ template_top('Smart Redirector'); ?>
 }
 
 .form-control:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
     outline: none;
 }
 
@@ -553,27 +552,27 @@ template_top('Smart Redirector'); ?>
 }
 
 .btn-p202 {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     color: #fff;
-    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+    box-shadow: 0 2px 8px rgba(47, 111, 221, 0.3);
 }
 
 .btn-p202:hover {
-    background: linear-gradient(135deg, #0056b3 0%, #003d82 100%);
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4);
+    background: #2861c4;
+    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.4);
     color: #fff;
     text-decoration: none;
 }
 
 .btn-default {
-    background: #f1f5f9;
-    color: #334155;
-    border: 1px solid #cbd5e1;
+    background: #f0f1f2;
+    color: #32383f;
+    border: 1px solid #c9cdd3;
 }
 
 .btn-default:hover {
-    background: #e2e8f0;
-    color: #1e293b;
+    background: #e7e8ea;
+    color: #1f2328;
 }
 
 .btn-xs {
@@ -595,30 +594,30 @@ template_top('Smart Redirector'); ?>
 }
 
 .alert-success {
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border-color: #86efac;
-    color: #166534;
+    background: #e7f5ec;
+    border-color: #e7f5ec;
+    color: #1d6c3a;
 }
 
 .alert-success .fa {
-    color: #22c55e;
+    color: #217a41;
     font-size: 16px;
 }
 
 .alert-danger {
-    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-    border-color: #fca5a5;
-    color: #991b1b;
+    background: #fdecec;
+    border-color: #c9372c;
+    color: #b02a20;
 }
 
 .alert-danger .fa {
-    color: #ef4444;
+    color: #c9372c;
     font-size: 16px;
 }
 
 /* Section Separator */
 .form_seperator {
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid #e7e8ea;
 }
 
 /* List Styling */
@@ -630,9 +629,9 @@ template_top('Smart Redirector'); ?>
 
 .list > li {
     padding: 8px 12px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid #f0f1f2;
     font-size: 13px;
-    color: #475569;
+    color: #374151;
 }
 
 .list > li:last-child {
@@ -640,11 +639,11 @@ template_top('Smart Redirector'); ?>
 }
 
 .list > li:hover {
-    background: #f8fafc;
+    background: #fafbfc;
 }
 
 .list > li a {
-    color: #007bff;
+    color: #2f6fdd;
     text-decoration: none;
     font-weight: 500;
 }
@@ -656,7 +655,7 @@ template_top('Smart Redirector'); ?>
 /* Info Text */
 .infotext {
     font-size: 13px;
-    color: #64748b;
+    color: #6b7280;
     display: block;
     margin-bottom: 12px;
 }
@@ -674,20 +673,20 @@ template_top('Smart Redirector'); ?>
     height: 18px;
     cursor: pointer;
     margin-right: 6px;
-    accent-color: #007bff;
+    accent-color: #2f6fdd;
 }
 
 /* Modal Styles */
 .modal-header {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
     padding: 16px 20px;
 }
 
 .modal-title {
     font-size: 16px;
     font-weight: 600;
-    color: #1e293b;
+    color: #1f2328;
     margin: 0;
 }
 
@@ -696,8 +695,8 @@ template_top('Smart Redirector'); ?>
 }
 
 .modal-footer {
-    background: #f8fafc;
-    border-top: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-top: 1px solid #e7e8ea;
     padding: 12px 16px;
 }
 
@@ -711,7 +710,7 @@ template_top('Smart Redirector'); ?>
 
 .form-group label {
     font-size: 14px;
-    color: #334155;
+    color: #32383f;
     font-weight: 500;
     margin: 0;
     white-space: nowrap;
@@ -727,20 +726,20 @@ template_top('Smart Redirector'); ?>
 .filter_rotator_name,
 .filter_rule_name {
     font-weight: 500;
-    color: #1e293b;
+    color: #1f2328;
     flex: 1;
     min-width: 100px;
 }
 
 .rule-criteria {
     font-size: 12px;
-    color: #64748b;
+    color: #6b7280;
     font-weight: 400;
 }
 
 /* List Action Links */
 .list-action {
-    color: #007bff;
+    color: #2f6fdd;
     text-decoration: none;
     font-size: 13px;
     font-weight: 500;
@@ -751,25 +750,25 @@ template_top('Smart Redirector'); ?>
 }
 
 .list-action:hover {
-    background: #f0f7ff;
-    color: #0056b3;
+    background: #eaf2fc;
+    color: #2861c4;
     text-decoration: none;
 }
 
 .list-action-danger {
-    color: #dc2626;
+    color: #c9372c;
 }
 
 .list-action-danger:hover {
-    background: #fef2f2;
-    color: #b91c1c;
+    background: #fdecec;
+    color: #b02a20;
 }
 
 .empty-state {
     text-align: center;
     padding: 24px 16px;
     color: #9ca3af;
-    border: 1px dashed #e5e7eb;
+    border: 1px dashed #e7e8ea;
     border-radius: 8px;
     font-size: 14px;
 }

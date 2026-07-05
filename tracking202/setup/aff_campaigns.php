@@ -312,7 +312,6 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and (!isset($add_success) || $add_suc
 
 template_top('Affiliate Campaigns Setup');
 ?>
-<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
 <!-- Page Header - Design System -->
 <div class="row" style="margin-bottom: 28px;">
@@ -707,10 +706,10 @@ template_top('Affiliate Campaigns Setup');
     align-items: center;
     gap: 16px;
     padding: 24px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-radius: 12px;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
     margin-bottom: 28px;
 }
 
@@ -750,7 +749,7 @@ template_top('Affiliate Campaigns Setup');
 
 /* Setup Panel Styling */
 .setup-panel {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     overflow: hidden;
@@ -758,12 +757,12 @@ template_top('Affiliate Campaigns Setup');
 }
 
 .setup-panel__heading {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
     padding: 16px 20px;
     font-weight: 600;
     font-size: 14px;
-    color: #1e293b;
+    color: #1f2328;
 }
 
 .setup-panel__body {
@@ -772,7 +771,7 @@ template_top('Affiliate Campaigns Setup');
 
 /* Panel Default Override */
 .panel-default {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     overflow: hidden;
@@ -780,12 +779,12 @@ template_top('Affiliate Campaigns Setup');
 }
 
 .panel-heading {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
     padding: 16px 20px;
     font-weight: 600;
     font-size: 14px;
-    color: #1e293b;
+    color: #1f2328;
 }
 
 .panel-body {
@@ -807,7 +806,7 @@ template_top('Affiliate Campaigns Setup');
 }
 
 .setup-form .form-control {
-    border: 1px solid #cbd5e1;
+    border: 1px solid #c9cdd3;
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 13px;
@@ -815,12 +814,12 @@ template_top('Affiliate Campaigns Setup');
 }
 
 .setup-form .form-control:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
 }
 
 .setup-form .has-error .form-control {
-    border-color: #dc2626;
+    border-color: #c9372c;
 }
 
 /* Setup List Item Styling */
@@ -835,13 +834,13 @@ template_top('Affiliate Campaigns Setup');
 
 .setup-list-meta {
     font-size: 12px;
-    color: #64748b;
+    color: #6b7280;
     white-space: nowrap;
 }
 
 /* List Action Links */
 .list-action {
-    color: #007bff;
+    color: #2f6fdd;
     text-decoration: none;
     font-weight: 500;
     font-size: 12px;
@@ -852,25 +851,25 @@ template_top('Affiliate Campaigns Setup');
 }
 
 .list-action:hover {
-    background-color: #eff6ff;
-    color: #0056b3;
+    background-color: #eaf2fc;
+    color: #2861c4;
     text-decoration: none;
 }
 
 .list-action-danger {
-    color: #dc2626;
+    color: #c9372c;
 }
 
 .list-action-danger:hover {
-    background-color: #fef2f2;
-    color: #991b1b;
+    background-color: #fdecec;
+    color: #b02a20;
 }
 
 .empty-state {
     text-align: center;
     padding: 24px 16px;
     color: #9ca3af;
-    border: 1px dashed #e5e7eb;
+    border: 1px dashed #e7e8ea;
     border-radius: 8px;
     font-size: 14px;
 }
@@ -889,7 +888,7 @@ template_top('Affiliate Campaigns Setup');
 
 #campaignList > ul > li {
     padding: 12px 14px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid #e7e8ea;
     border-radius: 8px;
     margin-bottom: 8px;
     font-size: 14px;
@@ -899,8 +898,8 @@ template_top('Affiliate Campaigns Setup');
 }
 
 #campaignList > ul > li:hover {
-    border-color: #c7d2fe;
-    background: #f8fafc;
+    border-color: #bcd4f6;
+    background: #fafbfc;
 }
 
 /* Nested campaign items */
@@ -915,17 +914,17 @@ template_top('Affiliate Campaigns Setup');
     flex-wrap: wrap;
     gap: 6px;
     padding: 10px 12px;
-    border-left: 3px solid #e5e7eb;
+    border-left: 3px solid #e7e8ea;
     margin-left: 8px;
     margin-bottom: 4px;
     font-weight: 400;
-    background: #fafafa;
+    background: #fafbfc;
     border-radius: 0 6px 6px 0;
 }
 
 #campaignList ul ul li:hover {
-    border-left-color: #007bff;
-    background: #f0f9ff;
+    border-left-color: #2f6fdd;
+    background: #eaf2fc;
 }
 
 /* Setup Button Styling */
@@ -940,33 +939,33 @@ template_top('Affiliate Campaigns Setup');
 }
 
 .setup-btn--primary {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     color: #fff;
 }
 
 .setup-btn--primary:hover {
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
-    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.3);
+    transform: none;
 }
 
 .setup-btn--danger {
-    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    background: #c9372c;
     color: #fff;
 }
 
 .setup-btn--danger:hover {
     box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
-    transform: translateY(-1px);
+    transform: none;
 }
 
 .setup-btn--secondary {
-    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    background: #6b7280;
     color: #fff;
 }
 
 .setup-btn--secondary:hover {
     box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
-    transform: translateY(-1px);
+    transform: none;
 }
 
 /* Setup Alert Styling */
@@ -982,22 +981,22 @@ template_top('Affiliate Campaigns Setup');
 
 .setup-alert--success,
 .alert-success {
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border-color: #86efac;
-    color: #166534;
+    background: #e7f5ec;
+    border-color: #e7f5ec;
+    color: #1d6c3a;
 }
 
 .setup-alert--danger,
 .alert-danger {
-    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-    border-color: #fca5a5;
-    color: #991b1b;
+    background: #fdecec;
+    border-color: #c9372c;
+    color: #b02a20;
 }
 
 .setup-alert--info {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-    border-color: #7dd3fc;
-    color: #0c4a6e;
+    background: #eaf2fc;
+    border-color: #bcd4f6;
+    color: #2861c4;
 }
 
 .setup-alert i,
@@ -1010,21 +1009,21 @@ template_top('Affiliate Campaigns Setup');
 .setup-form label {
     font-weight: 500;
     font-size: 13px;
-    color: #334155;
+    color: #32383f;
     margin-bottom: 6px;
 }
 
 /* Help Text */
 .help-block {
     font-size: 12px;
-    color: #64748b;
+    color: #6b7280;
     margin-top: 4px;
 }
 
 /* Placeholders and Info Text */
 .infotext {
     font-size: 13px;
-    color: #64748b;
+    color: #6b7280;
     display: block;
     margin-bottom: 8px;
 }
@@ -1045,7 +1044,7 @@ template_top('Affiliate Campaigns Setup');
 
 /* Form Separator */
 .form_seperator {
-    border-bottom: 2px solid #e2e8f0;
+    border-bottom: 2px solid #e7e8ea;
 }
 
 /* Button Groups in Forms */

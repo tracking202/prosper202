@@ -608,14 +608,9 @@
    FORM CONTROLS
    =========================================== */
 
-/* Override Bootstrap's inset shadow on inputs */
-.form-control {
-    box-shadow: none !important;
-    -webkit-box-shadow: none !important;
-}
-.form-control:focus {
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
-}
+/* Base .form-control styling (border/radius/focus ring) is owned globally by
+   p202-ui.css; design-system.css only styles the tokenfield plugin + the
+   -modern component variants below. */
 
 /* Tokenfield plugin override - clean minimal styling */
 .tokenfield,

@@ -146,7 +146,6 @@ if (isset($_GET['delete_aff_network_id'])) {
 
 template_top('Campaign Category Setup');
 ?>
-<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
 <!-- Page Header - Design System -->
 <div class="row" style="margin-bottom: 28px;">
@@ -302,10 +301,10 @@ template_top('Campaign Category Setup');
     align-items: center;
     gap: 16px;
     padding: 24px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-radius: 12px;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
 }
 
 .setup-page-header__icon {
@@ -358,12 +357,12 @@ template_top('Campaign Category Setup');
 }
 
 .form-group.has-error .form-control {
-    border-color: #f87171;
-    background-color: #fee2e2;
+    border-color: #c9372c;
+    background-color: #fdecec;
 }
 
 .form-control {
-    border: 1px solid #cbd5e1;
+    border: 1px solid #c9cdd3;
     border-radius: 8px;
     padding: 10px 12px;
     font-size: 14px;
@@ -372,13 +371,13 @@ template_top('Campaign Category Setup');
 }
 
 .form-control:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
     outline: none;
 }
 
 .form-control::placeholder {
-    color: #94a3b8;
+    color: #8a919b;
 }
 
 .input-sm {
@@ -409,32 +408,32 @@ template_top('Campaign Category Setup');
 }
 
 .btn-p202 {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     color: #fff;
-    border: 1px solid #0056b3;
+    border: 1px solid #2861c4;
 }
 
 .btn-p202:hover {
-    background: linear-gradient(135deg, #0056b3 0%, #004085 100%);
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
-    transform: translateY(-2px);
+    background: #2861c4;
+    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.3);
+    transform: none;
 }
 
 .btn-p202:active {
     transform: translateY(0);
-    box-shadow: 0 2px 6px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 2px 6px rgba(47, 111, 221, 0.2);
 }
 
 .btn-danger {
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    background: #c9372c;
     color: #fff;
-    border: 1px solid #dc2626;
+    border: 1px solid #c9372c;
 }
 
 .btn-danger:hover {
-    background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+    background: #c9372c;
     box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-    transform: translateY(-2px);
+    transform: none;
 }
 
 .btn-danger:active {
@@ -444,7 +443,7 @@ template_top('Campaign Category Setup');
 
 /* Panel Styling */
 .panel {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
@@ -453,16 +452,16 @@ template_top('Campaign Category Setup');
 }
 
 .panel-default {
-    border-color: #e2e8f0;
+    border-color: #e7e8ea;
 }
 
 .panel-heading {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
     padding: 16px 20px;
     font-weight: 600;
     font-size: 15px;
-    color: #1e293b;
+    color: #1f2328;
 }
 
 .panel-body {
@@ -501,7 +500,7 @@ template_top('Campaign Category Setup');
 
 #networkList ul.list li {
     padding: 12px 14px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid #e7e8ea;
     border-radius: 8px;
     margin-bottom: 8px;
     font-size: 14px;
@@ -515,8 +514,8 @@ template_top('Campaign Category Setup');
 }
 
 #networkList ul.list li:hover {
-    border-color: #c7d2fe;
-    background: #f8fafc;
+    border-color: #bcd4f6;
+    background: #fafbfc;
 }
 
 #networkList ul.list li:last-child {
@@ -530,7 +529,7 @@ template_top('Campaign Category Setup');
 }
 
 #networkList .list-action {
-    color: #007bff;
+    color: #2f6fdd;
     text-decoration: none;
     font-weight: 500;
     font-size: 13px;
@@ -541,17 +540,17 @@ template_top('Campaign Category Setup');
 }
 
 #networkList .list-action:hover {
-    background-color: #eff6ff;
-    color: #0056b3;
+    background-color: #eaf2fc;
+    color: #2861c4;
 }
 
 #networkList .list-action-danger {
-    color: #dc2626;
+    color: #c9372c;
 }
 
 #networkList .list-action-danger:hover {
-    background-color: #fef2f2;
-    color: #991b1b;
+    background-color: #fdecec;
+    color: #b02a20;
 }
 
 #networkList .empty-state {
@@ -573,15 +572,15 @@ template_top('Campaign Category Setup');
 }
 
 .alert-success {
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border: 1px solid #86efac;
-    color: #166534;
+    background: #e7f5ec;
+    border: 1px solid #e7f5ec;
+    color: #1d6c3a;
 }
 
 .alert-danger {
-    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-    border: 1px solid #fca5a5;
-    color: #991b1b;
+    background: #fdecec;
+    border: 1px solid #c9372c;
+    color: #b02a20;
 }
 
 .alert .fa {
@@ -591,39 +590,39 @@ template_top('Campaign Category Setup');
 
 /* Form Separator */
 .form_seperator {
-    border-bottom: 2px solid #e2e8f0;
+    border-bottom: 2px solid #e7e8ea;
     margin: 20px 0 !important;
 }
 
 /* Info Text */
 .infotext {
     display: block;
-    color: #64748b;
+    color: #6b7280;
     font-size: 13px;
     margin-bottom: 12px;
     line-height: 1.5;
 }
 
 small strong {
-    color: #1e293b;
+    color: #1f2328;
     font-size: 14px;
 }
 
 /* Secondary Button */
 .btn-secondary {
-    background: #f1f5f9;
-    color: #475569;
-    border: 1px solid #e2e8f0;
+    background: #f0f1f2;
+    color: #374151;
+    border: 1px solid #e7e8ea;
 }
 
 .btn-secondary:hover {
-    background: #e2e8f0;
-    color: #1e293b;
+    background: #e7e8ea;
+    color: #1f2328;
 }
 
 /* Fuzzy Search Input */
 .fuzzy-search {
-    border: 1px solid #e5e7eb !important;
+    border: 1px solid #e7e8ea !important;
     border-radius: 8px !important;
     padding: 10px 14px !important;
     font-size: 14px;
@@ -631,8 +630,8 @@ small strong {
 }
 
 .fuzzy-search:focus {
-    border-color: #007bff !important;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
+    border-color: #2f6fdd !important;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
     outline: none;
 }
 

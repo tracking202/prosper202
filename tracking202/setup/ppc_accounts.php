@@ -696,7 +696,6 @@ template_top('Traffic Sources'); ?>
 	});
 </script>
 
-<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
 <style>
 /* ===========================================
@@ -709,10 +708,10 @@ template_top('Traffic Sources'); ?>
     align-items: center;
     gap: 16px;
     padding: 24px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-radius: 12px;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
 }
 
 .setup-page-header__icon {
@@ -752,7 +751,7 @@ template_top('Traffic Sources'); ?>
 /* Panel Styles - Design System */
 .setup-panel,
 .panel-default {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     overflow: hidden;
@@ -760,11 +759,11 @@ template_top('Traffic Sources'); ?>
 }
 
 .panel-heading {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
     padding: 16px 20px;
     font-weight: 600;
-    color: #1e293b;
+    color: #1f2328;
 }
 
 .panel-body {
@@ -795,7 +794,7 @@ template_top('Traffic Sources'); ?>
 .form-group select {
     width: 100%;
     padding: 8px 12px;
-    border: 1px solid #d1d5db;
+    border: 1px solid #c9cdd3;
     border-radius: 6px;
     font-size: 14px;
     transition: all 0.2s ease;
@@ -805,8 +804,8 @@ template_top('Traffic Sources'); ?>
 .form-group textarea:focus,
 .form-group select:focus {
     outline: none;
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
 }
 
 /* Button Styles */
@@ -824,39 +823,39 @@ template_top('Traffic Sources'); ?>
 
 .setup-btn-primary,
 .btn-p202 {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     color: #fff;
-    border: 1px solid #0056b3;
+    border: 1px solid #2861c4;
 }
 
 .setup-btn-primary:hover,
 .btn-p202:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+    transform: none;
+    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.3);
 }
 
 .setup-btn-secondary {
-    background: #f3f4f6;
+    background: #f0f1f2;
     color: #374151;
-    border: 1px solid #d1d5db;
+    border: 1px solid #c9cdd3;
 }
 
 .setup-btn-secondary:hover {
-    background: #e5e7eb;
+    background: #e7e8ea;
     border-color: #9ca3af;
 }
 
 .setup-btn-danger,
 .btn-danger {
-    background: #ef4444;
+    background: #c9372c;
     color: #fff;
-    border: 1px solid #dc2626;
+    border: 1px solid #c9372c;
 }
 
 .setup-btn-danger:hover,
 .btn-danger:hover {
-    background: #dc2626;
-    transform: translateY(-2px);
+    background: #c9372c;
+    transform: none;
     box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }
 
@@ -874,28 +873,28 @@ template_top('Traffic Sources'); ?>
 
 .setup-alert-success,
 .alert-success {
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border-color: #86efac;
-    color: #166534;
+    background: #e7f5ec;
+    border-color: #e7f5ec;
+    color: #1d6c3a;
 }
 
 .setup-alert-danger,
 .alert-danger {
-    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-    border-color: #fca5a5;
-    color: #991b1b;
+    background: #fdecec;
+    border-color: #c9372c;
+    color: #b02a20;
 }
 
 .setup-alert-warning {
-    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
-    border-color: #fcd34d;
-    color: #92400e;
+    background: #fdf3e2;
+    border-color: #b54708;
+    color: #9a3c07;
 }
 
 .setup-alert-info {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-    border-color: #7dd3fc;
-    color: #0c4a6e;
+    background: #eaf2fc;
+    border-color: #bcd4f6;
+    color: #2861c4;
 }
 
 .setup-alert i,
@@ -916,15 +915,15 @@ template_top('Traffic Sources'); ?>
 .pixel-container {
     margin: 16px 0;
     padding: 16px;
-    background: #f9fafb;
+    background: #fafbfc;
     border-radius: 8px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid #e7e8ea;
 }
 
 .pixel {
     margin-bottom: 16px;
     padding-bottom: 16px;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid #e7e8ea;
 }
 
 .pixel:last-child {
@@ -935,17 +934,17 @@ template_top('Traffic Sources'); ?>
 
 #remove_pixel {
     cursor: pointer;
-    color: #ef4444;
+    color: #c9372c;
     transition: color 0.2s ease;
 }
 
 #remove_pixel:hover {
-    color: #dc2626;
+    color: #c9372c;
 }
 
 /* Form Separator */
 .form_seperator {
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid #e7e8ea;
 }
 
 /* Setup List */
@@ -965,9 +964,9 @@ template_top('Traffic Sources'); ?>
 .traffic-sources-heading__meta {
     font-size: 12px;
     font-weight: 500;
-    color: #475569;
+    color: #374151;
     background: #fff;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #c9cdd3;
     border-radius: 999px;
     padding: 2px 10px;
 }
@@ -985,13 +984,13 @@ template_top('Traffic Sources'); ?>
     top: 50%;
     left: 12px;
     transform: translateY(-50%);
-    color: #94a3b8;
+    color: #8a919b;
     pointer-events: none;
 }
 
 .traffic-source-search {
-    background: #f8fafc;
-    border-color: #cbd5e1;
+    background: #fafbfc;
+    border-color: #c9cdd3;
     padding-left: 34px !important;
     min-height: 36px;
 }
@@ -1018,17 +1017,17 @@ template_top('Traffic Sources'); ?>
        an empty account list wraps beside the header instead of below it. */
     display: block;
     margin-bottom: 0;
-    border: 1px solid #dbe3ec;
+    border: 1px solid #e7e8ea;
     border-radius: 10px;
-    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    background: #ffffff;
     padding: 12px;
     transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 #trafficSourceList .source-item:hover {
-    border-color: #9ec5fe;
+    border-color: #bcd4f6;
     box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
-    transform: translateY(-1px);
+    transform: none;
 }
 
 #trafficSourceList .source-header {
@@ -1049,15 +1048,15 @@ template_top('Traffic Sources'); ?>
 #trafficSourceList .source-name {
     font-size: 14px;
     font-weight: 600;
-    color: #1e293b;
+    color: #1f2328;
 }
 
 #trafficSourceList .source-account-count {
     font-size: 11px;
     font-weight: 600;
-    color: #1e40af;
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
+    color: #2861c4;
+    background: #eaf2fc;
+    border: 1px solid #bcd4f6;
     border-radius: 999px;
     padding: 2px 8px;
 }
@@ -1075,7 +1074,7 @@ template_top('Traffic Sources'); ?>
     list-style: none;
     margin: 10px 0 0 0;
     padding: 10px 0 0 12px;
-    border-top: 1px dashed #dbe3ec;
+    border-top: 1px dashed #e7e8ea;
 }
 
 #trafficSourceList .account-item {
@@ -1085,9 +1084,9 @@ template_top('Traffic Sources'); ?>
     gap: 10px;
     padding: 7px 10px;
     margin-bottom: 6px;
-    border-left: 2px solid #dbe3ec;
+    border-left: 2px solid #e7e8ea;
     border-radius: 0 8px 8px 0;
-    background: #f8fafc;
+    background: #fafbfc;
     transition: background 0.2s ease, border-color 0.2s ease;
 }
 
@@ -1096,26 +1095,26 @@ template_top('Traffic Sources'); ?>
 }
 
 #trafficSourceList .account-item:hover {
-    background: #eff6ff;
-    border-left-color: #60a5fa;
+    background: #eaf2fc;
+    border-left-color: #2f6fdd;
 }
 
 #trafficSourceList .account-name {
     font-size: 13px;
     font-weight: 500;
-    color: #334155;
+    color: #32383f;
 }
 
 #trafficSourceList .account-item-empty {
     font-size: 12px;
-    color: #64748b;
+    color: #6b7280;
     padding: 6px 0 2px;
     font-style: italic;
 }
 
 /* List Action Links */
 .list-action {
-    color: #2563eb;
+    color: #2f6fdd;
     text-decoration: none;
     font-weight: 600;
     font-size: 12px;
@@ -1127,34 +1126,34 @@ template_top('Traffic Sources'); ?>
 }
 
 .list-action:hover {
-    background-color: #eff6ff;
-    border-color: #bfdbfe;
-    color: #1d4ed8;
+    background-color: #eaf2fc;
+    border-color: #bcd4f6;
+    color: #2861c4;
     text-decoration: none;
 }
 
 .list-action-danger {
-    color: #dc2626;
+    color: #c9372c;
 }
 
 .list-action-danger:hover {
-    background-color: #fef2f2;
-    color: #991b1b;
+    background-color: #fdecec;
+    color: #b02a20;
 }
 
 .setup-list-empty,
 #trafficSourceList .empty-state {
     text-align: center;
     padding: 24px 16px;
-    color: #64748b;
-    border: 1px dashed #cbd5e1;
+    color: #6b7280;
+    border: 1px dashed #c9cdd3;
     border-radius: 10px;
-    background: #f8fafc;
+    background: #fafbfc;
 }
 
 /* Input and Select Improvements */
 .form-control {
-    border: 1px solid #d1d5db;
+    border: 1px solid #c9cdd3;
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 14px;
@@ -1167,8 +1166,8 @@ template_top('Traffic Sources'); ?>
 
 .form-control:focus {
     outline: none;
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
 }
 
 .form-control.input-sm {
@@ -1184,7 +1183,7 @@ template_top('Traffic Sources'); ?>
     min-height: 38px !important;
     box-shadow: none !important;
     -webkit-box-shadow: none !important;
-    border: 1px solid #d1d5db !important;
+    border: 1px solid #c9cdd3 !important;
     border-radius: 8px !important;
     background-color: #fff !important;
     display: flex !important;
@@ -1223,30 +1222,30 @@ template_top('Traffic Sources'); ?>
 }
 .tokenfield.focus,
 .tokenfield.form-control.focus {
-    border-color: #007bff !important;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
-    -webkit-box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
+    border-color: #2f6fdd !important;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
+    -webkit-box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
 }
 
 /* Search Input */
 .search {
-    border: 1px solid #d1d5db;
+    border: 1px solid #c9cdd3;
     box-shadow: none !important;
 }
 
 .search:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1) !important;
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
 }
 
 /* Modal Improvements */
 .modal-header {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
 }
 
 .modal-title {
-    color: #1e293b;
+    color: #1f2328;
     font-weight: 600;
 }
 
