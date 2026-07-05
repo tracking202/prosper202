@@ -705,14 +705,45 @@ $addressParts = array_filter([
     function ltvCustomerEdit(customerId) {
         ltvNav('customer', { customer_id: customerId, mode: 'edit' });
     }
+    // Merge picker (ltv_merge_modal.php): type-ahead search instead of a
+    // raw-id prompt, with a confirm step and a keep-direction swap.
+    var ltvMergeSelf = <?php echo json_encode($customer !== null ? [
+        'id' => (int) $customer['customer_id'],
+        'label' => trim(((string) ($customer['first_name'] ?? '')) . ' ' . ((string) ($customer['last_name'] ?? ''))) !== ''
+            ? trim(((string) ($customer['first_name'] ?? '')) . ' ' . ((string) ($customer['last_name'] ?? '')))
+            : (string) ($customer['primary_ref'] ?? ('#' . (int) $customer['customer_id'])),
+        'sub' => trim(implode(' · ', array_filter([
+            (string) ($customer['email'] ?? ''),
+            (string) ($customer['company'] ?? ''),
+            '#' . (int) $customer['customer_id'],
+        ]))),
+        'meta' => '$' . number_format((float) ($customer['total_revenue'] ?? 0), 2)
+            . ' · ' . (int) ($customer['order_count'] ?? 0) . ' order' . (((int) ($customer['order_count'] ?? 0)) === 1 ? '' : 's'),
+    ] : null, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
     function ltvCustomerMerge(customerId) {
-        var sourceId = window.prompt('Merge which customer # INTO this record?\n\nThe other record\'s aliases, revenue, conversions and subscriptions will be re-pointed here, and it will be excluded from reports.');
-        if (!sourceId || !/^\d+$/.test(sourceId.trim())) { return; }
-        loadContentPost('<?php echo $selfUrl; ?>', {
-            customer_id: customerId,
-            action: 'merge',
-            source_customer_id: sourceId.trim(),
-            token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
+        if (!ltvMergeSelf) { return; }
+        ltvMergeOpen({
+            entity: 'customer',
+            noun: 'customer',
+            placeholder: 'Search by name, email, ref or company…',
+            moves: 'aliases, revenue history, conversions, subscriptions and engagement',
+            target: ltvMergeSelf,
+            confirm: function(keptId, goneId) {
+                loadContentPost('<?php echo $selfUrl; ?>', {
+                    customer_id: keptId,
+                    action: 'merge',
+                    source_customer_id: goneId,
+                    token: <?php echo json_encode((string) ($_SESSION['token'] ?? '')); ?>
+                });
+                // When the direction was swapped, this page's URL points at
+                // the record that just merged away — move it to the survivor.
+                if (String(keptId) !== String(ltvMergeSelf.id) && window.history && window.history.replaceState) {
+                    window.history.replaceState(
+                        { ltvView: 'customer', ltvParams: { customer_id: keptId } }, '',
+                        ltvUrl('customer', { customer_id: keptId })
+                    );
+                }
+            }
         });
     }
     function ltvCustomerErase(customerId) {
@@ -742,3 +773,5 @@ $addressParts = array_filter([
         });
     }
 </script>
+
+<?php require __DIR__ . '/ltv_merge_modal.php'; ?>

@@ -543,6 +543,15 @@ final class LtvDatabaseIntegrationTest extends TestCase
     {
         $companies = new MysqlCompanyRepository(self::$conn);
 
+        // Merge-picker search: matches name or domain, excludes the target id.
+        $acme = $companies->create(1, 'Acme Widgets', 'acme.example.com');
+        $other = $companies->create(1, 'Widget World');
+        $found = $companies->search(1, 'widget', $other, 8);
+        self::assertCount(1, $found, 'the merge target itself is excluded');
+        self::assertSame($acme, (int) $found[0]['company_id']);
+        $byDomain = $companies->search(1, 'acme.example', 0, 8);
+        self::assertSame($acme, (int) $byDomain[0]['company_id'], 'domain matches too');
+
         // The invariant lives in the schema, not just the preflight checks.
         $idx = $this->row("SHOW INDEX FROM 202_companies WHERE Key_name='uniq_user_domain'");
         self::assertNotNull($idx, 'uniq_user_domain key must exist');

@@ -289,6 +289,33 @@ final class MysqlCompanyRepository
      *
      * @return array{rows: list<array<string, mixed>>, total: int}
      */
+    /**
+     * Type-ahead search for the merge picker: match name or domain
+     * (LIKE-escaped), excluding one id (the merge target itself), with the
+     * attached-contact count for display.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function search(int $userId, string $q, int $excludeId = 0, int $limit = 8): array
+    {
+        $term = '%' . addcslashes(trim($q), '%_\\') . '%';
+        $stmt = $this->conn->prepareRead(
+            'SELECT co.company_id, co.name, co.domain,
+                    COUNT(cu.customer_id) AS contacts
+             FROM 202_companies co
+             LEFT JOIN 202_customers cu ON cu.company_id = co.company_id
+                AND cu.user_id = co.user_id AND cu.merged_into_customer_id IS NULL
+             WHERE co.user_id = ? AND co.company_id <> ?
+               AND (co.name LIKE ? OR co.domain LIKE ?)
+             GROUP BY co.company_id, co.name, co.domain
+             ORDER BY contacts DESC, co.name ASC
+             LIMIT ?'
+        );
+        $this->conn->bind($stmt, 'iissi', [$userId, $excludeId, $term, $term, max(1, min(25, $limit))]);
+
+        return $this->conn->fetchAll($stmt);
+    }
+
     public function listWithRollups(int $userId, int $limit = 50, int $offset = 0): array
     {
         $stmt = $this->conn->prepareRead(

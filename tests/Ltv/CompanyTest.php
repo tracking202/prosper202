@@ -23,6 +23,21 @@ use Tests\Support\FakeMysqliConnection;
  */
 final class CompanyTest extends TestCase
 {
+    public function testSearchEscapesLikeAndExcludesTheMergeTarget(): void
+    {
+        $read = new FakeMysqliConnection();
+        $repo = new MysqlCompanyRepository(new Connection(new FakeMysqliConnection(), $read));
+
+        $repo->search(7, '50%_off', 12, 8);
+
+        $queries = $read->statementsContaining('co.name LIKE ?');
+        self::assertCount(1, $queries);
+        self::assertStringContainsString('co.company_id <> ?', $queries[0]->sql, 'the merge target itself is excluded');
+        self::assertStringContainsString('merged_into_customer_id IS NULL', $queries[0]->sql, 'contact counts skip merged customers');
+        self::assertSame('iissi', $queries[0]->boundTypes);
+        self::assertSame([7, 12, '%50\%\_off%', '%50\%\_off%', 8], $queries[0]->boundValues, 'LIKE metacharacters escaped');
+    }
+
     public function testNormalizeNameCollapsesCaseAndWhitespace(): void
     {
         self::assertSame('acme corp', MysqlCompanyRepository::normalizeName('  Acme   Corp '));

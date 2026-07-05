@@ -165,7 +165,13 @@ if ($error !== null && $action === 'update_company') {
                         <td><?php echo $when($companyRow['last_activity_time'] ?? 0); ?></td>
                         <td class="text-right" style="white-space: nowrap;">
                             <button type="button" class="btn btn-xs btn-default" onclick="ltvCompanyEdit(<?php echo $companyId; ?>);">Edit</button>
-                            <button type="button" class="btn btn-xs btn-default" onclick="ltvCompanyMerge(<?php echo $companyId; ?>);" title="Merge another company into this one">Merge</button>
+                            <?php $mergeTargetJson = json_encode([
+                                'id' => $companyId,
+                                'label' => (string) ($companyRow['name'] ?? ('#' . $companyId)),
+                                'sub' => trim(implode(' · ', array_filter([(string) ($companyRow['domain'] ?? ''), '#' . $companyId]))),
+                                'meta' => number_format((int) ($companyRow['contacts'] ?? 0)) . ' contact' . (((int) ($companyRow['contacts'] ?? 0)) === 1 ? '' : 's'),
+                            ], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>
+                            <button type="button" class="btn btn-xs btn-default" onclick='ltvCompanyMerge(<?php echo $mergeTargetJson; ?>);' title="Merge another company into this one">Merge</button>
                             <button type="button" class="btn btn-xs btn-danger" onclick="ltvCompanyDelete(<?php echo $companyId; ?>);">Delete</button>
                         </td>
                     </tr>
@@ -216,14 +222,21 @@ if ($error !== null && $action === 'update_company') {
             token: <?php echo json_encode($csrfToken); ?>
         });
     }
-    function ltvCompanyMerge(companyId) {
-        var sourceId = window.prompt('Merge which company # INTO this one?\n\nIts contacts move here (their company name is rewritten) and the other company is removed.');
-        if (!sourceId || !/^\d+$/.test(sourceId.trim())) { return; }
-        loadContentPost('<?php echo $selfUrl; ?>', {
-            action: 'merge_company',
-            company_id: companyId,
-            source_company_id: sourceId.trim(),
-            token: <?php echo json_encode($csrfToken); ?>
+    function ltvCompanyMerge(target) {
+        ltvMergeOpen({
+            entity: 'company',
+            noun: 'company',
+            placeholder: 'Search companies by name or domain…',
+            moves: 'all attached contacts (their company name is rewritten to the kept record)',
+            target: target,
+            confirm: function(keptId, goneId) {
+                loadContentPost('<?php echo $selfUrl; ?>', {
+                    action: 'merge_company',
+                    company_id: keptId,
+                    source_company_id: goneId,
+                    token: <?php echo json_encode($csrfToken); ?>
+                });
+            }
         });
     }
     function ltvCompanyDelete(companyId) {
@@ -238,3 +251,5 @@ if ($error !== null && $action === 'update_company') {
         ltvNav('company', { company: company });
     }
 </script>
+
+<?php require __DIR__ . '/ltv_merge_modal.php'; ?>
