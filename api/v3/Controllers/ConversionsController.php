@@ -151,9 +151,11 @@ class ConversionsController
             $convId = $repo->create($this->userId, $data);
         } catch (\Prosper202\Conversion\ClickNotFoundException $e) {
             throw new NotFoundException('Click not found or not owned by user');
-        } catch (\mysqli_sql_exception $e) {
-            // A real database failure is a 500 even though it extends
-            // RuntimeException — only repository validation maps to 422 below.
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+            // A real database failure is a 500 even though QueryException
+            // extends RuntimeException — under MYSQLI_REPORT_STRICT a failed
+            // query surfaces as Connection's QueryException, not
+            // mysqli_sql_exception. Only repository validation maps to 422 below.
             throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
         } catch (\RuntimeException $e) {
             // Validation-shaped repository errors (unknown customer_ref_type,

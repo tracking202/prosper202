@@ -326,20 +326,50 @@ final class PersonalizationTest extends TestCase
         // internals), so the atomic seal takes the concurrent-loser branch and
         // re-reads the winner's snapshot; feed it the sealed value.
         $write->whenQueryContainsReturnRows('SELECT snapshot FROM 202_personalization_tokens', [[
-            'snapshot' => '{"first_name":"John","city":"Austin","loyalty_tier":"gold"}',
+            'snapshot' => '{"first_name":"John","city":"Austin","cf_loyalty_tier":"gold"}',
         ]]);
 
         $repo = new MysqlPersonalizationRepository(new Connection($write, $read));
         $payload = $repo->redeem(str_repeat('a', 43), 1700000100);
 
         // 'email' is in the pref but NOT in ALLOWED_CRM_FIELDS: it must be
-        // silently ineligible — PII never reaches a landing page.
-        self::assertSame(['first_name' => 'John', 'city' => 'Austin', 'loyalty_tier' => 'gold'], $payload);
+        // silently ineligible — PII never reaches a landing page. The custom
+        // field seals under its 'cf_' namespace, disjoint from CRM keys.
+        self::assertSame(['first_name' => 'John', 'city' => 'Austin', 'cf_loyalty_tier' => 'gold'], $payload);
 
         $seals = $write->statementsContaining('UPDATE 202_personalization_tokens SET redeemed_at');
         self::assertCount(1, $seals);
         self::assertStringContainsString('redeemed_at IS NULL', $seals[0]->sql, 'seal must be atomic (claim-once)');
-        self::assertContains('{"first_name":"John","city":"Austin","loyalty_tier":"gold"}', $seals[0]->boundValues);
+        self::assertContains('{"first_name":"John","city":"Austin","cf_loyalty_tier":"gold"}', $seals[0]->boundValues);
+    }
+
+    public function testCustomFieldNamespaceKeepsRevocationIndependentFromCrm(): void
+    {
+        // A token sealed while BOTH CRM city and cf:city were allowed. Because
+        // they live in disjoint payload namespaces ('city' vs 'cf_city'),
+        // revoking one on replay must not leave the other replaying — the bug
+        // was both collapsing to 'city'.
+        $tokenRow = [
+            'p13n_id' => 1, 'user_id' => 7, 'customer_id' => 501,
+            'first_use_deadline' => 1700003600, 'replay_until' => 1702592000,
+            'redeemed_at' => 1700000100,
+            'snapshot' => '{"city":"Austin","cf_city":"HQ-West"}',
+        ];
+        $case = static function (string $allowlist) use ($tokenRow): array {
+            $write = new FakeMysqliConnection();
+            $read = new FakeMysqliConnection();
+            $write->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [$tokenRow]);
+            $read->whenQueryContainsReturnRows('user_ltv_personalization_fields', [[
+                'user_ltv_personalization_fields' => $allowlist,
+            ]]);
+            return (new MysqlPersonalizationRepository(new Connection($write, $read)))
+                ->redeem(str_repeat('a', 43), 1700100000);
+        };
+
+        self::assertSame(['city' => 'Austin', 'cf_city' => 'HQ-West'], $case('city, cf:city'), 'both allowed → both replay');
+        self::assertSame(['cf_city' => 'HQ-West'], $case('cf:city'), 'revoking CRM city drops only the CRM value');
+        self::assertSame(['city' => 'Austin'], $case('city'), 'revoking cf:city drops only the custom-field value');
+        self::assertSame([], $case('first_name'), 'revoking both leaves nothing to replay');
     }
 
     public function testSealRaceLoserDoesNotRecordAnImpression(): void

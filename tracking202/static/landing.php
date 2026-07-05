@@ -373,13 +373,16 @@ window.t202TrackVideo = function(videoEl) {
 })();
 
 // --- Customer personalization (privacy-preserving, graceful by design) ---
-// Elements opt in with name="t202p13n_<field>" (e.g. t202p13n_first_name) and
-// an optional t202Default attribute. Defaults render IMMEDIATELY; if the
-// visitor carries a valid personalization token cookie (minted server-side at
-// redirect for known customers only), the matching fields are overwritten
-// once the payload arrives. Any failure — no cookie, expired token, network
-// error, timeout — simply leaves the default copy in place. textContent only,
-// never HTML.
+// Elements opt in with name="t202p13n_<field>": CRM fields use the bare name
+// (e.g. t202p13n_first_name), custom fields use the cf_ namespace
+// (t202p13n_cf_<field_key>, e.g. t202p13n_cf_loyalty_tier), and the next-offer
+// recommendation uses t202p13n_next_offer_name / t202p13n_next_offer_url. An
+// optional t202Default attribute holds fallback copy. Defaults render
+// IMMEDIATELY; if the visitor carries a valid personalization token cookie
+// (minted server-side at redirect for known customers only), the matching
+// fields are overwritten once the payload arrives. Any failure — no cookie,
+// expired token, network error, timeout — simply leaves the default copy in
+// place. textContent only, never HTML.
 (function() {
 	window.t202Personalization = {};
 

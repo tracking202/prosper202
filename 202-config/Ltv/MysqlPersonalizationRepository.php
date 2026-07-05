@@ -31,6 +31,14 @@ final class MysqlPersonalizationRepository
     /** CRM columns eligible for the allowlist pref. Deliberately tiny. */
     public const ALLOWED_CRM_FIELDS = ['first_name', 'last_name', 'company', 'city', 'country'];
 
+    /**
+     * Payload-key prefix for custom-field ('cf:<key>') values. Keeps them in a
+     * namespace disjoint from CRM fields, so cf:city and CRM city hold their
+     * own payload keys and revoking one never leaves the other's sealed value
+     * replaying. Landing-page elements opt in with name="t202p13n_cf_<key>".
+     */
+    public const CUSTOM_FIELD_PAYLOAD_PREFIX = 'cf_';
+
     /** Seconds a fresh token may be redeemed for live data. */
     public const FIRST_USE_WINDOW = 3600; // 60 minutes
 
@@ -424,7 +432,13 @@ final class MysqlPersonalizationRepository
                 default => trim((string) ($row['value_text'] ?? '')),
             };
             if ($value !== '') {
-                $payload[$fieldKey] = $value;
+                // Custom fields live in their OWN 'cf_' payload namespace so a
+                // custom field named like a CRM field (cf:city vs CRM city)
+                // never shares a payload key with it. Sharing a key would make
+                // field revocation leak: a snapshot sealed under one still
+                // replays while the other's allowlist entry keeps that key
+                // alive. Distinct keys keep each field's revocation independent.
+                $payload[self::CUSTOM_FIELD_PAYLOAD_PREFIX . $fieldKey] = $value;
             }
         }
 
@@ -448,7 +462,9 @@ final class MysqlPersonalizationRepository
                 $keys['next_offer_name'] = true;
                 $keys['next_offer_url'] = true;
             } elseif (str_starts_with($entry, 'cf:')) {
-                $keys[substr($entry, 3)] = true;
+                // Custom fields emit 'cf_<key>' so they never collide with a
+                // same-named CRM field's payload key (see buildPayload).
+                $keys[self::CUSTOM_FIELD_PAYLOAD_PREFIX . substr($entry, 3)] = true;
             } else {
                 $keys[$entry] = true;
             }

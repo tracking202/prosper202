@@ -10,6 +10,7 @@ use Api\V3\Exception\LostIdempotencyRaceException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Ltv\LtvQuery;
 use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
@@ -550,6 +551,9 @@ class LtvController
             $result = $this->subscriptions->recordEvent($this->userId, $externalSubId, $eventType, $payload);
         } catch (SubscriptionNotFoundException $e) {
             throw new NotFoundException($e->getMessage());
+        } catch (QueryException | \mysqli_sql_exception $e) {
+            // Database-layer failure → 500, not a 422 (see wrap()).
+            throw new DatabaseException('Subscription event failed: ' . $e->getMessage(), $e);
         } catch (\RuntimeException $e) {
             throw new ValidationException($e->getMessage());
         } catch (\Throwable $e) {
@@ -992,6 +996,14 @@ class LtvController
             return $fn();
         } catch (ValidationException | NotFoundException | ConflictException | DatabaseException $e) {
             throw $e;
+        } catch (QueryException | \mysqli_sql_exception $e) {
+            // A database-LAYER failure (missing table on a code-before-migration
+            // deploy, a failed statement) is a 500, NOT a client-correctable
+            // 422 — under MYSQLI_REPORT_STRICT a failed query surfaces as
+            // Connection's QueryException (a RuntimeException subclass), so it
+            // must be caught before the validation branch or raw MySQL detail
+            // would leak to the client with a 422.
+            throw new DatabaseException('LTV operation failed: ' . $e->getMessage(), $e);
         } catch (\RuntimeException $e) {
             throw new ValidationException($e->getMessage());
         } catch (\Throwable $e) {
