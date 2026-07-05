@@ -526,6 +526,51 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertFalse($again['changed'], 'a repeat cancel is a no-op');
     }
 
+    public function testSubscriptionIdempotencyKeysAreScopedPerSubscriptionAndEvent(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+
+        $customerId = $crm->upsert(1, ['customer_ref' => 'scoped-key-1']);
+
+        // The account already spent this key on the /ltv/revenue surface
+        // (stored verbatim, account-wide uniqueness on (user_id, key)).
+        $customers->insertRevenueEvent(1, $customerId, [
+            'event_type' => 'one_time', 'amount' => 5.0, 'currency' => 'USD',
+            'occurred_at' => 1700000000, 'source' => 'api', 'idempotency_key' => 'shared-key-1',
+        ], 1700000000);
+
+        $subs->upsert(1, ['external_sub_id' => 'SUB-SCOPED', 'amount' => 20.0, 'status' => 'active', 'customer_id' => $customerId]);
+
+        // A renewal reusing the same caller key must NOT read as a replay of
+        // the unrelated revenue event: the period advances and MRR flows.
+        $renewal = $subs->recordEvent(1, 'SUB-SCOPED', 'renewal', ['idempotency_key' => 'shared-key-1']);
+        self::assertTrue($renewal['inserted'], 'a revenue-surface key must not swallow a subscription renewal');
+        self::assertTrue($renewal['changed']);
+        $stored = (string) $this->scalar('SELECT idempotency_key FROM 202_revenue_events WHERE event_id=' . (int) $renewal['eventId']);
+        self::assertSame('sub:' . $renewal['subscriptionId'] . ':renewal:key:shared-key-1', $stored, 'caller keys are stored scoped');
+
+        // Replaying the SAME renewal with the same key still dedupes.
+        $replay = $subs->recordEvent(1, 'SUB-SCOPED', 'renewal', ['idempotency_key' => 'shared-key-1']);
+        self::assertFalse($replay['inserted']);
+        self::assertFalse($replay['changed']);
+        self::assertSame($renewal['eventId'], $replay['eventId']);
+
+        // A refund with the same key is a DIFFERENT event, not a replay of
+        // the renewal (per-event scoping), and oversized keys hash instead of
+        // overflowing the varchar(191) column.
+        $refund = $subs->recordEvent(1, 'SUB-SCOPED', 'refund', ['idempotency_key' => 'shared-key-1', 'amount' => 20.0]);
+        self::assertTrue($refund['inserted'], 'same key on a different event type is a new event');
+        $longKey = str_repeat('k', 200);
+        $long = $subs->recordEvent(1, 'SUB-SCOPED', 'renewal', ['idempotency_key' => $longKey]);
+        self::assertTrue($long['inserted']);
+        $storedLong = (string) $this->scalar('SELECT idempotency_key FROM 202_revenue_events WHERE event_id=' . (int) $long['eventId']);
+        self::assertSame('sub:' . $long['subscriptionId'] . ':renewal:keyh:' . hash('sha256', $longKey), $storedLong);
+        $longReplay = $subs->recordEvent(1, 'SUB-SCOPED', 'renewal', ['idempotency_key' => $longKey]);
+        self::assertFalse($longReplay['inserted'], 'hashed long keys still dedupe deterministically');
+    }
+
     public function testPersonalizationMintRespectsAliasType(): void
     {
         $customers = new MysqlCustomerRepository(self::$conn);

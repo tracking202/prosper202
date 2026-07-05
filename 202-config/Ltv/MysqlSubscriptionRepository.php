@@ -200,8 +200,10 @@ final class MysqlSubscriptionRepository
      * Record a subscription lifecycle event.
      *
      * - renewal: appends a 'renewal' ledger event (idempotent on the caller's
-     *   idempotency_key/transaction_id), advances the paid-through period and
-     *   re-activates the subscription.
+     *   idempotency_key/transaction_id — both are scoped internally to this
+     *   subscription + event type, so a key the account already used on
+     *   /ltv/revenue or another subscription never reads as a replay here),
+     *   advances the paid-through period and re-activates the subscription.
      * - cancel: marks the subscription canceled (no money movement).
      * - refund: appends a negative 'refund' ledger event.
      *
@@ -267,6 +269,19 @@ final class MysqlSubscriptionRepository
                     // namespaces (void:/backfill:/sub:) — see the ledger's
                     // per-(user, key) uniqueness contract.
                     MysqlCustomerRepository::assertExternalIdempotencyKey($idempotencyKey);
+                    // Scope the key to this subscription + event type. The
+                    // ledger's uniqueness is account-wide (user_id, key), so a
+                    // key the account already spent on /ltv/revenue (or on a
+                    // different subscription/event) would otherwise make this
+                    // event read as an idempotent replay and silently skip the
+                    // renewal/refund. 'sub:' is a reserved internal namespace,
+                    // so scoped keys can never collide with externally-stored
+                    // ones; hash oversized keys to stay inside varchar(191).
+                    $scoped = 'sub:' . $subscriptionId . ':' . $eventType . ':key:' . $idempotencyKey;
+                    if (strlen($scoped) > 191) {
+                        $scoped = 'sub:' . $subscriptionId . ':' . $eventType . ':keyh:' . hash('sha256', $idempotencyKey);
+                    }
+                    $idempotencyKey = $scoped;
                 }
                 $transactionId = trim((string) ($payload['transaction_id'] ?? ''));
                 if ($idempotencyKey === '' && $transactionId !== '') {
