@@ -288,13 +288,23 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
             // reuse one token. A dead token (expired before first use, or
             // past its replay window) must NOT suppress reminting, or a
             // cookie-recognized visitor loses personalization until the
-            // 30-day LP cookie drains. Legacy pages send the bare flag '1'
-            // (unknown state): treated as usable, the conservative pre-
-            // validation behavior.
+            // 30-day LP cookie drains.
+            //
+            // Wire values (the beacon URL is a GET, so it must never carry
+            // the bearer token itself — server/proxy/CDN logs capture query
+            // strings): current snippets send 'h:' + sha256(token) from the
+            // companion hash cookie; '1' is the legacy bare presence flag
+            // (unknown state — treated as usable, the conservative
+            // pre-validation behavior); anything else is a raw token from a
+            // cached pre-digest snippet, still validated directly. ':' is
+            // outside the token's base64url charset, so the digest form can
+            // never be mistaken for a raw token.
             $pageToken = isset($get['p13n_have']) ? trim((string) $get['p13n_have']) : '';
             $pageHasToken = $pageToken !== '' && $pageToken !== '0';
-            if ($pageHasToken && $pageToken !== '1' && !$repo->tokenIsUsable($pageToken, time())) {
-                $pageHasToken = false;
+            if ($pageHasToken && $pageToken !== '1') {
+                $pageHasToken = str_starts_with($pageToken, 'h:')
+                    ? $repo->tokenHashIsUsable(substr($pageToken, 2), time())
+                    : $repo->tokenIsUsable($pageToken, time());
             }
 
             $customerId = $pageHasToken
@@ -306,9 +316,14 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
 
             $token = $repo->mint($userId, $customerId, $clickId, time());
 
-            // 30-day LP-domain cookie; token is base64url so json_encode
-            // yields a clean JS string literal.
-            return 'createCookie(\'tracking202p13n\',' . json_encode($token) . ',30);';
+            // Two 30-day LP-domain cookies: the bearer token itself (read by
+            // the LP's POST-only p13n/redeem and event calls) and its 'h:'
+            // sha256 digest, which is what the beacon reports back in the
+            // record.php GET URL — the bearer must never appear in a query
+            // string that request logs capture. Token is base64url, digest
+            // is hex, so json_encode yields clean JS string literals.
+            return 'createCookie(\'tracking202p13n\',' . json_encode($token) . ',30);'
+                . 'createCookie(\'tracking202p13nh\',' . json_encode('h:' . hash('sha256', $token)) . ',30);';
         } catch (\Throwable $e) {
             error_log('p202MintPersonalizationCookieJs failed: ' . $e->getMessage());
             return '';

@@ -235,6 +235,75 @@ final class PersonalizationTest extends TestCase
         self::assertCount(0, $fake->statementsContaining('INSERT INTO 202_personalization_tokens'), 'no needless re-mint');
     }
 
+    public function testTokenHashIsUsableStates(): void
+    {
+        $case = static function (?array $row): MysqlPersonalizationRepository {
+            $read = new FakeMysqliConnection();
+            if ($row !== null) {
+                $read->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [$row]);
+            }
+            return new MysqlPersonalizationRepository(new Connection(new FakeMysqliConnection(), $read));
+        };
+        $hex = str_repeat('ab', 32); // 64 hex chars
+
+        self::assertTrue($case(['first_use_deadline' => 1700003600, 'replay_until' => 1702592000, 'redeemed_at' => null])
+            ->tokenHashIsUsable($hex, 1700000100), 'unredeemed inside the first-use window');
+        self::assertFalse($case(['first_use_deadline' => 1700003600, 'replay_until' => 1702592000, 'redeemed_at' => null])
+            ->tokenHashIsUsable($hex, 1700010000), 'expired before first use = dead');
+        self::assertTrue($case(['first_use_deadline' => 1700003600, 'replay_until' => 1702592000, 'redeemed_at' => 1700000100])
+            ->tokenHashIsUsable($hex, 1701000000), 'sealed inside the replay window');
+        self::assertFalse($case(null)->tokenHashIsUsable($hex, 1700000100), 'unknown digest = dead');
+        self::assertFalse($case(null)->tokenHashIsUsable(str_repeat('z', 64), 1700000100), 'non-hex = dead without a lookup');
+        self::assertFalse($case(null)->tokenHashIsUsable('abcd', 1700000100), 'wrong length = dead without a lookup');
+    }
+
+    public function testBeaconDigestFormValidatesWithoutBearerToken(): void
+    {
+        require_once __DIR__ . '/../../202-config/static-endpoint-helpers.php';
+
+        $build = static function (array $tokenRow): FakeMysqliConnection {
+            $fake = new FakeMysqliConnection();
+            $fake->whenQueryContainsReturnRows('FROM 202_personalization_tokens WHERE token_hash', [$tokenRow]);
+            $fake->whenQueryContainsReturnRows('FROM 202_clicks_tracking ct', [['customer_id' => 501]]);
+            $fake->whenQueryContainsReturnRows('user_ltv_personalization_fields', [[
+                'user_ltv_personalization_fields' => 'first_name',
+            ]]);
+            $fake->whenQueryContainsReturnRows('FROM 202_customers WHERE customer_id = ? AND user_id = ? LIMIT 1', [['first_name' => 'John']]);
+            return $fake;
+        };
+        $digest = 'h:' . str_repeat('ab', 32);
+
+        // Usable digest: no explicit signal, so no re-mint — same contract
+        // as the raw-token form, but nothing bearer-shaped in the GET.
+        $fake = $build(['first_use_deadline' => 1000, 'replay_until' => PHP_INT_MAX, 'redeemed_at' => 500]);
+        $_COOKIE['tracking202subid'] = '777';
+        try {
+            self::assertSame('', p202MintPersonalizationCookieJs($fake, 7, ['p13n_have' => $digest], 999));
+            self::assertCount(0, $fake->statementsContaining('INSERT INTO 202_personalization_tokens'));
+
+            // Dead digest: the cookie-recognized visitor gets a replacement.
+            $fake = $build(['first_use_deadline' => 1000, 'replay_until' => 2592000, 'redeemed_at' => null]);
+            $js = p202MintPersonalizationCookieJs($fake, 7, ['p13n_have' => $digest], 999);
+            self::assertStringContainsString('createCookie', $js, 'a dead digest must not suppress the remint');
+
+            // The mint JS sets BOTH cookies, and the companion digest is the
+            // sha256 of the freshly minted bearer token.
+            self::assertSame(1, preg_match(
+                "/createCookie\('tracking202p13n',\"([A-Za-z0-9_\\-]+)\",30\\);createCookie\('tracking202p13nh',\"h:([0-9a-f]{64})\",30\\);/",
+                $js,
+                $m
+            ), 'mint emits token + digest cookies: ' . $js);
+            self::assertSame(hash('sha256', $m[1]), $m[2], 'digest cookie matches the minted token');
+
+            // A malformed digest is unverifiable — treated as dead, remint.
+            $fake = $build(['first_use_deadline' => 1000, 'replay_until' => PHP_INT_MAX, 'redeemed_at' => 500]);
+            $js = p202MintPersonalizationCookieJs($fake, 7, ['p13n_have' => 'h:not-a-digest'], 999);
+            self::assertStringContainsString('createCookie', $js, 'an unverifiable digest never blocks personalization');
+        } finally {
+            unset($_COOKIE['tracking202subid']);
+        }
+    }
+
     public function testFirstRedemptionBuildsAllowlistedPayloadAndSeals(): void
     {
         $write = new FakeMysqliConnection();

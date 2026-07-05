@@ -470,11 +470,34 @@ final class MysqlPersonalizationRepository
         if (strlen($rawToken) < 40 || strlen($rawToken) > 64 || preg_match('/^[A-Za-z0-9_\-]+$/', $rawToken) !== 1) {
             return false;
         }
+
+        return $this->hashIsUsable(hash('sha256', $rawToken, true), $now);
+    }
+
+    /**
+     * Same usability check keyed by the token's sha256 digest (hex). The LP
+     * beacon reports this digest instead of the raw token, so the 30-day
+     * bearer capability never travels in a GET query string where web-server
+     * / proxy / CDN logs would capture it — the digest cannot be replayed
+     * against p13n.php or p13n_event.php, which require the raw token.
+     */
+    public function tokenHashIsUsable(string $hexHash, int $now): bool
+    {
+        $hexHash = strtolower(trim($hexHash));
+        if (preg_match('/^[0-9a-f]{64}$/', $hexHash) !== 1) {
+            return false;
+        }
+
+        return $this->hashIsUsable(hex2bin($hexHash), $now);
+    }
+
+    private function hashIsUsable(string $binaryHash, int $now): bool
+    {
         $stmt = $this->conn->prepareRead(
             'SELECT first_use_deadline, replay_until, redeemed_at
              FROM 202_personalization_tokens WHERE token_hash = ? LIMIT 1'
         );
-        $this->conn->bind($stmt, 's', [hash('sha256', $rawToken, true)]);
+        $this->conn->bind($stmt, 's', [$binaryHash]);
         $token = $this->conn->fetchOne($stmt);
         if ($token === null || $now > (int) $token['replay_until']) {
             return false;

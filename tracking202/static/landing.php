@@ -206,11 +206,15 @@ var utm_campaign = t202GetVar('utm_campaign');
 		// first pageview — without this the ref never reaches record.php.
 		"cust=" + t202Enc(t202GetVar('cust') || t202GetVar('customer_ref')),
 		"cust_type=" + t202Enc(t202GetVar('cust_type') || t202GetVar('customer_ref_type')),
-		// Personalization: report the page's token cookie so the tracker can
-		// VALIDATE it — repeat pageviews within a visit reuse a usable token,
-		// while a dead one (expired unredeemed / past replay) gets replaced
-		// instead of blocking personalization until the cookie drains.
-		"p13n_have=" + t202Enc(readCookie('tracking202p13n') || '0')
+		// Personalization: report the token's DIGEST cookie (h:sha256) so the
+		// tracker can VALIDATE it — repeat pageviews within a visit reuse a
+		// usable token, while a dead one (expired unredeemed / past replay)
+		// gets replaced instead of blocking personalization until the cookie
+		// drains. Never the raw token: this is a GET URL, and the bearer
+		// capability must not land in web-server/proxy/CDN request logs.
+		// Older cookies minted before the digest existed fall back to the
+		// bare presence flag '1' (conservative: treated as usable).
+		"p13n_have=" + t202Enc(readCookie('tracking202p13nh') || (readCookie('tracking202p13n') ? '1' : '0'))
 	];
 	for (var i = 0; i < customVarNames.length; i++) {
 		parts.push(customVarNames[i] + "=" + t202Enc(customVarValues[i]));
