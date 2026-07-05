@@ -209,4 +209,28 @@ final class LtvGuardsTest extends TestCase
         $expected = 'sha256=' . hash_hmac('sha256', $body, 'secret-1');
         self::assertSame($expected, MysqlWebhookRepository::signature($body, 'secret-1'));
     }
+
+    public function testEmailDigestAliasValuesCanonicalize(): void
+    {
+        $md5 = md5('person@example.com');
+        $sha = hash('sha256', 'person@example.com');
+
+        // Digests are case-insensitive hex: canonical form is lowercase.
+        self::assertSame($md5, \Prosper202\Ltv\MysqlCustomerRepository::canonicalizeAliasValue('email_md5', strtoupper($md5)));
+        self::assertSame($sha, \Prosper202\Ltv\MysqlCustomerRepository::canonicalizeAliasValue('email_sha256', strtoupper($sha)));
+
+        // Case-sensitive identifier types pass through untouched.
+        self::assertSame('ABC-123', \Prosper202\Ltv\MysqlCustomerRepository::canonicalizeAliasValue('merchant_id', 'ABC-123'));
+        self::assertSame('MiXeD', \Prosper202\Ltv\MysqlCustomerRepository::canonicalizeAliasValue('custom', 'MiXeD'));
+
+        // Malformed digests are rejected explicitly (wrong length, non-hex).
+        foreach ([['email_md5', $sha], ['email_sha256', $md5], ['email_md5', 'zz' . substr($md5, 2)]] as [$type, $bad]) {
+            try {
+                \Prosper202\Ltv\MysqlCustomerRepository::canonicalizeAliasValue($type, $bad);
+                self::fail("malformed $type digest must be rejected");
+            } catch (\RuntimeException $e) {
+                self::assertStringContainsString('hex digest', $e->getMessage());
+            }
+        }
+    }
 }

@@ -530,6 +530,16 @@ final class MysqlPersonalizationRepository
         if ($ref === '' || strlen($ref) > 255) {
             return null;
         }
+        try {
+            // Same canonical form ingest stores (email digests lowercased),
+            // or an uppercase md5 from an email link would never match the
+            // alias a pixel created. Public beacon: a malformed digest
+            // resolves nobody instead of throwing — the response stays
+            // uniform.
+            $ref = MysqlCustomerRepository::canonicalizeAliasValue($type, $ref);
+        } catch (\RuntimeException) {
+            return null;
+        }
         $hash = hash('sha256', $ref, true);
         $stmt = $this->conn->prepareRead(
             'SELECT customer_id FROM 202_customer_aliases

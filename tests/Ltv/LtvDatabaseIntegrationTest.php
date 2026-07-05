@@ -898,6 +898,33 @@ CHILD;
             self::assertStringContainsString('customer_ref_type', $e->getMessage());
         }
         self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customers WHERE primary_ref = 'norm-2'"), 'a rejected type must not mint identity');
+
+        // Email digests are case-insensitive hex: the same md5 uppercased by
+        // an ESP and lowercased by a pixel must converge on ONE customer,
+        // stored in canonical lowercase.
+        $md5Upper = strtoupper(md5('person@example.com'));
+        $c = $customers->resolveOrCreateByAlias(1, 'email_md5', $md5Upper, [], null, 1700000000);
+        $d = $customers->resolveOrCreateByAlias(1, 'email_md5', strtolower($md5Upper), [], null, 1700000000);
+        self::assertSame($c, $d, 'digest case variants must resolve to the same customer');
+        self::assertSame(strtolower($md5Upper), (string) $this->scalar(
+            "SELECT alias_value FROM 202_customer_aliases WHERE alias_type = 'email_md5'"
+        ), 'digests are stored lowercased');
+
+        // addAlias applies the same canonical form: an uppercase sha256 added
+        // by hand matches a later lowercase resolution.
+        $sha = strtoupper(hash('sha256', 'person@example.com'));
+        $customers->addAlias(1, $c, 'email_sha256', $sha, 1700000000);
+        self::assertSame($c, $customers->resolveOrCreateByAlias(1, 'email_sha256', strtolower($sha), [], null, 1700000000));
+
+        // Malformed digests are rejected explicitly — not stored as an
+        // identity that nothing can ever match again.
+        try {
+            $customers->resolveOrCreateByAlias(1, 'email_md5', 'not-a-digest', [], null, 1700000000);
+            self::fail('malformed email_md5 must be rejected');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('hex digest', $e->getMessage());
+        }
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customers WHERE primary_ref = 'not-a-digest'"));
     }
 
     public function testCacSegmentsSearchAndCohortsEndToEnd(): void

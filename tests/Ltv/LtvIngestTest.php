@@ -212,7 +212,7 @@ final class LtvIngestTest extends TestCase
         $conn = new Connection($write, new FakeMysqliConnection());
         $repo = new MysqlCustomerRepository($conn);
 
-        $owner = $repo->addAlias(7, 501, 'email_md5', 'abc123', 1700000100);
+        $owner = $repo->addAlias(7, 501, 'email_md5', md5('person@example.com'), 1700000100);
         self::assertSame(555, $owner, 'existing alias binding must win; callers surface the conflict');
     }
 

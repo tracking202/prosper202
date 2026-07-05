@@ -6,12 +6,15 @@ declare(strict_types=1);
  * Landing-page personalization redemption endpoint (public, like the other
  * static pixel/postback endpoints).
  *
- * Contract: POST (preferred) or GET with `token`; responds with the
- * personalization payload as JSON, or `{}` — and `{}` looks identical for
- * unknown token / expired token / disabled feature / rate limit / internal
- * error, so the endpoint is not an oracle. Tokens are random 256-bit bearer
- * capabilities; on first use the payload is sealed and replays return the
- * sealed snapshot only (see MysqlPersonalizationRepository).
+ * Contract: POST with `token` in the body — GET is rejected, because a token
+ * in a query string lands in web-server / proxy / CDN / browser-history logs
+ * and it is a 30-day bearer capability (the bundled LP snippet has always
+ * POSTed). Responds with the personalization payload as JSON, or `{}` — and
+ * `{}` looks identical for GET delivery / unknown token / expired token /
+ * disabled feature / rate limit / internal error, so the endpoint is not an
+ * oracle. Tokens are random 256-bit bearer capabilities; on first use the
+ * payload is sealed and replays return the sealed snapshot only (see
+ * MysqlPersonalizationRepository).
  *
  * No PII is ever logged here.
  */
@@ -31,13 +34,9 @@ $emptyResponse = static function (): never {
     exit;
 };
 
-$token = '';
-foreach ([$_POST, $_GET] as $source) {
-    if (isset($source['token']) && is_scalar($source['token']) && trim((string) $source['token']) !== '') {
-        $token = trim((string) $source['token']);
-        break;
-    }
-}
+// Body-only delivery: a token in a GET query string would be captured by
+// ordinary request logging, and it's the full replay capability.
+$token = isset($_POST['token']) && is_scalar($_POST['token']) ? trim((string) $_POST['token']) : '';
 if ($token === '') {
     $emptyResponse();
 }

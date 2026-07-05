@@ -117,6 +117,7 @@ final class MysqlCustomerRepository
         // enforced once for all of them: a type stored as 'Merchant_ID' would
         // never match conversion/personalization lookups again.
         $aliasType = $this->normalizeAliasType($aliasType);
+        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue);
         $aliasHash = hash('sha256', $aliasValue, true);
 
         $existing = $this->aliasCustomerId($userId, $aliasType, $aliasHash);
@@ -172,6 +173,7 @@ final class MysqlCustomerRepository
             throw new RuntimeException('Alias value must not be empty');
         }
         $aliasType = $this->normalizeAliasType($aliasType);
+        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue);
         $aliasHash = hash('sha256', $aliasValue, true);
 
         $stmt = $this->conn->prepareWrite(
@@ -696,6 +698,31 @@ final class MysqlCustomerRepository
                 );
             }
         }
+    }
+
+    /**
+     * Canonicalize an alias VALUE for its (already-normalized) type. Email
+     * digests are case-insensitive hex by construction — the same md5/sha256
+     * sent uppercase by one ESP and lowercase by a conversion pixel must
+     * resolve to ONE customer, not two — so they are lowercased and validated
+     * before the alias_hash is computed. Case-sensitive identifiers
+     * (esp_id/merchant_id/subid/custom) pass through untouched. Malformed
+     * digests are rejected explicitly rather than stored as an unmatched
+     * identity.
+     */
+    public static function canonicalizeAliasValue(string $type, string $value): string
+    {
+        if ($type === 'email_md5' || $type === 'email_sha256') {
+            $value = strtolower($value);
+            $length = $type === 'email_md5' ? 32 : 64;
+            if (preg_match('/^[0-9a-f]{' . $length . '}$/', $value) !== 1) {
+                throw new RuntimeException(
+                    $type . ' alias value must be a ' . $length . '-character hex digest'
+                );
+            }
+        }
+
+        return $value;
     }
 
     private function normalizeAliasType(?string $type): string
