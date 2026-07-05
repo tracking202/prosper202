@@ -163,6 +163,8 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<link href="<?php echo get_absolute_url(); ?>202-css/css/select2.css" rel="stylesheet" />
 		<!-- Loading Custom CSS -->
 		<link href="<?php echo get_absolute_url(); ?>202-css/custom.css" rel="stylesheet">
+		<!-- Global design layer: shared tokens/components across the whole app (must load after custom.css) -->
+		<link href="<?php echo get_absolute_url(); ?>202-css/p202-ui.css" rel="stylesheet">
 		<?php if (!empty($_SESSION['user_id'])) { ?>
 			<!-- Prosper202 Messenger -->
 			<link href="<?php echo get_absolute_url(); ?>202-css/messenger.css" rel="stylesheet">
