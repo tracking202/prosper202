@@ -18,7 +18,7 @@ $action = (string) ($_POST['action'] ?? '');
 $offset = max(0, (int) ($_POST['offset'] ?? 0));
 $limit = 50;
 
-require_once __DIR__ . '/ltv_helpers.php';
+require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
@@ -156,44 +156,39 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
 $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['product_id'] ?? 0) : (int) ($_POST['edit'] ?? 0);
 ?>
 
-<div class="row" style="margin-bottom: 10px;">
-    <div class="col-xs-12">
-        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
-    </div>
-</div>
-
-<div class="row" style="margin-bottom: 15px;">
-    <div class="col-xs-12">
-        <h6>Product Catalog <small><?php echo number_format($totalProducts); ?> product(s) — created automatically from order line items</small></h6>
-    </div>
-</div>
+<?php echo p202_ltv_ui_styles(); ?>
+<?php echo p202_ltv_tabs('products'); ?>
 
 <?php if ($notice !== null && $error === null) { ?>
-    <div class="alert alert-success"><?php echo $esc($notice); ?></div>
+    <?php echo p202_ltv_flash('success', $esc($notice)); ?>
 <?php } ?>
 <?php if ($error !== null) { ?>
-    <div class="alert alert-danger"><?php echo $esc($error); ?></div>
+    <?php echo p202_ltv_flash('error', $esc($error)); ?>
 <?php } ?>
 
-<div class="row">
-    <div class="col-xs-12">
-        <table class="table table-bordered table-hover">
+<?php echo p202_ltv_card_open('Product Catalog',
+    number_format($totalProducts) . ' product(s) — created automatically from order line items'); ?>
+    <div class="ltv-table-wrap">
+        <table class="ltv-table ltv-table-hover">
             <thead>
                 <tr>
                     <th>Product</th>
                     <th>SKU</th>
                     <th>External ID</th>
-                    <th>List Price</th>
-                    <th>Orders</th>
-                    <th>Units</th>
-                    <th>Revenue</th>
+                    <th class="num">List Price</th>
+                    <th class="num">Orders</th>
+                    <th class="num">Units</th>
+                    <th class="num">Revenue</th>
                     <th>First Seen</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($products === []) { ?>
-                    <tr><td colspan="9"><em>No products yet — they appear when conversions or API revenue include line items.</em></td></tr>
+                    <tr><td colspan="9">
+                        <?php echo p202_ltv_empty('fa-shopping-cart', 'No products yet',
+                            'They appear automatically when conversions or API revenue include line items.'); ?>
+                    </td></tr>
                 <?php } ?>
                 <?php foreach ($products as $product) {
                     $productId = (int) $product['product_id'];
@@ -204,53 +199,45 @@ $editId = ($error !== null && $action === 'save_product') ? (int) ($_POST['produ
                             <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
                             <input type="hidden" name="action" value="save_product" />
                             <input type="hidden" name="product_id" value="<?php echo $productId; ?>" />
-                            <input type="text" class="form-control input-sm" name="product_name" maxlength="255"
+                            <input type="text" class="ltv-input ltv-input-sm" name="product_name" maxlength="255"
                                 value="<?php echo $esc($product['name'] ?? ''); ?>">
                         </td>
-                        <td><input type="text" class="form-control input-sm" name="product_sku" maxlength="191"
+                        <td><input type="text" class="ltv-input ltv-input-sm" name="product_sku" maxlength="191"
                                 value="<?php echo $esc($product['sku'] ?? ''); ?>"></td>
-                        <td><?php echo $esc($product['external_product_id'] ?? '') ?: '—'; ?></td>
-                        <td><input type="text" class="form-control input-sm" name="product_price" size="8"
+                        <td><?php echo $esc($product['external_product_id'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
+                        <td class="num"><input type="text" class="ltv-input ltv-input-sm" name="product_price" size="8" style="width: 90px;"
                                 value="<?php echo ($product['price'] ?? null) !== null ? $esc($product['price']) : ''; ?>"></td>
-                        <td><?php echo number_format((int) ($product['orders'] ?? 0)); ?></td>
-                        <td><?php echo number_format((float) ($product['units'] ?? 0)); ?></td>
-                        <td>$<?php echo $money($product['revenue'] ?? 0); ?></td>
+                        <td class="num"><?php echo number_format((int) ($product['orders'] ?? 0)); ?></td>
+                        <td class="num"><?php echo number_format((float) ($product['units'] ?? 0)); ?></td>
+                        <td class="num">$<?php echo $money($product['revenue'] ?? 0); ?></td>
                         <td><?php echo $when($product['created_at'] ?? 0); ?></td>
-                        <td class="text-right" style="white-space: nowrap;">
-                            <button type="button" class="btn btn-xs btn-primary" onclick="ltvProductSave(<?php echo $productId; ?>);">Save</button>
-                            <button type="button" class="btn btn-xs btn-default" onclick="ltvProductsReload();">Cancel</button>
+                        <td class="num" style="white-space: nowrap;">
+                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-primary" onclick="ltvProductSave(<?php echo $productId; ?>);">Save</button>
+                            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvProductsReload();">Cancel</button>
                         </td>
                     </tr>
                 <?php } else { ?>
                     <tr>
-                        <td><?php echo $esc($product['name'] ?? ''); ?></td>
-                        <td><?php echo $esc($product['sku'] ?? '') ?: '—'; ?></td>
-                        <td><?php echo $esc($product['external_product_id'] ?? '') ?: '—'; ?></td>
-                        <td><?php echo ($product['price'] ?? null) !== null ? '$' . $money($product['price']) : '—'; ?></td>
-                        <td><?php echo number_format((int) ($product['orders'] ?? 0)); ?></td>
-                        <td><?php echo number_format((float) ($product['units'] ?? 0)); ?></td>
-                        <td>$<?php echo $money($product['revenue'] ?? 0); ?></td>
+                        <td class="ltv-strong"><?php echo $esc($product['name'] ?? ''); ?></td>
+                        <td><?php echo $esc($product['sku'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
+                        <td><?php echo $esc($product['external_product_id'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
+                        <td class="num"><?php echo ($product['price'] ?? null) !== null ? '$' . $money($product['price']) : '<span class="ltv-dim">—</span>'; ?></td>
+                        <td class="num"><?php echo number_format((int) ($product['orders'] ?? 0)); ?></td>
+                        <td class="num"><?php echo number_format((float) ($product['units'] ?? 0)); ?></td>
+                        <td class="num ltv-strong">$<?php echo $money($product['revenue'] ?? 0); ?></td>
                         <td><?php echo $when($product['created_at'] ?? 0); ?></td>
-                        <td class="text-right" style="white-space: nowrap;">
-                            <button type="button" class="btn btn-xs btn-default" onclick="ltvProductEdit(<?php echo $productId; ?>);">Edit</button>
-                            <button type="button" class="btn btn-xs btn-danger" onclick="ltvProductDelete(<?php echo $productId; ?>);">Delete</button>
+                        <td class="num" style="white-space: nowrap;">
+                            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvProductEdit(<?php echo $productId; ?>);"><i class="fa fa-pencil"></i> Edit</button>
+                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-danger" onclick="ltvProductDelete(<?php echo $productId; ?>);">Delete</button>
                         </td>
                     </tr>
                 <?php } ?>
                 <?php } ?>
             </tbody>
         </table>
-
-        <div class="text-center">
-            <?php if ($offset > 0) { ?>
-                <a href="#" onclick="ltvProductsLoad(<?php echo max(0, $offset - $limit); ?>); return false;">&laquo; Previous</a>
-            <?php } ?>
-            <?php if ($offset + $limit < $totalProducts) { ?>
-                &nbsp;<a href="#" onclick="ltvProductsLoad(<?php echo $offset + $limit; ?>); return false;">Next &raquo;</a>
-            <?php } ?>
-        </div>
     </div>
-</div>
+    <?php echo p202_ltv_pager($offset, $limit, $totalProducts, 'ltvProductsLoad'); ?>
+<?php echo p202_ltv_card_close(); ?>
 
 <script type="text/javascript">
     function ltvProductsLoad(offset) {

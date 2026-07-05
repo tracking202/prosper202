@@ -18,7 +18,7 @@ $action = (string) ($_POST['action'] ?? '');
 $offset = max(0, (int) ($_POST['offset'] ?? 0));
 $limit = 50;
 
-require_once __DIR__ . '/ltv_helpers.php';
+require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
@@ -88,44 +88,38 @@ if ($error !== null && $action === 'update_company') {
 }
 ?>
 
-<div class="row" style="margin-bottom: 10px;">
-    <div class="col-xs-12">
-        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
-    </div>
-</div>
-
-<div class="row" style="margin-bottom: 15px;">
-    <div class="col-xs-12">
-        <h6>Companies <small><?php echo number_format((int) $list['total']); ?> account(s) — customers attach by company name or email domain</small></h6>
-    </div>
-</div>
+<?php echo p202_ltv_ui_styles(); ?>
+<?php echo p202_ltv_tabs('companies'); ?>
 
 <?php if ($notice !== null && $error === null) { ?>
-    <div class="alert alert-success"><?php echo $esc($notice); ?></div>
+    <?php echo p202_ltv_flash('success', $esc($notice)); ?>
 <?php } ?>
 <?php if ($error !== null) { ?>
-    <div class="alert alert-danger"><?php echo $esc($error); ?></div>
+    <?php echo p202_ltv_flash('error', $esc($error)); ?>
 <?php } ?>
 
-<div class="row">
-    <div class="col-xs-12">
-        <table class="table table-bordered table-hover">
+<?php echo p202_ltv_card_open('Companies',
+    number_format((int) $list['total']) . ' account(s) — customers attach by company name or email domain'); ?>
+    <div class="ltv-table-wrap">
+        <table class="ltv-table ltv-table-hover">
             <thead>
                 <tr>
                     <th>Company</th>
                     <th>Email Domain</th>
-                    <th>Contacts</th>
-                    <th>Orders</th>
-                    <th>Revenue</th>
-                    <th>MRR</th>
+                    <th class="num">Contacts</th>
+                    <th class="num">Orders</th>
+                    <th class="num">Revenue</th>
+                    <th class="num">MRR</th>
                     <th>Last Activity</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($list['rows'] === []) { ?>
-                    <tr><td colspan="8"><em>No companies yet. They are created when a customer gets a company name,
-                        by the nightly linking sweep, or manually below.</em></td></tr>
+                    <tr><td colspan="8">
+                        <?php echo p202_ltv_empty('fa-building-o', 'No companies yet',
+                            'They are created when a customer gets a company name, by the nightly linking sweep, or manually below.'); ?>
+                    </td></tr>
                 <?php } ?>
                 <?php foreach ($list['rows'] as $companyRow) {
                     $companyId = (int) $companyRow['company_id'];
@@ -135,66 +129,58 @@ if ($error !== null && $action === 'update_company') {
                         <td>
                             <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
                             <input type="hidden" name="company_id" value="<?php echo $companyId; ?>" />
-                            <input type="text" class="form-control input-sm" name="company_name" maxlength="255"
+                            <input type="text" class="ltv-input ltv-input-sm" name="company_name" maxlength="255"
                                 value="<?php echo $esc($companyRow['name'] ?? ''); ?>">
                         </td>
-                        <td><input type="text" class="form-control input-sm" name="company_domain" maxlength="191"
+                        <td><input type="text" class="ltv-input ltv-input-sm" name="company_domain" maxlength="191"
                                 placeholder="example.com" value="<?php echo $esc($companyRow['domain'] ?? ''); ?>"></td>
-                        <td><?php echo number_format((int) ($companyRow['contacts'] ?? 0)); ?></td>
-                        <td><?php echo number_format((int) ($companyRow['order_count'] ?? 0)); ?></td>
-                        <td>$<?php echo $money($companyRow['total_revenue'] ?? 0); ?></td>
-                        <td>$<?php echo $money($companyRow['mrr'] ?? 0); ?></td>
+                        <td class="num"><?php echo number_format((int) ($companyRow['contacts'] ?? 0)); ?></td>
+                        <td class="num"><?php echo number_format((int) ($companyRow['order_count'] ?? 0)); ?></td>
+                        <td class="num">$<?php echo $money($companyRow['total_revenue'] ?? 0); ?></td>
+                        <td class="num">$<?php echo $money($companyRow['mrr'] ?? 0); ?></td>
                         <td><?php echo $when($companyRow['last_activity_time'] ?? 0); ?></td>
-                        <td class="text-right" style="white-space: nowrap;">
-                            <button type="button" class="btn btn-xs btn-primary" onclick="ltvCompanySave(<?php echo $companyId; ?>);">Save</button>
-                            <button type="button" class="btn btn-xs btn-default" onclick="ltvCompaniesLoad(<?php echo $offset; ?>);">Cancel</button>
+                        <td class="num" style="white-space: nowrap;">
+                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-primary" onclick="ltvCompanySave(<?php echo $companyId; ?>);">Save</button>
+                            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvCompaniesLoad(<?php echo $offset; ?>);">Cancel</button>
                         </td>
                     </tr>
                 <?php } else { ?>
                     <tr>
-                        <td style="cursor: pointer;" onclick="ltvCompanyView(this.getAttribute('data-company'));"
+                        <td class="ltv-row-link" onclick="ltvCompanyView(this.getAttribute('data-company'));"
                             data-company="<?php echo $esc($companyRow['name'] ?? ''); ?>" title="View engagement drill-down">
-                            <a href="#" onclick="return false;"><?php echo $esc($companyRow['name'] ?? ''); ?></a>
-                            <small class="text-muted">#<?php echo $companyId; ?></small>
+                            <a href="#" onclick="return false;" class="ltv-strong"><?php echo $esc($companyRow['name'] ?? ''); ?></a>
+                            <span class="ltv-dim" style="font-size: 12px;">#<?php echo $companyId; ?></span>
                         </td>
-                        <td><?php echo $esc($companyRow['domain'] ?? '') ?: '—'; ?></td>
-                        <td><?php echo number_format((int) ($companyRow['contacts'] ?? 0)); ?></td>
-                        <td><?php echo number_format((int) ($companyRow['order_count'] ?? 0)); ?></td>
-                        <td>$<?php echo $money($companyRow['total_revenue'] ?? 0); ?></td>
-                        <td>$<?php echo $money($companyRow['mrr'] ?? 0); ?></td>
+                        <td><?php echo $esc($companyRow['domain'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
+                        <td class="num"><?php echo number_format((int) ($companyRow['contacts'] ?? 0)); ?></td>
+                        <td class="num"><?php echo number_format((int) ($companyRow['order_count'] ?? 0)); ?></td>
+                        <td class="num ltv-strong">$<?php echo $money($companyRow['total_revenue'] ?? 0); ?></td>
+                        <td class="num">$<?php echo $money($companyRow['mrr'] ?? 0); ?></td>
                         <td><?php echo $when($companyRow['last_activity_time'] ?? 0); ?></td>
-                        <td class="text-right" style="white-space: nowrap;">
-                            <button type="button" class="btn btn-xs btn-default" onclick="ltvCompanyEdit(<?php echo $companyId; ?>);">Edit</button>
+                        <td class="num" style="white-space: nowrap;">
+                            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvCompanyEdit(<?php echo $companyId; ?>);"><i class="fa fa-pencil"></i> Edit</button>
                             <?php $mergeTargetJson = json_encode([
                                 'id' => $companyId,
                                 'label' => (string) ($companyRow['name'] ?? ('#' . $companyId)),
                                 'sub' => trim(implode(' · ', array_filter([(string) ($companyRow['domain'] ?? ''), '#' . $companyId]))),
                                 'meta' => number_format((int) ($companyRow['contacts'] ?? 0)) . ' contact' . (((int) ($companyRow['contacts'] ?? 0)) === 1 ? '' : 's'),
                             ], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>
-                            <button type="button" class="btn btn-xs btn-default" onclick='ltvCompanyMerge(<?php echo $mergeTargetJson; ?>);' title="Merge another company into this one">Merge</button>
-                            <button type="button" class="btn btn-xs btn-danger" onclick="ltvCompanyDelete(<?php echo $companyId; ?>);">Delete</button>
+                            <button type="button" class="ltv-btn ltv-btn-xs" onclick='ltvCompanyMerge(<?php echo $mergeTargetJson; ?>);' title="Merge another company into this one"><i class="fa fa-compress"></i> Merge</button>
+                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-danger" onclick="ltvCompanyDelete(<?php echo $companyId; ?>);">Delete</button>
                         </td>
                     </tr>
                 <?php } ?>
                 <?php } ?>
             </tbody>
         </table>
-
-        <div class="text-center">
-            <?php if ($offset > 0) { ?>
-                <a href="#" onclick="ltvCompaniesLoad(<?php echo max(0, $offset - $limit); ?>); return false;">&laquo; Previous</a>
-            <?php } ?>
-            <?php if ($offset + $limit < (int) $list['total']) { ?>
-                &nbsp;<a href="#" onclick="ltvCompaniesLoad(<?php echo $offset + $limit; ?>); return false;">Next &raquo;</a>
-            <?php } ?>
-        </div>
-
-        <div class="form-inline" style="margin-top: 10px;">
-            <input type="text" class="form-control input-sm" id="ltv-new-company" maxlength="255" placeholder="New company name">
-            <button type="button" class="btn btn-sm btn-default" onclick="ltvCompanyAdd();">Add Company</button>
-        </div>
     </div>
-</div>
+    <?php echo p202_ltv_pager($offset, $limit, (int) $list['total'], 'ltvCompaniesLoad'); ?>
+    <div class="ltv-toolbar" style="padding-bottom: 12px; border-top: 1px solid #f0f1f2; padding-top: 12px;">
+        <input type="text" class="ltv-input ltv-input-sm" id="ltv-new-company" maxlength="255" placeholder="New company name"
+               onkeydown="if (event.key === 'Enter') { ltvCompanyAdd(); return false; }">
+        <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvCompanyAdd();"><i class="fa fa-plus"></i> Add Company</button>
+    </div>
+<?php echo p202_ltv_card_close(); ?>
 
 <script type="text/javascript">
     function ltvCompaniesLoad(offset) {

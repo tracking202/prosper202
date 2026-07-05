@@ -16,7 +16,7 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 $userId = (int) $_SESSION['user_id'];
 $action = (string) ($_POST['action'] ?? '');
 
-require_once __DIR__ . '/ltv_helpers.php';
+require_once __DIR__ . '/ltv_ui.php';
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
 
@@ -228,269 +228,271 @@ try {
 $csrfToken = (string) ($_SESSION['token'] ?? '');
 ?>
 
-<div class="row" style="margin-bottom: 10px;">
-    <div class="col-xs-12">
-        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
-    </div>
-</div>
-
-<div class="row" style="margin-bottom: 15px;">
-    <div class="col-xs-12">
-        <h6>LTV Settings</h6>
-    </div>
-</div>
+<?php echo p202_ltv_ui_styles(); ?>
+<?php echo p202_ltv_tabs('settings'); ?>
 
 <?php if ($notice !== null && $error === null) { ?>
-    <div class="alert alert-success"><?php echo $esc($notice); ?></div>
+    <?php echo p202_ltv_flash('success', $esc($notice)); ?>
 <?php } ?>
 <?php if ($newWebhookSecret !== null) { ?>
-    <div class="alert alert-warning">
-        <strong>Webhook signing secret (shown once — store it now):</strong>
-        <code><?php echo $esc($newWebhookSecret); ?></code><br>
-        <small>Deliveries are signed with <code>X-P202-Signature: sha256=HMAC-SHA256(body, secret)</code>.</small>
-    </div>
+    <?php echo p202_ltv_flash('warn',
+        '<strong>Webhook signing secret (shown once — store it now):</strong> '
+        . '<code>' . $esc($newWebhookSecret) . '</code><br>'
+        . '<small>Deliveries are signed with <code>X-P202-Signature: sha256=HMAC-SHA256(body, secret)</code>.</small>'); ?>
 <?php } ?>
 <?php if ($error !== null) { ?>
-    <div class="alert alert-danger"><?php echo $esc($error); ?></div>
+    <?php echo p202_ltv_flash('error', $esc($error)); ?>
 <?php } ?>
 
 <!-- ================= Tracking & personalization prefs ================= -->
-<div class="row">
-    <div class="col-xs-12">
-        <h6>Identity &amp; Personalization</h6>
-        <form id="ltv-prefs-form" onsubmit="return false;">
-            <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
-            <input type="hidden" name="action" value="save_prefs" />
-            <table class="table table-bordered">
-                <tbody>
-                    <tr>
-                        <th style="width: 30%;">Customer ID from c-param
-                            <br><small class="text-muted">When a conversion has no explicit customer id, resolve it from this tracking token. Run the backfill script after enabling.</small></th>
-                        <td>
-                            <select class="form-control" name="cparam" style="width: auto;">
-                                <option value="0" <?php if ($cparamValue === 0) { echo 'selected'; } ?>>Off</option>
-                                <?php for ($i = 1; $i <= 4; $i++) { ?>
-                                    <option value="<?php echo $i; ?>" <?php if ($cparamValue === $i) { echo 'selected'; } ?>>c<?php echo $i; ?></option>
-                                <?php } ?>
-                            </select>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Landing page personalization fields
-                            <br><small class="text-muted">Comma-separated. Empty = personalization off.
-                            Allowed: <?php echo $esc(implode(', ', \Prosper202\Ltv\MysqlPersonalizationRepository::ALLOWED_CRM_FIELDS)); ?>,
-                            <code>cf:&lt;field_key&gt;</code>, <code>rec:next_offer</code>.
-                            Email, phone and address are never eligible.</small></th>
-                        <td><input type="text" class="form-control" name="p13n_fields" maxlength="500"
-                            value="<?php echo $esc($p13nValue); ?>" placeholder="e.g. first_name, rec:next_offer"></td>
-                    </tr>
-                    <tr>
-                        <th>Engagement score weights
-                            <br><small class="text-muted">Points each component contributes; must total exactly 100.
-                            Volume saturates at 10 engagements/contact, time at a 5-minute average.</small></th>
-                        <td class="form-inline">
-                            <?php foreach ($weightValues as $component => $value) { ?>
-                                <label style="margin-right: 12px;"><?php echo $esc(ucfirst((string) $component)); ?>
-                                    <input type="number" class="form-control input-sm" style="width: 70px;"
-                                        name="weight_<?php echo $esc($component); ?>" min="0" max="100"
-                                        value="<?php echo (int) $value; ?>">
-                                </label>
-                            <?php } ?>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Offer fatigue
-                            <br><small class="text-muted">Stop suggesting an offer to a customer after it has been shown
-                            <em>times</em> visits over at least <em>days</em> days without a purchase (a fresh click on
-                            the offer resets it). Format <code>times,days</code>; empty =
-                            <?php echo (int) $fatigueDefaults['shown']; ?>,<?php echo (int) $fatigueDefaults['days']; ?>;
-                            <code>0</code> disables.</small></th>
-                        <td><input type="text" class="form-control input-sm" style="width: 120px;" name="rec_fatigue"
-                            maxlength="20" value="<?php echo $esc($fatigueValue); ?>"
-                            placeholder="<?php echo (int) $fatigueDefaults['shown']; ?>,<?php echo (int) $fatigueDefaults['days']; ?>"></td>
-                    </tr>
-                </tbody>
-            </table>
-            <button type="button" class="btn btn-primary" onclick="ltvSettingsSubmit('ltv-prefs-form');">Save Settings</button>
-        </form>
-    </div>
-</div>
+<?php echo p202_ltv_card_open('Identity & Personalization'); ?>
+    <form id="ltv-prefs-form" onsubmit="return false;">
+        <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
+        <input type="hidden" name="action" value="save_prefs" />
+        <div class="ltv-card-body">
+            <div class="ltv-def">
+                <div class="ltv-def-label">Customer ID from c-param
+                    <small>When a conversion has no explicit customer id, resolve it from this tracking token. Run the backfill script after enabling.</small></div>
+                <div class="ltv-def-value">
+                    <select class="ltv-select" name="cparam" style="width: auto;">
+                        <option value="0" <?php if ($cparamValue === 0) { echo 'selected'; } ?>>Off</option>
+                        <?php for ($i = 1; $i <= 4; $i++) { ?>
+                            <option value="<?php echo $i; ?>" <?php if ($cparamValue === $i) { echo 'selected'; } ?>>c<?php echo $i; ?></option>
+                        <?php } ?>
+                    </select>
+                </div>
+            </div>
+            <div class="ltv-def">
+                <div class="ltv-def-label">Landing page personalization fields
+                    <small>Comma-separated. Empty = personalization off.
+                    Allowed: <?php echo $esc(implode(', ', \Prosper202\Ltv\MysqlPersonalizationRepository::ALLOWED_CRM_FIELDS)); ?>,
+                    <code>cf:&lt;field_key&gt;</code>, <code>rec:next_offer</code>.
+                    Email, phone and address are never eligible.</small></div>
+                <div class="ltv-def-value"><input type="text" class="ltv-input" name="p13n_fields" maxlength="500"
+                    value="<?php echo $esc($p13nValue); ?>" placeholder="e.g. first_name, rec:next_offer"></div>
+            </div>
+            <div class="ltv-def">
+                <div class="ltv-def-label">Engagement score weights
+                    <small>Points each component contributes; must total exactly 100.
+                    Volume saturates at 10 engagements/contact, time at a 5-minute average.</small></div>
+                <div class="ltv-def-value">
+                    <?php foreach ($weightValues as $component => $value) { ?>
+                        <label style="margin: 0 12px 6px 0; font-weight: 400; font-size: 12px; color: #5f6670;"><?php echo $esc(ucfirst((string) $component)); ?>
+                            <input type="number" class="ltv-input ltv-input-sm" style="width: 64px;"
+                                name="weight_<?php echo $esc($component); ?>" min="0" max="100"
+                                value="<?php echo (int) $value; ?>">
+                        </label>
+                    <?php } ?>
+                </div>
+            </div>
+            <div class="ltv-def">
+                <div class="ltv-def-label">Offer fatigue
+                    <small>Stop suggesting an offer to a customer after it has been shown
+                    <em>times</em> visits over at least <em>days</em> days without a purchase (a fresh click on
+                    the offer resets it). Format <code>times,days</code>; empty =
+                    <?php echo (int) $fatigueDefaults['shown']; ?>,<?php echo (int) $fatigueDefaults['days']; ?>;
+                    <code>0</code> disables.</small></div>
+                <div class="ltv-def-value"><input type="text" class="ltv-input ltv-input-sm" style="width: 120px;" name="rec_fatigue"
+                    maxlength="20" value="<?php echo $esc($fatigueValue); ?>"
+                    placeholder="<?php echo (int) $fatigueDefaults['shown']; ?>,<?php echo (int) $fatigueDefaults['days']; ?>"></div>
+            </div>
+        </div>
+        <div class="ltv-card-body">
+            <button type="button" class="ltv-btn ltv-btn-primary" onclick="ltvSettingsSubmit('ltv-prefs-form');">Save Settings</button>
+        </div>
+    </form>
+<?php echo p202_ltv_card_close(); ?>
 
 <!-- ================= Custom field definitions ================= -->
-<div class="row" style="margin-top: 20px;">
-    <div class="col-xs-12">
-        <h6>Custom Fields <small>typed fields available on every customer record</small></h6>
-        <table class="table table-bordered table-hover">
+<?php echo p202_ltv_card_open('Custom Fields', 'typed fields available on every customer record'); ?>
+    <div class="ltv-table-wrap">
+        <table class="ltv-table ltv-table-hover">
             <thead>
                 <tr><th>Key</th><th>Label</th><th>Type</th><th>Required</th><th>Created</th><th></th></tr>
             </thead>
             <tbody>
                 <?php if ($fieldDefinitions === []) { ?>
-                    <tr><td colspan="6"><em>No custom fields defined yet.</em></td></tr>
+                    <tr><td colspan="6">
+                        <?php echo p202_ltv_empty('fa-list-alt', 'No custom fields defined yet',
+                            'Typed fields (text, number, date, boolean, select) become editable on every customer record and filterable via the API.'); ?>
+                    </td></tr>
                 <?php } ?>
                 <?php foreach ($fieldDefinitions as $field) { ?>
                     <tr>
                         <td><code><?php echo $esc($field['field_key']); ?></code></td>
                         <td><?php echo $esc($field['label'] ?? ''); ?></td>
-                        <td><?php echo $esc($field['field_type']); ?><?php
+                        <td><?php echo p202_ltv_pill((string) $field['field_type'], 'gray'); ?><?php
                             if ((string) $field['field_type'] === 'select') {
                                 $options = is_string($field['options'] ?? null) ? json_decode((string) $field['options'], true) : null;
                                 if (is_array($options) && $options !== []) {
-                                    echo ' <small class="text-muted">(' . $esc(implode(', ', array_map(strval(...), $options))) . ')</small>';
+                                    echo ' <span class="ltv-dim" style="font-size: 12px;">(' . $esc(implode(', ', array_map(strval(...), $options))) . ')</span>';
                                 }
                             }
                         ?></td>
-                        <td><?php echo !empty($field['is_required']) ? 'Yes' : 'No'; ?></td>
+                        <td><?php echo !empty($field['is_required']) ? 'Yes' : '<span class="ltv-dim">No</span>'; ?></td>
                         <td><?php echo $when($field['created_at'] ?? 0); ?></td>
-                        <td class="text-right">
-                            <button type="button" class="btn btn-xs btn-danger"
+                        <td class="num">
+                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-danger"
                                 onclick="ltvSettingsDelete('delete_field', 'field_id', <?php echo (int) $field['field_id']; ?>, 'Delete this field AND every value stored on customers? This cannot be undone.');">Delete</button>
                         </td>
                     </tr>
                 <?php } ?>
             </tbody>
         </table>
-
-        <form id="ltv-field-form" class="form-inline" onsubmit="return false;">
+    </div>
+    <form id="ltv-field-form" onsubmit="return false;">
+        <div class="ltv-toolbar" style="padding-bottom: 12px; border-top: 1px solid #f0f1f2; padding-top: 12px;">
             <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
             <input type="hidden" name="action" value="add_field" />
-            <input type="text" class="form-control" name="field_key" maxlength="64" placeholder="field_key (a-z, 0-9, _)">
-            <input type="text" class="form-control" name="field_label" maxlength="255" placeholder="Label">
-            <select class="form-control" name="field_type" id="ltv-field-type">
+            <input type="text" class="ltv-input ltv-input-sm" name="field_key" maxlength="64" placeholder="field_key (a-z, 0-9, _)">
+            <input type="text" class="ltv-input ltv-input-sm" name="field_label" maxlength="255" placeholder="Label">
+            <select class="ltv-select ltv-input-sm" name="field_type" id="ltv-field-type">
                 <?php foreach (\Prosper202\Ltv\MysqlCustomerFieldRepository::FIELD_TYPES as $type) { ?>
                     <option value="<?php echo $esc($type); ?>"><?php echo $esc($type); ?></option>
                 <?php } ?>
             </select>
-            <input type="text" class="form-control" name="field_options" maxlength="1000" placeholder="Options, comma-separated (select only)">
-            <label class="checkbox-inline"><input type="checkbox" name="field_required" value="1"> Required</label>
-            <button type="button" class="btn btn-default" onclick="ltvSettingsSubmit('ltv-field-form');">Add Field</button>
-        </form>
-    </div>
-</div>
+            <input type="text" class="ltv-input ltv-input-sm" name="field_options" maxlength="1000" placeholder="Options, comma-separated (select only)">
+            <label style="font-weight: 400; font-size: 12px; color: #5f6670; margin: 0;"><input type="checkbox" name="field_required" value="1"> Required</label>
+            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvSettingsSubmit('ltv-field-form');"><i class="fa fa-plus"></i> Add Field</button>
+        </div>
+    </form>
+<?php echo p202_ltv_card_close(); ?>
 
 <!-- ================= Outbound webhooks ================= -->
-<div class="row" style="margin-top: 20px;">
-    <div class="col-xs-12">
-        <h6>Outbound Webhooks <small>signed HMAC-SHA256 pushes for customer / revenue / subscription changes</small></h6>
-        <table class="table table-bordered table-hover">
+<?php echo p202_ltv_card_open('Outbound Webhooks', 'signed HMAC-SHA256 pushes for customer / revenue / subscription changes'); ?>
+    <div class="ltv-table-wrap">
+        <table class="ltv-table ltv-table-hover">
             <thead>
                 <tr><th>#</th><th>URL</th><th>Events</th><th>Status</th><th>Created</th><th></th></tr>
             </thead>
             <tbody>
                 <?php if ($webhooks === []) { ?>
-                    <tr><td colspan="6"><em>No webhooks registered.</em></td></tr>
+                    <tr><td colspan="6">
+                        <?php echo p202_ltv_empty('fa-paper-plane-o', 'No webhooks registered',
+                            'Register an HTTPS endpoint below to receive signed pushes when customers, revenue or subscriptions change.'); ?>
+                    </td></tr>
                 <?php } ?>
                 <?php foreach ($webhooks as $webhook) {
                     $status = (string) ($webhook['status'] ?? '');
                 ?>
                     <tr>
-                        <td><?php echo (int) $webhook['webhook_id']; ?></td>
+                        <td class="ltv-dim">#<?php echo (int) $webhook['webhook_id']; ?></td>
                         <td><?php echo $esc(mb_strimwidth((string) ($webhook['webhook_url'] ?? ''), 0, 70, '…')); ?></td>
-                        <td><small><?php echo $esc(str_replace(',', ', ', (string) ($webhook['subscribed_events'] ?? ''))); ?></small></td>
+                        <td><span class="ltv-dim" style="font-size: 12px;"><?php echo $esc(str_replace(',', ', ', (string) ($webhook['subscribed_events'] ?? ''))); ?></span></td>
                         <td>
                             <?php if ($status === 'dead') { ?>
-                                <span class="text-danger" title="Deliveries exhausted their retries; fix the endpoint and re-register."><strong>dead</strong></span>
+                                <span title="Deliveries exhausted their retries; fix the endpoint and re-register."><?php echo p202_ltv_status_pill('dead'); ?></span>
                             <?php } else { ?>
-                                <?php echo $esc($status); ?>
+                                <?php echo p202_ltv_status_pill($status); ?>
                             <?php } ?>
                         </td>
                         <td><?php echo $when($webhook['created_at'] ?? 0); ?></td>
-                        <td class="text-right">
-                            <button type="button" class="btn btn-xs btn-default"
-                                onclick="ltvWebhookLog(<?php echo (int) $webhook['webhook_id']; ?>);">Log</button>
-                            <button type="button" class="btn btn-xs btn-danger"
+                        <td class="num" style="white-space: nowrap;">
+                            <button type="button" class="ltv-btn ltv-btn-xs"
+                                onclick="ltvWebhookLog(<?php echo (int) $webhook['webhook_id']; ?>);"><i class="fa fa-list"></i> Log</button>
+                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-danger"
                                 onclick="ltvSettingsDelete('delete_webhook', 'webhook_id', <?php echo (int) $webhook['webhook_id']; ?>, 'Delete this webhook and its delivery history?');">Delete</button>
                         </td>
                     </tr>
                 <?php } ?>
             </tbody>
         </table>
-
-        <form id="ltv-webhook-form" class="form-inline" onsubmit="return false;">
+    </div>
+    <form id="ltv-webhook-form" onsubmit="return false;">
+        <div class="ltv-toolbar" style="border-top: 1px solid #f0f1f2; padding-top: 12px;">
             <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
             <input type="hidden" name="action" value="add_webhook" />
-            <input type="text" class="form-control" name="webhook_url" maxlength="500" size="40" placeholder="https://example.com/hooks/p202">
+            <input type="text" class="ltv-input ltv-input-sm ltv-grow" name="webhook_url" maxlength="500" placeholder="https://example.com/hooks/p202">
             <?php foreach (\Prosper202\Ltv\MysqlWebhookRepository::EVENTS as $eventName) { ?>
-                <label class="checkbox-inline">
+                <label style="font-weight: 400; font-size: 12px; color: #5f6670; margin: 0; white-space: nowrap;">
                     <input type="checkbox" name="webhook_events[]" value="<?php echo $esc($eventName); ?>" checked> <?php echo $esc($eventName); ?>
                 </label>
             <?php } ?>
-            <button type="button" class="btn btn-default" onclick="ltvSettingsSubmit('ltv-webhook-form');">Register Webhook</button>
-        </form>
-        <small class="text-muted">HTTPS only; hosts resolving to private or reserved addresses are rejected. The signing secret is shown once after registration.</small>
+            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvSettingsSubmit('ltv-webhook-form');"><i class="fa fa-plus"></i> Register Webhook</button>
+        </div>
+        <div class="ltv-card-body ltv-note" style="padding-top: 4px;">HTTPS only; hosts resolving to private or reserved addresses are rejected. The signing secret is shown once after registration.</div>
+    </form>
 
-        <?php if ($deliveryLogWebhookId > 0) { ?>
-            <h6 style="margin-top: 15px;">Delivery Log <small>webhook #<?php echo $deliveryLogWebhookId; ?>, most recent 25</small></h6>
-            <table class="table table-bordered">
+    <?php if ($deliveryLogWebhookId > 0) { ?>
+        <div class="ltv-card-head" style="border-top: 1px solid #f0f1f2; padding-top: 12px;">
+            <span class="ltv-card-title">Delivery Log</span>
+            <span class="ltv-card-sub">webhook #<?php echo $deliveryLogWebhookId; ?>, most recent 25</span>
+        </div>
+        <div class="ltv-table-wrap">
+            <table class="ltv-table">
                 <thead>
-                    <tr><th>#</th><th>Event</th><th>Status</th><th>Attempts</th><th>Last HTTP</th><th>Next Retry</th><th>Queued</th><th>Updated</th></tr>
+                    <tr><th>#</th><th>Event</th><th>Status</th><th class="num">Attempts</th><th class="num">Last HTTP</th><th>Next Retry</th><th>Queued</th><th>Updated</th></tr>
                 </thead>
                 <tbody>
                     <?php if ($deliveryLog === []) { ?>
-                        <tr><td colspan="8"><em>No deliveries recorded for this webhook yet.</em></td></tr>
+                        <tr><td colspan="8">
+                            <?php echo p202_ltv_empty('fa-inbox', 'No deliveries recorded for this webhook yet'); ?>
+                        </td></tr>
                     <?php } ?>
                     <?php foreach ($deliveryLog as $delivery) {
                         $deliveryStatus = (string) ($delivery['status'] ?? '');
                     ?>
                         <tr>
-                            <td><?php echo (int) $delivery['delivery_id']; ?></td>
+                            <td class="ltv-dim">#<?php echo (int) $delivery['delivery_id']; ?></td>
                             <td><?php echo $esc($delivery['event_name'] ?? ''); ?></td>
-                            <td class="<?php echo $deliveryStatus === 'failed' ? 'text-danger' : ($deliveryStatus === 'delivered' ? 'text-success' : ''); ?>">
-                                <?php echo $esc($deliveryStatus); ?></td>
-                            <td><?php echo (int) ($delivery['attempts'] ?? 0); ?></td>
-                            <td><?php echo ($delivery['last_status_code'] ?? null) !== null ? (int) $delivery['last_status_code'] : '—'; ?></td>
-                            <td><?php echo $deliveryStatus === 'pending' ? date('M j, g:ia', (int) ($delivery['next_attempt_at'] ?? 0)) : '—'; ?></td>
+                            <td><?php echo p202_ltv_status_pill($deliveryStatus); ?></td>
+                            <td class="num"><?php echo (int) ($delivery['attempts'] ?? 0); ?></td>
+                            <td class="num"><?php echo ($delivery['last_status_code'] ?? null) !== null ? (int) $delivery['last_status_code'] : '<span class="ltv-dim">—</span>'; ?></td>
+                            <td><?php echo $deliveryStatus === 'pending' ? date('M j, g:ia', (int) ($delivery['next_attempt_at'] ?? 0)) : '<span class="ltv-dim">—</span>'; ?></td>
                             <td><?php echo $when($delivery['created_at'] ?? 0); ?></td>
                             <td><?php echo $when($delivery['updated_at'] ?? 0); ?></td>
                         </tr>
                     <?php } ?>
                 </tbody>
             </table>
-        <?php } ?>
-    </div>
-</div>
+        </div>
+    <?php } ?>
+<?php echo p202_ltv_card_close(); ?>
 
 <!-- ================= Integrations ================= -->
-<div class="row" style="margin-top: 20px; margin-bottom: 20px;">
-    <div class="col-xs-12">
-        <h6>Integrations <small>label inbound pushes from ESPs, membership and billing platforms</small></h6>
-        <table class="table table-bordered table-hover">
+<?php echo p202_ltv_card_open('Integrations', 'label inbound pushes from ESPs, membership and billing platforms'); ?>
+    <div class="ltv-table-wrap">
+        <table class="ltv-table ltv-table-hover">
             <thead>
                 <tr><th>#</th><th>Provider</th><th>Name</th><th>Status</th><th>Created</th><th></th></tr>
             </thead>
             <tbody>
                 <?php if ($integrations === []) { ?>
-                    <tr><td colspan="6"><em>No integrations configured. Inbound pushes use the API with an <code>ltv:write</code> key.</em></td></tr>
+                    <tr><td colspan="6">
+                        <?php echo p202_ltv_empty('fa-plug', 'No integrations configured',
+                            'Inbound pushes use the API with an <code>ltv:write</code> key.'); ?>
+                    </td></tr>
                 <?php } ?>
                 <?php foreach ($integrations as $integration) { ?>
                     <tr>
-                        <td><?php echo (int) $integration['integration_id']; ?></td>
+                        <td class="ltv-dim">#<?php echo (int) $integration['integration_id']; ?></td>
                         <td><code><?php echo $esc($integration['provider']); ?></code></td>
                         <td><?php echo $esc($integration['name'] ?? ''); ?></td>
-                        <td><?php echo $esc($integration['status'] ?? ''); ?>
+                        <td><?php echo p202_ltv_status_pill((string) ($integration['status'] ?? '')); ?>
                             <?php if (!empty($integration['config_invalid'])) { ?>
-                                <span class="text-danger" title="The stored configuration is not valid JSON; re-save it via the API.">&#9888; config unreadable</span>
+                                <span class="ltv-neg" style="font-size: 12px;" title="The stored configuration is not valid JSON; re-save it via the API.">&#9888; config unreadable</span>
                             <?php } ?>
                         </td>
                         <td><?php echo $when($integration['created_at'] ?? 0); ?></td>
-                        <td class="text-right">
-                            <button type="button" class="btn btn-xs btn-danger"
+                        <td class="num">
+                            <button type="button" class="ltv-btn ltv-btn-xs ltv-btn-danger"
                                 onclick="ltvSettingsDelete('delete_integration', 'integration_id', <?php echo (int) $integration['integration_id']; ?>, 'Delete this integration record?');">Delete</button>
                         </td>
                     </tr>
                 <?php } ?>
             </tbody>
         </table>
-
-        <form id="ltv-integration-form" class="form-inline" onsubmit="return false;">
+    </div>
+    <form id="ltv-integration-form" onsubmit="return false;">
+        <div class="ltv-toolbar" style="padding-bottom: 12px; border-top: 1px solid #f0f1f2; padding-top: 12px;">
             <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
             <input type="hidden" name="action" value="add_integration" />
-            <input type="text" class="form-control" name="integration_provider" maxlength="50" placeholder="provider (e.g. shopify, aweber)">
-            <input type="text" class="form-control" name="integration_name" maxlength="255" placeholder="Display name">
-            <button type="button" class="btn btn-default" onclick="ltvSettingsSubmit('ltv-integration-form');">Add Integration</button>
-        </form>
-    </div>
-</div>
+            <input type="text" class="ltv-input ltv-input-sm" name="integration_provider" maxlength="50" placeholder="provider (e.g. shopify, aweber)">
+            <input type="text" class="ltv-input ltv-input-sm" name="integration_name" maxlength="255" placeholder="Display name">
+            <button type="button" class="ltv-btn ltv-btn-xs" onclick="ltvSettingsSubmit('ltv-integration-form');"><i class="fa fa-plus"></i> Add Integration</button>
+        </div>
+    </form>
+<?php echo p202_ltv_card_close(); ?>
 
 <script type="text/javascript">
     function ltvSettingsSubmit(formId) {

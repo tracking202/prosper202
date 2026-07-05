@@ -22,7 +22,7 @@ $status = isset($_POST['status']) && array_key_exists((string) $_POST['status'],
     ? (string) $_POST['status']
     : '';
 
-require_once __DIR__ . '/ltv_helpers.php';
+require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);
 $esc = p202_ltv_esc(...);
 $when = p202_ltv_when(...);
@@ -43,72 +43,36 @@ try {
 }
 ?>
 
-<div class="row" style="margin-bottom: 10px;">
-    <div class="col-xs-12">
-        <a href="#" onclick="ltvNav('report'); return false;">&laquo; Back to Customer LTV</a>
-    </div>
-</div>
-
-<div class="row" style="margin-bottom: 15px;">
-    <div class="col-xs-12">
-        <h6>Subscriptions <small><?php echo number_format((int) $list['total']); ?> record(s)</small></h6>
-    </div>
-</div>
+<?php echo p202_ltv_ui_styles(); ?>
+<?php echo p202_ltv_tabs('subscriptions'); ?>
 
 <!-- Recurring revenue summary -->
-<div class="row">
-    <div class="col-xs-12">
-        <table class="table table-bordered">
-            <thead>
-                <tr>
-                    <th>MRR</th>
-                    <th>ARR</th>
-                    <th>Active</th>
-                    <th>Trialing</th>
-                    <th>Past Due</th>
-                    <th>Paused</th>
-                    <th>Canceled (90d)</th>
-                    <th>Monthly Churn</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>$<?php echo $money($mrr['mrr'] ?? 0); ?></td>
-                    <td>$<?php echo $money(((float) ($mrr['mrr'] ?? 0)) * 12); ?></td>
-                    <td><?php echo number_format((int) ($mrr['active_subscriptions'] ?? 0)); ?></td>
-                    <td><?php echo number_format((int) ($mrr['trialing'] ?? 0)); ?></td>
-                    <td><?php echo number_format((int) ($mrr['past_due'] ?? 0)); ?></td>
-                    <td><?php echo number_format((int) ($mrr['paused'] ?? 0)); ?></td>
-                    <td><?php echo number_format((int) ($mrr['churn_inputs']['canceled_in_window'] ?? 0)); ?></td>
-                    <td><?php echo number_format(((float) ($mrr['monthly_churn_rate'] ?? 0)) * 100, 2); ?>%</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
+<div class="ltv-stats">
+    <?php echo p202_ltv_stat('MRR', '$' . $money($mrr['mrr'] ?? 0)); ?>
+    <?php echo p202_ltv_stat('ARR', '$' . $money(((float) ($mrr['mrr'] ?? 0)) * 12)); ?>
+    <?php echo p202_ltv_stat('Active', number_format((int) ($mrr['active_subscriptions'] ?? 0))); ?>
+    <?php echo p202_ltv_stat('Trialing', number_format((int) ($mrr['trialing'] ?? 0))); ?>
+    <?php echo p202_ltv_stat('Past Due', number_format((int) ($mrr['past_due'] ?? 0)),
+        '', ((int) ($mrr['past_due'] ?? 0)) > 0 ? 'bad' : ''); ?>
+    <?php echo p202_ltv_stat('Paused', number_format((int) ($mrr['paused'] ?? 0))); ?>
+    <?php echo p202_ltv_stat('Canceled (90d)', number_format((int) ($mrr['churn_inputs']['canceled_in_window'] ?? 0))); ?>
+    <?php echo p202_ltv_stat('Monthly Churn', number_format(((float) ($mrr['monthly_churn_rate'] ?? 0)) * 100, 2) . '%'); ?>
 </div>
 
-<div class="row" style="margin-top: 10px; margin-bottom: 5px;">
-    <div class="col-xs-12">
-        Status:
-        <select id="ltv-sub-status" style="width: auto; display: inline-block;">
-            <?php foreach ($statuses as $key => $label) { ?>
-                <option value="<?php echo $esc($key); ?>" <?php if ($key === $status) { echo 'selected'; } ?>><?php echo $esc($label); ?></option>
-            <?php } ?>
-        </select>
+<?php echo p202_ltv_card_open('Subscriptions', number_format((int) $list['total']) . ' record(s)'); ?>
+    <div class="ltv-toolbar" style="padding-top: 4px;">
+        <?php echo p202_ltv_chips('ltv-sub-status', $statuses, $status, 'ltvSubsLoad(0);'); ?>
     </div>
-</div>
-
-<div class="row">
-    <div class="col-xs-12">
-        <table class="table table-bordered table-hover">
+    <div class="ltv-table-wrap">
+        <table class="ltv-table ltv-table-hover">
             <thead>
                 <tr>
                     <th>Plan</th>
                     <th>Customer</th>
-                    <th title="The customer's lifetime revenue across ALL purchases and subscriptions, net of refunds">Customer LTV</th>
+                    <th class="num" title="The customer's lifetime revenue across ALL purchases and subscriptions, net of refunds">Customer LTV</th>
                     <th>Status</th>
-                    <th>Amount</th>
-                    <th>MRR</th>
+                    <th class="num">Amount</th>
+                    <th class="num">MRR</th>
                     <th>Started</th>
                     <th>Paid Through</th>
                     <th>Canceled</th>
@@ -116,7 +80,11 @@ try {
             </thead>
             <tbody>
                 <?php if ($list['rows'] === []) { ?>
-                    <tr><td colspan="9"><em>No subscriptions<?php echo $status !== '' ? ' with this status' : ' recorded yet — push them via POST /api/v3/ltv/subscriptions'; ?>.</em></td></tr>
+                    <tr><td colspan="9">
+                        <?php echo p202_ltv_empty('fa-refresh',
+                            $status !== '' ? 'No subscriptions with this status' : 'No subscriptions recorded yet',
+                            $status !== '' ? '' : 'Push them via <code>POST /api/v3/ltv/subscriptions</code>.'); ?>
+                    </td></tr>
                 <?php } ?>
                 <?php foreach ($list['rows'] as $sub) {
                     $customerName = trim(((string) ($sub['first_name'] ?? '')) . ' ' . ((string) ($sub['last_name'] ?? '')));
@@ -128,39 +96,30 @@ try {
                     }
                     $subStatus = (string) ($sub['status'] ?? '');
                 ?>
-                    <tr style="cursor: pointer;" onclick="ltvSubCustomer(<?php echo (int) ($sub['customer_id'] ?? 0); ?>);" title="View customer">
+                    <tr class="ltv-row-link" onclick="ltvSubCustomer(<?php echo (int) ($sub['customer_id'] ?? 0); ?>);" title="View customer">
                         <td title="<?php echo $esc($sub['external_sub_id'] ?? ''); ?>">
                             <?php echo $esc(($sub['plan_name'] ?? '') !== '' && $sub['plan_name'] !== null ? $sub['plan_name'] : ($sub['external_sub_id'] ?? '')); ?>
                         </td>
                         <td><?php echo $esc($customerName); ?>
                             <?php if (($sub['company'] ?? '') !== '' && $sub['company'] !== null) { ?>
-                                <small class="text-muted">(<?php echo $esc($sub['company']); ?>)</small>
+                                <span class="ltv-dim" style="font-size: 12px;">(<?php echo $esc($sub['company']); ?>)</span>
                             <?php } ?>
                         </td>
-                        <td><strong>$<?php echo $money($sub['customer_ltv'] ?? 0); ?></strong></td>
-                        <td class="<?php echo $subStatus === 'past_due' ? 'text-danger' : ($subStatus === 'active' ? 'text-success' : ''); ?>">
-                            <?php echo $esc($subStatus); ?></td>
-                        <td>$<?php echo $money($sub['amount'] ?? 0); ?> /
-                            <?php echo ((int) ($sub['billing_interval_count'] ?? 1)) > 1 ? (int) $sub['billing_interval_count'] . ' ' : ''; ?><?php echo $esc($sub['billing_interval'] ?? 'month'); ?></td>
-                        <td>$<?php echo $money($sub['mrr'] ?? 0); ?></td>
+                        <td class="num ltv-strong">$<?php echo $money($sub['customer_ltv'] ?? 0); ?></td>
+                        <td><?php echo p202_ltv_status_pill($subStatus); ?></td>
+                        <td class="num">$<?php echo $money($sub['amount'] ?? 0); ?> <span class="ltv-dim">/
+                            <?php echo ((int) ($sub['billing_interval_count'] ?? 1)) > 1 ? (int) $sub['billing_interval_count'] . ' ' : ''; ?><?php echo $esc($sub['billing_interval'] ?? 'month'); ?></span></td>
+                        <td class="num">$<?php echo $money($sub['mrr'] ?? 0); ?></td>
                         <td><?php echo $when($sub['started_at'] ?? 0); ?></td>
                         <td><?php echo $when($sub['current_period_end'] ?? 0); ?></td>
-                        <td><?php echo !empty($sub['canceled_at']) ? $when($sub['canceled_at']) : '—'; ?></td>
+                        <td><?php echo !empty($sub['canceled_at']) ? $when($sub['canceled_at']) : '<span class="ltv-dim">—</span>'; ?></td>
                     </tr>
                 <?php } ?>
             </tbody>
         </table>
-
-        <div class="text-center">
-            <?php if ($offset > 0) { ?>
-                <a href="#" onclick="ltvSubsLoad(<?php echo max(0, $offset - $limit); ?>); return false;">&laquo; Previous</a>
-            <?php } ?>
-            <?php if ($offset + $limit < (int) $list['total']) { ?>
-                &nbsp;<a href="#" onclick="ltvSubsLoad(<?php echo $offset + $limit; ?>); return false;">Next &raquo;</a>
-            <?php } ?>
-        </div>
     </div>
-</div>
+    <?php echo p202_ltv_pager($offset, $limit, (int) $list['total'], 'ltvSubsLoad'); ?>
+<?php echo p202_ltv_card_close(); ?>
 
 <script type="text/javascript">
     function ltvSubsLoad(offset) {
@@ -172,5 +131,4 @@ try {
     function ltvSubCustomer(customerId) {
         ltvNav('customer', { customer_id: customerId });
     }
-    $('#ltv-sub-status').on('change', function() { ltvSubsLoad(0); });
 </script>
