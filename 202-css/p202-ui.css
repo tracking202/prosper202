@@ -731,3 +731,26 @@ code {
     border-bottom: 1px solid var(--p202-rowsep);
     border-radius: 10px 10px 0 0;
 }
+
+/* ---------- Loading state (shared spinner) ---------- */
+.p202-loading-wrap {
+    text-align: center;
+    padding: 44px 20px;
+    color: var(--p202-muted);
+    font-size: 13px;
+}
+.p202-spinner {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    vertical-align: middle;
+    border: 2px solid var(--p202-hairline);
+    border-top-color: var(--p202-accent);
+    border-radius: 50%;
+    animation: p202-spin 0.7s linear infinite;
+}
+.p202-loading-wrap .p202-spinner {
+    display: block;
+    margin: 0 auto 10px;
+}
+@keyframes p202-spin { to { transform: rotate(360deg); } }

@@ -587,7 +587,7 @@ template_top('Traffic Sources'); ?>
 										<a href="?edit_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&edit_ppc_network_name=<?php echo $url['ppc_network_name']; ?>" class="list-action">edit</a>
 										<?php if ($userObj->hasPermission("remove_traffic_source")) { ?>
 											<a href="#" class="custom variables list-action" data-id="<?php echo $url['ppc_network_id']; ?>">variables</a>
-											<a href="?delete_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&delete_ppc_network_name=<?php echo $url['ppc_network_name']; ?>&token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Traffic Source?');">remove</a>
+											<a href="?delete_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&delete_ppc_network_name=<?php echo $url['ppc_network_name']; ?>&token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" class="list-action list-action-danger" onclick="return confirmAlert('Are You Sure You Want To Delete This Traffic Source?');">remove</a>
 										<?php } ?>
 									</div>
 								</div>
@@ -606,7 +606,7 @@ template_top('Traffic Sources'); ?>
 											<div class="account-actions">
 												<a href="?edit_ppc_account_id=<?php echo $url['ppc_account_id']; ?>" class="list-action">edit</a>
 												<?php if ($userObj->hasPermission("remove_traffic_source_account")) { ?>
-													<a href="?delete_ppc_account_id=<?php echo $url['ppc_account_id']; ?>&delete_ppc_account_name=<?php echo $url['ppc_account_name']; ?>&token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" class="list-action list-action-danger" onclick="return confirmSubmit('Are You Sure You Want To Delete This Account?');">remove</a>
+													<a href="?delete_ppc_account_id=<?php echo $url['ppc_account_id']; ?>&delete_ppc_account_name=<?php echo $url['ppc_account_name']; ?>&token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" class="list-action list-action-danger" onclick="return confirmAlert('Are You Sure You Want To Delete This Account?');">remove</a>
 												<?php } ?>
 											</div>
 										</li>

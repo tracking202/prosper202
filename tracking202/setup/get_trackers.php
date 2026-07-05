@@ -399,7 +399,7 @@ template_top('Get Trackers');  ?>
 								<?php } ?>
 								<a href="<?php echo get_absolute_url(); ?>tracking202/setup/get_trackers.php?edit_tracker_id=<?php echo $tracker_row['tracker_id_public']; ?>" class="list-action" title="Edit this tracker"><i class="fa fa-pencil-square-o"></i> edit</a>
 								<?php if ($userObj->hasPermission("remove_tracker")) { ?>
-									<a href="#" class="delete_tracker list-action list-action-danger" data-id="<?php echo $tracker_row['tracker_id']; ?>" title="Delete this tracker" onclick="return confirmSubmit('Are you sure you want to delete this tracker?');"><i class="fa fa-trash"></i> remove</a>
+									<a href="#" class="delete_tracker list-action list-action-danger" data-id="<?php echo $tracker_row['tracker_id']; ?>" title="Delete this tracker" onclick="return confirmAlert('Are you sure you want to delete this tracker?');"><i class="fa fa-trash"></i> remove</a>
 								<?php } ?>
 							</li>
 						<?php } ?>

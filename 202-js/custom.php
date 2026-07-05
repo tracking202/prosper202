@@ -780,7 +780,8 @@ $(document).on('change', ':radio[name=chart_time_range]', function() {
 		        series: data.json.series
 			});
 			element.css("opacity", "1");
-	});
+	})
+		.fail(function(xhr) { p202AjaxLoadFail(element, xhr); });
 });
 
 $(document).on('click', '#add_more_chart_data_type', function(e) {
@@ -1151,7 +1152,8 @@ function generate_simple_lp_tracking_links() {
 		  .done(function(data) {
 		  	element.css("opacity", "1");
 		  	element.html(data);
-		});
+		})
+		  .fail(function(xhr) { p202AjaxLoadFail(element, xhr); });
 }
 
 //Remove offer on ADV LP
@@ -1186,7 +1188,8 @@ function generate_adv_lp_tracking_links() {
 		  .done(function(data) {
 		  	element.css("opacity", "1");
 		  	element.html(data);
-		});
+		})
+		  .fail(function(xhr) { p202AjaxLoadFail(element, xhr); });
 }
 
 //Load methods of promotion (direct/lp)
@@ -1353,15 +1356,36 @@ function pixel_data_changed(trackingDomain) {
 		$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace('{{0}}',http_val).replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value).replace('{{3}}',subid_value).replace('{{3}}',subid_value));//.replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
 }
 
+// Shared AJAX failure handler for the dim-then-swap panels (report grid, code
+// generators, charts): restore the panel and surface a clear message instead
+// of leaving it dimmed or spinning forever with no feedback (session expiry,
+// network drop).
+function p202AjaxLoadFail(element, xhr) {
+	element.css('opacity', '1');
+	element.html(
+		'<div class="alert alert-danger" style="margin:12px 0;">The request failed ('
+		+ (xhr && xhr.status ? 'HTTP ' + xhr.status : 'network error')
+		+ '). Your session may have expired &mdash; reload the page and try again.</div>'
+	);
+}
+
 function loadContent(page, offset, order){
 	var element = $('#m-content');
 	var chartWidth = element.width();
+
+	// Show a spinner while the report loads so a page swap / pagination /
+	// drill-down never looks frozen.
+	element.css("opacity", "0.5");
+	if (!element.find('#stats-table').length) {
+		element.html('<div class="p202-loading-wrap"><span class="p202-spinner"></span>Loading&hellip;</div>');
+	}
 
 	$.post(page, { offset: offset, order: order, chartWidth:chartWidth})
 		  .done(function(data) {
 		  	element.html(data);
 		  	element.css("opacity", "1");
-		});
+		})
+		  .fail(function(xhr) { p202AjaxLoadFail(element, xhr); });
 }
 
 // POST a payload and swap the response into #m-content. Unlike bare

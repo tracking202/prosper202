@@ -204,7 +204,7 @@ template_top('Smart Redirector'); ?>
 																		$html['id'] = htmlentities((string) $row['id'], ENT_QUOTES, 'UTF-8');
 
 																		if ($userObj->hasPermission("remove_rotator")) {
-																			printf('<li><span class="filter_rotator_name">%s</span> <a href="?delete_rotator_id=%s&delete_rotator_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmSubmit(\'Are you sure?\');">remove</a></li>', $html['name'], $html['id'], $html['name']);
+																			printf('<li><span class="filter_rotator_name">%s</span> <a href="?delete_rotator_id=%s&delete_rotator_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are you sure?\');">remove</a></li>', $html['name'], $html['id'], $html['name']);
 																		} else {
 																			printf('<li><span class="filter_rotator_name">%s</span></li>', $html['name']);
 																		}

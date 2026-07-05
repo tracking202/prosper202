@@ -1347,6 +1347,20 @@ class DisplayData
         $rows = array_values((array) $theData);
         $rowCount = count($rows);
 
+        if ($rowCount === 0) {
+            // No rows at all: close the table cleanly (the totals row that
+            // normally emits </tbody></table> never runs here) and show a
+            // friendly empty state instead of a bare headers-only grid.
+            echo '</tbody></table>
+                <div class="empty-state"><i class="fa fa-inbox" style="font-size:40px; display:block; margin-bottom:12px; color:#c4c9cf;"></i>
+                <strong>No data for this date range</strong>
+                Try widening the date range above, or clearing your search filters.</div>';
+            if ($paginateReport) {
+                echo $this->paginate($reportType, $foundRows);
+            }
+            return;
+        }
+
         for ($i = 0; $i < $rowCount; $i++) {
             $html = $rows[$i];
             $featureKey = self::featureKey((string) $reportType, $html);
@@ -1574,6 +1588,16 @@ class DisplayData
 
         $rows = array_values((array) $theData);
         $rowCount = count($rows);
+
+        if ($rowCount === 0) {
+            // No rows: close the table cleanly and show a friendly empty state
+            // instead of a bare headers-only grid with an unclosed <tbody>.
+            echo '</tbody></table>
+                <div class="empty-state"><i class="fa fa-inbox" style="font-size:40px; display:block; margin-bottom:12px; color:#c4c9cf;"></i>
+                <strong>No data for this date range</strong>
+                Try widening the date range above, or clearing your search filters.</div>';
+            return;
+        }
 
         for ($i = 0; $i < $rowCount; $i++) {
             $html = $rows[$i];
