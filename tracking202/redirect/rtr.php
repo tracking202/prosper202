@@ -9,6 +9,15 @@ if (!is_numeric($tracker_id) || (int)$tracker_id <= 0) die();
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 
+// Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
+// probes) must not record a click — otherwise the speculative hit plus the real
+// navigation double-count the same visit (see p202IsSpeculativeRequest).
+if (p202IsSpeculativeRequest()) {
+	http_response_code(204);
+	die();
+}
+
+
 $usedCachedRedirect = false;
 if (!$db) $usedCachedRedirect = true;
 

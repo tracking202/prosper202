@@ -23,6 +23,15 @@ if (! is_numeric($acip))
 include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
+// Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
+// probes) must not record a click — otherwise the speculative hit plus the real
+// navigation double-count the same visit (see p202IsSpeculativeRequest).
+if (p202IsSpeculativeRequest()) {
+	http_response_code(204);
+	die();
+}
+
+
 if(isset($_COOKIE['tracking202subid'])) { //if there's a cookie use it
     $click_id = $_COOKIE['tracking202subid'];
 }

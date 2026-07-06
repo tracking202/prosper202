@@ -2627,6 +2627,34 @@ function get_absolute_url(): string
     return substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 }
 
+/**
+ * True when the current request is a SPECULATIVE fetch — a browser prefetch /
+ * prerender, a link-preview scanner, or a HEAD probe — rather than a real human
+ * navigation. The click-recording redirect endpoints (dl/lp/rtr/off/…) must not
+ * record a click for these: Chrome's Network Prediction (on by default) fetches
+ * the URL from the address bar or a hovered link BEFORE the click, then fetches
+ * it again on the real navigation, so counting both double-counts every click.
+ * Detected via the standard speculation-request headers each browser sends, plus
+ * the HTTP method. Callers answer a true result with 204 and record nothing; the
+ * real navigation re-requests and is counted exactly once.
+ */
+function p202IsSpeculativeRequest(): bool
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') {
+        return true;
+    }
+    // Chrome/Edge: "Sec-Purpose: prefetch", "prefetch;prerender", or "prerender".
+    $secPurpose = strtolower((string) ($_SERVER['HTTP_SEC_PURPOSE'] ?? ''));
+    if (str_contains($secPurpose, 'prefetch') || str_contains($secPurpose, 'prerender')) {
+        return true;
+    }
+    // Chrome (legacy): "Purpose: prefetch". Safari: "X-Purpose: preview|prefetch".
+    // Firefox: "X-moz: prefetch".
+    return strtolower((string) ($_SERVER['HTTP_PURPOSE'] ?? '')) === 'prefetch'
+        || in_array(strtolower((string) ($_SERVER['HTTP_X_PURPOSE'] ?? '')), ['prefetch', 'preview'], true)
+        || strtolower((string) ($_SERVER['HTTP_X_MOZ'] ?? '')) === 'prefetch';
+}
+
 function getTrackingDomain(): string
 {
     global $db;
