@@ -2643,16 +2643,29 @@ function p202IsSpeculativeRequest(): bool
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') {
         return true;
     }
-    // Chrome/Edge: "Sec-Purpose: prefetch", "prefetch;prerender", or "prerender".
-    $secPurpose = strtolower((string) ($_SERVER['HTTP_SEC_PURPOSE'] ?? ''));
-    if (str_contains($secPurpose, 'prefetch') || str_contains($secPurpose, 'prerender')) {
-        return true;
-    }
-    // Chrome (legacy): "Purpose: prefetch". Safari: "X-Purpose: preview|prefetch".
-    // Firefox: "X-moz: prefetch".
-    return strtolower((string) ($_SERVER['HTTP_PURPOSE'] ?? '')) === 'prefetch'
-        || in_array(strtolower((string) ($_SERVER['HTTP_X_PURPOSE'] ?? '')), ['prefetch', 'preview'], true)
-        || strtolower((string) ($_SERVER['HTTP_X_MOZ'] ?? '')) === 'prefetch';
+    // Collapse EVERY speculation-intent header into one lowercase haystack and
+    // substring-match. The headers each browser sends:
+    //   Chrome/Edge  Sec-Purpose: "prefetch" | "prefetch;prerender" | "prerender"
+    //   Chrome legacy Purpose:     "prefetch" (and joined variants like
+    //                              "prefetch;prerender")
+    //   Safari       X-Purpose:    "preview" | "prefetch"
+    //   Firefox      X-moz:        "prefetch"
+    // Substring matching is essential, not stylistic: the legacy Purpose /
+    // X-Purpose / X-moz headers used to require the value to be EXACTLY
+    // "prefetch", so a speculative hit sending "Purpose: prefetch;prerender"
+    // (any comma/semicolon-joined variant) was not recognized, fell through the
+    // guard, and got recorded as a real click ON TOP OF the real navigation —
+    // the double-count. Sec-Purpose was already tolerant; now all of them are.
+    $signals = strtolower(
+        (string) ($_SERVER['HTTP_SEC_PURPOSE'] ?? '') . ' '
+        . (string) ($_SERVER['HTTP_PURPOSE'] ?? '') . ' '
+        . (string) ($_SERVER['HTTP_X_PURPOSE'] ?? '') . ' '
+        . (string) ($_SERVER['HTTP_X_MOZ'] ?? '')
+    );
+
+    return str_contains($signals, 'prefetch')
+        || str_contains($signals, 'prerender')
+        || str_contains($signals, 'preview');
 }
 
 /**
@@ -3526,17 +3539,10 @@ function getScheme(): string
 
 function is_prefetch(): bool
 {
-    $prefetch = false;
-
-    if (isset($_SERVER["HTTP_X_PURPOSE"]) && $_SERVER['HTTP_X_PURPOSE'] == "preview") {
-        $prefetch = true;
-    } elseif (isset($_SERVER["HTTP_PURPOSE"]) && $_SERVER['HTTP_PURPOSE'] == "prefetch") {
-        $prefetch = true;
-    } elseif (isset($_SERVER["HTTP_X_MOZ"]) && $_SERVER['HTTP_X_MOZ'] == "prefetch") {
-        $prefetch = true;
-    }
-
-    return $prefetch;
+    // Delegate to the one hardened detector so this legacy helper cannot drift
+    // back to exact-match matching (which missed "Purpose: prefetch;prerender"
+    // and let speculative hits double-count).
+    return p202IsSpeculativeRequest();
 }
 
 function getUTMParams(&$mysql)
