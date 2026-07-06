@@ -51,7 +51,8 @@ $campaign_slack = '';
 	printf('<br></br><small><strong>Inbound Javascript Landing Page Code:</strong></small><br/>
             <span class="infotext">This is the javascript code should be put right above your &#60;&#47;body&#62; tag on <u>only</u> the page(s) where your visitors will first arrive.
 			This code is not supposed to be placed on every single page on your website. For example this <u>is not</u> to be placed in a template file that is to be included on everyone of your pages.<br/></span><br></br>
-            <textarea class="form-control" rows="10" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['javascript_code']);
+            ');
+        echo p202_copy_snippet($javascript_code, ['rows' => 10]);
 
 	
 	//now print out the each individual redirect code
@@ -83,7 +84,7 @@ $campaign_slack = '';
 				$outbound_go = '//' . getTrackingDomain() . get_absolute_url(). 'tracking202/redirect/go.php?acip=' . $aff_campaign_row['aff_campaign_id_public'];
 
 				$html['$outbound_go'] = htmlentities($outbound_go);
-				printf('</br><textarea class="form-control" rows="1" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['$outbound_go']);
+				echo p202_copy_snippet($outbound_go);
 				echo '<p></p>';
 				//for each real campaign selected, display the code to be used for it
 				$outbound_php = '
@@ -105,7 +106,7 @@ header(\'location: \'.$tracking202outbound);
 ?>';
 
 				$html['outbound_php'] = htmlentities($outbound_php);
-				printf('<p><textarea class="form-control" rows="16" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea></p>', $html['outbound_php']);
+				echo p202_copy_snippet($outbound_php, ['rows' => 16]);
 			}
 
 		} else if ($_POST['offer_type'.$count] == 'rotator') {
@@ -121,7 +122,7 @@ header(\'location: \'.$tracking202outbound);
 				$outbound_go = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/go.php?rpi=' . $rotator_row['public_id'];
 
 				$html['$outbound_go'] = htmlentities($outbound_go);
-				printf('</br><textarea class="form-control" rows="1" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['$outbound_go']);
+				echo p202_copy_snippet($outbound_go);
 				echo '<p></p>';
 				//for each real campaign selected, display the code to be used for it
 				$outbound_php = '
@@ -143,7 +144,7 @@ header(\'location: \'.$tracking202outbound);
 ?>';
 
 				$html['outbound_php'] = htmlentities($outbound_php);
-				printf('<p><textarea class="form-control" rows="16" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea></p>', $html['outbound_php']);
+				echo p202_copy_snippet($outbound_php, ['rows' => 16]);
 			}
 		}
 	} 

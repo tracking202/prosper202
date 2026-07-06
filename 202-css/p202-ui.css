@@ -754,3 +754,69 @@ code {
     margin: 0 auto 10px;
 }
 @keyframes p202-spin { to { transform: rotate(360deg); } }
+
+/* ---------- Copy snippet (shared code/URL block with one-click copy) ---------- */
+.p202-copy {
+    position: relative;
+    margin: 8px 0 14px;
+}
+.p202-copy-field {
+    width: 100%;
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--p202-text);
+    background: var(--p202-sub);
+    border: 1px solid var(--p202-input-border);
+    border-radius: var(--p202-r-md);
+    padding: 10px 12px;
+    resize: vertical;
+    box-shadow: none;
+}
+input.p202-copy-field {
+    padding-right: 5.25rem;
+    height: auto;
+}
+.p202-copy-field:focus {
+    outline: none;
+    border-color: var(--p202-accent);
+    box-shadow: 0 0 0 3px var(--p202-focus-ring);
+}
+.p202-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 6px 10px;
+    color: var(--p202-accent);
+    background: var(--p202-surface);
+    border: 1px solid var(--p202-input-border);
+    border-radius: var(--p202-r-sm);
+    cursor: pointer;
+    box-shadow: var(--p202-sh-sm);
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+    z-index: 2;
+}
+.p202-copy-btn:hover {
+    background: var(--p202-accent);
+    color: #fff;
+    border-color: var(--p202-accent);
+}
+.p202-copy-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--p202-focus-ring);
+}
+.p202-copy-btn.is-copied {
+    background: var(--p202-good);
+    border-color: var(--p202-good);
+    color: #fff;
+}
+.p202-copy-btn i {
+    font-size: 11px;
+}

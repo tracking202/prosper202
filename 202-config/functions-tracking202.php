@@ -3921,3 +3921,40 @@ function renderDynamicContentSegmentHelp(): void
 		   So how easy is it to display the visitor\'s country on your landing page? Here\'s the html for it:<br/>
 		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
 }
+
+/**
+ * Render a read-only code/URL snippet with a one-click Copy button (the shared
+ * .p202-copy component; styled in 202-css/p202-ui.css, wired by the delegated
+ * handler in 202-js/custom.php). Replaces the ad-hoc
+ * `<textarea class="form-control">...</textarea>` blocks scattered across the
+ * setup pages so every snippet gets the same copy affordance.
+ *
+ * $value is the RAW snippet text — this helper HTML-escapes it, so callers must
+ * NOT pre-encode. A single-line value renders as an <input>; multi-line (or an
+ * explicit rows >= 2) renders as a <textarea>.
+ *
+ * @param array{rows?: int, label?: string} $opts
+ */
+function p202_copy_snippet(string $value, array $opts = []): string
+{
+    $rows = isset($opts['rows']) ? max(1, (int) $opts['rows']) : 1;
+    $multiline = $rows > 1 || str_contains($value, "\n");
+    $escaped = htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+    $copyLabel = isset($opts['label']) && $opts['label'] !== ''
+        ? htmlspecialchars((string) $opts['label'], ENT_QUOTES, 'UTF-8')
+        : 'Copy';
+
+    if ($multiline) {
+        $field = '<textarea class="form-control p202-copy-field" rows="' . ($rows > 1 ? $rows : 6)
+            . '" readonly onclick="this.select();">' . $escaped . '</textarea>';
+    } else {
+        $field = '<input type="text" class="form-control p202-copy-field" readonly value="' . $escaped
+            . '" onclick="this.select();">';
+    }
+
+    return '<div class="p202-copy">' . $field
+        . '<button type="button" class="p202-copy-btn" data-copy-label="' . $copyLabel
+        . '" aria-label="Copy to clipboard">'
+        . '<i class="fa fa-clone" aria-hidden="true"></i>'
+        . '<span class="p202-copy-label">' . $copyLabel . '</span></button></div>';
+}

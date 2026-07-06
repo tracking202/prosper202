@@ -72,12 +72,14 @@ $error = [];
 	printf('<br></br><small><strong>Inbound Javascript Landing Page Code:</strong></small><br/>
             <span class="infotext">This is the javascript code should be put right above your &#60;&#47;body&#62; tag on <u>only</u> the page(s) where your PPC visitors will first arrive to.
 			This code is not supposed to be placed on every single page on your website. For example this <u>is not</u> to be placed in a template file that is to be included on everyone of your pages.</span>
-            <textarea class="form-control" rows="10" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['javascript_code']);
+            ');
+        echo p202_copy_snippet($javascript_code, ['rows' => 10]);
 
 	printf('<br/><small><strong>Option 1: Landing Page: Outbound Redirect Link:</strong></small><br/>
 			<span class="infotext">Use this link if you don\'t want to manualy upload PHP code to your server<br/>
             </span><br/>
-            <textarea class="form-control" rows="1" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['affiliate_link']);
+            ');
+        echo p202_copy_snippet($affiliate_link);
 	
 	$affiliate_link = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'];
 	$html['affiliate_link'] = htmlentities($affiliate_link);
@@ -114,7 +116,8 @@ $error = [];
             When the visitor goes to redirect.php with our outbound php code installed,
             they simply get redirected out to your affiliate link.<br/><br/>
             You must have PHP installed on your server for this to work! </span><br/>
-            <p><textarea class="form-control" rows="20" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea></p>', $html['outbound_php']);
+            ');
+        echo p202_copy_snippet($outbound_php, ['rows' => 20]);
 	
 	$outbound_javascript = '
 <!DOCTYPE html>
@@ -159,7 +162,8 @@ function urldecode(url) {
 			 to track the click-through ratios on your landing pages. With the normal PHP redirect
 			 you previously could not do this.  With the new Javascript Redirect, you can place
 			 other javascript tags to fire before processing the javascript redirect.</span><br></br>
-             <textarea class="form-control" rows="12" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['outbound_javascript']);
+             ');
+        echo p202_copy_snippet($outbound_javascript, ['rows' => 12]);
 
 	renderDynamicContentSegmentHelp();
 

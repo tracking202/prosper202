@@ -11,6 +11,49 @@ $(document).ready(function() {
 	$('[data-toggle="checkbox"]').radiocheck();
 	$('[data-toggle="tooltip"]').tooltip();
 	$('[data-toggle="dropdown"]').dropdown();
+
+	// Shared copy-to-clipboard for the .p202-copy snippet component. Delegated
+	// off document so any snippet rendered by any page or AJAX partial works
+	// with no per-page wiring. Falls back to selecting the field (so a manual
+	// copy is one keystroke) when the async clipboard API is unavailable.
+	$(document).on('click', '.p202-copy-btn', function (e) {
+		e.preventDefault();
+		var btn = this;
+		var field = $(btn).closest('.p202-copy').find('.p202-copy-field').get(0);
+		if (!field) { return; }
+		var text = field.value !== undefined ? field.value : field.textContent;
+
+		if (typeof field.focus === 'function') { field.focus(); }
+		if (typeof field.select === 'function') { field.select(); }
+		if (typeof field.setSelectionRange === 'function') {
+			try { field.setSelectionRange(0, String(text).length); } catch (err) {}
+		}
+
+		var flash = function (ok) {
+			var label = $(btn).find('.p202-copy-label');
+			var original = btn.getAttribute('data-copy-label') || 'Copy';
+			$(btn).toggleClass('is-copied', !!ok);
+			if (label.length) { label.text(ok ? 'Copied!' : 'Press Ctrl/⌘ C'); }
+			window.setTimeout(function () {
+				$(btn).removeClass('is-copied');
+				if (label.length) { label.text(original); }
+			}, 1600);
+		};
+
+		var legacyCopy = function () {
+			try { return !!(document.execCommand && document.execCommand('copy')); }
+			catch (err) { return false; }
+		};
+
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(text).then(
+				function () { flash(true); },
+				function () { flash(legacyCopy()); }
+			);
+		} else {
+			flash(legacyCopy());
+		}
+	});
     
 	var validator = $("#survey-form").validate({
 	  	    ignore:[],
