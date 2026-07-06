@@ -404,7 +404,9 @@ final class MysqlCompanyRepository
             $this->conn->bind($dupStmt, 'isi', [$userId, $normalized, $companyId]);
             $duplicate = $this->conn->fetchOne($dupStmt);
             if ($duplicate !== null) {
-                throw new RuntimeException(
+                // Same class as the create-path name clash: a duplicate is a
+                // CONFLICT (409), not a 422 validation error.
+                throw new CompanyConflictException(
                     'Another company already uses that name (#' . (int) $duplicate['company_id']
                     . '); merge the two companies instead of renaming'
                 );
@@ -422,7 +424,7 @@ final class MysqlCompanyRepository
             $this->conn->bind($dupStmt, 'isi', [$userId, $normalizedDomain, $companyId]);
             $duplicate = $this->conn->fetchOne($dupStmt);
             if ($duplicate !== null) {
-                throw new RuntimeException(
+                throw new CompanyConflictException(
                     'Domain ' . $normalizedDomain . ' already belongs to company #' . (int) $duplicate['company_id']
                 );
             }
@@ -472,7 +474,9 @@ final class MysqlCompanyRepository
             // A concurrent create/patch can slip past the preflight checks;
             // the unique keys (name, domain) are the real arbiter.
             if (Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
-                throw new RuntimeException(
+                // The unique key fired under a concurrent create/patch — a
+                // conflict (409), matching the create path's race handling.
+                throw new CompanyConflictException(
                     str_contains($e->getMessage(), 'uniq_user_domain')
                         ? 'Domain ' . (string) $normalizedDomain . ' already belongs to another company'
                         : 'Another company already uses that name; merge the two companies instead of renaming'

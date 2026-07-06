@@ -2655,6 +2655,26 @@ function p202IsSpeculativeRequest(): bool
         || strtolower((string) ($_SERVER['HTTP_X_MOZ'] ?? '')) === 'prefetch';
 }
 
+/**
+ * Decline a speculative fetch: record nothing and end the request with an
+ * empty, NON-cacheable 204. The no-store headers are essential — without them
+ * a prefetched/prerendered 204 can be stored and REUSED to satisfy the user's
+ * real navigation, which would then be neither counted nor redirected to the
+ * destination (the click silently vanishes). Forcing revalidation guarantees
+ * the actual click re-enters the redirect path. Every redirect endpoint that
+ * calls p202IsSpeculativeRequest() answers through here.
+ */
+function p202DeclineSpeculativeRequest(): never
+{
+    if (!headers_sent()) {
+        http_response_code(204);
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+    }
+    die();
+}
+
 function getTrackingDomain(): string
 {
     global $db;

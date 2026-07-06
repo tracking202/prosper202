@@ -13,8 +13,7 @@ include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php');
 // probes) must not record a click — otherwise the speculative hit plus the real
 // navigation double-count the same visit (see p202IsSpeculativeRequest).
 if (p202IsSpeculativeRequest()) {
-	http_response_code(204);
-	die();
+	p202DeclineSpeculativeRequest();
 }
 
 

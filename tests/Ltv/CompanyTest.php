@@ -119,6 +119,40 @@ final class CompanyTest extends TestCase
         $repo->update(7, 2, ['name' => 'Initech']);
     }
 
+    public function testUpdateRejectsDuplicateNameAsTypedConflict(): void
+    {
+        // A rename onto another company's name is a CONFLICT (409), the same
+        // class the create path throws — not a plain RuntimeException that
+        // patchCompany() would surface as a 422 validation error.
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('SELECT company_id, name, normalized_name', [
+            ['company_id' => 2, 'name' => 'Acme', 'normalized_name' => 'acme', 'domain' => null],
+        ]);
+        $write->whenQueryContainsReturnRows('normalized_name = ? AND company_id <> ?', [
+            ['company_id' => 9],
+        ]);
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $this->expectException(\Prosper202\Ltv\CompanyConflictException::class);
+        $repo->update(7, 2, ['name' => 'Initech']);
+    }
+
+    public function testUpdateRejectsDuplicateDomainAsTypedConflict(): void
+    {
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows('SELECT company_id, name, normalized_name', [
+            ['company_id' => 2, 'name' => 'Acme', 'normalized_name' => 'acme', 'domain' => null],
+        ]);
+        // No name change, so only the domain-owner lookup returns a clash.
+        $write->whenQueryContainsReturnRows('domain = ? AND company_id <> ?', [
+            ['company_id' => 9],
+        ]);
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $this->expectException(\Prosper202\Ltv\CompanyConflictException::class);
+        $repo->update(7, 2, ['domain' => 'taken.com']);
+    }
+
     public function testRenameRewritesEntityAndAttachedCustomers(): void
     {
         $write = new FakeMysqliConnection();

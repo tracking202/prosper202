@@ -712,7 +712,14 @@ class LtvController
             if (array_key_exists('domain', $payload)) {
                 $changes['domain'] = $payload['domain'] !== null ? (string) $payload['domain'] : null;
             }
-            $companies->update($this->userId, $companyId, $changes);
+            try {
+                $companies->update($this->userId, $companyId, $changes);
+            } catch (CompanyConflictException $e) {
+                // A duplicate name/domain (preflight or the unique-key race) is
+                // a 409 conflict, same as the create path — not the 422 that
+                // wrap() would map a bare RuntimeException to.
+                throw new ConflictException($e->getMessage());
+            }
 
             return ['data' => $companies->get($this->userId, $companyId)];
         });

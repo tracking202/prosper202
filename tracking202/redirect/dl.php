@@ -14,8 +14,7 @@ include_once(substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php');
 // p202IsSpeculativeRequest). Answer with 204 and record nothing; the real
 // navigation re-requests and is counted exactly once.
 if (p202IsSpeculativeRequest()) {
-	http_response_code(204);
-	die();
+	p202DeclineSpeculativeRequest();
 }
 
 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
