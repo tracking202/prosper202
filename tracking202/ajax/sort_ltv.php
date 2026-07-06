@@ -92,8 +92,12 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
     <?php echo p202_ltv_stat('Avg LTV', '$' . $money($summary['avg_ltv'] ?? 0)); ?>
     <?php echo p202_ltv_stat('AOV', '$' . $money($summary['aov'] ?? 0)); ?>
     <?php echo p202_ltv_stat('Repeat Rate', number_format(((float) ($summary['repeat_rate'] ?? 0)) * 100, 1) . '%'); ?>
-    <?php echo p202_ltv_stat('MRR', '$' . $money($mrr['mrr'] ?? 0),
-        number_format((int) ($mrr['active_subscriptions'] ?? 0)) . ' active subs'); ?>
+    <?php // MRR + active subs are cohort-scoped (from $summary) so a filtered
+          // acquisition range never shows the whole account's recurring
+          // revenue; churn stays account-level (it is a trailing-window rate,
+          // not a cohort statistic). ?>
+    <?php echo p202_ltv_stat('MRR', '$' . $money($summary['mrr'] ?? 0),
+        number_format((int) ($summary['active_subscriptions'] ?? 0)) . ' active subs'); ?>
     <?php echo p202_ltv_stat('Monthly Churn', number_format(((float) ($mrr['monthly_churn_rate'] ?? 0)) * 100, 2) . '%'); ?>
 </div>
 

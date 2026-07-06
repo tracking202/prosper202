@@ -219,7 +219,17 @@ if (!function_exists('p202ExtractItems')) {
             $item['name'] = trim((string) $source['product_name']);
         }
         if (isset($source['qty']) && is_numeric($source['qty'])) {
-            $item['quantity'] = (float) $source['qty'];
+            $quantity = (float) $source['qty'];
+            // A non-positive quantity is malformed and would make
+            // insertLineItems() throw INSIDE the conversion transaction, so
+            // the static endpoints would lose the CORE conversion just because
+            // optional product metadata was bad. Drop the line item instead —
+            // the conversion still records. Coercing qty to 1 would invent data
+            // the caller never sent (CLAUDE.md #4), so we discard the item.
+            if ($quantity <= 0) {
+                return [];
+            }
+            $item['quantity'] = $quantity;
         }
         if (isset($source['unit_price']) && is_numeric($source['unit_price'])) {
             $item['unit_price'] = (float) $source['unit_price'];
