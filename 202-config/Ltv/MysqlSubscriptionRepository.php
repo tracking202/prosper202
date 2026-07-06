@@ -285,8 +285,16 @@ final class MysqlSubscriptionRepository
                 }
                 $transactionId = trim((string) ($payload['transaction_id'] ?? ''));
                 if ($idempotencyKey === '' && $transactionId !== '') {
-                    // A billing-system transaction id is a natural idempotency key.
-                    $idempotencyKey = 'sub:' . $subscriptionId . ':' . $eventType . ':' . $transactionId;
+                    // A billing-system transaction id is a natural idempotency
+                    // key. transaction_id can be up to 255 chars (the ledger
+                    // column), so a long one makes the scoped key exceed
+                    // idempotency_key's varchar(191) and fail the insert —
+                    // hash oversized ids, exactly like the explicit-key path.
+                    $scoped = 'sub:' . $subscriptionId . ':' . $eventType . ':' . $transactionId;
+                    if (strlen($scoped) > 191) {
+                        $scoped = 'sub:' . $subscriptionId . ':' . $eventType . ':txnh:' . hash('sha256', $transactionId);
+                    }
+                    $idempotencyKey = $scoped;
                 }
 
                 $event = $this->customers->insertRevenueEvent($userId, $customerId, [

@@ -226,6 +226,30 @@ final class MysqlCustomerFieldRepository
     }
 
     /**
+     * The field_ids that currently hold a stored value for one customer. Used
+     * to enforce required fields on a customer save: a required field passes
+     * when it was just written or was already stored. Reads via the write
+     * connection so values written earlier in the same upsert transaction are
+     * visible.
+     *
+     * @return list<int>
+     */
+    public function fieldIdsWithValue(int $userId, int $customerId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT field_id FROM 202_customer_field_values WHERE customer_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+
+        $ids = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $ids[] = (int) $row['field_id'];
+        }
+
+        return $ids;
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     private function findById(int $userId, int $fieldId): ?array

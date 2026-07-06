@@ -561,21 +561,60 @@ final class MysqlCustomerCrmRepository
      */
     private function applyCustomFields(int $userId, int $customerId, array $payload): void
     {
-        if (!isset($payload['custom_fields'])) {
-            return;
-        }
-        if (!is_array($payload['custom_fields'])) {
-            throw new RuntimeException('custom_fields must be an object of field_key => value');
+        $customFields = null;
+        if (isset($payload['custom_fields'])) {
+            if (!is_array($payload['custom_fields'])) {
+                throw new RuntimeException('custom_fields must be an object of field_key => value');
+            }
+            $customFields = $payload['custom_fields'];
         }
 
-        foreach ($payload['custom_fields'] as $key => $value) {
-            $field = $this->fields->findByKey($userId, (string) $key);
-            if ($field === null) {
+        // Required fields are enforced on EVERY save, not just create: without
+        // this, a save that omits custom_fields (or clears one to blank) could
+        // leave a Required field empty, making the setting unreliable for
+        // segmentation and personalization.
+        $required = array_values(array_filter(
+            $this->fields->list($userId),
+            static fn (array $f): bool => !empty($f['is_required'])
+        ));
+
+        if ($customFields !== null) {
+            foreach ($customFields as $key => $value) {
+                $field = $this->fields->findByKey($userId, (string) $key);
+                if ($field === null) {
+                    throw new RuntimeException(
+                        'Unknown custom field "' . $key . '"; define it first via POST /ltv/fields'
+                    );
+                }
+                // setValue() deletes blank values, so a blank on a required
+                // field would silently clear it — reject before that happens.
+                if (!empty($field['is_required'])
+                    && ($value === null || (is_string($value) && trim($value) === ''))) {
+                    throw new RuntimeException(
+                        'Custom field "' . (string) $field['field_key'] . '" is required and cannot be cleared'
+                    );
+                }
+                $this->fields->setValue($userId, $customerId, $field, $value);
+            }
+        }
+
+        if ($required === []) {
+            return;
+        }
+
+        // Every required field must now hold a value — one just written above
+        // or one already stored on the customer. Read AFTER applying so a
+        // required field supplied in THIS save satisfies the check, and a
+        // partial update that doesn't touch already-populated required fields
+        // still passes.
+        $stored = $this->fields->fieldIdsWithValue($userId, $customerId);
+        foreach ($required as $field) {
+            if (!in_array((int) $field['field_id'], $stored, true)) {
                 throw new RuntimeException(
-                    'Unknown custom field "' . $key . '"; define it first via POST /ltv/fields'
+                    'Custom field "' . (string) $field['field_key']
+                    . '" is required; supply it in custom_fields'
                 );
             }
-            $this->fields->setValue($userId, $customerId, $field, $value);
         }
     }
 }

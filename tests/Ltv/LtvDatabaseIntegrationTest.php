@@ -571,6 +571,76 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertFalse($longReplay['inserted'], 'hashed long keys still dedupe deterministically');
     }
 
+    public function testSubscriptionTransactionIdFallbackKeyHashesWhenOversized(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+
+        $customerId = $crm->upsert(1, ['customer_ref' => 'txid-fallback-1']);
+        $subs->upsert(1, ['external_sub_id' => 'SUB-TXID', 'amount' => 20.0, 'status' => 'active', 'customer_id' => $customerId]);
+
+        // No explicit idempotency_key: the transaction_id is the natural key. A
+        // billing id near the ledger's 255-char transaction_id limit must not
+        // overflow idempotency_key's varchar(191) and fail the renewal insert.
+        $longTxn = str_repeat('T', 240);
+        $renewal = $subs->recordEvent(1, 'SUB-TXID', 'renewal', ['transaction_id' => $longTxn]);
+        self::assertTrue($renewal['inserted'], 'an oversized transaction id must still record the renewal');
+        $stored = (string) $this->scalar('SELECT idempotency_key FROM 202_revenue_events WHERE event_id=' . (int) $renewal['eventId']);
+        self::assertSame('sub:' . $renewal['subscriptionId'] . ':renewal:txnh:' . hash('sha256', $longTxn), $stored);
+        self::assertTrue(strlen($stored) <= 191, 'the stored key fits the varchar(191) column');
+
+        // The same transaction id replays deterministically (still dedupes).
+        $replay = $subs->recordEvent(1, 'SUB-TXID', 'renewal', ['transaction_id' => $longTxn]);
+        self::assertFalse($replay['inserted'], 'hashed transaction-id keys still dedupe');
+        self::assertSame($renewal['eventId'], $replay['eventId']);
+
+        // A short transaction id keeps the plain, un-hashed scoped format.
+        $short = $subs->recordEvent(1, 'SUB-TXID', 'renewal', ['transaction_id' => 'TXN-SHORT']);
+        self::assertTrue($short['inserted']);
+        $storedShort = (string) $this->scalar('SELECT idempotency_key FROM 202_revenue_events WHERE event_id=' . (int) $short['eventId']);
+        self::assertSame('sub:' . $short['subscriptionId'] . ':renewal:TXN-SHORT', $storedShort);
+    }
+
+    public function testRequiredCustomFieldsAreEnforcedOnCustomerSaves(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $fields = new MysqlCustomerFieldRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, $fields);
+
+        $fields->create(1, ['field_key' => 'plan_tier', 'label' => 'Plan Tier', 'field_type' => 'text', 'is_required' => true]);
+
+        // A save that omits the required field is rejected — and because the
+        // whole upsert is one transaction, the freshly created customer rolls
+        // back with it (no partial record).
+        try {
+            $crm->upsert(1, ['customer_ref' => 'req-1', 'first_name' => 'Ada']);
+            self::fail('a save omitting a required custom field must be rejected');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('required', $e->getMessage());
+        }
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customers WHERE primary_ref='req-1'"), 'rejected save leaves no partial record');
+
+        // Supplying it succeeds and stores the value.
+        $id = $crm->upsert(1, ['customer_ref' => 'req-1', 'custom_fields' => ['plan_tier' => 'gold']]);
+        self::assertSame('gold', $this->scalar('SELECT value_text FROM 202_customer_field_values WHERE customer_id=' . $id));
+
+        // A later partial update that doesn't touch the field still passes —
+        // the required value is already stored.
+        $crm->upsert(1, ['customer_id' => $id, 'first_name' => 'Ada']);
+        self::assertSame('Ada', $this->scalar('SELECT first_name FROM 202_customers WHERE customer_id=' . $id));
+
+        // Clearing the required field to blank is rejected (it would delete the
+        // stored value), and the existing value survives the rejected save.
+        try {
+            $crm->upsert(1, ['customer_id' => $id, 'custom_fields' => ['plan_tier' => '']]);
+            self::fail('clearing a required field must be rejected');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('required', $e->getMessage());
+        }
+        self::assertSame('gold', $this->scalar('SELECT value_text FROM 202_customer_field_values WHERE customer_id=' . $id), 'the required value survives the rejected clear');
+    }
+
     public function testPersonalizationMintRespectsAliasType(): void
     {
         $customers = new MysqlCustomerRepository(self::$conn);
