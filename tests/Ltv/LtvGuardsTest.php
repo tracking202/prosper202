@@ -19,6 +19,49 @@ use Tests\Support\FakeMysqliConnection;
  */
 final class LtvGuardsTest extends TestCase
 {
+    public function testCustomFieldFilterParamsRecoversDottedKeysFromNormalizedGet(): void
+    {
+        // PHP rewrites '.' -> '_' in $_GET keys, so over HTTP the documented
+        // cf.* filters arrive as cf_* and a str_starts_with('cf.') check would
+        // silently drop them. The controller recovers the ORIGINAL dotted keys
+        // from the raw query string (needed to disambiguate the field key from
+        // the .min/.max bound).
+        $controller = new \Api\V3\Controllers\LtvController(new FakeMysqliConnection(), 7);
+        $method = new \ReflectionMethod($controller, 'customFieldFilterParams');
+        $method->setAccessible(true);
+
+        $prev = $_SERVER['QUERY_STRING'] ?? null;
+        try {
+            // HTTP: $_GET normalized to cf_*, raw query keeps the dots.
+            $_SERVER['QUERY_STRING'] = 'period=last30&cf.vip=true&cf.spend.min=100&cf.tier_name=gold';
+            $http = $method->invoke($controller, [
+                'period' => 'last30', 'cf_vip' => 'true', 'cf_spend_min' => '100', 'cf_tier_name' => 'gold',
+            ]);
+            self::assertSame(
+                ['cf.vip' => 'true', 'cf.spend.min' => '100', 'cf.tier_name' => 'gold'],
+                $http,
+                'HTTP cf.* filters recovered with dots intact'
+            );
+
+            // URL-encoded values decode.
+            $_SERVER['QUERY_STRING'] = 'cf.city=New%20York';
+            self::assertSame(['cf.city' => 'New York'], $method->invoke($controller, ['cf_city' => 'New York']));
+
+            // CLI / internal callers pass dotted keys directly (no query string).
+            unset($_SERVER['QUERY_STRING']);
+            self::assertSame(
+                ['cf.vip' => 'true', 'cf.spend.max' => '500'],
+                $method->invoke($controller, ['cf.vip' => 'true', 'cf.spend.max' => '500'])
+            );
+        } finally {
+            if ($prev === null) {
+                unset($_SERVER['QUERY_STRING']);
+            } else {
+                $_SERVER['QUERY_STRING'] = $prev;
+            }
+        }
+    }
+
     public function testPredictCapsUnboundedSubscriberValueAndEchoesInputs(): void
     {
         $read = new FakeMysqliConnection();

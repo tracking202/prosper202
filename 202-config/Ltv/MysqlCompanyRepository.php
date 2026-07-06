@@ -140,8 +140,12 @@ final class MysqlCompanyRepository
             $normalizedDomain = self::normalizeDomain($domain);
             $owner = $this->findByDomain($userId, $normalizedDomain);
             if ($owner !== null) {
-                throw new RuntimeException(
+                // A duplicate domain is a CONFLICT (409), the same as a
+                // duplicate name above and the same as the concurrent
+                // uniq_user_domain race below — not a 422 validation error.
+                throw new CompanyConflictException(
                     'Domain ' . $normalizedDomain . ' already belongs to company #' . (int) $owner['company_id']
+                    . '; use PATCH /ltv/companies/' . (int) $owner['company_id'] . ' to modify it'
                 );
             }
         }
@@ -203,6 +207,21 @@ final class MysqlCompanyRepository
             if ($companyId <= 0) {
                 return;
             }
+            // Serialize against delete(): lock the company row before stamping
+            // it onto the customer. If a concurrent delete already removed it,
+            // re-create the entity so the customer never points at a dead id
+            // (the just-created row is safe within this transaction). The lock
+            // also blocks a delete from removing the row until we commit, at
+            // which point delete's in-lock count check sees this customer.
+            $locked = $this->lockCompanyRow($userId, $companyId);
+            if ($locked === null) {
+                $companyId = $this->resolveOrCreate($userId, $companyName, $now);
+                if ($companyId <= 0) {
+                    return;
+                }
+            } else {
+                $entityName = (string) $locked['name'];
+            }
             $stmt = $this->conn->prepareWrite(
                 'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
                  WHERE customer_id = ? AND user_id = ?'
@@ -224,14 +243,21 @@ final class MysqlCompanyRepository
         if ($company === null) {
             return;
         }
+        // Lock the row before the domain auto-attach so a concurrent delete
+        // cannot remove it between the lookup and the stamp; if it is already
+        // gone, skip — domain attach is best-effort (a NULL company stays NULL).
+        $locked = $this->lockCompanyRow($userId, (int) $company['company_id']);
+        if ($locked === null) {
+            return;
+        }
         $stmt = $this->conn->prepareWrite(
             'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
              WHERE customer_id = ? AND user_id = ? AND company_id IS NULL
                AND company IS NULL'
         );
         $this->conn->bind($stmt, 'isiii', [
-            (int) $company['company_id'],
-            (string) $company['name'],
+            (int) $locked['company_id'],
+            (string) $locked['name'],
             $now,
             $customerId,
             $userId,
@@ -532,7 +558,15 @@ final class MysqlCompanyRepository
      */
     public function delete(int $userId, int $companyId): void
     {
-        $company = $this->get($userId, $companyId);
+        // One transaction with the company row LOCKED so this serializes
+        // against attachCustomer() (CRM saves + ingest, which lock the same
+        // row before stamping company_id): whichever takes the lock first
+        // wins. An attach that beats the delete makes the in-lock count check
+        // below see the new customer and abort; an attach that loses re-reads
+        // the row as gone and re-creates the entity, so no customer is ever
+        // left pointing at a deleted company id.
+        $this->conn->transaction(function () use ($userId, $companyId): void {
+        $company = $this->lockCompanyRow($userId, $companyId);
         if ($company === null) {
             throw new RuntimeException('Company not found');
         }
@@ -578,6 +612,24 @@ final class MysqlCompanyRepository
         );
         $this->conn->bind($stmt, 'ii', [$companyId, $userId]);
         $this->conn->executeUpdate($stmt);
+        });
+    }
+
+    /**
+     * Lock a company row FOR UPDATE (must run inside a transaction). Returns
+     * the row, or null if it no longer exists — used by attachCustomer() to
+     * serialize stamping against delete().
+     *
+     * @return array<string, mixed>|null
+     */
+    private function lockCompanyRow(int $userId, int $companyId): ?array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT company_id, name, domain FROM 202_companies WHERE company_id = ? AND user_id = ? FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'ii', [$companyId, $userId]);
+
+        return $this->conn->fetchOne($stmt);
     }
 
     /**

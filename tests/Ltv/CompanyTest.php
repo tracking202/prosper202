@@ -86,6 +86,23 @@ final class CompanyTest extends TestCase
         $repo->resolveOrCreate(7, '   ');
     }
 
+    public function testCreateRejectsDuplicateDomainAsConflict(): void
+    {
+        // A domain already owned by another company is a CONFLICT (409), the
+        // same class as a duplicate NAME — not a plain RuntimeException that
+        // the controller would map to a 422 validation error.
+        $write = new FakeMysqliConnection();
+        // findByName returns nothing (no name clash); findByDomain returns an
+        // owner (the WHERE ... domain = ? query).
+        $write->whenQueryContainsReturnRows('AND domain = ?', [
+            ['company_id' => 42, 'name' => 'Acme', 'domain' => 'acme.com'],
+        ]);
+        $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $this->expectException(\Prosper202\Ltv\CompanyConflictException::class);
+        $repo->create(7, 'Totally New Name', 'acme.com');
+    }
+
     public function testRenameRejectsCollisionWithAnotherCompany(): void
     {
         $write = new FakeMysqliConnection();
@@ -168,6 +185,10 @@ final class CompanyTest extends TestCase
         $write->whenQueryContainsReturnRows('SELECT company_id, name, normalized_name', [
             ['company_id' => 2, 'name' => 'Acme', 'normalized_name' => 'acme', 'domain' => null],
         ]);
+        // delete() locks the company row FOR UPDATE before the count check.
+        $write->whenQueryContainsReturnRows('user_id = ? FOR UPDATE', [
+            ['company_id' => 2, 'name' => 'Acme', 'domain' => null],
+        ]);
         $write->whenQueryContainsReturnRows('SELECT COUNT(*) AS c FROM 202_customers WHERE company_id', [
             ['c' => 3],
         ]);
@@ -245,6 +266,10 @@ final class CompanyTest extends TestCase
             ['merged_into_customer_id' => null],
         ]);
         $write->whenQueryContainsReturnRows('WHERE user_id = ? AND domain = ?', [
+            ['company_id' => 4, 'name' => 'Acme Corp', 'domain' => 'acme.com'],
+        ]);
+        // attachCustomer() locks the resolved company row before the stamp.
+        $write->whenQueryContainsReturnRows('user_id = ? FOR UPDATE', [
             ['company_id' => 4, 'name' => 'Acme Corp', 'domain' => 'acme.com'],
         ]);
         $conn = new Connection($write, new FakeMysqliConnection());
@@ -350,6 +375,11 @@ final class CompanyTest extends TestCase
         $write->whenQueryContainsReturnRows('normalized_name = ? LIMIT 1', [
             ['company_id' => 4, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
         ]);
+        // The stamp locks the resolved entity row FOR UPDATE first; the
+        // stamped name comes from this locked row, not the caller string.
+        $write->whenQueryContainsReturnRows('user_id = ? FOR UPDATE', [
+            ['company_id' => 4, 'name' => 'Acme Corp', 'domain' => null],
+        ]);
         $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
 
         // Caller string differs in case; the stamp must use the entity's
@@ -382,6 +412,10 @@ final class CompanyTest extends TestCase
         $write = new FakeMysqliConnection();
         $write->whenQueryContainsReturnRows('SELECT company_id, name, normalized_name', [
             ['company_id' => 2, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
+        ]);
+        // delete() locks the company row FOR UPDATE before the guard checks.
+        $write->whenQueryContainsReturnRows('user_id = ? FOR UPDATE', [
+            ['company_id' => 2, 'name' => 'Acme Corp', 'domain' => null],
         ]);
         // Zero ATTACHED customers, but one unstamped legacy row whose string
         // is uncanonical (inner double space) — exact SQL equality would miss

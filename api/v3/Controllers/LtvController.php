@@ -843,10 +843,7 @@ class LtvController
         }
 
         $filters = [];
-        foreach ($params as $key => $value) {
-            if (!is_string($key) || !str_starts_with($key, 'cf.') || !is_scalar($value)) {
-                continue;
-            }
+        foreach ($this->customFieldFilterParams($params) as $key => $value) {
             $parts = explode('.', $key);
             $fieldKey = $parts[1] ?? '';
             $bound = $parts[2] ?? '';
@@ -885,6 +882,48 @@ class LtvController
         } catch (\RuntimeException $e) {
             throw new ValidationException($e->getMessage());
         }
+    }
+
+    /**
+     * Collect the cf.* custom-field filters as dotted keys mapped to values.
+     *
+     * PHP rewrites '.' to '_' in $_GET keys, so over HTTP `cf.vip=true` arrives
+     * as `cf_vip` and a `str_starts_with($key, 'cf.')` check would silently drop
+     * every documented cf.* filter (returning UNFILTERED cohorts). The dot also
+     * disambiguates the field key from the .min/.max bound (`cf.vip.min` — the
+     * underscore form `cf_vip_min` is ambiguous against a field literally named
+     * `vip_min`), so we recover the ORIGINAL keys from the raw query string
+     * rather than trust the normalized $_GET. Dotted keys already present in
+     * $params (CLI / internal callers that never went through $_GET) are honored
+     * too, so both call paths behave identically.
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, string> dotted cf.* key => value
+     */
+    private function customFieldFilterParams(array $params): array
+    {
+        $cf = [];
+        foreach ($params as $key => $value) {
+            if (is_string($key) && str_starts_with($key, 'cf.') && is_scalar($value)) {
+                $cf[$key] = (string) $value;
+            }
+        }
+        $raw = (string) ($_SERVER['QUERY_STRING'] ?? '');
+        if ($raw !== '') {
+            foreach (explode('&', $raw) as $pair) {
+                if ($pair === '') {
+                    continue;
+                }
+                $eq = strpos($pair, '=');
+                $rawKey = $eq === false ? $pair : substr($pair, 0, $eq);
+                $key = urldecode($rawKey);
+                if (str_starts_with($key, 'cf.')) {
+                    $cf[$key] = $eq === false ? '' : urldecode(substr($pair, $eq + 1));
+                }
+            }
+        }
+
+        return $cf;
     }
 
     /**
