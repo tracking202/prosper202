@@ -488,6 +488,12 @@ $click_id = $clickRepo->allocateClickId();
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_alp'] = 0;
 
+// Opt-in tracer (no-op unless 202-config/.click-debug exists): this hit passed
+// the speculative guard and just reserved a click_id, so it WILL count. Pair
+// this line with any 'declined-speculative' line for the same click to see what
+// a double-counting second hit actually looks like at the header level.
+p202LogRedirectHit('dl.php', 'recorded click_id=' . $click_id);
+
 // Generate click_id_public only when cloaking is active (needed for PCI-based lookups via cl.php)
 $click_id_public = '';
 $mysql['click_id_public'] = '';

@@ -2669,6 +2669,62 @@ function p202IsSpeculativeRequest(): bool
 }
 
 /**
+ * Opt-in click tracer. Off by default with ZERO overhead: it logs one line per
+ * redirect hit ONLY while the flag file 202-config/.click-debug exists, so a
+ * double-count can be diagnosed against real traffic without guessing. Each
+ * line carries the decision (recorded / declined-speculative) plus every header
+ * that distinguishes a real navigation from a speculative/duplicate fetch
+ * (Sec-Purpose/Purpose/X-Purpose/X-moz and the Sec-Fetch-* set, where a genuine
+ * user navigation is Sec-Fetch-Mode: navigate + Sec-Fetch-User: ?1). Compare
+ * the two lines for one click to see exactly what the second hit is.
+ *
+ * Enable:  touch 202-config/.click-debug
+ * Read:    tail -f <system temp dir>/p202-click-debug.log   (path is error_logged once)
+ * Disable: rm 202-config/.click-debug
+ */
+function p202LogRedirectHit(string $endpoint, string $decision): void
+{
+    static $enabled = null;
+    if ($enabled === null) {
+        $enabled = is_file(__DIR__ . '/.click-debug');
+    }
+    if (!$enabled) {
+        return;
+    }
+
+    $h = static fn (string $k): string => str_replace(["\t", "\n", "\r"], ' ', (string) ($_SERVER[$k] ?? ''));
+    $line = implode("\t", [
+        date('Y-m-d H:i:s'),
+        'ep=' . $endpoint,
+        'decision=' . $decision,
+        'method=' . $h('REQUEST_METHOD'),
+        'ip=' . $h('REMOTE_ADDR'),
+        'xff=' . $h('HTTP_X_FORWARDED_FOR'),
+        'sec_purpose=' . $h('HTTP_SEC_PURPOSE'),
+        'purpose=' . $h('HTTP_PURPOSE'),
+        'x_purpose=' . $h('HTTP_X_PURPOSE'),
+        'x_moz=' . $h('HTTP_X_MOZ'),
+        'sf_dest=' . $h('HTTP_SEC_FETCH_DEST'),
+        'sf_mode=' . $h('HTTP_SEC_FETCH_MODE'),
+        'sf_site=' . $h('HTTP_SEC_FETCH_SITE'),
+        'sf_user=' . $h('HTTP_SEC_FETCH_USER'),
+        'ua=' . $h('HTTP_USER_AGENT'),
+        'uri=' . $h('REQUEST_URI'),
+    ]);
+
+    $logFile = sys_get_temp_dir() . '/p202-click-debug.log';
+    if (@file_put_contents($logFile, $line . "\n", FILE_APPEND | LOCK_EX) === false) {
+        error_log('P202CLICKDBG ' . $line);
+    } else {
+        static $announced = false;
+        if (!$announced) {
+            $announced = true;
+            error_log('P202CLICKDBG click tracer active -> ' . $logFile);
+        }
+    }
+}
+
+/**
  * Decline a speculative fetch: record nothing and end the request with an
  * empty, NON-cacheable 204. The no-store headers are essential — without them
  * a prefetched/prerendered 204 can be stored and REUSED to satisfy the user's
@@ -2679,6 +2735,7 @@ function p202IsSpeculativeRequest(): bool
  */
 function p202DeclineSpeculativeRequest(): never
 {
+    p202LogRedirectHit(basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'redirect')), 'declined-speculative');
     if (!headers_sent()) {
         http_response_code(204);
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
