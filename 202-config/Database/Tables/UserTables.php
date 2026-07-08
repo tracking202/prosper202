@@ -136,6 +136,9 @@ final class UserTables
                 `user_ltv_personalization_fields` varchar(500) NOT NULL DEFAULT '',
                 `user_ltv_score_weights` varchar(100) NOT NULL DEFAULT '',
                 `user_ltv_rec_fatigue` varchar(20) NOT NULL DEFAULT '',
+                `bandit_site_key` varchar(64) NOT NULL DEFAULT '',
+                `bandit_status` varchar(16) NOT NULL DEFAULT '',
+                `bandit_bridge_config` text DEFAULT NULL,
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
