@@ -2725,6 +2725,22 @@ function p202LogRedirectHit(string $endpoint, string $decision): void
 }
 
 /**
+ * Mark the current response uncacheable. Every tracking-redirect response
+ * must send this BEFORE its Location header: a 302 stored by any browser or
+ * intermediary cache can be replayed without reaching the server, so the
+ * repeat click goes uncounted and the stale subid baked into the cached
+ * Location misattributes any later conversion to the wrong click.
+ */
+function p202NoStore(): void
+{
+    if (!headers_sent()) {
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+    }
+}
+
+/**
  * Decline a speculative fetch: record nothing and end the request with an
  * empty, NON-cacheable 204. The no-store headers are essential — without them
  * a prefetched/prerendered 204 can be stored and REUSED to satisfy the user's
@@ -2738,9 +2754,7 @@ function p202DeclineSpeculativeRequest(): never
     p202LogRedirectHit(basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'redirect')), 'declined-speculative');
     if (!headers_sent()) {
         http_response_code(204);
-        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-        header('Pragma: no-cache');
-        header('Expires: 0');
+        p202NoStore();
     }
     die();
 }

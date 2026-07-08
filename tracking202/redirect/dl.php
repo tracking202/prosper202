@@ -184,6 +184,7 @@ if ($usedCachedRedirect == true) {
 				$new_url = str_replace("[[utm_content]]", "p202utm_content", $new_url);
 			}
 
+			p202NoStore();
 			header('location: ' . $new_url);
 			die();
 		}
@@ -614,6 +615,7 @@ if ($redirectLocation === null || $redirectLocation === '') {
 	);
 }
 
+p202NoStore();
 header('Location: ' . $redirectLocation);
 if (function_exists('fastcgi_finish_request')) {
 	fastcgi_finish_request();

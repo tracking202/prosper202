@@ -77,6 +77,7 @@ if ($usedCachedRedirect==true) {
 				}
 			}
 			
+				p202NoStore();
 				header('location: '. $new_url); 
 				die();
 			}
@@ -220,9 +221,11 @@ $urlvars = getPrePopVars($vars);
 
 if ($cloaking_on == true) {
 	//if cloaked, redirect them to the cloaked site. 
+	p202NoStore();
 	header('location: '.setPrePopVars($urlvars,$cloaking_site_url,true));
 } else {
 	
+	p202NoStore();
 	header('location: '.setPrePopVars($urlvars,$redirect_site_url,false));
 } 
 die();

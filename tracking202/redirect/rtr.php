@@ -27,6 +27,7 @@ if ($usedCachedRedirect==true) {
 		if ($memcacheWorking) {
 			$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
 			if ($getUrl) {			
+				p202NoStore();
 				header('location: '. $getUrl); 
 				die();
 			}
@@ -77,6 +78,7 @@ if (!$rotator_row) {
 	if ($memcacheWorking) {
 		$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
 		if ($getUrl) {
+			p202NoStore();
 			header('location: ' . $getUrl);
 			die();
 		}
@@ -347,6 +349,7 @@ foreach ($rule_row as $rule) {
 		$default = false;
 		if ($redirect_array !== null) {
 			$redirect = redirect_process($db, $redirect_array, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
+			p202NoStore();
 			header('location: '.$redirect);
 			die();
 		}
@@ -382,6 +385,7 @@ if ($default == true) {
 				}
 			}
 		}
+	p202NoStore();
 	header('location: '.$default);
 	die();
 }

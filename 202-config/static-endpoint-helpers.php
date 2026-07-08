@@ -147,7 +147,8 @@ if (!function_exists('p202ExtractCustomer')) {
      * Pull the LTV customer reference from a request array so the conversion
      * can be attributed to a persistent customer. Networks/carts pass their
      * stable id (merchant customer id, ESP hash, hashed email) as `cust`
-     * (aliases: customer_ref, customer_id) with an optional `cust_type`.
+     * (alias: customer_ref) with an optional `cust_type`. `customer_id` is
+     * deliberately not accepted — see the note in the implementation.
      *
      * Returns [] when absent; otherwise keys customer_ref / customer_ref_type
      * ready to merge into the MysqlConversionRepository::record() payload.

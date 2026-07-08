@@ -113,6 +113,7 @@ if ($usedCachedRedirect == true) {
 
             $new_url = setPrePopVars($urlvars, $new_url, false);
 
+            p202NoStore();
             header('location: ' . $new_url);
             die();
         }
@@ -152,6 +153,7 @@ if ($pci == '') {
         
         // cloaking OFF, so do a php header redirect
 
+        p202NoStore();
         header('location: ' . $redirect_site_url);
         die();
     } else {
@@ -250,6 +252,7 @@ if (!$info_row || !isset($info_row['click_id'])) {
         if ($getUrl) {
             $urlvars = getPrePopVars($urlvarslist);
             $new_url = setPrePopVars($urlvars, str_replace('[[subid]]', 'p202', $getUrl), false);
+            p202NoStore();
             header('location: ' . $new_url);
             die();
         }
@@ -427,6 +430,7 @@ if ($cloaking_on == true) {
     
     // if cloaking is turned off, php header redirect out
    
+    p202NoStore();
     header('location: ' . $redirect_site_url);
     die();
 }
