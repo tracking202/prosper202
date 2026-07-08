@@ -234,6 +234,92 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db);
 	}
 
+	// Landing Page Optimizer (bandit) pairing: connect registers a local
+	// wildcard webhook and completes the SaaS handshake; disconnect reverses.
+	if (!isset($error['token']) && isset($_POST['bandit_action']) && in_array($_POST['bandit_action'], ['connect', 'disconnect'], true)) {
+		$bandit_user_id = (int) $_SESSION['user_id'];
+		$bandit_conn = new \Prosper202\Database\Connection($db);
+		$bandit_webhooks = new \Prosper202\Ltv\MysqlWebhookRepository($bandit_conn);
+		$bandit_client = new \Prosper202\Bandit\PairingClient();
+		$bandit_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? ''));
+		$bandit_install_hash = trim((string) ($user_row['install_hash'] ?? ''));
+
+		try {
+			if (!array_key_exists('bandit_status', $user_row)) {
+				throw new RuntimeException('Run the Prosper202 upgrade first (the bandit bridge columns are missing).');
+			}
+
+			if ($_POST['bandit_action'] === 'connect') {
+				if ((string) ($user_row['bandit_status'] ?? '') === 'active') {
+					// Replayed/double submit: never stack a second webhook.
+					throw new RuntimeException('Already connected. Disconnect first to re-pair.');
+				}
+				if ($bandit_api_key === '' || $bandit_install_hash === '') {
+					throw new RuntimeException('A Prosper202 Customer API key is required to connect — use the button below to get yours.');
+				}
+				$bandit_install_url = $strProtocol . $_SERVER['HTTP_HOST'] . rtrim(get_absolute_url(), '/');
+				$bandit_init = $bandit_client->pairInit($bandit_api_key, $bandit_install_hash, $bandit_install_url);
+				$bandit_site_key = trim((string) ($bandit_init['site_key'] ?? ''));
+				$bandit_hook_url = trim((string) ($bandit_init['hook_url'] ?? ''));
+				if ($bandit_site_key === '' || $bandit_hook_url === '') {
+					throw new RuntimeException('Pairing init did not return a site key and webhook URL.');
+				}
+
+				// The webhook secret is generated where it is used and
+				// transported to the SaaS exactly once, in pair/complete.
+				$bandit_created = $bandit_webhooks->create($bandit_user_id, $bandit_hook_url, ['*']);
+				try {
+					$bandit_client->pairComplete($bandit_api_key, $bandit_install_hash, $bandit_created['webhookId'], $bandit_created['secret']);
+				} catch (Throwable $bandit_complete_error) {
+					// Don't leave a half-paired endpoint delivering nowhere —
+					// and never let the rollback mask the original failure.
+					try {
+						$bandit_webhooks->delete($bandit_user_id, $bandit_created['webhookId']);
+					} catch (Throwable $bandit_rollback_error) {
+						error_log('bandit connect: webhook rollback failed after pair/complete error: ' . $bandit_rollback_error->getMessage());
+					}
+					throw $bandit_complete_error;
+				}
+
+				$bandit_state = json_encode(['webhook_id' => $bandit_created['webhookId']]);
+				if ($bandit_state === false) {
+					throw new RuntimeException('Failed to encode bridge state.');
+				}
+				updateUserPreference('bandit_site_key', $bandit_site_key, $bandit_user_id, $db);
+				updateUserPreference('bandit_status', 'active', $bandit_user_id, $db);
+				updateUserPreference('bandit_bridge_config', $bandit_state, $bandit_user_id, $db);
+				header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=connected#bandit');
+				die();
+			}
+
+			// Disconnect: remove the local webhook, revoke SaaS-side
+			// (best-effort — local state always clears), clear pairing prefs.
+			$bandit_state = json_decode((string) ($user_row['bandit_bridge_config'] ?? ''), true);
+			$bandit_webhook_id = is_array($bandit_state) ? (int) ($bandit_state['webhook_id'] ?? 0) : 0;
+			if ($bandit_webhook_id > 0) {
+				try {
+					$bandit_webhooks->delete($bandit_user_id, $bandit_webhook_id);
+				} catch (\Prosper202\Ltv\RecordNotFoundException) {
+					// Already gone locally; disconnect must still proceed.
+				}
+			}
+			if ($bandit_api_key !== '' && $bandit_install_hash !== '') {
+				try {
+					$bandit_client->pairDisconnect($bandit_api_key, $bandit_install_hash);
+				} catch (Throwable $bandit_disconnect_error) {
+					error_log('bandit disconnect: SaaS revoke failed (link will expire server-side): ' . $bandit_disconnect_error->getMessage());
+				}
+			}
+			updateUserPreference('bandit_site_key', '', $bandit_user_id, $db);
+			updateUserPreference('bandit_status', '', $bandit_user_id, $db);
+			updateUserPreference('bandit_bridge_config', '', $bandit_user_id, $db);
+			header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=disconnected#bandit');
+			die();
+		} catch (Throwable $bandit_error) {
+			$error['bandit'] = $bandit_error->getMessage();
+		}
+	}
+
 	if (!isset($error['token']) && isset($_POST['dni_network'])) {
 		if (array_search('', $_POST) !== false) {
 			$error['dni_network'] = 'Make sure all fields are selected and filled out!';
@@ -451,6 +537,79 @@ template_top('API Integrations');
 																												else echo 'Add'; ?></button>
 					</div>
 				</form>
+			</div>
+		</div>
+	</div>
+</div>
+
+<?php
+// Landing Page Optimizer (bandit) pairing panel. Status lives in
+// 202_users_pref (bandit_status / bandit_site_key); every feature screen is
+// hosted — this panel only connects and disconnects the generic bridge.
+$bandit_schema_ready = array_key_exists('bandit_status', $user_row);
+$bandit_connected = $bandit_schema_ready && (string) ($user_row['bandit_status'] ?? '') === 'active';
+$bandit_site_key = (string) ($user_row['bandit_site_key'] ?? '');
+$bandit_has_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? '')) !== '';
+$bandit_saas_base = \Prosper202\Bandit\PairingClient::saasBaseUrl();
+$bandit_capabilities = \Prosper202\Bandit\PairingClient::CAPABILITIES;
+?>
+<div class="row account" id="bandit">
+	<div class="col-xs-12">
+		<div class="row">
+			<div class="col-xs-4">
+				<h6>Landing Page Optimizer</h6>
+			</div>
+			<div class="col-xs-8">
+				<?php showSuccessMessage(isset($_GET['bandit']) && $_GET['bandit'] === 'connected', 'Landing Page Optimizer connected.'); ?>
+				<?php showSuccessMessage(isset($_GET['bandit']) && $_GET['bandit'] === 'disconnected', 'Landing Page Optimizer disconnected.'); ?>
+				<?php showErrorMessage($error, 'bandit'); ?>
+			</div>
+		</div>
+	</div>
+	<div class="col-xs-4">
+		<div class="row">
+			<div class="col-xs-12">
+				<div class="panel panel-default account_left">
+					<div class="panel-body">
+						Optimize your landing pages with hosted experiments. Connecting registers a signed conversion webhook with the optimizer; experiments are created and managed on the hosted dashboard — nothing else changes on this install.
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="col-xs-8">
+		<div class="row">
+			<div class="col-xs-9">
+				<?php if ($bandit_connected) { ?>
+					<small>
+						<span class="label label-primary">Connected</span>
+						<em>Site key: <code><?php echo htmlspecialchars($bandit_site_key); ?></code></em>
+					</small>
+					<br /><br />
+					<small>Bridge v<?php echo htmlspecialchars(\Prosper202\Bridge\EventBridge::BRIDGE_VERSION); ?> &middot; Capabilities: <?php echo htmlspecialchars(implode(', ', $bandit_capabilities['events'])); ?>, wildcard subscribe, remote config, v3 API</small>
+					<br /><br />
+					<a href="<?php echo htmlspecialchars($bandit_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener" class="btn btn-xs btn-p202">Manage experiments &rarr;</a>
+					<form class="form-horizontal" role="form" method="post" action="" style="display:inline;">
+						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+						<input type="hidden" name="bandit_action" value="disconnect" />
+						<button class="btn btn-xs btn-danger" type="submit" onclick="return confirm('Disconnect the Landing Page Optimizer? The pairing webhook will be removed.');">Disconnect</button>
+					</form>
+				<?php } elseif (!$bandit_schema_ready) { ?>
+					<small><span class="label label-important">Upgrade needed</span> Run the Prosper202 upgrade to enable this integration.</small>
+				<?php } elseif ($bandit_has_api_key) { ?>
+					<small><span class="label label-default">Not connected</span></small>
+					<br /><br />
+					<form class="form-horizontal" role="form" method="post" action="">
+						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+						<input type="hidden" name="bandit_action" value="connect" />
+						<button class="btn btn-xs btn-p202" type="submit">Connect Landing Page Optimizer</button>
+					</form>
+				<?php } else { ?>
+					<small><span class="label label-default">Not connected</span> A Prosper202 Customer API key is required first.</small>
+					<br /><br />
+					<a class="btn btn-xs btn-p202" href="<?php echo htmlspecialchars($bandit_saas_base); ?>/api/customers/login?redirect=get-api">Click Here For Your API Key</a>
+				<?php } ?>
 			</div>
 		</div>
 	</div>
