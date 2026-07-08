@@ -2627,6 +2627,138 @@ function get_absolute_url(): string
     return substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 }
 
+/**
+ * True when the current request is a SPECULATIVE fetch — a browser prefetch /
+ * prerender, a link-preview scanner, or a HEAD probe — rather than a real human
+ * navigation. The click-recording redirect endpoints (dl/lp/rtr/off/…) must not
+ * record a click for these: Chrome's Network Prediction (on by default) fetches
+ * the URL from the address bar or a hovered link BEFORE the click, then fetches
+ * it again on the real navigation, so counting both double-counts every click.
+ * Detected via the standard speculation-request headers each browser sends, plus
+ * the HTTP method. Callers answer a true result with 204 and record nothing; the
+ * real navigation re-requests and is counted exactly once.
+ */
+function p202IsSpeculativeRequest(): bool
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') {
+        return true;
+    }
+    // Collapse EVERY speculation-intent header into one lowercase haystack and
+    // substring-match. The headers each browser sends:
+    //   Chrome/Edge  Sec-Purpose: "prefetch" | "prefetch;prerender" | "prerender"
+    //   Chrome legacy Purpose:     "prefetch" (and joined variants like
+    //                              "prefetch;prerender")
+    //   Safari       X-Purpose:    "preview" | "prefetch"
+    //   Firefox      X-moz:        "prefetch"
+    // Substring matching is essential, not stylistic: the legacy Purpose /
+    // X-Purpose / X-moz headers used to require the value to be EXACTLY
+    // "prefetch", so a speculative hit sending "Purpose: prefetch;prerender"
+    // (any comma/semicolon-joined variant) was not recognized, fell through the
+    // guard, and got recorded as a real click ON TOP OF the real navigation —
+    // the double-count. Sec-Purpose was already tolerant; now all of them are.
+    $signals = strtolower(
+        (string) ($_SERVER['HTTP_SEC_PURPOSE'] ?? '') . ' '
+        . (string) ($_SERVER['HTTP_PURPOSE'] ?? '') . ' '
+        . (string) ($_SERVER['HTTP_X_PURPOSE'] ?? '') . ' '
+        . (string) ($_SERVER['HTTP_X_MOZ'] ?? '')
+    );
+
+    return str_contains($signals, 'prefetch')
+        || str_contains($signals, 'prerender')
+        || str_contains($signals, 'preview');
+}
+
+/**
+ * Opt-in click tracer. Off by default with ZERO overhead: it logs one line per
+ * redirect hit ONLY while the flag file 202-config/.click-debug exists, so a
+ * double-count can be diagnosed against real traffic without guessing. Each
+ * line carries the decision (recorded / declined-speculative) plus every header
+ * that distinguishes a real navigation from a speculative/duplicate fetch
+ * (Sec-Purpose/Purpose/X-Purpose/X-moz and the Sec-Fetch-* set, where a genuine
+ * user navigation is Sec-Fetch-Mode: navigate + Sec-Fetch-User: ?1). Compare
+ * the two lines for one click to see exactly what the second hit is.
+ *
+ * Enable:  touch 202-config/.click-debug
+ * Read:    tail -f <system temp dir>/p202-click-debug.log   (path is error_logged once)
+ * Disable: rm 202-config/.click-debug
+ */
+function p202LogRedirectHit(string $endpoint, string $decision): void
+{
+    static $enabled = null;
+    if ($enabled === null) {
+        $enabled = is_file(__DIR__ . '/.click-debug');
+    }
+    if (!$enabled) {
+        return;
+    }
+
+    $h = static fn (string $k): string => str_replace(["\t", "\n", "\r"], ' ', (string) ($_SERVER[$k] ?? ''));
+    $line = implode("\t", [
+        date('Y-m-d H:i:s'),
+        'ep=' . $endpoint,
+        'decision=' . $decision,
+        'method=' . $h('REQUEST_METHOD'),
+        'ip=' . $h('REMOTE_ADDR'),
+        'xff=' . $h('HTTP_X_FORWARDED_FOR'),
+        'sec_purpose=' . $h('HTTP_SEC_PURPOSE'),
+        'purpose=' . $h('HTTP_PURPOSE'),
+        'x_purpose=' . $h('HTTP_X_PURPOSE'),
+        'x_moz=' . $h('HTTP_X_MOZ'),
+        'sf_dest=' . $h('HTTP_SEC_FETCH_DEST'),
+        'sf_mode=' . $h('HTTP_SEC_FETCH_MODE'),
+        'sf_site=' . $h('HTTP_SEC_FETCH_SITE'),
+        'sf_user=' . $h('HTTP_SEC_FETCH_USER'),
+        'ua=' . $h('HTTP_USER_AGENT'),
+        'uri=' . $h('REQUEST_URI'),
+    ]);
+
+    $logFile = sys_get_temp_dir() . '/p202-click-debug.log';
+    if (@file_put_contents($logFile, $line . "\n", FILE_APPEND | LOCK_EX) === false) {
+        error_log('P202CLICKDBG ' . $line);
+    } else {
+        static $announced = false;
+        if (!$announced) {
+            $announced = true;
+            error_log('P202CLICKDBG click tracer active -> ' . $logFile);
+        }
+    }
+}
+
+/**
+ * Mark the current response uncacheable. Every tracking-redirect response
+ * must send this BEFORE its Location header: a 302 stored by any browser or
+ * intermediary cache can be replayed without reaching the server, so the
+ * repeat click goes uncounted and the stale subid baked into the cached
+ * Location misattributes any later conversion to the wrong click.
+ */
+function p202NoStore(): void
+{
+    if (!headers_sent()) {
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+    }
+}
+
+/**
+ * Decline a speculative fetch: record nothing and end the request with an
+ * empty, NON-cacheable 204. The no-store headers are essential — without them
+ * a prefetched/prerendered 204 can be stored and REUSED to satisfy the user's
+ * real navigation, which would then be neither counted nor redirected to the
+ * destination (the click silently vanishes). Forcing revalidation guarantees
+ * the actual click re-enters the redirect path. Every redirect endpoint that
+ * calls p202IsSpeculativeRequest() answers through here.
+ */
+function p202DeclineSpeculativeRequest(): never
+{
+    p202LogRedirectHit(basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'redirect')), 'declined-speculative');
+    if (!headers_sent()) {
+        http_response_code(204);
+        p202NoStore();
+    }
+    die();
+}
+
 function getTrackingDomain(): string
 {
     global $db;
@@ -3478,17 +3610,10 @@ function getScheme(): string
 
 function is_prefetch(): bool
 {
-    $prefetch = false;
-
-    if (isset($_SERVER["HTTP_X_PURPOSE"]) && $_SERVER['HTTP_X_PURPOSE'] == "preview") {
-        $prefetch = true;
-    } elseif (isset($_SERVER["HTTP_PURPOSE"]) && $_SERVER['HTTP_PURPOSE'] == "prefetch") {
-        $prefetch = true;
-    } elseif (isset($_SERVER["HTTP_X_MOZ"]) && $_SERVER['HTTP_X_MOZ'] == "prefetch") {
-        $prefetch = true;
-    }
-
-    return $prefetch;
+    // Delegate to the one hardened detector so this legacy helper cannot drift
+    // back to exact-match matching (which missed "Purpose: prefetch;prerender"
+    // and let speculative hits double-count).
+    return p202IsSpeculativeRequest();
 }
 
 function getUTMParams(&$mysql)

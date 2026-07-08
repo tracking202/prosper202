@@ -199,7 +199,22 @@ var utm_campaign = t202GetVar('utm_campaign');
 		"utm_campaign=" + t202Enc(utm_campaign),
 		"referer=" + t202Enc(referer),
 		"resolution=" + t202Enc(resolution),
-		"language=" + t202Enc(language)
+		"language=" + t202Enc(language),
+		// Customer identity: an LP URL that names the visitor (email links
+		// carrying ?cust=...) is the explicit signal the tracker needs to
+		// stamp engagement and mint a personalization token on the very
+		// first pageview — without this the ref never reaches record.php.
+		"cust=" + t202Enc(t202GetVar('cust') || t202GetVar('customer_ref')),
+		"cust_type=" + t202Enc(t202GetVar('cust_type') || t202GetVar('customer_ref_type')),
+		// Personalization: report the token's DIGEST cookie (h:sha256) so the
+		// tracker can VALIDATE it — repeat pageviews within a visit reuse a
+		// usable token, while a dead one (expired unredeemed / past replay)
+		// gets replaced instead of blocking personalization until the cookie
+		// drains. Never the raw token: this is a GET URL, and the bearer
+		// capability must not land in web-server/proxy/CDN request logs.
+		// Older cookies minted before the digest existed fall back to the
+		// bare presence flag '1' (conservative: treated as usable).
+		"p13n_have=" + t202Enc(readCookie('tracking202p13nh') || (readCookie('tracking202p13n') ? '1' : '0'))
 	];
 	for (var i = 0; i < customVarNames.length; i++) {
 		parts.push(customVarNames[i] + "=" + t202Enc(customVarValues[i]));
@@ -237,6 +252,195 @@ var utm_campaign = t202GetVar('utm_campaign');
 		var val = t202DataObj[name];
 		el.textContent = (val !== undefined && val !== null && val !== '') ? val : (el.getAttribute('t202Default') || '');
 	}
+})();
+
+// --- Manual ABM event instrumentation ---
+// Pages call t202Track('pricing_viewed') — optionally with a numeric value,
+// e.g. t202Track('video_viewed', 75) — to record an engagement event for the
+// recognized customer. Authenticated by the personalization token cookie
+// (a random bearer capability — no enumerable id is ever exposed); a visitor
+// without a token is simply not tracked. Fire-and-forget: never throws,
+// never blocks the page.
+var t202EventUrl = "<?php echo $baseUrl; ?>tracking202/static/p13n_event.php";
+
+function t202EventBody(eventName, value) {
+	var body = 'token=' + t202Enc(readCookie('tracking202p13n') || '') + '&event=' + t202Enc(eventName);
+	if (typeof value === 'number' && isFinite(value)) {
+		body += '&value=' + t202Enc(String(Math.round(value * 1000) / 1000));
+	}
+	return body;
+}
+
+window.t202Track = function(eventName, value) {
+	try {
+		if (typeof eventName !== 'string' || eventName === '') { return; }
+		if (!readCookie('tracking202p13n')) { return; }
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', t202EventUrl, true);
+		xhr.timeout = 3000;
+		xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+		xhr.send(t202EventBody(eventName, value));
+	} catch (e) { /* instrumentation is best-effort */ }
+};
+
+// Reliable delivery during page teardown (XHR is not): used by the
+// time-on-page metric below.
+function t202TrackBeacon(eventName, value) {
+	try {
+		if (!readCookie('tracking202p13n')) { return; }
+		var body = t202EventBody(eventName, value);
+		if (navigator.sendBeacon) {
+			navigator.sendBeacon(t202EventUrl, new Blob([body], { type: 'application/x-www-form-urlencoded' }));
+		} else {
+			var xhr = new XMLHttpRequest();
+			xhr.open('POST', t202EventUrl, false); // sync as a last resort during unload
+			xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+			xhr.send(body);
+		}
+	} catch (e) { /* best-effort */ }
+}
+
+// Track how much of a video element gets watched: fires video_viewed once
+// per 25/50/75/95 percent threshold. Pages can call t202TrackVideo(el)
+// explicitly; every <video> present at snippet load is wired automatically.
+window.t202TrackVideo = function(videoEl) {
+	try {
+		if (!videoEl || typeof videoEl.addEventListener !== 'function') { return; }
+		var fired = {};
+		videoEl.addEventListener('timeupdate', function() {
+			if (!videoEl.duration || !isFinite(videoEl.duration)) { return; }
+			var pct = (videoEl.currentTime / videoEl.duration) * 100;
+			var thresholds = [25, 50, 75, 95];
+			for (var i = 0; i < thresholds.length; i++) {
+				if (pct >= thresholds[i] && !fired[thresholds[i]]) {
+					fired[thresholds[i]] = true;
+					window.t202Track('video_viewed', thresholds[i]);
+				}
+			}
+		});
+	} catch (e) { /* best-effort */ }
+};
+
+// --- Automatic engagement depth metrics (recognized visitors only) ---
+// Bounded by design: scroll depth fires at most 4 events per page, video
+// progress at most 4 per video, time on page exactly 1. The senders no-op
+// without the token cookie (which arrives asynchronously on the first
+// pageview), so listeners attach unconditionally and check at fire time —
+// unknown visitors cost a cookie read per threshold, no network.
+(function() {
+	// Scroll depth: 25/50/75/100 percent, each once.
+	var scrollFired = {};
+	function onScroll() {
+		try {
+			var doc = document.documentElement;
+			var scrollable = (doc.scrollHeight - doc.clientHeight);
+			var pct = scrollable > 0 ? ((window.pageYOffset || doc.scrollTop) / scrollable) * 100 : 100;
+			var thresholds = [25, 50, 75, 100];
+			for (var i = 0; i < thresholds.length; i++) {
+				if (pct >= thresholds[i] && !scrollFired[thresholds[i]]) {
+					scrollFired[thresholds[i]] = true;
+					window.t202Track('scroll_depth', thresholds[i]);
+				}
+			}
+		} catch (e) { /* best-effort */ }
+	}
+	window.addEventListener('scroll', onScroll, { passive: true });
+
+	// Time on page: accumulate VISIBLE seconds, send once on teardown.
+	var visibleSince = document.hidden ? null : Date.now();
+	var visibleTotal = 0;
+	var timeSent = false;
+	document.addEventListener('visibilitychange', function() {
+		if (document.hidden) {
+			if (visibleSince !== null) { visibleTotal += Date.now() - visibleSince; visibleSince = null; }
+		} else if (visibleSince === null) {
+			visibleSince = Date.now();
+		}
+	});
+	window.addEventListener('pagehide', function() {
+		if (timeSent) { return; }
+		timeSent = true;
+		if (visibleSince !== null) { visibleTotal += Date.now() - visibleSince; }
+		var seconds = Math.min(3600, Math.round(visibleTotal / 1000));
+		if (seconds > 0) { t202TrackBeacon('time_on_page', seconds); }
+	});
+
+	// Auto-wire progress tracking for every video present at load.
+	try {
+		var videos = document.querySelectorAll('video');
+		for (var v = 0; v < videos.length; v++) { window.t202TrackVideo(videos[v]); }
+	} catch (e) { /* best-effort */ }
+})();
+
+// --- Customer personalization (privacy-preserving, graceful by design) ---
+// Elements opt in with name="t202p13n_<field>": CRM fields use the bare name
+// (e.g. t202p13n_first_name), custom fields use the cf_ namespace
+// (t202p13n_cf_<field_key>, e.g. t202p13n_cf_loyalty_tier), and the next-offer
+// recommendation uses t202p13n_next_offer_name / t202p13n_next_offer_url. An
+// optional t202Default attribute holds fallback copy. Defaults render
+// IMMEDIATELY; if the visitor carries a valid personalization token cookie
+// (minted server-side at redirect for known customers only), the matching
+// fields are overwritten once the payload arrives. Any failure — no cookie,
+// expired token, network error, timeout — simply leaves the default copy in
+// place. textContent only, never HTML.
+(function() {
+	window.t202Personalization = {};
+
+	var els = document.querySelectorAll('[name^="t202p13n_"]');
+	if (els.length === 0) { return; }
+
+	// 1. Defaults first: the page is always complete, personalized or not.
+	for (var i = 0; i < els.length; i++) {
+		if (!els[i].textContent) {
+			els[i].textContent = els[i].getAttribute('t202Default') || '';
+		}
+	}
+
+	function applyPayload(payload) {
+		window.t202Personalization = payload || {};
+		for (var i = 0; i < els.length; i++) {
+			var field = els[i].getAttribute('name').substring('t202p13n_'.length);
+			var val = payload ? payload[field] : null;
+			if (typeof val !== 'string' || val === '') { continue; }
+			if (field === 'next_offer_url' && els[i].tagName === 'A') {
+				// Offer links become real hrefs — but only for http(s) URLs,
+				// so a payload value can never smuggle a javascript: scheme.
+				if (/^https?:\/\//i.test(val)) { els[i].href = val; }
+				continue;
+			}
+			els[i].textContent = val; // textContent: values can never run as HTML
+		}
+		try {
+			document.dispatchEvent(new CustomEvent('t202personalization', { detail: window.t202Personalization }));
+		} catch (e) { /* older browsers: the data object is still available */ }
+	}
+
+	function redeem(token) {
+		try {
+			var xhr = new XMLHttpRequest();
+			xhr.open('POST', "<?php echo $baseUrl; ?>tracking202/static/p13n.php", true);
+			xhr.timeout = 3000;
+			xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+			xhr.onload = function() {
+				if (xhr.status !== 200) { return; }
+				try {
+					var payload = JSON.parse(xhr.responseText);
+					if (payload && typeof payload === 'object') { applyPayload(payload); }
+				} catch (e) { /* malformed response: defaults stay */ }
+			};
+			xhr.send('token=' + t202Enc(token));
+		} catch (e) { /* personalization is best-effort; defaults stay */ }
+	}
+
+	// On the very first pageview the token cookie arrives asynchronously via
+	// the record.php beacon response, so poll briefly before giving up. The
+	// defaults are already rendered — a late token only upgrades the copy.
+	var attempts = 0;
+	(function waitForToken() {
+		var token = readCookie('tracking202p13n');
+		if (token) { redeem(token); return; }
+		if (++attempts < 8) { setTimeout(waitForToken, 400); }
+	})();
 })();
 
 })();

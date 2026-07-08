@@ -80,6 +80,49 @@ final class RecordConversionTest extends TestCase
     {
         self::assertSame('xyz', p202ExtractTransactionId(['txid' => '  xyz  ']));
     }
+
+    // --- p202ExtractItems (pure) ---
+
+    public function testExtractItemsReturnsEmptyWithoutProductParams(): void
+    {
+        self::assertSame([], p202ExtractItems([]));
+        self::assertSame([], p202ExtractItems(['qty' => 2, 'unit_price' => 5]), 'qty/price alone are not a product');
+    }
+
+    public function testExtractItemsBuildsSingleLineItem(): void
+    {
+        $items = p202ExtractItems([
+            'product_id' => 'SHOP-9', 'sku' => 'WIDGET', 'product_name' => 'Blue Widget',
+            'qty' => '2', 'unit_price' => '9.50',
+        ]);
+        self::assertCount(1, $items);
+        self::assertSame('SHOP-9', $items[0]['external_product_id']);
+        self::assertSame('WIDGET', $items[0]['sku']);
+        self::assertSame('Blue Widget', $items[0]['name']);
+        self::assertSame(2.0, $items[0]['quantity']);
+        self::assertSame(9.5, $items[0]['unit_price']);
+    }
+
+    public function testExtractItemsDropsLineItemWithNonPositiveQuantity(): void
+    {
+        // insertLineItems() rejects a non-positive quantity inside the
+        // conversion transaction, so a pixel carrying qty=0 (or negative) must
+        // NOT reach the transactional writer — dropping the optional product
+        // keeps the core conversion from being lost.
+        self::assertSame([], p202ExtractItems(['sku' => 'WIDGET', 'qty' => '0']));
+        self::assertSame([], p202ExtractItems(['sku' => 'WIDGET', 'qty' => '-3']));
+        self::assertSame([], p202ExtractItems(['product_id' => 'P1', 'qty' => 0]));
+    }
+
+    public function testExtractItemsIgnoresNonNumericQuantity(): void
+    {
+        // A non-numeric qty is simply not set (insertLineItems defaults it to
+        // 1) — the item still records; only an explicit non-positive number is
+        // treated as malformed.
+        $items = p202ExtractItems(['sku' => 'WIDGET', 'qty' => 'abc']);
+        self::assertCount(1, $items);
+        self::assertFalse(array_key_exists('quantity', $items[0]));
+    }
 }
 
 /**

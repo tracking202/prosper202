@@ -9,6 +9,14 @@ if (!is_numeric($lpip)) die();
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
+// Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
+// probes) must not record a click — otherwise the speculative hit plus the real
+// navigation double-count the same visit (see p202IsSpeculativeRequest).
+if (p202IsSpeculativeRequest()) {
+	p202DeclineSpeculativeRequest();
+}
+
+
 $usedCachedRedirect = false; 
 if (!$db) $usedCachedRedirect = true;
 
@@ -69,6 +77,7 @@ if ($usedCachedRedirect==true) {
 				}
 			}
 			
+				p202NoStore();
 				header('location: '. $new_url); 
 				die();
 			}
@@ -212,9 +221,11 @@ $urlvars = getPrePopVars($vars);
 
 if ($cloaking_on == true) {
 	//if cloaked, redirect them to the cloaked site. 
+	p202NoStore();
 	header('location: '.setPrePopVars($urlvars,$cloaking_site_url,true));
 } else {
 	
+	p202NoStore();
 	header('location: '.setPrePopVars($urlvars,$redirect_site_url,false));
 } 
 die();

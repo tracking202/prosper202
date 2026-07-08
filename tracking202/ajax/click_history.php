@@ -134,10 +134,9 @@ $html['order'] = htmlentities((string)($_POST['order'] ?? ''), ENT_QUOTES, 'UTF-
 	<div class="col-xs-6">
 		<span class="infotext"><?php printf('<div class="results">Results <b>%s - %s</b> of <b>%s</b></div>', $html['from'], $html['to'], $html['rows']);  ?></span>
 	</div>
-	<div class="col-xs-6 text-right" style="top: -10px;">
-		<img style="margin-bottom:2px;" src="<?php echo get_absolute_url(); ?>202-img/icons/16x16/page_white_excel.png" />
-		<a style="font-size:12px;" target="_new" href="<?php echo get_absolute_url(); ?>tracking202/visitors/download/">
-			<strong>Download to excel</strong>
+	<div class="col-xs-6 text-right">
+		<a class="btn btn-default btn-xs" target="_new" href="<?php echo get_absolute_url(); ?>tracking202/visitors/download/">
+			<i class="fa fa-download"></i> Export to Excel
 		</a>
 	</div>
 </div>
@@ -152,20 +151,20 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 	<div class="col-xs-12" style="margin-top: 10px;">
 		<table class="table table-bordered" id="stats-table">
 			<thead>
-				<tr style="background-color: #f2fbfa;">
-					<td>Subid</td>
-					<td style="text-align:left; padding-left:10px;">Date</td>
-					<td>User Agent</td>
-					<td>GEO</td>
-					<td>ISP/Carrier</td>
-					<td>Click</td>
-					<td>IP</td>
-					<td>PPC Account</td>
-					<td>Offer / LP</td>
-					<td>Referer</td>
-					<td>Text Ad</td>
-					<td>Links</td>
-					<td>Keyword</td>
+				<tr>
+					<th>Subid</th>
+					<th style="text-align:left; padding-left:10px;">Date</th>
+					<th>User Agent</th>
+					<th>GEO</th>
+					<th>ISP/Carrier</th>
+					<th>Click</th>
+					<th>IP</th>
+					<th>PPC Account</th>
+					<th>Offer / LP</th>
+					<th>Referer</th>
+					<th>Text Ad</th>
+					<th>Links</th>
+					<th>Keyword</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -179,10 +178,15 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 				//if there is no clicks to display let them know :(
 				if ($click_result->num_rows == 0) {
 				?>
-				<tr><td colspan="13" style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">You have no data to display with your above filters currently.</td></tr>
-				<?php if ($isSpy) { ?>
-				<tr><td colspan="13" style="text-align: center; font-size: 14px; border-bottom: 1px rgb(234,234,234) solid; padding: 10px;">The spy view only shows clicks activity within the past 24 hours.</td></tr>
-				<?php }
+				<tr><td colspan="13" style="padding: 0;">
+					<div class="empty-state"><i class="fa fa-mouse-pointer" style="font-size:40px; display:block; margin-bottom:12px; color:#c4c9cf;"></i>
+						<strong>No clicks match your filters</strong>
+						<?php echo $isSpy
+							? 'The spy view only shows click activity from the past 24 hours &mdash; check back as new traffic arrives.'
+							: 'Try widening the date range above, or clearing your filters.'; ?>
+					</div>
+				</td></tr>
+				<?php
 				}
 
 				//now display all the clicks — row rendering delegated to click_history_row.php

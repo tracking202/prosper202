@@ -14,10 +14,16 @@ template_top('Account Overview');   ?>
 	</div>
 </div>
 
+<!-- Customer LTV snapshot (renders only when the account tracks customers) -->
+<div id="ltv-snapshot"></div>
+
 <?php display_calendar(get_absolute_url().'tracking202/ajax/account_overview.php', true, false, true, false, true, true);    ?>
 
 	<script type="text/javascript">
 		 loadContent('<?php echo get_absolute_url();?>tracking202/ajax/account_overview.php',null);
+		 $.post('<?php echo get_absolute_url();?>tracking202/ajax/ltv_snapshot.php').done(function(data) {
+			 if (data) { $('#ltv-snapshot').html(data); }
+		 });
 	</script>
 
 <?php template_bottom();

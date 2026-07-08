@@ -280,7 +280,6 @@ if ((($editing == true) or ($add_success != true)) and (isset($mysql['aff_campai
 }
 
 template_top('Landing Page Setup');  ?>
-<link rel="stylesheet" href="<?php echo get_absolute_url();?>202-css/design-system.css">
 
 <!-- Page Header - Design System -->
 <div class="row" style="margin-bottom: 28px;">
@@ -573,10 +572,10 @@ template_top('Landing Page Setup');  ?>
     align-items: center;
     gap: 16px;
     padding: 24px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-radius: 12px;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
     margin-bottom: 28px;
 }
 
@@ -618,7 +617,7 @@ template_top('Landing Page Setup');  ?>
 /* Setup Panel Styles */
 .setup-panel {
     background: #fff;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     overflow: hidden;
@@ -627,12 +626,12 @@ template_top('Landing Page Setup');  ?>
 
 .setup-panel:hover {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    border-color: #cbd5e1;
+    border-color: #c9cdd3;
 }
 
 /* Panel Defaults */
 .panel-default {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     overflow: hidden;
@@ -644,11 +643,11 @@ template_top('Landing Page Setup');  ?>
 }
 
 .panel-heading {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
     padding: 16px 20px;
     font-weight: 600;
-    color: #1e293b;
+    color: #1f2328;
     font-size: 14px;
     letter-spacing: 0.5px;
 }
@@ -662,7 +661,7 @@ template_top('Landing Page Setup');  ?>
 .setup-form-group {
     margin-bottom: 18px;
     padding-bottom: 18px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid #f0f1f2;
 }
 
 .setup-form-group:last-child {
@@ -673,7 +672,7 @@ template_top('Landing Page Setup');  ?>
 
 .setup-form-group label {
     font-weight: 500;
-    color: #334155;
+    color: #32383f;
     margin-bottom: 8px;
     display: block;
     font-size: 13px;
@@ -683,7 +682,7 @@ template_top('Landing Page Setup');  ?>
 .setup-form-group input,
 .setup-form-group textarea,
 .setup-form-group select {
-    border: 1px solid #cbd5e1;
+    border: 1px solid #c9cdd3;
     border-radius: 6px;
     padding: 8px 12px;
     font-size: 13px;
@@ -693,8 +692,8 @@ template_top('Landing Page Setup');  ?>
 .setup-form-group input:focus,
 .setup-form-group textarea:focus,
 .setup-form-group select:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
     outline: none;
 }
 
@@ -702,7 +701,7 @@ template_top('Landing Page Setup');  ?>
 .setup-btn {
     display: inline-block;
     padding: 10px 20px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -710,12 +709,12 @@ template_top('Landing Page Setup');  ?>
     font-size: 13px;
     cursor: pointer;
     transition: all 0.3s ease;
-    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
+    box-shadow: 0 2px 8px rgba(47, 111, 221, 0.15);
 }
 
 .setup-btn:hover {
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);
-    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.25);
+    transform: none;
 }
 
 .setup-btn:active {
@@ -723,7 +722,7 @@ template_top('Landing Page Setup');  ?>
 }
 
 .setup-btn-secondary {
-    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    background: #6b7280;
     box-shadow: 0 2px 8px rgba(107, 114, 128, 0.15);
 }
 
@@ -732,7 +731,7 @@ template_top('Landing Page Setup');  ?>
 }
 
 .setup-btn-danger {
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    background: #c9372c;
     box-shadow: 0 2px 8px rgba(239, 68, 68, 0.15);
 }
 
@@ -752,21 +751,21 @@ template_top('Landing Page Setup');  ?>
 }
 
 .setup-alert-success {
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border-color: #86efac;
-    color: #166534;
+    background: #e7f5ec;
+    border-color: #e7f5ec;
+    color: #1d6c3a;
 }
 
 .setup-alert-error {
-    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-    border-color: #fca5a5;
-    color: #991b1b;
+    background: #fdecec;
+    border-color: #c9372c;
+    color: #b02a20;
 }
 
 .setup-alert-info {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-    border-color: #7dd3fc;
-    color: #0c4a6e;
+    background: #eaf2fc;
+    border-color: #bcd4f6;
+    color: #2861c4;
 }
 
 .setup-alert i {
@@ -783,9 +782,9 @@ template_top('Landing Page Setup');  ?>
 
 .setup-list li {
     padding: 12px 0;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid #f0f1f2;
     font-size: 13px;
-    color: #334155;
+    color: #32383f;
     transition: color 0.3s ease;
     display: flex;
     align-items: center;
@@ -798,7 +797,7 @@ template_top('Landing Page Setup');  ?>
 }
 
 .setup-list li:hover {
-    color: #007bff;
+    color: #2f6fdd;
 }
 
 .setup-list li > span {
@@ -814,7 +813,7 @@ template_top('Landing Page Setup');  ?>
 }
 
 .setup-list .list-action {
-    color: #007bff;
+    color: #2f6fdd;
     text-decoration: none;
     font-weight: 500;
     transition: color 0.3s ease;
@@ -826,17 +825,17 @@ template_top('Landing Page Setup');  ?>
 }
 
 .setup-list .list-action:hover {
-    color: #0056b3;
+    color: #2861c4;
     text-decoration: none;
-    background: rgba(0, 123, 255, 0.1);
+    background: rgba(47, 111, 221, 0.1);
 }
 
 .setup-list .list-action-danger {
-    color: #ef4444;
+    color: #c9372c;
 }
 
 .setup-list .list-action-danger:hover {
-    color: #dc2626;
+    color: #c9372c;
     background: rgba(239, 68, 68, 0.1);
 }
 
@@ -844,14 +843,14 @@ template_top('Landing Page Setup');  ?>
     text-align: center;
     padding: 24px 16px;
     color: #9ca3af;
-    border: 1px dashed #e5e7eb;
+    border: 1px dashed #e7e8ea;
     border-radius: 8px;
     font-size: 14px;
 }
 
 /* Form Separator */
 .form_seperator {
-    border-bottom: 2px solid #e2e8f0;
+    border-bottom: 2px solid #e7e8ea;
     margin-bottom: 24px;
 }
 
@@ -867,7 +866,7 @@ template_top('Landing Page Setup');  ?>
     padding-left: 24px;
     cursor: pointer;
     font-weight: 400;
-    color: #334155;
+    color: #32383f;
 }
 
 .radio input,
@@ -880,7 +879,7 @@ template_top('Landing Page Setup');  ?>
 /* Info Text */
 .infotext {
     font-size: 12px;
-    color: #64748b;
+    color: #6b7280;
     font-weight: 400;
     line-height: 1.5;
 }
@@ -888,7 +887,7 @@ template_top('Landing Page Setup');  ?>
 /* Help Block */
 .help-block {
     font-size: 12px;
-    color: #64748b;
+    color: #6b7280;
     margin-top: 6px;
     display: block;
 }

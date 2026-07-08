@@ -418,8 +418,8 @@ $html = [];
 			always make sure to update it with a new tracking202 destination.
             You should have a unique tracking202 destination URL for each different above configuration you use.<br/>
             In order to track keywords, make sure immediately following &t202kw= you insert your dynamic keyword.
-            For example: &t202kw={keyword}</span><br></br>
-            <textarea class="form-control" rows="2" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>',$html['destination_url']); 
+            For example: &t202kw={keyword}</span>');
+            echo p202_copy_snippet($destination_url, ['rows' => 2]);
 
 	} 
 
@@ -436,8 +436,8 @@ $html = [];
 			always make sure to update it with a new tracking202 destination.
             You should have a unique tracking202 destination URL for each different above configuration you use.<br/>
             In order to track keywords, make sure immediately following &t202kw= you insert your dynamic keyword.
-            For example: &t202kw={keyword}</span><br></br>
-            <textarea class="form-control" rows="2" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>',$html['destination_url']); 
+            For example: &t202kw={keyword}</span>');
+            echo p202_copy_snippet($destination_url, ['rows' => 2]);
 
 	} 
 	
@@ -466,8 +466,8 @@ $html = [];
 				always make sure to update it with a new tracking202 destination.
 				You should have a unique tracking202 destination URL for each different above configuration you use.<br/>
 				In order to track keywords, make sure immediately following &t202kw= you insert your dynamic keyword.
-	            For example: &t202kw={keyword}</span><br></br>
-	            <textarea class="form-control" rows="2" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['destination_url']);
+	            For example: &t202kw={keyword}</span>');
+	            echo p202_copy_snippet($destination_url, ['rows' => 2]);
 	}   
 
 	/*

@@ -1,0 +1,321 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * LTV maintenance cronjob. Run every 15-60 minutes.
+ *
+ * 1. Subscription lifecycle sweep: 'active' subscriptions past
+ *    current_period_end + grace_days with no renewal become 'past_due';
+ *    'past_due' subscriptions 30 days past the period end become 'canceled'.
+ *    These windows are what makes churn a computable, documented number.
+ *
+ * 2. Rollup reconciliation: recomputes the cached customer rollups
+ *    (order_count, total_revenue, refunded_amount, mrr,
+ *    active_subscription_count) from the 202_revenue_events ledger and
+ *    202_subscriptions — the sources of truth. The ingest path bumps these
+ *    caches for freshness; this job makes any drift (crashes, bugs,
+ *    backfills) self-healing instead of permanent.
+ *
+ * Ledger-derived definitions (must stay in sync with
+ * MysqlCustomerRepository::applyEventToRollups):
+ *   total_revenue   = SUM(amount) over all events (voids/refunds are negative)
+ *   refunded_amount = SUM(-amount) over refund/chargeback events
+ *   order_count     = COUNT(purchase|renewal|one_time)
+ *                   - COUNT(adjustment with external_ref 'void:%')
+ *                     (voids of NON-order events carry 'void-nc:%' instead,
+ *                     so they never subtract an order that was never counted)
+ *   mrr / active_subscription_count = from subscriptions with status='active'
+ *
+ * Options:
+ *   --full            reconcile every customer (default: customers active in
+ *                     the last 48 hours)
+ *   --batch-size=N    customers per UPDATE chunk (default 500)
+ */
+
+error_reporting(E_ALL);
+
+include_once(str_repeat("../", 1) . '202-config/connect.php');
+
+set_time_limit(0);
+
+$isCli = PHP_SAPI === 'cli';
+$options = $isCli ? getopt('', ['full', 'batch-size::']) : [];
+$fullSweep = isset($options['full']);
+$batchSize = isset($options['batch-size']) ? max(50, (int) $options['batch-size']) : 500;
+
+if (!isset($db) || !($db instanceof mysqli)) {
+    fwrite(STDERR, "ltv_maintenance: database connection unavailable\n");
+    exit(1);
+}
+
+$now = time();
+
+/**
+ * Run a query, throwing on failure (CLAUDE.md: no unchecked query results).
+ */
+$run = function (string $sql) use ($db): mysqli_result|bool {
+    $result = $db->query($sql);
+    if ($result === false) {
+        throw new RuntimeException('ltv_maintenance query failed: ' . $db->error . ' -- ' . substr($sql, 0, 120));
+    }
+    return $result;
+};
+
+try {
+    // ---------- 1. Subscription lifecycle sweep ----------
+    // Collect the owners of subscriptions about to age out FIRST: their
+    // cached mrr/active_subscription_count must be recomputed right after
+    // the sweep, because a lapsed subscriber's last_activity_time is
+    // typically their last renewal — outside the reconcile dirty window
+    // below, which would leave churned MRR on the books until a --full run.
+    $sweepCustomerIds = [];
+    $idStmt = $db->prepare(
+        "SELECT DISTINCT customer_id FROM 202_subscriptions
+         WHERE (status = 'active' AND (current_period_end + grace_days * 86400) < ?)
+            OR (status = 'past_due' AND (current_period_end + (grace_days + 30) * 86400) < ?)"
+    );
+    if ($idStmt === false) {
+        throw new RuntimeException('prepare failed: ' . $db->error);
+    }
+    $idStmt->bind_param('ii', $now, $now);
+    if (!$idStmt->execute()) {
+        $idStmt->close();
+        throw new RuntimeException('sweep owner select failed: ' . $db->error);
+    }
+    $idResult = $idStmt->get_result();
+    if ($idResult === false) {
+        $idStmt->close();
+        throw new RuntimeException('sweep owner fetch failed: ' . $db->error);
+    }
+    while (($idRow = $idResult->fetch_assoc()) !== null) {
+        $sweepCustomerIds[] = (int) $idRow['customer_id'];
+    }
+    $idStmt->close();
+
+    // active -> past_due once the paid-through period plus grace has lapsed
+    // with no renewal (a renewal event pushes current_period_end forward).
+    $stmt = $db->prepare(
+        "UPDATE 202_subscriptions
+         SET status = 'past_due', updated_at = ?
+         WHERE status = 'active' AND (current_period_end + grace_days * 86400) < ?"
+    );
+    if ($stmt === false) {
+        throw new RuntimeException('prepare failed: ' . $db->error);
+    }
+    $stmt->bind_param('ii', $now, $now);
+    if (!$stmt->execute()) {
+        $stmt->close();
+        throw new RuntimeException('past_due sweep failed: ' . $db->error);
+    }
+    $pastDue = $stmt->affected_rows;
+    $stmt->close();
+
+    // past_due -> canceled after a further 30-day recovery window.
+    $stmt = $db->prepare(
+        "UPDATE 202_subscriptions
+         SET status = 'canceled', canceled_at = ?, updated_at = ?
+         WHERE status = 'past_due' AND (current_period_end + (grace_days + 30) * 86400) < ?"
+    );
+    if ($stmt === false) {
+        throw new RuntimeException('prepare failed: ' . $db->error);
+    }
+    $stmt->bind_param('iii', $now, $now, $now);
+    if (!$stmt->execute()) {
+        $stmt->close();
+        throw new RuntimeException('cancel sweep failed: ' . $db->error);
+    }
+    $canceled = $stmt->affected_rows;
+    $stmt->close();
+
+    // Refresh the swept owners' subscription rollups immediately (chunked;
+    // only mrr/active_subscription_count change on a status flip).
+    $sweepRefreshed = 0;
+    foreach (array_chunk($sweepCustomerIds, 500) as $chunk) {
+        $in = implode(',', array_map('intval', $chunk));
+        $run("UPDATE 202_customers c
+            LEFT JOIN (
+                SELECT customer_id,
+                    SUM(CASE WHEN status = 'active' THEN mrr ELSE 0 END) AS mrr,
+                    SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_subs
+                FROM 202_subscriptions
+                WHERE customer_id IN ({$in})
+                GROUP BY customer_id
+            ) s ON s.customer_id = c.customer_id
+            SET c.mrr = COALESCE(s.mrr, 0),
+                c.active_subscription_count = COALESCE(s.active_subs, 0),
+                c.updated_at = {$now}
+            WHERE c.customer_id IN ({$in})");
+        $sweepRefreshed += $db->affected_rows;
+    }
+
+    echo "subscription sweep: {$pastDue} -> past_due, {$canceled} -> canceled, {$sweepRefreshed} owner rollups refreshed\n";
+
+    // ---------- 2. Rollup reconciliation ----------
+    // Chunk over customer_id so the UPDATE ... JOIN never scans the whole
+    // ledger at once. Dirty window by default; --full sweeps everything.
+    $dirtyCutoff = $now - 172800;
+    $where = $fullSweep ? '1=1' : "last_activity_time >= {$dirtyCutoff}";
+    $whereC = $fullSweep ? '1=1' : "c.last_activity_time >= {$dirtyCutoff}";
+
+    $minMax = $run("SELECT MIN(customer_id) AS lo, MAX(customer_id) AS hi FROM 202_customers WHERE {$where}");
+    $range = $minMax instanceof mysqli_result ? $minMax->fetch_assoc() : null;
+    $lo = (int) ($range['lo'] ?? 0);
+    $hi = (int) ($range['hi'] ?? 0);
+
+    $reconciled = 0;
+    for ($start = $lo; $start > 0 && $start <= $hi; $start += $batchSize) {
+        $end = $start + $batchSize - 1;
+
+        $sql = "UPDATE 202_customers c
+            LEFT JOIN (
+                SELECT customer_id,
+                    SUM(amount) AS revenue,
+                    SUM(CASE WHEN event_type IN ('refund','chargeback') THEN -amount ELSE 0 END) AS refunded,
+                    SUM(CASE WHEN event_type IN ('purchase','renewal','one_time') THEN 1
+                             WHEN event_type = 'adjustment' AND external_ref LIKE 'void:%' THEN -1
+                             ELSE 0 END) AS orders
+                FROM 202_revenue_events
+                WHERE customer_id BETWEEN {$start} AND {$end}
+                GROUP BY customer_id
+            ) e ON e.customer_id = c.customer_id
+            LEFT JOIN (
+                SELECT customer_id,
+                    SUM(CASE WHEN status = 'active' THEN mrr ELSE 0 END) AS mrr,
+                    SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_subs
+                FROM 202_subscriptions
+                WHERE customer_id BETWEEN {$start} AND {$end}
+                GROUP BY customer_id
+            ) s ON s.customer_id = c.customer_id
+            SET c.order_count = GREATEST(0, COALESCE(e.orders, 0)),
+                c.total_revenue = COALESCE(e.revenue, 0),
+                c.refunded_amount = GREATEST(0, COALESCE(e.refunded, 0)),
+                c.mrr = COALESCE(s.mrr, 0),
+                c.active_subscription_count = COALESCE(s.active_subs, 0),
+                c.updated_at = {$now}
+            WHERE c.customer_id BETWEEN {$start} AND {$end} AND {$whereC}";
+
+        $run($sql);
+        $reconciled += $db->affected_rows;
+    }
+
+    echo "rollup reconcile: {$reconciled} customer rows corrected"
+        . ($fullSweep ? ' (full sweep)' : ' (48h dirty window)') . "\n";
+
+    // ---------- 3. Offer-transition rebuild (next-offer recommendations) ----------
+    // Rebuild "converted on A -> later converted on B" counts per account
+    // from the revenue ledger. Small result set (campaigns x campaigns), so a
+    // full per-user rebuild each run keeps it simple and drift-free.
+    // Isolated: this section needs 1.9.67 schema (202_offer_transitions); on
+    // a DB stranded between 1.9.66 and 1.9.67 it must not block the sections
+    // after it — in particular the personalization PII purge (whose table
+    // exists from 1.9.66). Sections 1-2 need only the 1.9.64 foundation; if
+    // THEY fail for schema reasons the tokens table doesn't exist either, so
+    // they can stay under the outer guard.
+    try {
+        $usersResult = $run(
+            "SELECT DISTINCT user_id FROM 202_revenue_events
+             WHERE source IN ('conversion','import')"
+        );
+        $transitionRows = 0;
+        $recConversions = 0;
+        if ($usersResult instanceof mysqli_result) {
+            $conn = new \Prosper202\Database\Connection($db);
+            $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($conn);
+            while ($userRow = $usersResult->fetch_assoc()) {
+                $transitionRows += $recommendations->rebuildTransitions((int) $userRow['user_id'], $now);
+                // Impression -> conversion reward join for the decision log:
+                // converted offers leave fatigue consideration permanently,
+                // and future bandit policies score on exactly this stamp.
+                $recConversions += $recommendations->stampRecommendationConversions((int) $userRow['user_id']);
+            }
+        }
+        echo "offer transitions: {$transitionRows} pairs rebuilt; {$recConversions} recommendation conversion(s) stamped\n";
+    } catch (Throwable $transitionError) {
+        fwrite(STDERR, 'offer-transition rebuild failed (continuing with remaining maintenance): '
+            . $transitionError->getMessage() . "\n");
+        error_log('ltv_maintenance offer transitions failed: ' . $transitionError->getMessage());
+    }
+
+    // ---------- 3b. Company entity linking ----------
+    // Attach customers that carry a company string but no company_id (rows
+    // predating the entity, or written by paths that only set the string).
+    // Chunked per user and idempotent; each pass converges. Isolated in its
+    // own try/catch: this section depends on 1.9.70 schema (company_id), and
+    // its failure must never block the sections after it — in particular the
+    // personalization PII purge below, which ran fine on older schemas.
+    try {
+        $companiesLinked = 0;
+        $conn = $conn ?? new \Prosper202\Database\Connection($db);
+        $companies = new \Prosper202\Ltv\MysqlCompanyRepository($conn);
+        // Per-user existence probes ride the (user_id, company_id) index; a
+        // single global DISTINCT over the predicate would full-scan the
+        // multi-tenant customers table on every run, even in steady state.
+        $companyUsers = $run('SELECT user_id FROM 202_users_pref');
+        if ($companyUsers instanceof mysqli_result) {
+            $probe = $db->prepare(
+                "SELECT 1 FROM 202_customers
+                 WHERE user_id = ? AND company_id IS NULL
+                   AND company IS NOT NULL AND company <> ''
+                   AND merged_into_customer_id IS NULL
+                 LIMIT 1"
+            );
+            if ($probe === false) {
+                throw new RuntimeException('prepare failed: ' . $db->error);
+            }
+            while ($userRow = $companyUsers->fetch_assoc()) {
+                $probeUserId = (int) $userRow['user_id'];
+                $probe->bind_param('i', $probeUserId);
+                if (!$probe->execute()) {
+                    $probe->close();
+                    throw new RuntimeException('company-link probe failed: ' . $db->error);
+                }
+                $probeResult = $probe->get_result();
+                if (!($probeResult instanceof mysqli_result)) {
+                    // false here is a transport failure, not an empty result
+                    // (a SELECT always yields a result set) — surfacing beats
+                    // silently skipping this user's linking backlog.
+                    $probe->close();
+                    throw new RuntimeException('company-link probe result failed: ' . $db->error);
+                }
+                $hasPending = $probeResult->num_rows > 0;
+                $probeResult->free();
+                if ($hasPending) {
+                    $companiesLinked += $companies->linkUnlinkedCustomers($probeUserId, 2000);
+                }
+            }
+            $probe->close();
+        }
+        // Converge attached strings onto the entity names: repairs rows
+        // stamped before string canonicalization and any partial-write drift.
+        $stringsFixed = $companies->reconcileAttachedStrings();
+        echo "company linking: {$companiesLinked} customers attached, {$stringsFixed} strings converged\n";
+    } catch (Throwable $companyError) {
+        fwrite(STDERR, 'company linking failed (continuing with remaining maintenance): '
+            . $companyError->getMessage() . "\n");
+        error_log('ltv_maintenance company linking failed: ' . $companyError->getMessage());
+    }
+
+    // ---------- 4. Personalization token purge ----------
+    // Tokens past their replay window are dead weight holding sealed PII
+    // snapshots; remove them.
+    $stmt = $db->prepare('DELETE FROM 202_personalization_tokens WHERE replay_until < ?');
+    if ($stmt === false) {
+        throw new RuntimeException('prepare failed: ' . $db->error);
+    }
+    $stmt->bind_param('i', $now);
+    if (!$stmt->execute()) {
+        $stmt->close();
+        throw new RuntimeException('personalization purge failed: ' . $db->error);
+    }
+    $purged = $stmt->affected_rows;
+    $stmt->close();
+    echo "personalization purge: {$purged} expired tokens removed\n";
+} catch (Throwable $e) {
+    fwrite(STDERR, 'ltv_maintenance failed: ' . $e->getMessage() . "\n");
+    error_log('ltv_maintenance failed: ' . $e->getMessage());
+    exit(1);
+}
+
+echo "ltv_maintenance completed\n";

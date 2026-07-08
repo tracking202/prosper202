@@ -3597,10 +3597,242 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.64', '>')) {
+        if ($prosper202_version == '1.9.64') {
 
-            $prosper202_version = '1.9.64';
+            // LTV feature: customer identity/CRM, alias resolution, custom
+            // fields, unified revenue ledger, products/line items,
+            // subscriptions, integrations and webhooks. Table DDL comes from
+            // LtvTables::getDefinitions() — the same definitions the fresh
+            // installer uses — so this block cannot drift from it. Everything
+            // here is idempotent (CREATE IF NOT EXISTS; ALTERs guarded by
+            // SHOW COLUMNS/INDEX), so a partial failure safely retries on the
+            // next run.
+            $ltv_ok = true;
+
+            foreach (\Prosper202\Database\Tables\LtvTables::getDefinitions() as $ltv_definition) {
+                if (_upgrade_query($ltv_definition->createStatement) === false) {
+                    $ltv_ok = false;
+                    error_log('Prosper202 upgrade: failed to create ' . $ltv_definition->tableName);
+                }
+            }
+
+            // Nullable ADD COLUMN with no backfill runs as ALGORITHM=INSTANT on
+            // MySQL 8.0; the index additions build INPLACE (online).
+            $ltv_alters = [
+                ['202_conversion_logs', 'customer_id', 'column',
+                    "ALTER TABLE `202_conversion_logs` ADD COLUMN `customer_id` bigint(20) unsigned DEFAULT NULL"],
+                ['202_conversion_logs', 'customer_id', 'index',
+                    "ALTER TABLE `202_conversion_logs` ADD KEY `customer_id` (`customer_id`)"],
+                ['202_clicks_tracking', 'customer_id', 'column',
+                    "ALTER TABLE `202_clicks_tracking` ADD COLUMN `customer_id` bigint(20) unsigned DEFAULT NULL"],
+                ['202_clicks_tracking', 'customer_id', 'index',
+                    "ALTER TABLE `202_clicks_tracking` ADD KEY `customer_id` (`customer_id`)"],
+                ['202_users_pref', 'user_ltv_customer_cparam', 'column',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_customer_cparam` tinyint(1) unsigned NOT NULL DEFAULT '0'"],
+            ];
+            foreach ($ltv_alters as [$ltv_table, $ltv_name, $ltv_kind, $ltv_sql]) {
+                $check_sql = $ltv_kind === 'index'
+                    ? "SHOW INDEX FROM `{$ltv_table}` WHERE Key_name = '{$ltv_name}'"
+                    : "SHOW COLUMNS FROM `{$ltv_table}` LIKE '{$ltv_name}'";
+                $check = _upgrade_query($check_sql);
+                $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+                if (!$exists && _upgrade_query($ltv_sql) === false) {
+                    $ltv_ok = false;
+                    error_log("Prosper202 upgrade: failed LTV alter on {$ltv_table} ({$ltv_kind} {$ltv_name})");
+                }
+            }
+
+            if ($ltv_ok) {
+                // Only advance the version once every DDL statement succeeded,
+                // so a partial failure re-enters this block on the next run.
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.65'") !== false) {
+                    $prosper202_version = '1.9.65';
+                } else {
+                    error_log('Prosper202 upgrade: LTV schema created but failed to persist version 1.9.65; leaving version at 1.9.64 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: LTV schema incomplete; leaving version at 1.9.64 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.65') {
+
+            // Landing-page personalization: token table (DDL shared with the
+            // fresh installer via LtvTables) + per-user field-allowlist pref.
+            // Idempotent, same retry semantics as the 1.9.64 LTV block.
+            $p13n_ok = true;
+
+            $p13n_definition = \Prosper202\Database\Tables\LtvTables::personalizationTokens();
+            if (_upgrade_query($p13n_definition->createStatement) === false) {
+                $p13n_ok = false;
+                error_log('Prosper202 upgrade: failed to create ' . $p13n_definition->tableName);
+            }
+
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'user_ltv_personalization_fields'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            if (!$exists && _upgrade_query(
+                "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_personalization_fields` varchar(500) NOT NULL DEFAULT ''"
+            ) === false) {
+                $p13n_ok = false;
+                error_log('Prosper202 upgrade: failed to add 202_users_pref.user_ltv_personalization_fields');
+            }
+
+            if ($p13n_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.66'") !== false) {
+                    $prosper202_version = '1.9.66';
+                } else {
+                    error_log('Prosper202 upgrade: personalization schema created but failed to persist version 1.9.66; leaving version at 1.9.65 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: personalization schema incomplete; leaving version at 1.9.65 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.66') {
+
+            // Next-offer recommendations: transition-count table, rebuilt from
+            // the revenue ledger by ltv_maintenance. Idempotent create.
+            $transitions_definition = \Prosper202\Database\Tables\LtvTables::offerTransitions();
+            if (_upgrade_query($transitions_definition->createStatement) !== false) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.67'") !== false) {
+                    $prosper202_version = '1.9.67';
+                } else {
+                    error_log('Prosper202 upgrade: created 202_offer_transitions but failed to persist version 1.9.67; leaving version at 1.9.66 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to create 202_offer_transitions; leaving version at 1.9.66 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.67') {
+
+            // Manually instrumented ABM/engagement events. Idempotent create.
+            $events_definition = \Prosper202\Database\Tables\LtvTables::engagementEvents();
+            if (_upgrade_query($events_definition->createStatement) !== false) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.68'") !== false) {
+                    $prosper202_version = '1.9.68';
+                } else {
+                    error_log('Prosper202 upgrade: created 202_engagement_events but failed to persist version 1.9.68; leaving version at 1.9.67 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to create 202_engagement_events; leaving version at 1.9.67 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.68') {
+
+            // Engagement depth metrics (time on page, scroll depth, video
+            // progress): events gain an optional numeric value. Guarded ALTER.
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_engagement_events` LIKE 'event_value'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $value_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_engagement_events` ADD COLUMN `event_value` decimal(12,3) DEFAULT NULL AFTER `click_id`"
+            ) !== false;
+
+            if ($value_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.69'") !== false) {
+                    $prosper202_version = '1.9.69';
+                } else {
+                    error_log('Prosper202 upgrade: added event_value but failed to persist version 1.9.69; leaving version at 1.9.68 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to add 202_engagement_events.event_value; leaving version at 1.9.68 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.69') {
+
+            // Company (ABM account) entity + customer attachment + tunable
+            // engagement-score weights. Every step is idempotent so a partial
+            // failure retries cleanly on the next run.
+            $companies_definition = \Prosper202\Database\Tables\LtvTables::companies();
+            $companies_ok = _upgrade_query($companies_definition->createStatement) !== false;
+
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_customers` LIKE 'company_id'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $company_col_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_customers` ADD COLUMN `company_id` bigint(20) unsigned DEFAULT NULL AFTER `company`, ADD KEY `user_company` (`user_id`,`company_id`)"
+            ) !== false;
+
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'user_ltv_score_weights'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $weights_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_score_weights` varchar(100) NOT NULL DEFAULT ''"
+            ) !== false;
+
+            if ($companies_ok && $company_col_ok && $weights_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.70'") !== false) {
+                    $prosper202_version = '1.9.70';
+                } else {
+                    error_log('Prosper202 upgrade: company schema created but failed to persist version 1.9.70; leaving version at 1.9.69 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: company/score-weight schema incomplete; leaving version at 1.9.69 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.70') {
+
+            // Next-offer v2 statistics: installs that created
+            // 202_offer_transitions at 1.9.67 predate the adjacent_count /
+            // from_customers / last_seen_at columns (the shared CREATE TABLE
+            // IF NOT EXISTS is a no-op on the existing table). Guarded ALTERs,
+            // matching the LtvTables definition; the ltv_maintenance rebuild
+            // repopulates the values on its next run.
+            $stats_ok = true;
+            foreach ([
+                ['adjacent_count', "ADD COLUMN `adjacent_count` int(10) unsigned NOT NULL DEFAULT '0' AFTER `transition_count`"],
+                ['from_customers', "ADD COLUMN `from_customers` int(10) unsigned NOT NULL DEFAULT '0' AFTER `adjacent_count`"],
+                ['last_seen_at', "ADD COLUMN `last_seen_at` int(10) unsigned NOT NULL DEFAULT '0' AFTER `from_customers`"],
+            ] as [$stats_column, $stats_alter]) {
+                $check = _upgrade_query("SHOW COLUMNS FROM `202_offer_transitions` LIKE '" . $stats_column . "'");
+                $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+                if (!$exists && _upgrade_query('ALTER TABLE `202_offer_transitions` ' . $stats_alter) === false) {
+                    $stats_ok = false;
+                    break;
+                }
+            }
+
+            if ($stats_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.71'") !== false) {
+                    $prosper202_version = '1.9.71';
+                } else {
+                    error_log('Prosper202 upgrade: added offer-transition stats columns but failed to persist version 1.9.71; leaving version at 1.9.70 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to add 202_offer_transitions stats columns; leaving version at 1.9.70 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.71') {
+
+            // Recommendation decision log (impressions + outcomes per
+            // customer/campaign — feeds the fatigue rule and future
+            // bandit/MVT policies) + the per-account fatigue tuning pref.
+            $recs_definition = \Prosper202\Database\Tables\LtvTables::offerRecommendations();
+            $recs_ok = _upgrade_query($recs_definition->createStatement) !== false;
+
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'user_ltv_rec_fatigue'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $fatigue_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_rec_fatigue` varchar(20) NOT NULL DEFAULT ''"
+            ) !== false;
+
+            if ($recs_ok && $fatigue_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.72'") !== false) {
+                    $prosper202_version = '1.9.72';
+                } else {
+                    error_log('Prosper202 upgrade: created offer-recommendation log but failed to persist version 1.9.72; leaving version at 1.9.71 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: offer-recommendation log/pref incomplete; leaving version at 1.9.71 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.72', '>')) {
+
+            $prosper202_version = '1.9.72';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

@@ -142,6 +142,206 @@ if (!function_exists('p202ExtractTransactionId')) {
     }
 }
 
+if (!function_exists('p202ExtractCustomer')) {
+    /**
+     * Pull the LTV customer reference from a request array so the conversion
+     * can be attributed to a persistent customer. Networks/carts pass their
+     * stable id (merchant customer id, ESP hash, hashed email) as `cust`
+     * (alias: customer_ref) with an optional `cust_type`. `customer_id` is
+     * deliberately not accepted — see the note in the implementation.
+     *
+     * Returns [] when absent; otherwise keys customer_ref / customer_ref_type
+     * ready to merge into the MysqlConversionRepository::record() payload.
+     *
+     * @param array<string,mixed> $source Typically $_GET.
+     * @return array{customer_ref?: string, customer_ref_type?: string}
+     */
+    function p202ExtractCustomer(array $source): array
+    {
+        $ref = '';
+        // Deliberately NOT 'customer_id': on public pixels that name would be
+        // ambiguous with the authenticated API's internal numeric id (which
+        // carries tenant-ownership checks). External references only here.
+        foreach (['cust', 'customer_ref'] as $key) {
+            if (array_key_exists($key, $source) && is_scalar($source[$key])) {
+                $value = trim((string) $source[$key]);
+                if ($value !== '') {
+                    $ref = $value;
+                    break;
+                }
+            }
+        }
+        if ($ref === '') {
+            return [];
+        }
+
+        $out = ['customer_ref' => $ref];
+        foreach (['cust_type', 'customer_ref_type'] as $key) {
+            if (array_key_exists($key, $source) && is_scalar($source[$key])) {
+                $type = trim((string) $source[$key]);
+                if ($type !== '') {
+                    $out['customer_ref_type'] = $type;
+                    break;
+                }
+            }
+        }
+
+        return $out;
+    }
+}
+
+if (!function_exists('p202ExtractItems')) {
+    /**
+     * Pull a single product line item from pixel/postback query params
+     * (`sku` and/or `product_id`, optional `product_name`, `qty`,
+     * `unit_price`). Pixels carry at most one product; multi-line orders go
+     * through the authenticated V3 API. Returns [] when no product params
+     * are present.
+     *
+     * @param array<string,mixed> $source Typically $_GET.
+     * @return list<array<string,mixed>>
+     */
+    function p202ExtractItems(array $source): array
+    {
+        $sku = isset($source['sku']) && is_scalar($source['sku']) ? trim((string) $source['sku']) : '';
+        $productId = isset($source['product_id']) && is_scalar($source['product_id']) ? trim((string) $source['product_id']) : '';
+        if ($sku === '' && $productId === '') {
+            return [];
+        }
+
+        $item = [];
+        if ($productId !== '') {
+            $item['external_product_id'] = $productId;
+        }
+        if ($sku !== '') {
+            $item['sku'] = $sku;
+        }
+        if (isset($source['product_name']) && is_scalar($source['product_name']) && trim((string) $source['product_name']) !== '') {
+            $item['name'] = trim((string) $source['product_name']);
+        }
+        if (isset($source['qty']) && is_numeric($source['qty'])) {
+            $quantity = (float) $source['qty'];
+            // A non-positive quantity is malformed and would make
+            // insertLineItems() throw INSIDE the conversion transaction, so
+            // the static endpoints would lose the CORE conversion just because
+            // optional product metadata was bad. Drop the line item instead —
+            // the conversion still records. Coercing qty to 1 would invent data
+            // the caller never sent (CLAUDE.md #4), so we discard the item.
+            if ($quantity <= 0) {
+                return [];
+            }
+            $item['quantity'] = $quantity;
+        }
+        if (isset($source['unit_price']) && is_numeric($source['unit_price'])) {
+            $item['unit_price'] = (float) $source['unit_price'];
+        }
+
+        return [$item];
+    }
+}
+
+if (!function_exists('p202MintPersonalizationCookieJs')) {
+    /**
+     * LTV landing-page personalization: mint a token for a visitor who
+     * resolves to a known customer through an EXPLICIT signal (cust/c-param
+     * alias from the beacon params, or a prior click already stamped with a
+     * customer — never IP guessing) and return the JS statement that stores
+     * it as a FIRST-PARTY cookie on the landing page's own domain (the same
+     * createCookie() delivery record_simple/record_adv already use for the
+     * subid — the tracker and the LP are usually different domains, so a
+     * Set-Cookie header here would be invisible to the LP's JS).
+     *
+     * Returns '' when personalization is disabled, the visitor is unknown,
+     * or anything fails — the beacon response must never break.
+     *
+     * @param array<string,mixed> $get The beacon's $_GET (carries c1-c4/cust).
+     */
+    function p202MintPersonalizationCookieJs(mysqli $db, int $userId, array $get, int $clickId): string
+    {
+        try {
+            $conn = new \Prosper202\Database\Connection($db);
+            $repo = new \Prosper202\Ltv\MysqlPersonalizationRepository($conn);
+
+            // The beacon request hits the tracking domain, so the request
+            // cookies are the tracker's own: the prior click's subid.
+            $cookieClickId = isset($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])
+                ? (int) $_COOKIE['tracking202subid']
+                : 0;
+
+            // Engagement (ABM): whenever the visitor resolves to a known
+            // customer — through any explicit signal — stamp this pageview's
+            // click so browsing behavior becomes per-customer queryable, and
+            // touch the customer's activity recency. Stamping is independent
+            // of whether a new token gets minted below.
+            $engagementCustomerId = $repo->resolveVisitorCustomer($userId, $get, $cookieClickId, true);
+            if ($engagementCustomerId !== null && $clickId > 0) {
+                $customers = new \Prosper202\Ltv\MysqlCustomerRepository($conn);
+                $customers->stampClickCustomer($clickId, $engagementCustomerId);
+                $touch = $conn->prepareWrite(
+                    'UPDATE 202_customers SET last_activity_time = GREATEST(last_activity_time, ?), updated_at = ?
+                     WHERE customer_id = ? AND user_id = ?'
+                );
+                $now = time();
+                $conn->bind($touch, 'iiii', [$now, $now, $engagementCustomerId, $userId]);
+                $conn->executeUpdate($touch);
+            }
+
+            // An empty allowlist only turns PERSONALIZATION off — the ABM
+            // stamping above must still run, so this gate sits between them.
+            if ($repo->allowedFields($userId) === []) {
+                return '';
+            }
+
+            // The LP reports its token cookie via the beacon (the cookie
+            // lives on the LP domain, invisible to this request). While the
+            // page holds a USABLE token, only a fresh EXPLICIT identity
+            // signal justifies re-minting — repeat pageviews within a visit
+            // reuse one token. A dead token (expired before first use, or
+            // past its replay window) must NOT suppress reminting, or a
+            // cookie-recognized visitor loses personalization until the
+            // 30-day LP cookie drains.
+            //
+            // Wire values (the beacon URL is a GET, so it must never carry
+            // the bearer token itself — server/proxy/CDN logs capture query
+            // strings): current snippets send 'h:' + sha256(token) from the
+            // companion hash cookie; '1' is the legacy bare presence flag
+            // (unknown state — treated as usable, the conservative
+            // pre-validation behavior); anything else is a raw token from a
+            // cached pre-digest snippet, still validated directly. ':' is
+            // outside the token's base64url charset, so the digest form can
+            // never be mistaken for a raw token.
+            $pageToken = isset($get['p13n_have']) ? trim((string) $get['p13n_have']) : '';
+            $pageHasToken = $pageToken !== '' && $pageToken !== '0';
+            if ($pageHasToken && $pageToken !== '1') {
+                $pageHasToken = str_starts_with($pageToken, 'h:')
+                    ? $repo->tokenHashIsUsable(substr($pageToken, 2), time())
+                    : $repo->tokenIsUsable($pageToken, time());
+            }
+
+            $customerId = $pageHasToken
+                ? $repo->resolveVisitorCustomer($userId, $get, $cookieClickId, false)
+                : $engagementCustomerId;
+            if ($customerId === null) {
+                return '';
+            }
+
+            $token = $repo->mint($userId, $customerId, $clickId, time());
+
+            // Two 30-day LP-domain cookies: the bearer token itself (read by
+            // the LP's POST-only p13n/redeem and event calls) and its 'h:'
+            // sha256 digest, which is what the beacon reports back in the
+            // record.php GET URL — the bearer must never appear in a query
+            // string that request logs capture. Token is base64url, digest
+            // is hex, so json_encode yields clean JS string literals.
+            return 'createCookie(\'tracking202p13n\',' . json_encode($token) . ',30);'
+                . 'createCookie(\'tracking202p13nh\',' . json_encode('h:' . hash('sha256', $token)) . ',30);';
+        } catch (\Throwable $e) {
+            error_log('p202MintPersonalizationCookieJs failed: ' . $e->getMessage());
+            return '';
+        }
+    }
+}
+
 if (!function_exists('p202RecordConversion')) {
     /**
      * Record a conversion atomically and idempotently for the legacy static
@@ -157,6 +357,10 @@ if (!function_exists('p202RecordConversion')) {
      * @param array<string,int|float|string> $log Conversion_logs column values.
      *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
      *        time_difference, ip, pixel_type, user_agent, click_payout.
+     * @param array{customer_ref?: string, customer_ref_type?: string} $customer
+     *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
+     * @param list<array<string,mixed>> $items Product line items for the
+     *        revenue ledger event (see p202ExtractItems); [] = none.
      * @return array{conv_id:int, duplicate:bool} conv_id is 0 only when the source
      *         click no longer exists (no orphan row is written).
      */
@@ -166,7 +370,9 @@ if (!function_exists('p202RecordConversion')) {
         string $clickCpa,
         bool $usePixelPayout,
         string $clickPayout,
-        string $transactionId = ''
+        string $transactionId = '',
+        array $customer = [],
+        array $items = []
     ): array {
         $clickId = (int) ($log['click_id'] ?? 0);
         if ($clickId <= 0) {
@@ -194,6 +400,28 @@ if (!function_exists('p202RecordConversion')) {
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
         ];
+
+        // LTV: customer identity + product line items ride the same
+        // transactional write (customer upsert, ledger event, line items and
+        // rollup bump commit together with the conversion).
+        if (!empty($customer['customer_id'])) {
+            $data['customer_id'] = (int) $customer['customer_id'];
+        }
+        if (!empty($customer['customer_ref'])) {
+            $data['customer_ref'] = (string) $customer['customer_ref'];
+            if (!empty($customer['customer_ref_type'])) {
+                $data['customer_ref_type'] = (string) $customer['customer_ref_type'];
+            }
+        }
+        if (!empty($customer['customer_crm']) && is_array($customer['customer_crm'])) {
+            // CRM fields (name/email/company/...) are applied on customer
+            // CREATE by the writer; dropping them here would silently lose
+            // caller-supplied identity data.
+            $data['customer_crm'] = $customer['customer_crm'];
+        }
+        if ($items !== []) {
+            $data['items'] = $items;
+        }
 
         $result = $repo->record(
             (int) ($log['user_id'] ?? 0),

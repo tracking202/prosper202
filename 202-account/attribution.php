@@ -32,12 +32,12 @@ template_top('Attribution Analytics', $templateOptions);
     justify-content: space-between;
     margin-bottom: 24px;
     padding-bottom: 16px;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid #e7e8ea;
 }
 .attribution-page .attribution-header h6 {
     font-size: 26px;
     font-weight: 700;
-    color: #1e293b;
+    color: #1f2328;
     margin: 0;
     letter-spacing: -0.5px;
 }
@@ -48,7 +48,7 @@ template_top('Attribution Analytics', $templateOptions);
 }
 .attribution-page .attribution-header-actions .text-muted {
     font-size: 13px;
-    color: #94a3b8;
+    color: #8a919b;
 }
 .attribution-page .attribution-header-actions .btn {
     border-radius: 8px;
@@ -56,14 +56,14 @@ template_top('Attribution Analytics', $templateOptions);
     transition: all 0.2s ease;
 }
 .attribution-page .attribution-header-actions .btn:hover {
-    background: #f1f5f9;
-    transform: translateY(-1px);
+    background: #f0f1f2;
+    transform: none;
 }
 
 /* Intro Banner */
 .attribution-page .attribution-intro {
-    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-    border: 1px solid #bfdbfe;
+    background: #eaf2fc;
+    border: 1px solid #bcd4f6;
     border-radius: 12px;
     padding: 20px 24px;
     margin-bottom: 24px;
@@ -71,14 +71,14 @@ template_top('Attribution Analytics', $templateOptions);
 }
 .attribution-page .attribution-intro strong {
     font-size: 16px;
-    color: #1e40af;
+    color: #2861c4;
     display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
 }
 .attribution-page .attribution-intro p {
-    color: #3b82f6;
+    color: #2f6fdd;
     margin: 0;
     font-size: 14px;
     line-height: 1.6;
@@ -96,7 +96,7 @@ template_top('Attribution Analytics', $templateOptions);
 
 /* Panel Styling */
 .attribution-page .attribution-panel {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03);
     margin-bottom: 24px;
@@ -107,7 +107,7 @@ template_top('Attribution Analytics', $templateOptions);
     box-shadow: 0 4px 6px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.06);
 }
 .attribution-page .attribution-panel .panel-heading {
-    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    background: #1f2328;
     border: none;
     padding: 16px 20px;
 }
@@ -140,8 +140,8 @@ template_top('Attribution Analytics', $templateOptions);
     background: #fff;
 }
 .attribution-page .attribution-panel .panel-footer {
-    background: #f8fafc;
-    border-top: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-top: 1px solid #e7e8ea;
     padding: 16px 20px;
 }
 
@@ -149,7 +149,7 @@ template_top('Attribution Analytics', $templateOptions);
 .attribution-page .attribution-filters {
     margin-bottom: 24px;
     padding-bottom: 24px;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid #e7e8ea;
 }
 .attribution-page .attribution-filters .form-group {
     margin-bottom: 0;
@@ -157,7 +157,7 @@ template_top('Attribution Analytics', $templateOptions);
 .attribution-page .attribution-filters .control-label {
     font-size: 12px;
     font-weight: 600;
-    color: #64748b;
+    color: #6b7280;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 8px;
@@ -166,12 +166,12 @@ template_top('Attribution Analytics', $templateOptions);
     gap: 6px;
 }
 .attribution-page .attribution-filters .help-icon {
-    color: #94a3b8;
+    color: #8a919b;
     font-size: 12px;
     cursor: help;
 }
 .attribution-page .attribution-filters .form-control {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 14px;
@@ -179,12 +179,12 @@ template_top('Attribution Analytics', $templateOptions);
     background: #fff;
 }
 .attribution-page .attribution-filters .form-control:focus {
-    border-color: #3b82f6;
+    border-color: #2f6fdd;
     box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
 }
 .attribution-page .attribution-filters .help-block {
     font-size: 12px;
-    color: #94a3b8;
+    color: #8a919b;
     margin-top: 6px;
 }
 
@@ -197,8 +197,8 @@ template_top('Attribution Analytics', $templateOptions);
     margin-bottom: 16px;
 }
 .attribution-page .attribution-kpi-card {
-    background: linear-gradient(145deg, #f8fafc, #f1f5f9);
-    border: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border: 1px solid #e7e8ea;
     border-radius: 12px;
     padding: 20px;
     text-align: center;
@@ -207,15 +207,15 @@ template_top('Attribution Analytics', $templateOptions);
     height: 100%;
 }
 .attribution-page .attribution-kpi-card:hover {
-    transform: translateY(-2px);
+    transform: none;
     box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-    border-color: #cbd5e1;
+    border-color: #c9cdd3;
 }
 .attribution-page .attribution-kpi-card .kpi-label {
     display: block;
     font-size: 11px;
     font-weight: 600;
-    color: #64748b;
+    color: #6b7280;
     text-transform: uppercase;
     letter-spacing: 0.8px;
     margin-bottom: 8px;
@@ -224,7 +224,7 @@ template_top('Attribution Analytics', $templateOptions);
     display: block;
     font-size: 24px;
     font-weight: 700;
-    color: #1e293b;
+    color: #1f2328;
     line-height: 1.2;
 }
 
@@ -232,7 +232,7 @@ template_top('Attribution Analytics', $templateOptions);
 .attribution-page .attribution-chart {
     min-height: 320px;
     border-radius: 8px;
-    background: #fafafa;
+    background: #fafbfc;
 }
 
 /* Touchpoint Mix */
@@ -242,7 +242,7 @@ template_top('Attribution Analytics', $templateOptions);
 }
 .attribution-page .touchpoint-mix li {
     padding: 12px 0;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid #f0f1f2;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -251,7 +251,7 @@ template_top('Attribution Analytics', $templateOptions);
     border-bottom: none;
 }
 .attribution-page .touchpoint-empty {
-    color: #94a3b8;
+    color: #8a919b;
     font-size: 14px;
     text-align: center;
     padding: 24px 16px;
@@ -261,11 +261,11 @@ template_top('Attribution Analytics', $templateOptions);
 .attribution-page .attribution-empty {
     text-align: center;
     padding: 32px 24px;
-    color: #64748b;
+    color: #6b7280;
     font-size: 14px;
-    background: #f8fafc;
+    background: #fafbfc;
     border-radius: 8px;
-    border: 1px dashed #e2e8f0;
+    border: 1px dashed #e7e8ea;
 }
 .attribution-page .attribution-empty .fui-info-circle {
     margin-right: 8px;
@@ -275,7 +275,7 @@ template_top('Attribution Analytics', $templateOptions);
 .attribution-page .attribution-loading {
     text-align: center;
     padding: 24px;
-    color: #64748b;
+    color: #6b7280;
     font-size: 14px;
 }
 .attribution-page .attribution-loading .fui-time {
@@ -304,8 +304,8 @@ template_top('Attribution Analytics', $templateOptions);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: #64748b;
-    border-bottom: 2px solid #e2e8f0;
+    color: #6b7280;
+    border-bottom: 2px solid #e7e8ea;
     padding: 12px 16px;
 }
 .attribution-page .sandbox-table td {
@@ -316,7 +316,7 @@ template_top('Attribution Analytics', $templateOptions);
 
 /* Buttons */
 .attribution-page .btn-primary {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #217a41;
     border: none;
     border-radius: 8px;
     padding: 12px 24px;
@@ -326,17 +326,17 @@ template_top('Attribution Analytics', $templateOptions);
     box-shadow: 0 2px 4px rgba(16,185,129,0.2);
 }
 .attribution-page .btn-primary:hover {
-    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    background: #217a41;
     box-shadow: 0 4px 12px rgba(16,185,129,0.35);
-    transform: translateY(-1px);
+    transform: none;
 }
 .attribution-page .btn-primary:disabled {
-    background: #94a3b8;
+    background: #8a919b;
     box-shadow: none;
     transform: none;
 }
 .attribution-page .btn-success {
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    background: #2f6fdd;
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
@@ -345,7 +345,7 @@ template_top('Attribution Analytics', $templateOptions);
     box-shadow: 0 2px 4px rgba(59,130,246,0.2);
 }
 .attribution-page .btn-success:hover {
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    background: #2f6fdd;
     box-shadow: 0 4px 12px rgba(59,130,246,0.35);
 }
 
@@ -353,16 +353,16 @@ template_top('Attribution Analytics', $templateOptions);
 .attribution-page .form-horizontal .control-label {
     font-size: 13px;
     font-weight: 500;
-    color: #475569;
+    color: #374151;
     padding-top: 10px;
 }
 .attribution-page .form-horizontal .form-control {
     border-radius: 8px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     padding: 10px 14px;
 }
 .attribution-page .form-horizontal .form-control:focus {
-    border-color: #3b82f6;
+    border-color: #2f6fdd;
     box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
 }
 
@@ -376,7 +376,7 @@ template_top('Attribution Analytics', $templateOptions);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: #64748b;
+    color: #6b7280;
     padding: 10px 12px;
 }
 .attribution-page [data-role="export-table"] td {
@@ -387,17 +387,17 @@ template_top('Attribution Analytics', $templateOptions);
 /* Help Blocks */
 .attribution-page .help-block {
     font-size: 13px;
-    color: #64748b;
+    color: #6b7280;
     margin-top: 8px;
     line-height: 1.5;
 }
 .attribution-page .help-block kbd {
-    background: #f1f5f9;
-    border: 1px solid #e2e8f0;
+    background: #f0f1f2;
+    border: 1px solid #e7e8ea;
     border-radius: 4px;
     padding: 2px 6px;
     font-size: 11px;
-    color: #475569;
+    color: #374151;
 }
 
 /* Responsive adjustments */

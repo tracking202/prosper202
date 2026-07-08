@@ -188,7 +188,12 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
         );
         // A conversion with this (click_id, transaction_id) already exists.
-        $write->whenQueryContainsReturnRows('SELECT conv_id FROM 202_conversion_logs', [['conv_id' => 99]]);
+        // (The dedup lookup also returns the LTV customer link since the
+        // customer_id column was added.)
+        $write->whenQueryContainsReturnRows(
+            'SELECT conv_id, customer_id FROM 202_conversion_logs',
+            [['conv_id' => 99, 'customer_id' => null]]
+        );
 
         [$repo] = $this->buildRepo($write);
         $id = $repo->create(1, ['click_id' => 10, 'transaction_id' => 'DUP']);
@@ -256,6 +261,12 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testSoftDeleteSetsDeletedFlag(): void
     {
         [$repo, $write] = $this->buildRepo();
+        // softDelete locks the conversion first (and voids its LTV ledger
+        // event when one exists — none here, so only the flag is set).
+        $write->whenQueryContainsReturnRows(
+            'SELECT conv_id, customer_id, deleted FROM 202_conversion_logs',
+            [['conv_id' => 5, 'customer_id' => null, 'deleted' => 0]]
+        );
 
         $repo->softDelete(5, 1);
 
@@ -263,6 +274,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::assertCount(1, $stmts);
         self::assertSame('ii', $stmts[0]->boundTypes);
         self::assertSame([5, 1], $stmts[0]->boundValues);
+        self::assertCount(0, $write->statementsContaining('INSERT INTO 202_revenue_events'), 'unlinked conversion has no ledger event to void');
     }
 
     // --- findById() ---

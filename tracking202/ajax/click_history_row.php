@@ -85,11 +85,11 @@ if ($click_row['click_alp'] == 1) {
 						else echo "-" ?></td>
 						<td class="filter">
 							<?php if ($click_row['click_filtered'] == '1') { ?>
-								<img style="margin-right: auto;" src="<?php echo get_absolute_url(); ?>202-img/icons/16x16/delete.png" alt="Filtered Out Click" title="filtered out click" />
+								<span class="label label-default" title="This click was filtered out (bot / rules)">Filtered</span>
 							<?php } elseif ($click_row['click_lead'] == '1') { ?>
-								<img style="margin-right: auto;" src="<?php echo get_absolute_url(); ?>202-img/icons/16x16/money_dollar.png" alt="Converted Click" title="converted click" width="16px" height="16px" />
+								<span class="label label-success" title="This click converted into a lead / sale">Lead</span>
 							<?php } else { ?>
-								<img style="margin-right: auto;" src="<?php echo get_absolute_url(); ?>202-img/icons/16x16/add.png" alt="Real Click" title="real click" />
+								<span class="label label-primary" title="A real (unfiltered) click">Real</span>
 							<?php } ?>
 						</td>
 						<td class="ip"><?php echo $html['ip_address']; ?></td>
@@ -103,21 +103,27 @@ if ($click_row['click_alp'] == 1) {
 						<td class="ad"><?php if ($html['text_ad_name']) echo $html['text_ad_name'];
 						else echo "-"; ?></td>
 						<td class="referer">
-							<?php if ($html['referer'] != '') {
-								printf('<a href="%s" target="_new" ><img src="%s202-img/icons/16x16/control_end_blue.png" alt="Referer" title="Referer: %s"/></a>', $html['referer'], get_absolute_url(), $html['referer']);
-							} ?>
-							<?php if ($html['landing'] != '') {
-								printf('<a href="%s" target="_new"><img src="%s202-img/icons/16x16/control_pause_blue.png" alt="Landing"  title="Landing Page: %s"/></a>', $html['landing'], get_absolute_url(), $html['landing']);
-							} ?>
-							<?php if (($html['outbound'] != '') and ($click_row['click_out'] == 1)) {
-								printf('<a href="%s" target="_new"><img src="%s202-img/icons/16x16/control_play_blue.png" alt="Outbound" title="Outbound: %s"/></a>', $html['outbound'], get_absolute_url(), $html['outbound']);
-							} ?>
-							<?php if (($html['cloaking'] != '') and ($click_row['click_out'] == 1)) {
-								printf('<a href="%s" target="_new"><img src="%s202-img/icons/16x16/control_equalizer_blue.png" alt="Cloaking" title="Cloaked Referer: %s"/></a>', $html['cloaking'], get_absolute_url(), $html['cloaking']);
-							} ?>
-							<?php if (($html['redirect'] != '') and ($click_row['click_out'] == 1)) {
-								printf('<a href="%s" target="_new"><img src="%s202-img/icons/16x16/control_fastforward_blue.png" alt="Redirection" title="Redirect: %s"/></a>', $html['redirect'], get_absolute_url(), $html['redirect']);
-							} ?>
+							<?php
+							// Journey links: the visitor's referer → landing → outbound
+							// → cloaked → redirect hops, as labelled Font Awesome icons
+							// (scalable + on-palette) instead of opaque 16x16 PNGs.
+							$journeyStyle = 'color:#2f6fdd; margin-right:6px;';
+							if ($html['referer'] != '') {
+								printf('<a href="%s" target="_new" style="%s" aria-label="Referer" title="Referer: %s"><i class="fa fa-sign-in"></i></a>', $html['referer'], $journeyStyle, $html['referer']);
+							}
+							if ($html['landing'] != '') {
+								printf('<a href="%s" target="_new" style="%s" aria-label="Landing page" title="Landing Page: %s"><i class="fa fa-file-o"></i></a>', $html['landing'], $journeyStyle, $html['landing']);
+							}
+							if (($html['outbound'] != '') and ($click_row['click_out'] == 1)) {
+								printf('<a href="%s" target="_new" style="%s" aria-label="Outbound" title="Outbound: %s"><i class="fa fa-external-link"></i></a>', $html['outbound'], $journeyStyle, $html['outbound']);
+							}
+							if (($html['cloaking'] != '') and ($click_row['click_out'] == 1)) {
+								printf('<a href="%s" target="_new" style="%s" aria-label="Cloaked referer" title="Cloaked Referer: %s"><i class="fa fa-user-secret"></i></a>', $html['cloaking'], $journeyStyle, $html['cloaking']);
+							}
+							if (($html['redirect'] != '') and ($click_row['click_out'] == 1)) {
+								printf('<a href="%s" target="_new" style="%s" aria-label="Redirect" title="Redirect: %s"><i class="fa fa-forward"></i></a>', $html['redirect'], $journeyStyle, $html['redirect']);
+							}
+							?>
 						</td>
 						<td class="keyword">
 							<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap; width: 250px;" title="<?php if ($html['keyword']) echo $html['keyword'];

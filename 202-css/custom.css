@@ -18,7 +18,7 @@ select.input-sm {
 }
 
 .navbar-default{
-  background-color: #267da8;
+  background-color: #2f6fdd;
   min-height: 44px;
   margin-top: 6px;
 }
@@ -65,11 +65,11 @@ margin-right: 0px;
 }
 
 .navbar-default .dropdown-menu {
-  background-color: #267da8;
+  background-color: #2f6fdd;
 }
 
 .navbar-default .dropdown-arrow{
-  border-color: transparent transparent #267da8 transparent;
+  border-color: transparent transparent #2f6fdd transparent;
 }
 
 .navbar-default .dropdown-menu li > a {
@@ -77,17 +77,17 @@ margin-right: 0px;
 }
 
 .navbar-default .dropdown-menu li > a:hover, .dropdown-menu li > a:active, .dropdown-menu li > a:focus {
-  background: #267da8;
+  background: #2f6fdd;
   color: #fff;
 }
 
 .navbar-default .dropdown-menu li.active > a{
-  background: #267da8;
+  background: #2f6fdd;
   color: #ffffff;
 }
 
 .navbar-default .dropdown-menu li.active > a:hover{
-  background: #267da8;
+  background: #2f6fdd;
   color: #ffffff;
 }
 
@@ -105,12 +105,12 @@ margin-right: 0px;
 
 #second-nav > li.active > a{
   border-color: #EBEBEB;
-  color: #267da8;
+  color: #2f6fdd;
   border-bottom: none;  
 }
 
 #second-nav > li > a:hover, #second-nav > li > a:focus{
-  color: #267da8;
+  color: #2f6fdd;
 }
 
 #sub-menu .breadcrumb{
@@ -131,7 +131,7 @@ margin-right: 0px;
 }
 
 #sub-menu .breadcrumb > li.active > a{
-  color: #267da8;
+  color: #2f6fdd;
   cursor: pointer;
 }
 
@@ -176,12 +176,12 @@ small, .small {
 }
 
 .form-group.focus .form-control, .form-control:focus {
-	border-color: #267da8;
+	border-color: #2f6fdd;
 }
 
 .btn-p202 {
   color: #ffffff;
-  background-color: #1d950c;
+  background-color: #217a41;
 }
 
 .btn-p202:hover, .btn-p202.hover, .btn-p202:focus{
@@ -342,7 +342,7 @@ small, .small {
 
 .success{
   background-color: #fff;
-  color: #1d950c;
+  color: #217a41;
 }
 
 .error{
@@ -552,7 +552,7 @@ small, .small {
 
 
 .label-info {
-  background-color: #3498db;
+  background-color: #2f6fdd;
   color: #ffffff;
 }
 
@@ -571,11 +571,11 @@ small, .small {
 }
 
 #table-pages ul li > a:hover{
-  background-color: #267da8;
+  background-color: #2f6fdd;
 }
 
 #table-pages ul li.active > a{
-  background-color: #267da8;
+  background-color: #2f6fdd;
 }
 
 .modal-dialog {
@@ -588,14 +588,14 @@ small, .small {
 }
 
 .bootstrap-switch-primary {
-  color: #1d950c;
+  color: #217a41;
   background-color: #bdc3c7;
   border-color: #bdc3c7;
 }
 
 .bootstrap-switch-primary~.bootstrap-switch-handle-off:before {
-  background-color: #1d950c;
-  border-color: #1d950c;
+  background-color: #217a41;
+  border-color: #217a41;
 }
 
 .iconbar-unread {
@@ -732,11 +732,11 @@ small, .small {
 }
 
 .twitter-typeahead .tt-dropdown-menu{
-  border: 2px solid #267da8;
+  border: 2px solid #2f6fdd;
 }
 
 .tokenfield .token {
-  background-color: #267da8;
+  background-color: #2f6fdd;
   color: #ffffff;
 }
 
@@ -834,12 +834,12 @@ small, .small {
 }
 
 #stats-table td.offerName > a {
-  color: #267da8;
+  color: #2f6fdd;
   text-decoration: none;
 }
 
 #stats-table td.offerName > a:hover {
-  color: #267da8;
+  color: #2f6fdd;
   text-decoration: none;
 }
 
@@ -860,12 +860,12 @@ small, .small {
 }
 
 #stats-table td.offerPreview > a {
-  color: #267da8;
+  color: #2f6fdd;
   text-decoration: none;
 }
 
 #stats-table td.offerPreview > a:hover {
-  color: #267da8;
+  color: #2f6fdd;
   text-decoration: none;
 }
 
@@ -1023,7 +1023,7 @@ small, .small {
   color: #a6a6a6;
 }
 .tabbable-line > .nav-tabs > li.open, .tabbable-line > .nav-tabs > li:hover {
-  border-bottom: 4px solid #267DA8;
+  border-bottom: 4px solid #2f6fdd;
 }
 .tabbable-line > .nav-tabs > li.open > a, .tabbable-line > .nav-tabs > li:hover > a {
   border: 0;
@@ -1037,7 +1037,7 @@ small, .small {
   margin-top: 0px;
 }
 .tabbable-line > .nav-tabs > li.active {
-  border-bottom: 4px solid #267DA8;
+  border-bottom: 4px solid #2f6fdd;
   position: relative;
 }
 .tabbable-line > .nav-tabs > li.active > a {
@@ -1093,7 +1093,7 @@ small, .small {
 .nav.nav-justified > li > a { position: relative; }
 .nav.nav-justified > li > a:hover,
 .nav.nav-justified > li > a:focus { background-color: transparent; }
-.nav.nav-justified > li > a > img { box-shadow: 0 0 0 5px #1D950C }
+.nav.nav-justified > li > a > img { box-shadow: 0 0 0 5px #217a41 }
 .nav.nav-justified > li > a > img { 
     max-width: 100%; 
     opacity: .3; 
@@ -1461,7 +1461,7 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
   background-color: #f5f8fb;
   border: 1px solid #EBEBEB;
   border-radius: 4px;
-  color: #267da8;
+  color: #2f6fdd;
   font-size: 13px;
 }
 
@@ -1535,7 +1535,7 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
 }
 
 .help-icon:hover {
-    color: #267da8;
+    color: #2f6fdd;
 }
 
 .attribution-intro {

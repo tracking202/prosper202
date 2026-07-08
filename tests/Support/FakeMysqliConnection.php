@@ -219,7 +219,9 @@ final class FakeMysqliStatement extends mysqli_stmt
     {
         $this->executeCount++;
         if (!$this->executeReturn) {
-            $this->error = 'fake execute failure';
+            // mysqli_stmt::$error is read-only even on subclasses (PHP 8.4),
+            // so it cannot be set here; Connection guards the read with a
+            // try/catch and reports '(unknown)'.
             return false;
         }
 

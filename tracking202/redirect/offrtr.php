@@ -16,6 +16,14 @@ if(!isset($_COOKIE['tracking202subid']) || !is_numeric($_COOKIE['tracking202subi
 include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
+// Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
+// probes) must not record a click — otherwise the speculative hit plus the real
+// navigation double-count the same visit (see p202IsSpeculativeRequest).
+if (p202IsSpeculativeRequest()) {
+	p202DeclineSpeculativeRequest();
+}
+
+
 $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
 $mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
 

@@ -183,7 +183,9 @@ final class ClickTables
                 `c2_id` bigint(20) NOT NULL,
                 `c3_id` bigint(20) NOT NULL,
                 `c4_id` bigint(20) NOT NULL,
-                PRIMARY KEY (`click_id`)
+                `customer_id` bigint(20) unsigned DEFAULT NULL,
+                PRIMARY KEY (`click_id`),
+                KEY `customer_id` (`customer_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

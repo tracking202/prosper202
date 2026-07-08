@@ -3,6 +3,14 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
+// Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
+// probes) must not record a click — otherwise the speculative hit plus the real
+// navigation double-count the same visit (see p202IsSpeculativeRequest).
+if (p202IsSpeculativeRequest()) {
+	p202DeclineSpeculativeRequest();
+}
+
+
 $pci = $_GET['pci'] ?? '';
 if (!is_numeric($pci)) {
 	die();

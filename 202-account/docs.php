@@ -98,28 +98,28 @@ template_top($doc_titles[$doc]); ?>
 }
 
 .documentation h1 {
-    color: #2c3e50;
-    border-bottom: 2px solid #3498db;
+    color: #32383f;
+    border-bottom: 2px solid #2f6fdd;
     padding-bottom: 10px;
     margin-bottom: 20px;
 }
 
 .documentation h2 {
-    color: #34495e;
+    color: #32383f;
     margin-top: 30px;
     margin-bottom: 15px;
-    border-left: 4px solid #3498db;
+    border-left: 4px solid #2f6fdd;
     padding-left: 10px;
 }
 
 .documentation h3 {
-    color: #34495e;
+    color: #32383f;
     margin-top: 25px;
     margin-bottom: 10px;
 }
 
 .documentation code {
-    background-color: #f8f9fa;
+    background-color: #fafbfc;
     padding: 2px 6px;
     border-radius: 3px;
     font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
@@ -127,8 +127,8 @@ template_top($doc_titles[$doc]); ?>
 }
 
 .documentation pre {
-    background-color: #f8f9fa;
-    border: 1px solid #e9ecef;
+    background-color: #fafbfc;
+    border: 1px solid #f0f1f2;
     border-radius: 5px;
     padding: 15px;
     overflow-x: auto;
@@ -149,7 +149,7 @@ template_top($doc_titles[$doc]); ?>
 }
 
 .documentation a {
-    color: #3498db;
+    color: #2f6fdd;
     text-decoration: none;
 }
 
@@ -162,13 +162,13 @@ template_top($doc_titles[$doc]); ?>
 }
 
 .back-link a {
-    color: #7f8c8d;
+    color: #6b7280;
     text-decoration: none;
     font-size: 14px;
 }
 
 .back-link a:hover {
-    color: #3498db;
+    color: #2f6fdd;
 }
 </style>
 

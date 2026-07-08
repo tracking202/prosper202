@@ -115,6 +115,31 @@ class ConversionsController
             $data['payout'] = (float)$payload['payout'];
         }
 
+        // LTV: optional customer identity + product line items. An invalid
+        // customer_ref_type or malformed items array is rejected by the
+        // repository with an explicit error — never silently dropped.
+        if (!empty($payload['customer_id'])) {
+            $data['customer_id'] = (int)$payload['customer_id'];
+        }
+        if (!empty($payload['customer_ref'])) {
+            $data['customer_ref'] = (string)$payload['customer_ref'];
+            if (!empty($payload['customer_ref_type'])) {
+                $data['customer_ref_type'] = (string)$payload['customer_ref_type'];
+            }
+        }
+        if (isset($payload['customer_crm'])) {
+            if (!is_array($payload['customer_crm'])) {
+                throw new ValidationException('customer_crm must be an object', ['customer_crm' => 'Must be an object of CRM fields']);
+            }
+            $data['customer_crm'] = $payload['customer_crm'];
+        }
+        if (isset($payload['items'])) {
+            if (!is_array($payload['items'])) {
+                throw new ValidationException('items must be an array', ['items' => 'Must be an array of line items']);
+            }
+            $data['items'] = $payload['items'];
+        }
+
         // Delegate to the single canonical conversion writer so the V3 API and the
         // legacy postback/pixel endpoints share one transactional, idempotent path
         // (locks the click, de-dupes on transaction_id, inserts + flags the click).
@@ -126,6 +151,20 @@ class ConversionsController
             $convId = $repo->create($this->userId, $data);
         } catch (\Prosper202\Conversion\ClickNotFoundException $e) {
             throw new NotFoundException('Click not found or not owned by user');
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+            // A real database failure is a 500 even though QueryException
+            // extends RuntimeException — under MYSQLI_REPORT_STRICT a failed
+            // query surfaces as Connection's QueryException, not
+            // mysqli_sql_exception. Only repository validation maps to 422 below.
+            throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
+        } catch (\RuntimeException $e) {
+            // Validation-shaped repository errors (unknown customer_ref_type,
+            // malformed line items, foreign customer_id) are client-
+            // correctable — 422/404 like the sibling /ltv endpoints, not 500.
+            if (str_contains($e->getMessage(), 'not found for this account')) {
+                throw new NotFoundException($e->getMessage());
+            }
+            throw new ValidationException($e->getMessage());
         } catch (\Throwable $e) {
             // Preserve the underlying failure for server-side logs via getPrevious().
             throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
@@ -137,10 +176,18 @@ class ConversionsController
     public function delete(int $id): void
     {
         $this->get($id);
-        $stmt = $this->prepare('UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ?');
-        $this->bind($stmt, 'ii', $id, $this->userId);
-        $this->execute($stmt, 'Delete failed');
-        $stmt->close();
+
+        // Delegate to the canonical repository so the soft-delete also voids
+        // the conversion's revenue ledger event (compensating adjustment) and
+        // corrects the customer's LTV rollups in the same transaction.
+        $repo = new \Prosper202\Conversion\MysqlConversionRepository(
+            new \Prosper202\Database\Connection($this->db)
+        );
+        try {
+            $repo->softDelete($id, $this->userId);
+        } catch (\Throwable $e) {
+            throw new DatabaseException('Delete failed: ' . $e->getMessage(), $e);
+        }
     }
 
     private function prepare(string $sql): \mysqli_stmt

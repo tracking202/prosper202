@@ -132,6 +132,10 @@ final class UserTables
                 `facebook_ads_linked` int(1) NOT NULL DEFAULT '0',
                 `user_pref_ad_settings` varchar(11) NOT NULL DEFAULT 'show_all',
                 `ipqs_api_key` varchar(250) DEFAULT NULL,
+                `user_ltv_customer_cparam` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `user_ltv_personalization_fields` varchar(500) NOT NULL DEFAULT '',
+                `user_ltv_score_weights` varchar(100) NOT NULL DEFAULT '',
+                `user_ltv_rec_fatigue` varchar(20) NOT NULL DEFAULT '',
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

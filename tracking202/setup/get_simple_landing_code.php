@@ -150,10 +150,10 @@ template_top('Get Landing Page Code');  ?>
     align-items: center;
     gap: 16px;
     padding: 24px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-radius: 12px;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
 }
 .setup-page-header__icon {
     display: flex;
@@ -194,25 +194,25 @@ template_top('Get Landing Page Code');  ?>
     gap: 14px;
     padding: 18px 24px;
     background: #fff;
-    border: 2px solid #e2e8f0;
+    border: 2px solid #e7e8ea;
     border-radius: 12px;
     text-decoration: none;
-    color: #64748b;
+    color: #6b7280;
     transition: all 0.2s ease;
     flex: 1;
 }
 .lp-tab:hover {
-    border-color: #007bff;
-    color: #007bff;
+    border-color: #2f6fdd;
+    color: #2f6fdd;
     text-decoration: none;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.1);
+    transform: none;
+    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.1);
 }
 .lp-tab.active {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    background: #2f6fdd;
     border-color: transparent;
     color: #fff;
-    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.3);
 }
 .lp-tab-icon {
     display: flex;
@@ -220,7 +220,7 @@ template_top('Get Landing Page Code');  ?>
     justify-content: center;
     width: 44px;
     height: 44px;
-    background: rgba(0, 123, 255, 0.1);
+    background: rgba(47, 111, 221, 0.1);
     border-radius: 10px;
     flex-shrink: 0;
 }
@@ -250,7 +250,7 @@ template_top('Get Landing Page Code');  ?>
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    border: 1px solid #e2e8f0;
+    border: 1px solid #e7e8ea;
     overflow: hidden;
     margin-bottom: 20px;
 }
@@ -259,25 +259,25 @@ template_top('Get Landing Page Code');  ?>
     align-items: center;
     gap: 10px;
     padding: 16px 20px;
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
     font-weight: 600;
     font-size: 15px;
-    color: #1e293b;
+    color: #1f2328;
 }
 .lp-panel-header .glyphicon {
-    color: #007bff;
+    color: #2f6fdd;
     font-size: 16px;
 }
 .lp-panel-body {
     padding: 24px;
 }
 .lp-panel-output .lp-panel-header {
-    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
-    border-bottom-color: #a7f3d0;
+    background: #e7f5ec;
+    border-bottom-color: #e7f5ec;
 }
 .lp-panel-output .lp-panel-header .glyphicon {
-    color: #059669;
+    color: #217a41;
 }
 
 /* Form Styling */
@@ -288,7 +288,7 @@ template_top('Get Landing Page Code');  ?>
     display: block;
     font-weight: 600;
     font-size: 13px;
-    color: #475569;
+    color: #374151;
     margin-bottom: 8px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -300,9 +300,9 @@ template_top('Get Landing Page Code');  ?>
     padding: 12px 16px;
     font-size: 14px;
     line-height: 1.5;
-    color: #1e293b;
+    color: #1f2328;
     background: #fff;
-    border: 2px solid #e2e8f0;
+    border: 2px solid #e7e8ea;
     border-radius: 8px;
     transition: all 0.2s ease;
     appearance: none;
@@ -312,14 +312,14 @@ template_top('Get Landing Page Code');  ?>
 }
 .lp-select:focus,
 .lp-panel .form-control:focus {
-    border-color: #007bff;
+    border-color: #2f6fdd;
     outline: none;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.15);
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.15);
 }
 .lp-select:disabled,
 .lp-panel .form-control:disabled {
-    background-color: #f8fafc;
-    color: #94a3b8;
+    background-color: #fafbfc;
+    color: #8a919b;
     cursor: not-allowed;
 }
 
@@ -334,7 +334,7 @@ template_top('Get Landing Page Code');  ?>
     font-size: 15px;
     font-weight: 600;
     color: #fff;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: #217a41;
     border: none;
     border-radius: 8px;
     cursor: pointer;
@@ -342,7 +342,7 @@ template_top('Get Landing Page Code');  ?>
     box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 .lp-btn-primary:hover {
-    transform: translateY(-1px);
+    transform: none;
     box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
 }
 .lp-btn-primary:active {
@@ -363,24 +363,24 @@ template_top('Get Landing Page Code');  ?>
     justify-content: center;
     width: 72px;
     height: 72px;
-    background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+    background: #f0f1f2;
     border-radius: 16px;
     margin-bottom: 16px;
 }
 .lp-empty-icon .glyphicon {
     font-size: 32px;
-    color: #94a3b8;
+    color: #8a919b;
 }
 .lp-empty-state h4 {
     margin: 0 0 8px 0;
     font-size: 16px;
     font-weight: 600;
-    color: #475569;
+    color: #374151;
 }
 .lp-empty-state p {
     margin: 0;
     font-size: 14px;
-    color: #94a3b8;
+    color: #8a919b;
     line-height: 1.5;
 }
 
@@ -389,8 +389,8 @@ template_top('Get Landing Page Code');  ?>
     display: flex;
     gap: 14px;
     padding: 16px;
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border: 1px solid #bbf7d0;
+    background: #e7f5ec;
+    border: 1px solid #e7f5ec;
     border-radius: 10px;
 }
 .lp-help-icon {
@@ -404,19 +404,19 @@ template_top('Get Landing Page Code');  ?>
     flex-shrink: 0;
 }
 .lp-help-icon .glyphicon {
-    color: #059669;
+    color: #217a41;
     font-size: 16px;
 }
 .lp-help-content strong {
     display: block;
     font-size: 13px;
-    color: #065f46;
+    color: #1d6c3a;
     margin-bottom: 4px;
 }
 .lp-help-content p {
     margin: 0;
     font-size: 12px;
-    color: #047857;
+    color: #1d6c3a;
     line-height: 1.5;
 }
 

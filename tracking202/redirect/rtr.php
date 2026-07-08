@@ -9,6 +9,14 @@ if (!is_numeric($tracker_id) || (int)$tracker_id <= 0) die();
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 
+// Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
+// probes) must not record a click — otherwise the speculative hit plus the real
+// navigation double-count the same visit (see p202IsSpeculativeRequest).
+if (p202IsSpeculativeRequest()) {
+	p202DeclineSpeculativeRequest();
+}
+
+
 $usedCachedRedirect = false;
 if (!$db) $usedCachedRedirect = true;
 
@@ -19,6 +27,7 @@ if ($usedCachedRedirect==true) {
 		if ($memcacheWorking) {
 			$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
 			if ($getUrl) {			
+				p202NoStore();
 				header('location: '. $getUrl); 
 				die();
 			}
@@ -69,6 +78,7 @@ if (!$rotator_row) {
 	if ($memcacheWorking) {
 		$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
 		if ($getUrl) {
+			p202NoStore();
 			header('location: ' . $getUrl);
 			die();
 		}
@@ -339,6 +349,7 @@ foreach ($rule_row as $rule) {
 		$default = false;
 		if ($redirect_array !== null) {
 			$redirect = redirect_process($db, $redirect_array, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
+			p202NoStore();
 			header('location: '.$redirect);
 			die();
 		}
@@ -374,6 +385,7 @@ if ($default == true) {
 				}
 			}
 		}
+	p202NoStore();
 	header('location: '.$default);
 	die();
 }

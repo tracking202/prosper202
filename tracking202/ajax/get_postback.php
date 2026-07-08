@@ -32,11 +32,13 @@ include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 	printf('<b>Tracking Pixel For '. $html['aff_campaign_name'].'</b>
                 Here is the tracking pixel for your campaign, give this to the network or advertiser you are working with and ask them to place it on the confirmation page.
                 With the pixel installed on the confirmation page, everytime you get a lead or sale, it will fire the pixel and update your leads automatically when this pixel fires.
-               <textarea class="code_snippet">%s</textarea>', $pixel);
+               ');
+	echo p202_copy_snippet($pixel, ['rows' => 3]);
 	
 	printf('<b>Post Back URL for '. $html['aff_campaign_name'].'</b>
                 If the network you work with supports post back URLS, you can use this URL.  The network should use this post-back URL and call it when a lead or sale takes place
                 and they should put the SUBID at the end of the url.  When the post back url is called it should automatically update your subids for you.
-               <textarea class="code_snippet">%s</textarea>', $postback);	
+               ');
+	echo p202_copy_snippet($postback);
 	
 	

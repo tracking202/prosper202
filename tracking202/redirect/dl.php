@@ -9,6 +9,14 @@ if (!is_numeric($t202id) || (int)$t202id <= 0) die();
 include_once(substr(__DIR__, 0, -21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php');
 
+// Speculative requests must NOT record a click (browser prefetch/prerender +
+// the real navigation would otherwise both count the same visit — see
+// p202IsSpeculativeRequest). Answer with 204 and record nothing; the real
+// navigation re-requests and is counted exactly once.
+if (p202IsSpeculativeRequest()) {
+	p202DeclineSpeculativeRequest();
+}
+
 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
@@ -176,6 +184,7 @@ if ($usedCachedRedirect == true) {
 				$new_url = str_replace("[[utm_content]]", "p202utm_content", $new_url);
 			}
 
+			p202NoStore();
 			header('location: ' . $new_url);
 			die();
 		}
@@ -480,6 +489,12 @@ $click_id = $clickRepo->allocateClickId();
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_alp'] = 0;
 
+// Opt-in tracer (no-op unless 202-config/.click-debug exists): this hit passed
+// the speculative guard and just reserved a click_id, so it WILL count. Pair
+// this line with any 'declined-speculative' line for the same click to see what
+// a double-counting second hit actually looks like at the header level.
+p202LogRedirectHit('dl.php', 'recorded click_id=' . $click_id);
+
 // Generate click_id_public only when cloaking is active (needed for PCI-based lookups via cl.php)
 $click_id_public = '';
 $mysql['click_id_public'] = '';
@@ -600,6 +615,7 @@ if ($redirectLocation === null || $redirectLocation === '') {
 	);
 }
 
+p202NoStore();
 header('Location: ' . $redirectLocation);
 if (function_exists('fastcgi_finish_request')) {
 	fastcgi_finish_request();

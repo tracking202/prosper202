@@ -11,6 +11,49 @@ $(document).ready(function() {
 	$('[data-toggle="checkbox"]').radiocheck();
 	$('[data-toggle="tooltip"]').tooltip();
 	$('[data-toggle="dropdown"]').dropdown();
+
+	// Shared copy-to-clipboard for the .p202-copy snippet component. Delegated
+	// off document so any snippet rendered by any page or AJAX partial works
+	// with no per-page wiring. Falls back to selecting the field (so a manual
+	// copy is one keystroke) when the async clipboard API is unavailable.
+	$(document).on('click', '.p202-copy-btn', function (e) {
+		e.preventDefault();
+		var btn = this;
+		var field = $(btn).closest('.p202-copy').find('.p202-copy-field').get(0);
+		if (!field) { return; }
+		var text = field.value !== undefined ? field.value : field.textContent;
+
+		if (typeof field.focus === 'function') { field.focus(); }
+		if (typeof field.select === 'function') { field.select(); }
+		if (typeof field.setSelectionRange === 'function') {
+			try { field.setSelectionRange(0, String(text).length); } catch (err) {}
+		}
+
+		var flash = function (ok) {
+			var label = $(btn).find('.p202-copy-label');
+			var original = btn.getAttribute('data-copy-label') || 'Copy';
+			$(btn).toggleClass('is-copied', !!ok);
+			if (label.length) { label.text(ok ? 'Copied!' : 'Press Ctrl/⌘ C'); }
+			window.setTimeout(function () {
+				$(btn).removeClass('is-copied');
+				if (label.length) { label.text(original); }
+			}, 1600);
+		};
+
+		var legacyCopy = function () {
+			try { return !!(document.execCommand && document.execCommand('copy')); }
+			catch (err) { return false; }
+		};
+
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(text).then(
+				function () { flash(true); },
+				function () { flash(legacyCopy()); }
+			);
+		} else {
+			flash(legacyCopy());
+		}
+	});
     
 	var validator = $("#survey-form").validate({
 	  	    ignore:[],
@@ -780,7 +823,8 @@ $(document).on('change', ':radio[name=chart_time_range]', function() {
 		        series: data.json.series
 			});
 			element.css("opacity", "1");
-	});
+	})
+		.fail(function(xhr) { p202AjaxLoadFail(element, xhr); });
 });
 
 $(document).on('click', '#add_more_chart_data_type', function(e) {
@@ -1151,7 +1195,8 @@ function generate_simple_lp_tracking_links() {
 		  .done(function(data) {
 		  	element.css("opacity", "1");
 		  	element.html(data);
-		});
+		})
+		  .fail(function(xhr) { p202AjaxLoadFail(element, xhr); });
 }
 
 //Remove offer on ADV LP
@@ -1186,7 +1231,8 @@ function generate_adv_lp_tracking_links() {
 		  .done(function(data) {
 		  	element.css("opacity", "1");
 		  	element.html(data);
-		});
+		})
+		  .fail(function(xhr) { p202AjaxLoadFail(element, xhr); });
 }
 
 //Load methods of promotion (direct/lp)
@@ -1353,15 +1399,202 @@ function pixel_data_changed(trackingDomain) {
 		$('#unsecure_universal_pixel_js').val(universal_pixel_code_js.replace('{{0}}',http_val).replace('{{0}}',http_val).replace('{{1}}',amount_value).replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value).replace('{{3}}',subid_value).replace('{{3}}',subid_value));//.replace('{{1}}',amount_value).replace('{{2}}',campaign_id_value));
 }
 
+// Shared AJAX failure handler for the dim-then-swap panels (report grid, code
+// generators, charts): restore the panel and surface a clear message instead
+// of leaving it dimmed or spinning forever with no feedback (session expiry,
+// network drop).
+function p202AjaxLoadFail(element, xhr) {
+	element.css('opacity', '1');
+	element.html(
+		'<div class="alert alert-danger" style="margin:12px 0;">The request failed ('
+		+ (xhr && xhr.status ? 'HTTP ' + xhr.status : 'network error')
+		+ '). Your session may have expired &mdash; reload the page and try again.</div>'
+	);
+}
+
 function loadContent(page, offset, order){
 	var element = $('#m-content');
 	var chartWidth = element.width();
+
+	// Show a spinner while the report loads so a page swap / pagination /
+	// drill-down never looks frozen.
+	element.css("opacity", "0.5");
+	if (!element.find('#stats-table').length) {
+		element.html('<div class="p202-loading-wrap"><span class="p202-spinner"></span>Loading&hellip;</div>');
+	}
 
 	$.post(page, { offset: offset, order: order, chartWidth:chartWidth})
 		  .done(function(data) {
 		  	element.html(data);
 		  	element.css("opacity", "1");
+		})
+		  .fail(function(xhr) { p202AjaxLoadFail(element, xhr); });
+}
+
+// POST a payload and swap the response into #m-content. Unlike bare
+// $.post().done() copies, a failed request restores the panel and tells the
+// user instead of leaving the page dimmed with no feedback.
+function loadContentPost(page, payload, done) {
+	var element = $('#m-content');
+	$.post(page, payload || {})
+		.done(function(data) {
+			element.html(data);
+			element.css('opacity', '1');
+			// After the partial is in the DOM — scroll restoration needs the
+			// page to have its real height before an offset can be applied.
+			if (done) { done(); }
+		})
+		.fail(function(xhr) {
+			element.css('opacity', '1');
+			element.prepend(
+				'<div class="alert alert-danger">The request failed ('
+				+ (xhr && xhr.status ? 'HTTP ' + xhr.status : 'network error')
+				+ '). Your session may have expired &mdash; reload the page and try again.</div>'
+			);
 		});
+}
+
+// ── LTV section history routing ──────────────────────────────────────
+// The LTV views are AJAX partials swapped into #m-content, so without URL
+// state the browser can't bookmark a view and back/forward do nothing.
+// ltvNav() renders a view AND records it in the address bar as
+// analyze/ltv.php?view=..., the popstate handler re-renders on
+// back/forward, and ltv.php seeds the initial view from its query string.
+// Only navigation goes through here — mutating posts (saves, deletes,
+// merges) still call loadContentPost directly, so a bookmarked URL can
+// never replay a mutation.
+var ltvViewPartials = {
+	report: 'sort_ltv',
+	customer: 'ltv_customer',
+	company: 'ltv_company',
+	companies: 'ltv_companies',
+	products: 'ltv_products',
+	subscriptions: 'ltv_subscriptions',
+	settings: 'ltv_settings'
+};
+var ltvPageUrl = '<?php echo get_absolute_url(); ?>tracking202/analyze/ltv.php';
+
+function ltvIsLtvPage() {
+	var a = document.createElement('a');
+	a.href = ltvPageUrl;
+	return window.location.pathname === a.pathname;
+}
+
+function ltvRender(view, params, done) {
+	var partial = ltvViewPartials[view] || ltvViewPartials.report;
+	loadContentPost('<?php echo get_absolute_url(); ?>tracking202/ajax/' + partial + '.php', params || {}, done);
+}
+
+// Record how far down the CURRENT view is scrolled on its own history
+// entry, so Back/Forward can put the user right where they left it. The
+// partials swap in async, which is why the browser's native restoration
+// can't do this (the page has no height yet when it would fire).
+function ltvStampScroll() {
+	if (!(window.history && window.history.replaceState)) { return; }
+	var state = window.history.state || {};
+	state.ltvScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
+	window.history.replaceState(state, '', window.location.href);
+}
+
+function ltvUrl(view, params) {
+	var query = [];
+	if (view !== 'report') {
+		query.push('view=' + encodeURIComponent(view));
+	}
+	$.each(params || {}, function(key, value) {
+		// Zero/empty values are the defaults everywhere in this section
+		// (offset 0, no status filter) — leave them out of bookmarks.
+		if (value === undefined || value === null || value === '' || value === 0 || value === '0') { return; }
+		query.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+	});
+	return ltvPageUrl + (query.length ? '?' + query.join('&') : '');
+}
+
+function ltvNav(view, params, replace) {
+	params = params || {};
+	if (!ltvViewPartials[view]) { view = 'report'; }
+	// Partials can only render inside ltv.php's #m-content; from anywhere
+	// else (e.g. a dashboard widget) follow the deep link as a page load.
+	if (!ltvIsLtvPage()) {
+		window.location.href = ltvUrl(view, params);
+		return;
+	}
+	// Stamp the departing entry's scroll offset before it becomes the Back
+	// target; switching to a DIFFERENT section starts at the top, while
+	// same-view updates (pagination, search, sorting) keep the position.
+	ltvStampScroll();
+	var previousView = (window.history && window.history.state && window.history.state.ltvView) || null;
+	var scrollTop = previousView !== null && previousView !== view;
+	ltvRender(view, params, scrollTop ? function() { window.scrollTo(0, 0); } : null);
+	if (window.history && window.history.pushState) {
+		var url = ltvUrl(view, params);
+		// Re-clicking the current view refreshes it without stacking a
+		// duplicate history entry the user would have to Back through.
+		var method = (replace || window.location.href === url) ? 'replaceState' : 'pushState';
+		window.history[method]({ ltvView: view, ltvParams: params }, '', url);
+	}
+}
+
+function ltvParseQuery() {
+	var params = {};
+	var search = window.location.search.replace(/^\?/, '');
+	if (search === '') { return params; }
+	var decode = function(str) {
+		try {
+			return decodeURIComponent(str.replace(/\+/g, '%20'));
+		} catch (e) {
+			return ''; // malformed escape in a hand-edited URL
+		}
+	};
+	var pairs = search.split('&');
+	for (var i = 0; i < pairs.length; i++) {
+		if (pairs[i] === '') { continue; }
+		var eq = pairs[i].indexOf('=');
+		var key = decode(eq === -1 ? pairs[i] : pairs[i].substring(0, eq));
+		if (key === '') { continue; }
+		params[key] = decode(eq === -1 ? '' : pairs[i].substring(eq + 1));
+	}
+	return params;
+}
+
+function ltvViewFromLocation() {
+	var params = ltvParseQuery();
+	// ?customer_id=N without a view is the legacy deep-link form.
+	var view = params.view || (params.customer_id ? 'customer' : 'report');
+	delete params.view;
+	return { view: view, params: params };
+}
+
+window.addEventListener('popstate', function(event) {
+	if (!ltvIsLtvPage()) { return; }
+	// Re-apply the offset stamped on the entry once its partial has
+	// rendered; entries never scrolled (or predating the router) start at
+	// the top.
+	var scrollY = (event.state && typeof event.state.ltvScroll === 'number') ? event.state.ltvScroll : 0;
+	var restore = function() { window.scrollTo(0, scrollY); };
+	if (event.state && event.state.ltvView) {
+		ltvRender(event.state.ltvView, event.state.ltvParams || {}, restore);
+	} else {
+		var target = ltvViewFromLocation();
+		ltvRender(target.view, target.params, restore);
+	}
+});
+
+// Keep each entry's stamp current while the user scrolls (debounced —
+// replaceState is rate-limited in some browsers), so Back returns to the
+// LATEST position even after a Back/Forward round trip re-entered the view.
+var ltvScrollStampTimer = null;
+window.addEventListener('scroll', function() {
+	if (!ltvIsLtvPage()) { return; }
+	if (ltvScrollStampTimer) { clearTimeout(ltvScrollStampTimer); }
+	ltvScrollStampTimer = setTimeout(ltvStampScroll, 150);
+});
+
+// The LTV page owns its scroll restoration (content arrives async); the
+// browser's native attempt would fire before the partial exists and pin
+// the page to the top.
+if (window.history && 'scrollRestoration' in window.history && ltvIsLtvPage()) {
+	window.history.scrollRestoration = 'manual';
 }
 
 function createCookie(name,value,days) {

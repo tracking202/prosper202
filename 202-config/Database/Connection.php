@@ -7,7 +7,7 @@ namespace Prosper202\Database;
 use mysqli;
 use mysqli_result;
 use mysqli_stmt;
-use RuntimeException;
+use Prosper202\Database\Exceptions\QueryException;
 use Throwable;
 
 /**
@@ -47,7 +47,7 @@ final class Connection
      * impossible to create proper subclass fakes.
      *
      * @return mysqli_stmt
-     * @throws RuntimeException if the prepare fails
+     * @throws QueryException if the prepare fails
      */
     public function prepareWrite(string $sql)
     {
@@ -58,7 +58,7 @@ final class Connection
      * Prepare a statement on the read (replica) connection, falling back to write.
      *
      * @return mysqli_stmt
-     * @throws RuntimeException if the prepare fails
+     * @throws QueryException if the prepare fails
      */
     public function prepareRead(string $sql)
     {
@@ -73,7 +73,7 @@ final class Connection
      *
      * @param mysqli_stmt $stmt
      * @param array<int, mixed> $values positional parameter values
-     * @throws RuntimeException if the bind fails
+     * @throws QueryException if the bind fails
      */
     public function bind(object $stmt, string $types, array $values): void
     {
@@ -82,7 +82,7 @@ final class Connection
         }
 
         if (strlen($types) !== count($values)) {
-            throw new RuntimeException(
+            throw new QueryException(
                 'bind_param type string length (' . strlen($types) . ') does not match value count (' . count($values) . ').'
             );
         }
@@ -101,7 +101,7 @@ final class Connection
 
         if (!call_user_func_array($stmt->bind_param(...), $refs)) {
             unset($this->boundValues[$stmtId]);
-            throw new RuntimeException('Failed to bind MySQL parameters.');
+            throw new QueryException('Failed to bind MySQL parameters.');
         }
     }
 
@@ -119,7 +119,7 @@ final class Connection
      * PHPStan enforces mysqli_stmt via the annotation.
      *
      * @param mysqli_stmt $stmt
-     * @throws RuntimeException if execute returns false
+     * @throws QueryException if execute returns false
      */
     public function execute(object $stmt): void
     {
@@ -130,11 +130,60 @@ final class Connection
             } catch (\Error) {
                 $error = '(unknown)';
             }
+            try {
+                $errno = (int) $stmt->errno;
+            } catch (\Error) {
+                $errno = 0;
+            }
             unset($this->boundValues[spl_object_id($stmt)]);
             $stmt->close();
-            throw new RuntimeException('MySQL execute failed: ' . $error);
+            // The errno tag makes error-class detection (deadlock, duplicate
+            // key, unknown column) locale-independent — the message text
+            // follows the server's lc_messages setting.
+            throw new QueryException(
+                'MySQL execute failed: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
+            );
         }
         unset($this->boundValues[spl_object_id($stmt)]);
+    }
+
+    /**
+     * True when the throwable (or anything in its previous-chain) is a MySQL
+     * deadlock (1213) or lock-wait timeout (1205) — the retryable lock
+     * errors. Works across both mysqli reporting modes this codebase runs
+     * under: STRICT|ERROR paths surface mysqli_sql_exception with the errno
+     * as its code; STRICT-only paths surface this class's QueryException,
+     * detected via the [errno N] tag with an English-message fallback for
+     * exceptions raised before the tag existed.
+     */
+    public static function isRetryableLockError(Throwable $e): bool
+    {
+        return self::isMysqlError($e, 1213, 'Deadlock found')
+            || self::isMysqlError($e, 1205, 'Lock wait timeout');
+    }
+
+    /**
+     * True when the throwable (or anything in its previous-chain) is the
+     * given MySQL error, detected locale-independently: mysqli_sql_exception
+     * carries the errno as its code (STRICT|ERROR reporting paths), this
+     * class's QueryException carries the [errno N] tag (STRICT-only
+     * paths), and the English message fragment covers exceptions raised
+     * before the tag existed.
+     */
+    public static function isMysqlError(Throwable $e, int $errno, string $englishFragment): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if ($current instanceof \mysqli_sql_exception && (int) $current->getCode() === $errno) {
+                return true;
+            }
+            $message = $current->getMessage();
+            if (str_contains($message, '[errno ' . $errno . ']')
+                || ($englishFragment !== '' && str_contains($message, $englishFragment))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -185,7 +234,7 @@ final class Connection
      * does not report one (behaviour varies by mysqli driver version).
      *
      * @param mysqli_stmt $stmt
-     * @throws RuntimeException if execute fails
+     * @throws QueryException if execute fails
      */
     public function executeInsert(object $stmt): int
     {
@@ -214,7 +263,7 @@ final class Connection
      * Execute an UPDATE/DELETE statement, return affected rows, and close.
      *
      * @param mysqli_stmt $stmt
-     * @throws RuntimeException if execute fails
+     * @throws QueryException if execute fails
      */
     public function executeUpdate(object $stmt): int
     {
@@ -247,7 +296,7 @@ final class Connection
             } catch (\Error) {
                 $error = '(unknown)';
             }
-            throw new RuntimeException('Unable to begin transaction: ' . $error);
+            throw new QueryException('Unable to begin transaction: ' . $error);
         }
 
         try {
@@ -259,7 +308,14 @@ final class Connection
                 } catch (\Error) {
                     $error = '(unknown)';
                 }
-                throw new RuntimeException('Unable to commit transaction: ' . $error);
+                try {
+                    $errno = (int) $this->write->errno;
+                } catch (\Error) {
+                    $errno = 0;
+                }
+                throw new QueryException(
+                    'Unable to commit transaction: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
+                );
             }
 
             return $result;
@@ -289,7 +345,7 @@ final class Connection
 
     /**
      * @return mysqli_stmt
-     * @throws RuntimeException if the prepare fails
+     * @throws QueryException if the prepare fails
      */
     private function prepare(mysqli $connection, string $sql)
     {
@@ -300,7 +356,14 @@ final class Connection
             } catch (\Error) {
                 $error = '(unknown)';
             }
-            throw new RuntimeException('Failed to prepare MySQL statement: ' . $error);
+            try {
+                $errno = (int) $connection->errno;
+            } catch (\Error) {
+                $errno = 0;
+            }
+            throw new QueryException(
+                'Failed to prepare MySQL statement: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
+            );
         }
 
         return $stmt;
