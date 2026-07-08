@@ -17,7 +17,20 @@ use RuntimeException;
  */
 final class MysqlWebhookRepository
 {
-    public const EVENTS = ['customer.updated', 'revenue.recorded', 'subscription.changed'];
+    /**
+     * Known event names — a documentation/UI listing, NOT a validation
+     * allowlist. Validation is well-formedness only (assertEventName), so a
+     * webhook registered with the '*' wildcard receives events added by
+     * future versions without re-registration, and new emitters need no
+     * repository edits.
+     */
+    public const KNOWN_EVENTS = [
+        'customer.updated',
+        'revenue.recorded',
+        'subscription.changed',
+        'conversion.recorded',
+        'engagement.recorded',
+    ];
 
     /** Max delivery attempts before a delivery is failed and the hook may die. */
     public const MAX_ATTEMPTS = 6;
@@ -101,10 +114,28 @@ final class MysqlWebhookRepository
     }
 
     /**
+     * Well-formedness rule for event names (not a membership check): a
+     * namespaced lowercase slug such as "conversion.recorded". Deliberately
+     * permissive about WHICH events exist so future emitters and versions
+     * need no repository edits — see KNOWN_EVENTS for the current listing.
+     *
+     * @throws RuntimeException when the name is not a namespaced slug
+     */
+    private static function assertEventName(string $event): void
+    {
+        if (preg_match('/^[a-z0-9_]+(\.[a-z0-9_-]+)+$/', $event) !== 1) {
+            throw new RuntimeException('Event name must be namespaced lowercase slug, e.g. conversion.recorded');
+        }
+    }
+
+    /**
      * Register a webhook endpoint. Returns [webhook_id, secret] — the secret
      * is generated server-side and shown once.
      *
-     * @param list<string> $events subset of self::EVENTS
+     * @param list<string> $events well-formed event names (see KNOWN_EVENTS
+     *        for the current listing), or ['*'] to subscribe to every current
+     *        AND future event — stored as '', which enqueue() already treats
+     *        as subscribe-all. [] defaults to KNOWN_EVENTS.
      * @return array{webhookId: int, secret: string}
      */
     public function create(int $userId, string $url, array $events): array
@@ -113,14 +144,18 @@ final class MysqlWebhookRepository
 
         $events = array_values(array_unique(array_map(strval(...), $events)));
         if ($events === []) {
-            $events = self::EVENTS;
+            $events = self::KNOWN_EVENTS;
         }
-        foreach ($events as $event) {
-            if (!in_array($event, self::EVENTS, true)) {
-                throw new RuntimeException(
-                    'Unknown webhook event "' . $event . '"; expected any of: ' . implode(', ', self::EVENTS)
-                );
+        if (in_array('*', $events, true)) {
+            if ($events !== ['*']) {
+                throw new RuntimeException("The '*' wildcard cannot be combined with individual event names");
             }
+            $subscribedEvents = '';
+        } else {
+            foreach ($events as $event) {
+                self::assertEventName($event);
+            }
+            $subscribedEvents = implode(',', $events);
         }
 
         $secret = bin2hex(random_bytes(24));
@@ -131,7 +166,7 @@ final class MysqlWebhookRepository
                 (user_id, webhook_url, webhook_secret, webhook_headers, subscribed_events, status, created_at, updated_at)
              VALUES (?, ?, ?, NULL, ?, 'active', ?, ?)"
         );
-        $this->conn->bind($stmt, 'isssii', [$userId, $url, $secret, implode(',', $events), $now, $now]);
+        $this->conn->bind($stmt, 'isssii', [$userId, $url, $secret, $subscribedEvents, $now, $now]);
         $webhookId = $this->conn->executeInsert($stmt);
 
         return ['webhookId' => $webhookId, 'secret' => $secret];
@@ -165,9 +200,7 @@ final class MysqlWebhookRepository
      */
     public function enqueue(int $userId, string $eventName, array $payload): void
     {
-        if (!in_array($eventName, self::EVENTS, true)) {
-            throw new RuntimeException('Unknown webhook event: ' . $eventName);
-        }
+        self::assertEventName($eventName);
 
         $stmt = $this->conn->prepareRead(
             "SELECT webhook_id FROM 202_ltv_webhooks
