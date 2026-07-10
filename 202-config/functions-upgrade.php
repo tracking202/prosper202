@@ -3860,10 +3860,33 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.73', '>')) {
+        if ($prosper202_version == '1.9.73') {
 
-            $prosper202_version = '1.9.73';
+            // Landing Page Optimizer t202ctx keyword privacy pref
+            // (p202-edge-sync §8): default on ('1'); '0' omits keyword text
+            // from the signed context tokens minted in rtr.php. Guarded
+            // ALTER so a partial failure retries cleanly on the next run.
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'bandit_ctx_kw'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $ctx_kw_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_users_pref` ADD COLUMN `bandit_ctx_kw` tinyint(1) NOT NULL DEFAULT '1'"
+            ) !== false;
+
+            if ($ctx_kw_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.74'") !== false) {
+                    $prosper202_version = '1.9.74';
+                } else {
+                    error_log('Prosper202 upgrade: added bandit_ctx_kw pref but failed to persist version 1.9.74; leaving version at 1.9.73 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to add 202_users_pref bandit_ctx_kw column; leaving version at 1.9.73 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.74', '>')) {
+
+            $prosper202_version = '1.9.74';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

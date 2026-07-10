@@ -24,6 +24,7 @@ error_reporting(E_ALL);
 
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 
+use Prosper202\Bandit\CtxToken;
 use Prosper202\Bandit\PairingClient;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
@@ -70,6 +71,29 @@ foreach ($paired as $row) {
         $webhookId = (int) ($state['webhook_id'] ?? 0);
         if ($webhookId <= 0) {
             throw new RuntimeException('no local webhook recorded for this pairing');
+        }
+
+        // Backfill the derived t202ctx key for pairings created before
+        // ctx_token support (p202-edge-sync §3.3). New pairings cache it at
+        // connect time; older ones pick it up here on the next cron pass —
+        // the redirect hot path never derives or writes, it just skips
+        // minting until this lands. Runs BEFORE the freshness gate so
+        // config-fresh users are healed too.
+        if (preg_match('/^[0-9a-f]{64}$/', (string) ($state['ctx_key'] ?? '')) !== 1) {
+            $keyStmt = $conn->prepareRead(
+                'SELECT webhook_secret FROM 202_ltv_webhooks WHERE webhook_id = ? AND user_id = ? LIMIT 1'
+            );
+            $conn->bind($keyStmt, 'ii', [$webhookId, $userId]);
+            $keyRow = $conn->fetchOne($keyStmt);
+            if ($keyRow !== null && (string) $keyRow['webhook_secret'] !== '') {
+                $state['ctx_key'] = bin2hex(CtxToken::deriveKey((string) $keyRow['webhook_secret']));
+                $keyJson = json_encode($state);
+                if ($keyJson !== false) {
+                    $persist = $conn->prepareWrite('UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ?');
+                    $conn->bind($persist, 'si', [$keyJson, $userId]);
+                    $conn->executeUpdate($persist);
+                }
+            }
         }
 
         // Respect the server-set poll interval (default 6h).

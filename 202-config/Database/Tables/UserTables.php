@@ -139,6 +139,7 @@ final class UserTables
                 `bandit_site_key` varchar(64) NOT NULL DEFAULT '',
                 `bandit_status` varchar(16) NOT NULL DEFAULT '',
                 `bandit_bridge_config` text DEFAULT NULL,
+                `bandit_ctx_kw` tinyint(1) NOT NULL DEFAULT '1',
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

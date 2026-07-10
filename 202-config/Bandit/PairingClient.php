@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Bandit;
 
 use Prosper202\Bridge\EventBridge;
+use Prosper202\Ltv\MysqlWebhookRepository;
 use RuntimeException;
 
 /**
@@ -30,11 +31,13 @@ final class PairingClient
         'wildcard_subscribe' => true,
         'remote_config' => true,
         'v3_api' => true,
+        'ctx_token' => 'v1',
+        'dimensions_sync' => 'v1',
     ];
 
     private string $baseUrl;
 
-    /** @var callable(string, string, ?string): array{0: int, 1: string} */
+    /** @var callable(string, string, ?string, list<string>): array{0: int, 1: string} */
     private $transport;
 
     /**
@@ -123,11 +126,33 @@ final class PairingClient
     }
 
     /**
+     * Push the dimension-map snapshot (p202-edge-sync §4.2): the install's
+     * traffic-source / campaign / landing-page dictionaries, signed over the
+     * exact raw body with the pairing webhook secret — byte-identical to the
+     * webhook dispatcher's signing (MysqlWebhookRepository::signature).
+     *
+     * @param array{networks: list<array<string, mixed>>, accounts: list<array<string, mixed>>, campaigns: list<array<string, mixed>>, landing_pages: list<array<string, mixed>>} $snapshot
+     * @return array<string, mixed>
+     */
+    public function pushDimensions(string $installHash, array $snapshot, string $webhookSecret): array
+    {
+        $encodedBody = json_encode([
+            'install_hash' => $installHash,
+            'bridge_version' => EventBridge::BRIDGE_VERSION,
+            'snapshot' => $snapshot,
+        ]);
+        if ($encodedBody === false) {
+            throw new RuntimeException('Failed to encode dimensions snapshot for /api/v2/bandit/dimensions');
+        }
+
+        return $this->requestEncoded('POST', '/api/v2/bandit/dimensions', $encodedBody, [
+            'X-P202-Signature: ' . MysqlWebhookRepository::signature($encodedBody, $webhookSecret),
+        ]);
+    }
+
+    /**
      * @param array<string, mixed>|null $body null = no request body (GET)
      * @return array<string, mixed>
-     * @throws RuntimeException on transport failure, non-2xx status, or a
-     *         non-JSON response — malformed responses are errors, never
-     *         silently empty
      */
     private function request(string $method, string $path, ?array $body): array
     {
@@ -139,25 +164,68 @@ final class PairingClient
             }
         }
 
-        [$status, $responseBody] = ($this->transport)($method, $this->baseUrl . $path, $encodedBody);
+        return $this->requestEncoded($method, $path, $encodedBody);
+    }
+
+    /**
+     * @param list<string> $extraHeaders extra "Name: value" request headers
+     * @return array<string, mixed>
+     * @throws PairingRequestException on transport failure, non-2xx status,
+     *         or a non-JSON response — malformed responses are errors, never
+     *         silently empty
+     */
+    private function requestEncoded(string $method, string $path, ?string $encodedBody, array $extraHeaders = []): array
+    {
+        $url = $this->baseUrl . $path;
+
+        [$status, $responseBody] = ($this->transport)($method, $url, $encodedBody, $extraHeaders);
 
         if ($status < 200 || $status >= 300) {
-            throw new RuntimeException(
-                'Pairing request ' . $path . ' failed with HTTP ' . $status . ': ' . substr($responseBody, 0, 200)
+            throw new PairingRequestException(
+                'Pairing request ' . $path . ' failed with HTTP ' . $status . ': ' . substr($responseBody, 0, 200),
+                PairingRequestException::KIND_HTTP,
+                $url,
+                $status,
+                self::serverErrorMessage($responseBody)
             );
         }
         $decoded = json_decode($responseBody, true);
         if (!is_array($decoded)) {
-            throw new RuntimeException('Pairing request ' . $path . ' returned invalid JSON');
+            throw new PairingRequestException(
+                'Pairing request ' . $path . ' returned invalid JSON',
+                PairingRequestException::KIND_BAD_RESPONSE,
+                $url,
+                $status
+            );
         }
 
         return $decoded;
     }
 
     /**
+     * A human-readable error the SaaS included in a JSON error body
+     * ({"error": "..."} or {"message": "..."}), or null. HTML and anything
+     * non-JSON is never surfaced.
+     */
+    private static function serverErrorMessage(string $responseBody): ?string
+    {
+        $decoded = json_decode($responseBody, true);
+        if (!is_array($decoded)) {
+            return null;
+        }
+        foreach (['error', 'message'] as $key) {
+            if (isset($decoded[$key]) && is_string($decoded[$key]) && trim($decoded[$key]) !== '') {
+                return trim($decoded[$key]);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @param list<string> $extraHeaders extra "Name: value" request headers
      * @return array{0: int, 1: string} [status code, response body]
      */
-    private function curlTransport(string $method, string $url, ?string $jsonBody): array
+    private function curlTransport(string $method, string $url, ?string $jsonBody, array $extraHeaders = []): array
     {
         if (!str_starts_with($url, 'https://')) {
             throw new RuntimeException('Pairing requests must use https:// (got ' . $url . ')');
@@ -177,11 +245,11 @@ final class PairingClient
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_HTTPHEADER => [
+            CURLOPT_HTTPHEADER => array_merge([
                 'Content-Type: application/json',
                 'Accept: application/json',
                 'User-Agent: Prosper202-Bandit-Bridge/' . EventBridge::BRIDGE_VERSION,
-            ],
+            ], $extraHeaders),
         ];
         if ($jsonBody !== null) {
             $options[CURLOPT_POSTFIELDS] = $jsonBody;
@@ -194,7 +262,11 @@ final class PairingClient
         curl_close($ch);
 
         if ($responseBody === false) {
-            throw new RuntimeException('Pairing request to ' . $url . ' failed: ' . $curlError);
+            throw new PairingRequestException(
+                'Pairing request to ' . $url . ' failed: ' . $curlError,
+                PairingRequestException::KIND_TRANSPORT,
+                $url
+            );
         }
 
         return [$statusCode, (string) $responseBody];

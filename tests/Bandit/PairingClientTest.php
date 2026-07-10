@@ -48,6 +48,8 @@ final class PairingClientTest extends TestCase
         self::assertTrue($body['capabilities']['wildcard_subscribe']);
         self::assertTrue($body['capabilities']['remote_config']);
         self::assertTrue($body['capabilities']['v3_api']);
+        self::assertSame('v1', $body['capabilities']['ctx_token']);
+        self::assertSame('v1', $body['capabilities']['dimensions_sync']);
     }
 
     public function testPairCompleteCarriesWebhookIdAndSecretOnce(): void
@@ -81,6 +83,41 @@ final class PairingClientTest extends TestCase
         self::assertSame(
             'https://saas.example/api/v2/bandit/bridge/config?install_hash=hash-1&bridge_version=' . EventBridge::BRIDGE_VERSION,
             $this->calls[0]['url']
+        );
+    }
+
+    public function testPushDimensionsSignsTheExactRawBody(): void
+    {
+        $calls = [];
+        $client = new PairingClient('https://saas.example', function (string $method, string $url, ?string $body, array $extraHeaders = []) use (&$calls): array {
+            $calls[] = ['method' => $method, 'url' => $url, 'body' => $body, 'headers' => $extraHeaders];
+
+            return [200, '{"status":"accepted"}'];
+        });
+
+        $snapshot = [
+            'networks' => [['id' => 3, 'name' => 'Facebook Ads']],
+            'accounts' => [['id' => 12, 'name' => 'FB – Acct A', 'network_id' => 3]],
+            'campaigns' => [['id' => 340, 'name' => 'Summer Promo', 'aff_network_id' => 7]],
+            'landing_pages' => [['id' => 18, 'name' => 'Blue LP v2']],
+        ];
+        $response = $client->pushDimensions('hash-1', $snapshot, 'secret-abc');
+
+        self::assertSame('accepted', $response['status']);
+        self::assertCount(1, $calls);
+        self::assertSame('POST', $calls[0]['method']);
+        self::assertSame('https://saas.example/api/v2/bandit/dimensions', $calls[0]['url']);
+
+        $body = json_decode((string) $calls[0]['body'], true);
+        self::assertSame('hash-1', $body['install_hash']);
+        self::assertSame(EventBridge::BRIDGE_VERSION, $body['bridge_version']);
+        self::assertSame($snapshot, $body['snapshot']);
+
+        // The signature header covers the exact raw body bytes, in the house
+        // webhook-dispatcher scheme (MysqlWebhookRepository::signature).
+        self::assertSame(
+            ['X-P202-Signature: sha256=' . hash_hmac('sha256', (string) $calls[0]['body'], 'secret-abc')],
+            $calls[0]['headers']
         );
     }
 
