@@ -143,6 +143,23 @@ function apiint_endpoint($label, $url)
 }
 
 $strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
+
+/**
+ * rtr.php caches the bandit t202ctx prefs (bandit_status, bandit_bridge_config,
+ * bandit_ctx_kw) for 3 minutes under md5(<exact SELECT> . systemHash()). Any
+ * pref change that alters minting behavior (keyword privacy opt-out, connect/
+ * disconnect) must drop that key so live redirects pick the change up
+ * immediately, not at TTL expiry (review finding). Keep the SELECT byte-
+ * identical to rtr.php's.
+ */
+function bandit_ctx_pref_cache_bust($userId)
+{
+	if (empty($GLOBALS['memcacheWorking']) || empty($GLOBALS['memcache'])) {
+		return;
+	}
+	$sql = "SELECT bandit_status, bandit_bridge_config, bandit_ctx_kw FROM 202_users_pref WHERE user_id='" . (int) $userId . "'";
+	$GLOBALS['memcache']->delete(md5($sql . systemHash()));
+}
 $mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ?? ''));
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
@@ -310,6 +327,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				}
 				updateUserPreference('bandit_site_key', $bandit_site_key, $bandit_user_id, $db);
 				updateUserPreference('bandit_status', 'active', $bandit_user_id, $db);
+			bandit_ctx_pref_cache_bust($bandit_user_id);
 				updateUserPreference('bandit_bridge_config', $bandit_state, $bandit_user_id, $db);
 				header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=connected#bandit');
 				die();
@@ -335,6 +353,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 			updateUserPreference('bandit_site_key', '', $bandit_user_id, $db);
 			updateUserPreference('bandit_status', '', $bandit_user_id, $db);
+			bandit_ctx_pref_cache_bust($bandit_user_id);
 			updateUserPreference('bandit_bridge_config', '', $bandit_user_id, $db);
 			header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=disconnected#bandit');
 			die();
@@ -363,6 +382,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$bandit_ctx_kw_new = !empty($_POST['bandit_ctx_kw']) ? '1' : '0';
 		if ($bandit_ctx_kw_new !== (string) ($user_row['bandit_ctx_kw'] ?? '1')) {
 			updateUserPreference('bandit_ctx_kw', $bandit_ctx_kw_new, $_SESSION['user_id'], $db);
+			bandit_ctx_pref_cache_bust($_SESSION['user_id']);
 			$user_row['bandit_ctx_kw'] = $bandit_ctx_kw_new;
 		}
 		$bandit_ctx_kw_saved = true;
