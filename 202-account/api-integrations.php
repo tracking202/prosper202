@@ -288,8 +288,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					// Replayed/double submit: never stack a second webhook.
 					throw new RuntimeException('Already connected. Disconnect first to re-pair.');
 				}
-				if ($bandit_api_key === '' || $bandit_install_hash === '') {
+				if ($bandit_api_key === '') {
 					throw new RuntimeException('A Prosper202 Customer API key is required to connect — use the button below to get yours.');
+				}
+				if ($bandit_install_hash === '') {
+					// distinct cause, distinct message (a blank install hash used
+					// to masquerade as a missing API key): the hash is created by
+					// the installer on the owner account and identifies this
+					// install to the SaaS — without it pairing cannot proceed.
+					throw new RuntimeException('This account has no install hash, so the install cannot pair. Log in as the account owner (user 1) to connect.');
 				}
 				$bandit_install_url = $strProtocol . $_SERVER['HTTP_HOST'] . rtrim(get_absolute_url(), '/');
 				$bandit_init = $bandit_client->pairInit($bandit_api_key, $bandit_install_hash, $bandit_install_url);
@@ -327,8 +334,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				}
 				updateUserPreference('bandit_site_key', $bandit_site_key, $bandit_user_id, $db);
 				updateUserPreference('bandit_status', 'active', $bandit_user_id, $db);
-			bandit_ctx_pref_cache_bust($bandit_user_id);
 				updateUserPreference('bandit_bridge_config', $bandit_state, $bandit_user_id, $db);
+				// bust AFTER the last pref write: a redirect racing between the
+				// status and config writes could otherwise cache active-with-
+				// stale-config for 3 minutes (no t202ctx until TTL expiry)
+				bandit_ctx_pref_cache_bust($bandit_user_id);
 				header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=connected#bandit');
 				die();
 			}
@@ -353,8 +363,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 			updateUserPreference('bandit_site_key', '', $bandit_user_id, $db);
 			updateUserPreference('bandit_status', '', $bandit_user_id, $db);
-			bandit_ctx_pref_cache_bust($bandit_user_id);
 			updateUserPreference('bandit_bridge_config', '', $bandit_user_id, $db);
+			bandit_ctx_pref_cache_bust($bandit_user_id); // after the last write (see connect)
 			header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=disconnected#bandit');
 			die();
 		} catch (\Prosper202\Bandit\PairingRequestException $bandit_error) {

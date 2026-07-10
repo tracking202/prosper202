@@ -49,7 +49,15 @@ if (!$tracker_row) {
 } 
 
 if(isset($mysql['202vars'])&&$mysql['202vars']!=''){
-	//remove & at the end of the string
+	// split any #fragment off first: the vars must join the QUERY string —
+	// appended after a fragment they stay client-side and never reach the
+	// landing page (drops prepop vars and the t202ctx token; review finding)
+	$cl_fragment = '';
+	$cl_hash_pos = strpos((string) $redirect_site_url, '#');
+	if ($cl_hash_pos !== false) {
+		$cl_fragment = substr((string) $redirect_site_url, $cl_hash_pos);
+		$redirect_site_url = substr((string) $redirect_site_url, 0, $cl_hash_pos);
+	}
 
 	if(!parse_url ((string) $redirect_site_url,PHP_URL_QUERY)){
 		
@@ -65,7 +73,10 @@ if(isset($mysql['202vars'])&&$mysql['202vars']!=''){
 
 		$redirect_site_url .="&".$mysql['202vars'];
 
-	}}
+	}
+
+	$redirect_site_url .= $cl_fragment;
+}
 	
 	?>
 
