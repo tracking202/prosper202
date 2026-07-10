@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Conversion;
 
+use Prosper202\Bridge\EventBridge;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use RuntimeException;
@@ -114,7 +115,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        when the customer is first created), items (product line items for
      *        the revenue ledger event).
      * @param (callable(int $clickId, float $payout): void)|null $clickSideUpdate
-     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null}
+     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, campaignId?: int, clickTime?: int, payout?: float}
      */
     public function record(int $userId, array $data, ?callable $clickSideUpdate = null): array
     {
@@ -250,20 +251,50 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 $clickSideUpdate($clickId, $payout);
             }
 
-            return ['convId' => $convId, 'duplicate' => false, 'clickFound' => true, 'customerId' => $customerId];
+            return [
+                'convId' => $convId, 'duplicate' => false, 'clickFound' => true, 'customerId' => $customerId,
+                // threaded out for the post-commit bridge emit (closure locals)
+                'campaignId' => $campaignId, 'clickTime' => $clickTime, 'payout' => $payout,
+            ];
         };
 
         // Unique-key upserts on 202_customer_aliases under concurrency make a
         // deadlock reachable, not theoretical. The transaction callback is a
         // pure function of its arguments, so one full retry is safe.
         try {
-            return $this->conn->transaction($work);
+            $result = $this->conn->transaction($work);
         } catch (Throwable $e) {
             if (!self::isRetryableLockError($e)) {
                 throw $e;
             }
-            return $this->conn->transaction($work);
+            $result = $this->conn->transaction($work);
         }
+
+        // Bandit bridge: post-commit, NEW conversions only (duplicates and
+        // missing clicks never emit). Living here — the single transactional
+        // writer — means every ingestion path (legacy postback/pixel helpers
+        // AND the V3 API) emits identically (review finding). EventBridge
+        // swallows its own failures, so a bridge hiccup never breaks recording.
+        if ($result['clickFound'] && !$result['duplicate']) {
+            EventBridge::emit($this->conn, $userId, 'conversion.recorded', [
+                'idempotency_key' => $clickId . ':' . ($transactionId !== null
+                    ? $transactionId
+                    // blank txids are stored as distinct NULL rows (no dedupe):
+                    // key by conversion row id so consumers never collapse them
+                    : 'conv:' . $result['convId']),
+                'click_id'        => $clickId,
+                'transaction_id'  => $transactionId !== null ? $transactionId : '',
+                'conv_id'         => $result['convId'],
+                'campaign_id'     => (int) ($result['campaignId'] ?? 0),
+                'payout'          => (float) ($result['payout'] ?? 0),
+                'conv_time'       => $convTime,
+                'click_time'      => (int) ($result['clickTime'] ?? 0),
+                'pixel_type'      => (int) ($data['pixel_type'] ?? 0),
+                'ip'              => (string) ($data['ip'] ?? ''),
+            ]);
+        }
+
+        return $result;
     }
 
     /**

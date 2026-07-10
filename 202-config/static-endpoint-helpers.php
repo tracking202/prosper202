@@ -438,22 +438,9 @@ if (!function_exists('p202RecordConversion')) {
         if ($result['clickFound'] && !$result['duplicate']) {
             $de = new DataEngine();
             $de->setDirtyHour((string) $clickId);
-
-            // Bandit bridge: post-commit, new conversions only (replayed
-            // postbacks never re-emit). Fire-and-forget plain DB enqueue —
-            // a no-op unless a webhook subscribes to the event or to '*'.
-            \Prosper202\Bridge\EventBridge::emit($conn, (int) ($log['user_id'] ?? 0), 'conversion.recorded', [
-                'idempotency_key' => $clickId . ':' . trim($transactionId),
-                'click_id'        => $clickId,
-                'transaction_id'  => trim($transactionId),
-                'conv_id'         => $result['convId'],
-                'campaign_id'     => (int) ($log['campaign_id'] ?? 0),
-                'payout'          => (float) ($log['click_payout'] ?? 0),
-                'conv_time'       => (int) ($log['conv_time'] ?? time()),
-                'click_time'      => (int) ($log['click_time'] ?? 0),
-                'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
-                'ip'              => (string) ($log['ip'] ?? ''),
-            ]);
+            // (conversion.recorded now emits from MysqlConversionRepository::
+            // record() post-commit — the single writer shared with the V3 API —
+            // so every ingestion path fires the bridge identically.)
         }
 
         return ['conv_id' => $result['convId'], 'duplicate' => $result['duplicate']];

@@ -723,7 +723,14 @@ $click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id); 
 
 if ($cloaking_on == true) {
-	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
+	// Match the request scheme (mirrors getSecureStatus(), which isn't loaded
+	// here) and honor subdirectory installs via get_absolute_url() — a
+	// hard-coded http://.../tracking202/... downgraded https visitors and
+	// broke non-root installs (review finding).
+	$cloaking_secure = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+		|| (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
+		|| (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
+	$cloaking_site_url = ($cloaking_secure ? 'https://' : 'http://').$_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
 // Landing Page Optimizer (bandit): the t202ctx token is minted ONLY when the
 // destination comes from the type='lp' branch below (p202-edge-sync §3.3) —
@@ -788,6 +795,8 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 		try {
 			$t202ctx_pref = false;
 			$t202ctx_sql = "SELECT bandit_status, bandit_bridge_config, bandit_ctx_kw FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
+			// key mirrored by bandit_ctx_pref_cache_bust() (202-account/
+			// api-integrations.php) — keep the SELECT text in sync
 			$t202ctx_cache_key = md5($t202ctx_sql . systemHash());
 			if (!empty($GLOBALS['memcacheWorking'])) {
 				$t202ctx_cached = $GLOBALS['memcache']->get($t202ctx_cache_key);
@@ -847,12 +856,21 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	//now we've recorded, now lets redirect them
 	if ($cloaking_on == true) {
 		//if cloaked, redirect them to the cloaked site.
+		// cl.php forwards only pci + 202vars to the landing page, so the token
+		// must ride INSIDE the packed vars — appended to the cl.php URL itself
+		// it would never reach the final destination (review finding).
+		if ($t202ctx_token !== '') {
+			$urlvars .= 't202ctx=' . $t202ctx_token . '&';
+		}
 		$t202ctx_final_url = setPrePopVars($urlvars,$cloaking_site_url,true);
 	} else {
 		$t202ctx_final_url = setPrePopVars($urlvars,$redirect_site_url,false);
-	}
-	if ($t202ctx_token !== '') {
-		$t202ctx_final_url .= (str_contains((string)$t202ctx_final_url, '?') ? '&' : '?') . 't202ctx=' . $t202ctx_token;
+		if ($t202ctx_token !== '') {
+			// fragment-safe append: the token must join the query string BEFORE
+			// any #fragment, or it stays client-side and never reaches the LP
+			// server/loader (review finding).
+			$t202ctx_final_url = \Prosper202\Bandit\CtxToken::appendToUrl((string)$t202ctx_final_url, $t202ctx_token);
+		}
 	}
 	return $t202ctx_final_url;
 

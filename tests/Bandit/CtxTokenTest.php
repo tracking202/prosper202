@@ -180,4 +180,14 @@ final class CtxTokenTest extends TestCase
 
         CtxToken::mint(['sid' => 's1'], bin2hex(CtxToken::deriveKey('secret-abc'))); // hex, not raw
     }
+
+    public function testAppendToUrlIsFragmentSafe(): void
+    {
+        // the token must join the query BEFORE any #fragment, or it stays
+        // client-side and never reaches the landing page (review finding)
+        self::assertSame('https://lp.example/page?t202ctx=tok', CtxToken::appendToUrl('https://lp.example/page', 'tok'));
+        self::assertSame('https://lp.example/page?a=1&t202ctx=tok', CtxToken::appendToUrl('https://lp.example/page?a=1', 'tok'));
+        self::assertSame('https://lp.example/page?t202ctx=tok#hero', CtxToken::appendToUrl('https://lp.example/page#hero', 'tok'));
+        self::assertSame('https://lp.example/page?a=1&t202ctx=tok#hero', CtxToken::appendToUrl('https://lp.example/page?a=1#hero', 'tok'));
+    }
 }

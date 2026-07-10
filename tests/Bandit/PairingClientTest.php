@@ -14,15 +14,15 @@ use Prosper202\Bridge\EventBridge;
  */
 final class PairingClientTest extends TestCase
 {
-    /** @var list<array{method: string, url: string, body: ?string}> */
+    /** @var list<array{method: string, url: string, body: ?string, headers: list<string>}> */
     private array $calls = [];
 
     private function client(int $status = 200, string $responseBody = '{"status":"ok"}', string $base = 'https://saas.example'): PairingClient
     {
         $this->calls = [];
 
-        return new PairingClient($base, function (string $method, string $url, ?string $body) use ($status, $responseBody): array {
-            $this->calls[] = ['method' => $method, 'url' => $url, 'body' => $body];
+        return new PairingClient($base, function (string $method, string $url, ?string $body, array $extraHeaders = []) use ($status, $responseBody): array {
+            $this->calls[] = ['method' => $method, 'url' => $url, 'body' => $body, 'headers' => $extraHeaders];
 
             return [$status, $responseBody];
         });
