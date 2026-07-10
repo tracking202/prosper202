@@ -187,6 +187,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 								 	WHERE        `landing_page_id`='" . $mysql['landing_page_id'] . "'";
 			$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 		}
+
+		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
+		// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
+		// (After the public-id block above: markDirty's queries reset insert_id.)
+		\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 	}
 }
 

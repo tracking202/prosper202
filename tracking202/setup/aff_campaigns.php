@@ -231,6 +231,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$slack->push('campaign_created', ['name' => $_POST['aff_campaign_name'], 'user' => $user_row['username']]);
 		}
 
+		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
+		// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
+		// (After the public-id block above: markDirty's queries reset insert_id.)
+		\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+
 		$_GET['copy_aff_campaign_id'] = false;
 	}
 }

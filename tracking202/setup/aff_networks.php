@@ -78,6 +78,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		$add_success = true;
 
+		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
+		// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
+		\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+
 		if ($slack) {
 			if ($editing == true) {
 				$slack->push('campaign_category_name_changed', ['old_name' => $aff_network_row['aff_network_name'], 'new_name' => $_POST['aff_network_name'], 'user' => $user_row['username']]);
