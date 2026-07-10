@@ -43,8 +43,10 @@ final class PairingClient
     /**
      * @param ?string $baseUrl null/'' = the BANDIT_SAAS_BASE_URL constant
      *        when defined, otherwise DEFAULT_BASE_URL
-     * @param ?callable $transport test seam: fn(method, url, jsonBody) =>
-     *        [statusCode, responseBody]; null = the curl transport
+     * @param ?callable $transport test seam:
+     *        fn(method, url, jsonBody, extraHeaders) => [statusCode, responseBody]
+     *        — extraHeaders is a list<string> of raw header lines (always
+     *        passed; empty for unsigned requests); null = the curl transport
      */
     public function __construct(?string $baseUrl = null, ?callable $transport = null)
     {

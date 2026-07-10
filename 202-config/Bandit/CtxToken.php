@@ -157,4 +157,20 @@ final class CtxToken
         // Byte fallback; JSON_INVALID_UTF8_SUBSTITUTE cleans a split char.
         return substr($value, 0, $chars);
     }
+
+    /**
+     * Append the token to a destination URL fragment-safely: the parameter
+     * must join the query string BEFORE any #fragment, or browsers keep it
+     * client-side and it never reaches the landing page. Handles all four
+     * shapes: bare, ?query, #fragment, ?query#fragment.
+     */
+    public static function appendToUrl(string $url, string $token): string
+    {
+        $hashPos = strpos($url, '#');
+        $base = $hashPos === false ? $url : substr($url, 0, $hashPos);
+        $fragment = $hashPos === false ? '' : substr($url, $hashPos);
+        $sep = strpos($base, '?') === false ? '?' : '&';
+
+        return $base . $sep . 't202ctx=' . $token . $fragment;
+    }
 }

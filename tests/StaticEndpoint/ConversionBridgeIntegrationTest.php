@@ -192,6 +192,33 @@ final class ConversionBridgeIntegrationTest extends TestCase
         self::assertCount(1, $this->deliveries(), 'a replayed postback must not re-emit');
     }
 
+    public function testBlankTransactionIdsGetPerConversionIdempotencyKeys(): void
+    {
+        $this->subscribeWildcard();
+        $this->insertClick(9400);
+
+        // Blank txids are stored as distinct NULL rows (no dedupe SELECT runs),
+        // so two REAL conversions on one click are legitimate — their bridge
+        // events must not collapse onto a shared "<clickId>:" key.
+        $first = p202RecordConversion(self::$db, $this->log(9400), '', true, '10.0', '');
+        $second = p202RecordConversion(self::$db, $this->log(9400), '', true, '10.0', '');
+
+        self::assertFalse($first['duplicate']);
+        self::assertFalse($second['duplicate']);
+
+        $deliveries = $this->deliveries();
+        self::assertCount(2, $deliveries, 'each blank-txid conversion emits its own delivery');
+
+        $keys = [];
+        foreach ($deliveries as $row) {
+            $payload = json_decode((string) $row['payload'], true)['data']['payload'];
+            self::assertSame('', $payload['transaction_id']);
+            self::assertSame('9400:conv:' . $payload['conv_id'], $payload['idempotency_key'], 'blank txid keys by conversion row id');
+            $keys[] = $payload['idempotency_key'];
+        }
+        self::assertCount(2, array_unique($keys), 'distinct conversions carry distinct idempotency keys');
+    }
+
     public function testNoSubscriberMeansNoDeliveryRow(): void
     {
         $this->insertClick(9200);

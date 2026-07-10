@@ -847,12 +847,21 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	//now we've recorded, now lets redirect them
 	if ($cloaking_on == true) {
 		//if cloaked, redirect them to the cloaked site.
+		// cl.php forwards only pci + 202vars to the landing page, so the token
+		// must ride INSIDE the packed vars — appended to the cl.php URL itself
+		// it would never reach the final destination (review finding).
+		if ($t202ctx_token !== '') {
+			$urlvars .= 't202ctx=' . $t202ctx_token . '&';
+		}
 		$t202ctx_final_url = setPrePopVars($urlvars,$cloaking_site_url,true);
 	} else {
 		$t202ctx_final_url = setPrePopVars($urlvars,$redirect_site_url,false);
-	}
-	if ($t202ctx_token !== '') {
-		$t202ctx_final_url .= (str_contains((string)$t202ctx_final_url, '?') ? '&' : '?') . 't202ctx=' . $t202ctx_token;
+		if ($t202ctx_token !== '') {
+			// fragment-safe append: the token must join the query string BEFORE
+			// any #fragment, or it stays client-side and never reaches the LP
+			// server/loader (review finding).
+			$t202ctx_final_url = \Prosper202\Bandit\CtxToken::appendToUrl((string)$t202ctx_final_url, $t202ctx_token);
+		}
 	}
 	return $t202ctx_final_url;
 

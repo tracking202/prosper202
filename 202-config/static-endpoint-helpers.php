@@ -443,7 +443,12 @@ if (!function_exists('p202RecordConversion')) {
             // postbacks never re-emit). Fire-and-forget plain DB enqueue —
             // a no-op unless a webhook subscribes to the event or to '*'.
             \Prosper202\Bridge\EventBridge::emit($conn, (int) ($log['user_id'] ?? 0), 'conversion.recorded', [
-                'idempotency_key' => $clickId . ':' . trim($transactionId),
+                'idempotency_key' => $clickId . ':' . (trim($transactionId) !== ''
+                    ? trim($transactionId)
+                    // blank txids are stored as distinct NULL rows (no dedupe), so
+                    // two real conversions on one click are legitimate — key them
+                    // by the conversion row id so consumers don't collapse them
+                    : 'conv:' . $result['convId']),
                 'click_id'        => $clickId,
                 'transaction_id'  => trim($transactionId),
                 'conv_id'         => $result['convId'],

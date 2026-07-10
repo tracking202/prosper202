@@ -142,7 +142,7 @@ function apiint_endpoint($label, $url)
 	echo '<div class="apiint-endpoint"><span class="apiint-endpoint-label">' . htmlspecialchars((string) $label) . '</span><code>' . $safe . '</code><button type="button" class="apiint-copy" data-copy="' . $safe . '" title="Copy to clipboard">Copy</button></div>';
 }
 
-$strProtocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+$strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
 $mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ?? ''));
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
