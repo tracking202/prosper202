@@ -243,9 +243,12 @@ function wpUpdateLp($db, $user): array {
 					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."' AND user_id = '".$mysql['user_id']."'";
 			$result = $db->query($sql);
 
-			// Landing Page Optimizer (segments-v2 G10): WP-plugin LP renames
-			// change the synced snapshot — flag dirty for the hourly push.
-			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+			if ($result) {
+				// Landing Page Optimizer (segments-v2 G10): WP-plugin LP renames
+				// change the synced snapshot — flag dirty for the hourly push.
+				// Guarded: only a successful UPDATE can change the snapshot.
+				\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+			}
 
 			return ['error' => '0'];
 		} else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
@@ -265,10 +268,13 @@ function wpUpdateLp($db, $user): array {
 					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."' AND user_id = '".$mysql['user_id']."'";
 				$result = $db->query($sql);
 
-				// Landing Page Optimizer (segments-v2 G10): WP-plugin LP
-				// renames/recampaigns change the synced snapshot — flag
-				// dirty for the hourly push.
-				\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+				if ($result) {
+					// Landing Page Optimizer (segments-v2 G10): WP-plugin LP
+					// renames/recampaigns change the synced snapshot — flag
+					// dirty for the hourly push. Guarded: only a successful
+					// UPDATE can change the snapshot.
+					\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+				}
 
 				return ['error' => '0'];
 			}
