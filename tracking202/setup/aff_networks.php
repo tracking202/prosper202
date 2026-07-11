@@ -140,6 +140,11 @@ if (isset($_GET['delete_aff_network_id'])) {
 		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_result)) {
 			$delete_success = true;
 
+			// Landing Page Optimizer (segments-v2 G10): mirror the save-path
+			// hook above — every dictionary mutation on this page flags the
+			// snapshot dirty for the hourly cron. DB-only — no HTTP here.
+			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+
 			if ($slack)
 				$slack->push('campaign_category_deleted', ['name' => $_GET['delete_aff_network_name'], 'user' => $user_row['username']]);
 		}

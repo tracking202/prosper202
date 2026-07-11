@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Prosper202\Bandit;
 
 use mysqli;
-use Prosper202\Bridge\EventBridge;
 use Prosper202\Database\Connection;
 use RuntimeException;
 use Throwable;
@@ -94,11 +93,28 @@ final class DimensionSync
      * observed before the push ($expectedDirtyAt): if a dictionary save
      * landed mid-push, the snapshot just sent is already stale, so the flag
      * stays set for the next hourly tick.
+     *
+     * The write is an atomic compare-and-set on the exact pref bytes read
+     * here — not just the PHP precheck above. A markDirty() (or any other
+     * pref write) landing between this read and the UPDATE changes those
+     * bytes, so the guard misses, zero rows update, and the newer dirty
+     * flag survives for the next hourly tick instead of being clobbered
+     * by a stale re-encode.
      */
     public static function clearDirty(Connection $conn, int $userId, mixed $expectedDirtyAt): void
     {
-        $state = EventBridge::readState($conn, $userId);
-        if (empty($state['dims_dirty'])) {
+        $stmt = $conn->prepareRead(
+            'SELECT bandit_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'i', [$userId]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            return;
+        }
+
+        $rawJson = (string) ($row['bandit_bridge_config'] ?? '');
+        $state = json_decode($rawJson, true);
+        if (!is_array($state) || empty($state['dims_dirty'])) {
             return;
         }
         if (($state['dims_dirty_at'] ?? null) !== $expectedDirtyAt) {
@@ -111,8 +127,10 @@ final class DimensionSync
             return;
         }
 
-        $update = $conn->prepareWrite('UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ?');
-        $conn->bind($update, 'si', [$stateJson, $userId]);
+        $update = $conn->prepareWrite(
+            'UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ? AND bandit_bridge_config = ?'
+        );
+        $conn->bind($update, 'sis', [$stateJson, $userId, $rawJson]);
         $conn->executeUpdate($update);
     }
 

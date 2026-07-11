@@ -111,9 +111,10 @@ final class DimensionSyncTest extends TestCase
 
     public function testClearDirtyRemovesTheFlagWhenNoNewerSaveLanded(): void
     {
+        $rawPref = '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '","dims_dirty":true,"dims_dirty_at":100}';
         $fake = new FakeMysqliConnection();
         $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '","dims_dirty":true,"dims_dirty_at":100}'],
+            ['bandit_bridge_config' => $rawPref],
         ]);
 
         DimensionSync::clearDirty(new Connection($fake), 7, 100);
@@ -125,6 +126,14 @@ final class DimensionSyncTest extends TestCase
         self::assertArrayNotHasKey('dims_dirty_at', $state);
         self::assertSame(3, $state['webhook_id'], 'the rest of the pairing state is untouched');
         self::assertSame(self::CTX_KEY_HEX, $state['ctx_key']);
+
+        // The clear is a compare-and-set on the exact bytes read, so a
+        // markDirty() racing in after the read makes this UPDATE match zero
+        // rows instead of clobbering the newer dirty flag (the PHP
+        // dims_dirty_at precheck alone cannot close that window).
+        self::assertStringContainsString('AND bandit_bridge_config = ?', $updates[0]->sql);
+        self::assertSame($rawPref, $updates[0]->boundValues[2], 'the CAS guard binds the pref bytes exactly as read');
+        self::assertSame(7, $updates[0]->boundValues[1]);
     }
 
     public function testClearDirtyKeepsTheFlagWhenADictionarySaveRacedThePush(): void
