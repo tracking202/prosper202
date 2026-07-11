@@ -204,6 +204,11 @@ function wpCreateLp($db, $user): array {
 		$landing_page_sql = "UPDATE `202_landing_pages` SET `landing_page_id_public`='".$landing_page_id_public."' WHERE `landing_page_id`='".$insert_id."'";
 		$landing_page_result = $db->query($landing_page_sql);
 
+		// Landing Page Optimizer (segments-v2 G10): WP-plugin LP creates
+		// change the synced snapshot like the setup pages — flag this
+		// user's snapshot dirty for the hourly push. DB-only, never fatal.
+		\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+
 		if ($landing_page_result) {
 			return ['error' => '0', 'lp_pid' => $landing_page_id_public];
 		} else {
@@ -237,6 +242,11 @@ function wpUpdateLp($db, $user): array {
 					user_id = '".$mysql['user_id']."'
 					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."' AND user_id = '".$mysql['user_id']."'";
 			$result = $db->query($sql);
+
+			// Landing Page Optimizer (segments-v2 G10): WP-plugin LP renames
+			// change the synced snapshot — flag dirty for the hourly push.
+			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+
 			return ['error' => '0'];
 		} else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
 			$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['slp_page_campaign']);
@@ -254,6 +264,12 @@ function wpUpdateLp($db, $user): array {
 					user_id = '".$mysql['user_id']."'
 					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."' AND user_id = '".$mysql['user_id']."'";
 				$result = $db->query($sql);
+
+				// Landing Page Optimizer (segments-v2 G10): WP-plugin LP
+				// renames/recampaigns change the synced snapshot — flag
+				// dirty for the hourly push.
+				\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+
 				return ['error' => '0'];
 			}
 		}

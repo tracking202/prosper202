@@ -144,6 +144,54 @@ final class DimensionSync
     }
 
     /**
+     * Concurrency-safe persist of a bandit_bridge_config mutation.
+     *
+     * Re-reads the CURRENT pref bytes, applies $mutate to the decoded
+     * state, and writes back guarded by a compare-and-set on the exact
+     * bytes read. Writers holding an older decode (e.g. the six-hour
+     * bridge-config pull, whose SELECT precedes a slow SaaS HTTP fetch)
+     * must persist through this instead of an unconditional UPDATE: the
+     * stale re-encode would erase keys written in between, such as a
+     * mid-pull markDirty()'s dims_dirty — the hourly dimension push
+     * would then skip the user until the nightly full sync.
+     *
+     * Single attempt by design, mirroring clearDirty(): a guard miss
+     * means another writer changed the state in the microseconds between
+     * the re-read and the UPDATE, so the caller's change simply does not
+     * land this pass. Every caller is a recurring job (the 6-hour pull,
+     * the ctx_key backfill) that re-applies on its next run; what is
+     * guaranteed is that OTHER writers' keys are never clobbered.
+     *
+     * @param callable(array): array $mutate pure, idempotent transform of the decoded state
+     */
+    public static function casMutateState(Connection $conn, int $userId, callable $mutate): void
+    {
+        $stmt = $conn->prepareRead(
+            'SELECT bandit_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'i', [$userId]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            return;
+        }
+
+        $rawJson = (string) ($row['bandit_bridge_config'] ?? '');
+        $state = json_decode($rawJson, true);
+        $state = is_array($state) ? $state : [];
+
+        $stateJson = json_encode($mutate($state));
+        if ($stateJson === false || $stateJson === $rawJson) {
+            return; // re-encode failed, or already in the desired shape
+        }
+
+        $update = $conn->prepareWrite(
+            'UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ? AND bandit_bridge_config = ?'
+        );
+        $conn->bind($update, 'sis', [$stateJson, $userId, $rawJson]);
+        $conn->executeUpdate($update);
+    }
+
+    /**
      * Resolve the pairing webhook secret, opportunistically backfill the
      * derived t202ctx key, build the §4.1 snapshot and POST it via
      * PairingClient::pushDimensions — the exact per-user path the nightly

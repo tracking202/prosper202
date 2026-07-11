@@ -171,6 +171,47 @@ final class DimensionSyncTest extends TestCase
         self::assertSame([], $fake->statementsContaining('UPDATE 202_users_pref'), 'the flag must stay set for the next hourly tick');
     }
 
+    // --- casMutateState: the guarded persist for writers holding stale decodes ---
+
+    public function testCasMutateStateAppliesTheMutationOntoFreshStateGuardedByTheExactBytesRead(): void
+    {
+        // The pref as it looks NOW — including a dims_dirty a save wrote
+        // while the caller (the 6-hour bridge-config pull) was busy with
+        // its SaaS fetch, holding an older decode without those keys.
+        $rawPref = '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":100}';
+        $fake = new FakeMysqliConnection();
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => $rawPref],
+        ]);
+
+        DimensionSync::casMutateState(new Connection($fake), 7, function (array $state): array {
+            $state['config'] = ['enabled_events' => ['*']];
+            $state['fetched_at'] = 12345;
+            return $state;
+        });
+
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        self::assertCount(1, $updates);
+        $state = json_decode((string) $updates[0]->boundValues[0], true);
+        self::assertSame(12345, $state['fetched_at']);
+        self::assertTrue($state['dims_dirty'], 'keys other writers own ride through: the mid-pull markDirty survives the config persist');
+        self::assertSame(100, $state['dims_dirty_at']);
+        self::assertStringContainsString('AND bandit_bridge_config = ?', $updates[0]->sql);
+        self::assertSame($rawPref, $updates[0]->boundValues[2], 'guarded by the exact bytes read — a racing write makes this match zero rows instead of clobbering');
+    }
+
+    public function testCasMutateStateSkipsTheWriteWhenAlreadyInTheDesiredShape(): void
+    {
+        $fake = new FakeMysqliConnection();
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '"}'],
+        ]);
+
+        DimensionSync::casMutateState(new Connection($fake), 7, fn (array $state): array => $state);
+
+        self::assertSame([], $fake->statementsContaining('UPDATE 202_users_pref'), 'a no-op mutation must not write at all');
+    }
+
     // --- pushForUser: the shared nightly/hourly per-user path ---
 
     public function testPushForUserBuildsTheCappedSnapshotAndPushesIt(): void
