@@ -403,7 +403,7 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
             <input type="hidden" name="token" value="<?php echo $esc($csrfToken); ?>" />
             <input type="hidden" name="action" value="add_webhook" />
             <input type="text" class="ltv-input ltv-input-sm ltv-grow" name="webhook_url" maxlength="500" placeholder="https://example.com/hooks/p202">
-            <?php foreach (\Prosper202\Ltv\MysqlWebhookRepository::EVENTS as $eventName) { ?>
+            <?php foreach (\Prosper202\Ltv\MysqlWebhookRepository::KNOWN_EVENTS as $eventName) { ?>
                 <label style="font-weight: 400; font-size: 12px; color: #5f6670; margin: 0; white-space: nowrap;">
                     <input type="checkbox" name="webhook_events[]" value="<?php echo $esc($eventName); ?>" checked> <?php echo $esc($eventName); ?>
                 </label>

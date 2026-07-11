@@ -111,7 +111,7 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 function showSuccessMessage($condition, $message)
 {
 	if ($condition) {
-		echo '<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> ' . htmlspecialchars((string) $message) . '</small></div>';
+		echo '<div class="apiint-note apiint-note--ok" role="status"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 4.5L6.5 11.5L2.5 7.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>' . htmlspecialchars((string) $message) . '</span></div>';
 	}
 }
 
@@ -121,11 +121,45 @@ function showSuccessMessage($condition, $message)
 function showErrorMessage($errors, $key)
 {
 	if (isset($errors[$key]) && $errors[$key]) {
-		echo '<div class="error" style="text-align:right"><small><span class="fui-alert"></span> ' . htmlspecialchars((string) $errors[$key]) . '</small></div>';
+		echo '<div class="apiint-note apiint-note--err" role="alert"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 5v3.5M8 11h.01M8 1.5 14.5 13a.6.6 0 0 1-.52.9H2.02a.6.6 0 0 1-.52-.9L8 1.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>' . htmlspecialchars((string) $errors[$key]) . '</span></div>';
 	}
 }
 
-$strProtocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
+/**
+ * Status pill: $state is one of ok | off | warn | err
+ */
+function apiint_pill($state, $text)
+{
+	echo '<span class="apiint-pill apiint-pill--' . $state . '"><span class="apiint-pill-dot"></span>' . htmlspecialchars((string) $text) . '</span>';
+}
+
+/**
+ * Labeled endpoint URL row with a copy button
+ */
+function apiint_endpoint($label, $url)
+{
+	$safe = htmlspecialchars((string) $url);
+	echo '<div class="apiint-endpoint"><span class="apiint-endpoint-label">' . htmlspecialchars((string) $label) . '</span><code>' . $safe . '</code><button type="button" class="apiint-copy" data-copy="' . $safe . '" title="Copy to clipboard">Copy</button></div>';
+}
+
+$strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
+
+/**
+ * rtr.php caches the bandit t202ctx prefs (bandit_status, bandit_bridge_config,
+ * bandit_ctx_kw) for 3 minutes under md5(<exact SELECT> . systemHash()). Any
+ * pref change that alters minting behavior (keyword privacy opt-out, connect/
+ * disconnect) must drop that key so live redirects pick the change up
+ * immediately, not at TTL expiry (review finding). Keep the SELECT byte-
+ * identical to rtr.php's.
+ */
+function bandit_ctx_pref_cache_bust($userId)
+{
+	if (empty($GLOBALS['memcacheWorking']) || empty($GLOBALS['memcache'])) {
+		return;
+	}
+	$sql = "SELECT bandit_status, bandit_bridge_config, bandit_ctx_kw FROM 202_users_pref WHERE user_id='" . (int) $userId . "'";
+	$GLOBALS['memcache']->delete(md5($sql . systemHash()));
+}
 $mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ?? ''));
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
@@ -234,6 +268,136 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db);
 	}
 
+	// Landing Page Optimizer (bandit) pairing: connect registers a local
+	// wildcard webhook and completes the SaaS handshake; disconnect reverses.
+	if (!isset($error['token']) && isset($_POST['bandit_action']) && in_array($_POST['bandit_action'], ['connect', 'disconnect'], true)) {
+		$bandit_user_id = (int) $_SESSION['user_id'];
+		$bandit_conn = new \Prosper202\Database\Connection($db);
+		$bandit_webhooks = new \Prosper202\Ltv\MysqlWebhookRepository($bandit_conn);
+		$bandit_client = new \Prosper202\Bandit\PairingClient();
+		$bandit_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? ''));
+		$bandit_install_hash = trim((string) ($user_row['install_hash'] ?? ''));
+
+		try {
+			if (!array_key_exists('bandit_status', $user_row)) {
+				throw new RuntimeException('Run the Prosper202 upgrade first (the bandit bridge columns are missing).');
+			}
+
+			if ($_POST['bandit_action'] === 'connect') {
+				if ((string) ($user_row['bandit_status'] ?? '') === 'active') {
+					// Replayed/double submit: never stack a second webhook.
+					throw new RuntimeException('Already connected. Disconnect first to re-pair.');
+				}
+				if ($bandit_api_key === '') {
+					throw new RuntimeException('A Prosper202 Customer API key is required to connect — use the button below to get yours.');
+				}
+				if ($bandit_install_hash === '') {
+					// distinct cause, distinct message (a blank install hash used
+					// to masquerade as a missing API key): the hash is created by
+					// the installer on the owner account and identifies this
+					// install to the SaaS — without it pairing cannot proceed.
+					throw new RuntimeException('This account has no install hash, so the install cannot pair. Log in as the account owner (user 1) to connect.');
+				}
+				$bandit_install_url = $strProtocol . $_SERVER['HTTP_HOST'] . rtrim(get_absolute_url(), '/');
+				$bandit_init = $bandit_client->pairInit($bandit_api_key, $bandit_install_hash, $bandit_install_url);
+				$bandit_site_key = trim((string) ($bandit_init['site_key'] ?? ''));
+				$bandit_hook_url = trim((string) ($bandit_init['hook_url'] ?? ''));
+				if ($bandit_site_key === '' || $bandit_hook_url === '') {
+					throw new RuntimeException('Pairing init did not return a site key and webhook URL.');
+				}
+
+				// The webhook secret is generated where it is used and
+				// transported to the SaaS exactly once, in pair/complete.
+				$bandit_created = $bandit_webhooks->create($bandit_user_id, $bandit_hook_url, ['*']);
+				try {
+					$bandit_client->pairComplete($bandit_api_key, $bandit_install_hash, $bandit_created['webhookId'], $bandit_created['secret']);
+				} catch (Throwable $bandit_complete_error) {
+					// Don't leave a half-paired endpoint delivering nowhere —
+					// and never let the rollback mask the original failure.
+					try {
+						$bandit_webhooks->delete($bandit_user_id, $bandit_created['webhookId']);
+					} catch (Throwable $bandit_rollback_error) {
+						error_log('bandit connect: webhook rollback failed after pair/complete error: ' . $bandit_rollback_error->getMessage());
+					}
+					throw $bandit_complete_error;
+				}
+
+				$bandit_state = json_encode([
+					'webhook_id' => $bandit_created['webhookId'],
+					// Derived t202ctx signing key (p202-edge-sync §3.3), cached
+					// at pairing time so the redirect hot path never touches
+					// 202_ltv_webhooks to mint context tokens.
+					'ctx_key' => bin2hex(\Prosper202\Bandit\CtxToken::deriveKey($bandit_created['secret'])),
+				]);
+				if ($bandit_state === false) {
+					throw new RuntimeException('Failed to encode bridge state.');
+				}
+				updateUserPreference('bandit_site_key', $bandit_site_key, $bandit_user_id, $db);
+				updateUserPreference('bandit_status', 'active', $bandit_user_id, $db);
+				updateUserPreference('bandit_bridge_config', $bandit_state, $bandit_user_id, $db);
+				// bust AFTER the last pref write: a redirect racing between the
+				// status and config writes could otherwise cache active-with-
+				// stale-config for 3 minutes (no t202ctx until TTL expiry)
+				bandit_ctx_pref_cache_bust($bandit_user_id);
+				header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=connected#bandit');
+				die();
+			}
+
+			// Disconnect: remove the local webhook, revoke SaaS-side
+			// (best-effort — local state always clears), clear pairing prefs.
+			$bandit_state = json_decode((string) ($user_row['bandit_bridge_config'] ?? ''), true);
+			$bandit_webhook_id = is_array($bandit_state) ? (int) ($bandit_state['webhook_id'] ?? 0) : 0;
+			if ($bandit_webhook_id > 0) {
+				try {
+					$bandit_webhooks->delete($bandit_user_id, $bandit_webhook_id);
+				} catch (\Prosper202\Ltv\RecordNotFoundException) {
+					// Already gone locally; disconnect must still proceed.
+				}
+			}
+			if ($bandit_api_key !== '' && $bandit_install_hash !== '') {
+				try {
+					$bandit_client->pairDisconnect($bandit_api_key, $bandit_install_hash);
+				} catch (Throwable $bandit_disconnect_error) {
+					error_log('bandit disconnect: SaaS revoke failed (link will expire server-side): ' . $bandit_disconnect_error->getMessage());
+				}
+			}
+			updateUserPreference('bandit_site_key', '', $bandit_user_id, $db);
+			updateUserPreference('bandit_status', '', $bandit_user_id, $db);
+			updateUserPreference('bandit_bridge_config', '', $bandit_user_id, $db);
+			bandit_ctx_pref_cache_bust($bandit_user_id); // after the last write (see connect)
+			header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=disconnected#bandit');
+			die();
+		} catch (\Prosper202\Bandit\PairingRequestException $bandit_error) {
+			// Full technical detail goes to the log; the UI gets plain
+			// English with a next step.
+			error_log('bandit ' . $_POST['bandit_action'] . ': ' . $bandit_error->getMessage());
+			// "Subscription required" is an expected upsell, not a failure —
+			// route it to the actionable "start a plan" state, not a red error.
+			if (stripos($bandit_error->userMessage(), 'subscription') !== false) {
+				$bandit_needs_subscription = true;
+				$bandit_sub_retry = !empty($_POST['bandit_retry']); // came from the "I've subscribed — connect" button
+			} else {
+				$error['bandit'] = $bandit_error->userMessage();
+			}
+		} catch (Throwable $bandit_error) {
+			error_log('bandit ' . $_POST['bandit_action'] . ': ' . $bandit_error->getMessage());
+			$error['bandit'] = $bandit_error->getMessage();
+		}
+	}
+
+	// Landing Page Optimizer privacy pref: include/omit keyword text in
+	// t202ctx context tokens (bandit_ctx_kw — default on, '0' = omit;
+	// p202-edge-sync §8). Storage only; rtr.php honors it at mint time.
+	if (!isset($error['token']) && isset($_POST['bandit_ctx_kw_save']) && $_POST['bandit_ctx_kw_save'] == '1' && array_key_exists('bandit_ctx_kw', $user_row)) {
+		$bandit_ctx_kw_new = !empty($_POST['bandit_ctx_kw']) ? '1' : '0';
+		if ($bandit_ctx_kw_new !== (string) ($user_row['bandit_ctx_kw'] ?? '1')) {
+			updateUserPreference('bandit_ctx_kw', $bandit_ctx_kw_new, $_SESSION['user_id'], $db);
+			bandit_ctx_pref_cache_bust($_SESSION['user_id']);
+			$user_row['bandit_ctx_kw'] = $bandit_ctx_kw_new;
+		}
+		$bandit_ctx_kw_saved = true;
+	}
+
 	if (!isset($error['token']) && isset($_POST['dni_network'])) {
 		if (array_search('', $_POST) !== false) {
 			$error['dni_network'] = 'Make sure all fields are selected and filled out!';
@@ -329,46 +493,99 @@ template_top('API Integrations');
 
 ?>
 
-<div class="row account">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-6">
-				<h6><span><img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/dni.jpg"></span> Direct Network Integration <?php showHelp("dni"); ?></h6>
-			</div>
-			<div class="col-xs-6">
-				<?php if (isset($error['dni_network']) && $error['dni_network']) { ?>
-					<div class="error" style="text-align:right"><small><span class="fui-alert"></span> <?php echo $error['dni_network']; ?></small></div>
-				<?php } ?>
-				<?php if (isset($error['dni_network_auth']) && $error['dni_network_auth']) { ?>
-					<div class="error" style="text-align:right"><small><span class="fui-alert"></span> <?php echo $error['dni_network_auth']; ?></small></div>
-				<?php } ?>
-				<?php if (isset($success) && isset($success['dni_network_added']) && $success['dni_network_added']) { ?>
-					<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> <?php echo $success['dni_network_added']; ?></small></div>
-				<?php } ?>
-				<?php if (isset($_GET['dni_network_updated'])) { ?>
-					<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> DNI Network updated successfully. API processing can take up to 5 minutes.</small></div>
-				<?php } ?>
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-4">
-		<div class="row">
-			<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-						If you wish to search, apply and setup offers directly from your Prosper202 dashboard, use Direct Network Integration to link Prosper202 with our offers API. This will allow you to search, apply and setup offers from various networks without leaving your Prosper202 dashboard.
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
+<style>
+	/* API Integrations page — scoped card layout (Notion-grade pass) */
+	.apiint{max-width:1100px;margin:0 auto;padding:4px 4px 48px;font-size:14px;color:#37352f;}
+	.apiint *,.apiint *::before,.apiint *::after{box-sizing:border-box;}
+	.apiint-head{margin:18px 2px 20px;}
+	.apiint-head h1{font-size:22px;font-weight:700;margin:0 0 6px;color:#37352f;letter-spacing:-.01em;}
+	.apiint-head p{margin:0;color:#787774;font-size:14px;}
+	.apiint-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;align-items:start;}
+	.apiint-card{background:#fff;border:1px solid #e9e9e7;border-radius:10px;padding:20px 22px 18px;box-shadow:0 1px 2px rgba(15,15,15,.03);transition:border-color .15s ease,box-shadow .15s ease;}
+	.apiint-card:hover{border-color:#d3d3d0;box-shadow:0 2px 6px rgba(15,15,15,.05);}
+	.apiint-card--wide{grid-column:1/-1;}
+	.apiint-card-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+	.apiint-card-head img{width:22px;height:22px;border-radius:5px;object-fit:contain;flex:none;}
+	.apiint-card-head h2{font-size:15px;font-weight:600;margin:0;color:#37352f;flex:1 1 auto;line-height:1.3;}
+	.apiint-icon-fallback{width:22px;height:22px;border-radius:5px;background:#eef3fe;color:#2383e2;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;letter-spacing:.02em;}
+	.apiint-card-head h2 .btn{background:none;border:none;color:#c8c7c4;padding:0 2px;font-size:13px;line-height:1;vertical-align:1px;box-shadow:none;}
+	.apiint-card-head h2 .btn:hover,.apiint-card-head h2 .btn:focus{color:#2383e2;background:none;}
+	.apiint-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;line-height:1;padding:4px 9px;border-radius:999px;white-space:nowrap;flex:none;}
+	.apiint-pill-dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.75;}
+	.apiint-pill--ok{background:#dbeddb;color:#1c3829;}
+	.apiint-pill--off{background:#f1f1ef;color:#6f6e69;}
+	.apiint-pill--warn{background:#fdecc8;color:#402c1b;}
+	.apiint-pill--err{background:#ffe2dd;color:#5d1715;}
+	.apiint-desc{color:#787774;font-size:13px;line-height:1.5;margin:0 0 14px;}
+	.apiint-desc a{color:#2383e2;}
+	.apiint-note{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;border-radius:6px;padding:9px 12px;margin:0 0 12px;text-align:left;}
+	.apiint-note svg{flex:none;margin-top:2px;}
+	.apiint-note--ok{background:#f0f9f0;color:#1c3829;border:1px solid #cfe8cf;}
+	.apiint-note--err{background:#fdf0ef;color:#5d1715;border:1px solid #f5d5d0;}
+	.apiint-note--warn{background:#fdf5e6;color:#6b4415;border:1px solid #f0e0bf;}
+	.apiint-endpoint{display:flex;align-items:center;gap:8px;background:#f7f7f5;border:1px solid #edece9;border-radius:6px;padding:7px 10px;margin:0 0 10px;}
+	.apiint-endpoint-label{font-size:11px;font-weight:600;color:#9b9a97;text-transform:uppercase;letter-spacing:.04em;flex:none;}
+	.apiint-endpoint code{flex:1 1 auto;background:none;border:none;padding:0;font-size:12px;color:#37352f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;}
+	.apiint-copy{flex:none;font-size:12px;font-weight:500;color:#2383e2;background:none;border:none;padding:2px 6px;border-radius:4px;cursor:pointer;}
+	.apiint-copy:hover{background:#e8f2fc;}
+	.apiint-copy.is-copied{color:#1c8a50;}
+	.apiint-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:500;line-height:1;padding:9px 14px;border-radius:6px;border:1px solid transparent;cursor:pointer;text-decoration:none;transition:background .12s ease;}
+	.apiint-btn--primary{background:#2383e2;color:#fff;}
+	.apiint-btn--primary:hover,.apiint-btn--primary:focus{background:#0e70cf;color:#fff;text-decoration:none;}
+	.apiint-btn--ghost{background:#fff;border-color:#e0e0dd;color:#37352f;}
+	.apiint-btn--ghost:hover,.apiint-btn--ghost:focus{background:#f7f7f5;color:#37352f;text-decoration:none;}
+	.apiint-btn--danger{background:#fff;border-color:#f0d4d0;color:#c4554d;}
+	.apiint-btn--danger:hover,.apiint-btn--danger:focus{background:#fdf0ef;color:#c4554d;text-decoration:none;}
+	.apiint-actions{display:flex;align-items:center;gap:8px;margin-top:2px;flex-wrap:wrap;}
+	.apiint-actions form{margin:0;display:inline;}
+	.apiint-meta{font-size:12px;color:#9b9a97;margin:12px 0 0;line-height:1.5;}
+	.apiint-config{margin-top:14px;border-top:1px solid #f1f1ef;padding-top:10px;}
+	.apiint-config summary{list-style:none;display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:#6f6e69;cursor:pointer;user-select:none;border-radius:5px;padding:4px 8px;margin-left:-8px;}
+	.apiint-config summary:hover{background:#f1f1ef;color:#37352f;}
+	.apiint-config summary::-webkit-details-marker{display:none;}
+	.apiint-config summary::before{content:"";width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s ease;flex:none;}
+	.apiint-config[open] summary::before{transform:rotate(90deg);}
+	.apiint-config form{margin:12px 0 0;}
+	.apiint-field{margin:0 0 12px;}
+	.apiint-field label{display:block;font-size:12px;font-weight:600;color:#6f6e69;margin:0 0 5px;}
+	.apiint .apiint-field input.form-control{height:34px;font-size:13px;border:1px solid #e0e0dd;border-radius:6px;box-shadow:none;padding:6px 10px;}
+	.apiint .apiint-field input.form-control:focus{border-color:#2383e2;box-shadow:0 0 0 2px rgba(35,131,226,.18);}
+	.apiint .table{margin:0 0 16px;border:1px solid #edece9;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden;font-size:13px;width:100%;}
+	.apiint .table th{background:#f7f7f5;color:#6f6e69;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;border:none;border-bottom:1px solid #edece9;padding:8px 12px;text-align:left;}
+	.apiint .table td{border:none;border-bottom:1px solid #f1f1ef;padding:9px 12px;vertical-align:middle;}
+	.apiint .table tr:last-child td{border-bottom:none;}
+	.apiint .table a{color:#6f6e69;}
+	.apiint .table a:hover{color:#37352f;}
+	.apiint-dni-form .form-control{height:34px;font-size:13px;border:1px solid #e0e0dd;border-radius:6px;box-shadow:none;}
+	@media (max-width:767px){.apiint-grid{grid-template-columns:1fr;}.apiint-card{padding:16px;}}
+</style>
 
-	<div class="col-xs-8">
-		<div class="row">
-			<div class="col-xs-12">
-				<table class="table table-bordered table-hover" id="stats-table">
+<div class="apiint">
+	<header class="apiint-head">
+		<h1>API Integrations</h1>
+		<p>Connect Prosper202 to your affiliate networks and tools. Everything here is optional &mdash; connect only what you use.</p>
+	</header>
+	<div class="apiint-grid">
+
+		<section class="apiint-card apiint-card--wide" id="dni">
+			<div class="apiint-card-head">
+				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/dni.jpg" alt="">
+				<h2>Direct Network Integration <?php showHelp("dni"); ?></h2>
+				<?php if ($dni_result->num_rows > 0) {
+					apiint_pill('ok', $dni_result->num_rows . ' network' . ($dni_result->num_rows === 1 ? '' : 's') . ' connected');
+				} else {
+					apiint_pill('off', 'Not connected');
+				} ?>
+			</div>
+			<p class="apiint-desc">Search, apply to and set up offers from your affiliate networks without leaving Prosper202.</p>
+			<?php showErrorMessage($error, 'dni_network'); ?>
+			<?php showErrorMessage($error, 'dni_network_auth'); ?>
+			<?php showSuccessMessage(isset($success['dni_network_added']) && $success['dni_network_added'], $success['dni_network_added'] ?? ''); ?>
+			<?php showSuccessMessage(isset($_GET['dni_network_updated']), 'DNI Network updated successfully. API processing can take up to 5 minutes.'); ?>
+			<?php if ($dni_result->num_rows > 0) { ?>
+				<table class="table" id="stats-table">
 					<thead>
-						<tr style="background-color: #f2fbfa;">
+						<tr>
 							<th>Network</th>
 							<th>API Key</th>
 							<th>ID</th>
@@ -376,35 +593,35 @@ template_top('API Integrations');
 						</tr>
 					</thead>
 					<tbody>
-						<?php if ($dni_result->num_rows > 0) {
-							while ($dni_row = $dni_result->fetch_assoc()) {
-								if ($dni_row['processed'] == false) {
-									$dniProcesing['networks'][] = ['id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']];
-								}
+						<?php while ($dni_row = $dni_result->fetch_assoc()) {
+							if ($dni_row['processed'] == false) {
+								$dniProcesing['networks'][] = ['id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']];
+							}
 						?>
-								<tr>
-									<td> <img src="<?php echo $dni_row['favIcon']; ?>" width=16>&nbsp;&nbsp;<?php echo $dni_row['name'] . " (" . $dni_row['type'] . ")"; ?><span class="fui-info-circle" style="font-size: 12px; margin: -25px 0px 0px 5px;" data-toggle="tooltip" title="" data-original-title="<?php echo $dni_row['shortDescription']; ?>"></span><br>
-										<?php if ($dni_row['processed'] == false) { ?>
-											<div id="network-<?php echo $dni_row['id']; ?>">
-												<span style='font-size:10px'>processing... <img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif"></span>
-												<div class="progress" style="margin: 0px 5px;">
-													<div id="<?php echo $dni_row['id']; ?>" class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%; color:#34495E">
-														0.00%
-													</div>
+							<tr>
+								<td> <img src="<?php echo $dni_row['favIcon']; ?>" width=16>&nbsp;&nbsp;<?php echo $dni_row['name'] . " (" . $dni_row['type'] . ")"; ?><span class="fui-info-circle" style="font-size: 12px; margin: -25px 0px 0px 5px;" data-toggle="tooltip" title="" data-original-title="<?php echo $dni_row['shortDescription']; ?>"></span><br>
+									<?php if ($dni_row['processed'] == false) { ?>
+										<div id="network-<?php echo $dni_row['id']; ?>">
+											<span style='font-size:10px'>processing... <img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif"></span>
+											<div class="progress" style="margin: 0px 5px;">
+												<div id="<?php echo $dni_row['id']; ?>" class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%; color:#34495E">
+													0.00%
 												</div>
-												<div>
-												<?php } ?>
-									</td>
-									<td><?php echo substr((string) $dni_row['apiKey'], 0, 12) . "... "; ?><a href="#" class="link showFullDniApikey" data-long="<?php echo $dni_row['apiKey']; ?>" data-short="<?php echo substr((string) $dni_row['apiKey'], 0, 12); ?>">show</a></td>
-									<td><?php echo $dni_row['affiliateId']; ?></td>
-									<td><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?edit_dni_network=<?php echo $dni_row['id']; ?>"><i class="glyphicon glyphicon-pencil"></i></a> <a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?delete_dni_network=<?php echo $dni_row['id']; ?>" onClick="return confirm('Delete This DNI Network?')"><i class="glyphicon glyphicon-trash"></i></a></td>
-								</tr>
-						<?php }
-						} ?>
+											</div>
+											<div>
+											<?php } ?>
+								</td>
+								<td><?php echo substr((string) $dni_row['apiKey'], 0, 12) . "... "; ?><a href="#" class="link showFullDniApikey" data-long="<?php echo $dni_row['apiKey']; ?>" data-short="<?php echo substr((string) $dni_row['apiKey'], 0, 12); ?>">show</a></td>
+								<td><?php echo $dni_row['affiliateId']; ?></td>
+								<td><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?edit_dni_network=<?php echo $dni_row['id']; ?>" title="Edit"><i class="glyphicon glyphicon-pencil"></i></a> <a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?delete_dni_network=<?php echo $dni_row['id']; ?>" onClick="return confirm('Delete This DNI Network?')" title="Delete"><i class="glyphicon glyphicon-trash"></i></a></td>
+							</tr>
+						<?php } ?>
 					</tbody>
 				</table>
-			</div>
-			<div class="col-xs-12">
+			<?php } else { ?>
+				<p class="apiint-meta" style="margin:0 0 12px;">No networks connected yet &mdash; pick a network below to get started.</p>
+			<?php } ?>
+			<div class="apiint-dni-form">
 				<form class="form-horizontal" role="form" method="post" action="">
 					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>">
 					<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo $edit_dni_row['type'] ?? ''; ?>">
@@ -421,7 +638,6 @@ template_top('API Integrations');
 								<option value="<?php echo $dninetwork['networkId']; ?>" data-type="<?php echo $dninetwork['networkType']; ?>" <?php if (isset($edit_dni_row['networkId']) && $edit_dni_row['networkId'] == $dninetwork['networkId'] || isset($mysql['add_dni']) && $mysql['add_dni'] == $dninetwork['networkId']) echo 'selected'; ?>><?php echo $dninetwork['name']; ?> (<?php echo $dninetwork['networkType']; ?>)</option>
 							<?php } ?>
 						</select>
-
 					</div>
 					<div class="<?php if (isset($editing_dni_network) && $editing_dni_network) {
 									if (isset($edit_dni_row['type']) && $edit_dni_row['type'] == 'HasOffers') echo 'col-xs-7';
@@ -431,7 +647,6 @@ template_top('API Integrations');
 								} ?>" id="dni_api_key_input_group" style="padding: 0px; padding-right: 5px;">
 						<label class="sr-only" for="dni_network_api_key">Add API key</label>
 						<input type="text" name="dni_network_api_key" class="form-control input-sm" placeholder="API Key" value="<?php echo $edit_dni_row['apiKey'] ?? ''; ?>">
-						<p>
 						<div id="dniInfo"></div>
 					</div>
 					<div class="col-xs-2" id="dni_affiliate_id_input_group" style="<?php if (isset($editing_dni_network) && $editing_dni_network) {
@@ -441,385 +656,299 @@ template_top('API Integrations');
 																					} ?> padding: 0px; padding-right: 5px;">
 						<label class="sr-only" for="dni_network_affiliate_id">Add Affiliate ID</label>
 						<input type="text" name="dni_network_affiliate_id" id="dni_network_affiliate_id" class="form-control input-sm" placeholder="Affiliate ID" value="<?php if (isset($editing_dni_network) && $editing_dni_network) {
-																																												if (isset($edit_dni_row['type']) && $edit_dni_row['type'] == 'HasOffers') echo 'null';
-																																											} else {
-																																												echo $edit_dni_row['affiliateId'] ?? '';
-																																											} ?>">
+																																								if (isset($edit_dni_row['type']) && $edit_dni_row['type'] == 'HasOffers') echo 'null';
+																																							} else {
+																																								echo $edit_dni_row['affiliateId'] ?? '';
+																																							} ?>">
 					</div>
 					<div class="col-xs-2" style="padding: 0px;">
-						<button class="btn btn-xs btn-p202 btn-block" type="submit" style="margin-top: 5px;"><?php if (isset($editing_dni_network) && $editing_dni_network) echo 'Edit';
-																												else echo 'Add'; ?></button>
+						<button class="apiint-btn apiint-btn--primary" type="submit" style="width:100%;"><?php if (isset($editing_dni_network) && $editing_dni_network) echo 'Save changes';
+																											else echo 'Add network'; ?></button>
 					</div>
 				</form>
 			</div>
-		</div>
-	</div>
-</div>
+		</section>
 
-<div class="row account">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6><span><img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/ipqs.png"></span> IPQualityScore Integration <?php showHelp("jvzoo"); ?></h6>
+		<?php
+		// Landing Page Optimizer (bandit) pairing card. Status lives in
+		// 202_users_pref (bandit_status / bandit_site_key); every feature screen is
+		// hosted — this card only connects and disconnects the generic bridge.
+		$bandit_schema_ready = array_key_exists('bandit_status', $user_row);
+		$bandit_connected = $bandit_schema_ready && (string) ($user_row['bandit_status'] ?? '') === 'active';
+		$bandit_site_key = (string) ($user_row['bandit_site_key'] ?? '');
+		$bandit_has_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? '')) !== '';
+		$bandit_needs_subscription = !empty($bandit_needs_subscription); // set by the connect catch above
+		$bandit_sub_retry = !empty($bandit_sub_retry); // the failed attempt came from the "I've subscribed" retry
+		$bandit_saas_base = \Prosper202\Bandit\PairingClient::saasBaseUrl();
+		$bandit_capabilities = \Prosper202\Bandit\PairingClient::CAPABILITIES;
+		?>
+		<section class="apiint-card" id="bandit">
+			<div class="apiint-card-head">
+				<div class="apiint-icon-fallback" aria-hidden="true">LP</div>
+				<h2>Landing Page Optimizer</h2>
+				<?php if ($bandit_connected) {
+					apiint_pill('ok', 'Connected');
+				} elseif (!$bandit_schema_ready) {
+					apiint_pill('warn', 'Upgrade needed');
+				} elseif ($bandit_needs_subscription) {
+					apiint_pill('warn', 'Subscription required');
+				} elseif (isset($error['bandit'])) {
+					apiint_pill('err', 'Action needed');
+				} else {
+					apiint_pill('off', 'Not connected');
+				} ?>
 			</div>
-			<div class="col-xs-8">
-				<?php showSuccessMessage($change_ipqs_api_key, 'Your IPQualityScore API key was changed successfully.'); ?>
-				<?php showErrorMessage($error, 'ipqs_api_key_error'); ?>
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-4">
-		<div class="row">
-			<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-						If you wish to detect and redirect Fraud in real-time using IPQualityScore, enter your IPQualityScore API Key! <a href='https://202.redirexit.com/tracking202/redirect/dl.php?t202id=12608&t202kw=' target='_blank' rel='noopener'>Click here for your free api key.</a>
-					</div>
+			<p class="apiint-desc">Run hosted A/B experiments on your landing pages. Connecting registers a signed conversion webhook &mdash; nothing else changes on this install.</p>
+			<?php showSuccessMessage(isset($_GET['bandit']) && $_GET['bandit'] === 'connected', 'Landing Page Optimizer connected.'); ?>
+			<?php showSuccessMessage(isset($_GET['bandit']) && $_GET['bandit'] === 'disconnected', 'Landing Page Optimizer disconnected.'); ?>
+			<?php showErrorMessage($error, 'bandit'); ?>
+			<?php if ($bandit_connected) { ?>
+				<?php apiint_endpoint('Site key', $bandit_site_key); ?>
+				<div class="apiint-actions">
+					<a href="<?php echo htmlspecialchars($bandit_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener" class="apiint-btn apiint-btn--primary">Manage experiments&nbsp;&rarr;</a>
+					<form method="post" action="">
+						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+						<input type="hidden" name="bandit_action" value="disconnect" />
+						<button class="apiint-btn apiint-btn--danger" type="submit" onclick="return confirm('Disconnect the Landing Page Optimizer? The pairing webhook will be removed.');">Disconnect</button>
+					</form>
 				</div>
+				<?php if (array_key_exists('bandit_ctx_kw', $user_row)) { ?>
+					<details class="apiint-config"<?php if (!empty($bandit_ctx_kw_saved)) echo ' open'; ?>>
+						<summary>Privacy</summary>
+						<?php showSuccessMessage(!empty($bandit_ctx_kw_saved), 'Context token preference saved.'); ?>
+						<form method="post" action="">
+							<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+							<input type="hidden" name="bandit_ctx_kw_save" value="1" />
+							<div class="apiint-field">
+								<label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;color:#37352f;font-size:13px;cursor:pointer;text-transform:none;">
+									<input type="checkbox" name="bandit_ctx_kw" value="1" style="margin:2px 0 0;"<?php if ((string) ($user_row['bandit_ctx_kw'] ?? '1') !== '0') echo ' checked'; ?>>
+									<span>Include keyword text in optimizer context tokens<br><span class="apiint-meta" style="margin:0;">Keywords ride the signed t202ctx token on rotator&rarr;landing-page redirects so experiments can segment by search term. Turn off to keep search terms out of tokens.</span></span>
+								</label>
+							</div>
+							<button class="apiint-btn apiint-btn--ghost" type="submit">Save</button>
+						</form>
+					</details>
+				<?php } ?>
+				<p class="apiint-meta">Bridge v<?php echo htmlspecialchars(\Prosper202\Bridge\EventBridge::BRIDGE_VERSION); ?> &middot; <?php echo htmlspecialchars(implode(', ', $bandit_capabilities['events'])); ?>, wildcard subscribe, remote config, v3 API, context tokens, dimensions sync</p>
+			<?php } elseif (!$bandit_schema_ready) { ?>
+				<p class="apiint-desc" style="margin-bottom:0;">Run the Prosper202 upgrade to enable this integration.</p>
+			<?php } elseif ($bandit_needs_subscription) { ?>
+				<div class="apiint-note apiint-note--warn" role="status">
+					<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.4v3.4M8 4.9h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+					<span><?php if ($bandit_sub_retry) { ?>We still don&rsquo;t see an active Bandit subscription for this account. If you just subscribed, give it a minute, then connect again.<?php } else { ?>Landing Page Optimizer runs on a Bandit plan, and this account doesn&rsquo;t have one yet. Start a subscription, then connect this install.<?php } ?></span>
+				</div>
+				<div class="apiint-actions">
+					<a class="apiint-btn apiint-btn--primary" href="<?php echo htmlspecialchars($bandit_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener">Get Landing Page Optimizer&nbsp;&rarr;</a>
+					<form method="post" action="" style="display:inline;">
+						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+						<input type="hidden" name="bandit_action" value="connect" />
+						<input type="hidden" name="bandit_retry" value="1" />
+						<button class="apiint-btn apiint-btn--ghost" type="submit">I&rsquo;ve subscribed &mdash; connect</button>
+					</form>
+				</div>
+			<?php } elseif ($bandit_has_api_key) { ?>
+				<div class="apiint-actions">
+					<form method="post" action="">
+						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+						<input type="hidden" name="bandit_action" value="connect" />
+						<button class="apiint-btn apiint-btn--primary" type="submit">Connect</button>
+					</form>
+				</div>
+			<?php } else { ?>
+				<p class="apiint-desc">You&rsquo;ll need your Prosper202 Customer API key first &mdash; it only takes a minute.</p>
+				<div class="apiint-actions">
+					<a class="apiint-btn apiint-btn--primary" href="<?php echo htmlspecialchars($bandit_saas_base); ?>/api/customers/login?redirect=get-api">Get your API key</a>
+				</div>
+			<?php } ?>
+		</section>
+
+		<section class="apiint-card" id="ipqs">
+			<div class="apiint-card-head">
+				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/ipqs.png" alt="">
+				<h2>IPQualityScore <?php showHelp("jvzoo"); ?></h2>
+				<?php apiint_pill(trim((string) ($user_row['ipqs_api_key'] ?? '')) !== '' ? 'ok' : 'off', trim((string) ($user_row['ipqs_api_key'] ?? '')) !== '' ? 'Connected' : 'Not connected'); ?>
 			</div>
-		</div>
-	</div>
-
-	<div class="col-xs-8">
-		<strong><small>Your IPQualityScore API Key Is:</small></strong><br />
-		<div class="row">
-
-			<form class="form-horizontal" role="form" method="post" action="">
-
-				<div class="col-xs-9">
-
+			<p class="apiint-desc">Detect and redirect click fraud in real time. <a href='https://202.redirexit.com/tracking202/redirect/dl.php?t202id=12608&t202kw=' target='_blank' rel='noopener'>Get a free API key</a>.</p>
+			<?php showSuccessMessage($change_ipqs_api_key, 'Your IPQualityScore API key was changed successfully.'); ?>
+			<?php showErrorMessage($error, 'ipqs_api_key_error'); ?>
+			<details class="apiint-config"<?php if (isset($error['ipqs_api_key_error'])) echo ' open'; ?>>
+				<summary><?php echo trim((string) ($user_row['ipqs_api_key'] ?? '')) !== '' ? 'Update API key' : 'Connect'; ?></summary>
+				<form method="post" action="">
 					<input type="hidden" name="change_ipqs_api_key" value="1" />
 					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-					<div class="form-group" style="margin-top: 20px;">
-						<label for="ipqs_api_key" class="col-xs-12 control-label" style="text-align:left">IPQS API Key:</label>
-						<div class="col-xs-12">
-							<input type="text" class="form-control input-sm" id="ipqs_api_key" name="ipqs_api_key" value="<?php echo $html['ipqs_api_key']; ?>">
+					<div class="apiint-field">
+						<label for="ipqs_api_key">IPQS API key</label>
+						<input type="text" class="form-control input-sm" id="ipqs_api_key" name="ipqs_api_key" value="<?php echo $html['ipqs_api_key']; ?>">
+					</div>
+					<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
+				</form>
+			</details>
+		</section>
+
+		<section class="apiint-card" id="clickbank">
+			<div class="apiint-card-head">
+				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/clickbank.png" alt="">
+				<h2>ClickBank <?php showHelp("clickbank"); ?></h2>
+				<?php
+				$cb_crypto_ok = extension_loaded('mcrypt') || function_exists("openssl_decrypt");
+				if (!$cb_crypto_ok) {
+					apiint_pill('warn', 'Unavailable');
+				} elseif (trim((string) ($user_row['cb_key'] ?? '')) === '') {
+					apiint_pill('off', 'Not connected');
+				} elseif ($cb_verified) {
+					apiint_pill('ok', 'Verified');
+				} else {
+					apiint_pill('warn', 'Unverified');
+				} ?>
+			</div>
+			<p class="apiint-desc">Update conversions automatically from ClickBank&rsquo;s Instant Notification Service.</p>
+			<?php showSuccessMessage($change_cb_key, 'Your Clickbank secret key was changed successfully.'); ?>
+			<?php showErrorMessage($error, 'cb_key'); ?>
+			<?php if ($cb_crypto_ok) { ?>
+				<?php apiint_endpoint('INS URL', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/cb202.php'); ?>
+				<details class="apiint-config"<?php if (isset($error['cb_key'])) echo ' open'; ?>>
+					<summary><?php echo trim((string) ($user_row['cb_key'] ?? '')) !== '' ? 'Update secret key' : 'Connect'; ?></summary>
+					<form method="post" action="">
+						<input type="hidden" name="change_cb_key" value="1" />
+						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
+						<div class="apiint-field">
+							<label for="cb_key">ClickBank secret key</label>
+							<input type="text" class="form-control input-sm" id="cb_key" name="cb_key" value="<?php echo $html['cb_key']; ?>">
 						</div>
-						<div class="col-xs-6">
-							<br>
-							<button class="btn btn-xs btn-p202 btn-block" type="submit">Update IPQS API Key</button>
-						</div>
-					</div>
-				</div>
-
-			</form>
-		</div>
-	</div>
-</div>
-
-<div class="row account">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-6">
-				<h6><span><img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/clickbank.png"></span> ClickBank Sales Notification <?php showHelp("clickbank"); ?></h6>
-			</div>
-			<div class="col-xs-6">
-				<?php showSuccessMessage($change_cb_key, 'Your Clickbank secret key was changed successfully.'); ?>
-				<?php showErrorMessage($error, 'cb_key'); ?>
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-4">
-		<div class="row">
-			<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-						If you wish to use Clickbank Sales Notification Service, to update conversions, enter your Secret Key!
-					</div>
-				</div>
-			</div>
-			<!--<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-					   <iframe width="100%" height="auto" src="//www.youtube.com/embed/M6zo3XuExL0" frameborder="0" allowfullscreen></iframe>
-					</div>
-				</div>			
-			</div> -->
-		</div>
-	</div>
-
-	<div class="col-xs-8">
-		<?php
-		if (extension_loaded('mcrypt') || function_exists("openssl_decrypt")) {
-		?>
-			<strong><small>Your Clickbank Notification URL is:</small></strong><br />
-			<div class="row">
-
-				<form class="form-horizontal" role="form" method="post" action="">
-
-					<div class="col-xs-9">
-
-						<small>
-							<span id="cb_verified">
+						<div class="apiint-actions">
+							<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
+							<a id="cb_status" class="apiint-btn apiint-btn--ghost">Check status</a>
+							<small><span id="cb_verified">
 								<?php if (!$cb_verified) { ?>
 									<span class="label label-important">Unverified</span>
 								<?php } else { ?>
 									<span class="label label-primary">Verified</span>
 								<?php } ?>
-							</span> -
-							<em><?php echo $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/cb202.php'; ?></em>
-						</small>
-
-						<input type="hidden" name="change_cb_key" value="1" />
-						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-						<div class="form-group" style="margin-top: 20px;">
-							<label for="cb_key" class="col-xs-5 control-label" style="text-align:left">Clickbank Secret Key:</label>
-							<div class="col-xs-7">
-								<input type="text" class="form-control input-sm" id="cb_key" name="cb_key" value="<?php echo $html['cb_key']; ?>">
-							</div>
+							</span></small>
 						</div>
-					</div>
+					</form>
+				</details>
+			<?php } else { ?>
+				<div class="apiint-note apiint-note--err" role="alert"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 5v3.5M8 11h.01M8 1.5 14.5 13a.6.6 0 0 1-.52.9H2.02a.6.6 0 0 1-.52-.9L8 1.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>The mcrypt (or OpenSSL) PHP extension is required for this integration. Install it, or ask your hosting provider for assistance.</span></div>
+			<?php } ?>
+		</section>
 
-					<div class="col-xs-3">
-						<a id="cb_status" class="btn btn-xs btn-warning btn-block">Check status</a>
-						<br />
-						<div class="form-group">
-							<div class="col-xs-12">
-								<button class="btn btn-xs btn-p202 btn-block" type="submit">Update Secret Key</button>
-							</div>
-						</div>
-					</div>
-
-				</form>
+		<section class="apiint-card" id="jvzoo">
+			<div class="apiint-card-head">
+				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/jvzoo.png" alt="">
+				<h2>JVZoo <?php showHelp("jvzoo"); ?></h2>
+				<?php apiint_pill(trim((string) ($user_row['jvzoo_ipn_secret_key'] ?? '')) !== '' ? 'ok' : 'off', trim((string) ($user_row['jvzoo_ipn_secret_key'] ?? '')) !== '' ? 'Connected' : 'Not connected'); ?>
 			</div>
-		<?php
-		} else {
-		?>
-			<div class="row">
-
-
-				<div class="col-xs-12">
-
-					<small>
-						<span id="cb_verified">
-							<span class="label label-important">Mcrypt Extension Missing </span>
-						</span> The mcrypt extension is needed for the ClickBank Sales Notification integration to work. However, it has not been installed. Please install it, or ask your hosting provider for assistance.
-					</small>
-
-				</div>
-
-
-			</div>
-		<?php
-		}
-		?>
-
-	</div>
-</div>
-
-<div class="row account">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6><span><img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/jvzoo.png"></span> JVZoo JVZIPN <?php showHelp("jvzoo"); ?></h6>
-			</div>
-			<div class="col-xs-8">
-				<?php showSuccessMessage($change_jvzoo_secret_key, 'Your JVZoo secret key was changed successfully.'); ?>
-				<?php showErrorMessage($error, 'jvzoo_secret_key_error'); ?>
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-4">
-		<div class="row">
-			<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-						If you wish to use JVZoo Instant Payment Notification (JVZIPN) to update conversions, enter your JVZIPN Secret Key!
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
-
-	<div class="col-xs-8">
-		<strong><small>Your JVZIPN URL For JVZoo Is:</small></strong><br />
-		<div class="row">
-
-			<form class="form-horizontal" role="form" method="post" action="">
-
-				<div class="col-xs-9">
-
-					<small>
-						<em><?php echo $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/jvzoo.php'; ?></em>
-					</small>
-
+			<p class="apiint-desc">Update conversions from JVZoo&rsquo;s Instant Payment Notification (JVZIPN).</p>
+			<?php showSuccessMessage($change_jvzoo_secret_key, 'Your JVZoo secret key was changed successfully.'); ?>
+			<?php showErrorMessage($error, 'jvzoo_secret_key_error'); ?>
+			<?php apiint_endpoint('IPN URL', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/jvzoo.php'); ?>
+			<details class="apiint-config"<?php if (isset($error['jvzoo_secret_key_error'])) echo ' open'; ?>>
+				<summary><?php echo trim((string) ($user_row['jvzoo_ipn_secret_key'] ?? '')) !== '' ? 'Update secret key' : 'Connect'; ?></summary>
+				<form method="post" action="">
 					<input type="hidden" name="change_jvzoo_secret_key" value="1" />
 					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-					<div class="form-group" style="margin-top: 20px;">
-						<label for="jvzoo_ipn_secret_key" class="col-xs-12 control-label" style="text-align:left">JVZoo Secret Key:</label>
-						<div class="col-xs-12">
-							<input type="text" class="form-control input-sm" id="jvzoo_ipn_secret_key" name="jvzoo_ipn_secret_key" value="<?php echo $html['jvzoo_ipn_secret_key']; ?>">
-						</div>
-						<div class="col-xs-6">
-							<br>
-							<button class="btn btn-xs btn-p202 btn-block" type="submit">Update JVZoo Secret Key</button>
-						</div>
+					<div class="apiint-field">
+						<label for="jvzoo_ipn_secret_key">JVZoo secret key</label>
+						<input type="text" class="form-control input-sm" id="jvzoo_ipn_secret_key" name="jvzoo_ipn_secret_key" value="<?php echo $html['jvzoo_ipn_secret_key']; ?>">
 					</div>
-				</div>
+					<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
+				</form>
+			</details>
+		</section>
 
-			</form>
-		</div>
-	</div>
-</div>
-
-<div class="row account">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6><span><img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/zaxaa.png"></span> ZPN Payment Notification (ZPN) <?php showHelp("zaxaa"); ?></h6>
+		<section class="apiint-card" id="zaxaa">
+			<div class="apiint-card-head">
+				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/zaxaa.png" alt="">
+				<h2>Zaxaa <?php showHelp("zaxaa"); ?></h2>
+				<?php apiint_pill(trim((string) ($user_row['zaxaa_api_signature'] ?? '')) !== '' ? 'ok' : 'off', trim((string) ($user_row['zaxaa_api_signature'] ?? '')) !== '' ? 'Connected' : 'Not connected'); ?>
 			</div>
-			<div class="col-xs-8">
-				<?php showSuccessMessage($change_zaxaa_api_signature, 'Your Zaxaa API signature was changed successfully.'); ?>
-				<?php showErrorMessage($error, 'zaxaa_api_signature_error'); ?>
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-4">
-		<div class="row">
-			<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-						If you wish to use Zaxaa Payment Notification (ZPN) to update conversions, enter your API Signature!
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
-
-	<div class="col-xs-8">
-		<strong><small>Your ZPN URL For Zaxaa Is:</small></strong><br />
-		<div class="row">
-
-			<form class="form-horizontal" role="form" method="post" action="">
-
-				<div class="col-xs-9">
-
-					<small>
-						<em><?php echo $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/zpn.php'; ?></em>
-					</small>
-
+			<p class="apiint-desc">Update conversions from Zaxaa Payment Notification (ZPN).</p>
+			<?php showSuccessMessage($change_zaxaa_api_signature, 'Your Zaxaa API signature was changed successfully.'); ?>
+			<?php showErrorMessage($error, 'zaxaa_api_signature_error'); ?>
+			<?php apiint_endpoint('ZPN URL', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/zpn.php'); ?>
+			<details class="apiint-config"<?php if (isset($error['zaxaa_api_signature_error'])) echo ' open'; ?>>
+				<summary><?php echo trim((string) ($user_row['zaxaa_api_signature'] ?? '')) !== '' ? 'Update API signature' : 'Connect'; ?></summary>
+				<form method="post" action="">
 					<input type="hidden" name="change_zaxaa_api_signature" value="1" />
 					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-					<div class="form-group" style="margin-top: 20px;">
-						<label for="zaxaa_api_signature" class="col-xs-12 control-label" style="text-align:left">Zaxaa API signature:</label>
-						<div class="col-xs-12">
-							<input type="text" class="form-control input-sm" id="zaxaa_api_signature" name="zaxaa_api_signature" value="<?php echo $html['zaxaa_api_signature']; ?>">
-						</div>
-						<div class="col-xs-6">
-							<br>
-							<button class="btn btn-xs btn-p202 btn-block" type="submit">Update Zaxaa API Signature</button>
-						</div>
+					<div class="apiint-field">
+						<label for="zaxaa_api_signature">Zaxaa API signature</label>
+						<input type="text" class="form-control input-sm" id="zaxaa_api_signature" name="zaxaa_api_signature" value="<?php echo $html['zaxaa_api_signature']; ?>">
 					</div>
-				</div>
+					<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
+				</form>
+			</details>
+		</section>
 
-			</form>
-		</div>
-	</div>
-</div>
-
-<div class="row account">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6><span><img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/slack.png"></span> Slack Integration <?php showHelp("slack"); ?></h6>
+		<section class="apiint-card" id="slack">
+			<div class="apiint-card-head">
+				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/slack.png" alt="">
+				<h2>Slack <?php showHelp("slack"); ?></h2>
+				<?php apiint_pill(trim((string) ($user_row['user_slack_incoming_webhook'] ?? '')) !== '' ? 'ok' : 'off', trim((string) ($user_row['user_slack_incoming_webhook'] ?? '')) !== '' ? 'Connected' : 'Not connected'); ?>
 			</div>
-			<div class="col-xs-8">
-				<?php showSuccessMessage($change_user_slack_incoming_webhook, 'Your Slack Incoming Webhook URL was changed successfully.'); ?>
-				<?php showErrorMessage($error, 'user_slack_incoming_webhook'); ?>
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-4">
-		<div class="row">
-			<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-						If you wish to send notifications into Slack enter your <strong>Slack</strong> incoming webhook url. To receive notifications from Slack, use the <strong>Prosper202</strong> Incoming Webhook URL.
-					</div>
-				</div>
-			</div>
-			<!--	<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-					    <iframe width="100%" height="auto" src="//www.youtube.com/embed/M6zo3XuExL0" frameborder="0" allowfullscreen></iframe>
-					</div>
-				</div>			
-			</div> -->
-		</div>
-	</div>
-
-	<div class="col-xs-8">
-		<strong><small>Prosper202 Incoming Webhook URL Is:</small></strong><br />
-		<div class="row">
-
-			<form class="form-horizontal" role="form" method="post" action="">
-
-				<div class="col-xs-9">
-
-					<small>
-						<em><?php echo $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/slack.php'; ?></em>
-					</small>
-
+			<p class="apiint-desc">Send Prosper202 notifications into a Slack channel, and receive Slack commands via the webhook below.</p>
+			<?php showSuccessMessage($change_user_slack_incoming_webhook, 'Your Slack Incoming Webhook URL was changed successfully.'); ?>
+			<?php showErrorMessage($error, 'user_slack_incoming_webhook'); ?>
+			<?php apiint_endpoint('P202 webhook', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/slack.php'); ?>
+			<details class="apiint-config"<?php if (isset($error['user_slack_incoming_webhook'])) echo ' open'; ?>>
+				<summary><?php echo trim((string) ($user_row['user_slack_incoming_webhook'] ?? '')) !== '' ? 'Update webhook URL' : 'Connect'; ?></summary>
+				<form method="post" action="">
 					<input type="hidden" name="change_user_slack_incoming_webhook" value="1" />
 					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-					<div class="form-group" style="margin-top: 20px;">
-						<label for="user_slack_incoming_webhook" class="col-xs-12 control-label" style="text-align:left">Slack Incoming Webhook URL:</label>
-						<div class="col-xs-12">
-							<input type="text" class="form-control input-sm" id="user_slack_incoming_webhook" name="user_slack_incoming_webhook" value="<?php echo $html['user_slack_incoming_webhook']; ?>">
-						</div>
-						<div class="col-xs-6">
-							<br>
-							<button class="btn btn-xs btn-p202 btn-block" type="submit">Update Webhook Url</button>
-						</div>
+					<div class="apiint-field">
+						<label for="user_slack_incoming_webhook">Slack incoming webhook URL</label>
+						<input type="text" class="form-control input-sm" id="user_slack_incoming_webhook" name="user_slack_incoming_webhook" value="<?php echo $html['user_slack_incoming_webhook']; ?>">
 					</div>
-				</div>
+					<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
+				</form>
+			</details>
+		</section>
 
-			</form>
-		</div>
+		<section class="apiint-card" id="paykickstart">
+			<div class="apiint-card-head">
+				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/paykickstart.png" alt="">
+				<h2>PayKickstart <?php showHelp("paykickstart"); ?></h2>
+				<?php apiint_pill('off', 'No setup needed'); ?>
+			</div>
+			<p class="apiint-desc">Update conversions from PayKickstart&rsquo;s Affiliate IPN &mdash; just paste this URL as your IPN URL in PayKickstart.</p>
+			<?php apiint_endpoint('IPN URL', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/paykickstart.php'); ?>
+		</section>
+
 	</div>
 </div>
 
-<div class="row account">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6><span><img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/paykickstart.png"></span> PayKickstart Affiliate IPN <?php showHelp("paykickstart"); ?></h6>
-			</div>
-			<div class="col-xs-8">
-
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-4">
-		<div class="row">
-			<div class="col-xs-12">
-				<div class="panel panel-default account_left">
-					<div class="panel-body">
-						If you wish to use PayKickstart Affiliate Instant Payment Notification (IPN) to update conversions, use the following url as your IPN url.
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
-
-	<div class="col-xs-8">
-		<strong><small>Your URL For PayKickstart Affiliate IPN is:</small></strong><br />
-		<div class="row">
-
-			<form class="form-horizontal" role="form" method="post" action="">
-
-				<div class="col-xs-9">
-
-					<small>
-						<em><?php echo $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/paykickstart.php'; ?></em>
-					</small>
-
-				</div>
-
-			</form>
-		</div>
-	</div>
-</div>
+<script>
+	$(function() {
+		// Copy-to-clipboard for endpoint URLs
+		$('.apiint').on('click', '.apiint-copy', function() {
+			var $btn = $(this);
+			var text = $btn.attr('data-copy');
+			var done = function() {
+				$btn.addClass('is-copied').text('Copied');
+				setTimeout(function() { $btn.removeClass('is-copied').text('Copy'); }, 1600);
+			};
+			if (navigator.clipboard && window.isSecureContext) {
+				navigator.clipboard.writeText(text).then(done);
+			} else {
+				var ta = document.createElement('textarea');
+				ta.value = text;
+				ta.style.position = 'fixed';
+				ta.style.opacity = '0';
+				document.body.appendChild(ta);
+				ta.select();
+				try { document.execCommand('copy'); done(); } catch (e) {}
+				document.body.removeChild(ta);
+			}
+		});
+		// After a POST, bring the outcome into view
+		var note = $('.apiint-note').first();
+		if (note.length) {
+			note.closest('details').attr('open', true);
+			note[0].scrollIntoView({ block: 'center' });
+		}
+	});
+</script>
 
 <?php if (count($dniProcesing['networks']) > 0) { ?>
 	<script type="text/javascript">

@@ -3829,10 +3829,64 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.72', '>')) {
+        if ($prosper202_version == '1.9.72') {
 
-            $prosper202_version = '1.9.72';
+            // Landing Page Optimizer (bandit) bridge pairing state: the
+            // paired site key, pairing status, and the signed remote bridge
+            // config pulled by 202-cronjobs/bridge_config.php. Guarded
+            // ALTERs so a partial failure retries cleanly on the next run.
+            $bandit_ok = true;
+            foreach ([
+                ['bandit_site_key', "ADD COLUMN `bandit_site_key` varchar(64) NOT NULL DEFAULT ''"],
+                ['bandit_status', "ADD COLUMN `bandit_status` varchar(16) NOT NULL DEFAULT ''"],
+                ['bandit_bridge_config', "ADD COLUMN `bandit_bridge_config` text DEFAULT NULL"],
+            ] as [$bandit_column, $bandit_alter]) {
+                $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE '" . $bandit_column . "'");
+                $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+                if (!$exists && _upgrade_query('ALTER TABLE `202_users_pref` ' . $bandit_alter) === false) {
+                    $bandit_ok = false;
+                    break;
+                }
+            }
+
+            if ($bandit_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.73'") !== false) {
+                    $prosper202_version = '1.9.73';
+                } else {
+                    error_log('Prosper202 upgrade: added bandit bridge columns but failed to persist version 1.9.73; leaving version at 1.9.72 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to add 202_users_pref bandit bridge columns; leaving version at 1.9.72 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.73') {
+
+            // Landing Page Optimizer t202ctx keyword privacy pref
+            // (p202-edge-sync §8): default on ('1'); '0' omits keyword text
+            // from the signed context tokens minted in rtr.php. Guarded
+            // ALTER so a partial failure retries cleanly on the next run.
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'bandit_ctx_kw'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $ctx_kw_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_users_pref` ADD COLUMN `bandit_ctx_kw` tinyint(1) NOT NULL DEFAULT '1'"
+            ) !== false;
+
+            if ($ctx_kw_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.74'") !== false) {
+                    $prosper202_version = '1.9.74';
+                } else {
+                    error_log('Prosper202 upgrade: added bandit_ctx_kw pref but failed to persist version 1.9.74; leaving version at 1.9.73 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to add 202_users_pref bandit_ctx_kw column; leaving version at 1.9.73 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.74', '>')) {
+
+            $prosper202_version = '1.9.74';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Ltv;
 
+use Prosper202\Bridge\EventBridge;
 use Prosper202\Database\Connection;
 
 /**
@@ -74,6 +75,18 @@ final class MysqlEngagementRepository
         );
         $this->conn->bind($touch, 'iiii', [$occurredAt, $now, $customerId, $userId]);
         $this->conn->executeUpdate($touch);
+
+        // Bandit bridge: OFF by default — only emits once the signed remote
+        // bridge config explicitly enables engagement.recorded (or '*').
+        EventBridge::emitIfEnabled($this->conn, $userId, 'engagement.recorded', [
+            'engagement_id' => $eventId,
+            'customer_id' => $customerId,
+            'event_name' => $eventName,
+            'source' => $source,
+            'click_id' => $clickId !== null && $clickId > 0 ? $clickId : null,
+            'event_value' => $eventValue,
+            'occurred_at' => $occurredAt,
+        ]);
 
         return $eventId;
     }

@@ -44,6 +44,21 @@ if (!empty($_GET['copy_landing_page_id'])) {
 	$copying = true;
 }
 
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !$editing && !$copying && !empty($_GET['aff_campaign_id'])) {
+	$requestedCampaignId = filter_input(INPUT_GET, 'aff_campaign_id', FILTER_VALIDATE_INT);
+	if ($requestedCampaignId) {
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+		$mysql['aff_campaign_id'] = $db->real_escape_string((string)$requestedCampaignId);
+		$campaignSql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "' AND user_id='" . $mysql['user_id'] . "' AND aff_campaign_deleted='0'";
+		$campaignResult = $db->query($campaignSql) or record_mysql_error($campaignSql);
+		if ($campaignResult->num_rows > 0) {
+			$html['aff_campaign_id'] = htmlentities((string)$requestedCampaignId, ENT_QUOTES, 'UTF-8');
+		} else {
+			unset($mysql['aff_campaign_id']);
+		}
+	}
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// Require a valid session token for this state-changing request.
@@ -456,6 +471,25 @@ template_top('Landing Page Setup');  ?>
 					<ul class="setup-list">
 						<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
+						// Landing Page Optimizer deeplink: paired installs jump to the
+						// hosted create page with context params; unpaired ones land on
+						// the pairing panel. Degrades to unpaired before the upgrade
+						// adds the bandit_status pref column.
+						$bandit_paired = false;
+						$bandit_install_hash = '';
+						try {
+							$bandit_result = $db->query("SELECT 2u.install_hash, 2up.bandit_status FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_id'] . "'");
+							$bandit_row = ($bandit_result instanceof mysqli_result) ? $bandit_result->fetch_assoc() : null;
+							$bandit_install_hash = trim((string) ($bandit_row['install_hash'] ?? ''));
+							// a pairing is only deeplinkable with a real install hash —
+							// a blank one would emit install= and break the hosted page,
+							// so treat it as unpaired (the link then routes to the panel)
+							$bandit_paired = (string) ($bandit_row['bandit_status'] ?? '') === 'active' && $bandit_install_hash !== '';
+						} catch (Throwable $bandit_lookup_error) {
+							// pre-upgrade schema; keep the panel link
+						}
+						$bandit_create_base = \Prosper202\Bandit\PairingClient::saasBaseUrl() . '/api/customers/experiments/create';
+
 						$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='" . $mysql['user_id'] . "' AND landing_page_type='1' AND landing_page_deleted='0'";
 
 						$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
@@ -468,10 +502,16 @@ template_top('Landing Page Setup');  ?>
 																		$html['landing_page_nickname'] = htmlentities((string)($landing_page_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');
 																		$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
-																		if ($userObj->hasPermission("remove_landing_page")) {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a> <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
+																		if ($bandit_paired) {
+																			$bandit_optimize_link = ' <a href="' . htmlentities($bandit_create_base . '?lp=' . urlencode((string) ($landing_page_row['landing_page_url'] ?? '')) . '&install=' . urlencode($bandit_install_hash), ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" class="list-action">optimize</a>';
 																		} else {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a></li>', $html['landing_page_nickname'], $html['landing_page_id']);
+																			$bandit_optimize_link = ' <a href="' . htmlentities(get_absolute_url() . '202-account/api-integrations.php#bandit', ENT_QUOTES, 'UTF-8') . '" class="list-action">optimize</a>';
+																		}
+
+																		if ($userObj->hasPermission("remove_landing_page")) {
+																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a>%s <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $bandit_optimize_link, $html['landing_page_id'], $html['landing_page_nickname']);
+																		} else {
+																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a>%s</li>', $html['landing_page_nickname'], $html['landing_page_id'], $bandit_optimize_link);
 																		}
 																	} ?>
 					</ul>

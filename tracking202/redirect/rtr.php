@@ -723,8 +723,19 @@ $click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id); 
 
 if ($cloaking_on == true) {
-	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;      
+	// Match the request scheme (mirrors getSecureStatus(), which isn't loaded
+	// here) and honor subdirectory installs via get_absolute_url() — a
+	// hard-coded http://.../tracking202/... downgraded https visitors and
+	// broke non-root installs (review finding).
+	$cloaking_secure = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+		|| (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
+		|| (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
+	$cloaking_site_url = ($cloaking_secure ? 'https://' : 'http://').$_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
+// Landing Page Optimizer (bandit): the t202ctx token is minted ONLY when the
+// destination comes from the type='lp' branch below (p202-edge-sync §3.3) —
+// never for campaign/url/auto_monetizer targets (offer URLs must not carry it).
+$t202ctx_lp_destination = false;
 if ($rule['aff_campaign_id'] != null) {
 	//rotate the urls
 	$redirect_site_url = rotateTrackerUrl($db, $rule);
@@ -735,6 +746,7 @@ if ($rule['aff_campaign_id'] != null) {
 		$redirect_site_url = $rule['aff_campaign_url'];
 	} else if ($rule['type'] == 'lp') {
 		$redirect_site_url = $rule['landing_page_url'];
+		$t202ctx_lp_destination = true;
 	} else if ($rule['type'] == 'auto_monetizer') {
 		$redirect_site_url = "http://prosper202.com";
 	} else if ($rule['default_url'] != null) {
@@ -767,13 +779,99 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	$data = $de->setDirtyHour($mysql['click_id']);
 
 	$urlvars = getPrePopVars($_GET);
-	
+
+	// Landing Page Optimizer: on rotator→LP destinations only, append the
+	// signed per-click context token (t202ctx, p202-edge-sync §3.2/§3.3) so
+	// the paired edge can resolve traffic-source segments at assign time.
+	// Gated on an active bandit pairing whose derived key is already cached
+	// in the bandit_bridge_config pref — installs paired before ctx_token
+	// support skip minting until 202-cronjobs/bridge_config.php backfills
+	// the key. All payload claims are already in scope: zero extra queries
+	// beyond the memcached pref row. Failure-open: ANY problem in this block
+	// (missing bandit columns pre-upgrade, bad JSON, mint error) leaves the
+	// redirect exactly as it was.
+	$t202ctx_token = '';
+	if ($t202ctx_lp_destination) {
+		try {
+			$t202ctx_pref = false;
+			$t202ctx_sql = "SELECT bandit_status, bandit_bridge_config, bandit_ctx_kw FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
+			// key mirrored by bandit_ctx_pref_cache_bust() (202-account/
+			// api-integrations.php) — keep the SELECT text in sync
+			$t202ctx_cache_key = md5($t202ctx_sql . systemHash());
+			if (!empty($GLOBALS['memcacheWorking'])) {
+				$t202ctx_cached = $GLOBALS['memcache']->get($t202ctx_cache_key);
+				if ($t202ctx_cached !== false) {
+					$t202ctx_pref = unserialize((string)$t202ctx_cached, ['allowed_classes' => false]);
+				}
+			}
+			if ($t202ctx_pref === false) {
+				// Plain query on purpose (not _mysqli_query): a missing bandit
+				// column on a pre-upgrade schema must soft-skip the token,
+				// never kill the redirect.
+				$t202ctx_result = $db->query($t202ctx_sql);
+				if ($t202ctx_result instanceof mysqli_result) {
+					$t202ctx_pref = $t202ctx_result->fetch_assoc();
+					if (!empty($GLOBALS['memcacheWorking']) && is_array($t202ctx_pref)) {
+						setCache($t202ctx_cache_key, serialize($t202ctx_pref), 60 * 3);
+					}
+				}
+			}
+			if (is_array($t202ctx_pref) && ($t202ctx_pref['bandit_status'] ?? '') === 'active') {
+				$t202ctx_state = json_decode((string)($t202ctx_pref['bandit_bridge_config'] ?? ''), true);
+				$t202ctx_key_hex = is_array($t202ctx_state) ? (string)($t202ctx_state['ctx_key'] ?? '') : '';
+				if (preg_match('/^[0-9a-f]{64}$/', $t202ctx_key_hex) === 1) {
+					$t202ctx_claims = ['v' => 1, 't' => time(), 'sid' => (string)$mysql['click_id']];
+					if ((int)$ppc_account > 0) {
+						$t202ctx_claims['acc'] = (int)$ppc_account;
+					}
+					if ((int)$rule['aff_campaign_id'] > 0) {
+						$t202ctx_claims['cmp'] = (int)$rule['aff_campaign_id'];
+					}
+					$t202ctx_lp_id = (int)($rule['landing_page_id'] ?: ($rule['default_lp'] ?? 0));
+					if ($t202ctx_lp_id > 0) {
+						$t202ctx_claims['lp'] = $t202ctx_lp_id;
+					}
+					// stripslashes undoes the real_escape_string applied for
+					// the SQL writes above — the token carries the plain text.
+					if ((string)($t202ctx_pref['bandit_ctx_kw'] ?? '1') !== '0' && is_scalar($keyword) && (string)$keyword !== '') {
+						$t202ctx_claims['kw'] = stripslashes((string)$keyword);
+					}
+					foreach (['c1' => $c1, 'c2' => $c2, 'c3' => $c3, 'c4' => $c4] as $t202ctx_ck => $t202ctx_cv) {
+						if ((string)$t202ctx_cv !== '') {
+							$t202ctx_claims[$t202ctx_ck] = stripslashes((string)$t202ctx_cv);
+						}
+					}
+					if ((string)$countryCode !== '') {
+						$t202ctx_claims['cc'] = (string)$countryCode;
+					}
+					$t202ctx_token = \Prosper202\Bandit\CtxToken::mint($t202ctx_claims, (string)hex2bin($t202ctx_key_hex));
+				}
+			}
+		} catch (\Throwable $t202ctx_error) {
+			// A mint failure must never break the redirect.
+			$t202ctx_token = '';
+		}
+	}
+
 	//now we've recorded, now lets redirect them
 	if ($cloaking_on == true) {
-		//if cloaked, redirect them to the cloaked site. 
-		return setPrePopVars($urlvars,$cloaking_site_url,true);  
+		//if cloaked, redirect them to the cloaked site.
+		// cl.php forwards only pci + 202vars to the landing page, so the token
+		// must ride INSIDE the packed vars — appended to the cl.php URL itself
+		// it would never reach the final destination (review finding).
+		if ($t202ctx_token !== '') {
+			$urlvars .= 't202ctx=' . $t202ctx_token . '&';
+		}
+		$t202ctx_final_url = setPrePopVars($urlvars,$cloaking_site_url,true);
 	} else {
-		return setPrePopVars($urlvars,$redirect_site_url,false);       
-	} 
+		$t202ctx_final_url = setPrePopVars($urlvars,$redirect_site_url,false);
+		if ($t202ctx_token !== '') {
+			// fragment-safe append: the token must join the query string BEFORE
+			// any #fragment, or it stays client-side and never reaches the LP
+			// server/loader (review finding).
+			$t202ctx_final_url = \Prosper202\Bandit\CtxToken::appendToUrl((string)$t202ctx_final_url, $t202ctx_token);
+		}
+	}
+	return $t202ctx_final_url;
 
 }

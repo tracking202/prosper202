@@ -438,6 +438,9 @@ if (!function_exists('p202RecordConversion')) {
         if ($result['clickFound'] && !$result['duplicate']) {
             $de = new DataEngine();
             $de->setDirtyHour((string) $clickId);
+            // (conversion.recorded now emits from MysqlConversionRepository::
+            // record() post-commit — the single writer shared with the V3 API —
+            // so every ingestion path fires the bridge identically.)
         }
 
         return ['conv_id' => $result['convId'], 'duplicate' => $result['duplicate']];
