@@ -202,6 +202,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 								 	WHERE        `landing_page_id`='" . $mysql['landing_page_id'] . "'";
 			$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
 		}
+
+		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
+		// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
+		// (After the public-id block above: markDirty's queries reset insert_id.)
+		\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 	}
 }
 
@@ -225,6 +230,12 @@ if (isset($_GET['delete_landing_page_id'])) {
 
 		if ($delete_result = $db->query($delete_sql)) {
 			$delete_success = true;
+
+			// Landing Page Optimizer (segments-v2 G10): deletes change the
+			// synced snapshot too (buildSnapshot omits deleted rows) — flag
+			// dirty so the hourly cron re-pushes. DB-only — no HTTP here.
+			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+
 			if ($slack) {
 				if (isset($_GET['delete_landing_page_type']) && $_GET['delete_landing_page_type'] == '0') {
 					$slack->push('simple_landing_page_deleted', ['name' => $_GET['delete_landing_page_name'] ?? '', 'user' => $user_row['username'] ?? '']);

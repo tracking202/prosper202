@@ -219,6 +219,12 @@ function RunHourlyCronJob()
             $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
             $insert_result = $db->query($insert_sql);
 
+            // Landing Page Optimizer (segments-v2 G10): push the dimension
+            // snapshot for paired users the dictionary CRUD flagged dirty.
+            // Self-contained and never fatal — the nightly full sync
+            // (202-cronjobs/bandit_dimensions.php) remains the backstop.
+            PushDirtyBanditDimensions();
+
             // Log the execution
             $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
             $log_result = $db->query($log_sql);
@@ -233,6 +239,89 @@ function RunHourlyCronJob()
     } catch (Exception $e) {
         error_log("RunHourlyCronJob Exception: " . $e->getMessage());
         return false;
+    }
+}
+
+/**
+ * Hourly tier of the bandit dimension sync (segments-v2 G10).
+ *
+ * The dictionary CRUD pages (setup/ppc_accounts.php, setup/aff_campaigns.php,
+ * setup/aff_networks.php, setup/landing_pages.php) never talk to the SaaS
+ * inline — they only set `dims_dirty` inside the bandit_bridge_config JSON
+ * pref via DimensionSync::markDirty. This job pushes the fresh snapshot for
+ * those flagged users through the exact per-user path the nightly full sync
+ * uses (DimensionSync::pushForUser) and clears the flag only on success: a
+ * failed push keeps the flag set, so the next hourly tick retries and the
+ * nightly bandit_dimensions.php run remains the backstop.
+ */
+function PushDirtyBanditDimensions()
+{
+    try {
+        try {
+            $db = getDatabaseConnection();
+        } catch (Exception $e) {
+            error_log("PushDirtyBanditDimensions: Database connection failed - " . $e->getMessage());
+            return;
+        }
+
+        $conn = new \Prosper202\Database\Connection($db);
+
+        try {
+            $stmt = $conn->prepareRead(
+                "SELECT p.user_id, p.bandit_bridge_config, u.install_hash
+                 FROM 202_users_pref p
+                 JOIN 202_users u ON u.user_id = p.user_id
+                 WHERE p.bandit_status = 'active'"
+            );
+            $paired = $conn->fetchAll($stmt);
+        } catch (\Throwable $e) {
+            if (\Prosper202\Database\Connection::isMysqlError($e, 1054, 'Unknown column')) {
+                // Pre-upgrade schema: the bandit columns do not exist yet.
+                return;
+            }
+            error_log("PushDirtyBanditDimensions: " . $e->getMessage());
+            return;
+        }
+
+        $client = null;
+        foreach ($paired as $row) {
+            $userId = (int) $row['user_id'];
+            $stateJson = (string) ($row['bandit_bridge_config'] ?? '');
+            $state = json_decode($stateJson, true);
+            if (!is_array($state) || empty($state['dims_dirty'])) {
+                continue;
+            }
+
+            try {
+                echo 'Pushing bandit dimensions for user ' . $userId . '...';
+                flushOutput();
+
+                if ($client === null) {
+                    $client = new \Prosper202\Bandit\PairingClient();
+                }
+                \Prosper202\Bandit\DimensionSync::pushForUser(
+                    $conn,
+                    $client,
+                    $userId,
+                    $stateJson,
+                    isset($row['install_hash']) ? (string) $row['install_hash'] : null
+                );
+                // Clear only on success — and only if no dictionary save
+                // landed mid-push (dims_dirty_at unchanged).
+                \Prosper202\Bandit\DimensionSync::clearDirty($conn, $userId, $state['dims_dirty_at'] ?? null);
+
+                echo 'Done<br>';
+                flushOutput();
+            } catch (\Throwable $e) {
+                // Keep dims_dirty set: the next hourly tick retries, and the
+                // nightly full sync covers it regardless.
+                echo 'Failed<br>';
+                flushOutput();
+                error_log("PushDirtyBanditDimensions: user " . $userId . " push failed - " . $e->getMessage());
+            }
+        }
+    } catch (\Throwable $e) {
+        error_log("PushDirtyBanditDimensions Exception: " . $e->getMessage());
     }
 }
 

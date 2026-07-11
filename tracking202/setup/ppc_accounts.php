@@ -77,6 +77,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 			$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
 			$add_success = true;
+			// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
+			// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
+			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 			if ($network_editing == true) {
 				if ($slack)
 					$slack->push('traffic_source_name_changed', ['old_name' => $_GET['edit_ppc_network_name'], 'new_name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
@@ -171,6 +174,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// Cast to int: this id is interpolated into SQL without quotes, where
 			// real_escape_string() would not prevent injection in a numeric context.
 			$the_ppc_account_id = (int)($db->insert_id != 0 ? $db->insert_id : $mysql['ppc_account_id']);
+			// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
+			// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
+			// (After the insert_id capture above: markDirty's queries reset it.)
+			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 
 			foreach ($_POST['pixel_type_id'] as $key => $value) {
 				$mysql['pixel_type_id'] = $db->real_escape_string($value);
@@ -263,6 +270,10 @@ if (isset($_GET['delete_ppc_network_id'])) {
 						AND     `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
 		if ($delete_result = _mysqli_query($delete_sql)) { //($delete_result)) {
 			$delete_success = true;
+			// Landing Page Optimizer (segments-v2 G10): deletes change the
+			// synced snapshot too (buildSnapshot omits deleted rows) — flag
+			// dirty so the hourly cron re-pushes. DB-only — no HTTP here.
+			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 			if ($slack)
 				$slack->push('traffic_source_deleted', ['name' => $_GET['delete_ppc_network_name'], 'user' => $user_row['username']]);
 		}
@@ -291,6 +302,10 @@ if (isset($_GET['delete_ppc_account_id'])) {
 						AND     `ppc_account_id`='" . $mysql['ppc_account_id'] . "'";
 		if ($delete_result = _mysqli_query($delete_sql)) {
 			$delete_success = true;
+			// Landing Page Optimizer (segments-v2 G10): deletes change the
+			// synced snapshot too (buildSnapshot omits deleted rows) — flag
+			// dirty so the hourly cron re-pushes. DB-only — no HTTP here.
+			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 			if ($slack)
 				$slack->push('traffic_source_account_deleted', ['account_name' => $_GET['delete_ppc_account_name'], 'user' => $user_row['username']]);
 		}

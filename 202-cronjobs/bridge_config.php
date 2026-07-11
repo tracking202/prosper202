@@ -25,6 +25,7 @@ error_reporting(E_ALL);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 
 use Prosper202\Bandit\CtxToken;
+use Prosper202\Bandit\DimensionSync;
 use Prosper202\Bandit\PairingClient;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
@@ -86,13 +87,19 @@ foreach ($paired as $row) {
             $conn->bind($keyStmt, 'ii', [$webhookId, $userId]);
             $keyRow = $conn->fetchOne($keyStmt);
             if ($keyRow !== null && (string) $keyRow['webhook_secret'] !== '') {
-                $state['ctx_key'] = bin2hex(CtxToken::deriveKey((string) $keyRow['webhook_secret']));
-                $keyJson = json_encode($state);
-                if ($keyJson !== false) {
-                    $persist = $conn->prepareWrite('UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ?');
-                    $conn->bind($persist, 'si', [$keyJson, $userId]);
-                    $conn->executeUpdate($persist);
-                }
+                $ctxKeyHex = bin2hex(CtxToken::deriveKey((string) $keyRow['webhook_secret']));
+                $state['ctx_key'] = $ctxKeyHex; // keep this loop's view coherent
+                // CAS persist onto the FRESH pref state, not this loop's
+                // pre-loop decode: an admin save may have set dims_dirty
+                // since the SELECT, and an unconditional write from the
+                // stale decode would erase it (hourly push then skips the
+                // user until the nightly full sync).
+                DimensionSync::casMutateState($conn, $userId, function (array $freshState) use ($ctxKeyHex): array {
+                    if (preg_match('/^[0-9a-f]{64}$/', (string) ($freshState['ctx_key'] ?? '')) !== 1) {
+                        $freshState['ctx_key'] = $ctxKeyHex;
+                    }
+                    return $freshState;
+                });
             }
         }
 
@@ -168,15 +175,19 @@ foreach ($paired as $row) {
             $conn->executeUpdate($update);
         }
 
-        $state['config'] = $config;
-        $state['fetched_at'] = $now;
-        $stateJson = json_encode($state);
-        if ($stateJson === false) {
-            throw new RuntimeException('state re-encode failed');
-        }
-        $persist = $conn->prepareWrite('UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ?');
-        $conn->bind($persist, 'si', [$stateJson, $userId]);
-        $conn->executeUpdate($persist);
+        // CAS persist onto the FRESH pref state, not the pre-loop decode:
+        // the SaaS fetch above leaves a wide window in which an admin/API
+        // save can set dims_dirty (or the backfill above wrote ctx_key),
+        // and an unconditional write from the stale decode would erase
+        // those keys. The mutator re-applies only this cron's own fields;
+        // a guard miss (a writer racing the final microseconds) simply
+        // self-heals on the next 6-hour pass — same fail-closed posture
+        // as every other failure in this loop.
+        DimensionSync::casMutateState($conn, $userId, function (array $freshState) use ($config, $now): array {
+            $freshState['config'] = $config;
+            $freshState['fetched_at'] = $now;
+            return $freshState;
+        });
         $updated++;
     } catch (Throwable $e) {
         // Fail closed: keep the currently applied config for this user.
