@@ -28,6 +28,20 @@ abstract class Controller
     private ?array $cachedFields = null;
     private ?ServerStateStore $stateStore = null;
 
+    /**
+     * Dictionary tables whose rows feed the Landing Page Optimizer
+     * dimension snapshot (DimensionSync::buildSnapshot, plus 202_aff_networks
+     * for parity with the setup-page hooks). API mutations of these must
+     * flag the user's snapshot dirty exactly like the legacy setup pages do.
+     */
+    private const BANDIT_SYNCED_DICTIONARIES = [
+        '202_aff_campaigns',
+        '202_aff_networks',
+        '202_ppc_networks',
+        '202_ppc_accounts',
+        '202_landing_pages',
+    ];
+
     public function __construct(protected \mysqli $db, protected int $userId)
     {
     }
@@ -734,6 +748,18 @@ abstract class Controller
 
     protected function recordChange(string $operation, array $record): void
     {
+        // Landing Page Optimizer (segments-v2 G10): create/update/delete of
+        // a synced dictionary through the v3 API changes the dimension
+        // snapshot exactly like the setup-page save/delete paths, so flag
+        // the user's snapshot dirty for the hourly push. This is the shared
+        // post-mutation choke point (create(), update(), delete(), and
+        // bulkUpsert() via create/update all land here). markDirty is
+        // DB-only and never fatal, so API responses cannot break on pairing
+        // problems or pre-upgrade schemas.
+        if (in_array($this->tableName(), self::BANDIT_SYNCED_DICTIONARIES, true)) {
+            \Prosper202\Bandit\DimensionSync::markDirty($this->db, $this->userId);
+        }
+
         $entity = $this->changeEntityName();
         if ($entity === null) {
             return;
