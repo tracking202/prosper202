@@ -272,7 +272,13 @@ final class Connection
         try {
             $affected = $stmt->affected_rows;
         } catch (\Error) {
-            $affected = 0;
+            // Native mysqli_stmt::$affected_rows is a virtual property whose
+            // read throws on statements that skipped the real constructor
+            // (the test fakes; same constraint as ::$error). Those fakes can
+            // expose the count through a plain method instead — callers like
+            // the DimensionSync CAS persist branch on it to detect guard
+            // misses, so it must be fakeable.
+            $affected = method_exists($stmt, 'affectedRowsFallback') ? $stmt->affectedRowsFallback() : 0;
         }
 
         $stmt->close();

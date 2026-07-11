@@ -41,10 +41,15 @@ final class DimensionSyncTest extends TestCase
 
     public function testMarkDirtyFlagsInsideBridgeConfigPreservingExistingKeys(): void
     {
+        $rawPref = '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '"}';
         $fake = new FakeMysqliConnection();
         $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '"}'],
+            ['bandit_status' => 'active', 'bandit_bridge_config' => $rawPref],
         ]);
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => $rawPref],
+        ]);
+        $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1);
 
         DimensionSync::markDirty($fake, 7);
 
@@ -57,14 +62,27 @@ final class DimensionSyncTest extends TestCase
         self::assertIsInt($state['dims_dirty_at']);
         self::assertEqualsWithDelta(time(), $state['dims_dirty_at'], 5);
         self::assertSame(7, $updates[0]->boundValues[1]);
+
+        // The write is the byte-guarded CAS, not an unconditional UPDATE: a
+        // bridge-config persist landing between markDirty's reads and this
+        // write must miss the guard instead of being overwritten with the
+        // older JSON (EventBridge routing reads config.enabled_events from
+        // these same bytes).
+        self::assertStringContainsString('AND bandit_bridge_config = ?', $updates[0]->sql);
+        self::assertSame($rawPref, $updates[0]->boundValues[2], 'guarded on the exact fresh bytes read');
     }
 
     public function testMarkDirtyBumpsDirtyAtOnEverySaveSoMidPushChangesSurvive(): void
     {
+        $rawPref = '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":100}';
         $fake = new FakeMysqliConnection();
         $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":100}'],
+            ['bandit_status' => 'active', 'bandit_bridge_config' => $rawPref],
         ]);
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => $rawPref],
+        ]);
+        $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1);
 
         DimensionSync::markDirty($fake, 7);
 
@@ -84,10 +102,15 @@ final class DimensionSyncTest extends TestCase
         // pass both clearDirty guards and clear a flag whose snapshot
         // missed this save. The token must be strictly monotonic instead.
         $now = time();
+        $rawPref = '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":' . $now . '}';
         $fake = new FakeMysqliConnection();
         $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":' . $now . '}'],
+            ['bandit_status' => 'active', 'bandit_bridge_config' => $rawPref],
         ]);
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => $rawPref],
+        ]);
+        $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1);
 
         DimensionSync::markDirty($fake, 7);
 
@@ -95,6 +118,60 @@ final class DimensionSyncTest extends TestCase
         self::assertCount(1, $updates);
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertGreaterThan($now, $state['dims_dirty_at'], 'same-second saves must still produce a new token');
+    }
+
+    public function testMarkDirtyCarriesAConcurrentConfigWriteInsteadOfClobberingIt(): void
+    {
+        // Between the status read and the persist, the six-hour pull saved a
+        // fresh remote config into the pref. markDirty's CAS re-read sees
+        // those bytes, so the dirty keys are layered ONTO them — the old
+        // unconditional UPDATE would have written the config-less decode
+        // back and silently disabled event routing until the next pull.
+        $stalePref = '{"webhook_id":3}';
+        $freshPref = '{"webhook_id":3,"config":{"enabled_events":["*"]},"fetched_at":12345}';
+        $fake = new FakeMysqliConnection();
+        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
+            ['bandit_status' => 'active', 'bandit_bridge_config' => $stalePref],
+        ]);
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => $freshPref],
+        ]);
+        $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1);
+
+        DimensionSync::markDirty($fake, 7);
+
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        self::assertCount(1, $updates);
+        $state = json_decode((string) $updates[0]->boundValues[0], true);
+        self::assertSame(['enabled_events' => ['*']], $state['config'], 'the mid-save config pull survives the dirty-marking');
+        self::assertSame(12345, $state['fetched_at']);
+        self::assertTrue($state['dims_dirty']);
+        self::assertSame($freshPref, $updates[0]->boundValues[2], 'the guard binds the FRESH bytes, not the status-read decode');
+    }
+
+    public function testMarkDirtyRetriesGuardMissesAndNeverThrows(): void
+    {
+        // Every CAS attempt loses its race (affected_rows stays 0): the
+        // one-shot save hook retries with fresh bytes instead of giving up
+        // on the first miss, then degrades to the nightly backstop quietly.
+        $rawPref = '{"webhook_id":3}';
+        $fake = new FakeMysqliConnection();
+        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
+            ['bandit_status' => 'active', 'bandit_bridge_config' => $rawPref],
+        ]);
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => $rawPref],
+        ]);
+        $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 0);
+
+        DimensionSync::markDirty($fake, 7);
+
+        self::assertCount(
+            3,
+            $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config'),
+            'a guard miss on the one-shot save path retries (bounded) rather than dropping the flag'
+        );
+        $this->addToAssertionCount(1); // reaching here proves the admin save survived the misses
     }
 
     public function testMarkDirtyIsANoOpUnlessActivelyPaired(): void
@@ -268,16 +345,26 @@ final class DimensionSyncTest extends TestCase
         self::assertStringContainsString('LIMIT 128', $fake->statementsContaining('FROM 202_landing_pages')[0]->sql);
     }
 
-    public function testPushForUserBackfillsCtxKeyWithoutDroppingTheDirtyFlag(): void
+    public function testPushForUserBackfillsCtxKeyThroughTheCasWithoutDroppingConcurrentWrites(): void
     {
+        // The cron selected this user's pref before the per-user work
+        // started; by backfill time an admin save has set dims_dirty and
+        // the 6-hour pull has stored a config. The backfill must layer
+        // ctx_key onto THOSE fresh bytes via the guarded CAS — the old bare
+        // UPDATE from the stale cron decode dropped both (and with the
+        // dirty flag, the failed-push retry).
+        $freshPref = '{"webhook_id":5,"dims_dirty":true,"dims_dirty_at":100,"config":{"enabled_events":["*"]}}';
         $fake = new FakeMysqliConnection();
         $fake->whenQueryContainsReturnRows('FROM 202_ltv_webhooks', [['webhook_secret' => 'secret-abc']]);
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => $freshPref],
+        ]);
 
         DimensionSync::pushForUser(
             new Connection($fake),
             $this->client(),
             7,
-            '{"webhook_id":5,"dims_dirty":true,"dims_dirty_at":100}',
+            '{"webhook_id":5}', // the cron's stale decode: no dirty flag, no config yet
             'hash-1'
         );
 
@@ -285,8 +372,33 @@ final class DimensionSyncTest extends TestCase
         self::assertCount(1, $updates);
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertSame(bin2hex(CtxToken::deriveKey('secret-abc')), $state['ctx_key']);
-        self::assertTrue($state['dims_dirty'], 'the backfill re-encode must carry the dirty flag through');
+        self::assertTrue($state['dims_dirty'], 'the backfill must carry the mid-cron dirty flag through');
         self::assertSame(100, $state['dims_dirty_at']);
+        self::assertSame(['enabled_events' => ['*']], $state['config'], 'the mid-cron config pull survives too');
+        self::assertStringContainsString('AND bandit_bridge_config = ?', $updates[0]->sql);
+        self::assertSame($freshPref, $updates[0]->boundValues[2], 'guarded on the fresh bytes, not the cron decode');
+    }
+
+    public function testPushForUserSkipsTheBackfillWhenAnotherWriterAlreadyLandedIt(): void
+    {
+        // The stale cron decode lacks ctx_key, but by backfill time another
+        // run already wrote it: the CAS callback re-checks on fresh bytes
+        // and the mutation is a byte-identical no-op — no write at all.
+        $fake = new FakeMysqliConnection();
+        $fake->whenQueryContainsReturnRows('FROM 202_ltv_webhooks', [['webhook_secret' => 'secret-abc']]);
+        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+            ['bandit_bridge_config' => '{"webhook_id":5,"ctx_key":"' . self::CTX_KEY_HEX . '"}'],
+        ]);
+
+        DimensionSync::pushForUser(
+            new Connection($fake),
+            $this->client(),
+            7,
+            '{"webhook_id":5}',
+            'hash-1'
+        );
+
+        self::assertSame([], $fake->statementsContaining('UPDATE 202_users_pref'), 'an already-backfilled fresh state must not be rewritten');
     }
 
     public function testPushForUserThrowsWhenThePairingHasNoWebhook(): void
