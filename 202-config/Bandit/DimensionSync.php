@@ -36,9 +36,14 @@ final class DimensionSync
      * INSERT/UPDATE, so the hourly cron tier re-pushes it (segments-v2 G10).
      *
      * Stored inside the existing bandit_bridge_config JSON pref as
-     * `dims_dirty: true` plus `dims_dirty_at` (epoch seconds of the latest
-     * dictionary change — bumped on every save so a push that raced a newer
-     * save leaves the flag in place, see clearDirty()).
+     * `dims_dirty: true` plus `dims_dirty_at` (a strictly monotonic
+     * per-save token, normally epoch seconds of the latest dictionary
+     * change). Monotonic — max(now, previous + 1) — because clearDirty()
+     * uses the value to detect saves that raced a push: two saves inside
+     * the same wall-clock second would otherwise write identical tokens
+     * (and byte-identical pref JSON), letting a push that snapshotted
+     * between them clear the flag even though the snapshot missed the
+     * second save.
      *
      * Only acts for users paired with bandit_status='active'. Absolutely
      * never fatal and never any HTTP: any problem (pre-upgrade schema
@@ -66,7 +71,11 @@ final class DimensionSync
             $state = json_decode((string) ($row['bandit_bridge_config'] ?? ''), true);
             $state = is_array($state) ? $state : [];
             $state['dims_dirty'] = true;
-            $state['dims_dirty_at'] = time();
+            // Strictly monotonic per-save token (see the docblock): a save
+            // landing in the same second as the previous one must still
+            // produce a new value, or clearDirty() could not tell it apart
+            // from the save whose snapshot was already pushed.
+            $state['dims_dirty_at'] = max(time(), (int) ($state['dims_dirty_at'] ?? 0) + 1);
 
             $stateJson = json_encode($state);
             if ($stateJson === false) {

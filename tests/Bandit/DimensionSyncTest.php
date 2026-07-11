@@ -76,6 +76,27 @@ final class DimensionSyncTest extends TestCase
         self::assertEqualsWithDelta(time(), $state['dims_dirty_at'], 5);
     }
 
+    public function testMarkDirtyTokenMovesEvenForSavesWithinTheSameSecond(): void
+    {
+        // The previous save stamped the CURRENT wall-clock second. A
+        // whole-second time() would reuse that value (byte-identical pref
+        // JSON), so a push that snapshotted between the two saves would
+        // pass both clearDirty guards and clear a flag whose snapshot
+        // missed this save. The token must be strictly monotonic instead.
+        $now = time();
+        $fake = new FakeMysqliConnection();
+        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
+            ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":' . $now . '}'],
+        ]);
+
+        DimensionSync::markDirty($fake, 7);
+
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        self::assertCount(1, $updates);
+        $state = json_decode((string) $updates[0]->boundValues[0], true);
+        self::assertGreaterThan($now, $state['dims_dirty_at'], 'same-second saves must still produce a new token');
+    }
+
     public function testMarkDirtyIsANoOpUnlessActivelyPaired(): void
     {
         // Paired-off user: pref row exists but bandit_status is ''.
