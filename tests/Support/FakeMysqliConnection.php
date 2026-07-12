@@ -158,7 +158,13 @@ final class FakeMysqliConnection extends mysqli
             }
         }
 
-        return 1;
+        // Default 0, matching the contract every existing test was written
+        // against (the native property read always threw on fakes and
+        // Connection::executeUpdate reported 0): atomic-claim, scoped-delete
+        // and race-loser tests rely on an unconfigured UPDATE matching
+        // nothing. Tests that need a write to land opt in via
+        // whenQueryContainsAffectedRows().
+        return 0;
     }
 
     private function resolveExecuteReturn(string $query): bool
@@ -186,7 +192,6 @@ final class FakeMysqliStatement extends mysqli_stmt
     public int $executeCount = 0;
     public int $closeCount = 0;
     public string|int $insert_id = 0;
-    public string|int $affected_rows = 0;
     public string $error = '';
 
     /**
@@ -242,6 +247,19 @@ final class FakeMysqliStatement extends mysqli_stmt
     {
         $this->closeCount++;
         return true;
+    }
+
+    /**
+     * Native mysqli_stmt::$affected_rows (like ::$error) cannot be written
+     * or even read on constructor-skipping fakes — PHP 8.4+ virtual
+     * property reads throw "Property access is not allowed yet".
+     * Connection::executeUpdate() falls back to this method inside its
+     * existing \Error guard, so tests can express guard misses (0) and
+     * landed writes (>0) via whenQueryContainsAffectedRows().
+     */
+    public function affectedRowsFallback(): int
+    {
+        return $this->executeCount > 0 ? $this->configuredAffectedRows : 0;
     }
 }
 

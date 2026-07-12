@@ -68,23 +68,32 @@ final class DimensionSync
                 return;
             }
 
-            $state = json_decode((string) ($row['bandit_bridge_config'] ?? ''), true);
-            $state = is_array($state) ? $state : [];
-            $state['dims_dirty'] = true;
-            // Strictly monotonic per-save token (see the docblock): a save
-            // landing in the same second as the previous one must still
-            // produce a new value, or clearDirty() could not tell it apart
-            // from the save whose snapshot was already pushed.
-            $state['dims_dirty_at'] = max(time(), (int) ($state['dims_dirty_at'] ?? 0) + 1);
+            // Persist through the byte-guarded CAS (fresh re-read inside):
+            // an unconditional UPDATE from the row read above would clobber
+            // any pref write landing in between — e.g. the six-hour pull's
+            // freshly fetched config/fetched_at/ctx_key, and EventBridge
+            // routing reads config.enabled_events from this same JSON. The
+            // save-path hook is one-shot (no cron re-applies it), so a guard
+            // miss retries with fresh bytes instead of dropping the flag
+            // until the nightly full sync.
+            for ($attempt = 0; $attempt < 3; $attempt++) {
+                $landed = self::casMutateState($conn, $userId, static function (array $state): array {
+                    $state['dims_dirty'] = true;
+                    // Strictly monotonic per-save token (see the docblock),
+                    // recomputed from the FRESH state on every attempt: a
+                    // save landing in the same second as the previous one
+                    // must still produce a new value, or clearDirty() could
+                    // not tell it apart from the save whose snapshot was
+                    // already pushed.
+                    $state['dims_dirty_at'] = max(time(), (int) ($state['dims_dirty_at'] ?? 0) + 1);
 
-            $stateJson = json_encode($state);
-            if ($stateJson === false) {
-                return;
+                    return $state;
+                });
+                if ($landed) {
+                    return;
+                }
             }
-
-            $update = $conn->prepareWrite('UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ?');
-            $conn->bind($update, 'si', [$stateJson, $userId]);
-            $conn->executeUpdate($update);
+            error_log('DimensionSync::markDirty user ' . $userId . ': dirty flag did not land after 3 CAS attempts');
         } catch (Throwable $e) {
             // Pre-upgrade schemas miss the bandit columns entirely — that is
             // the expected quiet case, not worth log noise on every save.
@@ -155,16 +164,21 @@ final class DimensionSync
      * mid-pull markDirty()'s dims_dirty — the hourly dimension push
      * would then skip the user until the nightly full sync.
      *
-     * Single attempt by design, mirroring clearDirty(): a guard miss
-     * means another writer changed the state in the microseconds between
-     * the re-read and the UPDATE, so the caller's change simply does not
-     * land this pass. Every caller is a recurring job (the 6-hour pull,
-     * the ctx_key backfill) that re-applies on its next run; what is
-     * guaranteed is that OTHER writers' keys are never clobbered.
+     * Single attempt, mirroring clearDirty(): a guard miss means another
+     * writer changed the state in the microseconds between the re-read and
+     * the UPDATE, so the caller's change simply does not land this pass.
+     * Recurring jobs (the 6-hour pull, the ctx_key backfill) re-apply on
+     * their next run and may ignore the return value; one-shot callers
+     * (markDirty on an admin save) check it and retry with fresh bytes.
+     * What is guaranteed either way is that OTHER writers' keys are never
+     * clobbered.
      *
      * @param callable(array): array $mutate pure, idempotent transform of the decoded state
+     * @return bool true when the mutated state is persisted (or the pref
+     *              already had the desired bytes); false on a guard miss,
+     *              a missing pref row, or a failed re-encode
      */
-    public static function casMutateState(Connection $conn, int $userId, callable $mutate): void
+    public static function casMutateState(Connection $conn, int $userId, callable $mutate): bool
     {
         $stmt = $conn->prepareRead(
             'SELECT bandit_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
@@ -172,7 +186,7 @@ final class DimensionSync
         $conn->bind($stmt, 'i', [$userId]);
         $row = $conn->fetchOne($stmt);
         if ($row === null) {
-            return;
+            return false;
         }
 
         $rawJson = (string) ($row['bandit_bridge_config'] ?? '');
@@ -180,15 +194,19 @@ final class DimensionSync
         $state = is_array($state) ? $state : [];
 
         $stateJson = json_encode($mutate($state));
-        if ($stateJson === false || $stateJson === $rawJson) {
-            return; // re-encode failed, or already in the desired shape
+        if ($stateJson === false) {
+            return false;
+        }
+        if ($stateJson === $rawJson) {
+            return true; // already in the desired shape
         }
 
         $update = $conn->prepareWrite(
             'UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ? AND bandit_bridge_config = ?'
         );
         $conn->bind($update, 'sis', [$stateJson, $userId, $rawJson]);
-        $conn->executeUpdate($update);
+
+        return $conn->executeUpdate($update) > 0;
     }
 
     /**
@@ -239,16 +257,25 @@ final class DimensionSync
         }
 
         // Backfill the derived t202ctx key for pre-ctx_token pairings — the
-        // secret is already loaded, so this costs one UPDATE at most once.
-        // $state carries any dims_dirty flags through the re-encode intact.
+        // secret is already loaded, so this costs one guarded write at most
+        // once. $bridgeConfigJson was selected by the cron before the
+        // per-user work started (possibly minutes stale behind a SaaS
+        // fetch), so the persist goes through casMutateState: a bare UPDATE
+        // from that stale decode would drop anything written in between — a
+        // fresh 6-hour config pull, or an admin save's dims_dirty (and with
+        // it the failed-push retry). The callback re-checks on the fresh
+        // bytes; if another writer already backfilled, the mutation is a
+        // byte-identical no-op. Single attempt: this is a recurring-job
+        // path, the next run re-applies.
         if (preg_match('/^[0-9a-f]{64}$/', (string) ($state['ctx_key'] ?? '')) !== 1) {
-            $state['ctx_key'] = bin2hex(CtxToken::deriveKey($webhookSecret));
-            $stateJson = json_encode($state);
-            if ($stateJson !== false) {
-                $persist = $conn->prepareWrite('UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ?');
-                $conn->bind($persist, 'si', [$stateJson, $userId]);
-                $conn->executeUpdate($persist);
-            }
+            $ctxKeyHex = bin2hex(CtxToken::deriveKey($webhookSecret));
+            self::casMutateState($conn, $userId, static function (array $fresh) use ($ctxKeyHex): array {
+                if (preg_match('/^[0-9a-f]{64}$/', (string) ($fresh['ctx_key'] ?? '')) !== 1) {
+                    $fresh['ctx_key'] = $ctxKeyHex;
+                }
+
+                return $fresh;
+            });
         }
 
         $snapshot = self::buildSnapshot($conn, $userId);

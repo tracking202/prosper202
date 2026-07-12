@@ -95,6 +95,10 @@ final class ApiDictionaryDirtyTest extends TestCase
             $db->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
                 ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3}'],
             ]);
+            $db->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+                ['bandit_bridge_config' => '{"webhook_id":3}'],
+            ]); // markDirty persists via the CAS, which re-reads fresh bytes
+            $db->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1); // the guarded write lands first try
 
             $this->landingPagesController($db)->delete(18);
 
@@ -115,6 +119,10 @@ final class ApiDictionaryDirtyTest extends TestCase
             $db->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
                 ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3}'],
             ]);
+            $db->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
+                ['bandit_bridge_config' => '{"webhook_id":3}'],
+            ]); // markDirty persists via the CAS, which re-reads fresh bytes
+            $db->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1); // the guarded write lands first try
 
             $this->landingPagesController($db)->update(18, ['landing_page_nickname' => 'Renamed LP']);
 
