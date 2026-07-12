@@ -158,7 +158,13 @@ final class FakeMysqliConnection extends mysqli
             }
         }
 
-        return 1;
+        // Default 0, matching the contract every existing test was written
+        // against (the native property read always threw on fakes and
+        // Connection::executeUpdate reported 0): atomic-claim, scoped-delete
+        // and race-loser tests rely on an unconfigured UPDATE matching
+        // nothing. Tests that need a write to land opt in via
+        // whenQueryContainsAffectedRows().
+        return 0;
     }
 
     private function resolveExecuteReturn(string $query): bool
