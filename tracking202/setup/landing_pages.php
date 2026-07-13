@@ -485,17 +485,17 @@ template_top('Landing Page Setup');  ?>
 						// Landing Page Optimizer deeplink: paired installs jump to the
 						// hosted create page with context params; unpaired ones land on
 						// the pairing panel. Degrades to unpaired before the upgrade
-						// adds the bandit_status pref column.
+						// adds the lpo_status pref column.
 						$bandit_paired = false;
 						$bandit_install_hash = '';
 						try {
-							$bandit_result = $db->query("SELECT 2u.install_hash, 2up.bandit_status FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_id'] . "'");
+							$bandit_result = $db->query("SELECT 2u.install_hash, 2up.lpo_status FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_id'] . "'");
 							$bandit_row = ($bandit_result instanceof mysqli_result) ? $bandit_result->fetch_assoc() : null;
 							$bandit_install_hash = trim((string) ($bandit_row['install_hash'] ?? ''));
 							// a pairing is only deeplinkable with a real install hash —
 							// a blank one would emit install= and break the hosted page,
 							// so treat it as unpaired (the link then routes to the panel)
-							$bandit_paired = (string) ($bandit_row['bandit_status'] ?? '') === 'active' && $bandit_install_hash !== '';
+							$bandit_paired = (string) ($bandit_row['lpo_status'] ?? '') === 'active' && $bandit_install_hash !== '';
 						} catch (Throwable $bandit_lookup_error) {
 							// pre-upgrade schema; keep the panel link
 						}

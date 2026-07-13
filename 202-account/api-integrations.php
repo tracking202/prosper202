@@ -145,8 +145,8 @@ function apiint_endpoint($label, $url)
 $strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
 
 /**
- * rtr.php caches the bandit t202ctx prefs (bandit_status, bandit_bridge_config,
- * bandit_ctx_kw) for 3 minutes under md5(<exact SELECT> . systemHash()). Any
+ * rtr.php caches the bandit t202ctx prefs (lpo_status, lpo_bridge_config,
+ * lpo_ctx_kw) for 3 minutes under md5(<exact SELECT> . systemHash()). Any
  * pref change that alters minting behavior (keyword privacy opt-out, connect/
  * disconnect) must drop that key so live redirects pick the change up
  * immediately, not at TTL expiry (review finding). Keep the SELECT byte-
@@ -157,7 +157,7 @@ function bandit_ctx_pref_cache_bust($userId)
 	if (empty($GLOBALS['memcacheWorking']) || empty($GLOBALS['memcache'])) {
 		return;
 	}
-	$sql = "SELECT bandit_status, bandit_bridge_config, bandit_ctx_kw FROM 202_users_pref WHERE user_id='" . (int) $userId . "'";
+	$sql = "SELECT lpo_status, lpo_bridge_config, lpo_ctx_kw FROM 202_users_pref WHERE user_id='" . (int) $userId . "'";
 	$GLOBALS['memcache']->delete(md5($sql . systemHash()));
 }
 $mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ?? ''));
@@ -279,12 +279,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$bandit_install_hash = trim((string) ($user_row['install_hash'] ?? ''));
 
 		try {
-			if (!array_key_exists('bandit_status', $user_row)) {
+			if (!array_key_exists('lpo_status', $user_row)) {
 				throw new RuntimeException('Run the Prosper202 upgrade first (the bandit bridge columns are missing).');
 			}
 
 			if ($_POST['bandit_action'] === 'connect') {
-				if ((string) ($user_row['bandit_status'] ?? '') === 'active') {
+				if ((string) ($user_row['lpo_status'] ?? '') === 'active') {
 					// Replayed/double submit: never stack a second webhook.
 					throw new RuntimeException('Already connected. Disconnect first to re-pair.');
 				}
@@ -300,9 +300,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				}
 				$bandit_install_url = $strProtocol . $_SERVER['HTTP_HOST'] . rtrim(get_absolute_url(), '/');
 				$bandit_init = $bandit_client->pairInit($bandit_api_key, $bandit_install_hash, $bandit_install_url);
-				$bandit_site_key = trim((string) ($bandit_init['site_key'] ?? ''));
+				$lpo_site_key = trim((string) ($bandit_init['site_key'] ?? ''));
 				$bandit_hook_url = trim((string) ($bandit_init['hook_url'] ?? ''));
-				if ($bandit_site_key === '' || $bandit_hook_url === '') {
+				if ($lpo_site_key === '' || $bandit_hook_url === '') {
 					throw new RuntimeException('Pairing init did not return a site key and webhook URL.');
 				}
 
@@ -332,9 +332,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				if ($bandit_state === false) {
 					throw new RuntimeException('Failed to encode bridge state.');
 				}
-				updateUserPreference('bandit_site_key', $bandit_site_key, $bandit_user_id, $db);
-				updateUserPreference('bandit_status', 'active', $bandit_user_id, $db);
-				updateUserPreference('bandit_bridge_config', $bandit_state, $bandit_user_id, $db);
+				updateUserPreference('lpo_site_key', $lpo_site_key, $bandit_user_id, $db);
+				updateUserPreference('lpo_status', 'active', $bandit_user_id, $db);
+				updateUserPreference('lpo_bridge_config', $bandit_state, $bandit_user_id, $db);
 				// bust AFTER the last pref write: a redirect racing between the
 				// status and config writes could otherwise cache active-with-
 				// stale-config for 3 minutes (no t202ctx until TTL expiry)
@@ -345,7 +345,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			// Disconnect: remove the local webhook, revoke SaaS-side
 			// (best-effort — local state always clears), clear pairing prefs.
-			$bandit_state = json_decode((string) ($user_row['bandit_bridge_config'] ?? ''), true);
+			$bandit_state = json_decode((string) ($user_row['lpo_bridge_config'] ?? ''), true);
 			$bandit_webhook_id = is_array($bandit_state) ? (int) ($bandit_state['webhook_id'] ?? 0) : 0;
 			if ($bandit_webhook_id > 0) {
 				try {
@@ -361,9 +361,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					error_log('bandit disconnect: SaaS revoke failed (link will expire server-side): ' . $bandit_disconnect_error->getMessage());
 				}
 			}
-			updateUserPreference('bandit_site_key', '', $bandit_user_id, $db);
-			updateUserPreference('bandit_status', '', $bandit_user_id, $db);
-			updateUserPreference('bandit_bridge_config', '', $bandit_user_id, $db);
+			updateUserPreference('lpo_site_key', '', $bandit_user_id, $db);
+			updateUserPreference('lpo_status', '', $bandit_user_id, $db);
+			updateUserPreference('lpo_bridge_config', '', $bandit_user_id, $db);
 			bandit_ctx_pref_cache_bust($bandit_user_id); // after the last write (see connect)
 			header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=disconnected#bandit');
 			die();
@@ -386,16 +386,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// Landing Page Optimizer privacy pref: include/omit keyword text in
-	// t202ctx context tokens (bandit_ctx_kw — default on, '0' = omit;
+	// t202ctx context tokens (lpo_ctx_kw — default on, '0' = omit;
 	// p202-edge-sync §8). Storage only; rtr.php honors it at mint time.
-	if (!isset($error['token']) && isset($_POST['bandit_ctx_kw_save']) && $_POST['bandit_ctx_kw_save'] == '1' && array_key_exists('bandit_ctx_kw', $user_row)) {
-		$bandit_ctx_kw_new = !empty($_POST['bandit_ctx_kw']) ? '1' : '0';
-		if ($bandit_ctx_kw_new !== (string) ($user_row['bandit_ctx_kw'] ?? '1')) {
-			updateUserPreference('bandit_ctx_kw', $bandit_ctx_kw_new, $_SESSION['user_id'], $db);
+	if (!isset($error['token']) && isset($_POST['lpo_ctx_kw_save']) && $_POST['lpo_ctx_kw_save'] == '1' && array_key_exists('lpo_ctx_kw', $user_row)) {
+		$lpo_ctx_kw_new = !empty($_POST['lpo_ctx_kw']) ? '1' : '0';
+		if ($lpo_ctx_kw_new !== (string) ($user_row['lpo_ctx_kw'] ?? '1')) {
+			updateUserPreference('lpo_ctx_kw', $lpo_ctx_kw_new, $_SESSION['user_id'], $db);
 			bandit_ctx_pref_cache_bust($_SESSION['user_id']);
-			$user_row['bandit_ctx_kw'] = $bandit_ctx_kw_new;
+			$user_row['lpo_ctx_kw'] = $lpo_ctx_kw_new;
 		}
-		$bandit_ctx_kw_saved = true;
+		$lpo_ctx_kw_saved = true;
 	}
 
 	if (!isset($error['token']) && isset($_POST['dni_network'])) {
@@ -671,11 +671,11 @@ template_top('API Integrations');
 
 		<?php
 		// Landing Page Optimizer (bandit) pairing card. Status lives in
-		// 202_users_pref (bandit_status / bandit_site_key); every feature screen is
+		// 202_users_pref (lpo_status / lpo_site_key); every feature screen is
 		// hosted — this card only connects and disconnects the generic bridge.
-		$bandit_schema_ready = array_key_exists('bandit_status', $user_row);
-		$bandit_connected = $bandit_schema_ready && (string) ($user_row['bandit_status'] ?? '') === 'active';
-		$bandit_site_key = (string) ($user_row['bandit_site_key'] ?? '');
+		$bandit_schema_ready = array_key_exists('lpo_status', $user_row);
+		$bandit_connected = $bandit_schema_ready && (string) ($user_row['lpo_status'] ?? '') === 'active';
+		$lpo_site_key = (string) ($user_row['lpo_site_key'] ?? '');
 		$bandit_has_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? '')) !== '';
 		$bandit_needs_subscription = !empty($bandit_needs_subscription); // set by the connect catch above
 		$bandit_sub_retry = !empty($bandit_sub_retry); // the failed attempt came from the "I've subscribed" retry
@@ -703,7 +703,7 @@ template_top('API Integrations');
 			<?php showSuccessMessage(isset($_GET['bandit']) && $_GET['bandit'] === 'disconnected', 'Landing Page Optimizer disconnected.'); ?>
 			<?php showErrorMessage($error, 'bandit'); ?>
 			<?php if ($bandit_connected) { ?>
-				<?php apiint_endpoint('Site key', $bandit_site_key); ?>
+				<?php apiint_endpoint('Site key', $lpo_site_key); ?>
 				<div class="apiint-actions">
 					<a href="<?php echo htmlspecialchars($bandit_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener" class="apiint-btn apiint-btn--primary">Manage experiments&nbsp;&rarr;</a>
 					<form method="post" action="">
@@ -712,16 +712,16 @@ template_top('API Integrations');
 						<button class="apiint-btn apiint-btn--danger" type="submit" onclick="return confirm('Disconnect the Landing Page Optimizer? The pairing webhook will be removed.');">Disconnect</button>
 					</form>
 				</div>
-				<?php if (array_key_exists('bandit_ctx_kw', $user_row)) { ?>
-					<details class="apiint-config"<?php if (!empty($bandit_ctx_kw_saved)) echo ' open'; ?>>
+				<?php if (array_key_exists('lpo_ctx_kw', $user_row)) { ?>
+					<details class="apiint-config"<?php if (!empty($lpo_ctx_kw_saved)) echo ' open'; ?>>
 						<summary>Privacy</summary>
-						<?php showSuccessMessage(!empty($bandit_ctx_kw_saved), 'Context token preference saved.'); ?>
+						<?php showSuccessMessage(!empty($lpo_ctx_kw_saved), 'Context token preference saved.'); ?>
 						<form method="post" action="">
 							<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-							<input type="hidden" name="bandit_ctx_kw_save" value="1" />
+							<input type="hidden" name="lpo_ctx_kw_save" value="1" />
 							<div class="apiint-field">
 								<label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;color:#37352f;font-size:13px;cursor:pointer;text-transform:none;">
-									<input type="checkbox" name="bandit_ctx_kw" value="1" style="margin:2px 0 0;"<?php if ((string) ($user_row['bandit_ctx_kw'] ?? '1') !== '0') echo ' checked'; ?>>
+									<input type="checkbox" name="lpo_ctx_kw" value="1" style="margin:2px 0 0;"<?php if ((string) ($user_row['lpo_ctx_kw'] ?? '1') !== '0') echo ' checked'; ?>>
 									<span>Include keyword text in optimizer context tokens<br><span class="apiint-meta" style="margin:0;">Keywords ride the signed t202ctx token on rotator&rarr;landing-page redirects so experiments can segment by search term. Turn off to keep search terms out of tokens.</span></span>
 								</label>
 							</div>

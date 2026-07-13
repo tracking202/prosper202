@@ -52,7 +52,7 @@ final class CtxToken
 
     /**
      * K = HMAC-SHA256(key = webhook secret bytes, msg = 't202ctx-v1') as raw
-     * 32 bytes. Cached hex in the bandit_bridge_config pref as `ctx_key` so
+     * 32 bytes. Cached hex in the lpo_bridge_config pref as `ctx_key` so
      * the redirect hot path never re-derives it or queries 202_ltv_webhooks.
      */
     public static function deriveKey(string $webhookSecret): string

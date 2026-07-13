@@ -97,7 +97,7 @@ final class EventBridgeTest extends TestCase
     {
         $read = new FakeMysqliConnection();
         if ($storedConfig !== null) {
-            $read->whenQueryContainsReturnRows('bandit_bridge_config', [['bandit_bridge_config' => $storedConfig]]);
+            $read->whenQueryContainsReturnRows('lpo_bridge_config', [['lpo_bridge_config' => $storedConfig]]);
         }
 
         return EventBridge::isEventEnabled(new Connection(new FakeMysqliConnection(), $read), 7, 'engagement.recorded');
@@ -126,7 +126,7 @@ final class EventBridgeTest extends TestCase
     public function testGateFailsClosedWhenPrefReadFails(): void
     {
         $read = new FakeMysqliConnection();
-        $read->whenQueryContainsExecuteReturns('bandit_bridge_config', false);
+        $read->whenQueryContainsExecuteReturns('lpo_bridge_config', false);
 
         self::assertFalse(EventBridge::isEventEnabled(new Connection(new FakeMysqliConnection(), $read), 7, 'engagement.recorded'));
     }
@@ -145,8 +145,8 @@ final class EventBridgeTest extends TestCase
         // identifiers in the envelope payload.
         $write = new FakeMysqliConnection();
         $read = new FakeMysqliConnection();
-        $read->whenQueryContainsReturnRows('bandit_bridge_config', [
-            ['bandit_bridge_config' => '{"webhook_id":3,"config":{"enabled_events":["engagement.recorded"]}}'],
+        $read->whenQueryContainsReturnRows('lpo_bridge_config', [
+            ['lpo_bridge_config' => '{"webhook_id":3,"config":{"enabled_events":["engagement.recorded"]}}'],
         ]);
         $read->whenQueryContainsReturnRows('FROM 202_ltv_webhooks', [['webhook_id' => 3]]);
         $repo = new MysqlEngagementRepository(new Connection($write, $read));

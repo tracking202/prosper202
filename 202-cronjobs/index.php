@@ -247,7 +247,7 @@ function RunHourlyCronJob()
  *
  * The dictionary CRUD pages (setup/ppc_accounts.php, setup/aff_campaigns.php,
  * setup/aff_networks.php, setup/landing_pages.php) never talk to the SaaS
- * inline — they only set `dims_dirty` inside the bandit_bridge_config JSON
+ * inline — they only set `dims_dirty` inside the lpo_bridge_config JSON
  * pref via DimensionSync::markDirty. This job pushes the fresh snapshot for
  * those flagged users through the exact per-user path the nightly full sync
  * uses (DimensionSync::pushForUser) and clears the flag only on success: a
@@ -268,10 +268,10 @@ function PushDirtyBanditDimensions()
 
         try {
             $stmt = $conn->prepareRead(
-                "SELECT p.user_id, p.bandit_bridge_config, u.install_hash
+                "SELECT p.user_id, p.lpo_bridge_config, u.install_hash
                  FROM 202_users_pref p
                  JOIN 202_users u ON u.user_id = p.user_id
-                 WHERE p.bandit_status = 'active'"
+                 WHERE p.lpo_status = 'active'"
             );
             $paired = $conn->fetchAll($stmt);
         } catch (\Throwable $e) {
@@ -286,7 +286,7 @@ function PushDirtyBanditDimensions()
         $client = null;
         foreach ($paired as $row) {
             $userId = (int) $row['user_id'];
-            $stateJson = (string) ($row['bandit_bridge_config'] ?? '');
+            $stateJson = (string) ($row['lpo_bridge_config'] ?? '');
             $state = json_decode($stateJson, true);
             if (!is_array($state) || empty($state['dims_dirty'])) {
                 continue;

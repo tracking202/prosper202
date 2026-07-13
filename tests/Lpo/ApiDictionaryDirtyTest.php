@@ -92,17 +92,17 @@ final class ApiDictionaryDirtyTest extends TestCase
             $db->whenQueryContainsReturnRows('FROM 202_landing_pages', [
                 ['landing_page_id' => 18, 'landing_page_nickname' => 'Blue LP', 'user_id' => 7],
             ]);
-            $db->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-                ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3}'],
+            $db->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+                ['lpo_status' => 'active', 'lpo_bridge_config' => '{"webhook_id":3}'],
             ]);
-            $db->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-                ['bandit_bridge_config' => '{"webhook_id":3}'],
+            $db->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+                ['lpo_bridge_config' => '{"webhook_id":3}'],
             ]); // markDirty persists via the CAS, which re-reads fresh bytes
             $db->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1); // the guarded write lands first try
 
             $this->landingPagesController($db)->delete(18);
 
-            $updates = $db->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+            $updates = $db->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
             self::assertCount(1, $updates, 'an API soft-delete must markDirty like the setup-page delete does');
             $state = json_decode((string) $updates[0]->boundValues[0], true);
             self::assertTrue($state['dims_dirty']);
@@ -116,17 +116,17 @@ final class ApiDictionaryDirtyTest extends TestCase
             $db->whenQueryContainsReturnRows('FROM 202_landing_pages', [
                 ['landing_page_id' => 18, 'landing_page_nickname' => 'Blue LP', 'user_id' => 7],
             ]);
-            $db->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-                ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3}'],
+            $db->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+                ['lpo_status' => 'active', 'lpo_bridge_config' => '{"webhook_id":3}'],
             ]);
-            $db->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-                ['bandit_bridge_config' => '{"webhook_id":3}'],
+            $db->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+                ['lpo_bridge_config' => '{"webhook_id":3}'],
             ]); // markDirty persists via the CAS, which re-reads fresh bytes
             $db->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1); // the guarded write lands first try
 
             $this->landingPagesController($db)->update(18, ['landing_page_nickname' => 'Renamed LP']);
 
-            $updates = $db->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+            $updates = $db->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
             self::assertCount(1, $updates, 'an API rename must markDirty so Bandit does not keep the stale name');
         });
     }

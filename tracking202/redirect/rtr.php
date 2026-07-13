@@ -784,7 +784,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	// signed per-click context token (t202ctx, p202-edge-sync §3.2/§3.3) so
 	// the paired edge can resolve traffic-source segments at assign time.
 	// Gated on an active bandit pairing whose derived key is already cached
-	// in the bandit_bridge_config pref — installs paired before ctx_token
+	// in the lpo_bridge_config pref — installs paired before ctx_token
 	// support skip minting until 202-cronjobs/bridge_config.php backfills
 	// the key. All payload claims are already in scope: zero extra queries
 	// beyond the memcached pref row. Failure-open: ANY problem in this block
@@ -794,7 +794,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	if ($t202ctx_lp_destination) {
 		try {
 			$t202ctx_pref = false;
-			$t202ctx_sql = "SELECT bandit_status, bandit_bridge_config, bandit_ctx_kw FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
+			$t202ctx_sql = "SELECT lpo_status, lpo_bridge_config, lpo_ctx_kw FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
 			// key mirrored by bandit_ctx_pref_cache_bust() (202-account/
 			// api-integrations.php) — keep the SELECT text in sync
 			$t202ctx_cache_key = md5($t202ctx_sql . systemHash());
@@ -816,8 +816,8 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 					}
 				}
 			}
-			if (is_array($t202ctx_pref) && ($t202ctx_pref['bandit_status'] ?? '') === 'active') {
-				$t202ctx_state = json_decode((string)($t202ctx_pref['bandit_bridge_config'] ?? ''), true);
+			if (is_array($t202ctx_pref) && ($t202ctx_pref['lpo_status'] ?? '') === 'active') {
+				$t202ctx_state = json_decode((string)($t202ctx_pref['lpo_bridge_config'] ?? ''), true);
 				$t202ctx_key_hex = is_array($t202ctx_state) ? (string)($t202ctx_state['ctx_key'] ?? '') : '';
 				if (preg_match('/^[0-9a-f]{64}$/', $t202ctx_key_hex) === 1) {
 					$t202ctx_claims = ['v' => 1, 't' => time(), 'sid' => (string)$mysql['click_id']];
@@ -833,7 +833,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 					}
 					// stripslashes undoes the real_escape_string applied for
 					// the SQL writes above — the token carries the plain text.
-					if ((string)($t202ctx_pref['bandit_ctx_kw'] ?? '1') !== '0' && is_scalar($keyword) && (string)$keyword !== '') {
+					if ((string)($t202ctx_pref['lpo_ctx_kw'] ?? '1') !== '0' && is_scalar($keyword) && (string)$keyword !== '') {
 						$t202ctx_claims['kw'] = stripslashes((string)$keyword);
 					}
 					foreach (['c1' => $c1, 'c2' => $c2, 'c3' => $c3, 'c4' => $c4] as $t202ctx_ck => $t202ctx_cv) {

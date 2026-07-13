@@ -6,7 +6,7 @@ declare(strict_types=1);
 /**
  * Bandit dimension-map push (p202-edge-sync §4.1/§4.2). Run nightly.
  *
- * For every user paired with the Landing Page Optimizer (bandit_status =
+ * For every user paired with the Landing Page Optimizer (lpo_status =
  * 'active') this snapshots the install's slowly-changing dictionaries —
  * traffic-source networks/accounts, campaigns and landing pages — and POSTs
  * them to the SaaS control plane via PairingClient::pushDimensions, signed
@@ -20,7 +20,7 @@ declare(strict_types=1);
  * first; names truncated to 80 chars. Keywords are never synced.
  *
  * Also opportunistically backfills the derived t202ctx key into the
- * bandit_bridge_config pref (the webhook secret is already in hand here),
+ * lpo_bridge_config pref (the webhook secret is already in hand here),
  * complementing the same backfill in bridge_config.php.
  *
  * The per-user secret-resolve/snapshot/push path lives in
@@ -51,10 +51,10 @@ $conn = new Connection($db);
 
 try {
     $stmt = $conn->prepareRead(
-        "SELECT p.user_id, p.bandit_bridge_config, u.install_hash
+        "SELECT p.user_id, p.lpo_bridge_config, u.install_hash
          FROM 202_users_pref p
          JOIN 202_users u ON u.user_id = p.user_id
-         WHERE p.bandit_status = 'active'"
+         WHERE p.lpo_status = 'active'"
     );
     $paired = $conn->fetchAll($stmt);
 } catch (Throwable $e) {
@@ -81,7 +81,7 @@ foreach ($paired as $row) {
             $conn,
             $client,
             $userId,
-            isset($row['bandit_bridge_config']) ? (string) $row['bandit_bridge_config'] : null,
+            isset($row['lpo_bridge_config']) ? (string) $row['lpo_bridge_config'] : null,
             isset($row['install_hash']) ? (string) $row['install_hash'] : null
         );
 
