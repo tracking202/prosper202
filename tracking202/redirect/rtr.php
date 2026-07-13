@@ -795,7 +795,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 		try {
 			$t202ctx_pref = false;
 			$t202ctx_sql = "SELECT lpo_status, lpo_bridge_config, lpo_ctx_kw FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
-			// key mirrored by bandit_ctx_pref_cache_bust() (202-account/
+			// key mirrored by lpo_ctx_pref_cache_bust() (202-account/
 			// api-integrations.php) — keep the SELECT text in sync
 			$t202ctx_cache_key = md5($t202ctx_sql . systemHash());
 			if (!empty($GLOBALS['memcacheWorking'])) {

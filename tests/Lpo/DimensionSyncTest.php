@@ -320,7 +320,7 @@ final class DimensionSyncTest extends TestCase
         self::assertSame(['networks' => 1, 'accounts' => 1, 'campaigns' => 1, 'landing_pages' => 1], $counts);
         self::assertCount(1, $this->calls);
         self::assertSame('POST', $this->calls[0]['method']);
-        self::assertSame('https://saas.example/api/v2/bandit/dimensions', $this->calls[0]['url']);
+        self::assertSame('https://saas.example/api/v2/lpo/dimensions', $this->calls[0]['url']);
 
         $body = json_decode((string) $this->calls[0]['body'], true);
         self::assertSame('hash-1', $body['install_hash']);

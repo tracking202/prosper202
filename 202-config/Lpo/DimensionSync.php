@@ -24,7 +24,7 @@ use Throwable;
  *    unhappy or the bandit schema predates the upgrade.
  *
  *  - pushForUser() / clearDirty(): the §4.1/§4.2 snapshot push, shared by the
- *    nightly full sync (202-cronjobs/bandit_dimensions.php) and the hourly
+ *    nightly full sync (202-cronjobs/lpo_dimensions.php) and the hourly
  *    dirty-user tier (202-cronjobs/index.php). The dirty flag is cleared only
  *    after a successful push — a failed push leaves it set so the next hourly
  *    tick retries, and the nightly full sync remains the backstop either way.

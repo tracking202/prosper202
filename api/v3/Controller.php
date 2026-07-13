@@ -34,7 +34,7 @@ abstract class Controller
      * for parity with the setup-page hooks). API mutations of these must
      * flag the user's snapshot dirty exactly like the legacy setup pages do.
      */
-    private const BANDIT_SYNCED_DICTIONARIES = [
+    private const LPO_SYNCED_DICTIONARIES = [
         '202_aff_campaigns',
         '202_aff_networks',
         '202_ppc_networks',
@@ -756,7 +756,7 @@ abstract class Controller
         // bulkUpsert() via create/update all land here). markDirty is
         // DB-only and never fatal, so API responses cannot break on pairing
         // problems or pre-upgrade schemas.
-        if (in_array($this->tableName(), self::BANDIT_SYNCED_DICTIONARIES, true)) {
+        if (in_array($this->tableName(), self::LPO_SYNCED_DICTIONARIES, true)) {
             \Prosper202\Lpo\DimensionSync::markDirty($this->db, $this->userId);
         }
 

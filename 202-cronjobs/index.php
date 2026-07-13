@@ -222,8 +222,8 @@ function RunHourlyCronJob()
             // Landing Page Optimizer (segments-v2 G10): push the dimension
             // snapshot for paired users the dictionary CRUD flagged dirty.
             // Self-contained and never fatal — the nightly full sync
-            // (202-cronjobs/bandit_dimensions.php) remains the backstop.
-            PushDirtyBanditDimensions();
+            // (202-cronjobs/lpo_dimensions.php) remains the backstop.
+            PushDirtyLpoDimensions();
 
             // Log the execution
             $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
@@ -252,15 +252,15 @@ function RunHourlyCronJob()
  * those flagged users through the exact per-user path the nightly full sync
  * uses (DimensionSync::pushForUser) and clears the flag only on success: a
  * failed push keeps the flag set, so the next hourly tick retries and the
- * nightly bandit_dimensions.php run remains the backstop.
+ * nightly lpo_dimensions.php run remains the backstop.
  */
-function PushDirtyBanditDimensions()
+function PushDirtyLpoDimensions()
 {
     try {
         try {
             $db = getDatabaseConnection();
         } catch (Exception $e) {
-            error_log("PushDirtyBanditDimensions: Database connection failed - " . $e->getMessage());
+            error_log("PushDirtyLpoDimensions: Database connection failed - " . $e->getMessage());
             return;
         }
 
@@ -279,7 +279,7 @@ function PushDirtyBanditDimensions()
                 // Pre-upgrade schema: the bandit columns do not exist yet.
                 return;
             }
-            error_log("PushDirtyBanditDimensions: " . $e->getMessage());
+            error_log("PushDirtyLpoDimensions: " . $e->getMessage());
             return;
         }
 
@@ -317,11 +317,11 @@ function PushDirtyBanditDimensions()
                 // nightly full sync covers it regardless.
                 echo 'Failed<br>';
                 flushOutput();
-                error_log("PushDirtyBanditDimensions: user " . $userId . " push failed - " . $e->getMessage());
+                error_log("PushDirtyLpoDimensions: user " . $userId . " push failed - " . $e->getMessage());
             }
         }
     } catch (\Throwable $e) {
-        error_log("PushDirtyBanditDimensions Exception: " . $e->getMessage());
+        error_log("PushDirtyLpoDimensions Exception: " . $e->getMessage());
     }
 }
 

@@ -41,7 +41,7 @@ final class PairingClient
     private $transport;
 
     /**
-     * @param ?string $baseUrl null/'' = the BANDIT_SAAS_BASE_URL constant
+     * @param ?string $baseUrl null/'' = the LPO_SAAS_BASE_URL constant
      *        when defined, otherwise DEFAULT_BASE_URL
      * @param ?callable $transport test seam:
      *        fn(method, url, jsonBody, extraHeaders) => [statusCode, responseBody]
@@ -60,8 +60,8 @@ final class PairingClient
      */
     public static function saasBaseUrl(): string
     {
-        return defined('BANDIT_SAAS_BASE_URL')
-            ? rtrim((string) BANDIT_SAAS_BASE_URL, '/')
+        return defined('LPO_SAAS_BASE_URL')
+            ? rtrim((string) LPO_SAAS_BASE_URL, '/')
             : self::DEFAULT_BASE_URL;
     }
 
@@ -73,7 +73,7 @@ final class PairingClient
      */
     public function pairInit(string $customersApiKey, string $installHash, string $installUrl): array
     {
-        return $this->request('POST', '/api/v2/bandit/pair/init', [
+        return $this->request('POST', '/api/v2/lpo/pair/init', [
             'customers_api_key' => $customersApiKey,
             'install_hash' => $installHash,
             'install_url' => $installUrl,
@@ -91,7 +91,7 @@ final class PairingClient
      */
     public function pairComplete(string $customersApiKey, string $installHash, int $p202WebhookId, string $webhookSecret): array
     {
-        return $this->request('POST', '/api/v2/bandit/pair/complete', [
+        return $this->request('POST', '/api/v2/lpo/pair/complete', [
             'customers_api_key' => $customersApiKey,
             'install_hash' => $installHash,
             'p202_webhook_id' => $p202WebhookId,
@@ -106,7 +106,7 @@ final class PairingClient
      */
     public function pairDisconnect(string $customersApiKey, string $installHash): array
     {
-        return $this->request('POST', '/api/v2/bandit/pair/disconnect', [
+        return $this->request('POST', '/api/v2/lpo/pair/disconnect', [
             'customers_api_key' => $customersApiKey,
             'install_hash' => $installHash,
         ]);
@@ -121,7 +121,7 @@ final class PairingClient
      */
     public function fetchBridgeConfig(string $installHash): array
     {
-        return $this->request('GET', '/api/v2/bandit/bridge/config?' . http_build_query([
+        return $this->request('GET', '/api/v2/lpo/bridge/config?' . http_build_query([
             'install_hash' => $installHash,
             'bridge_version' => EventBridge::BRIDGE_VERSION,
         ]), null);
@@ -144,10 +144,10 @@ final class PairingClient
             'snapshot' => $snapshot,
         ]);
         if ($encodedBody === false) {
-            throw new RuntimeException('Failed to encode dimensions snapshot for /api/v2/bandit/dimensions');
+            throw new RuntimeException('Failed to encode dimensions snapshot for /api/v2/lpo/dimensions');
         }
 
-        return $this->requestEncoded('POST', '/api/v2/bandit/dimensions', $encodedBody, [
+        return $this->requestEncoded('POST', '/api/v2/lpo/dimensions', $encodedBody, [
             'X-P202-Signature: ' . MysqlWebhookRepository::signature($encodedBody, $webhookSecret),
         ]);
     }
@@ -250,7 +250,7 @@ final class PairingClient
             CURLOPT_HTTPHEADER => array_merge([
                 'Content-Type: application/json',
                 'Accept: application/json',
-                'User-Agent: Prosper202-Bandit-Bridge/' . EventBridge::BRIDGE_VERSION,
+                'User-Agent: Prosper202-Lpo-Bridge/' . EventBridge::BRIDGE_VERSION,
             ], $extraHeaders),
         ];
         if ($jsonBody !== null) {

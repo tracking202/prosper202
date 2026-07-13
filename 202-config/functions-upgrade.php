@@ -3835,21 +3835,21 @@ class UPGRADE
             // paired site key, pairing status, and the signed remote bridge
             // config pulled by 202-cronjobs/bridge_config.php. Guarded
             // ALTERs so a partial failure retries cleanly on the next run.
-            $bandit_ok = true;
+            $lpo_ok = true;
             foreach ([
                 ['lpo_site_key', "ADD COLUMN `lpo_site_key` varchar(64) NOT NULL DEFAULT ''"],
                 ['lpo_status', "ADD COLUMN `lpo_status` varchar(16) NOT NULL DEFAULT ''"],
                 ['lpo_bridge_config', "ADD COLUMN `lpo_bridge_config` text DEFAULT NULL"],
-            ] as [$bandit_column, $bandit_alter]) {
-                $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE '" . $bandit_column . "'");
+            ] as [$lpo_column, $lpo_alter]) {
+                $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE '" . $lpo_column . "'");
                 $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
-                if (!$exists && _upgrade_query('ALTER TABLE `202_users_pref` ' . $bandit_alter) === false) {
-                    $bandit_ok = false;
+                if (!$exists && _upgrade_query('ALTER TABLE `202_users_pref` ' . $lpo_alter) === false) {
+                    $lpo_ok = false;
                     break;
                 }
             }
 
-            if ($bandit_ok) {
+            if ($lpo_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.73'") !== false) {
                     $prosper202_version = '1.9.73';
                 } else {

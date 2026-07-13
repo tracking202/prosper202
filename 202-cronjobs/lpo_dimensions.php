@@ -43,7 +43,7 @@ use Prosper202\Database\Connection;
 set_time_limit(0);
 
 if (!isset($db) || !($db instanceof mysqli)) {
-    fwrite(STDERR, "bandit_dimensions: database connection unavailable\n");
+    fwrite(STDERR, "lpo_dimensions: database connection unavailable\n");
     exit(1);
 }
 
@@ -60,11 +60,11 @@ try {
 } catch (Throwable $e) {
     if (Connection::isMysqlError($e, 1054, 'Unknown column')) {
         // Pre-upgrade schema: the bandit columns do not exist yet.
-        echo "bandit_dimensions: bandit schema not installed; nothing to do\n";
+        echo "lpo_dimensions: bandit schema not installed; nothing to do\n";
         exit(0);
     }
-    fwrite(STDERR, 'bandit_dimensions failed: ' . $e->getMessage() . "\n");
-    error_log('bandit_dimensions failed: ' . $e->getMessage());
+    fwrite(STDERR, 'lpo_dimensions failed: ' . $e->getMessage() . "\n");
+    error_log('lpo_dimensions failed: ' . $e->getMessage());
     exit(1);
 }
 
@@ -86,7 +86,7 @@ foreach ($paired as $row) {
         );
 
         $pushed++;
-        echo 'bandit_dimensions: user ' . $userId . ' pushed '
+        echo 'lpo_dimensions: user ' . $userId . ' pushed '
             . $counts['networks'] . ' networks, '
             . $counts['accounts'] . ' accounts, '
             . $counts['campaigns'] . ' campaigns, '
@@ -94,9 +94,9 @@ foreach ($paired as $row) {
     } catch (Throwable $e) {
         // Never fatal across users; the SaaS keeps the previous snapshot.
         $failed++;
-        error_log('bandit_dimensions: user ' . $userId . ' push failed: ' . $e->getMessage());
-        echo 'bandit_dimensions: user ' . $userId . ' FAILED: ' . $e->getMessage() . "\n";
+        error_log('lpo_dimensions: user ' . $userId . ' push failed: ' . $e->getMessage());
+        echo 'lpo_dimensions: user ' . $userId . ' FAILED: ' . $e->getMessage() . "\n";
     }
 }
 
-echo "bandit_dimensions: {$pushed} pushed, {$failed} failed\n";
+echo "lpo_dimensions: {$pushed} pushed, {$failed} failed\n";

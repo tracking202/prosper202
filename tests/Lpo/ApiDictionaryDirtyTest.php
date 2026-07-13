@@ -71,7 +71,7 @@ final class ApiDictionaryDirtyTest extends TestCase
     /** @param callable(FakeMysqliConnection): void $fn */
     private function withIsolatedStateStore(callable $fn): void
     {
-        $stateDir = sys_get_temp_dir() . '/p202-bandit-dirty-' . bin2hex(random_bytes(4));
+        $stateDir = sys_get_temp_dir() . '/p202-lpo-dirty-' . bin2hex(random_bytes(4));
         mkdir($stateDir, 0700, true);
         putenv('P202_SERVER_STATE_DIR=' . $stateDir);
 
@@ -131,7 +131,7 @@ final class ApiDictionaryDirtyTest extends TestCase
         });
     }
 
-    public function testApiMutationOfAnUnrelatedResourceLeavesTheBanditPrefAlone(): void
+    public function testApiMutationOfAnUnrelatedResourceLeavesTheLpoPrefAlone(): void
     {
         $this->withIsolatedStateStore(function (FakeMysqliConnection $db): void {
             $db->whenQueryContainsReturnRows('FROM 202_text_ads', [
