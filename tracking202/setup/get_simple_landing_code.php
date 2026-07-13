@@ -86,7 +86,7 @@ template_top('Get Landing Page Code');  ?>
 					<div class="lp-form-group">
 				        <label for="landing_page_id" class="lp-label">Landing Page</label>
 			        	<img id="landing_page_div_loading" class="loading" style="display: none;" src="/202-img/loader-small.gif"/>
-						<div id="landing_page_div">
+						<div id="landing_page_div" data-allow-create="1">
 							<select class="form-control lp-select" id="landing_page_id" disabled="">
 				                <option>-- Select a campaign first --</option>
 				            </select>

@@ -1106,14 +1106,25 @@ function load_aff_campaign_id(aff_network_id, aff_campaign_id){
 //Load landing pages
 function load_landing_page(aff_campaign_id, landing_page_id, type) {
 	var element = $("#landing_page_div");
-    
+	var allowCreate = element.data("allow-create") ? 1 : 0;
+	    
 		$('#landing_page_div_loading').show();
 
-		$.post("<?php echo get_absolute_url();?>tracking202/ajax/landing_pages.php", {aff_campaign_id: aff_campaign_id, landing_page_id: landing_page_id, type: type})
+		$.post("<?php echo get_absolute_url();?>tracking202/ajax/landing_pages.php", {aff_campaign_id: aff_campaign_id, landing_page_id: landing_page_id, type: type, allow_create: allowCreate})
 		  .done(function(data) {
 		  	$('#landing_page_div_loading').hide();
 		  	element.html(data);
-		  	$("#landing_page_id").select2();
+		  	$("#landing_page_id")
+		  		.select2()
+		  		.off("change.createLandingPage")
+		  		.on("change.createLandingPage", function() {
+		  			if (this.value !== "__create_landing_page__") {
+		  				return;
+		  			}
+
+		  			var campaignId = $("#aff_campaign_id").val() || aff_campaign_id || 0;
+		  			window.location.href = "<?php echo get_absolute_url();?>tracking202/setup/landing_pages.php?aff_campaign_id=" + encodeURIComponent(campaignId);
+		  		});
 		});
 }
 

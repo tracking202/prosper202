@@ -81,11 +81,11 @@ template_top('Get Trackers');  ?>
 
 				<div class="col-xs-8" style="margin-top: 15px;">
 					<label class="radio">
-						<input type="radio" name="tracker_type" value="0" data-toggle="radio" <?php if (isset($edit_tracker_row['landing_page_type']) && $edit_tracker_row['landing_page_type'] == false || isset($edit_tracker_row['landing_page_id']) && $edit_tracker_row['landing_page_id'] == false) echo "checked"; ?> <?php if (!isset($showEdit) || !$showEdit) echo "checked"; ?>>
+						<input type="radio" name="tracker_type" value="0" data-toggle="radio" <?php if (!$showEdit || (empty($edit_tracker_row['landing_page_type']) && empty($edit_tracker_row['rotator_id']))) echo "checked"; ?>>
 						Direct Link Setup, or Simple Landing Page Setup
 					</label>
 					<label class="radio">
-						<input type="radio" name="tracker_type" value="1" data-toggle="radio" <?php if (isset($edit_tracker_row['landing_page_type']) && $edit_tracker_row['landing_page_type']) echo "checked"; ?>>
+						<input type="radio" name="tracker_type" value="1" data-toggle="radio" <?php if (empty($edit_tracker_row['rotator_id']) && !empty($edit_tracker_row['landing_page_type'])) echo "checked"; ?>>
 						Advanced Landing Page Setup
 					</label>
 					<label class="radio">

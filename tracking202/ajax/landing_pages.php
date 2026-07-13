@@ -3,6 +3,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
+$allow_create = ($_POST['allow_create'] ?? '') === '1' && ($_POST['type'] ?? '') === 'landingpage';
 if (!isset($_POST['type']) || (($_POST['type'] != 'landingpage' && $_POST['type'] != 'landingpages') && $_POST['type'] != 'advlandingpage')) { ?>
 	
 	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id" disabled="">
@@ -40,8 +41,11 @@ $landing_page_result = $db->query($landing_page_sql) or record_mysql_error($land
 if ($landing_page_result->num_rows == 0) { ?>
 
 	<select class="form-control input-sm" name="landing_page_id" id="landing_page_id">
-        <option value="0"> -- </option>
-    </select>
+	        <option value="0">-- No landing pages yet --</option>
+		<?php if ($allow_create) { ?>
+			<option value="__create_landing_page__">+ Create a landing page</option>
+		<?php } ?>
+	    </select>
 
 <?php } else { ?>
 
@@ -59,5 +63,9 @@ if ($landing_page_result->num_rows == 0) { ?>
             
 			printf('<option %s value="%s">%s</option>',  $selected, $html['landing_page_id'], $html['landing_page_nickname']);  
 
-		} ?>
-	</select> <?php } ?>
+			}
+			if ($allow_create) { ?>
+				<option disabled>──────────</option>
+				<option value="__create_landing_page__">+ Create a landing page</option>
+			<?php } ?>
+		</select> <?php } ?>

@@ -10,6 +10,11 @@ if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ??
 	die('Invalid token');
 }
 
+$trackerType = $_POST['tracker_type'] ?? null;
+if (!is_string($trackerType) || !in_array($trackerType, ['0', '1', '2'], true)) {
+	die('<div class="error"><small><span class="fui-alert"></span> You have not selected a tracker type.</small></div>');
+}
+
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
@@ -25,7 +30,7 @@ $error = [];
 $html = [];
 
 //check variables
-	if (!empty($_POST['tracker_type']) && $_POST['tracker_type'] == 0) { 
+	if ($trackerType === '0') {
 
 		if(empty($_POST['aff_network_id'])) { $error['aff_network_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate network.</small></div>'; }
 		if(empty($_POST['aff_campaign_id'])) { $error['aff_campaign_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate campaign.</small></div>'; }
@@ -37,12 +42,12 @@ $html = [];
 		
 		if (!empty($error)) { die(); } 
 
-	} else if(!empty($_POST['tracker_type']) && $_POST['tracker_type'] == 2) {
+	} else if ($trackerType === '2') {
 		if(empty($_POST['tracker_rotator'])) { die('<div class="error"><small><span class="fui-alert"></span> You have not selected rotator.</small></div>'); }
 	}
 	
 	//but we'll allow them to choose the following options, can make a tracker link without but they will be notified	
-	if (!empty($_POST['tracker_type']) && $_POST['tracker_type'] != 2) {
+	if ($trackerType !== '2') {
 		if(empty($_POST['click_cloaking'])) { $error['click_cloaking'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any cloaking preference, are you sure you want to do this?</small></div>'; }
 	}
 
@@ -249,7 +254,7 @@ $html = [];
 		$editTracker = !empty($_POST['edit_tracker']);
 
 		$tracker_type = 'Unknown';
-		switch ($_POST['tracker_type'] ?? '') {
+		switch ($trackerType) {
 			case '0':
 				if (($_POST['method_of_promotion'] ?? '') == 'directlink') {
 						$tracker_type = 'Direct Link';
@@ -273,7 +278,7 @@ $html = [];
 
 		} else if($editTracker && !empty($_POST['tracker_id']) && $get_tracker_result->num_rows > 0) {
 
-			if ($_POST['tracker_type'] == '0') {
+			if ($trackerType === '0') {
 				if ($_POST['aff_campaign_id'] != $get_tracker_row['aff_campaign_id']) {
 					
 					$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
@@ -298,10 +303,8 @@ $html = [];
 				}
 			}
 
-			if ($_POST['method_of_promotion'] == 'landingpage' || $_POST['tracker_type'] == '1') {
-				if (($get_tracker_row['landing_page_id']) && $_POST['landing_page_id'] != $get_tracker_row['landing_page_id']) {
-					
-					$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? '0'));
+			if (($_POST['method_of_promotion'] ?? '') == 'landingpage' || $trackerType === '1') {
+				if (($get_tracker_row['landing_page_id']) && $mysql['landing_page_id'] != $get_tracker_row['landing_page_id']) {
 					$sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$mysql['landing_page_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -310,33 +313,26 @@ $html = [];
 				}
 			}
 
-			if (isset($_POST['tracker_type']) && ($_POST['tracker_type'] == '0' || $_POST['tracker_type'] == '1')) {
+			if ($trackerType === '0' || $trackerType === '1') {
+				$newTextAdId = (int)$mysql['text_ad_id'];
+				$oldTextAdId = (int)($get_tracker_row['text_ad_id'] ?? 0);
 
-				if (isset($_POST['text_ad_id']) && $get_tracker_row['text_ad_id']) {
-					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
+				if ($newTextAdId !== $oldTextAdId && $newTextAdId > 0) {
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
+					$newTextAdName = (string)($row['text_ad_name'] ?? '');
 
-					$slack->push('tracking_link_text_ad_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_ad' => $get_tracker_row['text_ad_name'], 'new_ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
-				}
-
-				if (isset($_POST['text_ad_id']) && !$get_tracker_row['text_ad_id']) {
-					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
-					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
-					$result = $db->query($sql);
-					$row = $result->fetch_assoc();
-
-					$slack->push('tracking_link_text_ad_added', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
-				}
-
-				if (!$_POST['text_ad_id'] && $get_tracker_row['text_ad_id']) {
-					
+					if ($oldTextAdId > 0) {
+						$slack->push('tracking_link_text_ad_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_ad' => $get_tracker_row['text_ad_name'], 'new_ad' => $newTextAdName, 'user' => $user_row['username']]);
+					} else {
+						$slack->push('tracking_link_text_ad_added', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $newTextAdName, 'user' => $user_row['username']]);
+					}
+				} else if ($newTextAdId === 0 && $oldTextAdId > 0) {
 					$slack->push('tracking_link_text_ad_removed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $get_tracker_row['text_ad_name'], 'user' => $user_row['username']]);
-
 				}
 
-				if ($_POST['click_cloaking'] != $get_tracker_row['click_cloaking']) {
+				if ($mysql['click_cloaking'] != $get_tracker_row['click_cloaking']) {
 					if ($get_tracker_row['click_cloaking'] == '-1') {
 						$from_type = 'Campaign Default On/Off';
 					} else if ($get_tracker_row['click_cloaking'] == '0') {
@@ -345,9 +341,9 @@ $html = [];
 						$from_type = 'On - Overide Campaign Default';
 					}
 
-					if ($_POST['click_cloaking'] == '-1') {
+					if ($mysql['click_cloaking'] == '-1') {
 						$to_type = 'Campaign Default On/Off';
-					} else if ($_POST['click_cloaking'] == '0') {
+					} else if ($mysql['click_cloaking'] == '0') {
 						$to_type = 'Off - Overide Campaign Default';
 					} else {
 						$to_type = 'On - Overide Campaign Default';
@@ -357,14 +353,21 @@ $html = [];
 				}
 			}
 
-			if ($_POST['ppc_account_id'] != $get_tracker_row['ppc_account_id']) {
-				$mysql['ppc_account_id'] = $db->real_escape_string((string)$_POST['ppc_account_id']);
-				$sql = "SELECT ppc_account_name, ppc_network_name FROM 202_ppc_accounts LEFT JOIN 202_ppc_networks USING (ppc_network_id) WHERE ppc_account_id = '".$mysql['ppc_account_id']."'";
-				$result = $db->query($sql);
-				$row = $result->fetch_assoc();
+			$newPpcAccountId = (int)$mysql['ppc_account_id'];
+			$oldPpcAccountId = (int)($get_tracker_row['ppc_account_id'] ?? 0);
+			if ($newPpcAccountId !== $oldPpcAccountId) {
+				$newPpcNetworkName = 'None';
+				$newPpcAccountName = 'None';
+				if ($newPpcAccountId > 0) {
+					$sql = "SELECT ppc_account_name, ppc_network_name FROM 202_ppc_accounts LEFT JOIN 202_ppc_networks USING (ppc_network_id) WHERE ppc_account_id = '".$mysql['ppc_account_id']."'";
+					$result = $db->query($sql);
+					$row = $result->fetch_assoc();
+					$newPpcNetworkName = (string)($row['ppc_network_name'] ?? 'Unknown');
+					$newPpcAccountName = (string)($row['ppc_account_name'] ?? 'Unknown');
+				}
 
-				$slack->push('tracking_link_pcc_network_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_source' => $get_tracker_row['ppc_network_name'], 'new_source' => $row['ppc_network_name'], 'user' => $user_row['username']]);
-				$slack->push('tracking_link_ppc_account_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_account' => $get_tracker_row['ppc_account_name'], 'new_account' => $row['ppc_account_name'], 'user' => $user_row['username']]);
+				$slack->push('tracking_link_pcc_network_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_source' => $get_tracker_row['ppc_network_name'], 'new_source' => $newPpcNetworkName, 'user' => $user_row['username']]);
+				$slack->push('tracking_link_ppc_account_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_account' => $get_tracker_row['ppc_account_name'], 'new_account' => $newPpcAccountName, 'user' => $user_row['username']]);
 			}
 
 			if (isset($_POST['cost_type']) && $_POST['cost_type'] == 'cpc') {
@@ -376,7 +379,7 @@ $html = [];
 					}
 				}
 
-			} else if ($_POST['cost_type'] == 'cpa') {
+			} else if (($_POST['cost_type'] ?? '') == 'cpa') {
 				if ($get_tracker_row['click_cpa'] == null) {
 					$slack->push('tracking_link_cost_type_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_type' => 'CPC', 'new_type' => 'CPA', 'user' => $user_row['username']]);
 				} else if ($click_cpa != $get_tracker_row['click_cpa']) {
@@ -384,9 +387,8 @@ $html = [];
 				}
 			}
 
-			if ($_POST['tracker_type'] == '2') {
-				if ($_POST['tracker_rotator'] != $get_tracker_row['rotator_id']) {
-					$mysql['rotator_id'] = $db->real_escape_string((string)$_POST['tracker_rotator']);
+			if ($trackerType === '2') {
+				if ($mysql['rotator_id'] != $get_tracker_row['rotator_id']) {
 					$sql = "SELECT name FROM 202_rotators WHERE id = '".$mysql['rotator_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
@@ -423,7 +425,7 @@ $html = [];
 
 	} 
 
-	if (($_POST['tracker_type'] ?? '') == 2) {
+	if ($trackerType === '2') {
 
 		$destination_url = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/rtr.php?t202id=' . $tracker_id_public . $tracking_variable_string;
 		$html['destination_url'] = htmlentities($destination_url, ENT_QUOTES, 'UTF-8');
@@ -441,7 +443,7 @@ $html = [];
 
 	} 
 	
-	if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or (($_POST['tracker_type'] ?? '') == 1)) {
+	if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or ($trackerType === '1')) {
 
 		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' . 
 		                   ($parsed_url['host'] ?? '') . 
