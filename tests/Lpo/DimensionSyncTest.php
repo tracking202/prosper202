@@ -2,19 +2,19 @@
 
 declare(strict_types=1);
 
-namespace Tests\Bandit;
+namespace Tests\Lpo;
 
 use PHPUnit\Framework\TestCase;
-use Prosper202\Bandit\CtxToken;
-use Prosper202\Bandit\DimensionSync;
-use Prosper202\Bandit\PairingClient;
-use Prosper202\Bandit\PairingRequestException;
+use Prosper202\Lpo\CtxToken;
+use Prosper202\Lpo\DimensionSync;
+use Prosper202\Lpo\PairingClient;
+use Prosper202\Lpo\PairingRequestException;
 use Prosper202\Database\Connection;
 use Tests\Support\FakeMysqliConnection;
 
 /**
  * The on-change dimension push (segments-v2 G10): the CRUD-side dirty flag
- * lives INSIDE the bandit_bridge_config JSON pref (no new column), marking
+ * lives INSIDE the lpo_bridge_config JSON pref (no new column), marking
  * is gated on an active pairing and can never throw, and the shared
  * pushForUser/clearDirty pair keeps the flag set whenever a push fails so
  * the nightly full sync stays the backstop. No DB, no live HTTP anywhere.
@@ -43,17 +43,17 @@ final class DimensionSyncTest extends TestCase
     {
         $rawPref = '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '"}';
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => 'active', 'bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+            ['lpo_status' => 'active', 'lpo_bridge_config' => $rawPref],
         ]);
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => $rawPref],
         ]);
         $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1);
 
         DimensionSync::markDirty($fake, 7);
 
-        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
         self::assertCount(1, $updates, 'exactly one pref write, no new column anywhere');
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertSame(3, $state['webhook_id'], 'existing pairing state survives the re-encode');
@@ -68,7 +68,7 @@ final class DimensionSyncTest extends TestCase
         // write must miss the guard instead of being overwritten with the
         // older JSON (EventBridge routing reads config.enabled_events from
         // these same bytes).
-        self::assertStringContainsString('AND bandit_bridge_config = ?', $updates[0]->sql);
+        self::assertStringContainsString('AND lpo_bridge_config = ?', $updates[0]->sql);
         self::assertSame($rawPref, $updates[0]->boundValues[2], 'guarded on the exact fresh bytes read');
     }
 
@@ -76,17 +76,17 @@ final class DimensionSyncTest extends TestCase
     {
         $rawPref = '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":100}';
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => 'active', 'bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+            ['lpo_status' => 'active', 'lpo_bridge_config' => $rawPref],
         ]);
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => $rawPref],
         ]);
         $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1);
 
         DimensionSync::markDirty($fake, 7);
 
-        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
         self::assertCount(1, $updates);
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertTrue($state['dims_dirty']);
@@ -104,17 +104,17 @@ final class DimensionSyncTest extends TestCase
         $now = time();
         $rawPref = '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":' . $now . '}';
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => 'active', 'bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+            ['lpo_status' => 'active', 'lpo_bridge_config' => $rawPref],
         ]);
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => $rawPref],
         ]);
         $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1);
 
         DimensionSync::markDirty($fake, 7);
 
-        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
         self::assertCount(1, $updates);
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertGreaterThan($now, $state['dims_dirty_at'], 'same-second saves must still produce a new token');
@@ -130,17 +130,17 @@ final class DimensionSyncTest extends TestCase
         $stalePref = '{"webhook_id":3}';
         $freshPref = '{"webhook_id":3,"config":{"enabled_events":["*"]},"fetched_at":12345}';
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => 'active', 'bandit_bridge_config' => $stalePref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+            ['lpo_status' => 'active', 'lpo_bridge_config' => $stalePref],
         ]);
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => $freshPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => $freshPref],
         ]);
         $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1);
 
         DimensionSync::markDirty($fake, 7);
 
-        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
         self::assertCount(1, $updates);
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertSame(['enabled_events' => ['*']], $state['config'], 'the mid-save config pull survives the dirty-marking');
@@ -156,11 +156,11 @@ final class DimensionSyncTest extends TestCase
         // on the first miss, then degrades to the nightly backstop quietly.
         $rawPref = '{"webhook_id":3}';
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => 'active', 'bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+            ['lpo_status' => 'active', 'lpo_bridge_config' => $rawPref],
         ]);
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => $rawPref],
         ]);
         $fake->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 0);
 
@@ -168,7 +168,7 @@ final class DimensionSyncTest extends TestCase
 
         self::assertCount(
             3,
-            $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config'),
+            $fake->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config'),
             'a guard miss on the one-shot save path retries (bounded) rather than dropping the flag'
         );
         $this->addToAssertionCount(1); // reaching here proves the admin save survived the misses
@@ -176,10 +176,10 @@ final class DimensionSyncTest extends TestCase
 
     public function testMarkDirtyIsANoOpUnlessActivelyPaired(): void
     {
-        // Paired-off user: pref row exists but bandit_status is ''.
+        // Paired-off user: pref row exists but lpo_status is ''.
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-            ['bandit_status' => '', 'bandit_bridge_config' => ''],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+            ['lpo_status' => '', 'lpo_bridge_config' => ''],
         ]);
         DimensionSync::markDirty($fake, 7);
         self::assertSame([], $fake->statementsContaining('UPDATE 202_users_pref'));
@@ -196,9 +196,9 @@ final class DimensionSyncTest extends TestCase
         DimensionSync::markDirty(null, 7);
 
         // The pref read fails hard (covers DB outage and the pre-upgrade
-        // schema where the bandit columns do not exist yet).
+        // schema where the Landing Page Optimizer columns do not exist yet).
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsExecuteReturns('SELECT bandit_status, bandit_bridge_config', false);
+        $fake->whenQueryContainsExecuteReturns('SELECT lpo_status, lpo_bridge_config', false);
         DimensionSync::markDirty($fake, 7);
 
         self::assertSame([], $fake->statementsContaining('UPDATE 202_users_pref'));
@@ -211,13 +211,13 @@ final class DimensionSyncTest extends TestCase
     {
         $rawPref = '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '","dims_dirty":true,"dims_dirty_at":100}';
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => $rawPref],
         ]);
 
         DimensionSync::clearDirty(new Connection($fake), 7, 100);
 
-        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
         self::assertCount(1, $updates);
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertArrayNotHasKey('dims_dirty', $state);
@@ -229,7 +229,7 @@ final class DimensionSyncTest extends TestCase
         // markDirty() racing in after the read makes this UPDATE match zero
         // rows instead of clobbering the newer dirty flag (the PHP
         // dims_dirty_at precheck alone cannot close that window).
-        self::assertStringContainsString('AND bandit_bridge_config = ?', $updates[0]->sql);
+        self::assertStringContainsString('AND lpo_bridge_config = ?', $updates[0]->sql);
         self::assertSame($rawPref, $updates[0]->boundValues[2], 'the CAS guard binds the pref bytes exactly as read');
         self::assertSame(7, $updates[0]->boundValues[1]);
     }
@@ -237,8 +237,8 @@ final class DimensionSyncTest extends TestCase
     public function testClearDirtyKeepsTheFlagWhenADictionarySaveRacedThePush(): void
     {
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":200}'],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":200}'],
         ]);
 
         // The push started when dims_dirty_at was 100; a save moved it to 200
@@ -257,8 +257,8 @@ final class DimensionSyncTest extends TestCase
         // its SaaS fetch, holding an older decode without those keys.
         $rawPref = '{"webhook_id":3,"dims_dirty":true,"dims_dirty_at":100}';
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => $rawPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => $rawPref],
         ]);
 
         DimensionSync::casMutateState(new Connection($fake), 7, function (array $state): array {
@@ -267,21 +267,21 @@ final class DimensionSyncTest extends TestCase
             return $state;
         });
 
-        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
         self::assertCount(1, $updates);
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertSame(12345, $state['fetched_at']);
         self::assertTrue($state['dims_dirty'], 'keys other writers own ride through: the mid-pull markDirty survives the config persist');
         self::assertSame(100, $state['dims_dirty_at']);
-        self::assertStringContainsString('AND bandit_bridge_config = ?', $updates[0]->sql);
+        self::assertStringContainsString('AND lpo_bridge_config = ?', $updates[0]->sql);
         self::assertSame($rawPref, $updates[0]->boundValues[2], 'guarded by the exact bytes read — a racing write makes this match zero rows instead of clobbering');
     }
 
     public function testCasMutateStateSkipsTheWriteWhenAlreadyInTheDesiredShape(): void
     {
         $fake = new FakeMysqliConnection();
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '"}'],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => '{"webhook_id":3,"ctx_key":"' . self::CTX_KEY_HEX . '"}'],
         ]);
 
         DimensionSync::casMutateState(new Connection($fake), 7, fn (array $state): array => $state);
@@ -320,7 +320,7 @@ final class DimensionSyncTest extends TestCase
         self::assertSame(['networks' => 1, 'accounts' => 1, 'campaigns' => 1, 'landing_pages' => 1], $counts);
         self::assertCount(1, $this->calls);
         self::assertSame('POST', $this->calls[0]['method']);
-        self::assertSame('https://saas.example/api/v2/bandit/dimensions', $this->calls[0]['url']);
+        self::assertSame('https://saas.example/api/v2/lpo/dimensions', $this->calls[0]['url']);
 
         $body = json_decode((string) $this->calls[0]['body'], true);
         self::assertSame('hash-1', $body['install_hash']);
@@ -356,8 +356,8 @@ final class DimensionSyncTest extends TestCase
         $freshPref = '{"webhook_id":5,"dims_dirty":true,"dims_dirty_at":100,"config":{"enabled_events":["*"]}}';
         $fake = new FakeMysqliConnection();
         $fake->whenQueryContainsReturnRows('FROM 202_ltv_webhooks', [['webhook_secret' => 'secret-abc']]);
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => $freshPref],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => $freshPref],
         ]);
 
         DimensionSync::pushForUser(
@@ -368,14 +368,14 @@ final class DimensionSyncTest extends TestCase
             'hash-1'
         );
 
-        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+        $updates = $fake->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
         self::assertCount(1, $updates);
         $state = json_decode((string) $updates[0]->boundValues[0], true);
         self::assertSame(bin2hex(CtxToken::deriveKey('secret-abc')), $state['ctx_key']);
         self::assertTrue($state['dims_dirty'], 'the backfill must carry the mid-cron dirty flag through');
         self::assertSame(100, $state['dims_dirty_at']);
         self::assertSame(['enabled_events' => ['*']], $state['config'], 'the mid-cron config pull survives too');
-        self::assertStringContainsString('AND bandit_bridge_config = ?', $updates[0]->sql);
+        self::assertStringContainsString('AND lpo_bridge_config = ?', $updates[0]->sql);
         self::assertSame($freshPref, $updates[0]->boundValues[2], 'guarded on the fresh bytes, not the cron decode');
     }
 
@@ -386,8 +386,8 @@ final class DimensionSyncTest extends TestCase
         // and the mutation is a byte-identical no-op — no write at all.
         $fake = new FakeMysqliConnection();
         $fake->whenQueryContainsReturnRows('FROM 202_ltv_webhooks', [['webhook_secret' => 'secret-abc']]);
-        $fake->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-            ['bandit_bridge_config' => '{"webhook_id":5,"ctx_key":"' . self::CTX_KEY_HEX . '"}'],
+        $fake->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+            ['lpo_bridge_config' => '{"webhook_id":5,"ctx_key":"' . self::CTX_KEY_HEX . '"}'],
         ]);
 
         DimensionSync::pushForUser(

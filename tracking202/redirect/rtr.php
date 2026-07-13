@@ -732,7 +732,7 @@ if ($cloaking_on == true) {
 		|| (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
 	$cloaking_site_url = ($cloaking_secure ? 'https://' : 'http://').$_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
-// Landing Page Optimizer (bandit): the t202ctx token is minted ONLY when the
+// Landing Page Optimizer: the t202ctx token is minted ONLY when the
 // destination comes from the type='lp' branch below (p202-edge-sync §3.3) —
 // never for campaign/url/auto_monetizer targets (offer URLs must not carry it).
 $t202ctx_lp_destination = false;
@@ -783,19 +783,19 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	// Landing Page Optimizer: on rotator→LP destinations only, append the
 	// signed per-click context token (t202ctx, p202-edge-sync §3.2/§3.3) so
 	// the paired edge can resolve traffic-source segments at assign time.
-	// Gated on an active bandit pairing whose derived key is already cached
-	// in the bandit_bridge_config pref — installs paired before ctx_token
+	// Gated on an active Landing Page Optimizer pairing whose derived key is already cached
+	// in the lpo_bridge_config pref — installs paired before ctx_token
 	// support skip minting until 202-cronjobs/bridge_config.php backfills
 	// the key. All payload claims are already in scope: zero extra queries
 	// beyond the memcached pref row. Failure-open: ANY problem in this block
-	// (missing bandit columns pre-upgrade, bad JSON, mint error) leaves the
+	// (missing Landing Page Optimizer columns pre-upgrade, bad JSON, mint error) leaves the
 	// redirect exactly as it was.
 	$t202ctx_token = '';
 	if ($t202ctx_lp_destination) {
 		try {
 			$t202ctx_pref = false;
-			$t202ctx_sql = "SELECT bandit_status, bandit_bridge_config, bandit_ctx_kw FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
-			// key mirrored by bandit_ctx_pref_cache_bust() (202-account/
+			$t202ctx_sql = "SELECT lpo_status, lpo_bridge_config, lpo_ctx_kw FROM 202_users_pref WHERE user_id='".$mysql['user_id']."'";
+			// key mirrored by lpo_ctx_pref_cache_bust() (202-account/
 			// api-integrations.php) — keep the SELECT text in sync
 			$t202ctx_cache_key = md5($t202ctx_sql . systemHash());
 			if (!empty($GLOBALS['memcacheWorking'])) {
@@ -805,8 +805,8 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 				}
 			}
 			if ($t202ctx_pref === false) {
-				// Plain query on purpose (not _mysqli_query): a missing bandit
-				// column on a pre-upgrade schema must soft-skip the token,
+				// Plain query on purpose (not _mysqli_query): a missing Landing
+				// Page Optimizer column on a pre-upgrade schema must soft-skip the token,
 				// never kill the redirect.
 				$t202ctx_result = $db->query($t202ctx_sql);
 				if ($t202ctx_result instanceof mysqli_result) {
@@ -816,8 +816,8 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 					}
 				}
 			}
-			if (is_array($t202ctx_pref) && ($t202ctx_pref['bandit_status'] ?? '') === 'active') {
-				$t202ctx_state = json_decode((string)($t202ctx_pref['bandit_bridge_config'] ?? ''), true);
+			if (is_array($t202ctx_pref) && ($t202ctx_pref['lpo_status'] ?? '') === 'active') {
+				$t202ctx_state = json_decode((string)($t202ctx_pref['lpo_bridge_config'] ?? ''), true);
 				$t202ctx_key_hex = is_array($t202ctx_state) ? (string)($t202ctx_state['ctx_key'] ?? '') : '';
 				if (preg_match('/^[0-9a-f]{64}$/', $t202ctx_key_hex) === 1) {
 					$t202ctx_claims = ['v' => 1, 't' => time(), 'sid' => (string)$mysql['click_id']];
@@ -833,7 +833,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 					}
 					// stripslashes undoes the real_escape_string applied for
 					// the SQL writes above — the token carries the plain text.
-					if ((string)($t202ctx_pref['bandit_ctx_kw'] ?? '1') !== '0' && is_scalar($keyword) && (string)$keyword !== '') {
+					if ((string)($t202ctx_pref['lpo_ctx_kw'] ?? '1') !== '0' && is_scalar($keyword) && (string)$keyword !== '') {
 						$t202ctx_claims['kw'] = stripslashes((string)$keyword);
 					}
 					foreach (['c1' => $c1, 'c2' => $c2, 'c3' => $c3, 'c4' => $c4] as $t202ctx_ck => $t202ctx_cv) {
@@ -844,7 +844,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 					if ((string)$countryCode !== '') {
 						$t202ctx_claims['cc'] = (string)$countryCode;
 					}
-					$t202ctx_token = \Prosper202\Bandit\CtxToken::mint($t202ctx_claims, (string)hex2bin($t202ctx_key_hex));
+					$t202ctx_token = \Prosper202\Lpo\CtxToken::mint($t202ctx_claims, (string)hex2bin($t202ctx_key_hex));
 				}
 			}
 		} catch (\Throwable $t202ctx_error) {
@@ -869,7 +869,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 			// fragment-safe append: the token must join the query string BEFORE
 			// any #fragment, or it stays client-side and never reaches the LP
 			// server/loader (review finding).
-			$t202ctx_final_url = \Prosper202\Bandit\CtxToken::appendToUrl((string)$t202ctx_final_url, $t202ctx_token);
+			$t202ctx_final_url = \Prosper202\Lpo\CtxToken::appendToUrl((string)$t202ctx_final_url, $t202ctx_token);
 		}
 	}
 	return $t202ctx_final_url;

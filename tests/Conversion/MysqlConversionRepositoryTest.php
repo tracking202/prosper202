@@ -33,7 +33,7 @@ final class MysqlConversionRepositoryTest extends TestCase
 
         // The transactional write path must never touch the read connection —
         // it has to see the locked/uncommitted state. The ONLY reads allowed
-        // are the post-commit bandit-bridge emit lookups (install context +
+        // are the post-commit Landing Page Optimizer bridge emit lookups (install context +
         // webhook subscriber match), which run after the transaction returns.
         foreach ($read->statements as $stmt) {
             self::assertMatchesRegularExpression(

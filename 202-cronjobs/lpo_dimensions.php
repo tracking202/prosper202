@@ -4,9 +4,9 @@
 declare(strict_types=1);
 
 /**
- * Bandit dimension-map push (p202-edge-sync §4.1/§4.2). Run nightly.
+ * Landing Page Optimizer dimension-map push (p202-edge-sync §4.1/§4.2). Run nightly.
  *
- * For every user paired with the Landing Page Optimizer (bandit_status =
+ * For every user paired with the Landing Page Optimizer (lpo_status =
  * 'active') this snapshots the install's slowly-changing dictionaries —
  * traffic-source networks/accounts, campaigns and landing pages — and POSTs
  * them to the SaaS control plane via PairingClient::pushDimensions, signed
@@ -20,7 +20,7 @@ declare(strict_types=1);
  * first; names truncated to 80 chars. Keywords are never synced.
  *
  * Also opportunistically backfills the derived t202ctx key into the
- * bandit_bridge_config pref (the webhook secret is already in hand here),
+ * lpo_bridge_config pref (the webhook secret is already in hand here),
  * complementing the same backfill in bridge_config.php.
  *
  * The per-user secret-resolve/snapshot/push path lives in
@@ -36,14 +36,14 @@ error_reporting(E_ALL);
 
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 
-use Prosper202\Bandit\DimensionSync;
-use Prosper202\Bandit\PairingClient;
+use Prosper202\Lpo\DimensionSync;
+use Prosper202\Lpo\PairingClient;
 use Prosper202\Database\Connection;
 
 set_time_limit(0);
 
 if (!isset($db) || !($db instanceof mysqli)) {
-    fwrite(STDERR, "bandit_dimensions: database connection unavailable\n");
+    fwrite(STDERR, "lpo_dimensions: database connection unavailable\n");
     exit(1);
 }
 
@@ -51,20 +51,20 @@ $conn = new Connection($db);
 
 try {
     $stmt = $conn->prepareRead(
-        "SELECT p.user_id, p.bandit_bridge_config, u.install_hash
+        "SELECT p.user_id, p.lpo_bridge_config, u.install_hash
          FROM 202_users_pref p
          JOIN 202_users u ON u.user_id = p.user_id
-         WHERE p.bandit_status = 'active'"
+         WHERE p.lpo_status = 'active'"
     );
     $paired = $conn->fetchAll($stmt);
 } catch (Throwable $e) {
     if (Connection::isMysqlError($e, 1054, 'Unknown column')) {
-        // Pre-upgrade schema: the bandit columns do not exist yet.
-        echo "bandit_dimensions: bandit schema not installed; nothing to do\n";
+        // Pre-upgrade schema: the Landing Page Optimizer columns do not exist yet.
+        echo "lpo_dimensions: Landing Page Optimizer schema not installed; nothing to do\n";
         exit(0);
     }
-    fwrite(STDERR, 'bandit_dimensions failed: ' . $e->getMessage() . "\n");
-    error_log('bandit_dimensions failed: ' . $e->getMessage());
+    fwrite(STDERR, 'lpo_dimensions failed: ' . $e->getMessage() . "\n");
+    error_log('lpo_dimensions failed: ' . $e->getMessage());
     exit(1);
 }
 
@@ -81,12 +81,12 @@ foreach ($paired as $row) {
             $conn,
             $client,
             $userId,
-            isset($row['bandit_bridge_config']) ? (string) $row['bandit_bridge_config'] : null,
+            isset($row['lpo_bridge_config']) ? (string) $row['lpo_bridge_config'] : null,
             isset($row['install_hash']) ? (string) $row['install_hash'] : null
         );
 
         $pushed++;
-        echo 'bandit_dimensions: user ' . $userId . ' pushed '
+        echo 'lpo_dimensions: user ' . $userId . ' pushed '
             . $counts['networks'] . ' networks, '
             . $counts['accounts'] . ' accounts, '
             . $counts['campaigns'] . ' campaigns, '
@@ -94,9 +94,9 @@ foreach ($paired as $row) {
     } catch (Throwable $e) {
         // Never fatal across users; the SaaS keeps the previous snapshot.
         $failed++;
-        error_log('bandit_dimensions: user ' . $userId . ' push failed: ' . $e->getMessage());
-        echo 'bandit_dimensions: user ' . $userId . ' FAILED: ' . $e->getMessage() . "\n";
+        error_log('lpo_dimensions: user ' . $userId . ' push failed: ' . $e->getMessage());
+        echo 'lpo_dimensions: user ' . $userId . ' FAILED: ' . $e->getMessage() . "\n";
     }
 }
 
-echo "bandit_dimensions: {$pushed} pushed, {$failed} failed\n";
+echo "lpo_dimensions: {$pushed} pushed, {$failed} failed\n";

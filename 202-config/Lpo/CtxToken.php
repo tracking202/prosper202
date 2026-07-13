@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Prosper202\Bandit;
+namespace Prosper202\Lpo;
 
 use RuntimeException;
 
@@ -17,8 +17,8 @@ use RuntimeException;
  *   b64url = URL-safe alphabet, NO padding
  *
  * The byte layout is a cross-language contract: the SaaS Worker verifies
- * tokens byte-for-byte (bandit-app src/auth/t202ctx.ts) against the pinned
- * vectors mirrored in tests/Bandit/fixtures/t202ctx-vectors.json. That is
+ * tokens byte-for-byte (Worker repo: src/auth/t202ctx.ts) against the pinned
+ * vectors mirrored in tests/Lpo/fixtures/t202ctx-vectors.json. That is
  * why the payload is encoded with JSON_UNESCAPED_UNICODE and
  * JSON_UNESCAPED_SLASHES (matching JS JSON.stringify output) and claims are
  * always emitted in the canonical §3.2 order — same inputs, same bytes.
@@ -52,7 +52,7 @@ final class CtxToken
 
     /**
      * K = HMAC-SHA256(key = webhook secret bytes, msg = 't202ctx-v1') as raw
-     * 32 bytes. Cached hex in the bandit_bridge_config pref as `ctx_key` so
+     * 32 bytes. Cached hex in the lpo_bridge_config pref as `ctx_key` so
      * the redirect hot path never re-derives it or queries 202_ltv_webhooks.
      */
     public static function deriveKey(string $webhookSecret): string

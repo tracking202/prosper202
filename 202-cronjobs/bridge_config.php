@@ -4,13 +4,13 @@
 declare(strict_types=1);
 
 /**
- * Bandit bridge remote-config pull. Run every 6 hours.
+ * Landing Page Optimizer bridge remote-config pull. Run every 6 hours.
  *
- * For every user paired with the Landing Page Optimizer (bandit_status =
+ * For every user paired with the Landing Page Optimizer (lpo_status =
  * 'active') this fetches the bridge config from the SaaS, verifies its
  * HMAC-SHA256 signature against the pairing webhook secret (hash_equals;
  * both sides sign json_encode(config) with PHP defaults), persists it to
- * 202_users_pref.bandit_bridge_config, and applies it to the local webhook
+ * 202_users_pref.lpo_bridge_config, and applies it to the local webhook
  * row: enabled_events maps onto subscribed_events ('*' = '' = subscribe-all)
  * and a hook_url change re-runs the SSRF guard (assertUrlAllowed) before the
  * URL is updated. This makes event routing and endpoints adjustable
@@ -24,9 +24,9 @@ error_reporting(E_ALL);
 
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 
-use Prosper202\Bandit\CtxToken;
-use Prosper202\Bandit\DimensionSync;
-use Prosper202\Bandit\PairingClient;
+use Prosper202\Lpo\CtxToken;
+use Prosper202\Lpo\DimensionSync;
+use Prosper202\Lpo\PairingClient;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
 
@@ -41,16 +41,16 @@ $conn = new Connection($db);
 
 try {
     $stmt = $conn->prepareRead(
-        "SELECT p.user_id, p.bandit_bridge_config, u.install_hash
+        "SELECT p.user_id, p.lpo_bridge_config, u.install_hash
          FROM 202_users_pref p
          JOIN 202_users u ON u.user_id = p.user_id
-         WHERE p.bandit_status = 'active'"
+         WHERE p.lpo_status = 'active'"
     );
     $paired = $conn->fetchAll($stmt);
 } catch (Throwable $e) {
     if (Connection::isMysqlError($e, 1054, 'Unknown column')) {
-        // Pre-upgrade schema: the bandit columns do not exist yet.
-        echo "bridge_config: bandit schema not installed; nothing to do\n";
+        // Pre-upgrade schema: the Landing Page Optimizer columns do not exist yet.
+        echo "bridge_config: Landing Page Optimizer schema not installed; nothing to do\n";
         exit(0);
     }
     fwrite(STDERR, 'bridge_config failed: ' . $e->getMessage() . "\n");
@@ -67,7 +67,7 @@ $failed = 0;
 foreach ($paired as $row) {
     $userId = (int) $row['user_id'];
     try {
-        $state = json_decode((string) ($row['bandit_bridge_config'] ?? ''), true);
+        $state = json_decode((string) ($row['lpo_bridge_config'] ?? ''), true);
         $state = is_array($state) ? $state : [];
         $webhookId = (int) ($state['webhook_id'] ?? 0);
         if ($webhookId <= 0) {

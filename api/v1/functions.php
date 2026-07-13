@@ -207,7 +207,7 @@ function wpCreateLp($db, $user): array {
 		// Landing Page Optimizer (segments-v2 G10): WP-plugin LP creates
 		// change the synced snapshot like the setup pages — flag this
 		// user's snapshot dirty for the hourly push. DB-only, never fatal.
-		\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+		\Prosper202\Lpo\DimensionSync::markDirty($db, (int) $user);
 
 		if ($landing_page_result) {
 			return ['error' => '0', 'lp_pid' => $landing_page_id_public];
@@ -247,7 +247,7 @@ function wpUpdateLp($db, $user): array {
 				// Landing Page Optimizer (segments-v2 G10): WP-plugin LP renames
 				// change the synced snapshot — flag dirty for the hourly push.
 				// Guarded: only a successful UPDATE can change the snapshot.
-				\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+				\Prosper202\Lpo\DimensionSync::markDirty($db, (int) $user);
 			}
 
 			return ['error' => '0'];
@@ -273,7 +273,7 @@ function wpUpdateLp($db, $user): array {
 					// renames/recampaigns change the synced snapshot — flag
 					// dirty for the hourly push. Guarded: only a successful
 					// UPDATE can change the snapshot.
-					\Prosper202\Bandit\DimensionSync::markDirty($db, (int) $user);
+					\Prosper202\Lpo\DimensionSync::markDirty($db, (int) $user);
 				}
 
 				return ['error' => '0'];

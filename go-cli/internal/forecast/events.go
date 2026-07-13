@@ -54,7 +54,7 @@ type EventAdjustment struct {
 	EventNames []string // which events contribute to this date
 }
 
-// priorWeight controls Bayesian blending of user hint vs learned data.
+// priorWeight controls the weighted blending of user hint vs learned data.
 // A priorWeight of 1 means 1 occurrence of user hint = 1 occurrence of data.
 const priorWeight = 1.0
 
@@ -111,7 +111,7 @@ func MaskEventDays(series Series, events []Event) Series {
 //  2. For each historical event occurrence, predict what baseline would have been
 //  3. Compute ratio = actual / baseline for lead, core, and lag zones
 //  4. Average ratios across all occurrences of the same event name
-//  5. Blend with user hint via Bayesian shrinkage if hint is provided
+//  5. Blend with user hint via weighted shrinkage if hint is provided
 func LearnEventImpacts(series Series, events []Event, cfg Config) map[string]LearnedImpact {
 	if len(series) < 3 || len(events) == 0 {
 		return nil
@@ -428,7 +428,7 @@ func collectZoneRatios(actuals, baselines map[string]float64, from, to time.Time
 }
 
 // blendZone computes the final multiplier for a zone by blending data-learned
-// ratios with the user hint via Bayesian shrinkage.
+// ratios with the user hint via weighted shrinkage.
 func blendZone(zone string, ratios []float64, hintMultiplier float64, hasHint bool) ZoneImpact {
 	n := float64(len(ratios))
 
@@ -451,7 +451,7 @@ func blendZone(zone string, ratios []float64, hintMultiplier float64, hasHint bo
 		return ZoneImpact{Zone: zone, Multiplier: dataMean, Samples: int(n)}
 	}
 
-	// Bayesian blend: posterior = (hint * priorWeight + dataMean * n) / (priorWeight + n)
+	// Weighted blend: result = (hint * priorWeight + dataMean * n) / (priorWeight + n)
 	blended := (hintMultiplier*priorWeight + dataMean*n) / (priorWeight + n)
 	return ZoneImpact{Zone: zone, Multiplier: blended, Samples: int(n)}
 }

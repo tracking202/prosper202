@@ -51,10 +51,11 @@ final class LtvTables
      * REACHED the customer (personalization seal, API-delivered sends) and
      * whether they converted on it afterward. This is the substrate every
      * serving policy reads: the fatigue rule keys on times_shown/first_shown,
-     * and future bandit/MVT policies get their arm aggregates from the same
-     * rows — SUM(times_shown) and COUNT(converted_at) per campaign are the
-     * Beta(alpha, beta) inputs for Thompson sampling; `policy` records which
-     * serving policy made each decision so policies can be compared offline.
+     * and future adaptive/MVT policies would derive their own scoring
+     * aggregates from the same rows — SUM(times_shown) and COUNT(converted_at)
+     * per campaign are the per-campaign inputs those policies would score on;
+     * `policy` records which serving policy made each decision so policies
+     * can be compared offline.
      */
     public static function offerRecommendations(): SchemaDefinition
     {

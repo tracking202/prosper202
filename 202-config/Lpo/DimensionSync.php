@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Prosper202\Bandit;
+namespace Prosper202\Lpo;
 
 use mysqli;
 use Prosper202\Database\Connection;
@@ -18,13 +18,13 @@ use Throwable;
  *  - markDirty(): called from the dictionary CRUD save paths
  *    (setup/ppc_accounts.php, setup/aff_campaigns.php, setup/aff_networks.php,
  *    setup/landing_pages.php) after a successful INSERT/UPDATE. It only flips
- *    `dims_dirty` / `dims_dirty_at` inside the existing bandit_bridge_config
+ *    `dims_dirty` / `dims_dirty_at` inside the existing lpo_bridge_config
  *    JSON pref on 202_users_pref — deliberately no new column and no HTTP,
  *    and never fatal: an admin save must never break because the pairing is
- *    unhappy or the bandit schema predates the upgrade.
+ *    unhappy or the Landing Page Optimizer schema predates the upgrade.
  *
  *  - pushForUser() / clearDirty(): the §4.1/§4.2 snapshot push, shared by the
- *    nightly full sync (202-cronjobs/bandit_dimensions.php) and the hourly
+ *    nightly full sync (202-cronjobs/lpo_dimensions.php) and the hourly
  *    dirty-user tier (202-cronjobs/index.php). The dirty flag is cleared only
  *    after a successful push — a failed push leaves it set so the next hourly
  *    tick retries, and the nightly full sync remains the backstop either way.
@@ -35,7 +35,7 @@ final class DimensionSync
      * Flag the user's dimension snapshot as dirty after a dictionary
      * INSERT/UPDATE, so the hourly cron tier re-pushes it (segments-v2 G10).
      *
-     * Stored inside the existing bandit_bridge_config JSON pref as
+     * Stored inside the existing lpo_bridge_config JSON pref as
      * `dims_dirty: true` plus `dims_dirty_at` (a strictly monotonic
      * per-save token, normally epoch seconds of the latest dictionary
      * change). Monotonic — max(now, previous + 1) — because clearDirty()
@@ -45,9 +45,9 @@ final class DimensionSync
      * between them clear the flag even though the snapshot missed the
      * second save.
      *
-     * Only acts for users paired with bandit_status='active'. Absolutely
+     * Only acts for users paired with lpo_status='active'. Absolutely
      * never fatal and never any HTTP: any problem (pre-upgrade schema
-     * without the bandit columns, DB hiccup, malformed JSON) leaves the
+     * without the Landing Page Optimizer columns, DB hiccup, malformed JSON) leaves the
      * admin save exactly as it was — the nightly full sync covers the gap.
      */
     public static function markDirty(?mysqli $db, int $userId): void
@@ -59,12 +59,12 @@ final class DimensionSync
 
             $conn = new Connection($db);
             $stmt = $conn->prepareRead(
-                'SELECT bandit_status, bandit_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+                'SELECT lpo_status, lpo_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
             );
             $conn->bind($stmt, 'i', [$userId]);
             $row = $conn->fetchOne($stmt);
 
-            if ($row === null || (string) ($row['bandit_status'] ?? '') !== 'active') {
+            if ($row === null || (string) ($row['lpo_status'] ?? '') !== 'active') {
                 return;
             }
 
@@ -95,7 +95,7 @@ final class DimensionSync
             }
             error_log('DimensionSync::markDirty user ' . $userId . ': dirty flag did not land after 3 CAS attempts');
         } catch (Throwable $e) {
-            // Pre-upgrade schemas miss the bandit columns entirely — that is
+            // Pre-upgrade schemas miss the Landing Page Optimizer columns entirely — that is
             // the expected quiet case, not worth log noise on every save.
             if (!Connection::isMysqlError($e, 1054, 'Unknown column')) {
                 error_log('DimensionSync::markDirty user ' . $userId . ': ' . $e->getMessage());
@@ -122,7 +122,7 @@ final class DimensionSync
     public static function clearDirty(Connection $conn, int $userId, mixed $expectedDirtyAt): void
     {
         $stmt = $conn->prepareRead(
-            'SELECT bandit_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+            'SELECT lpo_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
         );
         $conn->bind($stmt, 'i', [$userId]);
         $row = $conn->fetchOne($stmt);
@@ -130,7 +130,7 @@ final class DimensionSync
             return;
         }
 
-        $rawJson = (string) ($row['bandit_bridge_config'] ?? '');
+        $rawJson = (string) ($row['lpo_bridge_config'] ?? '');
         $state = json_decode($rawJson, true);
         if (!is_array($state) || empty($state['dims_dirty'])) {
             return;
@@ -146,14 +146,14 @@ final class DimensionSync
         }
 
         $update = $conn->prepareWrite(
-            'UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ? AND bandit_bridge_config = ?'
+            'UPDATE 202_users_pref SET lpo_bridge_config = ? WHERE user_id = ? AND lpo_bridge_config = ?'
         );
         $conn->bind($update, 'sis', [$stateJson, $userId, $rawJson]);
         $conn->executeUpdate($update);
     }
 
     /**
-     * Concurrency-safe persist of a bandit_bridge_config mutation.
+     * Concurrency-safe persist of a lpo_bridge_config mutation.
      *
      * Re-reads the CURRENT pref bytes, applies $mutate to the decoded
      * state, and writes back guarded by a compare-and-set on the exact
@@ -181,7 +181,7 @@ final class DimensionSync
     public static function casMutateState(Connection $conn, int $userId, callable $mutate): bool
     {
         $stmt = $conn->prepareRead(
-            'SELECT bandit_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+            'SELECT lpo_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
         );
         $conn->bind($stmt, 'i', [$userId]);
         $row = $conn->fetchOne($stmt);
@@ -189,7 +189,7 @@ final class DimensionSync
             return false;
         }
 
-        $rawJson = (string) ($row['bandit_bridge_config'] ?? '');
+        $rawJson = (string) ($row['lpo_bridge_config'] ?? '');
         $state = json_decode($rawJson, true);
         $state = is_array($state) ? $state : [];
 
@@ -202,7 +202,7 @@ final class DimensionSync
         }
 
         $update = $conn->prepareWrite(
-            'UPDATE 202_users_pref SET bandit_bridge_config = ? WHERE user_id = ? AND bandit_bridge_config = ?'
+            'UPDATE 202_users_pref SET lpo_bridge_config = ? WHERE user_id = ? AND lpo_bridge_config = ?'
         );
         $conn->bind($update, 'sis', [$stateJson, $userId, $rawJson]);
 
@@ -219,7 +219,7 @@ final class DimensionSync
      * Throws on any failure (missing pairing rows, transport/HTTP errors):
      * callers decide the policy — the crons log and keep the dirty flag set.
      *
-     * @param ?string $bridgeConfigJson the raw bandit_bridge_config pref value
+     * @param ?string $bridgeConfigJson the raw lpo_bridge_config pref value
      * @param ?string $installHash the 202_users.install_hash for this user
      * @return array{networks: int, accounts: int, campaigns: int, landing_pages: int}
      *         entity counts actually pushed (for cron progress output)

@@ -76,7 +76,7 @@ final class MysqlEngagementRepository
         $this->conn->bind($touch, 'iiii', [$occurredAt, $now, $customerId, $userId]);
         $this->conn->executeUpdate($touch);
 
-        // Bandit bridge: OFF by default — only emits once the signed remote
+        // Landing Page Optimizer bridge: OFF by default — only emits once the signed remote
         // bridge config explicitly enables engagement.recorded (or '*').
         EventBridge::emitIfEnabled($this->conn, $userId, 'engagement.recorded', [
             'engagement_id' => $eventId,

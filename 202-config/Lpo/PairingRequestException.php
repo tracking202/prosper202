@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Prosper202\Bandit;
+namespace Prosper202\Lpo;
 
 use RuntimeException;
 
@@ -54,7 +54,7 @@ final class PairingRequestException extends RuntimeException
             $this->httpStatus === 401, $this->httpStatus === 403 =>
                 "The optimizer service rejected this install's API key. Get a fresh Prosper202 Customer API key, then try connecting again.",
             $this->httpStatus === 404, $this->httpStatus === 405 =>
-                "The optimizer service at {$host} doesn't support pairing yet. If you're self-hosting the optimizer, set BANDIT_SAAS_BASE_URL to your instance's URL in 202-config.php.",
+                "The optimizer service at {$host} doesn't support pairing yet. If you're self-hosting the optimizer, set LPO_SAAS_BASE_URL to your instance's URL in 202-config.php.",
             $this->httpStatus === 429 =>
                 'The optimizer service is rate-limiting requests. Wait a minute, then try again.',
             $this->httpStatus !== null && $this->httpStatus >= 500 =>

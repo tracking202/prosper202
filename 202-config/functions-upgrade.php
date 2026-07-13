@@ -3808,7 +3808,7 @@ class UPGRADE
 
             // Recommendation decision log (impressions + outcomes per
             // customer/campaign — feeds the fatigue rule and future
-            // bandit/MVT policies) + the per-account fatigue tuning pref.
+            // adaptive/MVT policies) + the per-account fatigue tuning pref.
             $recs_definition = \Prosper202\Database\Tables\LtvTables::offerRecommendations();
             $recs_ok = _upgrade_query($recs_definition->createStatement) !== false;
 
@@ -3831,32 +3831,32 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.72') {
 
-            // Landing Page Optimizer (bandit) bridge pairing state: the
+            // Landing Page Optimizer bridge pairing state: the
             // paired site key, pairing status, and the signed remote bridge
             // config pulled by 202-cronjobs/bridge_config.php. Guarded
             // ALTERs so a partial failure retries cleanly on the next run.
-            $bandit_ok = true;
+            $lpo_ok = true;
             foreach ([
-                ['bandit_site_key', "ADD COLUMN `bandit_site_key` varchar(64) NOT NULL DEFAULT ''"],
-                ['bandit_status', "ADD COLUMN `bandit_status` varchar(16) NOT NULL DEFAULT ''"],
-                ['bandit_bridge_config', "ADD COLUMN `bandit_bridge_config` text DEFAULT NULL"],
-            ] as [$bandit_column, $bandit_alter]) {
-                $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE '" . $bandit_column . "'");
+                ['lpo_site_key', "ADD COLUMN `lpo_site_key` varchar(64) NOT NULL DEFAULT ''"],
+                ['lpo_status', "ADD COLUMN `lpo_status` varchar(16) NOT NULL DEFAULT ''"],
+                ['lpo_bridge_config', "ADD COLUMN `lpo_bridge_config` text DEFAULT NULL"],
+            ] as [$lpo_column, $lpo_alter]) {
+                $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE '" . $lpo_column . "'");
                 $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
-                if (!$exists && _upgrade_query('ALTER TABLE `202_users_pref` ' . $bandit_alter) === false) {
-                    $bandit_ok = false;
+                if (!$exists && _upgrade_query('ALTER TABLE `202_users_pref` ' . $lpo_alter) === false) {
+                    $lpo_ok = false;
                     break;
                 }
             }
 
-            if ($bandit_ok) {
+            if ($lpo_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.73'") !== false) {
                     $prosper202_version = '1.9.73';
                 } else {
-                    error_log('Prosper202 upgrade: added bandit bridge columns but failed to persist version 1.9.73; leaving version at 1.9.72 so the next run retries.');
+                    error_log('Prosper202 upgrade: added Landing Page Optimizer bridge columns but failed to persist version 1.9.73; leaving version at 1.9.72 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_users_pref bandit bridge columns; leaving version at 1.9.72 so the next run retries.');
+                error_log('Prosper202 upgrade: failed to add 202_users_pref Landing Page Optimizer bridge columns; leaving version at 1.9.72 so the next run retries.');
             }
         }
 
@@ -3866,20 +3866,20 @@ class UPGRADE
             // (p202-edge-sync §8): default on ('1'); '0' omits keyword text
             // from the signed context tokens minted in rtr.php. Guarded
             // ALTER so a partial failure retries cleanly on the next run.
-            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'bandit_ctx_kw'");
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'lpo_ctx_kw'");
             $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
             $ctx_kw_ok = $exists || _upgrade_query(
-                "ALTER TABLE `202_users_pref` ADD COLUMN `bandit_ctx_kw` tinyint(1) NOT NULL DEFAULT '1'"
+                "ALTER TABLE `202_users_pref` ADD COLUMN `lpo_ctx_kw` tinyint(1) NOT NULL DEFAULT '1'"
             ) !== false;
 
             if ($ctx_kw_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.74'") !== false) {
                     $prosper202_version = '1.9.74';
                 } else {
-                    error_log('Prosper202 upgrade: added bandit_ctx_kw pref but failed to persist version 1.9.74; leaving version at 1.9.73 so the next run retries.');
+                    error_log('Prosper202 upgrade: added lpo_ctx_kw pref but failed to persist version 1.9.74; leaving version at 1.9.73 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_users_pref bandit_ctx_kw column; leaving version at 1.9.73 so the next run retries.');
+                error_log('Prosper202 upgrade: failed to add 202_users_pref lpo_ctx_kw column; leaving version at 1.9.73 so the next run retries.');
             }
         }
 

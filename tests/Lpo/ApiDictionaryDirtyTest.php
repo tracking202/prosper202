@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Tests\Bandit;
+namespace Tests\Lpo;
 
 use Api\V3\Controller;
 use PHPUnit\Framework\TestCase;
@@ -13,8 +13,8 @@ use Tests\Support\FakeMysqliConnection;
  * Optimizer syncs (campaigns, categories, traffic sources/accounts,
  * landing pages), so the shared post-mutation choke point in the base
  * Controller must flag the user's snapshot dirty exactly like the
- * setup-page save/delete hooks — and must leave the bandit pref alone
- * for unrelated resources.
+ * setup-page save/delete hooks — and must leave the Landing Page Optimizer
+ * pref alone for unrelated resources.
  */
 final class ApiDictionaryDirtyTest extends TestCase
 {
@@ -71,7 +71,7 @@ final class ApiDictionaryDirtyTest extends TestCase
     /** @param callable(FakeMysqliConnection): void $fn */
     private function withIsolatedStateStore(callable $fn): void
     {
-        $stateDir = sys_get_temp_dir() . '/p202-bandit-dirty-' . bin2hex(random_bytes(4));
+        $stateDir = sys_get_temp_dir() . '/p202-lpo-dirty-' . bin2hex(random_bytes(4));
         mkdir($stateDir, 0700, true);
         putenv('P202_SERVER_STATE_DIR=' . $stateDir);
 
@@ -92,17 +92,17 @@ final class ApiDictionaryDirtyTest extends TestCase
             $db->whenQueryContainsReturnRows('FROM 202_landing_pages', [
                 ['landing_page_id' => 18, 'landing_page_nickname' => 'Blue LP', 'user_id' => 7],
             ]);
-            $db->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-                ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3}'],
+            $db->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+                ['lpo_status' => 'active', 'lpo_bridge_config' => '{"webhook_id":3}'],
             ]);
-            $db->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-                ['bandit_bridge_config' => '{"webhook_id":3}'],
+            $db->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+                ['lpo_bridge_config' => '{"webhook_id":3}'],
             ]); // markDirty persists via the CAS, which re-reads fresh bytes
             $db->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1); // the guarded write lands first try
 
             $this->landingPagesController($db)->delete(18);
 
-            $updates = $db->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
+            $updates = $db->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
             self::assertCount(1, $updates, 'an API soft-delete must markDirty like the setup-page delete does');
             $state = json_decode((string) $updates[0]->boundValues[0], true);
             self::assertTrue($state['dims_dirty']);
@@ -116,22 +116,22 @@ final class ApiDictionaryDirtyTest extends TestCase
             $db->whenQueryContainsReturnRows('FROM 202_landing_pages', [
                 ['landing_page_id' => 18, 'landing_page_nickname' => 'Blue LP', 'user_id' => 7],
             ]);
-            $db->whenQueryContainsReturnRows('SELECT bandit_status, bandit_bridge_config', [
-                ['bandit_status' => 'active', 'bandit_bridge_config' => '{"webhook_id":3}'],
+            $db->whenQueryContainsReturnRows('SELECT lpo_status, lpo_bridge_config', [
+                ['lpo_status' => 'active', 'lpo_bridge_config' => '{"webhook_id":3}'],
             ]);
-            $db->whenQueryContainsReturnRows('SELECT bandit_bridge_config', [
-                ['bandit_bridge_config' => '{"webhook_id":3}'],
+            $db->whenQueryContainsReturnRows('SELECT lpo_bridge_config', [
+                ['lpo_bridge_config' => '{"webhook_id":3}'],
             ]); // markDirty persists via the CAS, which re-reads fresh bytes
             $db->whenQueryContainsAffectedRows('UPDATE 202_users_pref', 1); // the guarded write lands first try
 
             $this->landingPagesController($db)->update(18, ['landing_page_nickname' => 'Renamed LP']);
 
-            $updates = $db->statementsContaining('UPDATE 202_users_pref SET bandit_bridge_config');
-            self::assertCount(1, $updates, 'an API rename must markDirty so Bandit does not keep the stale name');
+            $updates = $db->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
+            self::assertCount(1, $updates, 'an API rename must markDirty so Landing Page Optimizer does not keep the stale name');
         });
     }
 
-    public function testApiMutationOfAnUnrelatedResourceLeavesTheBanditPrefAlone(): void
+    public function testApiMutationOfAnUnrelatedResourceLeavesTheLpoPrefAlone(): void
     {
         $this->withIsolatedStateStore(function (FakeMysqliConnection $db): void {
             $db->whenQueryContainsReturnRows('FROM 202_text_ads', [
@@ -140,7 +140,7 @@ final class ApiDictionaryDirtyTest extends TestCase
 
             $this->textAdsController($db)->delete(4);
 
-            self::assertSame([], $db->statementsContaining('202_users_pref'), 'non-dictionary resources must not touch the bandit pref at all');
+            self::assertSame([], $db->statementsContaining('202_users_pref'), 'non-dictionary resources must not touch the Landing Page Optimizer pref at all');
         });
     }
 }

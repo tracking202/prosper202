@@ -83,8 +83,8 @@ final class MysqlRecommendationRepository
 
     /**
      * The serving policy stamped onto decision-log rows. Today there is one
-     * deterministic policy; future bandit/MVT policies record their own name
-     * (e.g. 'bandit:thompson', 'mvt:hero-copy-b') so decisions made by
+     * deterministic policy; future adaptive/MVT policies record their own name
+     * (e.g. 'adaptive:v2', 'mvt:hero-copy-b') so decisions made by
      * different policies can be compared offline from the same log.
      */
     private const SERVING_POLICY = 'default';
@@ -138,7 +138,7 @@ final class MysqlRecommendationRepository
      * into a landing-page personalization snapshot, or delivered by an API
      * consumer). One rollup row per (customer, campaign, surface); repeat
      * exposures increment times_shown. This log is what the fatigue rule —
-     * and any future bandit/MVT policy — learns from.
+     * and any future adaptive/MVT policy — learns from.
      */
     public function recordImpression(
         int $userId,
@@ -267,7 +267,7 @@ final class MysqlRecommendationRepository
      * Stamp converted_at on decision-log rows whose customer later converted
      * on the recommended campaign (order events only, deleted conversions
      * excluded). Run by ltv_maintenance. This is the impression → conversion
-     * reward join a future bandit policy scores on, and it permanently
+     * reward join a future adaptive policy scores on, and it permanently
      * removes converted offers from fatigue consideration.
      */
     public function stampRecommendationConversions(int $userId): int

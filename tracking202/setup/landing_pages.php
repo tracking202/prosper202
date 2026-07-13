@@ -206,7 +206,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
 		// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
 		// (After the public-id block above: markDirty's queries reset insert_id.)
-		\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+		\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 	}
 }
 
@@ -234,7 +234,7 @@ if (isset($_GET['delete_landing_page_id'])) {
 			// Landing Page Optimizer (segments-v2 G10): deletes change the
 			// synced snapshot too (buildSnapshot omits deleted rows) — flag
 			// dirty so the hourly cron re-pushes. DB-only — no HTTP here.
-			\Prosper202\Bandit\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 
 			if ($slack) {
 				if (isset($_GET['delete_landing_page_type']) && $_GET['delete_landing_page_type'] == '0') {
@@ -485,21 +485,21 @@ template_top('Landing Page Setup');  ?>
 						// Landing Page Optimizer deeplink: paired installs jump to the
 						// hosted create page with context params; unpaired ones land on
 						// the pairing panel. Degrades to unpaired before the upgrade
-						// adds the bandit_status pref column.
-						$bandit_paired = false;
-						$bandit_install_hash = '';
+						// adds the lpo_status pref column.
+						$lpo_paired = false;
+						$lpo_install_hash = '';
 						try {
-							$bandit_result = $db->query("SELECT 2u.install_hash, 2up.bandit_status FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_id'] . "'");
-							$bandit_row = ($bandit_result instanceof mysqli_result) ? $bandit_result->fetch_assoc() : null;
-							$bandit_install_hash = trim((string) ($bandit_row['install_hash'] ?? ''));
+							$lpo_result = $db->query("SELECT 2u.install_hash, 2up.lpo_status FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_id'] . "'");
+							$lpo_row = ($lpo_result instanceof mysqli_result) ? $lpo_result->fetch_assoc() : null;
+							$lpo_install_hash = trim((string) ($lpo_row['install_hash'] ?? ''));
 							// a pairing is only deeplinkable with a real install hash —
 							// a blank one would emit install= and break the hosted page,
 							// so treat it as unpaired (the link then routes to the panel)
-							$bandit_paired = (string) ($bandit_row['bandit_status'] ?? '') === 'active' && $bandit_install_hash !== '';
-						} catch (Throwable $bandit_lookup_error) {
+							$lpo_paired = (string) ($lpo_row['lpo_status'] ?? '') === 'active' && $lpo_install_hash !== '';
+						} catch (Throwable $lpo_lookup_error) {
 							// pre-upgrade schema; keep the panel link
 						}
-						$bandit_create_base = \Prosper202\Bandit\PairingClient::saasBaseUrl() . '/api/customers/experiments/create';
+						$lpo_create_base = \Prosper202\Lpo\PairingClient::saasBaseUrl() . '/api/customers/experiments/create';
 
 						$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='" . $mysql['user_id'] . "' AND landing_page_type='1' AND landing_page_deleted='0'";
 
@@ -513,16 +513,16 @@ template_top('Landing Page Setup');  ?>
 																		$html['landing_page_nickname'] = htmlentities((string)($landing_page_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');
 																		$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 
-																		if ($bandit_paired) {
-																			$bandit_optimize_link = ' <a href="' . htmlentities($bandit_create_base . '?lp=' . urlencode((string) ($landing_page_row['landing_page_url'] ?? '')) . '&install=' . urlencode($bandit_install_hash), ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" class="list-action">optimize</a>';
+																		if ($lpo_paired) {
+																			$lpo_optimize_link = ' <a href="' . htmlentities($lpo_create_base . '?lp=' . urlencode((string) ($landing_page_row['landing_page_url'] ?? '')) . '&install=' . urlencode($lpo_install_hash), ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" class="list-action">optimize</a>';
 																		} else {
-																			$bandit_optimize_link = ' <a href="' . htmlentities(get_absolute_url() . '202-account/api-integrations.php#bandit', ENT_QUOTES, 'UTF-8') . '" class="list-action">optimize</a>';
+																			$lpo_optimize_link = ' <a href="' . htmlentities(get_absolute_url() . '202-account/api-integrations.php#lpo', ENT_QUOTES, 'UTF-8') . '" class="list-action">optimize</a>';
 																		}
 
 																		if ($userObj->hasPermission("remove_landing_page")) {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a>%s <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $bandit_optimize_link, $html['landing_page_id'], $html['landing_page_nickname']);
+																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a>%s <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $lpo_optimize_link, $html['landing_page_id'], $html['landing_page_nickname']);
 																		} else {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a>%s</li>', $html['landing_page_nickname'], $html['landing_page_id'], $bandit_optimize_link);
+																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a>%s</li>', $html['landing_page_nickname'], $html['landing_page_id'], $lpo_optimize_link);
 																		}
 																	} ?>
 					</ul>

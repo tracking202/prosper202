@@ -227,7 +227,7 @@ try {
                 $transitionRows += $recommendations->rebuildTransitions((int) $userRow['user_id'], $now);
                 // Impression -> conversion reward join for the decision log:
                 // converted offers leave fatigue consideration permanently,
-                // and future bandit policies score on exactly this stamp.
+                // and future adaptive policies score on exactly this stamp.
                 $recConversions += $recommendations->stampRecommendationConversions((int) $userRow['user_id']);
             }
         }

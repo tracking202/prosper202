@@ -95,18 +95,18 @@ final class EventBridge
     public static function readState(Connection $conn, int $userId): array
     {
         $stmt = $conn->prepareRead(
-            'SELECT bandit_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
+            'SELECT lpo_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1'
         );
         $conn->bind($stmt, 'i', [$userId]);
         $row = $conn->fetchOne($stmt);
 
-        $raw = trim((string) ($row['bandit_bridge_config'] ?? ''));
+        $raw = trim((string) ($row['lpo_bridge_config'] ?? ''));
         if ($raw === '') {
             return [];
         }
         $decoded = json_decode($raw, true);
         if (!is_array($decoded)) {
-            error_log('EventBridge: bandit_bridge_config for user ' . $userId . ' is not valid JSON; treating as absent');
+            error_log('EventBridge: lpo_bridge_config for user ' . $userId . ' is not valid JSON; treating as absent');
 
             return [];
         }

@@ -230,7 +230,7 @@ class LtvController
      * Log that a next-offer recommendation was DELIVERED to the customer by
      * an API consumer (email send, external CRM, ...). The LP personalization
      * surface records itself at seal time; this endpoint is for senders the
-     * tracker cannot see. Feeds the fatigue rule and future bandit policies.
+     * tracker cannot see. Feeds the fatigue rule and future adaptive policies.
      */
     public function recordNextOfferImpression(int $customerId, array $payload): array
     {

@@ -275,7 +275,7 @@ final class MysqlPersonalizationRepository
 
         // Impression bookkeeping ONLY for the request that won the seal: a
         // concurrent loser renders the same snapshot but is the same visit,
-        // and counting it twice would advance fatigue/bandit stats early.
+        // and counting it twice would advance fatigue/scoring stats early.
         // Guarded: the public endpoint must never break over bookkeeping.
         if ($impression !== null) {
             try {

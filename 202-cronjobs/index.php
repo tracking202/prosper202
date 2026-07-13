@@ -222,8 +222,8 @@ function RunHourlyCronJob()
             // Landing Page Optimizer (segments-v2 G10): push the dimension
             // snapshot for paired users the dictionary CRUD flagged dirty.
             // Self-contained and never fatal — the nightly full sync
-            // (202-cronjobs/bandit_dimensions.php) remains the backstop.
-            PushDirtyBanditDimensions();
+            // (202-cronjobs/lpo_dimensions.php) remains the backstop.
+            PushDirtyLpoDimensions();
 
             // Log the execution
             $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
@@ -243,24 +243,24 @@ function RunHourlyCronJob()
 }
 
 /**
- * Hourly tier of the bandit dimension sync (segments-v2 G10).
+ * Hourly tier of the Landing Page Optimizer dimension sync (segments-v2 G10).
  *
  * The dictionary CRUD pages (setup/ppc_accounts.php, setup/aff_campaigns.php,
  * setup/aff_networks.php, setup/landing_pages.php) never talk to the SaaS
- * inline — they only set `dims_dirty` inside the bandit_bridge_config JSON
+ * inline — they only set `dims_dirty` inside the lpo_bridge_config JSON
  * pref via DimensionSync::markDirty. This job pushes the fresh snapshot for
  * those flagged users through the exact per-user path the nightly full sync
  * uses (DimensionSync::pushForUser) and clears the flag only on success: a
  * failed push keeps the flag set, so the next hourly tick retries and the
- * nightly bandit_dimensions.php run remains the backstop.
+ * nightly lpo_dimensions.php run remains the backstop.
  */
-function PushDirtyBanditDimensions()
+function PushDirtyLpoDimensions()
 {
     try {
         try {
             $db = getDatabaseConnection();
         } catch (Exception $e) {
-            error_log("PushDirtyBanditDimensions: Database connection failed - " . $e->getMessage());
+            error_log("PushDirtyLpoDimensions: Database connection failed - " . $e->getMessage());
             return;
         }
 
@@ -268,38 +268,38 @@ function PushDirtyBanditDimensions()
 
         try {
             $stmt = $conn->prepareRead(
-                "SELECT p.user_id, p.bandit_bridge_config, u.install_hash
+                "SELECT p.user_id, p.lpo_bridge_config, u.install_hash
                  FROM 202_users_pref p
                  JOIN 202_users u ON u.user_id = p.user_id
-                 WHERE p.bandit_status = 'active'"
+                 WHERE p.lpo_status = 'active'"
             );
             $paired = $conn->fetchAll($stmt);
         } catch (\Throwable $e) {
             if (\Prosper202\Database\Connection::isMysqlError($e, 1054, 'Unknown column')) {
-                // Pre-upgrade schema: the bandit columns do not exist yet.
+                // Pre-upgrade schema: the Landing Page Optimizer columns do not exist yet.
                 return;
             }
-            error_log("PushDirtyBanditDimensions: " . $e->getMessage());
+            error_log("PushDirtyLpoDimensions: " . $e->getMessage());
             return;
         }
 
         $client = null;
         foreach ($paired as $row) {
             $userId = (int) $row['user_id'];
-            $stateJson = (string) ($row['bandit_bridge_config'] ?? '');
+            $stateJson = (string) ($row['lpo_bridge_config'] ?? '');
             $state = json_decode($stateJson, true);
             if (!is_array($state) || empty($state['dims_dirty'])) {
                 continue;
             }
 
             try {
-                echo 'Pushing bandit dimensions for user ' . $userId . '...';
+                echo 'Pushing Landing Page Optimizer dimensions for user ' . $userId . '...';
                 flushOutput();
 
                 if ($client === null) {
-                    $client = new \Prosper202\Bandit\PairingClient();
+                    $client = new \Prosper202\Lpo\PairingClient();
                 }
-                \Prosper202\Bandit\DimensionSync::pushForUser(
+                \Prosper202\Lpo\DimensionSync::pushForUser(
                     $conn,
                     $client,
                     $userId,
@@ -308,7 +308,7 @@ function PushDirtyBanditDimensions()
                 );
                 // Clear only on success — and only if no dictionary save
                 // landed mid-push (dims_dirty_at unchanged).
-                \Prosper202\Bandit\DimensionSync::clearDirty($conn, $userId, $state['dims_dirty_at'] ?? null);
+                \Prosper202\Lpo\DimensionSync::clearDirty($conn, $userId, $state['dims_dirty_at'] ?? null);
 
                 echo 'Done<br>';
                 flushOutput();
@@ -317,11 +317,11 @@ function PushDirtyBanditDimensions()
                 // nightly full sync covers it regardless.
                 echo 'Failed<br>';
                 flushOutput();
-                error_log("PushDirtyBanditDimensions: user " . $userId . " push failed - " . $e->getMessage());
+                error_log("PushDirtyLpoDimensions: user " . $userId . " push failed - " . $e->getMessage());
             }
         }
     } catch (\Throwable $e) {
-        error_log("PushDirtyBanditDimensions Exception: " . $e->getMessage());
+        error_log("PushDirtyLpoDimensions Exception: " . $e->getMessage());
     }
 }
 

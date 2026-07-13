@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Tests\Bandit;
+namespace Tests\Lpo;
 
 use PHPUnit\Framework\TestCase;
-use Prosper202\Bandit\PairingClient;
+use Prosper202\Lpo\PairingClient;
 use Prosper202\Bridge\EventBridge;
 
 /**
@@ -36,7 +36,7 @@ final class PairingClientTest extends TestCase
         self::assertSame('pk_live_x', $response['site_key']);
         self::assertCount(1, $this->calls);
         self::assertSame('POST', $this->calls[0]['method']);
-        self::assertSame('https://saas.example/api/v2/bandit/pair/init', $this->calls[0]['url']);
+        self::assertSame('https://saas.example/api/v2/lpo/pair/init', $this->calls[0]['url']);
 
         $body = json_decode((string) $this->calls[0]['body'], true);
         self::assertSame('key-1', $body['customers_api_key']);
@@ -57,7 +57,7 @@ final class PairingClientTest extends TestCase
         $client = $this->client(200, '{"status":"active","site_key":"pk_live_x"}');
         $client->pairComplete('key-1', 'hash-1', 12, 'secret-abc');
 
-        self::assertSame('https://saas.example/api/v2/bandit/pair/complete', $this->calls[0]['url']);
+        self::assertSame('https://saas.example/api/v2/lpo/pair/complete', $this->calls[0]['url']);
         $body = json_decode((string) $this->calls[0]['body'], true);
         self::assertSame(['customers_api_key' => 'key-1', 'install_hash' => 'hash-1', 'p202_webhook_id' => 12, 'webhook_secret' => 'secret-abc'], $body);
     }
@@ -68,7 +68,7 @@ final class PairingClientTest extends TestCase
         $client->pairDisconnect('key-1', 'hash-1');
 
         self::assertSame('POST', $this->calls[0]['method']);
-        self::assertSame('https://saas.example/api/v2/bandit/pair/disconnect', $this->calls[0]['url']);
+        self::assertSame('https://saas.example/api/v2/lpo/pair/disconnect', $this->calls[0]['url']);
         self::assertSame(['customers_api_key' => 'key-1', 'install_hash' => 'hash-1'], json_decode((string) $this->calls[0]['body'], true));
     }
 
@@ -81,7 +81,7 @@ final class PairingClientTest extends TestCase
         self::assertSame('GET', $this->calls[0]['method']);
         self::assertNull($this->calls[0]['body'], 'the config pull carries no request body');
         self::assertSame(
-            'https://saas.example/api/v2/bandit/bridge/config?install_hash=hash-1&bridge_version=' . EventBridge::BRIDGE_VERSION,
+            'https://saas.example/api/v2/lpo/bridge/config?install_hash=hash-1&bridge_version=' . EventBridge::BRIDGE_VERSION,
             $this->calls[0]['url']
         );
     }
@@ -106,7 +106,7 @@ final class PairingClientTest extends TestCase
         self::assertSame('accepted', $response['status']);
         self::assertCount(1, $calls);
         self::assertSame('POST', $calls[0]['method']);
-        self::assertSame('https://saas.example/api/v2/bandit/dimensions', $calls[0]['url']);
+        self::assertSame('https://saas.example/api/v2/lpo/dimensions', $calls[0]['url']);
 
         $body = json_decode((string) $calls[0]['body'], true);
         self::assertSame('hash-1', $body['install_hash']);
@@ -126,7 +126,7 @@ final class PairingClientTest extends TestCase
         $client = $this->client(200, '{"status":"ok"}', 'https://saas.example/');
         $client->pairDisconnect('k', 'h');
 
-        self::assertSame('https://saas.example/api/v2/bandit/pair/disconnect', $this->calls[0]['url']);
+        self::assertSame('https://saas.example/api/v2/lpo/pair/disconnect', $this->calls[0]['url']);
     }
 
     public function testNon2xxResponseThrows(): void
