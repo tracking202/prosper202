@@ -4,7 +4,7 @@
 declare(strict_types=1);
 
 /**
- * Bandit dimension-map push (p202-edge-sync §4.1/§4.2). Run nightly.
+ * Landing Page Optimizer dimension-map push (p202-edge-sync §4.1/§4.2). Run nightly.
  *
  * For every user paired with the Landing Page Optimizer (lpo_status =
  * 'active') this snapshots the install's slowly-changing dictionaries —
@@ -59,8 +59,8 @@ try {
     $paired = $conn->fetchAll($stmt);
 } catch (Throwable $e) {
     if (Connection::isMysqlError($e, 1054, 'Unknown column')) {
-        // Pre-upgrade schema: the bandit columns do not exist yet.
-        echo "lpo_dimensions: bandit schema not installed; nothing to do\n";
+        // Pre-upgrade schema: the Landing Page Optimizer columns do not exist yet.
+        echo "lpo_dimensions: Landing Page Optimizer schema not installed; nothing to do\n";
         exit(0);
     }
     fwrite(STDERR, 'lpo_dimensions failed: ' . $e->getMessage() . "\n");

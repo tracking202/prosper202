@@ -21,7 +21,7 @@ use Throwable;
  *    `dims_dirty` / `dims_dirty_at` inside the existing lpo_bridge_config
  *    JSON pref on 202_users_pref — deliberately no new column and no HTTP,
  *    and never fatal: an admin save must never break because the pairing is
- *    unhappy or the bandit schema predates the upgrade.
+ *    unhappy or the Landing Page Optimizer schema predates the upgrade.
  *
  *  - pushForUser() / clearDirty(): the §4.1/§4.2 snapshot push, shared by the
  *    nightly full sync (202-cronjobs/lpo_dimensions.php) and the hourly
@@ -47,7 +47,7 @@ final class DimensionSync
      *
      * Only acts for users paired with lpo_status='active'. Absolutely
      * never fatal and never any HTTP: any problem (pre-upgrade schema
-     * without the bandit columns, DB hiccup, malformed JSON) leaves the
+     * without the Landing Page Optimizer columns, DB hiccup, malformed JSON) leaves the
      * admin save exactly as it was — the nightly full sync covers the gap.
      */
     public static function markDirty(?mysqli $db, int $userId): void
@@ -95,7 +95,7 @@ final class DimensionSync
             }
             error_log('DimensionSync::markDirty user ' . $userId . ': dirty flag did not land after 3 CAS attempts');
         } catch (Throwable $e) {
-            // Pre-upgrade schemas miss the bandit columns entirely — that is
+            // Pre-upgrade schemas miss the Landing Page Optimizer columns entirely — that is
             // the expected quiet case, not worth log noise on every save.
             if (!Connection::isMysqlError($e, 1054, 'Unknown column')) {
                 error_log('DimensionSync::markDirty user ' . $userId . ': ' . $e->getMessage());

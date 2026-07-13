@@ -196,7 +196,7 @@ final class DimensionSyncTest extends TestCase
         DimensionSync::markDirty(null, 7);
 
         // The pref read fails hard (covers DB outage and the pre-upgrade
-        // schema where the bandit columns do not exist yet).
+        // schema where the Landing Page Optimizer columns do not exist yet).
         $fake = new FakeMysqliConnection();
         $fake->whenQueryContainsExecuteReturns('SELECT lpo_status, lpo_bridge_config', false);
         DimensionSync::markDirty($fake, 7);

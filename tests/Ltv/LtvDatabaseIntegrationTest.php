@@ -1261,7 +1261,7 @@ CHILD;
         self::assertSame(1, (int) $this->scalar("SELECT times_shown FROM 202_offer_recommendations WHERE customer_id=$cid AND campaign_id=7 AND surface='api'"));
 
         // They finally buy campaign 7: the maintenance join stamps the
-        // conversion onto the decision log (the bandit reward signal), and
+        // conversion onto the decision log (the reward signal), and
         // the campaign leaves fatigue consideration for good.
         $log = $this->log(9201);
         $log['click_time'] = $freshTime;

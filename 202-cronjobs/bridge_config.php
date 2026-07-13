@@ -4,7 +4,7 @@
 declare(strict_types=1);
 
 /**
- * Bandit bridge remote-config pull. Run every 6 hours.
+ * Landing Page Optimizer bridge remote-config pull. Run every 6 hours.
  *
  * For every user paired with the Landing Page Optimizer (lpo_status =
  * 'active') this fetches the bridge config from the SaaS, verifies its
@@ -49,8 +49,8 @@ try {
     $paired = $conn->fetchAll($stmt);
 } catch (Throwable $e) {
     if (Connection::isMysqlError($e, 1054, 'Unknown column')) {
-        // Pre-upgrade schema: the bandit columns do not exist yet.
-        echo "bridge_config: bandit schema not installed; nothing to do\n";
+        // Pre-upgrade schema: the Landing Page Optimizer columns do not exist yet.
+        echo "bridge_config: Landing Page Optimizer schema not installed; nothing to do\n";
         exit(0);
     }
     fwrite(STDERR, 'bridge_config failed: ' . $e->getMessage() . "\n");

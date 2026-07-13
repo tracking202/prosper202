@@ -9,9 +9,9 @@ use Prosper202\Ltv\MysqlWebhookRepository;
 use RuntimeException;
 
 /**
- * Thin server-to-server client for the Landing Page Optimizer (bandit)
- * pairing endpoints on the SaaS control plane. Deliberately no bandit or
- * decision logic here — this client only pairs the install and pulls the
+ * Thin server-to-server client for the Landing Page Optimizer
+ * pairing endpoints on the SaaS control plane. Deliberately no optimization
+ * or decision logic here — this client only pairs the install and pulls the
  * signed remote bridge config; every feature screen is hosted.
  *
  * TLS/timeout hygiene matches the LTV webhook dispatcher

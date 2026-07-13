@@ -10,7 +10,7 @@ use Prosper202\Ltv\MysqlWebhookRepository;
 use Tests\Support\FakeMysqliConnection;
 
 /**
- * Event-name semantics behind the bandit bridge (E.1): KNOWN_EVENTS is a
+ * Event-name semantics behind the Landing Page Optimizer bridge (E.1): KNOWN_EVENTS is a
  * documentation listing, validation is well-formedness only, and the '*'
  * wildcard stores the '' subscribe-all value enqueue() already honors.
  */

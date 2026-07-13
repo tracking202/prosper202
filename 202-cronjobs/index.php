@@ -243,7 +243,7 @@ function RunHourlyCronJob()
 }
 
 /**
- * Hourly tier of the bandit dimension sync (segments-v2 G10).
+ * Hourly tier of the Landing Page Optimizer dimension sync (segments-v2 G10).
  *
  * The dictionary CRUD pages (setup/ppc_accounts.php, setup/aff_campaigns.php,
  * setup/aff_networks.php, setup/landing_pages.php) never talk to the SaaS
@@ -276,7 +276,7 @@ function PushDirtyLpoDimensions()
             $paired = $conn->fetchAll($stmt);
         } catch (\Throwable $e) {
             if (\Prosper202\Database\Connection::isMysqlError($e, 1054, 'Unknown column')) {
-                // Pre-upgrade schema: the bandit columns do not exist yet.
+                // Pre-upgrade schema: the Landing Page Optimizer columns do not exist yet.
                 return;
             }
             error_log("PushDirtyLpoDimensions: " . $e->getMessage());
@@ -293,7 +293,7 @@ function PushDirtyLpoDimensions()
             }
 
             try {
-                echo 'Pushing bandit dimensions for user ' . $userId . '...';
+                echo 'Pushing Landing Page Optimizer dimensions for user ' . $userId . '...';
                 flushOutput();
 
                 if ($client === null) {

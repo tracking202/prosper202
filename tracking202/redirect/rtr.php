@@ -732,7 +732,7 @@ if ($cloaking_on == true) {
 		|| (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
 	$cloaking_site_url = ($cloaking_secure ? 'https://' : 'http://').$_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
-// Landing Page Optimizer (bandit): the t202ctx token is minted ONLY when the
+// Landing Page Optimizer: the t202ctx token is minted ONLY when the
 // destination comes from the type='lp' branch below (p202-edge-sync §3.3) —
 // never for campaign/url/auto_monetizer targets (offer URLs must not carry it).
 $t202ctx_lp_destination = false;
@@ -783,12 +783,12 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	// Landing Page Optimizer: on rotator→LP destinations only, append the
 	// signed per-click context token (t202ctx, p202-edge-sync §3.2/§3.3) so
 	// the paired edge can resolve traffic-source segments at assign time.
-	// Gated on an active bandit pairing whose derived key is already cached
+	// Gated on an active Landing Page Optimizer pairing whose derived key is already cached
 	// in the lpo_bridge_config pref — installs paired before ctx_token
 	// support skip minting until 202-cronjobs/bridge_config.php backfills
 	// the key. All payload claims are already in scope: zero extra queries
 	// beyond the memcached pref row. Failure-open: ANY problem in this block
-	// (missing bandit columns pre-upgrade, bad JSON, mint error) leaves the
+	// (missing Landing Page Optimizer columns pre-upgrade, bad JSON, mint error) leaves the
 	// redirect exactly as it was.
 	$t202ctx_token = '';
 	if ($t202ctx_lp_destination) {
@@ -805,8 +805,8 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 				}
 			}
 			if ($t202ctx_pref === false) {
-				// Plain query on purpose (not _mysqli_query): a missing bandit
-				// column on a pre-upgrade schema must soft-skip the token,
+				// Plain query on purpose (not _mysqli_query): a missing Landing
+				// Page Optimizer column on a pre-upgrade schema must soft-skip the token,
 				// never kill the redirect.
 				$t202ctx_result = $db->query($t202ctx_sql);
 				if ($t202ctx_result instanceof mysqli_result) {

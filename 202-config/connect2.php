@@ -2450,7 +2450,7 @@ function getPrePopVars($vars)
         't202kw',
         't202id',
         't202b',
-        't202ctx', // bandit context token: minted fresh per click, never re-passed
+        't202ctx', // Landing Page Optimizer context token: minted fresh per click, never re-passed
         't202ref',
         't202pubid',
         'acip',

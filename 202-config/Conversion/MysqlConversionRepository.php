@@ -270,7 +270,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $result = $this->conn->transaction($work);
         }
 
-        // Bandit bridge: post-commit, NEW conversions only (duplicates and
+        // Landing Page Optimizer bridge: post-commit, NEW conversions only (duplicates and
         // missing clicks never emit). Living here — the single transactional
         // writer — means every ingestion path (legacy postback/pixel helpers
         // AND the V3 API) emits identically (review finding). EventBridge

@@ -3808,7 +3808,7 @@ class UPGRADE
 
             // Recommendation decision log (impressions + outcomes per
             // customer/campaign — feeds the fatigue rule and future
-            // bandit/MVT policies) + the per-account fatigue tuning pref.
+            // adaptive/MVT policies) + the per-account fatigue tuning pref.
             $recs_definition = \Prosper202\Database\Tables\LtvTables::offerRecommendations();
             $recs_ok = _upgrade_query($recs_definition->createStatement) !== false;
 
@@ -3831,7 +3831,7 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.72') {
 
-            // Landing Page Optimizer (bandit) bridge pairing state: the
+            // Landing Page Optimizer bridge pairing state: the
             // paired site key, pairing status, and the signed remote bridge
             // config pulled by 202-cronjobs/bridge_config.php. Guarded
             // ALTERs so a partial failure retries cleanly on the next run.
@@ -3853,10 +3853,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.73'") !== false) {
                     $prosper202_version = '1.9.73';
                 } else {
-                    error_log('Prosper202 upgrade: added bandit bridge columns but failed to persist version 1.9.73; leaving version at 1.9.72 so the next run retries.');
+                    error_log('Prosper202 upgrade: added Landing Page Optimizer bridge columns but failed to persist version 1.9.73; leaving version at 1.9.72 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_users_pref bandit bridge columns; leaving version at 1.9.72 so the next run retries.');
+                error_log('Prosper202 upgrade: failed to add 202_users_pref Landing Page Optimizer bridge columns; leaving version at 1.9.72 so the next run retries.');
             }
         }
 

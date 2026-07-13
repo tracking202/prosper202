@@ -13,8 +13,8 @@ use Tests\Support\FakeMysqliConnection;
  * Optimizer syncs (campaigns, categories, traffic sources/accounts,
  * landing pages), so the shared post-mutation choke point in the base
  * Controller must flag the user's snapshot dirty exactly like the
- * setup-page save/delete hooks — and must leave the bandit pref alone
- * for unrelated resources.
+ * setup-page save/delete hooks — and must leave the Landing Page Optimizer
+ * pref alone for unrelated resources.
  */
 final class ApiDictionaryDirtyTest extends TestCase
 {
@@ -127,7 +127,7 @@ final class ApiDictionaryDirtyTest extends TestCase
             $this->landingPagesController($db)->update(18, ['landing_page_nickname' => 'Renamed LP']);
 
             $updates = $db->statementsContaining('UPDATE 202_users_pref SET lpo_bridge_config');
-            self::assertCount(1, $updates, 'an API rename must markDirty so Bandit does not keep the stale name');
+            self::assertCount(1, $updates, 'an API rename must markDirty so Landing Page Optimizer does not keep the stale name');
         });
     }
 
@@ -140,7 +140,7 @@ final class ApiDictionaryDirtyTest extends TestCase
 
             $this->textAdsController($db)->delete(4);
 
-            self::assertSame([], $db->statementsContaining('202_users_pref'), 'non-dictionary resources must not touch the bandit pref at all');
+            self::assertSame([], $db->statementsContaining('202_users_pref'), 'non-dictionary resources must not touch the Landing Page Optimizer pref at all');
         });
     }
 }

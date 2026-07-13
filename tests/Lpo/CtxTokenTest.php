@@ -11,7 +11,7 @@ use RuntimeException;
 /**
  * Cross-language byte contract for the t202ctx token (p202-edge-sync §3.2):
  * the PHP mint must reproduce the Worker reference implementation
- * (bandit-app src/auth/t202ctx.ts) EXACTLY — same canonical claim order,
+ * (Worker repo: src/auth/t202ctx.ts) EXACTLY — same canonical claim order,
  * compact JSON (unescaped unicode + slashes), unpadded b64url, and a MAC of
  * the first 16 HMAC-SHA256 bytes over the ENCODED payload string. The
  * pinned vectors in fixtures/t202ctx-vectors.json are shared verbatim with

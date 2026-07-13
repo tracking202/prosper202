@@ -145,7 +145,7 @@ function apiint_endpoint($label, $url)
 $strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
 
 /**
- * rtr.php caches the bandit t202ctx prefs (lpo_status, lpo_bridge_config,
+ * rtr.php caches the Landing Page Optimizer t202ctx prefs (lpo_status, lpo_bridge_config,
  * lpo_ctx_kw) for 3 minutes under md5(<exact SELECT> . systemHash()). Any
  * pref change that alters minting behavior (keyword privacy opt-out, connect/
  * disconnect) must drop that key so live redirects pick the change up
@@ -268,7 +268,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db);
 	}
 
-	// Landing Page Optimizer (bandit) pairing: connect registers a local
+	// Landing Page Optimizer pairing: connect registers a local
 	// wildcard webhook and completes the SaaS handshake; disconnect reverses.
 	if (!isset($error['token']) && isset($_POST['lpo_action']) && in_array($_POST['lpo_action'], ['connect', 'disconnect'], true)) {
 		$lpo_user_id = (int) $_SESSION['user_id'];
@@ -280,7 +280,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		try {
 			if (!array_key_exists('lpo_status', $user_row)) {
-				throw new RuntimeException('Run the Prosper202 upgrade first (the bandit bridge columns are missing).');
+				throw new RuntimeException('Run the Prosper202 upgrade first (the Landing Page Optimizer bridge columns are missing).');
 			}
 
 			if ($_POST['lpo_action'] === 'connect') {
@@ -670,7 +670,7 @@ template_top('API Integrations');
 		</section>
 
 		<?php
-		// Landing Page Optimizer (bandit) pairing card. Status lives in
+		// Landing Page Optimizer pairing card. Status lives in
 		// 202_users_pref (lpo_status / lpo_site_key); every feature screen is
 		// hosted — this card only connects and disconnects the generic bridge.
 		$lpo_schema_ready = array_key_exists('lpo_status', $user_row);
@@ -735,7 +735,7 @@ template_top('API Integrations');
 			<?php } elseif ($lpo_needs_subscription) { ?>
 				<div class="apiint-note apiint-note--warn" role="status">
 					<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.4v3.4M8 4.9h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-					<span><?php if ($lpo_sub_retry) { ?>We still don&rsquo;t see an active Bandit subscription for this account. If you just subscribed, give it a minute, then connect again.<?php } else { ?>Landing Page Optimizer runs on a Bandit plan, and this account doesn&rsquo;t have one yet. Start a subscription, then connect this install.<?php } ?></span>
+					<span><?php if ($lpo_sub_retry) { ?>We still don&rsquo;t see an active Landing Page Optimizer subscription for this account. If you just subscribed, give it a minute, then connect again.<?php } else { ?>Landing Page Optimizer runs on a Landing Page Optimizer plan, and this account doesn&rsquo;t have one yet. Start a subscription, then connect this install.<?php } ?></span>
 				</div>
 				<div class="apiint-actions">
 					<a class="apiint-btn apiint-btn--primary" href="<?php echo htmlspecialchars($lpo_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener">Get Landing Page Optimizer&nbsp;&rarr;</a>

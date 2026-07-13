@@ -17,7 +17,7 @@ use RuntimeException;
  *   b64url = URL-safe alphabet, NO padding
  *
  * The byte layout is a cross-language contract: the SaaS Worker verifies
- * tokens byte-for-byte (bandit-app src/auth/t202ctx.ts) against the pinned
+ * tokens byte-for-byte (Worker repo: src/auth/t202ctx.ts) against the pinned
  * vectors mirrored in tests/Lpo/fixtures/t202ctx-vectors.json. That is
  * why the payload is encoded with JSON_UNESCAPED_UNICODE and
  * JSON_UNESCAPED_SLASHES (matching JS JSON.stringify output) and claims are
