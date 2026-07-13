@@ -274,7 +274,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$bandit_user_id = (int) $_SESSION['user_id'];
 		$bandit_conn = new \Prosper202\Database\Connection($db);
 		$bandit_webhooks = new \Prosper202\Ltv\MysqlWebhookRepository($bandit_conn);
-		$bandit_client = new \Prosper202\Bandit\PairingClient();
+		$bandit_client = new \Prosper202\Lpo\PairingClient();
 		$bandit_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? ''));
 		$bandit_install_hash = trim((string) ($user_row['install_hash'] ?? ''));
 
@@ -327,7 +327,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					// Derived t202ctx signing key (p202-edge-sync §3.3), cached
 					// at pairing time so the redirect hot path never touches
 					// 202_ltv_webhooks to mint context tokens.
-					'ctx_key' => bin2hex(\Prosper202\Bandit\CtxToken::deriveKey($bandit_created['secret'])),
+					'ctx_key' => bin2hex(\Prosper202\Lpo\CtxToken::deriveKey($bandit_created['secret'])),
 				]);
 				if ($bandit_state === false) {
 					throw new RuntimeException('Failed to encode bridge state.');
@@ -367,7 +367,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			bandit_ctx_pref_cache_bust($bandit_user_id); // after the last write (see connect)
 			header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?bandit=disconnected#bandit');
 			die();
-		} catch (\Prosper202\Bandit\PairingRequestException $bandit_error) {
+		} catch (\Prosper202\Lpo\PairingRequestException $bandit_error) {
 			// Full technical detail goes to the log; the UI gets plain
 			// English with a next step.
 			error_log('bandit ' . $_POST['bandit_action'] . ': ' . $bandit_error->getMessage());
@@ -679,8 +679,8 @@ template_top('API Integrations');
 		$bandit_has_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? '')) !== '';
 		$bandit_needs_subscription = !empty($bandit_needs_subscription); // set by the connect catch above
 		$bandit_sub_retry = !empty($bandit_sub_retry); // the failed attempt came from the "I've subscribed" retry
-		$bandit_saas_base = \Prosper202\Bandit\PairingClient::saasBaseUrl();
-		$bandit_capabilities = \Prosper202\Bandit\PairingClient::CAPABILITIES;
+		$bandit_saas_base = \Prosper202\Lpo\PairingClient::saasBaseUrl();
+		$bandit_capabilities = \Prosper202\Lpo\PairingClient::CAPABILITIES;
 		?>
 		<section class="apiint-card" id="bandit">
 			<div class="apiint-card-head">

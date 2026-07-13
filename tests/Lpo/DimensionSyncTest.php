@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace Tests\Bandit;
+namespace Tests\Lpo;
 
 use PHPUnit\Framework\TestCase;
-use Prosper202\Bandit\CtxToken;
-use Prosper202\Bandit\DimensionSync;
-use Prosper202\Bandit\PairingClient;
-use Prosper202\Bandit\PairingRequestException;
+use Prosper202\Lpo\CtxToken;
+use Prosper202\Lpo\DimensionSync;
+use Prosper202\Lpo\PairingClient;
+use Prosper202\Lpo\PairingRequestException;
 use Prosper202\Database\Connection;
 use Tests\Support\FakeMysqliConnection;
 

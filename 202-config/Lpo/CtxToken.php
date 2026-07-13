@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Prosper202\Bandit;
+namespace Prosper202\Lpo;
 
 use RuntimeException;
 
@@ -18,7 +18,7 @@ use RuntimeException;
  *
  * The byte layout is a cross-language contract: the SaaS Worker verifies
  * tokens byte-for-byte (bandit-app src/auth/t202ctx.ts) against the pinned
- * vectors mirrored in tests/Bandit/fixtures/t202ctx-vectors.json. That is
+ * vectors mirrored in tests/Lpo/fixtures/t202ctx-vectors.json. That is
  * why the payload is encoded with JSON_UNESCAPED_UNICODE and
  * JSON_UNESCAPED_SLASHES (matching JS JSON.stringify output) and claims are
  * always emitted in the canonical §3.2 order — same inputs, same bytes.

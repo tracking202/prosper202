@@ -24,9 +24,9 @@ error_reporting(E_ALL);
 
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 
-use Prosper202\Bandit\CtxToken;
-use Prosper202\Bandit\DimensionSync;
-use Prosper202\Bandit\PairingClient;
+use Prosper202\Lpo\CtxToken;
+use Prosper202\Lpo\DimensionSync;
+use Prosper202\Lpo\PairingClient;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
 

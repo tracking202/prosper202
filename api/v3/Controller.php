@@ -757,7 +757,7 @@ abstract class Controller
         // DB-only and never fatal, so API responses cannot break on pairing
         // problems or pre-upgrade schemas.
         if (in_array($this->tableName(), self::BANDIT_SYNCED_DICTIONARIES, true)) {
-            \Prosper202\Bandit\DimensionSync::markDirty($this->db, $this->userId);
+            \Prosper202\Lpo\DimensionSync::markDirty($this->db, $this->userId);
         }
 
         $entity = $this->changeEntityName();

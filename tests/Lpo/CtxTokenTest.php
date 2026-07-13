@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Tests\Bandit;
+namespace Tests\Lpo;
 
 use PHPUnit\Framework\TestCase;
-use Prosper202\Bandit\CtxToken;
+use Prosper202\Lpo\CtxToken;
 use RuntimeException;
 
 /**

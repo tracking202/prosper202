@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Tests\Bandit;
+namespace Tests\Lpo;
 
 use Api\V3\Controller;
 use PHPUnit\Framework\TestCase;

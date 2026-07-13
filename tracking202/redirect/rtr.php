@@ -844,7 +844,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 					if ((string)$countryCode !== '') {
 						$t202ctx_claims['cc'] = (string)$countryCode;
 					}
-					$t202ctx_token = \Prosper202\Bandit\CtxToken::mint($t202ctx_claims, (string)hex2bin($t202ctx_key_hex));
+					$t202ctx_token = \Prosper202\Lpo\CtxToken::mint($t202ctx_claims, (string)hex2bin($t202ctx_key_hex));
 				}
 			}
 		} catch (\Throwable $t202ctx_error) {
@@ -869,7 +869,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 			// fragment-safe append: the token must join the query string BEFORE
 			// any #fragment, or it stays client-side and never reaches the LP
 			// server/loader (review finding).
-			$t202ctx_final_url = \Prosper202\Bandit\CtxToken::appendToUrl((string)$t202ctx_final_url, $t202ctx_token);
+			$t202ctx_final_url = \Prosper202\Lpo\CtxToken::appendToUrl((string)$t202ctx_final_url, $t202ctx_token);
 		}
 	}
 	return $t202ctx_final_url;

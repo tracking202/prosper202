@@ -297,9 +297,9 @@ function PushDirtyBanditDimensions()
                 flushOutput();
 
                 if ($client === null) {
-                    $client = new \Prosper202\Bandit\PairingClient();
+                    $client = new \Prosper202\Lpo\PairingClient();
                 }
-                \Prosper202\Bandit\DimensionSync::pushForUser(
+                \Prosper202\Lpo\DimensionSync::pushForUser(
                     $conn,
                     $client,
                     $userId,
@@ -308,7 +308,7 @@ function PushDirtyBanditDimensions()
                 );
                 // Clear only on success — and only if no dictionary save
                 // landed mid-push (dims_dirty_at unchanged).
-                \Prosper202\Bandit\DimensionSync::clearDirty($conn, $userId, $state['dims_dirty_at'] ?? null);
+                \Prosper202\Lpo\DimensionSync::clearDirty($conn, $userId, $state['dims_dirty_at'] ?? null);
 
                 echo 'Done<br>';
                 flushOutput();

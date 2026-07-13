@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Prosper202\Bandit;
+namespace Prosper202\Lpo;
 
 use Prosper202\Bridge\EventBridge;
 use Prosper202\Ltv\MysqlWebhookRepository;
