@@ -13,29 +13,29 @@ namespace Prosper202\DataEngine;
 final class GroupedReportDefinition
 {
     /**
+     * Pagination counts the report's own GROUP BY over these same joins, so a report
+     * needs no separate count strategy — see DataEngine::countReportGroups(). The old
+     * $countColumn / $usesRefererCount pair described a count that ran against a
+     * different set of rows than the report itself, which is what made totalRows
+     * disagree with the rows returned.
+     *
      * @param string  $labelSelect       Dimension column(s) for the SELECT list,
      *                                   e.g. "country_name,country_code".
      * @param string  $joins             Report-specific JOIN clause against the
      *                                   `2st` (202_dataengine) alias.
-     * @param string  $groupBy           GROUP BY expression.
-     * @param ?string $countColumn       2st column counted (DISTINCT) for
-     *                                   pagination, or null when the report
-     *                                   uses the referer-specific count.
+     * @param string  $groupBy           GROUP BY expression. May name an alias
+     *                                   defined in $labelSelect.
      * @param bool    $includeFilterJoin Whether the user-preference filter JOIN
      *                                   is prepended. The keyword report must
      *                                   not include it: it already joins
      *                                   202_keywords under the same `2k` alias
      *                                   the filter join would introduce.
-     * @param bool    $usesRefererCount  Pagination count via the referer
-     *                                   domain-grouping subquery.
      */
     public function __construct(
         public readonly string $labelSelect,
         public readonly string $joins,
         public readonly string $groupBy,
-        public readonly ?string $countColumn,
         public readonly bool $includeFilterJoin = true,
-        public readonly bool $usesRefererCount = false,
     ) {
     }
 }
