@@ -1,5 +1,6 @@
 <?php
 
+use Tracking202\Data\StaticFilterOptionsProvider;
 use UAParser\Parser;
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.
@@ -133,6 +134,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $show_filters = $options['show_filters'] ?? false;
     $show_avg_cpc = $options['show_avg_cpc'] ?? false;
     $skip_publisher_check = $options['skip_publisher_check'] ?? false;
+    $json_bootstrap_dependent_filters = $options['json_bootstrap_dependent_filters'] ?? false;
     $hide_publisher_sections = !$skip_publisher_check && !empty($_SESSION['publisher']);
 
     $userId = (int) ($_SESSION['user_id'] ?? 0);
@@ -185,6 +187,26 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $html['user_pref_device_id'] = htmlentities((string) ($user_row['user_pref_device_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $html['user_pref_browser_id'] = htmlentities((string) ($user_row['user_pref_browser_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $html['user_pref_platform_id'] = htmlentities((string) ($user_row['user_pref_platform_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+    $ssr_static_filters = [
+        'country' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
+        'region' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
+        'isp' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
+        'device' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
+        'browser' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
+        'platform' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
+    ];
+
+    if ($show_adv && tracking202StaticFilterSsrEnabled()) {
+        $ssr_static_filters = StaticFilterOptionsProvider::build([
+            'country' => $html['user_pref_country_id'],
+            'region' => $html['user_pref_region_id'],
+            'isp' => $html['user_pref_isp_id'],
+            'device' => $html['user_pref_device_id'],
+            'browser' => $html['user_pref_browser_id'],
+            'platform' => $html['user_pref_platform_id'],
+        ]);
+    }
 
     // --- SSR: Pre-render small/bounded filter dropdowns to eliminate AJAX round-trips ---
     // PPC Networks (user-scoped, bounded)
@@ -432,12 +454,13 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                                     <label>Device type: </label>
                                                     <div class="form-group">
                                                         <img id="device_id_div_loading" class="loading"
-                                                            style="right: 0px; left: 5px;"
+                                                            style="<?php if ($ssr_static_filters['device']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
                                                             src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
                                                         <div id="device_id_div" style="top: -12px; font-size: 10px;">
                                                             <select class="form-control input-sm" name="device_id"
                                                                 id="device_id">
-                                                                <option value="0">--</option>
+                                                                <option value="0" <?php if ($html['user_pref_device_id'] === '' || $html['user_pref_device_id'] === '0') echo 'selected=""'; ?>>--</option>
+                                                                <?php echo $ssr_static_filters['device']['options_html']; ?>
                                                             </select>
                                                         </div>
                                                     </div>
@@ -447,13 +470,14 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                                     <label>Country: </label>
                                                     <div class="form-group">
                                                         <img id="country_id_div_loading" class="loading"
-                                                            style="right: 0px; left: 5px;"
+                                                            style="<?php if ($ssr_static_filters['country']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
                                                             src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
                                                         <div id="country_id_div"
                                                             style="top: -12px; font-size: 10px;">
                                                             <select class="form-control input-sm" name="country_id"
                                                                 id="country_id">
-                                                                <option value="0">--</option>
+                                                                <option value="0" <?php if ($html['user_pref_country_id'] === '' || $html['user_pref_country_id'] === '0') echo 'selected=""'; ?>>--</option>
+                                                                <?php echo $ssr_static_filters['country']['options_html']; ?>
                                                             </select>
                                                         </div>
                                                     </div>
@@ -483,13 +507,14 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                                     <label>Browser: </label>
                                                     <div class="form-group">
                                                         <img id="browser_id_div_loading" class="loading"
-                                                            style="right: 0px; left: 5px;"
+                                                            style="<?php if ($ssr_static_filters['browser']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
                                                             src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
                                                         <div id="browser_id_div"
                                                             style="top: -12px; font-size: 10px;">
                                                             <select class="form-control input-sm" name="browser_id"
                                                                 id="browser_id">
-                                                                <option value="0">--</option>
+                                                                <option value="0" <?php if ($html['user_pref_browser_id'] === '' || $html['user_pref_browser_id'] === '0') echo 'selected=""'; ?>>--</option>
+                                                                <?php echo $ssr_static_filters['browser']['options_html']; ?>
                                                             </select>
                                                         </div>
                                                     </div>
@@ -498,12 +523,13 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                                     <label>Region: </label>
                                                     <div class="form-group">
                                                         <img id="region_id_div_loading" class="loading"
-                                                            style="right: 0px; left: 5px;"
+                                                            style="<?php if ($ssr_static_filters['region']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
                                                             src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
                                                         <div id="region_id_div" style="top: -12px; font-size: 10px;">
                                                             <select class="form-control input-sm" name="region_id"
                                                                 id="region_id">
-                                                                <option value="0">--</option>
+                                                                <option value="0" <?php if ($html['user_pref_region_id'] === '' || $html['user_pref_region_id'] === '0') echo 'selected=""'; ?>>--</option>
+                                                                <?php echo $ssr_static_filters['region']['options_html']; ?>
                                                             </select>
                                                         </div>
                                                     </div>
@@ -530,13 +556,14 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                                     <label>Platforms: </label>
                                                     <div class="form-group">
                                                         <img id="platform_id_div_loading" class="loading"
-                                                            style="right: 0px; left: 5px;"
+                                                            style="<?php if ($ssr_static_filters['platform']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
                                                             src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
                                                         <div id="platform_id_div"
                                                             style="top: -12px; font-size: 10px;">
                                                             <select class="form-control input-sm" name="platform_id"
                                                                 id="platform_id">
-                                                                <option value="0">--</option>
+                                                                <option value="0" <?php if ($html['user_pref_platform_id'] === '' || $html['user_pref_platform_id'] === '0') echo 'selected=""'; ?>>--</option>
+                                                                <?php echo $ssr_static_filters['platform']['options_html']; ?>
                                                             </select>
                                                         </div>
                                                     </div>
@@ -545,12 +572,13 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                                     <label>ISP/Carrier: </label>
                                                     <div class="form-group">
                                                         <img id="isp_id_div_loading" class="loading"
-                                                            style="right: 0px; left: 5px;"
+                                                            style="<?php if ($ssr_static_filters['isp']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
                                                             src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
                                                         <div id="isp_id_div" style="top: -12px; font-size: 10px;">
                                                             <select class="form-control input-sm" name="isp_id"
                                                                 id="isp_id">
-                                                                <option value="0">--</option>
+                                                                <option value="0" <?php if ($html['user_pref_isp_id'] === '' || $html['user_pref_isp_id'] === '0') echo 'selected=""'; ?>>--</option>
+                                                                <?php echo $ssr_static_filters['isp']['options_html']; ?>
                                                             </select>
                                                         </div>
                                                     </div>
@@ -1005,31 +1033,35 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
         $("#aff_network_id").select2();
         $("#method_of_promotion").select2();
 
-        // Cascading filters: still load via AJAX when user has saved preferences
+        // Cascading filters: still load via AJAX when user has saved preferences.
+        // PPC account stays on the legacy AJAX path — it is not part of the JSON payload.
         <?php if ($html['user_pref_ppc_account_id'] != '') { ?>
             load_ppc_account_id('<?php echo $html['user_pref_ppc_network_id']; ?>', '<?php echo $html['user_pref_ppc_account_id']; ?>');
         <?php } ?>
 
-        <?php if ($html['user_pref_aff_campaign_id'] != '') { ?>
-            load_aff_campaign_id('<?php echo $html['user_pref_aff_network_id']; ?>', '<?php echo $html['user_pref_aff_campaign_id']; ?>');
-        <?php } ?>
+        <?php if (!$json_bootstrap_dependent_filters) { ?>
+            <?php if ($html['user_pref_aff_campaign_id'] != '') { ?>
+                load_aff_campaign_id('<?php echo $html['user_pref_aff_network_id']; ?>', '<?php echo $html['user_pref_aff_campaign_id']; ?>');
+            <?php } ?>
 
-        <?php if ($html['user_pref_text_ad_id'] != '') { ?>
-            load_text_ad_id('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_text_ad_id']; ?>');
-            load_ad_preview('<?php echo $html['user_pref_text_ad_id']; ?>');
-        <?php } ?>
+            <?php if ($html['user_pref_text_ad_id'] != '') { ?>
+                load_text_ad_id('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_text_ad_id']; ?>');
+                load_ad_preview('<?php echo $html['user_pref_text_ad_id']; ?>');
+            <?php } ?>
 
-        <?php if ($html['user_pref_landing_page_id'] != '') { ?>
-            load_landing_page('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_landing_page_id']; ?>', '<?php echo $html['user_pref_method_of_promotion']; ?>s');
+            <?php if ($html['user_pref_landing_page_id'] != '') { ?>
+                load_landing_page('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_landing_page_id']; ?>', '<?php echo $html['user_pref_method_of_promotion']; ?>s');
+            <?php } ?>
         <?php } ?>
 
         <?php if ($show_adv != false) { ?>
-            load_country_id('<?php echo $html['user_pref_country_id']; ?>');
-            load_region_id('<?php echo $html['user_pref_region_id']; ?>');
-            load_isp_id('<?php echo $html['user_pref_isp_id']; ?>');
-            load_device_id('<?php echo $html['user_pref_device_id']; ?>');
-            load_browser_id('<?php echo $html['user_pref_browser_id']; ?>');
-            load_platform_id('<?php echo $html['user_pref_platform_id']; ?>');
+            <?php foreach (['country', 'region', 'isp', 'device', 'browser', 'platform'] as $ssr_filter_key) { ?>
+                <?php if ($ssr_static_filters[$ssr_filter_key]['enabled']) { ?>
+                    $("#<?php echo $ssr_filter_key; ?>_id").select2();
+                <?php } else { ?>
+                    load_<?php echo $ssr_filter_key; ?>_id('<?php echo $html['user_pref_' . $ssr_filter_key . '_id']; ?>');
+                <?php } ?>
+            <?php } ?>
         <?php } ?>
     </script>
 <?php
@@ -1037,6 +1069,93 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 }
 
 function display_calendar2(...$args) { return display_calendar(...$args); }
+
+/**
+ * Build the client-side config for the JSON report transport.
+ *
+ * $reportType must be one of ReportDispatchRequest::SUPPORTED_REPORT_TYPES. When the
+ * JSON architecture flag is off, 'enabled' is false and 202-js/tracking-report.js hands
+ * control straight back to the legacy loadContent() path.
+ *
+ * @return array<string, mixed>
+ */
+function tracking202_report_canary_config(string $reportType, string $legacyPageUrl): array
+{
+    $database = DB::getInstance();
+    $db = $database->getConnection();
+
+    $enabled = tracking202JsonArchitectureEnabled();
+
+    $dispatchUrl = get_absolute_url() . 'tracking202/ajax/report_dispatch.php';
+    $override = tracking202NormalizeBooleanFlag($_GET['tracking_json_mode'] ?? null);
+    if ($override !== null) {
+        $dispatchUrl .= '?tracking_json_mode=' . ($override ? '1' : '0');
+    }
+
+    $userId = $db->real_escape_string((string) ($_SESSION['user_id'] ?? 0));
+    $sql = "SELECT
+                user_pref_aff_network_id,
+                user_pref_aff_campaign_id,
+                user_pref_text_ad_id,
+                user_pref_method_of_promotion,
+                user_pref_landing_page_id
+            FROM 202_users_pref
+            WHERE user_id='" . $userId . "'";
+    $result = _mysqli_query($sql);
+    if (!$result instanceof mysqli_result) {
+        // Fail loudly: a swallowed prefs read would hand the client an empty dependent-filter
+        // bootstrap, silently dropping the user's saved campaign/text-ad/landing-page filters.
+        record_mysql_error($sql);
+    }
+    $prefs = $result->fetch_assoc() ?? [];
+
+    return [
+        'enabled' => $enabled,
+        'reportType' => $reportType,
+        'legacyPageUrl' => $legacyPageUrl,
+        'dispatchUrl' => $dispatchUrl,
+        'loaderUrl' => get_absolute_url() . '202-img/loader-small.gif',
+        'excelIconUrl' => get_absolute_url() . '202-img/icons/16x16/page_white_excel.png',
+        'dependentFilters' => [
+            'jsonBootstrap' => $enabled && empty($_SESSION['publisher']),
+            'publisherHidden' => !empty($_SESSION['publisher']),
+            'affNetworkId' => (string) ($prefs['user_pref_aff_network_id'] ?? ''),
+            'affCampaignId' => (string) ($prefs['user_pref_aff_campaign_id'] ?? ''),
+            'textAdId' => (string) ($prefs['user_pref_text_ad_id'] ?? ''),
+            'landingPageId' => (string) ($prefs['user_pref_landing_page_id'] ?? ''),
+            'methodOfPromotion' => (string) ($prefs['user_pref_method_of_promotion'] ?? ''),
+        ],
+    ];
+}
+
+/**
+ * Emit the JSON transport bootstrap for a report page.
+ *
+ * @param array<string, mixed> $config
+ */
+function tracking202_render_report_canary(array $config): void
+{
+    // JSON_HEX_* stops a stray "</script>" in any value from escaping the inline script
+    // context. JSON_THROW_ON_ERROR because an unchecked encode failure would emit
+    // "window.… = ;" — a syntax error that would kill the whole inline block.
+    try {
+        $json = json_encode(
+            $config,
+            JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+                | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+        );
+    } catch (JsonException $e) {
+        // Emit nothing: the page keeps the legacy transport, which renders the same data.
+        error_log('tracking202 report canary config encoding failed: ' . $e->getMessage());
+        return;
+    }
+    ?>
+    <script type="text/javascript">
+        window.tracking202ReportCanaryConfig = <?php echo $json; ?>;
+    </script>
+    <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/tracking-report.js"></script>
+    <?php
+}
 
 function grab_timeframe($unused = null): array
 {
