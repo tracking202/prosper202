@@ -140,6 +140,13 @@ final class UserTables
                 `lpo_status` varchar(16) NOT NULL DEFAULT '',
                 `lpo_bridge_config` text DEFAULT NULL,
                 `lpo_ctx_kw` tinyint(1) NOT NULL DEFAULT '1',
+                `analytics_consent` enum('granted','denied','unset') NOT NULL DEFAULT 'unset',
+                `analytics_consent_at` datetime DEFAULT NULL,
+                `analytics_consent_source` varchar(32) DEFAULT NULL,
+                `email_marketing_consent` enum('granted','denied','unset') NOT NULL DEFAULT 'unset',
+                `email_marketing_consent_at` datetime DEFAULT NULL,
+                `eu_consent_prompt_seen` tinyint(1) NOT NULL DEFAULT '0',
+                `analytics_geo_is_eu` tinyint(1) DEFAULT NULL,
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

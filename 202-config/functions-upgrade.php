@@ -3883,10 +3883,57 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.74', '>')) {
+        if ($prosper202_version == '1.9.74') {
 
-            $prosper202_version = '1.9.74';
+            // Consent + product-analytics columns (additive, idempotent): two
+            // independent account-holder consent flags (analytics, email
+            // marketing) with audit metadata, the one-time EU prompt marker,
+            // the persisted EU geo flag for cron use, and the
+            // essential/analytics tier marker on queued messaging events.
+            // Guarded ALTERs so a partial failure retries cleanly on the
+            // next run.
+            $consent_ok = true;
+            foreach ([
+                ['202_users_pref', 'analytics_consent',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `analytics_consent` enum('granted','denied','unset') NOT NULL DEFAULT 'unset'"],
+                ['202_users_pref', 'analytics_consent_at',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `analytics_consent_at` datetime DEFAULT NULL"],
+                ['202_users_pref', 'analytics_consent_source',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `analytics_consent_source` varchar(32) DEFAULT NULL"],
+                ['202_users_pref', 'email_marketing_consent',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `email_marketing_consent` enum('granted','denied','unset') NOT NULL DEFAULT 'unset'"],
+                ['202_users_pref', 'email_marketing_consent_at',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `email_marketing_consent_at` datetime DEFAULT NULL"],
+                ['202_users_pref', 'eu_consent_prompt_seen',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `eu_consent_prompt_seen` tinyint(1) NOT NULL DEFAULT '0'"],
+                ['202_users_pref', 'analytics_geo_is_eu',
+                    "ALTER TABLE `202_users_pref` ADD COLUMN `analytics_geo_is_eu` tinyint(1) DEFAULT NULL"],
+                ['202_messaging_events', 'tier',
+                    "ALTER TABLE `202_messaging_events` ADD COLUMN `tier` enum('essential','analytics') NOT NULL DEFAULT 'analytics' AFTER `client_token`"],
+            ] as [$consent_table, $consent_column, $consent_sql]) {
+                $check = _upgrade_query("SHOW COLUMNS FROM `{$consent_table}` LIKE '{$consent_column}'");
+                $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+                if (!$exists && _upgrade_query($consent_sql) === false) {
+                    $consent_ok = false;
+                    error_log("Prosper202 upgrade: failed consent/analytics alter on {$consent_table}.{$consent_column}");
+                }
+            }
+
+            if ($consent_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.75'") !== false) {
+                    $prosper202_version = '1.9.75';
+                } else {
+                    error_log('Prosper202 upgrade: added consent/analytics columns but failed to persist version 1.9.75; leaving version at 1.9.74 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: consent/analytics column migration incomplete; leaving version at 1.9.74 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.75', '>')) {
+
+            $prosper202_version = '1.9.75';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }
