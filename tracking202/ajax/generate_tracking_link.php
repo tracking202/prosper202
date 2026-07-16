@@ -185,6 +185,13 @@ $html = [];
 
 	$db->commit();
 
+	// Milestone event on create only (edits delete + re-insert; must not emit).
+	// Analytics tier → self-gates on consent; failures log + swallow.
+	if (empty($_POST['edit_tracker'])) {
+		require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
+		Analytics::event('tracker_created', [], 'analytics');
+	}
+
 	$parsed_url = [];
 	if (!empty($landing_page_row['landing_page_url'])) {
 		$parsed_url = parse_url((string) $landing_page_row['landing_page_url']);

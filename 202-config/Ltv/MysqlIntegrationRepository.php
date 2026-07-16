@@ -80,7 +80,15 @@ final class MysqlIntegrationRepository
         );
         $this->conn->bind($stmt, 'isssii', [$userId, $provider, $name, $encodedConfig, $now, $now]);
 
-        return $this->conn->executeInsert($stmt);
+        $integrationId = $this->conn->executeInsert($stmt);
+
+        // Milestone event after the INSERT succeeded (executeInsert throws on
+        // failure). Provider name is config, not customer data. Analytics tier
+        // → self-gates on consent; Analytics swallows its own failures.
+        require_once dirname(__DIR__) . '/Messaging/Analytics.class.php';
+        \Analytics::event('ltv_integration_connected', ['provider' => (string) $provider], 'analytics');
+
+        return $integrationId;
     }
 
     public function delete(int $userId, int $integrationId): void

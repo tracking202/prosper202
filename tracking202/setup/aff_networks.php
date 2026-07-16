@@ -82,6 +82,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
 		\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 
+		// Milestone event on create only (edits must not emit *_added).
+		// Analytics tier → self-gates on consent; failures log + swallow.
+		if ($editing != true) {
+			require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
+			Analytics::event('aff_network_added', [], 'analytics');
+		}
+
 		if ($slack) {
 			if ($editing == true) {
 				$slack->push('campaign_category_name_changed', ['old_name' => $aff_network_row['aff_network_name'], 'new_name' => $_POST['aff_network_name'], 'user' => $user_row['username']]);

@@ -229,6 +229,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 			if ($slack)
 				$slack->push('campaign_created', ['name' => $_POST['aff_campaign_name'], 'user' => $user_row['username']]);
+
+			// Milestone event on create only (edits must not emit *_added).
+			// Analytics tier → self-gates on consent; failures log + swallow.
+			// Uses the id captured above — $db->insert_id is reset by later queries.
+			require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
+			Analytics::event('aff_campaign_added', ['aff_campaign_id' => (int) $aff_campaign_row['aff_campaign_id']], 'analytics');
 		}
 
 		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension

@@ -339,6 +339,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// status and config writes could otherwise cache active-with-
 				// stale-config for 3 minutes (no t202ctx until TTL expiry)
 				lpo_ctx_pref_cache_bust($lpo_user_id);
+
+				// Milestone event after pairComplete() succeeded and pairing state
+				// is persisted. Analytics tier → self-gates on consent; Analytics
+				// swallows its own failures — never blocks the redirect.
+				require_once dirname(__DIR__) . '/202-config/Messaging/Analytics.class.php';
+				Analytics::event('lpo_paired', [], 'analytics');
+
 				header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?lpo=connected#lpo');
 				die();
 			}
