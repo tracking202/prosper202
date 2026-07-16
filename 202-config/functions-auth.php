@@ -266,6 +266,20 @@ class AUTH
         }
 
         self::$sessionHeartbeatRefreshed = true;
+
+        // Persist the account holder's EU status once known (unknown → non-EU).
+        // Tracking must never break login: guard the connection and swallow failures.
+        try {
+            require_once __DIR__ . '/Messaging/ConsentPolicy.class.php';
+            $db = $GLOBALS['db'] ?? null;
+            if (isset($db) && $db instanceof \mysqli && !empty($_SESSION['user_id'])) {
+                if (!ConsentPolicy::rememberGeo($db, (int) $_SESSION['user_id'], !empty($_SESSION['is_european_union']))) {
+                    error_log('[ConsentPolicy] rememberGeo at login failed for user ' . (int) $_SESSION['user_id']);
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[ConsentPolicy] rememberGeo at login failed: ' . $e->getMessage());
+        }
     }
 
     /**

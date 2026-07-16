@@ -501,6 +501,12 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			});
 		</script>
 		<?php if (!empty($_SESSION['user_id'])) { ?>
+			<?php
+			// Server-side page-view (analytics tier → self-gates on consent).
+			require_once __DIR__ . '/Messaging/Analytics.class.php';
+			$p202_route = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: 'unknown';
+			Analytics::event('page_viewed', ['path' => $p202_route], 'analytics');
+			?>
 			<!-- Prosper202 Messenger: config + command-queue stub + widget -->
 			<script type="text/javascript">
 				window.P202M_CONFIG = {
