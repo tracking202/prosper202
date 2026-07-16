@@ -39,6 +39,76 @@ final class ConsentPolicy
         return $row !== null && $row['email_marketing_consent'] === 'granted';
     }
 
+    /**
+     * Consent state as transmitted to the central server (receiver spec §6
+     * CONTRACT DELTA). Operational bookkeeping — exported for ALL users so
+     * the server learns denials too. On any lookup failure OR a genuine
+     * missing row the all-unset shape (nulls for source/timestamps) is
+     * returned: absence must read as "no grant" server-side (fail closed),
+     * so a failure can never masquerade as a grant on the wire.
+     *
+     * Failure and missing-row take the same fail-closed shape but stay
+     * distinguished below, mirroring loadPref's raw-mysqli checks: a false
+     * get_result() on a SELECT is a fetch FAILURE (server gone away
+     * mid-fetch, mysqlnd OOM) and is logged as one — a successful SELECT
+     * always yields a mysqli_result, even with zero rows.
+     *
+     * @return array{analytics:string,analytics_source:?string,analytics_at:?string,email_marketing:string,email_marketing_at:?string}
+     */
+    public static function exportForSync(mysqli $db, int $userId): array
+    {
+        $unset = [
+            'analytics'          => 'unset',
+            'analytics_source'   => null,
+            'analytics_at'       => null,
+            'email_marketing'    => 'unset',
+            'email_marketing_at' => null,
+        ];
+        try {
+            $stmt = $db->prepare(
+                "SELECT `analytics_consent`, `analytics_consent_source`, `analytics_consent_at`,
+                        `email_marketing_consent`, `email_marketing_consent_at`
+                   FROM `202_users_pref` WHERE `user_id` = ? LIMIT 1"
+            );
+            if ($stmt === false) {
+                error_log('[ConsentPolicy] exportForSync prepare failed: ' . $db->error);
+                return $unset;
+            }
+            $stmt->bind_param('i', $userId);
+            if (!$stmt->execute()) {
+                error_log('[ConsentPolicy] exportForSync execute failed: ' . $stmt->error);
+                $stmt->close();
+                return $unset;
+            }
+            $res = $stmt->get_result();
+            if ($res === false) {
+                // Fetch FAILURE, not a missing row (see docblock).
+                error_log('[ConsentPolicy] exportForSync get_result failed: ' . $stmt->error);
+                $stmt->close();
+                return $unset;
+            }
+            $row = $res->fetch_assoc();
+            $stmt->close();
+        } catch (\Throwable $e) {
+            error_log('[ConsentPolicy] exportForSync failed: ' . $e->getMessage());
+            return $unset;
+        }
+        // Genuine missing row: the user truly never answered — same
+        // fail-closed all-unset shape, via the no-row path.
+        if (!$row) { return $unset; }
+
+        $states = ['granted', 'denied', 'unset'];
+        return [
+            'analytics'          => in_array($row['analytics_consent'] ?? '', $states, true)
+                ? (string) $row['analytics_consent'] : 'unset',
+            'analytics_source'   => isset($row['analytics_consent_source']) ? (string) $row['analytics_consent_source'] : null,
+            'analytics_at'       => isset($row['analytics_consent_at']) ? (string) $row['analytics_consent_at'] : null,
+            'email_marketing'    => in_array($row['email_marketing_consent'] ?? '', $states, true)
+                ? (string) $row['email_marketing_consent'] : 'unset',
+            'email_marketing_at' => isset($row['email_marketing_consent_at']) ? (string) $row['email_marketing_consent_at'] : null,
+        ];
+    }
+
     public static function needsEuPrompt(mysqli $db, int $userId): bool
     {
         $row = self::loadPref($db, $userId);

@@ -87,16 +87,24 @@ class MessagingClient
      *
      * @param array      $identity   Identity payload.
      * @param array      $attributes Latest custom-attribute snapshot.
-     * @param array<int,array> $events Queued events (name/metadata/occurred_at/client_token).
+     * @param array<int,array> $events Queued events (name/metadata/occurred_at/client_token/tier).
+     * @param array|null $consent    Consent block (receiver spec §6 delta); when
+     *                               non-null it is sent as a TOP-LEVEL sibling of
+     *                               identity/attributes/events. Null preserves the
+     *                               pre-delta wire shape (backward-compatible).
      * @return array|null Decoded response, or null on failure.
      */
-    public function track(array $identity, array $attributes, array $events): ?array
+    public function track(array $identity, array $attributes, array $events, ?array $consent = null): ?array
     {
-        return $this->postJson('track', [
+        $payload = [
             'identity'   => $identity,
             'attributes' => (object) $attributes,
             'events'     => array_values($events),
-        ]);
+        ];
+        if ($consent !== null) {
+            $payload['consent'] = $consent;
+        }
+        return $this->postJson('track', $payload);
     }
 
     /**

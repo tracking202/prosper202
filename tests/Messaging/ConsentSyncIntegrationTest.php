@@ -18,7 +18,7 @@ require_once __DIR__ . '/../../202-config/Messaging/Analytics.class.php';
  */
 final class ConsentSyncFakeClient extends MessagingClient
 {
-    /** @var array<int,array{identity:array,attributes:array,events:array}> */
+    /** @var array<int,array{identity:array,attributes:array,events:array,consent:?array}> */
     public array $trackCalls = [];
     /** @var array<int,array{identity:array,cursor:?string}> */
     public array $pullCalls = [];
@@ -39,9 +39,9 @@ final class ConsentSyncFakeClient extends MessagingClient
         return ['ok' => true];
     }
 
-    public function track(array $identity, array $attributes, array $events): ?array
+    public function track(array $identity, array $attributes, array $events, ?array $consent = null): ?array
     {
-        $this->trackCalls[] = ['identity' => $identity, 'attributes' => $attributes, 'events' => $events];
+        $this->trackCalls[] = ['identity' => $identity, 'attributes' => $attributes, 'events' => $events, 'consent' => $consent];
         return ['ok' => true];
     }
 }
@@ -293,6 +293,12 @@ final class ConsentSyncIntegrationTest extends TestCase
         $this->assertSame([], $track['attributes'], 'the analytics snapshot must not sync');
         $this->assertArrayNotHasKey('attributes', $track['identity'],
             'identity must not embed the attribute snapshot for a non-consented user');
+        // Spec §6 delta: the consent block still travels for a held user —
+        // absence would read as "unset" server-side, but so must "held".
+        $this->assertSame('unset', $track['consent']['analytics'] ?? null,
+            'the /track consent block must travel even when analytics is held');
+        $this->assertSame('unset', $track['identity']['consent']['analytics'] ?? null,
+            'identity.consent must travel even when attributes are stripped');
         $this->assertCount(1, $fake->pullCalls);
         $this->assertArrayNotHasKey('attributes', $fake->pullCalls[0]['identity'],
             'pull identity re-transmitted the profile — the revocation leak the review flagged');
@@ -330,6 +336,9 @@ final class ConsentSyncIntegrationTest extends TestCase
         $this->assertSame(9, $track['attributes']['clicks_30d'] ?? null);
         $this->assertSame(9, $track['identity']['attributes']['clicks_30d'] ?? null,
             'consented identity carries the snapshot as before');
+        $this->assertSame('granted', $track['consent']['analytics'] ?? null,
+            'the /track consent block must carry the granted state (spec §6)');
+        $this->assertSame('eu_prompt', $track['consent']['analytics_source'] ?? null);
 
         $rows = $this->eventRows();
         $this->assertSame([['login', 'essential', 'sent'], ['page_viewed', 'analytics', 'sent']],

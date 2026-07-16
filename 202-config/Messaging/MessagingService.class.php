@@ -33,6 +33,8 @@ class MessagingService
     private ?MessagingClient $client = null;
     /** Cached consent decision for this instance (one lookup per sync run). */
     private ?bool $analyticsSyncAllowed = null;
+    /** Cached consent export for this instance (one lookup per sync run). */
+    private ?array $consentExport = null;
 
     /**
      * @param array<string,mixed> $identity Identity payload for the central API.
@@ -139,11 +141,31 @@ class MessagingService
     }
 
     /**
+     * Consent state as sent to the central server (receiver spec §6 delta).
+     * Operational bookkeeping: attached for ALL users — including
+     * analytics-denied ones, since the server must learn a user is denied —
+     * so it is NOT gated on analyticsSyncAllowed(). ConsentPolicy stays the
+     * only reader of the raw consent columns; exportForSync never throws and
+     * fails closed to the all-unset shape. Cached per instance like
+     * analyticsSyncAllowed() so a sync run performs one export read.
+     *
+     * @return array<string,string|null>
+     */
+    private function consentExport(): array
+    {
+        if ($this->consentExport === null) {
+            $this->consentExport = ConsentPolicy::exportForSync($this->db, $this->userId);
+        }
+        return $this->consentExport;
+    }
+
+    /**
      * Identity payload as sent over the wire. The stored attribute snapshot
      * is analytics-tier data (the offer profile + client custom attributes),
      * so it is stripped for non-consented users — only essential identity
      * fields (install hash, email, registration date) may leave the install
-     * (spec §9). Every client() call site must use this, never raw identity.
+     * (spec §9). The consent export always rides along (spec §6). Every
+     * client() call site must use this, never raw identity.
      *
      * @return array<string,mixed>
      */
@@ -153,6 +175,12 @@ class MessagingService
         if (!$this->analyticsSyncAllowed()) {
             unset($identity['attributes']);
         }
+        // Deliberately outside the strip above: the denied state itself must
+        // reach the server (spec §6 — absence reads as "unset", not "denied",
+        // and an explicit denial is what stops server-side email marketing).
+        // The export is total (fail-closed all-unset on any lookup failure),
+        // so the attach is unconditional.
+        $identity['consent'] = $this->consentExport();
         return $identity;
     }
 
@@ -966,7 +994,9 @@ class MessagingService
         }, $events);
 
         $attributes = $analyticsAllowed ? $this->getAttributes() : [];
-        $response = $this->client()->track($this->outboundIdentity(), $attributes, $payloadEvents);
+        // The consent block is passed top-level for ALL users (spec §6): a
+        // denied user's flush still tells the server the user is denied.
+        $response = $this->client()->track($this->outboundIdentity(), $attributes, $payloadEvents, $this->consentExport());
 
         if ($response === null) {
             // Bump attempts so poison events eventually stop being retried.
