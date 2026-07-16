@@ -743,7 +743,25 @@ class MessagingService
     // ---------------------------------------------------------------------
 
     /**
+     * Can this value be persisted as an attribute? Scalars, null, and
+     * JSON-encodable arrays are accepted — the offer profile carries nested
+     * structures (networks[], top_geos[], device_mix{}, offers[], ltv{}).
+     * Objects and resources are rejected (and the rejection is logged by
+     * updateAttributes — never silently dropped, CLAUDE.md #4).
+     *
+     * @param mixed $value
+     */
+    public static function isPersistableAttributeValue($value): bool
+    {
+        return is_scalar($value) || $value === null || is_array($value);
+    }
+
+    /**
      * Merge custom attributes into the stored snapshot and mark it for delivery.
+     *
+     * Values may be scalars, null, or nested arrays (see
+     * isPersistableAttributeValue); everything is serialized as one JSON
+     * document into 202_messaging_attributes.data.
      *
      * @param array<string,mixed> $attributes
      */
@@ -754,10 +772,13 @@ class MessagingService
         }
 
         $current = $this->getAttributes();
-        // Scalars only — nested structures are not part of the contract.
         foreach ($attributes as $key => $value) {
-            if (is_scalar($value) || $value === null) {
+            if (self::isPersistableAttributeValue($value)) {
                 $current[(string) $key] = $value;
+            } else {
+                // Loud rejection: silently dropping a key would be invisible
+                // data loss for the caller.
+                error_log("MessagingService: updateAttributes rejected non-persistable value for key '{$key}' (" . gettype($value) . ')');
             }
         }
 
