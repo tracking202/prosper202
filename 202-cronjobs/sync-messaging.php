@@ -18,6 +18,10 @@ declare(strict_types=1);
 
 include_once(__DIR__ . '/../202-config/connect.php');
 
+require_once __DIR__ . '/../202-config/Messaging/ConsentPolicy.class.php';
+require_once __DIR__ . '/../202-config/Messaging/OfferProfile.class.php';
+require_once __DIR__ . '/../202-config/Messaging/MessagingService.class.php';
+
 // Prevent overlapping runs.
 $lockFile   = __DIR__ . '/messaging-sync.lock';
 $maxLockAge = 600; // 10 minutes
@@ -49,6 +53,9 @@ try {
         throw new RuntimeException('failed to list users');
     }
 
+    // One timestamp for the whole run so every user shares the same window bound.
+    $now = time();
+
     $synced = 0;
     $failed = 0;
     while ($row = $result->fetch_assoc()) {
@@ -56,6 +63,17 @@ try {
         $service = MessagingService::forUser($userId);
         if ($service === null) {
             continue;
+        }
+
+        // Consent-gated offer profile: skip entirely (no compute, no write)
+        // when analytics consent is not granted. Never let this break the sync.
+        try {
+            if (ConsentPolicy::analyticsAllowed($db, $userId)) {
+                $profile = OfferProfile::compute($db, $userId, $now);
+                $service->updateAttributes($profile);
+            }
+        } catch (Throwable $e) {
+            error_log("Messaging sync: profile update failed for user {$userId}: " . $e->getMessage());
         }
 
         // Force past the per-request throttle; the cron cadence is the throttle here.
