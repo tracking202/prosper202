@@ -790,12 +790,18 @@ class MessagingService
      * Record a behavioural event for later delivery to the central server.
      *
      * @param array<string,mixed>|null $metadata
+     * @param string                   $tier     'essential' or 'analytics' (202_messaging_events.tier).
      */
-    public function recordEvent(string $name, ?array $metadata = null): void
+    public function recordEvent(string $name, ?array $metadata = null, string $tier = 'analytics'): void
     {
         $name = trim($name);
         if ($name === '') {
             return;
+        }
+
+        // Guard the ENUM: an unknown tier would fail the INSERT under strict mode.
+        if (!in_array($tier, ['essential', 'analytics'], true)) {
+            $tier = 'analytics';
         }
 
         $metaJson = null;
@@ -811,14 +817,14 @@ class MessagingService
         $token = $this->generateToken();
         $now   = date('Y-m-d H:i:s');
         $sql   = "INSERT INTO 202_messaging_events
-                    (user_id, event_name, metadata, occurred_at, client_token, delivery_status)
-                  VALUES (?, ?, ?, ?, ?, 'pending')";
+                    (user_id, event_name, metadata, occurred_at, client_token, delivery_status, tier)
+                  VALUES (?, ?, ?, ?, ?, 'pending', ?)";
         $stmt = $this->db->prepare($sql);
         if (!$stmt) {
             error_log('MessagingService: prepare recordEvent failed');
             return;
         }
-        $stmt->bind_param('issss', $this->userId, $name, $metaJson, $now, $token);
+        $stmt->bind_param('isssss', $this->userId, $name, $metaJson, $now, $token, $tier);
         if (!$stmt->execute()) {
             error_log('MessagingService: recordEvent failed');
         }
