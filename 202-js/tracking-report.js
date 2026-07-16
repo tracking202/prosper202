@@ -439,6 +439,20 @@
 
     function interceptedLoadContent(page, offset, order) {
         if (state.legacyMode || !config.enabled || !matchesLegacyPage(page) || typeof window.fetch !== 'function') {
+            // We're taking the legacy transport. When JSON mode was on at render time,
+            // display_calendar() suppressed the legacy aff-campaign/text-ad/landing-page
+            // bootstrap on the expectation that the JSON response would supply those
+            // fragments — but on this path (most importantly when window.fetch is missing,
+            // e.g. an older embedded webview) that response is never fetched, so the saved
+            // dependent filters and ad preview would render blank. Hydrate them once here,
+            // the same way fetchAndRender()'s failure path does. Gated on firstLoadPending
+            // so legacy pagination cannot re-run the cascade, and the helper itself is a
+            // no-op unless jsonBootstrap applies, so the flag-off/publisher paths are safe.
+            if (state.firstLoadPending) {
+                state.firstLoadPending = false;
+                bootstrapLegacyDependentFilters();
+            }
+
             return legacyLoadContent(page, offset, order);
         }
 
