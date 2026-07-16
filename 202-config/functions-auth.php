@@ -284,6 +284,17 @@ class AUTH
         } catch (\Throwable $e) {
             error_log('[ConsentPolicy] rememberGeo at login failed: ' . $e->getMessage());
         }
+
+        // Essential-tier lifecycle event (spec §7.3): login always flows, no
+        // consent gate. Analytics resolves $db/$_SESSION (established above),
+        // never throws, and logs + swallows its own failures — a tracking
+        // problem must never break login.
+        try {
+            require_once __DIR__ . '/Messaging/Analytics.class.php';
+            \Analytics::event('login', [], 'essential');
+        } catch (\Throwable $e) {
+            error_log('[Analytics] login event failed: ' . $e->getMessage());
+        }
     }
 
     /**

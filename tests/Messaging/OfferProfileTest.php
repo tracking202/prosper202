@@ -34,6 +34,29 @@ final class OfferProfileTest extends TestCase
         $this->assertFalse(OfferProfile::nearPlanLimit(40));
     }
 
+    public function test_login_cadence_buckets(): void
+    {
+        // Spec §8: login_cadence (daily/weekly/dormant), derived from the
+        // essential-tier login events recorded on this install.
+        $this->assertSame('dormant', OfferProfile::loginCadence(0));
+        $this->assertSame('occasional', OfferProfile::loginCadence(1));
+        $this->assertSame('occasional', OfferProfile::loginCadence(3));
+        $this->assertSame('weekly', OfferProfile::loginCadence(4));
+        $this->assertSame('weekly', OfferProfile::loginCadence(19));
+        $this->assertSame('daily', OfferProfile::loginCadence(20));
+        $this->assertSame('daily', OfferProfile::loginCadence(90));
+    }
+
+    public function test_compute_covers_spec8_lifecycle_attributes(): void
+    {
+        // first_click_at / days_since_signup / login_cadence must be part of
+        // the computed profile (spec §8 rows previously missing).
+        $src = file_get_contents(__DIR__ . '/../../202-config/Messaging/OfferProfile.class.php');
+        foreach (['first_click_at', 'days_since_signup', 'login_cadence'] as $key) {
+            $this->assertStringContainsString("'$key'", $src, "OfferProfile missing spec §8 attribute $key");
+        }
+    }
+
     public function test_ltv_privacy_boundary_no_per_customer_surfaces(): void
     {
         // The profile may use ONLY account-level LTV aggregates. Guard against

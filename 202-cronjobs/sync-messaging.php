@@ -71,6 +71,17 @@ try {
             if (ConsentPolicy::analyticsAllowed($db, $userId)) {
                 $profile = OfferProfile::compute($db, $userId, $now);
                 $service->updateAttributes($profile);
+
+                // One-shot analytics-tier milestone (spec §7.3), derived here
+                // because no click-path handler may carry tracking overhead.
+                // Guarded by the same consent gate as the profile above.
+                if ($profile['first_click_at'] !== null && !$service->hasEvent('first_click_received')) {
+                    $service->recordEvent(
+                        'first_click_received',
+                        ['first_click_at' => (int) $profile['first_click_at']],
+                        'analytics'
+                    );
+                }
             }
         } catch (Throwable $e) {
             error_log("Messaging sync: profile update failed for user {$userId}: " . $e->getMessage());

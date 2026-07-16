@@ -42,6 +42,19 @@ final class OfferProfile
         return $pct >= self::NEAR_LIMIT_PCT;
     }
 
+    /**
+     * Pure: bucket a 30-day login count into a cadence label (spec §8).
+     * Derived from the essential-tier 'login' events this install records,
+     * so fresh installs read 'dormant' until logins accumulate.
+     */
+    public static function loginCadence(int $logins30d): string
+    {
+        if ($logins30d <= 0) { return 'dormant'; }
+        if ($logins30d >= 20) { return 'daily'; }
+        if ($logins30d >= 4) { return 'weekly'; }
+        return 'occasional';
+    }
+
     private static function domain(string $url): string
     {
         $h = parse_url($url, PHP_URL_HOST);
@@ -59,6 +72,7 @@ final class OfferProfile
         $out = [
             'clicks_30d'=>0,'conversions_30d'=>0,'income_30d'=>0.0,'cost_30d'=>0.0,'net_30d'=>0.0,
             'active_campaigns'=>0,'active_trackers'=>0,'plan_limit_pct'=>0,'near_plan_limit'=>false,
+            'first_click_at'=>null,'days_since_signup'=>0,'login_cadence'=>'unknown',
             'networks'=>[],'traffic_source_types'=>[],'top_geos'=>[],
             'device_mix'=>['mobile'=>0,'desktop'=>0,'tablet'=>0],'offers'=>[],
         ];
@@ -79,6 +93,49 @@ final class OfferProfile
                 $out['income_30d'] = (float) ($row['inc'] ?? 0);
                 $out['cost_30d'] = (float) ($row['cost'] ?? 0);
                 $out['net_30d'] = $out['income_30d'] - $out['cost_30d'];
+            }
+            $stmt->close();
+        }
+
+        // --- lifecycle (spec §8): first click ever, signup age, login cadence ---
+        $stmt = $db->prepare(
+            "SELECT MIN(click_time) fc FROM `202_dataengine` WHERE user_id = ? AND clicks > 0"
+        );
+        if ($stmt !== false) {
+            $stmt->bind_param('i', $userId);
+            if ($stmt->execute()) {
+                $row = $stmt->get_result()->fetch_assoc() ?: [];
+                // MIN() is NULL when the user has no clicks yet (isset() excludes it).
+                $out['first_click_at'] = isset($row['fc']) ? (int) $row['fc'] : null;
+            }
+            $stmt->close();
+        }
+
+        $stmt = $db->prepare("SELECT user_time_register FROM `202_users` WHERE user_id = ? LIMIT 1");
+        if ($stmt !== false) {
+            $stmt->bind_param('i', $userId);
+            if ($stmt->execute()) {
+                $row = $stmt->get_result()->fetch_assoc() ?: [];
+                if ((int) ($row['user_time_register'] ?? 0) > 0) {
+                    $out['days_since_signup'] = max(0, (int) floor(($now - (int) $row['user_time_register']) / 86400));
+                }
+            }
+            $stmt->close();
+        }
+
+        // Cadence from the essential-tier login events this install records
+        // (202_messaging_events). No historical login log exists, so this
+        // reads 'dormant' until logins accumulate post-upgrade.
+        $stmt = $db->prepare(
+            "SELECT COUNT(*) c FROM `202_messaging_events`
+              WHERE user_id = ? AND event_name = 'login' AND tier = 'essential' AND occurred_at >= ?"
+        );
+        if ($stmt !== false) {
+            $sinceDt = date('Y-m-d H:i:s', $since);
+            $stmt->bind_param('is', $userId, $sinceDt);
+            if ($stmt->execute()) {
+                $row = $stmt->get_result()->fetch_assoc() ?: [];
+                $out['login_cadence'] = self::loginCadence((int) ($row['c'] ?? 0));
             }
             $stmt->close();
         }

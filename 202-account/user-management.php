@@ -217,6 +217,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// Only run pref_sql when creating a new user (not editing)
 		if (!$editing) {
 			$pref_result = _mysqli_query($pref_sql);
+
+			// Essential-tier lifecycle event (spec §7.3) for the NEW account —
+			// recorded via MessagingService directly because the Analytics
+			// facade would attach it to the creating admin's session user.
+			// Essential tier needs no consent; failures log + swallow.
+			// $user_id is $db->insert_id: 0 when the user INSERT failed, so
+			// guard against recording an event for a user that was never made.
+			if ((int) $user_id > 0) {
+				try {
+					require_once dirname(__DIR__) . '/202-config/Messaging/MessagingService.class.php';
+					(new MessagingService($db, (int) $user_id, []))->recordEvent('account_created', [], 'essential');
+				} catch (Throwable $analytics_e) {
+					error_log('[Analytics] account_created event failed: ' . $analytics_e->getMessage());
+				}
+			}
 		}
 
 		$add_success = true;
