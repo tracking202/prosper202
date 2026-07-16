@@ -11,10 +11,22 @@ final class Analytics
         return ConsentPolicy::decide($stored, $isEu, $tier);
     }
 
+    /**
+     * Normalize a tier with the same semantics as ConsentPolicy::decide:
+     * anything that is not exactly 'essential' is treated as 'analytics'
+     * and therefore consent-gated. Never fail open on a typo or a future
+     * tier name. Exposed for testing.
+     */
+    public static function normalizeTier(string $tier): string
+    {
+        return $tier === 'essential' ? 'essential' : 'analytics';
+    }
+
     public static function event(string $name, array $meta = [], string $tier = 'analytics'): void
     {
         self::guarded(function (mysqli $db, int $uid) use ($name, $meta, $tier) {
-            if ($tier === 'analytics' && !ConsentPolicy::analyticsAllowed($db, $uid)) {
+            $tier = self::normalizeTier($tier);
+            if (!self::wouldRecord($db, $uid, $tier)) {
                 return;
             }
             $service = new MessagingService($db, $uid, []);
@@ -26,7 +38,7 @@ final class Analytics
     public static function attr(array $attributes, string $tier = 'analytics'): void
     {
         self::guarded(function (mysqli $db, int $uid) use ($attributes, $tier) {
-            if ($tier === 'analytics' && !ConsentPolicy::analyticsAllowed($db, $uid)) {
+            if (!self::wouldRecord($db, $uid, self::normalizeTier($tier))) {
                 return;
             }
             $service = new MessagingService($db, $uid, []);
@@ -37,7 +49,7 @@ final class Analytics
     /** Thin testable wrapper: would a write of this tier be recorded for this user? */
     public static function wouldRecord(mysqli $db, int $userId, string $tier): bool
     {
-        if ($tier !== 'analytics') {
+        if (self::normalizeTier($tier) === 'essential') {
             return true;
         }
         return ConsentPolicy::analyticsAllowed($db, $userId);

@@ -799,9 +799,12 @@ class MessagingService
             return;
         }
 
-        // Guard the ENUM: an unknown tier would fail the INSERT under strict mode.
+        // Reject unknown tiers loudly: silently coercing would persist data
+        // as consent-gated 'analytics' without ConsentPolicy ever being
+        // consulted. Callers must normalize (see Analytics::normalizeTier).
         if (!in_array($tier, ['essential', 'analytics'], true)) {
-            $tier = 'analytics';
+            error_log("MessagingService: recordEvent rejected unknown tier '{$tier}' for event '{$name}'");
+            return;
         }
 
         $metaJson = null;

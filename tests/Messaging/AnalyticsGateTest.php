@@ -19,4 +19,21 @@ final class AnalyticsGateTest extends TestCase
     {
         $this->assertTrue(Analytics::gate('granted', true, 'analytics'));
     }
+    // Unknown tiers must not bypass the gate: anything not 'essential'
+    // normalizes to 'analytics' and is consent-gated (matches decide()).
+    public function test_normalize_tier_treats_unknown_as_analytics(): void
+    {
+        $this->assertSame('analytics', Analytics::normalizeTier('analytic'));
+        $this->assertSame('analytics', Analytics::normalizeTier('marketing'));
+        $this->assertSame('analytics', Analytics::normalizeTier(''));
+        $this->assertSame('analytics', Analytics::normalizeTier('Essential'));
+        $this->assertSame('essential', Analytics::normalizeTier('essential'));
+        $this->assertSame('analytics', Analytics::normalizeTier('analytics'));
+    }
+    public function test_gate_unknown_tier_is_gated_like_analytics(): void
+    {
+        $this->assertFalse(Analytics::gate('denied', false, Analytics::normalizeTier('marketing')));
+        $this->assertFalse(Analytics::gate('unset', true, Analytics::normalizeTier('analytic')));
+        $this->assertTrue(Analytics::gate('granted', true, Analytics::normalizeTier('marketing')));
+    }
 }
