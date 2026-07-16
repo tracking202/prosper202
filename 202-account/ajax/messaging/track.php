@@ -5,6 +5,7 @@ declare(strict_types=1);
 include_once(str_repeat('../', 3) . '202-config/connect.php');
 
 require __DIR__ . '/_auth.php';
+require_once dirname(__DIR__, 3) . '/202-config/Messaging/Analytics.class.php';
 
 header('Content-Type: application/json');
 
@@ -15,12 +16,10 @@ if (!AUTH::check_csrf_token()) {
     exit;
 }
 
-$userId  = $messagingUserId;
-$service = MessagingService::forUser($userId);
-
-if ($service === null) {
-    http_response_code(409);
-    echo json_encode(['ok' => false, 'error' => 'messaging unavailable for this account']);
+// --- analytics consent gate: client events are analytics-tier ---
+require_once dirname(__DIR__, 3) . '/202-config/Messaging/ConsentPolicy.class.php';
+if (!ConsentPolicy::analyticsAllowed($db, $messagingUserId)) {
+    echo json_encode(['ok' => true, 'recorded' => false, 'reason' => 'analytics_not_consented']);
     exit;
 }
 
@@ -28,29 +27,29 @@ $handled = false;
 
 // 1. Custom attributes for segmentation: Prosper202Messenger('update', {...})
 if (isset($_POST['update']) && $_POST['update'] !== '') {
-    $attributes = json_decode((string) $_POST['update'], true);
+    $decoded = json_decode((string) $_POST['update'], true);
     // Reject malformed input explicitly rather than silently ignoring it (CLAUDE.md #4).
-    if (json_last_error() !== JSON_ERROR_NONE || !is_array($attributes)) {
+    if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
         http_response_code(400);
-        echo json_encode(['ok' => false, 'error' => 'update must be a JSON object']);
+        echo json_encode(['ok' => false, 'error' => 'invalid_update_json']);
         exit;
     }
-    $service->updateAttributes($attributes);
+    Analytics::attr($decoded, 'analytics');
     $handled = true;
 }
 
 // 2. Behavioural event: Prosper202Messenger('trackEvent', name, metadata)
 if (isset($_POST['event_name']) && trim((string) $_POST['event_name']) !== '') {
-    $metadata = null;
+    $meta = [];
     if (isset($_POST['metadata']) && $_POST['metadata'] !== '') {
-        $metadata = json_decode((string) $_POST['metadata'], true);
-        if (json_last_error() !== JSON_ERROR_NONE || !is_array($metadata)) {
+        $meta = json_decode((string) $_POST['metadata'], true);
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($meta)) {
             http_response_code(400);
-            echo json_encode(['ok' => false, 'error' => 'metadata must be a JSON object']);
+            echo json_encode(['ok' => false, 'error' => 'invalid_metadata_json']);
             exit;
         }
     }
-    $service->recordEvent((string) $_POST['event_name'], $metadata);
+    Analytics::event((string) $_POST['event_name'], $meta, 'analytics');
     $handled = true;
 }
 
