@@ -111,9 +111,14 @@ final class ReportIntegrationTest extends TestCase
     /**
      * Seed a deterministic fixture: three clicks for the sentinel user.
      * Totals: clicks=3, click_out=2, leads=2, income=30, cost=6.
-     * Lookup dimensions are intentionally left unseeded — the reports
-     * LEFT JOIN them, so every row collapses into one "[no X]" group plus
-     * the totals row, which is all these assertions need.
+     *
+     * Each click carries a *different* id for every lookup dimension, and none of those
+     * ids exist in the lookup tables. The reports LEFT JOIN those tables, so all three
+     * rows collapse into a single "[no X]" group — while there are three distinct
+     * foreign keys. That gap is deliberate: it is the shape that made the pagination
+     * count disagree with the rows returned (see
+     * testFoundRowsMatchesTheRowsActuallyReturned), and it is what real data looks like
+     * whenever 202_dataengine references a lookup row that was never written.
      */
     private static function seedFixture(): void
     {
@@ -131,13 +136,21 @@ final class ReportIntegrationTest extends TestCase
             [9900002, 1, 1, 1, '20.00000', '2.00000'],
             [9900003, 0, 0, 0, '0.00000',  '2.00000'],
         ];
-        foreach ($rows as [$clickId, $clickOut, $leads, $clickLead, $income, $cost]) {
+        // Dimension ids are unique per row and resolve to nothing.
+        $dimBase = 970000;
+        foreach ($rows as $i => [$clickId, $clickOut, $leads, $clickLead, $income, $cost]) {
+            $d = $dimBase + $i;
             $ok = self::$db->query(
                 "INSERT INTO 202_dataengine
                    (user_id, click_id, click_time, ppc_account_id, landing_page_id,
+                    keyword_id, text_ad_id, ip_id, country_id, region_id, city_id,
+                    isp_id, device_id, browser_id, platform_id, click_referer_site_url_id,
                     click_lead, clicks, click_out, leads, payout, income, cost)
                  VALUES
-                   ($uid, $clickId, $t, 0, 0, $clickLead, 1, $clickOut, $leads, 0.00, $income, $cost)"
+                   ($uid, $clickId, $t, 0, $d,
+                    $d, $d, $d, $d, $d, $d,
+                    $d, $d, $d, $d, $d,
+                    $clickLead, 1, $clickOut, $leads, 0.00, $income, $cost)"
             );
             if (!$ok) {
                 self::markTestSkipped('Could not seed 202_dataengine: ' . self::$db->error);
@@ -186,6 +199,59 @@ final class ReportIntegrationTest extends TestCase
 
         // foundRows (pagination count) must be reachable without error.
         self::assertIsInt($de->foundRows());
+    }
+
+    /**
+     * The pagination count must equal the number of rows the report actually returns.
+     *
+     * This is the regression guard for the count/rows mismatch. Reports GROUP BY the
+     * joined name (region_name, text_ad_name, …), but the count used to run a separate
+     * COUNT(DISTINCT <foreign key>) against 202_dataengine with none of the report's
+     * joins. The fixture seeds three distinct, unresolvable dimension ids per report, so
+     * the old count returned 3 where the report returns a single "[no X]" group — an
+     * inflated totalRows that advertised a trailing page rendering zero rows.
+     *
+     * The limit is well above the group count here, so every group is on page one and
+     * foundRows is directly comparable to the rows returned.
+     *
+     * @dataProvider groupedReportProvider
+     */
+    public function testFoundRowsMatchesTheRowsActuallyReturned(string $reportType): void
+    {
+        $de = new \DataEngine();
+        $data = $de->getReportData($reportType, self::$from, self::$to, false);
+
+        self::assertIsArray($data);
+        self::assertNotEmpty($data);
+
+        // The engine appends a trailing "Totals for report" row that is not a group.
+        $dataRows = count($data) - 1;
+
+        self::assertSame(
+            $dataRows,
+            $de->foundRows(),
+            "$reportType: pagination count ({$de->foundRows()}) must equal the $dataRows row(s) returned"
+        );
+    }
+
+    /**
+     * The three seeded clicks share no lookup rows, so each report must collapse them
+     * into exactly one group. Pins the fixture's intent, so a future edit that makes the
+     * ids resolvable cannot quietly neuter the guard above.
+     *
+     * @dataProvider groupedReportProvider
+     */
+    public function testUnresolvableDimensionIdsCollapseIntoASingleGroup(string $reportType): void
+    {
+        $de = new \DataEngine();
+        $data = $de->getReportData($reportType, self::$from, self::$to, false);
+
+        self::assertCount(
+            2,
+            $data,
+            "$reportType must return one group plus the totals row for three unresolvable ids"
+        );
+        self::assertSame(1, $de->foundRows(), "$reportType must count exactly one group");
     }
 
     public function testTimeBreakdownReportsExecute(): void

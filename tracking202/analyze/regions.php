@@ -8,6 +8,9 @@ AUTH::require_user();
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
 
+$reportSortUrl = get_absolute_url() . 'tracking202/ajax/sort_regions.php';
+$reportCanary = tracking202_report_canary_config('region', $reportSortUrl);
+
 //show the template
 template_top('Analyze Incoming Regions'); ?>
 
@@ -17,10 +20,14 @@ template_top('Analyze Incoming Regions'); ?>
 	</div>
 </div>
 
-<?php display_calendar(get_absolute_url() . 'tracking202/ajax/sort_regions.php', true, true, true, true, true, true); ?>
+<?php display_calendar($reportSortUrl, true, true, true, true, true, true, true, false, [
+	'json_bootstrap_dependent_filters' => $reportCanary['dependentFilters']['jsonBootstrap'],
+]); ?>
+
+<?php tracking202_render_report_canary($reportCanary); ?>
 
 <script type="text/javascript">
-	loadContent('<?php echo get_absolute_url(); ?>tracking202/ajax/sort_regions.php', null);
+	loadContent('<?php echo $reportSortUrl; ?>', null);
 </script>
 
 <?php template_bottom(); ?>

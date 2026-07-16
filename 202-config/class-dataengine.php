@@ -119,53 +119,53 @@ class DataEngine
     }
 
     /**
-     * Count distinct values for pagination without SQL_CALC_FOUND_ROWS.
-     * Runs a simple COUNT(DISTINCT ...) on 202_dataengine — no lookup JOINs,
-     * no aggregates — so it can use covering indexes.
+     * The FROM/JOIN/WHERE shared by a grouped report and its pagination count.
      *
-     * COUNT(DISTINCT ...) ignores NULLs, but a NULL dimension renders as its
-     * own report group ("[no keyword]" etc.), so one is added back whenever
-     * any row has a NULL key — otherwise the last page was unreachable.
+     * Both queries must see exactly the same rows, so they build this fragment from
+     * the same place. Note $filters['join'] is conditional: the keyword report already
+     * owns the 2k alias that the keyword preference filter joins under, so including
+     * it there would be a duplicate-alias SQL error.
      *
-     * @param array{join?: string, filter?: string} $filters
+     * @param array{join: string, filter: string} $filters
      */
-    private function countGroups(string $fkColumn, string $from, string $to, array $filters): int
+    private function groupedReportFrom(GroupedReportDefinition $definition, string $from, string $to, array $filters): string
     {
-        if (!isset($filters['join'], $filters['filter'])) {
-            return 0;
-        }
-
-        $countSql = "SELECT COUNT(DISTINCT 2st." . $fkColumn . ") + IFNULL(MAX(2st." . $fkColumn . " IS NULL), 0) AS cnt FROM 202_dataengine AS 2st "
-            . $filters['join']
+        return ' FROM 202_dataengine as 2st '
+            . ($definition->includeFilterJoin ? $filters['join'] : '')
+            . $definition->joins
             . $this->mysql['user_id_query']
-            . " AND click_time >= " . $from
-            . " AND click_time <= " . $to
+            . ' AND click_time >= ' . $from
+            . ' AND click_time <= ' . $to
             . $filters['filter'];
-
-        return $this->runCountQuery($countSql);
     }
 
     /**
+     * Count the groups a grouped report produces, for pagination.
+     *
+     * This counts the report's own GROUP BY, over the report's own joins. The previous
+     * implementation counted DISTINCT foreign keys on 202_dataengine instead — a cheaper
+     * query, but a different one: reports group by the *joined name* (region_name,
+     * text_ad_name, …), not the id. Any two ids sharing a name, or several ids with no
+     * lookup row (which all collapse into a single NULL-name group), made the count
+     * exceed the number of rows actually returned. That inflated totalRows and could
+     * advertise a trailing page that renders empty. Counting the real grouping cannot
+     * disagree with the rows by construction.
+     *
      * @param array{join?: string, filter?: string} $filters
      */
-    private function countRefererGroups(string $from, string $to, array $filters): int
+    private function countReportGroups(GroupedReportDefinition $definition, string $from, string $to, array $filters): int
     {
         if (!isset($filters['join'], $filters['filter'])) {
             return 0;
         }
 
-        $countSql = "SELECT COUNT(*) AS cnt FROM (
-                SELECT 2sd.site_domain_host
-                FROM 202_dataengine AS 2st "
-            . $filters['join']
-            . " LEFT JOIN 202_site_urls AS 2su ON (2st.click_referer_site_url_id = 2su.site_url_id)
-                LEFT JOIN 202_site_domains AS 2sd ON (2sd.site_domain_id = 2su.site_domain_id)"
-            . $this->mysql['user_id_query']
-            . " AND click_time >= " . $from
-            . " AND click_time <= " . $to
-            . $filters['filter']
-            . " GROUP BY 2sd.site_domain_host
-            ) AS referer_groups";
+        // The inner SELECT is the report's labelSelect so that a groupBy naming a SELECT
+        // alias (the ip and referer reports) still resolves.
+        $countSql = 'SELECT COUNT(*) AS cnt FROM ('
+            . ' SELECT ' . $definition->labelSelect
+            . $this->groupedReportFrom($definition, $from, $to, $filters)
+            . ' GROUP BY ' . $definition->groupBy
+            . ') AS report_groups';
 
         return $this->runCountQuery($countSql);
     }
@@ -427,24 +427,14 @@ class DataEngine
         $filters = $this->getFilters();
 
         $sql = 'SELECT ' . $definition->labelSelect . ',' . MetricsSql::GROUPED_SELECT
-            . ' FROM 202_dataengine as 2st '
-            . ($definition->includeFilterJoin ? $filters['join'] : '')
-            . $definition->joins
-            . $this->mysql['user_id_query']
-            . ' AND click_time >= ' . $clickFrom
-            . ' AND click_time <= ' . $clickTo
-            . $filters['filter']
+            . $this->groupedReportFrom($definition, (string) $clickFrom, (string) $clickTo, $filters)
             . ' group by ' . $definition->groupBy
             . $this->sortOrder()
             . $filters['limit'];
 
         $data = $this->collectRows($sql, $cpv);
 
-        if ($definition->usesRefererCount) {
-            self::$found_rows = $this->countRefererGroups((string) $clickFrom, (string) $clickTo, $filters);
-        } elseif ($definition->countColumn !== null) {
-            self::$found_rows = $this->countGroups($definition->countColumn, (string) $clickFrom, (string) $clickTo, $filters);
-        }
+        self::$found_rows = $this->countReportGroups($definition, (string) $clickFrom, (string) $clickTo, $filters);
 
         return $data;
     }

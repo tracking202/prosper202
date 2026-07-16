@@ -30,13 +30,26 @@ final class GroupedReportRegistryTest extends TestCase
         self::assertNull(GroupedReportRegistry::definition('nope'));
     }
 
-    public function testEveryReportHasAPaginationCountStrategy(): void
+    /**
+     * Pagination counts the report's own GROUP BY (DataEngine::countReportGroups), so a
+     * definition needs nothing extra to be countable — but the groupBy must be resolvable
+     * in that count's inner SELECT, which selects labelSelect and nothing else. A groupBy
+     * naming an alias is fine only if labelSelect actually defines that alias.
+     */
+    public function testEveryGroupByIsResolvableFromItsLabelSelect(): void
     {
         foreach (self::GROUPED_TYPES as $type) {
-            $definition = GroupedReportRegistry::definition($type);
+            $definition = GroupedReportRegistry::definition($type, 'inet6_ntoa');
+            $groupBy = $definition->groupBy;
+            $labelSelect = $definition->labelSelect;
+
+            $resolvable = str_contains($labelSelect, $groupBy)
+                || str_contains($labelSelect, '`' . $groupBy . '`');
+
             self::assertTrue(
-                $definition->countColumn !== null || $definition->usesRefererCount,
-                "Report $type must define a pagination count strategy"
+                $resolvable,
+                "Report $type groups by '$groupBy', which its labelSelect '$labelSelect' does not "
+                . 'provide — the pagination count would fail with an unknown column.'
             );
         }
     }
@@ -58,11 +71,11 @@ final class GroupedReportRegistryTest extends TestCase
         }
     }
 
-    public function testRefererReportUsesDomainGroupingCount(): void
+    public function testRefererReportGroupsByItsDomainAlias(): void
     {
         $referer = GroupedReportRegistry::definition('referer');
-        self::assertTrue($referer->usesRefererCount);
-        self::assertNull($referer->countColumn);
+        self::assertSame('referer_name', $referer->groupBy);
+        self::assertStringContainsString('site_domain_host as referer_name', $referer->labelSelect);
     }
 
     public function testIpReportEmbedsIpv6DecodeFunction(): void
@@ -74,27 +87,34 @@ final class GroupedReportRegistryTest extends TestCase
         self::assertStringContainsString('IFNULL((2i6.ip_address),2i.ip_address)', $withoutUdf->labelSelect);
     }
 
-    public function testCountColumnsAreDataengineForeignKeys(): void
+    /**
+     * Regression guard. Reports group by the joined *name*, so pagination must count that
+     * grouping. Counting DISTINCT foreign keys on 202_dataengine instead — which is what
+     * the removed $countColumn described — counts a different thing: two ids sharing a
+     * name, or several ids with no lookup row (all of which collapse into one NULL-name
+     * group), make the count exceed the rows the report returns.
+     */
+    public function testReportsGroupByTheJoinedNameNotTheForeignKey(): void
     {
         $expected = [
-            'keyword' => 'keyword_id',
-            'textad' => 'text_ad_id',
-            'ip' => 'ip_id',
-            'country' => 'country_id',
-            'region' => 'region_id',
-            'city' => 'city_id',
-            'isp' => 'isp_id',
-            'landingpage' => 'landing_page_id',
-            'device' => 'device_id',
-            'browser' => 'browser_id',
-            'platform' => 'platform_id',
+            'textad' => 'text_ad_name',
+            'country' => 'country_name',
+            'region' => 'region_name',
+            'city' => 'city_name',
+            'isp' => 'isp_name',
+            'landingpage' => 'landing_page_nickname',
+            'device' => 'device_name',
+            'browser' => 'browser_name',
+            'platform' => 'platform_name',
         ];
 
-        foreach ($expected as $type => $column) {
-            self::assertSame(
-                $column,
-                GroupedReportRegistry::definition($type)->countColumn,
-                "Unexpected count column for $type"
+        foreach ($expected as $type => $groupBy) {
+            $definition = GroupedReportRegistry::definition($type);
+            self::assertSame($groupBy, $definition->groupBy, "Unexpected grouping for $type");
+            self::assertStringNotContainsString(
+                '_id',
+                $definition->groupBy,
+                "Report $type must not group by a foreign key"
             );
         }
     }
