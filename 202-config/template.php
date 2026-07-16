@@ -506,7 +506,25 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			require_once __DIR__ . '/Messaging/Analytics.class.php';
 			$p202_route = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: 'unknown';
 			Analytics::event('page_viewed', ['path' => $p202_route], 'analytics');
+
+			// One-time EU consent prompt. ConsentPolicy is the only consent
+			// reader; a consent lookup failure must never break the page.
+			require_once __DIR__ . '/Messaging/ConsentPolicy.class.php';
+			try {
+				$p202_consent_db = $GLOBALS['db'] ?? null;
+				$p202_needs_prompt = ($p202_consent_db instanceof mysqli)
+					&& ConsentPolicy::needsEuPrompt($p202_consent_db, (int) $_SESSION['user_id']);
+			} catch (\Throwable $p202_consent_e) {
+				$p202_needs_prompt = false;
+				error_log('[Consent] ' . $p202_consent_e->getMessage());
+			}
 			?>
+			<?php if ($p202_needs_prompt) { ?>
+				<div id="p202-consent-banner"
+					data-base="<?php echo htmlspecialchars(get_absolute_url(), ENT_QUOTES); ?>"
+					data-token="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>"></div>
+				<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/consent-prompt.js"></script>
+			<?php } ?>
 			<!-- Prosper202 Messenger: config + command-queue stub + widget -->
 			<script type="text/javascript">
 				window.P202M_CONFIG = {

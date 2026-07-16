@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
+require_once dirname(__DIR__) . '/202-config/Messaging/ConsentPolicy.class.php';
 
 AUTH::require_user();
 
@@ -262,6 +263,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$update_profile = true;
 				$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 				registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $html['install_hash']);
+
+				// Consent toggles — always route through ConsentPolicy (the single
+				// chokepoint); never write the raw consent columns here. A failure
+				// must not break the settings save, so log and continue.
+				$consentUserId = (int) $_SESSION['user_id'];
+				if (!ConsentPolicy::record($db, $consentUserId, 'analytics', !empty($_POST['analytics_consent']) ? 'granted' : 'denied', 'settings')) {
+					error_log('[Consent] failed to record analytics consent for user ' . $consentUserId);
+				}
+				if (!ConsentPolicy::record($db, $consentUserId, 'email_marketing', !empty($_POST['email_marketing_consent']) ? 'granted' : 'denied', 'settings')) {
+					error_log('[Consent] failed to record email marketing consent for user ' . $consentUserId);
+				}
 
 				//try to set non expiring cache for values that are used in redirects
 				if (!empty($memcacheWorking)) {
@@ -819,6 +831,31 @@ $html = array_map('htmlentities', $user_row);
 								} ?>
 								value="all">Enabled for All Traffic</option>
 						</select>
+					</div>
+				</div>
+				<?php
+				// Checkbox state comes from ConsentPolicy (the only consent reader)
+				// so 'unset' reflects the effective default rather than the raw column.
+				$analyticsChecked = ConsentPolicy::analyticsAllowed($db, (int) $_SESSION['user_id']) ? 'checked' : '';
+				$emailChecked = ConsentPolicy::emailMarketingAllowed($db, (int) $_SESSION['user_id']) ? 'checked' : '';
+				?>
+				<div class="form-group">
+					<label class="col-xs-4 control-label">Data &amp; Communication:</label>
+					<div class="col-xs-8">
+						<div class="checkbox-modern">
+							<label><input type="checkbox" name="analytics_consent" value="1" <?php echo $analyticsChecked; ?>>
+								<span><strong>Product analytics &amp; personalized help</strong> — lets us surface workflow tips and match
+								you with specially-sourced, higher-paying offers relevant to what you promote. Your usage data —
+								including traffic stats, revenue numbers, and campaign names + destination links — is sent to
+								Prosper202. We never share it with third parties. <a href="/disclosure" target="_blank">Learn more</a>.</span>
+							</label>
+						</div>
+						<div class="checkbox-modern">
+							<label><input type="checkbox" name="email_marketing_consent" value="1" <?php echo $emailChecked; ?>>
+								<span><strong>Money-making offers &amp; tips by email</strong> — occasional emails about higher-paying
+								offers and workflow improvements. You can unsubscribe anytime.</span>
+							</label>
+						</div>
 					</div>
 				</div>
 				<div class="form-group">
