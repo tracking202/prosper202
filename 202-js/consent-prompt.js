@@ -40,7 +40,15 @@
         'match you with specially-sourced, higher-paying offers relevant to what you ' +
         'promote. Your usage data — including traffic stats, revenue numbers, and ' +
         'campaign names + destination links — is sent to Prosper202. We never share ' +
-        'it with third parties.';
+        'it with third parties. ';
+
+    // The full disclosure page (what is sent, what never leaves the install).
+    var learnMore = document.createElement('a');
+    learnMore.href = base + '202-account/disclosure.php';
+    learnMore.target = '_blank';
+    learnMore.rel = 'noopener';
+    learnMore.textContent = 'Learn more';
+    body.appendChild(learnMore);
 
     var actions = document.createElement('div');
     actions.style.display = 'flex';

@@ -847,7 +847,7 @@ $html = array_map('htmlentities', $user_row);
 								<span><strong>Product analytics &amp; personalized help</strong> — lets us surface workflow tips and match
 								you with specially-sourced, higher-paying offers relevant to what you promote. Your usage data —
 								including traffic stats, revenue numbers, and campaign names + destination links — is sent to
-								Prosper202. We never share it with third parties. <a href="/disclosure" target="_blank">Learn more</a>.</span>
+								Prosper202. We never share it with third parties. <a href="<?php echo get_absolute_url(); ?>202-account/disclosure.php" target="_blank" rel="noopener">Learn more</a>.</span>
 							</label>
 						</div>
 						<div class="checkbox-modern">
