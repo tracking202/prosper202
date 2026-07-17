@@ -10,7 +10,8 @@ declare(strict_types=1);
  * (the install can only make outbound requests), so this class only ever POSTs
  * and reads the JSON response.
  *
- * The contract implemented here is documented in 202-config/Messaging/CENTRAL-API.md.
+ * The contract implemented here is exercised end-to-end by the local mock server
+ * (202-config/Messaging/mock-server.php, see MOCK-SERVER.md).
  *
  * Every method returns a decoded associative array on success, or null on any
  * transport/parse/HTTP failure. Callers must treat null as "could not reach the

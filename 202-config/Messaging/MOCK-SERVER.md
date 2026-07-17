@@ -2,7 +2,7 @@
 
 `mock-server.php` is a dependency-free stand-in for the central
 `my.tracking202.com` messaging API, so you can click through the messenger
-widget locally. It implements the contract in `CENTRAL-API.md`.
+widget locally. It implements the central messaging API contract.
 
 ## Run it
 

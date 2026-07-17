@@ -7,7 +7,7 @@ declare(strict_types=1);
  *
  * A self-contained, dependency-free stand-in for the my.tracking202.com messaging
  * API so you can click through the Prosper202 messenger widget locally. It
- * implements the contract in 202-config/Messaging/CENTRAL-API.md:
+ * implements the central messaging API contract:
  *   POST /messaging/pull
  *   POST /messaging/send
  *   POST /messaging/read

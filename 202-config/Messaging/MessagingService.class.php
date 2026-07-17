@@ -271,7 +271,7 @@ class MessagingService
             }
 
             // Optional: the server may signal conversations it has removed/retracted
-            // so the local cache doesn't keep them forever (see CENTRAL-API.md).
+            // so the local cache doesn't keep them forever (per the central API contract).
             if (isset($response['deleted_conversation_ids']) && is_array($response['deleted_conversation_ids'])) {
                 $this->deleteConversations($response['deleted_conversation_ids']);
             }

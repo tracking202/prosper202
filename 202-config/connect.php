@@ -80,7 +80,7 @@ DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
 // Messaging API configuration (Intercom-style messenger).
-// Central server contract: 202-config/Messaging/CENTRAL-API.md
+// Central server contract: exercised by 202-config/Messaging/mock-server.php (see MOCK-SERVER.md).
 // Both values are overridable via environment variables so a developer can point
 // the app at the local mock server (202-config/Messaging/mock-server.php) without
 // editing tracked config, e.g. MESSAGING_API_URL=http://127.0.0.1:8787/messaging
