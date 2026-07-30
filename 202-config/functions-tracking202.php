@@ -3030,6 +3030,15 @@ function api_key_validate($key)
     curl_setopt($ch, CURLOPT_POST, true);
     // Set post fields
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+    // Bound the call. With no timeouts set at all, curl waits up to 300s to
+    // connect and then indefinitely for the body, hanging whatever page called us.
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    // Follow redirects, keeping the POST body, so an HTTP->HTTPS redirect returns
+    // JSON rather than a redirect page that json_decode() turns into null.
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
     // Execute
     $result = curl_exec($ch);
 
@@ -3563,8 +3572,17 @@ function validateCustomersApiKey($key)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    // A CONNECTTIMEOUT of 0 means curl's 300s default, and TIMEOUT 60 blocked the
+    // account page for a full minute whenever the licence API was slow.
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    // Follow redirects, keeping the POST body. Without this a 301 (an HTTP->HTTPS
+    // redirect at the edge, say) returns the redirect page instead of JSON,
+    // json_decode() yields null, and every caller then reports the key invalid
+    // because it only checks $validate['code'] != 200.
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
     $result = curl_exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
