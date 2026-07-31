@@ -1,5 +1,414 @@
 Release notes
 
+Version 1.9.74
+-- New: Landing Page Optimizer keyword-privacy control lets you choose whether keyword text is included in the signed context tokens sent to the optimizer
+-- New: Optional JSON data transport for the flat Analyze reports for faster client-side rendering (off by default)
+-- Fixed: Customer API key validation now follows edge redirects and uses sensible timeouts, so valid keys are no longer wrongly reported as invalid
+-- Fixed: Corrected pagination counts on reports
+
+Version 1.9.73
+-- New: Landing Page Optimizer bridge lets you pair your Prosper202 account with the Landing Page Optimizer to sync landing-page test data at the edge
+-- Update: Campaign and landing-page dimensions sync to the optimizer automatically whenever they change
+
+Version 1.9.72
+-- New: Offer-recommendation tracking logs which next-offer recommendations were shown to each customer and how they performed
+-- New: Per-account recommendation fatigue control stops the same offer from being shown over and over
+
+Version 1.9.71
+-- Update: More accurate next-offer recommendations using richer customer purchase-path statistics
+
+Version 1.9.70
+-- New: Company records for account-based marketing let you group customers under a company and roll up their value
+-- New: Customizable engagement-score weights to tune how customer engagement is scored
+
+Version 1.9.69
+-- New: Engagement depth metrics capture time on page, scroll depth and video progress as engagement events
+
+Version 1.9.68
+-- New: Engagement events let you record custom customer engagement and account-based-marketing activity against clicks
+
+Version 1.9.67
+-- New: Next-offer recommendations based on your customers' purchase paths
+
+Version 1.9.66
+-- New: Landing-page personalization displays customer lifetime-value fields as dynamic tokens on your pages, with a per-account field allowlist
+
+Version 1.9.65
+-- New: Customer LTV tracking adds a full customer record with identity resolution, custom fields, a unified revenue ledger, products, subscriptions, and integrations with webhooks
+-- New: Link clicks and conversions to a customer via a custom variable so lifetime value rolls up automatically
+
+Version 1.9.64
+-- New: Forecast calendar events let you flag holidays, promotions and anomalies so traffic and revenue forecasts adjust around them
+
+Version 1.9.63
+-- Fixed: Conversion logs now store full IPv6 and forwarded IP addresses without truncation
+-- Fixed: Prevented duplicate user-role assignments from repeated or concurrent setup
+
+Version 1.9.62
+-- New: Intercom-style in-app messaging lets you receive broadcasts and hold two-way conversations with the Prosper202 team right inside your dashboard
+-- Update: Replaced the old dashboard content and alerts sync
+
+Version 1.9.61
+-- Fixed: Retried or replayed conversion postbacks can no longer double-count a conversion
+-- Update: Faster conversion look-ups on the redirect and postback path
+
+Version 1.9.60
+-- New: Sync API to plan and replicate your setup (campaigns, networks, offers and more) between Prosper202 installs, with collision handling, an incremental change feed and a full audit trail
+-- New: Scoped API keys let you limit what each API key is allowed to access
+-- Update: Faster login throttling for better brute-force protection
+
+Version 1.9.59
+-- New: Schedule attribution report exports and deliver them automatically to a webhook
+
+Version 1.9.58
+-- New: Turn multi-touch attribution on or off per campaign or scope
+
+Version 1.9.57
+-- New: Multi-touch attribution records each conversion's full click journey so credit can be split across every touchpoint in the path
+
+Version 1.9.56
+-- New: GCLID Export support for ads feed url for auto updating
+-- New: t202DataObj() supports GCLIS, FBCLID and MSCLIKID
+-- New: updatePurlink() js function to manually update purlinks when t202DataObject changes
+-- New: Enhanced Shopify webhook support for conversion tracking
+-- Update: User can manually enter their API key
+-- Update: Postbacks can use the campaign id (cid) to match conversions
+-- Update: Switch to OpenSSL
+-- Update: All postback and pixels use https by default
+-- Update: Leave behind works with any kind of redirect link on page
+-- Update: PurLinks support tracking for when someone right clicks and opens in a new window
+-- Fixed: Bot202 FB Pixel assistant creates the correct events
+-- Fixed: Bot202 FB Pixel assistant shows all event types in drop down
+-- Fixed: GCLID export formating does not cause errors
+-- Fixed: Rotators work correctly when using https
+-- Fixed: Url variables correctly get passed to redirect link
+-- Fixed: Leave behind works with any kind of redirect link on page
+
+Version 1.9.55
+-- New: Support for Chrome Samesite=none and secure requirement 
+-- New: PayKickstart Integration for Bot202 Link Assistant and Affiliate IPN for conversion tracking
+-- New: Deferred Pixel Now Supports PurLinks
+-- New: API Access To All Setup Data (Steps 1-8)
+-- Update: Ability to remove all pixels from ppc account
+-- Update: PurLinks on Simple Landing pages can now be updated dynamically via JavaScript call
+-- Update: New Useragent detection list 
+-- Update: New Traffic source icons for LinkedIn & Yahoo
+-- Update: Landing page JavaScript uses cache buster to ensure better tracking
+-- Update: Duplicate emails no longer allowed when adding a new user
+-- Fixed: Postbacks and pixels with &currency were displaying wrong
+-- Fixed: Url vars with a . were being replaced with _
+-- Fixed: Manual Triggering Of Deferred Pixel Checker
+-- Fixed: Conversion logs reports show manual and api conversion type
+-- Fixed: Conversion logs filtering by subid or campaign works
+-- Fixed: Conversion logs reports needed 2 clicks to run
+-- Fixed: PHP warning when expected url variables were not used
+-- Fixed: Currency Exchange Works with postbacks
+-- Fixed: Google Ad GCLID export header csv fixed
+-- Fixed: Google Ad GCLID uses conversion time instead of click time
+-- Fixed: Bot202 Link Assistant wasn't working
+-- Fixed: Bot202 Facebook Pixel Assistant wasn't fully installed
+
+Version 1.9.54
+-- New: Bot202 Facebook Pixel Assistant 
+-- Update: More accurate exchange rates 
+-- Update: Deferred Pixel fires on background mobile tabs
+-- Update: Sentinel T.Q.E has improved fraud detection tuning
+-- Fixed: Cron Jobs Don't Overload Servers with lots of data
+-- Fixed: Group overview show correct stats when doing breakdown with c1-c5 and utm variables
+-- Fixed: Deferred Pixel works on external domains
+-- Fixed:  Browsers details were not showing in spy/visitor view
+-- Fixed: Initial Overview screen wasn't showing all data
+
+Version 1.9.53
+-- Fixed: IPQS api column was not created 
+-- Update: Tracking links automatically use https if secure server detected 
+-- Update: Auto upgrade messsage wording
+
+Version 1.9.52
+-- New: Advanced Deferred Pixel Support 
+-- New: FBCLID value is identified and saved
+-- New: Sentinel T.Q.E Fraudulent Click Detection and Filtering 
+-- New: [[FBCLID]] token
+-- New: Purlink support for advanced landing pages
+-- New: Background automated cron jobs 
+-- Update: Up to 10x redirect speed boost for large databases
+-- Update: Ignore DNT header
+-- Update: Sortable columns on all reports
+-- Update: Currency exchange rate values update on each new conversion
+-- Update: Upgrades that take a while will not time out
+-- Update: Landing page sets the right domain and subdirectory
+-- Update: Adblocker warning removed
+-- Update: Output javascript header for landing page javascript
+-- Update: Switch to utf8mb4_general_ci in reports
+-- Update: MySQL strict mode disabled
+-- Update: Ability to get the landing page url from a get variable instead of referrer
+-- Update: Better strict mode disabling
+-- Update: Improved alp/slp code management
+-- Update: SSL based redirects for referer shield if server has ssl installed
+-- Update: Group Overview shows IPv6 addresses better
+-- Update: PurLink performance enhancements for faster and better tracking 
+-- Fixed: Automatic 202-config.php settings transfer was passing blank values
+-- Fixed: Simple landing page code works if installed in a subdirectory
+-- Fixed: Charts were not showing all data
+-- Fixed: ipv6 didn't work on older database versions
+-- Fixed: Visitor download report works
+-- Fixed: Maxbounty uses s2 for Bot202 LinkAssist
+-- Fixed: LP doesn't double count visits on Safari
+
+Version 1.9.51
+-- New: GDPR Compliance Options To Mask IP and Cookieless Functionality
+-- New: Prosper202 Postback can be used as Webhook url for Shopify conversion tracking
+-- New: Ability To Remap Default Prosper202 Url Varables To Custom Varables
+-- New: PCI value available on dynamic content segments and t202DataObj
+-- New: Support for Bing MSCLKID for offline conversions
+-- New: Dynamic content segments can now display dynamic dates on landing pages
+-- New: Up To 10x faster Zero Redirect PurLink Redirects
+-- New: [[CPA]] Token
+-- New: Support for ipv6
+-- New: Support for php 7.2
+-- New: Smart Redirector can now id European traffic for GDPR and other uses
+-- New: AdBlocker Detection to ensure Prosper202 dashboard works as expected
+-- New: PurLinks now support pages that use forms for lead gen
+-- Update: All api calls use https
+-- Update: If a public click id is missing in the url, find it from the database
+-- Update: Support for newer browsers such as Brave
+-- Update: Improved the logout to be more secure
+-- Update: Spy View will use the read only database if it exists
+-- Update: 202-config-sample.php now includes read only database
+-- Update: Maxbounty uses s1 for LinkAssist
+-- Update: Direct links work even when database is offline with BlazerCache
+-- Update: Group Overview reports more accurate
+-- Update:Faster Bot Detection Code
+-- Update: Switch to new GEOLite2 Database
+-- Update: Cron jobs will run more frequently
+-- Update: Big deletion jobs will run in batches
+-- Fixed:  Tokens were not being pass correctly
+-- Fixed: Device type report in group overview was not correct
+-- Fixed: Users were not able to reupload subid conversion data if it had been deleted
+-- Fixed: Cloaked Landing Pages didn't redirect correctly
+-- Fixed: Cron jobs use more accurate times 
+-- Fixed: API Key wasn't being loaded correctly
+-- Fixed: Conversion log was calculating wrong date difference between first click and conversion
+-- Fixed: More secure database error page 
+-- Fixed: Some new clicks were not getting set with ip address
+
+Version 1.9.50
+-- New: Login page wallpaper
+-- New: [[transactionid]] token
+-- New: Mailchimp, Instagram, Pinterest, Snapchat, Quora icons for spy & visitor view
+-- Update: Refresh Facebook, Twitter, Youtube icons for spy & visitor view
+-- Update: Advanced Landing Page Javascript
+-- Update: Pixel url validation
+-- Fixed: Correct display of links in step 8
+-- Fixed: Duplicate Conversion checker for the dedupe pixel/postback option
+-- Fixed: Update Currency didn't save the new settings
+-- Fixed: Only create publisher ids if random_bytes() function exists
+-- Fixed: Memcache error in DataEngine reports
+
+Version 1.9.49
+-- Fixed: Smart Redirector wasn't passing values into tokens
+-- Fixed: No chat widget for publishers
+-- Fixed: Limit publisher ability to see ppc accounts, landing pages and campaign lists
+
+Version 1.9.48
+-- New: Create Internal Affiliate Program with new Publishers feature
+-- New: View Transaction Id Report in Group Overview
+-- New: View Publisher/User Report in Group Overview
+-- New: Support for downgrading from newer version down to 1.9.48
+-- New: [[t202pubid]] Token for dynamically passing public publisher id to other urls and postbacks
+-- Fixed: Link To Text Ads
+-- Fixed: Prosper202 API won't list deleted landing pages
+-- Fixed: Iframe pixel code fixed
+-- Fixed: CLickbank postback/ips url works in PHP7 
+-- Fixed: Fix for users installing in subdirectory
+-- Fixed: Upgrade Check Typo Bug
+
+Version 1.9.47
+-- New: Bot202 LinkAssist Support for additional networks
+-- New: Dynamic Content Segments Supports IP address display
+-- Fixed: 1-Click Auto Updates work
+
+Version 1.9.46
+-- New: Bot202 LinkAssist Automatically Detects and auto formats affiliate links with [[subid]] token
+-- New: Auto check landing pages to make sure the LP javascript is placed
+-- New: Async Landing page Javascript snippet with automatic support for https
+-- Update: Improved less confusing installation flow
+-- Fixed: Bug with geoip when php geoip module is installed on server
+-- Fixed: Bug with upgrade from versions older than 1.9.3
+-- Fixed: Workaround for when SERVER_NAME is _
+-- Fixed: Database changes during upgrades and new installs
+
+Version 1.9.45
+-- New: Zero Redirect PurLink Technology For Landing Pages
+-- New: Advanced Landing Pages now support Leave Behind links for extra revenue
+-- New: Ability to get secure LP javascript
+-- Update: The Smart Redirector allows for substring matching in the referrer url rule
+-- Update: Landing page Javascript loads faster for even better tracking
+-- Fixed: Redirect issues on some Smart Redirector links
+-- Fixed: Day parting report sorts hourly by default
+-- Fixed: Hourly Overview reports sorts data hourly by default
+-- Fixed: Landing Page Tracking Error
+-- Fixed: Login issue during setup for some users
+-- Fixed: Fixed width layout
+
+Version 1.9.44
+-- Update: User Interface Design Improvements 
+-- Update: Min PHP Requirement Dropped to 5.4
+-- Update: Min MySQL Requirement Dropped to 5.5
+-- Fixed: Direct Link Tracking Error
+-- Fixed: Landing Page Tracking Error
+-- Fixed: Cloaked link redirect error
+-- Fixed: Subid upload error
+
+Version 1.9.43
+-- New: TV202 For Training Videos 
+-- Update: Removed AppStore
+-- Update: Removed Rapid Ad Builder
+-- Update: Requirements Support MariaDB
+-- Update: Subid uploads are faster
+-- Fixed: Subid Upload Error
+
+Version 1.9.42
+-- Update: Faster pixel firing and redirects
+-- Fixed: Query error for custom variables fixed
+-- Fixed: Clickbank verification url fixed
+-- Fixed: 3rd Party piggy back postback firing correctly
+-- Fixed: Secondary users can now see reports
+-- Fixed: Error with updating CPC when installed in subdirectory
+
+Version 1.9.41
+-- New: You can create custom variables that save data into c1-c4 and t202kw variables
+-- New: New option for setting default traffic source. Allows for better organic SEO tracking
+-- Fixed: Don’t show deleted variables in the custom variable report
+-- Fixed: Cleaned up confusing ui on landing page setup
+
+Version 1.9.40
+-- New: Leave behind functionality to increase landing page revenue
+-- New: Landing pages use secure links if secure Javascript snippet is used 
+-- Update: Default to sorting reports by leads
+-- Update: Optimized all images
+-- Update: No meetup, system or version update checks 
+-- Update: Expanded the layout width to 80% instead of fixed 1028px
+-- Update: Deleted unneeded footer links and text 
+-- Fixed: 3rd party piggyback postbacks were not firing
+-- Fixed: Tokens in the redirect URL were not being fired if not set in tracking url
+
+Version 1.9.39
+-- New: Ability to hide ads
+-- New: Support for read only database for performance boost
+-- Update: Redirect links will work in any directory. Phase 1 of being able to remove 202 finger prints from url
+-- Update: Optimized smart redirector by not saving to spy view
+-- Update: Turn on Maxmind ISP database for everyone
+-- Update: Faster DataEngine Queries for Reporting
+-- Update: Improved support for both memcache and memcached  
+-- Update: Improved error message for database fails
+-- Update: Updated GeoIp File
+-- Fixed: Deleted unneeded Ajax calls on home page 
+-- Fixed: Rapid Ad Builder was adding the words click to edit into links
+-- Fixed: Big reports don't show memory limit errors
+-- Fixed: General memcache related bugs
+-- Fixed: Pagination related error fixed
+
+Version 1.9.38
+-- New: We detect prefetch links from Facebook and other bots so stats are not thrown off
+-- Update: Conversion Logs now track manual uploads
+-- Update: New GeoIp Databases
+-- Update: You will now get even more enhanced details about your smart rotators when looking at Spy view & visitor view
+-- Update: Your smart rotator now supports tracking of custom traffic source variables
+-- Fixed: Smart Rotators didn't always show due to our filtering widget
+-- Fixed: Smart Rotators can now be filtered when creating links on step 8
+
+Version 1.9.37
+-- New: Conversion pixels are now able to completely ignore duplicate conversions by setting adding &t202dedupe=1
+-- Update: Spy view & visitor view shows more complete information on your Smart Rotators. This makes it easier to see which offers users saw and clicked on.
+-- Update: We've improved the way we link and report stats for rotators that send clicks to landing pages. You will see less double counting in your stats. 
+-- Update: The landing page Javascript loads the code faster to ensure better tracking of visitor.
+
+Version 1.9.36
+-- New: Ability To Upload Directly To Facebook Ads via Rapid Builder
+-- New: Updated all API endpoints to https for enhanced security
+-- Update: New Geo IP Location Detection Database
+-- Update: New User Agent Browser Detection Database
+
+Version 1.9.35
+-- New: Added RevContent support for RapidBuilder.
+-- Fixed: Various Bug fixes.
+
+Version 1.9.34
+-- New: Added Ability to edit tokens in your RapidBuilder url.
+-- New: Tokens pre-populate from RapidBuilder tracking url.
+-- Fixed: RapidBuilder UI tweaks.
+-- Fixed: Various Bug fixes.
+
+
+Version 1.9.33
+-- New: Added Ability to edit feeds you have already generated
+-- New: You can now preview all the ads and removed unwanted combinations before generating the feed
+-- New: Simple way to add your Prosper202 Customer API key to your account with 1-click
+-- Fixed: Uploaded images had the wrong path
+-- Fixed: Conversion logs show the right pixel type
+-- Fixed: AdvancedAdvanced landing pages dropdown ui fixed to allow filtering
+-- Fixed:Header added to Adwords offline conversions file
+-- Fixed: [[source_id]] and other tokens work for landing pages
+-- Fixed: Show currency for  CNY,INR and RUB in campaign setup page
+-- Fixed: Manual upload timestamp accepts human readable values
+
+Version 1.9.32
+-- New: Prosper202 Native AdBots Beta 1
+-- Fixed: Various Bug fixes
+
+Version 1.9.31
+-- New: Multi Currency Support. Prosper202 automatically converts payouts into your local currency.
+-- New: Support for windows servers with php installed
+-- New: Support transaction ids that allow tracking of multi-step offers
+-- New: Subid upload page now support transaction ids
+-- New: Adwords Offline Conversions Export
+-- New: Clickbank support for multiple conversions, up-sells and refunds
+-- New: Ability To Redirect Filtered Visitors in Smart Redirector
+-- New: Ability To Redirect by C1-C4 value Smart Redirector
+-- New: Ability To Redirect by t202kw value in Smart Redirector
+-- New: Ability To Redirect by utm variables value in Smart Redirector
+-- New: Ability To Redirect by referrer value in Smart Redirector
+-- New: Optimized redirect speeds for Smart Redirector
+-- New: Mobile App Deeplinks support for campaign urls
+-- New: Pixel url validation for Universal Smart Pixel
+-- New: Smart Redirector support for ip ranges
+-- New: Auto Database Optimization -- Keeps your database size optimized automatically
+-- New: Custom Variables report runs multiple times faster
+-- New: Support for transaction ids in pixels, postbacks and manual conversion uploads
+-- New: Brand new design for step 9 pixels and postback page.
+-- New: Prosper202 Customer API key to unlock extra Premium functionality 
+-- New: Group overview report now includes pagination for reports with multiple pages
+-- New: Support for Memcached in addition to Memcache
+-- New: Support for MySQL Strict Mode
+-- Fixed: Fixed Bug where smart rotators and advanced landing pages were not showing in step 8
+-- Fixed: APC Bug where cache wasn't being cleared on upgrade
+-- Fixed: Smart Rotators modal loads correctly
+-- Fixed: No errors show when DNI server is offline
+-- Fixed: Improved click deletion functions
+-- Fixed: Error in spy/visitor view display when location was unknown
+-- Fixed: Dynamic Bid for Simple Landing Pages is recognized
+-- Fixed: For some users setup tab was missing after an upgrade
+-- Fixed: Fixed support for all tag in Smart Redirector so it's case insensitive
+-- Fixed: Fix for auto increment sometimes being set to 0 in the clicks counter
+-- Fixed: Advanced Landing Page Smart Redirector works better for split tests
+-- Fixed: Date formatted in US format in account overview
+-- Fixed: Password reset emails were not getting sent
+-- Fixed: In visitor/spy view, No PPC Network selection filters correctly
+-- Fixed: Ability to disable mysql strict mode
+-- Fixed: Improved installation script to reduct errors
+-- Fixed: Improved pagination for reports with multiple pages
+-- Fixed: Conversion logs no longer shows errors when you choose a custom time range
+-- Update: Removed report caching feature
+-- Update: Conversion Logs moved into main reports section
+-- Update: Optimized Analyze Variables Report for speed
+-- Update: Visitors download report now includes revenue column
+
+
+Version 1.9.30
+-- New: Prosper202 Customer API key to unlock extra Premium functionality 
+-- Fixed: Various bug fixes for stability and performance.
+
 Version 1.9.29
 -- New: Performance Optimizations for Direct Links
 -- New: Support for PHP 7
