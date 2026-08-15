@@ -74,7 +74,15 @@ completed — you only validate your API key and create the admin account.
 - **Upgrades** — click **Redeploy** (or enable auto-deploy on push). The image
   is rebuilt from git; your data lives in the `db_data` volume and survives
   redeploys. `202-config.php` is regenerated from the environment on boot when
-  missing, so a fresh container wires itself back to the same database.
+  missing, so a fresh container wires itself back to the same database. After
+  a redeploy that ships a new Prosper202 version, the app walks you through
+  the one-click **database** upgrade on your next login.
+- **In-app 1-click upgrade is disabled** — Prosper202's built-in auto-upgrade
+  downloads files over HTTP and overwrites the docroot, which on this
+  deployment would be silently reverted by the next redeploy. The stack sets
+  `P202_DISABLE_AUTO_UPGRADE=1` (and the app also detects Coolify's own
+  `COOLIFY_*` variables), so the upgrade pages refuse to run and the "new
+  version" banner points at the redeploy flow instead.
 - **Backups** — the only state is MySQL. Use Coolify's scheduled backup
   feature on the stack's volume, or run `mysqldump` in the db container:
   `docker exec <db-container> mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" prosper202`.

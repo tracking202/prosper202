@@ -29,6 +29,10 @@ services:
       # this service on container port 80. Coolify fills in the value.
       - SERVICE_FQDN_WEB_80
       - APP_ENV=production
+      # Disables the in-app 1-click/auto upgrade: this deployment is immutable
+      # (rebuilt from git), so files written by the in-app upgrader would be
+      # silently reverted on the next redeploy. Upgrade by redeploying instead.
+      - P202_DISABLE_AUTO_UPGRADE=1
       # Consumed by the entrypoint to self-write 202-config.php, so the setup
       # wizard opens with the database step already done.
       - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL:?}

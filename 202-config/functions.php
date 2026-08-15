@@ -329,6 +329,31 @@ function info_top(): void
 	}
 
 
+	/**
+	 * True when this install is a managed, immutable deployment (Coolify, or any
+	 * Docker image built from git) where the in-app auto/1-click upgrade must not
+	 * run: files it writes land in the ephemeral container filesystem and are
+	 * silently reverted on the next redeploy. Upgrades for these installs happen
+	 * by redeploying the new version from git.
+	 *
+	 * Detection: the explicit P202_DISABLE_AUTO_UPGRADE variable (set by
+	 * docker-compose.coolify.yaml), or any of the COOLIFY_* variables Coolify
+	 * injects into containers it manages.
+	 */
+	function auto_upgrade_disabled(): bool
+	{
+		$flag = getenv('P202_DISABLE_AUTO_UPGRADE');
+		if ($flag !== false && $flag !== '' && $flag !== '0') {
+			return true;
+		}
+		foreach (['COOLIFY_RESOURCE_UUID', 'COOLIFY_CONTAINER_NAME', 'COOLIFY_FQDN', 'COOLIFY_URL', 'COOLIFY_BRANCH'] as $coolifyVar) {
+			if (getenv($coolifyVar) !== false) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	function update_needed()
 	{
 		global $version;
@@ -369,6 +394,13 @@ function info_top(): void
 
 				//if current version, is older than the latest version, return true for an update is now needed.
 				if (version_compare($version, $latest_version) == '-1') {
+
+					// Managed deployments (Coolify/Docker built from git) must never
+					// self-modify: report that an update exists, but skip the silent
+					// file-writing upgrade below — a redeploy would revert it anyway.
+					if (auto_upgrade_disabled()) {
+						return true;
+					}
 
 					if (!is_writable(__DIR__ . '/') || !class_exists('ZipArchive')) {
 						$_SESSION['auto_upgraded_not_possible'] = true;

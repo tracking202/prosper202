@@ -7,6 +7,17 @@ include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
 
 AUTH::require_user();
 
+// On managed deployments (Coolify, or any Docker image built from git) the
+// 1-click upgrade would write into the ephemeral container filesystem and be
+// silently reverted on the next redeploy — refuse before touching anything.
+if (auto_upgrade_disabled()) {
+	_die("<h6>1-Click upgrade is disabled on this deployment</h6>
+		<small>This Prosper202 install runs as a managed deployment (Coolify/Docker) built from git.
+		Files changed here would be reverted the next time the container is redeployed.<br><br>
+		To upgrade, redeploy the new version from git instead (in Coolify: click <strong>Redeploy</strong>,
+		or enable auto-deploy on push). The database upgrade will run automatically on your next login.</small>");
+}
+
 ini_set('memory_limit', '-1');
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT install_hash, p202_customer_api_key FROM 202_users WHERE user_id = '" . $mysql['user_own_id'] . "'";
