@@ -123,6 +123,10 @@ services:
     build:
       context: .
     restart: unless-stopped
+    # Same UID as Apache in the web container: the state/export volumes are
+    # shared, and ServerStateStore creates subdirectories with mode 0700 on
+    # first use — created by root they'd be unwritable for the web process.
+    user: www-data
     environment:
       - APP_ENV=production
       - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL:?}
