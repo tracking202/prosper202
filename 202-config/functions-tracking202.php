@@ -1258,9 +1258,12 @@ function getLastDayOfMonth($month, $year)
 
 function getTrackingDomain(): string
 {
-    // SERVER_NAME does not exist for CLI runs (cron workers); the declared
-    // string return type would turn the missing key into a fatal TypeError.
-    $tracking_domain = (string) ($_SERVER['SERVER_NAME'] ?? '');
+    // Keep in sync with the connect2.php variant of this function: SERVER_NAME
+    // does not exist for CLI runs (cron workers) — the declared string return
+    // type would turn the missing key into a fatal TypeError — and the raw
+    // value is sanitized against host-header injection.
+    $raw_server_name = $_SERVER['SERVER_NAME'] ?? '';
+    $tracking_domain = (string) preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string) $raw_server_name);
 
     // Add port if non-standard (not 80/443)
     $port = $_SERVER['SERVER_PORT'] ?? 80;
@@ -1268,11 +1271,15 @@ function getTrackingDomain(): string
         $tracking_domain .= ':' . $port;
     }
 
-    // Only query database if user is logged in
-    if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
-        return $tracking_domain;
-    }
-    
+    // Use the logged-in user's configured tracking domain; without a session
+    // (CLI cron workers) fall back to the primary account, like the
+    // connect2.php variant — otherwise CLI could never resolve a configured
+    // domain and URL builders would degrade to 'localhost'. _mysqli_query
+    // returns false (handled below) when the schema doesn't exist yet.
+    $lookup_user_id = (isset($_SESSION['user_id']) && !empty($_SESSION['user_id']))
+        ? (string) $_SESSION['user_id']
+        : '1';
+
     $database = DB::getInstance();
     $db = $database->getConnection();
     $tracking_domain_sql = "
@@ -1281,7 +1288,7 @@ function getTrackingDomain(): string
 		FROM
 			`202_users_pref`
 		WHERE
-			`user_id`='" . $db->real_escape_string((string)$_SESSION['user_id']) . "'
+			`user_id`='" . $db->real_escape_string($lookup_user_id) . "'
 	";
     $tracking_domain_result = _mysqli_query($tracking_domain_sql);
     

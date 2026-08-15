@@ -2370,8 +2370,14 @@ function getIspData($ip)
         return "Unknown ISP/Carrier";
     }
 
+    // The ISP databases are user-uploaded (not shipped with the repo), so on
+    // immutable container deployments P202_GEO_DIR points them at a persistent
+    // volume instead of the ephemeral docroot. The shipped GeoLite2-City.mmdb
+    // stays under CONFIG_PATH on purpose — it updates with the image.
+    $geo_dir = getenv('P202_GEO_DIR') ?: CONFIG_PATH . '/geo';
+
     // Try GeoIP2 ISP database (.mmdb) first
-    $mmdb_file = CONFIG_PATH . '/geo/GeoIP2-ISP.mmdb';
+    $mmdb_file = $geo_dir . '/GeoIP2-ISP.mmdb';
     if (file_exists($mmdb_file)) {
         try {
             $reader = new Reader($mmdb_file);
@@ -2385,7 +2391,7 @@ function getIspData($ip)
     }
 
     // Legacy GeoIPISP.dat fallback via PHP geoip extension
-    $dat_file = CONFIG_PATH . '/geo/GeoIPISP.dat';
+    $dat_file = $geo_dir . '/GeoIPISP.dat';
     if (file_exists($dat_file) && function_exists('geoip_org_by_name')) {
         $isp = @geoip_org_by_name($ip_address);
         if ($isp) {

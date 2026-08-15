@@ -342,8 +342,11 @@ function info_top(): void
 	 */
 	function auto_upgrade_disabled(): bool
 	{
+		// Same falsy set as SyncEngine::envFlagEnabled(), so
+		// P202_DISABLE_AUTO_UPGRADE=false / no / off means what it says
+		// instead of silently counting as enabled.
 		$flag = getenv('P202_DISABLE_AUTO_UPGRADE');
-		if ($flag !== false && $flag !== '' && $flag !== '0') {
+		if ($flag !== false && !in_array(strtolower(trim($flag)), ['', '0', 'false', 'no', 'off', 'disabled'], true)) {
 			return true;
 		}
 		foreach (['COOLIFY_RESOURCE_UUID', 'COOLIFY_CONTAINER_NAME', 'COOLIFY_FQDN', 'COOLIFY_URL', 'COOLIFY_BRANCH'] as $coolifyVar) {
@@ -352,6 +355,23 @@ function info_top(): void
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Shared refusal for the 1-click upgrade entry points (auto-upgrade.php and
+	 * auto-upgrade-premium.php) so the operational instructions in the message
+	 * can never drift between the two analogous pages.
+	 */
+	function die_if_auto_upgrade_disabled(): void
+	{
+		if (!auto_upgrade_disabled()) {
+			return;
+		}
+		_die("<h6>1-Click upgrade is disabled on this deployment</h6>
+			<small>This Prosper202 install runs as a managed deployment (Coolify/Docker) built from git.
+			Files changed here would be reverted the next time the container is redeployed.<br><br>
+			To upgrade, redeploy the new version from git instead (in Coolify: click <strong>Redeploy</strong>,
+			or enable auto-deploy on push). The database upgrade will run automatically on your next login.</small>");
 	}
 
 	function update_needed()
@@ -394,13 +414,6 @@ function info_top(): void
 
 				//if current version, is older than the latest version, return true for an update is now needed.
 				if (version_compare($version, $latest_version) == '-1') {
-
-					// Managed deployments (Coolify/Docker built from git) must never
-					// self-modify: report that an update exists, but skip the silent
-					// file-writing upgrade below — a redeploy would revert it anyway.
-					if (auto_upgrade_disabled()) {
-						return true;
-					}
 
 					if (!is_writable(__DIR__ . '/') || !class_exists('ZipArchive')) {
 						$_SESSION['auto_upgraded_not_possible'] = true;

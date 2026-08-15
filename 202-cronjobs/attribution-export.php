@@ -171,18 +171,18 @@ function buildWebhookDownloadUrl(ExportJob $job): ?string
     $path .= '?' . $query;
 
     // This worker normally runs from the CLI (crontab, or the attribution-cron
-    // container), where there is no request to infer scheme/host from — the
-    // $_SERVER fallbacks below would produce http://localhost. An explicit
-    // public origin from the environment wins (docker-compose.coolify.yaml
-    // passes the Coolify-assigned URL as P202_PUBLIC_ORIGIN).
-    $publicOrigin = getenv('P202_PUBLIC_ORIGIN');
-    if (is_string($publicOrigin) && preg_match('#^https?://[^/\s]+$#', rtrim($publicOrigin, '/'))) {
-        $baseUrl = rtrim($publicOrigin, '/');
-        $basePath = trim((string) get_absolute_url(), '/');
-        if ($basePath !== '') {
-            $baseUrl .= '/' . $basePath;
+    // container), where there is no request to infer scheme/host/sub-path
+    // from. An explicit public origin from the environment wins and is used
+    // verbatim — include any install sub-directory in it
+    // (docker-compose.coolify.yaml passes the Coolify-assigned URL as
+    // P202_PUBLIC_ORIGIN). A set-but-invalid value is reported on stderr, not
+    // silently ignored.
+    $publicOrigin = rtrim(trim((string) getenv('P202_PUBLIC_ORIGIN')), '/');
+    if ($publicOrigin !== '') {
+        if (preg_match('#^https?://\S+$#', $publicOrigin)) {
+            return $publicOrigin . $path;
         }
-        return $baseUrl . $path;
+        fwrite(STDERR, "Warning: ignoring P202_PUBLIC_ORIGIN '{$publicOrigin}': not an http(s) URL.\n");
     }
 
     $scheme = null;
@@ -207,10 +207,21 @@ function buildWebhookDownloadUrl(ExportJob $job): ?string
 
     $host = getTrackingDomain();
     if (empty($host)) {
-        $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
+        $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '';
+        if ($host === '') {
+            // Nothing configured at all: a fabricated localhost link would be
+            // delivered to the webhook consumer as if it were real — say so.
+            fwrite(STDERR, "Warning: no public origin available for webhook download links; "
+                . "set P202_PUBLIC_ORIGIN or a tracking domain. Falling back to 'localhost'.\n");
+            $host = 'localhost';
+        }
     }
 
-    $basePath = trim((string) get_absolute_url(), '/');
+    // get_absolute_url() derives the install sub-path from DOCUMENT_ROOT,
+    // which does not exist under CLI (realpath('') resolves to the cwd, so the
+    // result depends on where the worker was launched from). Sub-directory
+    // installs running from cron must carry the sub-path in P202_PUBLIC_ORIGIN.
+    $basePath = PHP_SAPI === 'cli' ? '' : trim((string) get_absolute_url(), '/');
     $baseUrl = $scheme . '://' . $host;
     if ($basePath !== '') {
         $baseUrl .= '/' . $basePath;

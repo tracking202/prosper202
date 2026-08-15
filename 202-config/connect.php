@@ -91,8 +91,9 @@ if (!defined('MESSAGING_SYNC_THROTTLE')) {
     DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user network syncs
 }
 
-//fix for nginx with no server name set
-if ($_SERVER['SERVER_NAME'] == '_') {
+//fix for nginx with no server name set. SERVER_NAME does not exist under CLI
+//(cron workers include this file every minute — don't spam warnings there).
+if (($_SERVER['SERVER_NAME'] ?? '') == '_') {
     $_SERVER['SERVER_NAME'] = $_SERVER['HTTP_HOST'];
 }
 
@@ -190,7 +191,8 @@ $_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
     !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
     !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
     !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
-    default => $_SERVER['REMOTE_ADDR'],
+    // REMOTE_ADDR does not exist under CLI (cron workers)
+    default => $_SERVER['REMOTE_ADDR'] ?? '',
 };
 
 

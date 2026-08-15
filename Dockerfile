@@ -64,13 +64,21 @@ CMD ["apache2-foreground"]
 # The entrypoint sees vendor/autoload.php and skips its runtime composer
 # install, so container start stays fast.
 FROM base AS app
+# Dependencies first, in their own layer keyed on composer.json alone: a code
+# change then reuses the cached vendor layer instead of re-resolving and
+# re-downloading every package on every deploy. (No composer.lock is committed,
+# so an install is a full resolution — cache it as hard as possible.)
+COPY composer.json /var/www/html/composer.json
+RUN composer install --no-dev --no-interaction --no-scripts --no-autoloader --no-progress
 COPY --chown=www-data:www-data . /var/www/html
-RUN composer install --no-dev --no-interaction --optimize-autoloader
+RUN composer dump-autoload --optimize --no-dev
 # Pre-create the volume mount points owned by the web user: a named volume
 # copies the image directory's ownership on first use, and without this the
 # volumes initialize root-owned, which would break API/state writes running as
-# www-data. The API v3 state dir lives OUTSIDE the docroot on purpose — it
-# holds sync jobs and idempotency records that must never be servable.
+# www-data. The API v3 state dir and the uploaded-geo-database dir live
+# OUTSIDE the docroot on purpose — sync jobs, idempotency records, and
+# purchased databases must never be servable.
 RUN install -d -o www-data -g www-data \
         /var/www/html/202-config/temp/attribution-exports \
-        /var/lib/prosper202/api-v3-state
+        /var/lib/prosper202/api-v3-state \
+        /var/lib/prosper202/geo
