@@ -170,6 +170,21 @@ function buildWebhookDownloadUrl(ExportJob $job): ?string
     $query = http_build_query(['export_id' => $job->exportId], '', '&', PHP_QUERY_RFC3986);
     $path .= '?' . $query;
 
+    // This worker normally runs from the CLI (crontab, or the attribution-cron
+    // container), where there is no request to infer scheme/host from — the
+    // $_SERVER fallbacks below would produce http://localhost. An explicit
+    // public origin from the environment wins (docker-compose.coolify.yaml
+    // passes the Coolify-assigned URL as P202_PUBLIC_ORIGIN).
+    $publicOrigin = getenv('P202_PUBLIC_ORIGIN');
+    if (is_string($publicOrigin) && preg_match('#^https?://[^/\s]+$#', rtrim($publicOrigin, '/'))) {
+        $baseUrl = rtrim($publicOrigin, '/');
+        $basePath = trim((string) get_absolute_url(), '/');
+        if ($basePath !== '') {
+            $baseUrl .= '/' . $basePath;
+        }
+        return $baseUrl . $path;
+    }
+
     $scheme = null;
     if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
         $schemeCandidates = explode(',', (string) $_SERVER['HTTP_X_FORWARDED_PROTO']);

@@ -121,6 +121,11 @@ services:
       - DB_HOST=db
       - MC_HOST=memcached
       - P202_DISABLE_AUTO_UPGRADE=1
+      # The export worker has no request context to infer the public URL from
+      # when it builds webhook download links; Coolify substitutes the URL it
+      # assigned to the web service (empty outside Coolify — the worker then
+      # falls back to the tracking-domain logic).
+      - P202_PUBLIC_ORIGIN=${SERVICE_URL_WEB:-}
     volumes:
       - attribution_exports:/var/www/html/202-config/temp/attribution-exports
     depends_on:

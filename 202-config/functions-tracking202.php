@@ -1258,7 +1258,9 @@ function getLastDayOfMonth($month, $year)
 
 function getTrackingDomain(): string
 {
-    $tracking_domain = $_SERVER['SERVER_NAME'];
+    // SERVER_NAME does not exist for CLI runs (cron workers); the declared
+    // string return type would turn the missing key into a fatal TypeError.
+    $tracking_domain = (string) ($_SERVER['SERVER_NAME'] ?? '');
 
     // Add port if non-standard (not 80/443)
     $port = $_SERVER['SERVER_PORT'] ?? 80;
