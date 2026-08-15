@@ -39,12 +39,20 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
       - DB_HOST=db
       - MC_HOST=memcached
+      # REST API v3 queues sync jobs and idempotency records on disk
+      # (Api\V3\Support\ServerStateStore); the default is under /tmp, which a
+      # redeploy wipes. Point it at the persistent volume below, outside the
+      # docroot so state files are never servable.
+      - P202_SERVER_STATE_DIR=/var/lib/prosper202/api-v3-state
     volumes:
       # Shared with attribution-cron: exports are generated there but
       # downloaded through this container (202-account/attribution-export.php
       # serves the absolute path recorded in the database), and both must
       # survive redeploys of the (otherwise immutable) app containers.
       - attribution_exports:/var/www/html/202-config/temp/attribution-exports
+      # Shared with attribution-cron: the API (this container) enqueues sync
+      # jobs, the sync worker (that container) processes them.
+      - api_state:/var/lib/prosper202/api-v3-state
     depends_on:
       db:
         condition: service_healthy
@@ -104,12 +112,13 @@ services:
       timeout: 5s
       retries: 3
 
-  # The attribution workers are standalone CLI scripts that
-  # 202-cronjobs/index.php does NOT run (the repo docs schedule them from a
-  # host crontab, which this stack promises you don't need): the export queue
-  # processor runs every minute, the snapshot rebuild hourly. Built from the
-  # same image as web so the code and composer dependencies match; the shared
-  # entrypoint writes this container's own 202-config.php from the env below.
+  # Runs the standalone CLI cron workers that 202-cronjobs/index.php does NOT
+  # cover (the repo docs schedule them from a host crontab, which this stack
+  # promises you don't need): the attribution export queue and the API v3 sync
+  # worker every minute, the attribution snapshot rebuild hourly. Built from
+  # the same image as web so the code and composer dependencies match; the
+  # shared entrypoint writes this container's own 202-config.php from the env
+  # below.
   attribution-cron:
     build:
       context: .
@@ -126,8 +135,10 @@ services:
       # assigned to the web service (empty outside Coolify — the worker then
       # falls back to the tracking-domain logic).
       - P202_PUBLIC_ORIGIN=${SERVICE_URL_WEB:-}
+      - P202_SERVER_STATE_DIR=/var/lib/prosper202/api-v3-state
     volumes:
       - attribution_exports:/var/www/html/202-config/temp/attribution-exports
+      - api_state:/var/lib/prosper202/api-v3-state
     depends_on:
       db:
         condition: service_healthy
@@ -140,6 +151,7 @@ services:
         last_rebuild=0
         while true; do
           php 202-cronjobs/attribution-export.php || true
+          php 202-cronjobs/sync-worker.php || true
           now=$$(date +%s)
           if [ $$((now - last_rebuild)) -ge 3600 ]; then
             php 202-cronjobs/attribution-rebuild.php || true
@@ -156,3 +168,4 @@ services:
 volumes:
   db_data:
   attribution_exports:
+  api_state:

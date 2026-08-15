@@ -66,3 +66,11 @@ CMD ["apache2-foreground"]
 FROM base AS app
 COPY --chown=www-data:www-data . /var/www/html
 RUN composer install --no-dev --no-interaction --optimize-autoloader
+# Pre-create the volume mount points owned by the web user: a named volume
+# copies the image directory's ownership on first use, and without this the
+# volumes initialize root-owned, which would break API/state writes running as
+# www-data. The API v3 state dir lives OUTSIDE the docroot on purpose — it
+# holds sync jobs and idempotency records that must never be servable.
+RUN install -d -o www-data -g www-data \
+        /var/www/html/202-config/temp/attribution-exports \
+        /var/lib/prosper202/api-v3-state
