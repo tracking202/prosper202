@@ -1,0 +1,140 @@
+# documentation: https://prosper202.com
+# slogan: Self-hosted PPC and affiliate conversion tracking platform (ClickServer).
+# category: analytics
+# tags: tracking, affiliate, ppc, analytics, marketing, conversion, clickserver
+# logo: svgs/prosper202.svg
+# port: 80
+
+# Ready-to-submit Coolify one-click service template for Prosper202.
+# Submission target: templates/compose/prosper202.yaml in coollabsio/coolify
+# (see the README next to this file for the submission checklist).
+#
+# Mirrors the repo's docker-compose.coolify.yaml, except it pulls the
+# published image instead of building from a git checkout — one-click
+# services never clone the repository. The container self-writes its
+# database config from the environment on boot, so the setup wizard opens
+# with the database step already completed.
+
+services:
+  prosper202:
+    image: ghcr.io/tracking202/prosper202:latest
+    environment:
+      - SERVICE_FQDN_PROSPER202_80
+      - APP_ENV=production
+      # In-app 1-click upgrade writes to the ephemeral container filesystem;
+      # upgrades arrive as new image tags instead.
+      - P202_DISABLE_AUTO_UPGRADE=1
+      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
+      - DB_HOST=db
+      - MC_HOST=memcached
+      # REST API v3 job/idempotency state — persisted outside the docroot.
+      - P202_SERVER_STATE_DIR=/var/lib/prosper202/api-v3-state
+      # Uploaded MaxMind ISP databases — persisted outside the docroot.
+      - P202_GEO_DIR=/var/lib/prosper202/geo
+    volumes:
+      - prosper202-exports:/var/www/html/202-config/temp/attribution-exports
+      - prosper202-api-state:/var/lib/prosper202/api-v3-state
+      - prosper202-geo:/var/lib/prosper202/geo
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/health/') === false ? 1 : 0);"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
+    volumes:
+      - prosper202-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$${MYSQL_ROOT_PASSWORD}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  memcached:
+    image: memcached:1.6-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 11211"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # Polls the scheduled-jobs endpoint once a minute (it has its own lock and
+  # frequency tiers), replacing a host crontab.
+  cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    depends_on:
+      prosper202:
+        condition: service_started
+    command: >
+      sh -c 'while true; do
+               wget -q -O /dev/null http://prosper202/202-cronjobs/index.php || true;
+               sleep 60;
+             done'
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 30s
+
+  # Standalone CLI workers the HTTP cron endpoint does not cover: attribution
+  # export queue and API v3 sync worker every minute, snapshot rebuild hourly.
+  # Runs the same image as the web service, as the web user, sharing the
+  # export/state volumes.
+  worker:
+    image: ghcr.io/tracking202/prosper202:latest
+    restart: unless-stopped
+    user: www-data
+    environment:
+      - APP_ENV=production
+      - P202_DISABLE_AUTO_UPGRADE=1
+      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
+      - DB_HOST=db
+      - MC_HOST=memcached
+      - P202_SERVER_STATE_DIR=/var/lib/prosper202/api-v3-state
+      - P202_GEO_DIR=/var/lib/prosper202/geo
+      # Public origin for webhook download links (no request context in CLI).
+      - P202_PUBLIC_ORIGIN=${SERVICE_URL_PROSPER202}
+    volumes:
+      - prosper202-exports:/var/www/html/202-config/temp/attribution-exports
+      - prosper202-api-state:/var/lib/prosper202/api-v3-state
+      - prosper202-geo:/var/lib/prosper202/geo
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+    command:
+      - bash
+      - -c
+      - |
+        last_rebuild=0
+        while true; do
+          php 202-cronjobs/attribution-export.php || true
+          php 202-cronjobs/sync-worker.php || true
+          now=$$(date +%s)
+          if [ $$((now - last_rebuild)) -ge 3600 ]; then
+            php 202-cronjobs/attribution-rebuild.php || true
+            last_rebuild=$$now
+          fi
+          sleep 60
+        done
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 30s
+
+volumes:
+  prosper202-mysql-data:
+  prosper202-exports:
+  prosper202-api-state:
+  prosper202-geo:
