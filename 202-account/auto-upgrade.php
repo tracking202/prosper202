@@ -7,6 +7,11 @@ include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
 
 AUTH::require_user();
 
+// On managed deployments (Coolify, or any Docker image built from git) the
+// 1-click upgrade would write into the ephemeral container filesystem and be
+// silently reverted on the next redeploy — refuse before touching anything.
+die_if_auto_upgrade_disabled();
+
 ini_set('memory_limit', '-1');
 
 // Initialize state used by the upgrade flow and rendering below.

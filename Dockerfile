@@ -1,4 +1,11 @@
-FROM php:8.3-apache
+# Stage layout:
+#   base — runtime (PHP extensions, Apache config, entrypoint) with no app
+#          code; the dev compose stack builds this target and bind-mounts the
+#          checkout over /var/www/html.
+#   app  — (default) base plus the application and its composer dependencies
+#          baked in, for deployments that build straight from git with no bind
+#          mount (Coolify, any production docker compose host).
+FROM php:8.3-apache AS base
 
 # git/unzip for Composer; libmemcached for the optional memcached extension
 # used by 202-config/connect.php. Dev libs stay installed because the built
@@ -30,6 +37,10 @@ RUN a2enmod rewrite \
         echo '<LocationMatch "/\.(?!well-known/)">'; \
         echo '    Require all denied'; \
         echo '</LocationMatch>'; \
+        echo '# Behind a TLS-terminating proxy (Coolify/Traefik, a load'; \
+        echo '# balancer), PHP only sees plain HTTP. Surface the forwarded'; \
+        echo '# scheme as HTTPS=on so secure cookies and generated URLs work.'; \
+        echo 'SetEnvIf X-Forwarded-Proto "^https$" HTTPS=on'; \
     } > /etc/apache2/conf-available/prosper202.conf \
     && a2enconf prosper202
 
@@ -45,3 +56,29 @@ WORKDIR /var/www/html
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["apache2-foreground"]
+
+# Default stage: self-contained image with the app baked in. www-data owns the
+# tree because the app writes inside the docroot at runtime (202-config.php,
+# 202-cronjobs/cron.lock, attribution exports, auto-upgrade). vendor/ is
+# installed afterwards as root on purpose — the web user only needs to read it.
+# The entrypoint sees vendor/autoload.php and skips its runtime composer
+# install, so container start stays fast.
+FROM base AS app
+# Dependencies first, in their own layer keyed on composer.json alone: a code
+# change then reuses the cached vendor layer instead of re-resolving and
+# re-downloading every package on every deploy. (No composer.lock is committed,
+# so an install is a full resolution — cache it as hard as possible.)
+COPY composer.json /var/www/html/composer.json
+RUN composer install --no-dev --no-interaction --no-scripts --no-autoloader --no-progress
+COPY --chown=www-data:www-data . /var/www/html
+RUN composer dump-autoload --optimize --no-dev
+# Pre-create the volume mount points owned by the web user: a named volume
+# copies the image directory's ownership on first use, and without this the
+# volumes initialize root-owned, which would break API/state writes running as
+# www-data. The API v3 state dir and the uploaded-geo-database dir live
+# OUTSIDE the docroot on purpose — sync jobs, idempotency records, and
+# purchased databases must never be servable.
+RUN install -d -o www-data -g www-data \
+        /var/www/html/202-config/temp/attribution-exports \
+        /var/lib/prosper202/api-v3-state \
+        /var/lib/prosper202/geo

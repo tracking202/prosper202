@@ -329,6 +329,51 @@ function info_top(): void
 	}
 
 
+	/**
+	 * True when this install is a managed, immutable deployment (Coolify, or any
+	 * Docker image built from git) where the in-app auto/1-click upgrade must not
+	 * run: files it writes land in the ephemeral container filesystem and are
+	 * silently reverted on the next redeploy. Upgrades for these installs happen
+	 * by redeploying the new version from git.
+	 *
+	 * Detection: the explicit P202_DISABLE_AUTO_UPGRADE variable (set by
+	 * docker-compose.coolify.yaml), or any of the COOLIFY_* variables Coolify
+	 * injects into containers it manages.
+	 */
+	function auto_upgrade_disabled(): bool
+	{
+		// Same falsy set as SyncEngine::envFlagEnabled(), so
+		// P202_DISABLE_AUTO_UPGRADE=false / no / off means what it says
+		// instead of silently counting as enabled.
+		$flag = getenv('P202_DISABLE_AUTO_UPGRADE');
+		if ($flag !== false && !in_array(strtolower(trim($flag)), ['', '0', 'false', 'no', 'off', 'disabled'], true)) {
+			return true;
+		}
+		foreach (['COOLIFY_RESOURCE_UUID', 'COOLIFY_CONTAINER_NAME', 'COOLIFY_FQDN', 'COOLIFY_URL', 'COOLIFY_BRANCH'] as $coolifyVar) {
+			if (getenv($coolifyVar) !== false) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Shared refusal for the 1-click upgrade entry points (auto-upgrade.php and
+	 * auto-upgrade-premium.php) so the operational instructions in the message
+	 * can never drift between the two analogous pages.
+	 */
+	function die_if_auto_upgrade_disabled(): void
+	{
+		if (!auto_upgrade_disabled()) {
+			return;
+		}
+		_die("<h6>1-Click upgrade is disabled on this deployment</h6>
+			<small>This Prosper202 install runs as a managed deployment (Coolify/Docker) built from git.
+			Files changed here would be reverted the next time the container is redeployed.<br><br>
+			To upgrade, redeploy the new version from git instead (in Coolify: click <strong>Redeploy</strong>,
+			or enable auto-deploy on push). The database upgrade will run automatically on your next login.</small>");
+	}
+
 	function update_needed()
 	{
 		global $version;

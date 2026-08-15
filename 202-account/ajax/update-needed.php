@@ -4,7 +4,44 @@ include_once(str_repeat("../", 2) . '202-config/connect.php');
 
 AUTH::require_user();
 
-if (isset($_SESSION['auto_upgraded_not_possible']) && $_SESSION['auto_upgraded_not_possible'] == true) { ?>
+// Managed deployments (Coolify/Docker built from git): the 1-click and manual
+// file-upload upgrade paths below don't apply — changed files would be
+// reverted on the next redeploy. Show how to upgrade properly instead.
+if (
+	auto_upgrade_disabled()
+	&& (
+		(isset($_SESSION['update_needed']) && $_SESSION['update_needed'] == true)
+		|| (isset($_SESSION['premium_update_available']) && $_SESSION['premium_update_available'] == true)
+		|| (isset($_SESSION['auto_upgraded_not_possible']) && $_SESSION['auto_upgraded_not_possible'] == true)
+	)
+) { ?>
+	<div class="panel-group alertaccordion" id="accordion" role="tablist" aria-multiselectable="true">
+		<div class="panel panel-default">
+			<div class="panel-heading" role="tab" id="headingOne">
+				<h4 class="panel-title">
+					<a role="button" data-toggle="collapse" data-parent="#accordion" href="#collapseOne" aria-expanded="true" aria-controls="collapseOne">
+						A New Version of Prosper202 Is Available!
+					</a>
+					<a role="button" data-toggle="collapse" data-parent="#accordion" href="#collapseOne" aria-expanded="true" aria-controls="collapseOne" style="float:right">&times;</a>
+				</h4>
+			</div>
+			<div id="collapseOne" class="panel-collapse collapse <?php if (isset($_SESSION['show_update_check']) && $_SESSION['show_update_check'] == true) echo "in"; ?>" role="tabpanel" aria-labelledby="headingOne">
+				<div class="panel-body">
+					<small>
+						<p>This install is a managed deployment (Coolify/Docker) built from git, so the
+							1-Click upgrade is disabled &mdash; files it changes would be reverted on the
+							next redeploy.</p>
+					</small>
+					<small>
+						<p>To upgrade: pull the new version and redeploy (in Coolify, click
+							<strong>Redeploy</strong>, or enable auto-deploy on push). The database
+							upgrade runs automatically after you log back in.</p>
+					</small>
+				</div>
+			</div>
+		</div>
+	</div>
+<?php } else if (isset($_SESSION['auto_upgraded_not_possible']) && $_SESSION['auto_upgraded_not_possible'] == true) { ?>
 	<div class="panel-group alertaccordion" id="accordion" role="tablist" aria-multiselectable="true">
 		<div class="panel panel-default">
 			<div class="panel-heading" role="tab" id="headingOne">
