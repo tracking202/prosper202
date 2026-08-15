@@ -101,7 +101,14 @@ DEFINE('CONFIG_PATH', __DIR__);
 @ini_set('auto_detect_line_endings', '1');
 // Deprecated in PHP 5.4
 // @ini_set('register_globals', 0);
-@ini_set('display_errors', 'On');
+// Displaying errors to visitors leaks internals on a public tracker, so
+// APP_ENV=production (set by the production docker compose stacks) turns it
+// off for web requests; errors still reach the server/container log. CLI runs
+// (cron workers) always display — their output is a log, not a visitor page.
+// The historical default (no APP_ENV set — bare-metal and shared-hosting
+// installs) stays On.
+$p202_display_errors = (PHP_SAPI !== 'cli' && getenv('APP_ENV') === 'production') ? 'Off' : 'On';
+@ini_set('display_errors', $p202_display_errors);
 @ini_set('error_reporting', '6135');
 // @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
 @ini_set('set_time_limit', '0');
@@ -149,7 +156,7 @@ if (function_exists('mysqli_report')) {
 } else {
     // Polyfill or alternative error handling if mysqli_report isn't available
     error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED);
-    @ini_set('display_errors', 'On');
+    @ini_set('display_errors', $p202_display_errors);
 }
 
 $install_path = substr(ROOT_PATH, strlen((string) $_SERVER['DOCUMENT_ROOT']));
