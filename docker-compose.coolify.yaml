@@ -39,15 +39,23 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
       - DB_HOST=db
       - MC_HOST=memcached
+    volumes:
+      # Shared with attribution-cron: exports are generated there but
+      # downloaded through this container (202-account/attribution-export.php
+      # serves the absolute path recorded in the database), and both must
+      # survive redeploys of the (otherwise immutable) app containers.
+      - attribution_exports:/var/www/html/202-config/temp/attribution-exports
     depends_on:
       db:
         condition: service_healthy
       memcached:
         condition: service_started
     healthcheck:
-      # curl ships in the php:apache base image. /health/ is served before the
-      # install wizard completes, so a fresh deploy still reports healthy.
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/health/"]
+      # Uses the php CLI (guaranteed present in the image) rather than curl, so
+      # the check can't silently break if the base image's tool set changes.
+      # /health/ is served before the install wizard completes, so a fresh
+      # deploy still reports healthy.
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/health/') === false ? 1 : 0);"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -96,5 +104,50 @@ services:
       timeout: 5s
       retries: 3
 
+  # The attribution workers are standalone CLI scripts that
+  # 202-cronjobs/index.php does NOT run (the repo docs schedule them from a
+  # host crontab, which this stack promises you don't need): the export queue
+  # processor runs every minute, the snapshot rebuild hourly. Built from the
+  # same image as web so the code and composer dependencies match; the shared
+  # entrypoint writes this container's own 202-config.php from the env below.
+  attribution-cron:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL:?}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
+      - DB_HOST=db
+      - MC_HOST=memcached
+      - P202_DISABLE_AUTO_UPGRADE=1
+    volumes:
+      - attribution_exports:/var/www/html/202-config/temp/attribution-exports
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+    command:
+      - bash
+      - -c
+      - |
+        last_rebuild=0
+        while true; do
+          php 202-cronjobs/attribution-export.php || true
+          now=$$(date +%s)
+          if [ $$((now - last_rebuild)) -ge 3600 ]; then
+            php 202-cronjobs/attribution-rebuild.php || true
+            last_rebuild=$$now
+          fi
+          sleep 60
+        done
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   db_data:
+  attribution_exports:
