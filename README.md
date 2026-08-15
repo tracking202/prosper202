@@ -39,6 +39,7 @@ There are two tracks. Pick by what you have access to:
 |-----------|-----|-------------|
 | Shared/cPanel hosting, **no terminal** | **Download & upload** (below) | Upload a pre-built zip, click through the wizard |
 | A terminal (VPS, local, Docker) | **From source** (below) | `git clone` + `./install.sh` or Docker |
+| A VPS running [Coolify](https://coolify.io) | **Coolify** (below) | Point Coolify at this repo, click Deploy |
 
 ### Download & Upload (no terminal)
 
@@ -91,6 +92,20 @@ Dependencies are automatically installed on container startup. Alternatively, ru
 
 - Application: `http://localhost:8000`
 - phpMyAdmin (optional): `docker compose --profile debug up -d`, then `http://127.0.0.1:8080` (user `root`, password from your `.env`)
+
+#### Coolify (self-hosted PaaS)
+
+Running [Coolify](https://coolify.io) on a VPS? The repo ships a production
+stack for it — `docker-compose.coolify.yaml` — with TLS, the database password,
+`202-config.php`, and cron all handled automatically:
+
+1. [Install Coolify](https://coolify.io/docs/get-started/installation) on your server.
+2. Add this repository as a **Docker Compose** resource with the compose
+   location set to `/docker-compose.coolify.yaml`.
+3. Set your domain on the `web` service and click **Deploy**, then open the
+   domain and finish the setup wizard.
+
+Full walkthrough: [documentation/deploying-on-coolify.md](documentation/deploying-on-coolify.md).
 
 #### Security defaults
 

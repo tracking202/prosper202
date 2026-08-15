@@ -1,4 +1,11 @@
-FROM php:8.3-apache
+# Stage layout:
+#   base — runtime (PHP extensions, Apache config, entrypoint) with no app
+#          code; the dev compose stack builds this target and bind-mounts the
+#          checkout over /var/www/html.
+#   app  — (default) base plus the application and its composer dependencies
+#          baked in, for deployments that build straight from git with no bind
+#          mount (Coolify, any production docker compose host).
+FROM php:8.3-apache AS base
 
 # git/unzip for Composer; libmemcached for the optional memcached extension
 # used by 202-config/connect.php. Dev libs stay installed because the built
@@ -30,6 +37,10 @@ RUN a2enmod rewrite \
         echo '<LocationMatch "/\.(?!well-known/)">'; \
         echo '    Require all denied'; \
         echo '</LocationMatch>'; \
+        echo '# Behind a TLS-terminating proxy (Coolify/Traefik, a load'; \
+        echo '# balancer), PHP only sees plain HTTP. Surface the forwarded'; \
+        echo '# scheme as HTTPS=on so secure cookies and generated URLs work.'; \
+        echo 'SetEnvIf X-Forwarded-Proto "^https$" HTTPS=on'; \
     } > /etc/apache2/conf-available/prosper202.conf \
     && a2enconf prosper202
 
@@ -45,3 +56,13 @@ WORKDIR /var/www/html
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["apache2-foreground"]
+
+# Default stage: self-contained image with the app baked in. www-data owns the
+# tree because the app writes inside the docroot at runtime (202-config.php,
+# 202-cronjobs/cron.lock, attribution exports, auto-upgrade). vendor/ is
+# installed afterwards as root on purpose — the web user only needs to read it.
+# The entrypoint sees vendor/autoload.php and skips its runtime composer
+# install, so container start stays fast.
+FROM base AS app
+COPY --chown=www-data:www-data . /var/www/html
+RUN composer install --no-dev --no-interaction --optimize-autoloader

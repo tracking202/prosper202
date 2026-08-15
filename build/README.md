@@ -48,7 +48,7 @@ on first boot, so the setup wizard opens with the database step already done.
 
 | File | Purpose |
 |------|---------|
-| `../Dockerfile` (repo root) | The app image, `prosper202-web` (`php:8.3-apache` base). This is the **only** Dockerfile the stacks build — the dev compose uses `build: .`, which resolves to the root `Dockerfile`, not anything under `build/`. Installs `mysqli`, `pdo_mysql`, `opcache`, and the `memcached` extension (used by `202-config/connect.php`), pulls Composer via `COPY --from=composer:2`, and writes an Apache conf that enables `mod_rewrite` **and denies dotfiles** (`.env`, `.git`, …) so the bind-mounted checkout can't leak them under the document root. It does **not** `COPY` the application in — source arrives via the compose bind mount and the entrypoint installs dependencies at boot. |
+| `../Dockerfile` (repo root) | The app image, `prosper202-web` (`php:8.3-apache` base). This is the **only** Dockerfile the stacks build — the dev compose uses `build:` with context `.`, which resolves to the root `Dockerfile`, not anything under `build/`. Two stages: **`base`** installs `mysqli`, `pdo_mysql`, `opcache`, and the `memcached` extension (used by `202-config/connect.php`), pulls Composer via `COPY --from=composer:2`, and writes an Apache conf that enables `mod_rewrite`, **denies dotfiles** (`.env`, `.git`, …) so a bind-mounted checkout can't leak them, and maps `X-Forwarded-Proto: https` to `HTTPS=on` for TLS-terminating proxies. `base` does **not** `COPY` the application in — the dev stack builds `target: base` and bind-mounts the source, with the entrypoint installing dependencies at boot. The default final stage (**`app`**) additionally bakes the checkout and a `--no-dev` Composer install into the image for deployments with no bind mount (Coolify / production compose); `.dockerignore` keeps `.git`, `.env*`, and `202-config.php` out of it. |
 | `php/conf.d/error-reporting.ini` | Dev-only PHP overrides — `display_errors = On`, `error_reporting = E_ALL`, errors to stderr (`/proc/self/fd/2`) so they land in `docker compose logs`. The dev compose mounts this read-only into the container; **never ship it to production**, where errors should be logged, not displayed. |
 
 ### Scripts (`scripts/`)
@@ -80,6 +80,13 @@ without a rebuild. They live at the **repo root**, not in `build/`.
 | **Dev** (default) | `docker-compose.yaml` | ✅ committed | `8000` | `db` (volume `db_data`), memcached, cron, optional phpMyAdmin | Day-to-day development. Generates `202-config.php` from `.env`. |
 | **Staging** | `docker-compose.staging.yml` | ⬇️ local (gitignored) | `8001` | `db2` on host `13307` | A second long-lived instance alongside dev (e.g. comparing behavior). Uses `staging-config.php` + `P202_URL_MAP`. |
 | **Test-install** | `docker-compose.test-install.yml` | ⬇️ local (gitignored) | `8002` | `db-test` on host `13308` | Exercising the install/upgrade path against a clean DB. Uses `test-install-config.php`. |
+
+There is also a fourth, production stack at the repo root:
+`docker-compose.coolify.yaml` (✅ committed). Unlike the three above it does
+**not** bind-mount the working tree — it builds the Dockerfile's default `app`
+stage with the code baked in, and is designed for
+[Coolify](https://coolify.io) deployments (see
+[`documentation/deploying-on-coolify.md`](../documentation/deploying-on-coolify.md)).
 
 Only the **dev** stack ships in the repo — `docker compose up -d` just works.
 The staging and test-install compose files are intentionally gitignored

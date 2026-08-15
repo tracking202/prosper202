@@ -1,0 +1,95 @@
+# Deploying Prosper202 on Coolify
+
+[Coolify](https://coolify.io) is a self-hosted, open-source platform that turns
+any VPS into your own Heroku/Netlify: it builds from git, routes domains,
+issues Let's Encrypt certificates, and restarts things that die. Prosper202
+ships a ready-made stack for it — [`docker-compose.coolify.yaml`](../docker-compose.coolify.yaml)
+— that runs the web app, MySQL, memcached, and the cron poller with one click.
+
+## 1. Install Coolify on your server
+
+Follow the official guide: <https://coolify.io/docs/get-started/installation>.
+
+You need a server (VPS or dedicated) with SSH root access and at least
+**2 CPU cores, 2 GB RAM, and 30 GB of disk**. On Ubuntu LTS the whole install
+is one command:
+
+```bash
+curl -fsSL https://cdn.coollabs.io/coolify/install.sh | sudo bash
+```
+
+Then open `http://<your-server-ip>:8000`, create the Coolify admin account
+immediately (the first visitor claims the instance), and finish Coolify's
+onboarding — let it manage **localhost** unless you want to deploy to a
+separate server.
+
+## 2. Create the Prosper202 resource
+
+1. In the Coolify dashboard, open a project and click **+ New** →
+   **Public Repository** (or **Private Repository (GitHub App)** if you deploy
+   a private fork).
+2. Repository URL: `https://github.com/tracking202/prosper202`, branch `master`
+   (or your fork/branch).
+3. Set **Build Pack** to **Docker Compose**.
+4. Set **Docker Compose Location** to `/docker-compose.coolify.yaml`.
+   *(The default `/docker-compose.yaml` is the development stack — bind
+   mounts, port 8000, `display_errors` on. Don't deploy that one.)*
+5. Continue. Coolify parses the compose file and shows the services.
+
+## 3. Set the domain
+
+On the **web** service, set the domain your tracker will run on, e.g.
+`https://track.example.com` (the compose file's `SERVICE_FQDN_WEB_80` variable
+tells Coolify to route the domain to Apache on port 80). Point the domain's
+DNS A record at your server first; Coolify then provisions the Let's Encrypt
+certificate automatically.
+
+Everything else is hands-off:
+
+- **Database password** — Coolify generates `SERVICE_PASSWORD_MYSQL` on first
+  deploy and injects it into both the web and db containers. The container
+  writes its own `202-config.php` from it at startup; you never edit a config
+  file. Note the password is baked into the MySQL data volume on first start,
+  so don't rotate the variable later without also changing it inside MySQL.
+- **Cron** — the `cron` service polls `202-cronjobs/index.php` once a minute.
+  No host crontab needed.
+- **HTTPS detection** — Coolify's proxy terminates TLS; the image maps
+  `X-Forwarded-Proto` back to `HTTPS=on` so secure cookies and generated URLs
+  are correct.
+
+## 4. Deploy and finish the wizard
+
+Click **Deploy**. Coolify builds the image from git (the app and its Composer
+dependencies are baked in — first build takes a few minutes) and starts the
+stack; the web service reports healthy once `/health/` responds.
+
+Then open your domain. The setup wizard runs with the database step already
+completed — you only validate your API key and create the admin account.
+
+> **Do this immediately after deploying.** Until the wizard is finished the
+> install has no account, and anyone who reaches the domain first can claim it.
+
+## Day-2 operations
+
+- **Upgrades** — click **Redeploy** (or enable auto-deploy on push). The image
+  is rebuilt from git; your data lives in the `db_data` volume and survives
+  redeploys. `202-config.php` is regenerated from the environment on boot when
+  missing, so a fresh container wires itself back to the same database.
+- **Backups** — the only state is MySQL. Use Coolify's scheduled backup
+  feature on the stack's volume, or run `mysqldump` in the db container:
+  `docker exec <db-container> mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" prosper202`.
+- **Scaling note** — this stack is a single-server deployment, which is the
+  standard Prosper202 topology. For a tuned bare-metal click server, see the
+  Nginx/Apache configs referenced in the main [README](../README.md).
+
+## Running the stack without Coolify
+
+The same file works with plain docker compose — supply the password Coolify
+would have generated:
+
+```bash
+SERVICE_PASSWORD_MYSQL=$(openssl rand -hex 16) docker compose -f docker-compose.coolify.yaml up -d --build
+```
+
+There are no host port mappings, so front it with your own reverse proxy that
+forwards to the `web` container (and sets `X-Forwarded-Proto`).
