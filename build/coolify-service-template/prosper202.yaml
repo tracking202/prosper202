@@ -19,12 +19,16 @@ services:
   prosper202:
     image: ghcr.io/tracking202/prosper202:latest
     environment:
+      # FQDN routes the assigned domain to this service on port 80; URL is the
+      # same domain with the scheme, declared so Coolify generates it — the
+      # worker consumes it as P202_PUBLIC_ORIGIN for webhook download links.
       - SERVICE_FQDN_PROSPER202_80
+      - SERVICE_URL_PROSPER202
       - APP_ENV=production
       # In-app 1-click upgrade writes to the ephemeral container filesystem;
       # upgrades arrive as new image tags instead.
       - P202_DISABLE_AUTO_UPGRADE=1
-      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL}
+      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL:?}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
       - DB_HOST=db
       - MC_HOST=memcached
@@ -51,7 +55,7 @@ services:
   db:
     image: mysql:8.0
     environment:
-      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL}
+      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL:?}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
     volumes:
       - prosper202-mysql-data:/var/lib/mysql
@@ -97,14 +101,14 @@ services:
     environment:
       - APP_ENV=production
       - P202_DISABLE_AUTO_UPGRADE=1
-      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL}
+      - MYSQL_ROOT_PASSWORD=${SERVICE_PASSWORD_MYSQL:?}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-prosper202}
       - DB_HOST=db
       - MC_HOST=memcached
       - P202_SERVER_STATE_DIR=/var/lib/prosper202/api-v3-state
       - P202_GEO_DIR=/var/lib/prosper202/geo
       # Public origin for webhook download links (no request context in CLI).
-      - P202_PUBLIC_ORIGIN=${SERVICE_URL_PROSPER202}
+      - P202_PUBLIC_ORIGIN=${SERVICE_URL_PROSPER202:-}
     volumes:
       - prosper202-exports:/var/www/html/202-config/temp/attribution-exports
       - prosper202-api-state:/var/lib/prosper202/api-v3-state
