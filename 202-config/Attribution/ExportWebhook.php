@@ -24,8 +24,8 @@ final readonly class ExportWebhook
         }
 
         // SSRF guard: this URL is POSTed to by 202-cronjobs/attribution-export.php
-        // on behalf of a tenant, so an unvalidated value turns the install into a
-        // blind request oracle against its own network.
+        // on behalf of a user, so an unvalidated value turns the install into a
+        // blind request oracle against its own (or the host's) internal network.
         try {
             \Prosper202\Validation\OutboundUrlGuard::assertAllowed($this->url, 'Webhook URL');
         } catch (\RuntimeException $e) {

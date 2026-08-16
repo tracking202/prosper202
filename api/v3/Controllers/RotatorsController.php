@@ -129,9 +129,11 @@ class RotatorsController
         $defaultLp = (int)($payload['default_lp'] ?? 0);
         // public_id is the handle offrtr.php/rtr.php resolve for ANY visitor with
         // no user scoping, and 202_rotators has no unique key on it — so a
-        // caller-chosen value could collide with another tenant's rotator and
-        // hijack their outbound traffic (the lookup is then memcached). Always
-        // derive it server-side, and check for a free value before using it.
+        // caller-chosen value could collide with another user's rotator in this
+        // install and route that rotator's clicks to the wrong destination (the
+        // lookup is then memcached). A correctness/integrity bug within the
+        // install, not cross-install. Always derive it server-side, and check
+        // for a free value before using it.
         $publicId = $this->generatePublicId();
 
         $stmt = $this->prepare('INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)');

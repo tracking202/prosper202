@@ -96,7 +96,8 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
     {
         // Always derive server-side: public_id is resolved by the unauthenticated
         // redirect with no user scoping and has no UNIQUE key, so honouring a
-        // caller-supplied value lets one tenant collide with another's rotator.
+        // caller-supplied value lets one user's rotator collide with another's
+        // within this install and resolve to the wrong record.
         $publicId = $this->generatePublicId();
 
         $stmt = $this->conn->prepareWrite(
