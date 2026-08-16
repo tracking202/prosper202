@@ -55,7 +55,11 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
                 $params['user_id'] = $auth;
             }
 
-            $payload = array_merge($params, decode_json_body($request));
+            $body = decode_json_body($request);
+            if ($body === null) {
+                return respond_json($response, ['error' => 'Invalid JSON body'], 400);
+            }
+            $payload = array_merge($params, $body);
             if ($auth !== null) {
                 $payload['user_id'] = $auth;
             }
@@ -92,7 +96,11 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
                 $params['user_id'] = $auth;
             }
 
-            $payload = array_merge($params, decode_json_body($request));
+            $body = decode_json_body($request);
+            if ($body === null) {
+                return respond_json($response, ['error' => 'Invalid JSON body'], 400);
+            }
+            $payload = array_merge($params, $body);
             if ($auth !== null) {
                 $payload['user_id'] = $auth;
             }
@@ -107,7 +115,11 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
                 $params['user_id'] = $auth;
             }
 
-            $payload = array_merge($params, decode_json_body($request));
+            $body = decode_json_body($request);
+            if ($body === null) {
+                return respond_json($response, ['error' => 'Invalid JSON body'], 400);
+            }
+            $payload = array_merge($params, $body);
             if ($auth !== null) {
                 $payload['user_id'] = $auth;
             }
@@ -356,9 +368,13 @@ function user_has_permission(int $userId, string $permission): bool
 }
 
 /**
- * @return array<string, mixed>
+ * Decode the request body. Returns [] for an empty body and null for a
+ * malformed one — malformed JSON must produce a 400, not be silently
+ * treated as an empty payload.
+ *
+ * @return array<string, mixed>|null
  */
-function decode_json_body(Request $request): array
+function decode_json_body(Request $request): ?array
 {
     $body = (string) $request->getBody();
     if ($body === '') {
@@ -368,16 +384,21 @@ function decode_json_body(Request $request): array
     try {
         $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
     } catch (\Throwable) {
-        return [];
+        return null;
     }
 
-    return is_array($decoded) ? $decoded : [];
+    return is_array($decoded) ? $decoded : null;
 }
 
 function respond_json(Response $response, array $payload, int $status = 200): Response
 {
+    $json = json_encode($payload);
+    if ($json === false) {
+        $status = 500;
+        $json = (string) json_encode(['error' => 'Response encoding failed']);
+    }
     $response = $response->withStatus($status);
     $response = $response->withHeader('Content-Type', 'application/json');
-    $response->getBody()->write(json_encode($payload));
+    $response->getBody()->write($json);
     return $response;
 }

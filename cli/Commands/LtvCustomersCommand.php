@@ -35,7 +35,7 @@ class LtvCustomersCommand extends BaseCommand
         if ($id !== null) {
             $result = $this->client()->get('ltv/customers/' . (int) $id, []);
         } else {
-            $result = $this->client()->get('ltv/customers', LtvSummaryCommand::collectLtvParams($input));
+            $result = $this->client()->get('ltv/customers', $this->collectOptions($input, LtvSummaryCommand::LTV_PARAMS));
         }
         $this->render($output, $result, $input);
         return Command::SUCCESS;

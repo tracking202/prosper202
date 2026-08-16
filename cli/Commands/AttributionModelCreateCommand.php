@@ -41,16 +41,9 @@ class AttributionModelCreateCommand extends BaseCommand
             'is_default' => (int)$input->getOption('is_default'),
         ];
 
-        $weightingConfig = $input->getOption('weighting_config');
+        $weightingConfig = $this->decodeJsonOption($input, 'weighting_config');
         if ($weightingConfig !== null) {
-            $decodedConfig = json_decode((string)$weightingConfig, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                $output->writeln(
-                    sprintf('<error>Invalid --weighting_config JSON: %s</error>', json_last_error_msg())
-                );
-                return Command::FAILURE;
-            }
-            $body['weighting_config'] = $decodedConfig;
+            $body['weighting_config'] = $weightingConfig;
         }
 
         $result = $this->client()->post('attribution/models', $body);

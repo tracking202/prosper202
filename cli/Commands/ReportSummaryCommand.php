@@ -11,6 +11,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class ReportSummaryCommand extends BaseCommand
 {
+    /** Filter options shared by every report command. */
+    public const array FILTER_PARAMS = ['period', 'time_from', 'time_to', 'aff_campaign_id', 'ppc_account_id', 'aff_network_id', 'ppc_network_id', 'landing_page_id', 'country_id'];
+
     protected static $defaultName = 'report:summary';
 
     #[\Override]
@@ -27,23 +30,10 @@ class ReportSummaryCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $params = self::collectParams($input);
+        $params = $this->collectOptions($input, self::FILTER_PARAMS);
         $result = $this->client()->get('reports/summary', $params);
         $this->render($output, $result, $input);
         return Command::SUCCESS;
     }
 
-    public static function collectParams(InputInterface $input): array
-    {
-        $params = [];
-        foreach (['period', 'time_from', 'time_to', 'aff_campaign_id', 'ppc_account_id', 'aff_network_id', 'ppc_network_id', 'landing_page_id', 'country_id'] as $p) {
-            if ($input->hasOption($p)) {
-                $val = $input->getOption($p);
-                if ($val !== null) {
-                    $params[$p] = $val;
-                }
-            }
-        }
-        return $params;
-    }
 }

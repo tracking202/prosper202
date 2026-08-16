@@ -28,7 +28,10 @@ final readonly class Auth
      */
     public static function fromRequest(array $headers, \mysqli $db): self
     {
-        $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
+        // Header names are case-insensitive per RFC 9110; normalize instead of
+        // probing a couple of hardcoded casings.
+        $headers = array_change_key_case($headers, CASE_LOWER);
+        $authHeader = $headers['authorization'] ?? '';
         if (is_array($authHeader)) {
             $authHeader = $authHeader[0] ?? '';
         }
@@ -42,10 +45,12 @@ final readonly class Auth
             throw new AuthException('API key required. Pass via Authorization: Bearer <key> header.', 401);
         }
 
+        // Join 202_users so keys belonging to soft-deleted users stop
+        // authenticating — "deleting" a user must actually revoke access.
         $scopeColumnExists = self::apiKeyScopeColumnExists($db);
         $sql = $scopeColumnExists
-            ? 'SELECT user_id, scope FROM 202_api_keys WHERE api_key = ? LIMIT 1'
-            : 'SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1';
+            ? 'SELECT k.user_id, k.scope FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
+            : 'SELECT k.user_id FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1';
         $stmt = $db->prepare($sql);
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
@@ -163,18 +168,22 @@ final readonly class Auth
 
     private static function apiKeyScopeColumnExists(\mysqli $db): bool
     {
+        // Fail closed: a DB error here must not silently drop the scope column
+        // from the auth query (which would grant the key the full '*' scope).
+        // Only a successful probe that finds no column may report false —
+        // that is the legitimate pre-upgrade schema case.
         $stmt = $db->prepare("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
         if (!$stmt) {
-            return false;
+            throw new AuthException('Authentication unavailable', 500);
         }
         if (!self::execute($stmt)) {
             $stmt->close();
-            return false;
+            throw new AuthException('Authentication unavailable', 500);
         }
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
-            return false;
+            throw new AuthException('Authentication unavailable', 500);
         }
         $row = $result->fetch_assoc();
         $stmt->close();
@@ -192,12 +201,18 @@ final readonly class Auth
         $scopes = [];
         if (str_starts_with($raw, '[')) {
             $decoded = json_decode($raw, true);
-            if (is_array($decoded)) {
-                foreach ($decoded as $scope) {
-                    $value = strtolower(trim((string)$scope));
-                    if ($value !== '') {
-                        $scopes[] = $value;
-                    }
+            if (!is_array($decoded)) {
+                // Fail closed: corrupt scope JSON must not silently widen a
+                // restricted key to the full '*' scope.
+                throw new AuthException('API key scope configuration is invalid.', 500);
+            }
+            foreach ($decoded as $scope) {
+                if (!is_scalar($scope)) {
+                    throw new AuthException('API key scope configuration is invalid.', 500);
+                }
+                $value = strtolower(trim((string)$scope));
+                if ($value !== '') {
+                    $scopes[] = $value;
                 }
             }
         } else {

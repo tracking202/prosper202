@@ -278,7 +278,7 @@ class CrudCommandsTest extends TestCase
         ]);
 
         $this->assertSame(Command::FAILURE, $status);
-        $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
+        $this->assertStringContainsString('Invalid JSON in --weighting_config', $tester->getDisplay());
     }
 
     public function testAttributionUpdateRejectsInvalidWeightingConfigJson(): void
@@ -294,6 +294,6 @@ class CrudCommandsTest extends TestCase
         ]);
 
         $this->assertSame(Command::FAILURE, $status);
-        $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
+        $this->assertStringContainsString('Invalid JSON in --weighting_config', $tester->getDisplay());
     }
 }

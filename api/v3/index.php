@@ -65,7 +65,12 @@ RequestContext::setHeaders($headers);
 
 $payload = [];
 if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
-    $raw = file_get_contents('php://input', false, null, 0, 1_048_576); // 1 MB limit
+    $maxBody = 1_048_576; // 1 MB limit
+    $raw = file_get_contents('php://input', false, null, 0, $maxBody + 1);
+    if ($raw !== false && strlen($raw) > $maxBody) {
+        Bootstrap::errorResponse('Request body too large', 413, ['max_bytes' => $maxBody]);
+        exit;
+    }
     if ($raw !== '' && $raw !== false) {
         $payload = json_decode($raw, true);
         if ($payload === null && json_last_error() !== JSON_ERROR_NONE) {
@@ -80,7 +85,7 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
     }
 }
 
-$requestedVersion = strtolower(trim((string)($headers['X-P202-API-Version'] ?? $headers['x-p202-api-version'] ?? '')));
+$requestedVersion = strtolower((string)RequestContext::header('x-p202-api-version', ''));
 if ($requestedVersion !== '' && !in_array($requestedVersion, ['v3', '3'], true)) {
     Bootstrap::errorResponse(
         'Unsupported API version',

@@ -6,9 +6,12 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\StatementHelpers;
 
 class ReportsController
 {
+    use StatementHelpers;
+
     private const array BREAKDOWNS = [
         'campaign'     => ['table' => '202_aff_campaigns',      'id' => 'aff_campaign_id',  'name' => 'aff_campaign_name',  'de_id' => 'aff_campaign_id'],
         'aff_network'  => ['table' => '202_aff_networks',       'id' => 'aff_network_id',   'name' => 'aff_network_name',   'de_id' => 'aff_network_id'],
@@ -425,13 +428,17 @@ class ReportsController
         if (!empty($params['period'])) {
             $now = time();
             $todayStart = strtotime('today midnight');
-            [$from, $to] = match ($params['period']) {
+            [$from, $to] = match ((string)$params['period']) {
                 'today'     => [$todayStart, $now],
                 'yesterday' => [$todayStart - 86400, $todayStart - 1],
                 'last7'     => [$now - (7 * 86400), $now],
                 'last30'    => [$now - (30 * 86400), $now],
                 'last90'    => [$now - (90 * 86400), $now],
-                default     => [0, $now],
+                // A typo like period=last7d must not silently mean "all time".
+                default     => throw new ValidationException(
+                    'Invalid period',
+                    ['period' => 'Valid: today, yesterday, last7, last30, last90']
+                ),
             };
             $where[] = 'de.click_time >= ?';
             $binds[] = $from;
@@ -451,15 +458,6 @@ class ReportsController
                 $types .= 'i';
             }
         }
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
     }
 
     private function resolveUserTimezone(): string
@@ -525,23 +523,5 @@ class ReportsController
 
             return ((int)$a[$keyName]) <=> ((int)$b[$keyName]);
         });
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized ref-safe bind wrapper (no Connection instance; routing through $this->conn would self-recurse)
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized checked-execute wrapper (no Connection instance; routing through $this->conn would self-recurse)
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
     }
 }

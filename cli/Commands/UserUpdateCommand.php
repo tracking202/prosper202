@@ -9,7 +9,6 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\Question;
 
 class UserUpdateCommand extends BaseCommand
 {
@@ -31,24 +30,14 @@ class UserUpdateCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $body = [];
-        foreach (['user_fname', 'user_lname', 'user_email', 'user_timezone', 'user_active'] as $f) {
-            $val = $input->getOption($f);
-            if ($val !== null) {
-                $body[$f] = $val;
-            }
-        }
+        $body = $this->collectOptions($input, ['user_fname', 'user_lname', 'user_email', 'user_timezone', 'user_active']);
 
         // Handle password separately — prompt securely if --user_pass given without value
         $passVal = $input->getOption('user_pass');
         if ($passVal === null && $input->hasParameterOption('--user_pass')) {
-            $helper = $this->getHelper('question');
-            $question = new Question('New password (hidden): ');
-            $question->setHidden(true);
-            $question->setHiddenFallback(false);
-            $passVal = $helper->ask($input, $output, $question);
+            $passVal = $this->promptHiddenSecret($input, $output, 'New password (hidden): ');
         }
-        if ($passVal !== null && $passVal !== false && $passVal !== '') {
+        if (is_string($passVal) && $passVal !== '') {
             $body['user_pass'] = $passVal;
         }
         if (empty($body)) {

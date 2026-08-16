@@ -8,9 +8,12 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\StatementHelpers;
 
 class UsersController
 {
+    use StatementHelpers;
+
     public function __construct(private readonly \mysqli $db)
     {
     }
@@ -177,10 +180,27 @@ class UsersController
     public function delete(int $id): void
     {
         $this->get($id);
-        $stmt = $this->prepare('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?');
-        $this->bind($stmt, 'i', $id);
-        $this->execute($stmt, 'Delete failed');
-        $stmt->close();
+        $this->db->begin_transaction();
+        try {
+            $stmt = $this->prepare('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?');
+            $this->bind($stmt, 'i', $id);
+            $this->execute($stmt, 'Delete failed');
+            $stmt->close();
+
+            // Deleting a user is an access-revocation event: remove their API
+            // keys so the credentials cannot keep authenticating.
+            $stmt = $this->prepare('DELETE FROM 202_api_keys WHERE user_id = ?');
+            $this->bind($stmt, 'i', $id);
+            $this->execute($stmt, 'API key revocation failed');
+            $stmt->close();
+
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Delete commit failed');
+            }
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
     }
 
     // --- Roles ---
@@ -205,6 +225,19 @@ class UsersController
             throw new ValidationException('role_id is required', ['role_id' => 'Must be a positive integer']);
         }
 
+        // Validate BEFORE mutating: 202_user_role has no foreign keys, so an
+        // insert for a nonexistent user/role would persist an orphan grant
+        // that silently becomes live if that user ID is ever created.
+        $this->get($userId);
+        $stmt = $this->prepare('SELECT role_id FROM 202_roles WHERE role_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $roleId);
+        $this->execute($stmt, 'Role lookup failed');
+        $role = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$role) {
+            throw new ValidationException('Unknown role_id', ['role_id' => 'Role does not exist']);
+        }
+
         $stmt = $this->prepare('INSERT IGNORE INTO 202_user_role (user_id, role_id) VALUES (?, ?)');
         $this->bind($stmt, 'ii', $userId, $roleId);
         $this->execute($stmt, 'Failed to assign role');
@@ -218,7 +251,12 @@ class UsersController
         $stmt = $this->prepare('DELETE FROM 202_user_role WHERE user_id = ? AND role_id = ?');
         $this->bind($stmt, 'ii', $userId, $roleId);
         $this->execute($stmt, 'Failed to remove role');
+        $affected = $stmt->affected_rows;
         $stmt->close();
+        if ($affected === 0) {
+            // A revocation that matched nothing must not report success.
+            throw new NotFoundException('Role assignment not found');
+        }
     }
 
     // --- API Keys ---
@@ -261,7 +299,14 @@ class UsersController
         $stmt = $this->prepare('DELETE FROM 202_api_keys WHERE user_id = ? AND api_key = ?');
         $this->bind($stmt, 'is', $userId, $apiKey);
         $this->execute($stmt, 'Failed to delete API key');
+        $affected = $stmt->affected_rows;
         $stmt->close();
+        if ($affected === 0) {
+            // Callers only ever see masked keys after creation; a mismatched
+            // value deleting zero rows must surface as an error — reporting
+            // 204 here would tell the caller a live credential was revoked.
+            throw new NotFoundException('API key not found');
+        }
     }
 
     // --- Preferences ---
@@ -317,32 +362,5 @@ class UsersController
         $stmt->close();
 
         return $this->getPreferences($userId);
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall -- local checked bind wrapper
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall -- local checked execute wrapper
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
     }
 }

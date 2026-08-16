@@ -36,7 +36,7 @@ class ReportBreakdownCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $params = ReportSummaryCommand::collectParams($input);
+        $params = $this->collectOptions($input, ReportSummaryCommand::FILTER_PARAMS);
         $params['breakdown'] = $input->getOption('breakdown');
         $params['sort'] = $input->getOption('sort');
         $params['sort_dir'] = $input->getOption('sort_dir');

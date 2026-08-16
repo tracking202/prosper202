@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
-use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\StatementHelpers;
 
 class RotatorsController
 {
+    use StatementHelpers;
+
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
     }
@@ -119,6 +121,11 @@ class RotatorsController
     {
         $this->get($id);
 
+        // create() rejects empty names; update must too.
+        if (array_key_exists('name', $payload) && trim((string)$payload['name']) === '') {
+            throw new ValidationException('name cannot be empty', ['name' => 'Cannot be empty']);
+        }
+
         $sets = [];
         $binds = [];
         $types = '';
@@ -210,6 +217,9 @@ class RotatorsController
             if (!empty($payload['criteria']) && is_array($payload['criteria'])) {
                 $insertCriteria = $this->prepare('INSERT INTO 202_rotator_rules_criteria (rotator_id, rule_id, type, statement, value) VALUES (?, ?, ?, ?, ?)');
                 foreach ($payload['criteria'] as $c) {
+                    if (!is_array($c)) {
+                        throw new ValidationException('Each criterion must be an object', ['criteria' => 'Scalar entries are not valid criteria']);
+                    }
                     $cType = (string)($c['type'] ?? '');
                     $cStatement = (string)($c['statement'] ?? '');
                     $cValue = (string)($c['value'] ?? '');
@@ -222,6 +232,9 @@ class RotatorsController
             if (!empty($payload['redirects']) && is_array($payload['redirects'])) {
                 $insertRedirect = $this->prepare('INSERT INTO 202_rotator_rules_redirects (rule_id, redirect_url, redirect_campaign, redirect_lp, weight, name) VALUES (?, ?, ?, ?, ?, ?)');
                 foreach ($payload['redirects'] as $r) {
+                    if (!is_array($r)) {
+                        throw new ValidationException('Each redirect must be an object', ['redirects' => 'Scalar entries are not valid redirects']);
+                    }
                     $rUrl = (string)($r['redirect_url'] ?? '');
                     $rCampaign = (int)($r['redirect_campaign'] ?? 0);
                     $rLp = (int)($r['redirect_lp'] ?? 0);
@@ -371,6 +384,19 @@ class RotatorsController
     {
         $this->get($rotatorId);
 
+        // Verify the rule belongs to this rotator BEFORE deleting its
+        // criteria/redirects — those deletes match on rule_id alone, and
+        // rule IDs are global, so an unscoped delete would let one user
+        // strip criteria off another user's rule.
+        $stmt = $this->prepare('SELECT id FROM 202_rotator_rules WHERE id = ? AND rotator_id = ?');
+        $this->bind($stmt, 'ii', $ruleId, $rotatorId);
+        $this->execute($stmt, 'Rule lookup failed');
+        $found = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$found) {
+            throw new NotFoundException('Rule not found');
+        }
+
         $this->db->begin_transaction();
         try {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
@@ -392,33 +418,6 @@ class RotatorsController
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
-        }
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line -- this IS the ref-safe wrapper; no Connection in scope
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line -- this IS the checked-execution wrapper; no Connection in scope
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
         }
     }
 }

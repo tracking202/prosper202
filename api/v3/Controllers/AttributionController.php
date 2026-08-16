@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
-use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\StatementHelpers;
 
 class AttributionController
 {
+    use StatementHelpers;
+
     private const array VALID_MODEL_TYPES = ['first_touch', 'last_touch', 'linear', 'time_decay', 'position_based', 'algorithmic'];
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
@@ -68,6 +71,56 @@ class AttributionController
         return ['data' => $row];
     }
 
+    /**
+     * Validate/encode a weighting_config payload value to a JSON string.
+     * json_encode() failures and non-JSON strings must be explicit errors:
+     * a silently-emptied config makes the model compute garbage attribution.
+     */
+    private function normalizeWeightingConfig(mixed $config): string
+    {
+        if (is_array($config)) {
+            $json = json_encode($config, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if ($json === false) {
+                throw new ValidationException('weighting_config could not be encoded', ['weighting_config' => json_last_error_msg()]);
+            }
+            return $json;
+        }
+
+        $raw = trim((string)$config);
+        if ($raw === '') {
+            return '{}';
+        }
+        json_decode($raw);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new ValidationException('weighting_config must be valid JSON', ['weighting_config' => json_last_error_msg()]);
+        }
+        return $raw;
+    }
+
+    /**
+     * 202_attribution_models has UNIQUE (user_id, model_slug); surface a
+     * duplicate as 409 instead of letting the INSERT die as a generic 500.
+     */
+    private function assertSlugAvailable(string $slug, ?int $excludeId = null): void
+    {
+        $sql = 'SELECT model_id FROM 202_attribution_models WHERE user_id = ? AND model_slug = ?';
+        $types = 'is';
+        $binds = [$this->userId, $slug];
+        if ($excludeId !== null) {
+            $sql .= ' AND model_id != ?';
+            $types .= 'i';
+            $binds[] = $excludeId;
+        }
+        $stmt = $this->prepare($sql . ' LIMIT 1');
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Slug lookup failed');
+        $existing = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if ($existing) {
+            throw new ConflictException('A model with this slug already exists', ['model_slug' => $slug]);
+        }
+    }
+
     public function createModel(array $payload): array
     {
         $name = trim((string)($payload['model_name'] ?? ''));
@@ -80,11 +133,12 @@ class AttributionController
             throw new ValidationException('Invalid model_type', ['model_type' => 'Valid: ' . implode(', ', self::VALID_MODEL_TYPES)]);
         }
 
-        $slug = preg_replace('/[^a-z0-9]+/', '-', strtolower($name));
-        $config = $payload['weighting_config'] ?? '{}';
-        if (is_array($config)) {
-            $config = json_encode($config);
+        $slug = trim((string)preg_replace('/[^a-z0-9]+/', '-', strtolower($name)), '-');
+        if ($slug === '') {
+            throw new ValidationException('model_name must contain at least one alphanumeric character', ['model_name' => 'Cannot derive a slug']);
         }
+        $this->assertSlugAvailable($slug);
+        $config = $this->normalizeWeightingConfig($payload['weighting_config'] ?? '{}');
         $isActive = (int)($payload['is_active'] ?? 1);
         $isDefault = (int)($payload['is_default'] ?? 0);
         $now = time();
@@ -108,6 +162,17 @@ class AttributionController
             }
         }
 
+        // Create rejects empty names/slugs; update must too, and an emptied
+        // slug would additionally break slug-addressed lookups.
+        foreach (['model_name', 'model_slug'] as $requiredField) {
+            if (array_key_exists($requiredField, $payload) && trim((string)$payload[$requiredField]) === '') {
+                throw new ValidationException("$requiredField cannot be empty", [$requiredField => 'Must not be empty']);
+            }
+        }
+        if (array_key_exists('model_slug', $payload)) {
+            $this->assertSlugAvailable(trim((string)$payload['model_slug']), $id);
+        }
+
         $sets = [];
         $binds = [];
         $types = '';
@@ -121,8 +186,7 @@ class AttributionController
         }
         if (array_key_exists('weighting_config', $payload)) {
             $sets[] = 'weighting_config = ?';
-            $val = is_array($payload['weighting_config']) ? json_encode($payload['weighting_config']) : (string)$payload['weighting_config'];
-            $binds[] = $val;
+            $binds[] = $this->normalizeWeightingConfig($payload['weighting_config']);
             $types .= 's';
         }
 
@@ -269,32 +333,5 @@ class AttributionController
         $stmt->close();
 
         return ['data' => $row];
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line this IS the ref-safe bind wrapper (analog of Connection::bind); class has no $this->conn, cannot self-route
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line this IS the checked-execute wrapper (analog of Connection::execute); class has no $this->conn, cannot self-route
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
     }
 }
