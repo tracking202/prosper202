@@ -67,8 +67,11 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
             return 0;
         }
 
+        // The device catalog is 202_device_models; 202_devices is created by no
+        // install path, so every call here was destined for a 1146 on the click
+        // hot path. device_type is NOT NULL with no default, so supply it.
         $stmt = $this->conn->prepareRead(
-            'SELECT device_id FROM 202_devices WHERE device_name = ?'
+            'SELECT device_id FROM 202_device_models WHERE device_name = ?'
         );
         $this->conn->bind($stmt, 's', [$name]);
         $row = $this->conn->fetchOne($stmt);
@@ -78,7 +81,7 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
         }
 
         $stmt = $this->conn->prepareWrite(
-            'INSERT INTO 202_devices SET device_name = ?'
+            'INSERT INTO 202_device_models SET device_name = ?, device_type = 0'
         );
         $this->conn->bind($stmt, 's', [$name]);
 

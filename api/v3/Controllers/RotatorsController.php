@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
@@ -94,6 +95,28 @@ class RotatorsController
         return ['data' => $row];
     }
 
+    /**
+     * Pick an unused public_id. 202_rotators has no UNIQUE key on the column,
+     * so this is best-effort: it removes deliberate collisions and makes random
+     * ones vanishingly unlikely.
+     */
+    private function generatePublicId(): int
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $candidate = random_int(100_000, 9_999_999);
+            $stmt = $this->prepare('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
+            $this->bind($stmt, 'i', $candidate);
+            $this->execute($stmt, 'Public id lookup failed');
+            $taken = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if (!$taken) {
+                return $candidate;
+            }
+        }
+
+        throw new DatabaseException('Unable to allocate a unique rotator public id');
+    }
+
     public function create(array $payload): array
     {
         $name = trim((string)($payload['name'] ?? ''));
@@ -104,9 +127,12 @@ class RotatorsController
         $defaultUrl = (string)($payload['default_url'] ?? '');
         $defaultCampaign = (int)($payload['default_campaign'] ?? 0);
         $defaultLp = (int)($payload['default_lp'] ?? 0);
-        $publicId = isset($payload['public_id']) && (int)$payload['public_id'] > 0
-            ? (int)$payload['public_id']
-            : random_int(100_000, 9_999_999);
+        // public_id is the handle offrtr.php/rtr.php resolve for ANY visitor with
+        // no user scoping, and 202_rotators has no unique key on it — so a
+        // caller-chosen value could collide with another tenant's rotator and
+        // hijack their outbound traffic (the lookup is then memcached). Always
+        // derive it server-side, and check for a free value before using it.
+        $publicId = $this->generatePublicId();
 
         $stmt = $this->prepare('INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)');
         $this->bind($stmt, 'iissii', $publicId, $this->userId, $name, $defaultUrl, $defaultCampaign, $defaultLp);
@@ -181,7 +207,9 @@ class RotatorsController
             $this->execute($stmt, 'Delete rotator failed');
             $stmt->close();
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
@@ -246,7 +274,9 @@ class RotatorsController
                 $insertRedirect->close();
             }
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
@@ -371,7 +401,9 @@ class RotatorsController
                 }
             }
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
@@ -414,7 +446,9 @@ class RotatorsController
             $this->execute($stmt, 'Delete rule failed');
             $stmt->close();
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;

@@ -224,9 +224,11 @@ final readonly class Auth
             }
         }
 
-        if ($scopes === []) {
-            $scopes[] = '*';
-        }
+        // Deliberately NO '*' default here. An empty raw value means "legacy
+        // key, no scope column" and already returned ['*'] above; reaching this
+        // point means a scope WAS configured, so a value that parses to nothing
+        // (e.g. '[]' or ',') means "may do nothing" — granting '*' would turn a
+        // deliberately-neutered key into a full-access one.
         return array_values(array_unique($scopes));
     }
 

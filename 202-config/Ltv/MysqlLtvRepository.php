@@ -363,6 +363,25 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $rows = [];
         foreach ($this->breakdown($query, $breakdownType, 100, 0) as $row) {
             $customers = (int) ($row['customers'] ?? 0);
+            // Not every breakdown supplies the projection inputs: the product
+            // breakdown aggregates line items and has no aov/repeat_rate/mrr.
+            // Without this check those cohorts projected to exactly 0.0, so a
+            // best-selling product reported $0 predicted LTV while a product
+            // below MIN_COHORT_SIZE correctly fell back to the account average
+            // — inverting the numbers used for scaling decisions.
+            $hasProjectionInputs = array_key_exists('aov', $row) && array_key_exists('repeat_rate', $row);
+            if (!$hasProjectionInputs) {
+                $prediction = $account;
+                $prediction['basis'] = 'account_fallback';
+                $prediction['fallback_reason'] = "'{$breakdownType}' breakdown does not supply per-cohort aov/repeat_rate";
+                $rows[] = [
+                    'id' => $row['id'] ?? null,
+                    'name' => $row['name'] ?? null,
+                    'customers' => $customers,
+                    'prediction' => $prediction,
+                ];
+                continue;
+            }
             if ($customers >= self::MIN_COHORT_SIZE) {
                 // Cohort projection: the COHORT's own MRR (a campaign with no
                 // subscribers must not display the account-wide subscriber

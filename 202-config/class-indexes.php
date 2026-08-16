@@ -655,11 +655,13 @@ class INDEXES
         }
 
         $mysql['device_name'] = $db->real_escape_string(trim((string) $device_name));
-        $device_sql = "SELECT device_id FROM 202_devices WHERE device_name='" . $mysql['device_name'] . "'";
-        $device_result = $db->query($device_sql); // or record_mysql_error($device_sql);
+        // 202_device_models is the real catalog; 202_devices is created by no
+        // install path. device_type is NOT NULL with no default, so supply it.
+        $device_sql = "SELECT device_id FROM 202_device_models WHERE device_name='" . $mysql['device_name'] . "'";
+        $device_result = $db->query($device_sql) or record_mysql_error($device_sql);
 
         if ($device_result->num_rows == 0) {
-            $device_sql = "INSERT INTO 202_devices SET device_name='" . $mysql['device_name'] . "'";
+            $device_sql = "INSERT INTO 202_device_models SET device_name='" . $mysql['device_name'] . "', device_type='0'";
             delay_sql($device_sql);
             $device_id = mysqli_insert_id($db);
         } else {

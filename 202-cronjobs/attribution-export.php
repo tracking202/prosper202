@@ -285,12 +285,29 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         $headers[] = 'X-Prosper202-Signature: ' . $signature;
     }
 
+    // Re-validate at dispatch: DNS can change between scheduling and delivery.
+    try {
+        \Prosper202\Validation\OutboundUrlGuard::assertAllowed($webhook->url, 'webhook_url');
+    } catch (\RuntimeException $e) {
+        error_log('attribution-export: refusing webhook delivery: ' . $e->getMessage());
+        return [
+            'success' => false,
+            'attempted_at' => time(),
+            'status_code' => null,
+            'response_body' => null,
+            'error' => $e->getMessage(),
+        ];
+    }
+
     $ch = curl_init($webhook->url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    // Never follow a redirect into a private address, and never leave https.
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+    curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
 
     $response = curl_exec($ch);
     $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE) ?: null;

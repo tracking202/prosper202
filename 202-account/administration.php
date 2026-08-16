@@ -45,7 +45,7 @@ $de_query = "SELECT count(*) as total, sum(processed) as done FROM 202_dataengin
 $de_result = $db->query($de_query);
 $de_row = $de_result ? ($de_result->fetch_assoc() ?: []) : [];
 
-if ($de_result->num_rows && $de_row['total'] != 0) {
+if ($de_result && $de_result->num_rows && $de_row['total'] != 0) {
 	$de_total = $de_row['total'];
 	$de_done = $de_row['done'];
 	$de_ratio = @round(($de_done / $de_total) * 100, 2);

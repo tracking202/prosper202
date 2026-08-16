@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\ConflictException;
+use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
@@ -237,7 +238,9 @@ class AttributionController
             $this->execute($stmt, 'Delete model failed');
             $stmt->close();
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;

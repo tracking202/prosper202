@@ -94,7 +94,10 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
 
     public function create(int $userId, array $data): int
     {
-        $publicId = (int) ($data['public_id'] ?? random_int(100_000, 9_999_999));
+        // Always derive server-side: public_id is resolved by the unauthenticated
+        // redirect with no user scoping and has no UNIQUE key, so honouring a
+        // caller-supplied value lets one tenant collide with another's rotator.
+        $publicId = $this->generatePublicId();
 
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)'
@@ -233,6 +236,13 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
     public function updateRule(int $ruleId, int $rotatorId, array $data): void
     {
         $this->conn->transaction(function () use ($ruleId, $rotatorId, $data): void {
+            // Ownership pre-check: rule ids are globally unique and the child
+            // criteria/redirect replacements below match on rule_id alone, so
+            // without this a caller could wipe another rotator's targeting and
+            // re-stamp the rows with their own rotator_id. Matches the guard in
+            // InMemoryRotatorRepository and RotatorsController::deleteRule.
+            $this->assertRuleBelongsToRotator($ruleId, $rotatorId);
+
             // Update rule fields
             $sets = [];
             $values = [];
@@ -324,9 +334,49 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
         });
     }
 
+    /**
+     * Pick an unused public_id. Best-effort in the absence of a UNIQUE key:
+     * removes deliberate collisions, makes random ones vanishingly unlikely.
+     */
+    private function generatePublicId(): int
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $candidate = random_int(100_000, 9_999_999);
+            $stmt = $this->conn->prepareRead('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
+            $this->conn->bind($stmt, 'i', [$candidate]);
+            $row = $this->conn->fetchOne($stmt);
+            $stmt->close();
+            if ($row === null) {
+                return $candidate;
+            }
+        }
+
+        throw new RuntimeException('Unable to allocate a unique rotator public id');
+    }
+
+    /**
+     * Verify a rule belongs to the given rotator before touching its children,
+     * which are keyed on the globally-unique rule_id alone.
+     */
+    private function assertRuleBelongsToRotator(int $ruleId, int $rotatorId): void
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT rotator_id FROM 202_rotator_rules WHERE id = ?'
+        );
+        $this->conn->bind($stmt, 'i', [$ruleId]);
+        $row = $this->conn->fetchOne($stmt);
+        $stmt->close();
+
+        if ($row === null || (int) $row['rotator_id'] !== $rotatorId) {
+            throw new RuntimeException("Rule $ruleId not found");
+        }
+    }
+
     public function deleteRule(int $ruleId, int $rotatorId): void
     {
         $this->conn->transaction(function () use ($ruleId, $rotatorId): void {
+            $this->assertRuleBelongsToRotator($ruleId, $rotatorId);
+
             $stmt = $this->conn->prepareWrite(
                 'DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?'
             );

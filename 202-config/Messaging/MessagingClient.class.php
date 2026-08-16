@@ -25,7 +25,14 @@ class MessagingClient
     public function __construct()
     {
         // MESSAGING_API_URL is defined in 202-config/connect.php.
-        $this->baseUrl    = defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging';
+        // Every request body below carries the install's customer API key and the
+        // user's email, so refuse to speak cleartext even if MESSAGING_API_URL is
+        // misconfigured (mirrors Lpo\PairingClient's guard).
+        $configuredUrl = defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging';
+        if (!str_starts_with(strtolower(trim((string) $configuredUrl)), 'https://')) {
+            throw new \RuntimeException('MESSAGING_API_URL must be an https:// URL; refusing to send credentials in cleartext.');
+        }
+        $this->baseUrl    = $configuredUrl;
         $this->timeout    = 10;
         // Kept low so the synchronous widget-poll path stays responsive when the
         // central server is slow/unreachable; a healthy server answers on the first
@@ -151,6 +158,7 @@ class MessagingClient
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_USERAGENT      => 'Prosper202-Messaging/1.0',
             CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_PROTOCOLS      => CURLPROTO_HTTPS,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_HTTPHEADER     => [

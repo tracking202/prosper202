@@ -361,7 +361,10 @@ class MessagingService
         $direction   = ($m['direction'] ?? '') === 'outbound' ? 'outbound' : 'inbound';
         $author      = in_array($m['author'] ?? '', ['team', 'system', 'user'], true) ? $m['author'] : 'team';
         $body        = isset($m['body']) ? (string) $m['body'] : '';
-        $createdAt   = $this->normalizeDate($m['created_at'] ?? null) ?? date('Y-m-d H:i:s');
+        // Keep the provided value separate from the substituted "now": the
+        // synthetic id below must not hash a timestamp that changes every poll.
+        $providedCreatedAt = $this->normalizeDate($m['created_at'] ?? null);
+        $createdAt   = $providedCreatedAt ?? date('Y-m-d H:i:s');
 
         // Reconcile a locally-queued outbound message by its client token.
         if ($clientToken !== null) {
@@ -388,7 +391,12 @@ class MessagingService
         // derive a stable synthetic id from its content so repeated pulls dedupe via
         // messageExists() below instead of inserting a fresh copy every sync.
         if ($externalId === null) {
-            $externalId = 'syn_' . md5($direction . '|' . $author . '|' . $createdAt . '|' . $body);
+            // Hash only fields that are stable across polls. Using $createdAt
+            // here meant a message with no created_at got a fresh id on every
+            // sync, so messageExists() never matched and the poll inserted a
+            // duplicate row each time (~180/hour with a tab open) — the
+            // UNIQUE (conversation_id, external_id) key could not help.
+            $externalId = 'syn_' . md5($direction . '|' . $author . '|' . ($providedCreatedAt ?? '') . '|' . $body);
         }
 
         // Skip if we already have this message.

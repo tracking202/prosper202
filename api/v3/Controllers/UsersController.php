@@ -124,7 +124,9 @@ class UsersController
             $this->execute($stmt, 'Failed to create user preferences');
             $stmt->close();
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;

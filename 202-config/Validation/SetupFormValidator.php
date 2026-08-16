@@ -234,31 +234,40 @@ class SetupFormValidator
     /**
      * Validate that a slug is unique for the user
      */
-    public function validateUniqueSlug(int $userId, string $table, string $slug, ?int $excludeId = null, string $fieldName = 'slug'): ValidationResult
+    public function validateUniqueSlug(int $userId, string $table, string $slug, ?int $excludeId = null, string $fieldName = 'slug', string $slugColumn = 'model_slug', string $idColumn = 'model_id'): ValidationResult
     {
-        // The table name cannot be parameterized; constrain it before use.
-        if (!$this->assertAllowedTable($table)) {
+        // Identifiers cannot be parameterized; constrain them before use. The
+        // column names were hardcoded to model_slug/model_id while any of the
+        // allowlisted tables could be passed, so every other table produced a
+        // 1054 that was then reported as "unique".
+        if (!$this->assertAllowedTable($table) || !$this->isValidIdentifier($slugColumn) || !$this->isValidIdentifier($idColumn)) {
             return ValidationResult::failure("$fieldName could not be validated");
         }
 
         $userIdEscaped = $this->db->real_escape_string((string)$userId);
         $slugEscaped = $this->db->real_escape_string($slug);
 
-        $sql = "SELECT 1 FROM `$table` WHERE `user_id` = '$userIdEscaped' AND `model_slug` = '$slugEscaped'";
+        $sql = "SELECT 1 FROM `$table` WHERE `user_id` = '$userIdEscaped' AND `$slugColumn` = '$slugEscaped'";
         
         if ($excludeId !== null) {
             $excludeIdEscaped = $this->db->real_escape_string((string)$excludeId);
-            $sql .= " AND `model_id` != '$excludeIdEscaped'";
+            $sql .= " AND `$idColumn` != '$excludeIdEscaped'";
         }
         
         $sql .= " LIMIT 1";
         
         $result = $this->db->query($sql);
-        
-        if ($result && $result->num_rows > 0) {
+
+        // Fail CLOSED like validateRecordExists/validateOwnership above: a
+        // failed query previously fell through and reported the slug as unique.
+        if (!$result) {
+            return ValidationResult::failure("$fieldName could not be validated");
+        }
+
+        if ($result->num_rows > 0) {
             return ValidationResult::failure("$fieldName must be unique");
         }
-        
+
         return ValidationResult::success($slug);
     }
     

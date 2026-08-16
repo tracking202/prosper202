@@ -23,6 +23,15 @@ final readonly class ExportWebhook
             throw new InvalidArgumentException('Webhook URL cannot be empty.');
         }
 
+        // SSRF guard: this URL is POSTed to by 202-cronjobs/attribution-export.php
+        // on behalf of a tenant, so an unvalidated value turns the install into a
+        // blind request oracle against its own network.
+        try {
+            \Prosper202\Validation\OutboundUrlGuard::assertAllowed($this->url, 'Webhook URL');
+        } catch (\RuntimeException $e) {
+            throw new InvalidArgumentException($e->getMessage(), 0, $e);
+        }
+
         foreach ($this->headers as $key => $value) {
             if (!is_string($key) || $key === '' || !is_string($value)) {
                 throw new InvalidArgumentException('Webhook headers must be an associative array of strings.');

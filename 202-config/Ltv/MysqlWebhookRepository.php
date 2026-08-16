@@ -83,9 +83,9 @@ final class MysqlWebhookRepository
             throw new RuntimeException('webhook_url host does not resolve');
         }
         foreach ($ips as $ip) {
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
-                throw new RuntimeException('webhook_url resolves to a private or reserved address');
-            }
+            // Covers the PHP filter flags PLUS the ranges they miss
+            // (RFC 6598 CGNAT, 192.0.0.0/24, 198.18.0.0/15, multicast).
+            \Prosper202\Validation\OutboundUrlGuard::assertIpAllowed($ip, 'webhook_url');
         }
 
         return array_values($ips);
@@ -326,11 +326,17 @@ final class MysqlWebhookRepository
         }
 
         $stmt = $this->conn->prepareWrite(
+            // `attempts = attempts + 1` MUST come last: MySQL evaluates
+            // single-table UPDATE assignments left to right and later
+            // expressions see already-updated columns. With the increment
+            // first, `attempts + 1` below read old+1, so the status test was
+            // really old+2 — abandoning delivery one attempt early (5 of the
+            // 6 MAX_ATTEMPTS) and marking the endpoint dead prematurely.
             "UPDATE 202_ltv_webhook_deliveries
-             SET attempts = attempts + 1,
-                 status = IF(attempts + 1 >= ?, 'failed', 'pending'),
+             SET status = IF(attempts + 1 >= ?, 'failed', 'pending'),
                  next_attempt_at = ? + (POW(2, LEAST(attempts + 1, 10)) * 60),
-                 last_status_code = ?, last_response_body = ?, updated_at = ?
+                 last_status_code = ?, last_response_body = ?, updated_at = ?,
+                 attempts = attempts + 1
              WHERE delivery_id = ?"
         );
         $this->conn->bind($stmt, 'iiisii', [
