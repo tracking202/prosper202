@@ -487,7 +487,12 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 }
 
 if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats202_app_key'] == '1') {
-	if (!preg_match('/\*/', (string) $_POST['user_stats202_app_key'])) {
+	// CSRF check — every other mutation block in this file validates the token;
+	// this one omitted it, letting a forged form overwrite the Stats202 app key.
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		$error['token'] = 'You must use our forms to submit data.';
+	}
+	if (!$error && !preg_match('/\*/', (string) $_POST['user_stats202_app_key'])) {
 		// Replace the undefined method with a more direct validation approach
 		$app_key = $_POST['user_stats202_app_key'];
 		$api_key = $_SESSION['user_api_key'];

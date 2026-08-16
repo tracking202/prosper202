@@ -227,7 +227,7 @@ template_top('Smart Redirector'); ?>
 																				}
 
 										?>
-									<li><span class="filter_rule_name"><?php echo $rule_row['rule_name']; ?></span><span class="rule-criteria"><?php echo $criteria; ?></span> <a href="" id="rule_details" data-id="<?php echo $rule_row['id']; ?>" data-toggle="modal" data-target="#rule_values_modal" class="list-action">Details</a></li>
+									<li><span class="filter_rule_name"><?php echo htmlentities((string) $rule_row['rule_name'], ENT_QUOTES, 'UTF-8'); ?></span><span class="rule-criteria"><?php echo $criteria; ?></span> <a href="" id="rule_details" data-id="<?php echo $rule_row['id']; ?>" data-toggle="modal" data-target="#rule_values_modal" class="list-action">Details</a></li>
 								<?php }
 																			echo "</ul>";
 								?>

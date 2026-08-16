@@ -1540,19 +1540,22 @@ function query(
         }
 
         if ($user_row['user_pref_country_id']) {
-            $mysql['user_pref_country_id'] = $db->real_escape_string($user_row['user_pref_country_id']);
+            // Cast to int: these ids are interpolated UNQUOTED, where
+            // real_escape_string does not neutralize a payload like
+            // "1 OR (SELECT ...)" (it contains no quotes to escape).
+            $mysql['user_pref_country_id'] = (int) $user_row['user_pref_country_id'];
             $click_sql .= " AND      2ca.country_id=" . $mysql['user_pref_country_id'];
             $count_where .= " AND      2c.country_id=" . $mysql['user_pref_country_id'];
         }
 
         if ($user_row['user_pref_region_id']) {
-            $mysql['user_pref_region_id'] = $db->real_escape_string($user_row['user_pref_region_id']);
+            $mysql['user_pref_region_id'] = (int) $user_row['user_pref_region_id'];
             $click_sql .= " AND      2ca.region_id=" . $mysql['user_pref_region_id'];
             $count_where .= " AND      2c.region_id=" . $mysql['user_pref_region_id'];
         }
 
         if ($user_row['user_pref_isp_id']) {
-            $mysql['user_pref_isp_id'] = $db->real_escape_string($user_row['user_pref_isp_id']);
+            $mysql['user_pref_isp_id'] = (int) $user_row['user_pref_isp_id'];
             $click_sql .= " AND      2is.isp_id=" . $mysql['user_pref_isp_id'];
             $count_where .= " AND      2c.isp_id=" . $mysql['user_pref_isp_id'];
         }
@@ -1578,19 +1581,19 @@ function query(
         }
 
         if ($user_row['user_pref_device_id']) {
-            $mysql['user_pref_device_id'] = $db->real_escape_string($user_row['user_pref_device_id']);
+            $mysql['user_pref_device_id'] = (int) $user_row['user_pref_device_id'];
             $click_sql .= " AND      2d.device_type=" . $mysql['user_pref_device_id'];
             $count_where .= " AND      2c.device_id IN (SELECT device_id FROM 202_device_models WHERE device_type=" . $mysql['user_pref_device_id'] . ")";
         }
 
         if ($user_row['user_pref_browser_id']) {
-            $mysql['user_pref_browser_id'] = $db->real_escape_string($user_row['user_pref_browser_id']);
+            $mysql['user_pref_browser_id'] = (int) $user_row['user_pref_browser_id'];
             $click_sql .= " AND      2b.browser_id=" . $mysql['user_pref_browser_id'];
             $count_where .= " AND      2c.browser_id=" . $mysql['user_pref_browser_id'];
         }
 
         if ($user_row['user_pref_platform_id']) {
-            $mysql['user_pref_platform_id'] = $db->real_escape_string($user_row['user_pref_platform_id']);
+            $mysql['user_pref_platform_id'] = (int) $user_row['user_pref_platform_id'];
             $click_sql .= " AND      2p.platform_id=" . $mysql['user_pref_platform_id'];
             $count_where .= " AND      2c.platform_id=" . $mysql['user_pref_platform_id'];
         }

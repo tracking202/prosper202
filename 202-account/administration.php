@@ -10,6 +10,15 @@ include_once(str_repeat("../", 1) . '202-config/functions-empty.php');
 
 AUTH::require_user();
 
+// The Settings nav link is already gated on access_to_settings
+// (202-config/template.php); the page itself must enforce the same
+// permission, or any authenticated low-privilege user can POST directly
+// to the install-wide settings and click-data deletion actions below.
+if (!$userObj->hasPermission("access_to_settings")) {
+	header('location: ' . get_absolute_url() . '202-account/');
+	exit;
+}
+
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string) $_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
