@@ -608,9 +608,13 @@ if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
 		// click_id, which produced junk rows that never join back to anything.
 		$click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
 		$click_result = $db->query($click_sql) or record_mysql_error($db);
-		$mysql['click_id'] = $db->real_escape_string((string)$db->insert_id);
+		// $click_id (not just $mysql['click_id']) is read later for the cloaked
+		// click_id_public and the {clickid} placeholder, so set both.
+		$click_id = $db->insert_id;
+		$mysql['click_id'] = $db->real_escape_string((string)$click_id);
 		$keyword = $db->real_escape_string($keyword);
-		$mysql['keyword_id'] = '0';
+		// Leave $mysql['keyword_id'] as resolved above — this path still has a
+		// real keyword; zeroing it here dropped it from the Keywords report.
 	}
 }
 else{

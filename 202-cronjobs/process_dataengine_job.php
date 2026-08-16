@@ -32,7 +32,12 @@ try {
             // instead of double-processing the window into the DataEngine.
             $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "' AND processing = '0'";
             $db->query($sql);
-            if ($db->affected_rows !== 1) {
+            // 202_dataengine_job has no PRIMARY/UNIQUE key, so a duplicated
+            // window legitimately flips more than one row. Require >= 1 (we
+            // won the claim) rather than exactly 1 — bailing out after having
+            // already set processing='1' would strand the window forever,
+            // because the release UPDATEs live below this point.
+            if ($db->affected_rows < 1) {
                 return;
             }
 

@@ -29,6 +29,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$subids = explode("\r", $subids);
 	$subids = str_replace("\n", '', $subids);
 
+	// Optimistic before the loop so a mid-loop failure can flip it false. The
+	// previous unconditional `$success = true;` AFTER the loop overwrote every
+	// failure, reporting success even when updates had failed.
+	$success = true;
+
 	foreach ($subids as $click_id) {
 		$mysql['click_id'] = $db->real_escape_string($click_id);
 
@@ -60,10 +65,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				click_id='" . $mysql['click_id'] . "'
 				AND user_id='" . $mysql['user_id'] . "'
 		";
-		try {
-			$update_result = $db->query($update_sql);
-		} catch (Exception $e) {
-			error_log("Database query failed: " . $e->getMessage());
+		// Return-value check, not try/catch: see the note on the spy update below.
+		if ($db->query($update_sql) === false) {
+			error_log("delete-subids clicks update failed: " . $db->error);
 			$success = false;
 			continue;
 		}
@@ -77,13 +81,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				click_id='" . $mysql['click_id'] . "'
 				AND user_id='" . $mysql['user_id'] . "'
 		";
-		// Match the 202_clicks update's handling: log and skip on failure
-		// instead of `die($db->error)`, which leaked the raw MySQL error to
-		// the client and left 202_clicks updated while 202_clicks_spy was not.
-		try {
-			$update_result = $db->query($update_sql);
-		} catch (Exception $e) {
-			error_log("delete-subids spy update failed: " . $e->getMessage());
+		// connect.php sets mysqli_report(MYSQLI_REPORT_STRICT) WITHOUT
+		// MYSQLI_REPORT_ERROR, so a failed query() returns false rather than
+		// throwing — check the return value, a catch block would never run.
+		// (Replaces `or die($db->error)`, which leaked the raw MySQL error and
+		// left 202_clicks updated while 202_clicks_spy was not.)
+		if ($db->query($update_sql) === false) {
+			error_log("delete-subids spy update failed: " . $db->error);
 			$success = false;
 			continue;
 		}
@@ -91,8 +95,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$de = new DataEngine();
 		$de->setDirtyHour($mysql['click_id']);
 	}
-
-	$success = true;
 }
 
 //show the template
