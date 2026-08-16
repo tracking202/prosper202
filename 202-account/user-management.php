@@ -22,9 +22,9 @@ $deleting = false;
 
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
 $username = $user_row['username'];
 
 if (!empty($user_row['url']))
@@ -274,6 +274,13 @@ $user_result_edit = _mysqli_query($user_sql_edit);
 
 if ($deleting == true) {
 
+	// CSRF check — this GET soft-deletes a user and purges their attribution
+	// data; the POST branch above validates the token and this must too.
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_GET['token'] ?? ''))) {
+		http_response_code(403);
+		die('Invalid token.');
+	}
+
 	$mysql['user_id'] = $db->real_escape_string(trim(filter_input(INPUT_GET, 'delete_user_id', FILTER_SANITIZE_NUMBER_INT)));
 
 	if (!$userObj->hasPermission("add_edit_delete_admin")) {
@@ -496,10 +503,10 @@ template_top('User Management'); ?>
 							if (!$userObj->hasPermission("add_edit_delete_admin")) {
 								printf('<li>%s</li>', $html['user_display_name']);
 							} else {
-								printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This User?\');">remove</a></li>', $html['user_display_name'], $url['user_id'], $url['user_id']);
+								printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s&amp;token=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This User?\');">remove</a></li>', $html['user_display_name'], $url['user_id'], $url['user_id'], urlencode((string) ($_SESSION['token'] ?? '')));
 							}
 						} else {
-							printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This User?\');">remove</a></li>', $html['user_display_name'], $url['user_id'], $url['user_id']);
+							printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s&amp;token=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This User?\');">remove</a></li>', $html['user_display_name'], $url['user_id'], $url['user_id'], urlencode((string) ($_SESSION['token'] ?? '')));
 						}
 
 					?>

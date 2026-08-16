@@ -595,11 +595,23 @@ if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
 					ORDER BY 	202_clicks.click_id DESC 
 					LIMIT 		1";
 	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-	$click_row1 = $click_result1->fetch_assoc();
-	$mysql['click_id'] = $db->real_escape_string((string)$click_row1['click_id']);
-	$keyword = $db->real_escape_string($keyword);
-	$keyword_id = $db->real_escape_string((string)$click_row1['keyword_id']);
-	$mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id);
+	$click_row1 = $click_result1 ? $click_result1->fetch_assoc() : null;
+
+	if ($click_row1 && !empty($click_row1['click_id'])) {
+		$mysql['click_id'] = $db->real_escape_string((string)$click_row1['click_id']);
+		$keyword = $db->real_escape_string($keyword);
+		$keyword_id = $db->real_escape_string((string)$click_row1['keyword_id']);
+		$mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id);
+	} else {
+		// No prior click matched this IP/user inside the window. Fall back to a
+		// fresh click id instead of writing 202_clicks* rows keyed on an empty
+		// click_id, which produced junk rows that never join back to anything.
+		$click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
+		$click_result = $db->query($click_sql) or record_mysql_error($db);
+		$mysql['click_id'] = $db->real_escape_string((string)$db->insert_id);
+		$keyword = $db->real_escape_string($keyword);
+		$mysql['keyword_id'] = '0';
+	}
 }
 else{
 //ok we have the main data, now insert this row

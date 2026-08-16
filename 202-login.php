@@ -149,7 +149,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$login_server_serialized,
 			$login_session_serialized
 		);
-		$login_log_stmt->execute();
+		if (!$login_log_stmt->execute()) {
+			prosper_log('login', 'Unable to write login log row: ' . $login_log_stmt->error);
+		}
 		$login_log_stmt->close();
 	} elseif ($should_log_attempt) {
 		prosper_log('login', 'Unable to prepare login log statement: ' . $db->error);

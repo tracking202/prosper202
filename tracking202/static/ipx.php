@@ -31,8 +31,12 @@ $sql = "INSERT INTO 202_clicks_impressions
  		ppc_account_id = '".$tracker_row['ppc_account_id']."',
  		text_ad_id = '".$tracker_row['text_ad_id']."',
  		impression_time = '".$time."'";
-$db->query($sql);
-$ipx_id = $db->insert_id;	
+// Check the INSERT: on failure insert_id is 0, and writing a p202_ipx=0
+// cookie would bind that meaningless id to the visitor's later click.
+$impression_result = $db->query($sql);
+$ipx_id = $impression_result ? $db->insert_id : 0;
 
-setcookie("p202_ipx", (string) $ipx_id, ['expires' => $time + (10 * 365 * 24 * 60 * 60), 'path' => '/', 'domain' => (string) $_SERVER['SERVER_NAME']]);
+if ($ipx_id > 0) {
+	setcookie("p202_ipx", (string) $ipx_id, ['expires' => $time + (10 * 365 * 24 * 60 * 60), 'path' => '/', 'domain' => (string) $_SERVER['SERVER_NAME']]);
+}
 echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");

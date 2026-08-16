@@ -21,9 +21,9 @@ if (!$userObj->hasPermission("access_to_settings")) {
 
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string) $_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
 $username = $user_row['username'];
 $user_time_register = $user_row['user_time_register'];
 
@@ -43,7 +43,7 @@ if ($cron_log_result->num_rows > 0) {
 
 $de_query = "SELECT count(*) as total, sum(processed) as done FROM 202_dataengine_job";
 $de_result = $db->query($de_query);
-$de_row = $de_result->fetch_assoc();
+$de_row = $de_result ? ($de_result->fetch_assoc() ?: []) : [];
 
 if ($de_result->num_rows && $de_row['total'] != 0) {
 	$de_total = $de_row['total'];

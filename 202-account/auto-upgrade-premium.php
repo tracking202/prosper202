@@ -281,7 +281,7 @@ if ($missing_api_key == true) {
 
 		<?php if (($_POST['start_upgrade'] ?? '') === '1') { ?>
 			<br>
-			<textarea rows="8" class="form-control install_logs"><?php echo $installlog; ?></textarea>
+			<textarea rows="8" class="form-control install_logs"><?php echo htmlspecialchars((string) $installlog, ENT_QUOTES, 'UTF-8'); ?></textarea>
 		<?php }
 
 		if ($upgrade_done !== true) { ?>

@@ -1545,8 +1545,42 @@ class DisplayData
         }
     }
 
+    /**
+     * Mask click/revenue figures for users without access_to_campaign_data,
+     * matching displayReport()/downloadReport(). The variable reports nest
+     * their rows (network -> variable -> value), so walk the structure and
+     * mask wherever those keys appear.
+     */
+    private function maskVariableData($theData)
+    {
+        global $userObj;
+
+        if (!($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher']))) {
+            return $theData;
+        }
+
+        $sensitive = ['clicks', 'click_out', 'leads', 'income', 'cost', 'net'];
+        $mask = function ($value) use (&$mask, $sensitive) {
+            if (!is_array($value)) {
+                return $value;
+            }
+            foreach ($value as $key => $item) {
+                if (is_array($item)) {
+                    $value[$key] = $mask($item);
+                } elseif (in_array($key, $sensitive, true)) {
+                    $value[$key] = '?';
+                }
+            }
+            return $value;
+        };
+
+        return $mask((array) $theData);
+    }
+
     public function displayVariableReport($theData)
     {
+        $theData = $this->maskVariableData($theData);
+
         echo '<div class="row">
                     <div class="col-xs-12 text-right" style="padding-bottom: 10px;">
                         <img style="margin-bottom:2px;" src="' . get_absolute_url() . '202-img/icons/16x16/page_white_excel.png"/>
@@ -1706,6 +1740,8 @@ class DisplayData
 
     public function downloadVariables($theData)
     {
+        $theData = $this->maskVariableData($theData);
+
         echo "Custom Variables" . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
 
         $rows = array_values((array) $theData);

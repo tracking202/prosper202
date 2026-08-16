@@ -24,9 +24,9 @@ $dt = new DateTime('now', $utc);
 
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
 $username = $user_row['username'];
 
 if (!empty($user_row['url']))
@@ -148,7 +148,7 @@ if (!$userObj->hasPermission("access_to_personal_settings")) {
 }
 
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 $html = array_map('htmlentities', $user_row);
 
@@ -567,7 +567,7 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 			$verify_stmt->bind_param('i', $current_user_id);
 			$verify_stmt->execute();
 			$result = $verify_stmt->get_result();
-			$stored = $result ? $result->fetch_assoc() : null;
+			$stored = $result ? ($result->fetch_assoc() ?: []) : [];
 			$verify_stmt->close();
 			if (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
 				$error['user_pass'] .= 'Your old password was typed incorrectly.';
@@ -642,7 +642,7 @@ $user_sql = "	SELECT 	*
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
 $html = array_map('htmlentities', $user_row);
 ?>
 
