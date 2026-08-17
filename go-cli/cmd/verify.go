@@ -443,7 +443,12 @@ var rotatorTraceCmd = &cobra.Command{
 		var tr struct {
 			Data []map[string]interface{} `json:"data"`
 		}
-		_ = json.Unmarshal(trk, &tr)
+		// Discarding this error made tr.Data nil, so a malformed response was
+		// reported as "fed by 0 tracker(s)" — a confident false claim from a
+		// command whose whole purpose is verification.
+		if err := json.Unmarshal(trk, &tr); err != nil {
+			return fmt.Errorf("parsing trackers for rotator %s: %w", args[0], err)
+		}
 
 		fmt.Fprintf(os.Stderr, "Rotator %s %q — default %s, %d rule(s), fed by %d tracker(s)\n",
 			args[0], fmt.Sprintf("%v", rot.Data["name"]), defaultDest(rot.Data),
@@ -534,7 +539,11 @@ var trackerCheckCmd = &cobra.Command{
 			var resp struct {
 				Data []map[string]interface{} `json:"data"`
 			}
-			_ = json.Unmarshal(list, &resp)
+			// Without this check a malformed list left resp.Data nil, so the
+			// command verified nothing at all and still reported success.
+			if err := json.Unmarshal(list, &resp); err != nil {
+				return fmt.Errorf("parsing tracker list: %w", err)
+			}
 			for _, t := range resp.Data {
 				ids = append(ids, fmt.Sprintf("%v", normalizeID(t["tracker_id"])))
 			}

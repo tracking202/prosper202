@@ -1081,16 +1081,37 @@ func init() {
 					close(results)
 				}()
 
-				ordered := make([]map[string]interface{}, len(trackers))
+				// Report per-tracker failures and keep the rows that succeeded,
+				// matching how the bulk deletes account for partial failure.
+				// Returning on the first error discarded every row already
+				// fetched, so one transient 500 threw away the whole listing.
+				indexed := make([]map[string]interface{}, len(trackers))
+				failed := 0
 				for result := range results {
 					if result.err != nil {
-						return result.err
+						failed++
+						fmt.Fprintf(os.Stderr, "Failed to fetch URL for tracker at row %d: %v\n", result.index+1, result.err)
+						continue
 					}
-					ordered[result.index] = result.row
+					indexed[result.index] = result.row
 				}
 
-				encoded, _ := json.Marshal(map[string]interface{}{"data": ordered})
+				// Drop the gaps left by failed rows rather than emitting nulls.
+				ordered := make([]map[string]interface{}, 0, len(trackers)-failed)
+				for _, row := range indexed {
+					if row != nil {
+						ordered = append(ordered, row)
+					}
+				}
+
+				encoded, err := json.Marshal(map[string]interface{}{"data": ordered})
+				if err != nil {
+					return fmt.Errorf("encoding tracker URLs: %w", err)
+				}
 				render(encoded)
+				if failed > 0 {
+					return partialFailureError("failed to fetch %d of %d tracker URLs", failed, len(trackers))
+				}
 				return nil
 			},
 		}

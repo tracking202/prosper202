@@ -258,7 +258,14 @@ func emitBatchResult(command string, output []byte, err error) {
 			result["output"] = strings.TrimSpace(string(output))
 		}
 	}
-	line, _ := json.Marshal(result)
+	line, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		// Never drop a batch record silently: a consumer counting JSONL lines
+		// against commands would misread the run as having fewer results.
+		fmt.Fprintf(os.Stderr, "Error encoding result for %q: %v\n", command, marshalErr)
+		fmt.Printf("{\"command\":%q,\"success\":false,\"error\":\"result could not be encoded\"}\n", command)
+		return
+	}
 	fmt.Println(string(line))
 }
 
@@ -329,9 +336,14 @@ func handleBuiltin(line string, state *shell.State, currentProfile string) (bool
 				printOutput(output) // partial output produced before the error
 				return true, "", false, err
 			}
-			if value, ok := normalizeValue(output); ok {
-				state.Set(varName, value)
+			value, ok := normalizeValue(output)
+			if !ok {
+				// Void operations (delete, revoke) report success on stderr and
+				// write nothing to stdout. Silently leaving $name unset would let
+				// the user believe the result was captured.
+				return true, "", false, fmt.Errorf("command produced no output; $%s was not set", varName)
 			}
+			state.Set(varName, value)
 			printOutput(output)
 			return true, "", false, nil
 		}
@@ -499,12 +511,19 @@ func captureStdout(fn func()) []byte {
 		done <- buf
 	}()
 
-	fn()
-
-	os.Stdout = oldStdout
-	_ = w.Close()
-	captured := <-done
-	_ = r.Close()
+	// Restore through a defer: if fn panics, leaving os.Stdout pointing at this
+	// pipe would silence every later command in the session and leak the reader
+	// goroutine. The panic still propagates after the restore runs.
+	var captured []byte
+	func() {
+		defer func() {
+			os.Stdout = oldStdout
+			_ = w.Close()
+			captured = <-done
+			_ = r.Close()
+		}()
+		fn()
+	}()
 	return captured
 }
 
@@ -537,11 +556,15 @@ func normalizeValue(output []byte) (json.RawMessage, bool) {
 	return json.RawMessage(quoted), true
 }
 
-// storeResult saves command output as the $_ variable.
+// storeResult saves command output as the $_ variable. A command that produced
+// no output sets $_ to null rather than leaving the previous command's value in
+// place, which would misreport stale data as the last result.
 func storeResult(state *shell.State, output []byte) {
 	if value, ok := normalizeValue(output); ok {
 		state.SetLast(value)
+		return
 	}
+	state.SetLast(json.RawMessage("null"))
 }
 
 func init() {
