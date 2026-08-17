@@ -288,7 +288,13 @@ function authorize_attribution_request(array $params, string $permission): array
         ];
     }
 
-    $stmt = $connection->prepare('SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1');
+    // Join 202_users so a soft-deleted user's key stops authenticating (as
+    // api/v3/Auth.php does) — deleting a user must revoke access everywhere.
+    $stmt = $connection->prepare(
+        'SELECT k.user_id FROM 202_api_keys k
+         INNER JOIN 202_users u ON u.user_id = k.user_id
+         WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
+    );
     if ($stmt === false) {
         return [
             'status' => 500,

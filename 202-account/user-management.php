@@ -291,8 +291,12 @@ if ($deleting == true) {
 	$user_sql_delete = "UPDATE 202_users SET user_deleted = '1' WHERE user_id = " . $mysql['user_id'];
 $user_result_delete = _mysqli_query($user_sql_delete);
 
-	// Purge attribution data for the deleted user
+	// Revoke API keys and purge attribution data for the deleted user.
+	// The key deletion mirrors the v3 API's delete endpoint
+	// (UsersController::delete) — without it, a user deleted through this page
+	// kept working REST access on every API version.
 	$attributionCleanupQueries = [
+		"DELETE FROM 202_api_keys WHERE user_id = " . $mysql['user_id'],
 		"DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'] . ")",
 		"DELETE FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'],
 		"DELETE FROM 202_attribution_settings WHERE user_id = " . $mysql['user_id'],
