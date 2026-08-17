@@ -299,14 +299,9 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 			return err
 		}
 		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Delete API key for user %s? [y/N] ", args[0])
-			var answer string
-			fmt.Scanln(&answer)
-			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
+		if !force && !confirmPrompt("Delete API key for user %s?", args[0]) {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
 		}
 		if err := c.Delete("users/" + args[0] + "/api-keys/" + args[1]); err != nil {
 			return err
@@ -349,11 +344,11 @@ var userAPIKeyRotateCmd = &cobra.Command{
 		deletedOld := false
 		if !keepOld {
 			if !force {
-				fmt.Printf("Delete old API key for user %s? [y/N] ", userID)
-				var answer string
-				fmt.Scanln(&answer)
-				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-					fmt.Println("Skipping old key deletion.")
+				// Prompt via the shared helper so the question and the outcome go
+				// to stderr; this command renders a JSON result on stdout, which
+				// the prompt text used to corrupt.
+				if !confirmPrompt("Delete old API key for user %s?", userID) {
+					fmt.Fprintln(os.Stderr, "Skipping old key deletion.")
 				} else {
 					if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
 						return err

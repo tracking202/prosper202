@@ -153,12 +153,12 @@ var rotatorDeleteCmd = &cobra.Command{
 				return parseErr
 			}
 			if len(idList) == 0 {
-				return fmt.Errorf("--ids requires at least one ID")
+				return validationError("--ids requires at least one ID")
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
 			if !force && !confirmPrompt("Delete %d rotators and all their rules?", len(idList)) {
-				fmt.Println("Cancelled.")
+				fmt.Fprintln(os.Stderr, "Cancelled.")
 				return nil
 			}
 
@@ -179,15 +179,19 @@ var rotatorDeleteCmd = &cobra.Command{
 			return nil
 		}
 
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete rotator %s and all its rules?", args[0]) {
-			fmt.Println("Cancelled.")
-			return nil
-		}
-		if err := c.Delete("rotators/" + args[0]); err != nil {
+		id, err := validateID(args[0])
+		if err != nil {
 			return err
 		}
-		output.Success("Rotator %s deleted.", args[0])
+		force, _ := cmd.Flags().GetBool("force")
+		if !force && !confirmPrompt("Delete rotator %s and all its rules?", id) {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+		if err := c.Delete("rotators/" + id); err != nil {
+			return err
+		}
+		output.Success("Rotator %s deleted.", id)
 		return nil
 	},
 }
@@ -267,19 +271,16 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 				return parseErr
 			}
 			if len(idList) == 0 {
-				return fmt.Errorf("--ids requires at least one rule ID")
+				return validationError("--ids requires at least one rule ID")
 			}
-			rotatorID := args[0]
+			rotatorID, err := validateID(args[0])
+			if err != nil {
+				return err
+			}
 			force, _ := cmd.Flags().GetBool("force")
-			if !force {
-				fmt.Printf("Delete %d rules from rotator %s? [y/N] ", len(idList), rotatorID)
-				var answer string
-				fmt.Scanln(&answer)
-				answer = strings.ToLower(strings.TrimSpace(answer))
-				if answer != "y" && answer != "yes" {
-					fmt.Println("Cancelled.")
-					return nil
-				}
+			if !force && !confirmPrompt("Delete %d rules from rotator %s?", len(idList), rotatorID) {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
 			}
 
 			deleted := 0
@@ -299,20 +300,23 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 			return nil
 		}
 
-		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Delete rule %s from rotator %s? [y/N] ", args[1], args[0])
-			var answer string
-			fmt.Scanln(&answer)
-			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-		}
-		if err := c.Delete("rotators/" + args[0] + "/rules/" + args[1]); err != nil {
+		rotatorID, err := validateID(args[0])
+		if err != nil {
 			return err
 		}
-		output.Success("Rule %s deleted from rotator %s.", args[1], args[0])
+		ruleID, err := validateID(args[1])
+		if err != nil {
+			return err
+		}
+		force, _ := cmd.Flags().GetBool("force")
+		if !force && !confirmPrompt("Delete rule %s from rotator %s?", ruleID, rotatorID) {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+		if err := c.Delete("rotators/" + rotatorID + "/rules/" + ruleID); err != nil {
+			return err
+		}
+		output.Success("Rule %s deleted from rotator %s.", ruleID, rotatorID)
 		return nil
 	},
 }

@@ -144,16 +144,20 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 	}
 
 	if len(args) != 1 {
-		return fmt.Errorf("provide a single id or use --ids")
+		return validationError("provide a single id or use --ids")
 	}
-	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
+	id, err := validateID(args[0])
+	if err != nil {
+		return err
+	}
+	if !force && !confirmPrompt("Delete %s %s?", noun, id) {
 		fmt.Fprintln(os.Stderr, "Cancelled.")
 		return nil
 	}
-	if err := c.Delete(endpoint + "/" + args[0]); err != nil {
+	if err := c.Delete(endpoint + "/" + id); err != nil {
 		return err
 	}
-	output.Success("%s %s deleted.", capitalize(noun), args[0])
+	output.Success("%s %s deleted.", capitalize(noun), id)
 	return nil
 }
 
@@ -288,6 +292,31 @@ func cloneMutableFields(source map[string]interface{}, fields []crudField) map[s
 		}
 	}
 	return out
+}
+
+// requireID rejects a blank positional id. Interpolating one produced a request
+// against the collection endpoint itself (DELETE users/) rather than against a
+// record — a very different operation from the one the user asked for.
+func requireID(raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return "", validationError("an ID is required")
+	}
+	return id, nil
+}
+
+// validateID additionally enforces, for a single positional id, the same numeric
+// rule parseIDList applies to every id in --ids. Used by the mutating commands;
+// `get` uses requireID instead because it also accepts public ids.
+func validateID(raw string) (string, error) {
+	id, err := requireID(raw)
+	if err != nil {
+		return "", err
+	}
+	if _, err := strconv.Atoi(id); err != nil {
+		return "", validationError("invalid ID %q: must be a numeric value", id)
+	}
+	return id, nil
 }
 
 func parseIDList(raw string) ([]string, error) {
@@ -500,8 +529,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			id, err := requireID(args[0])
+			if err != nil {
+				return err
+			}
 			forcePublic, _ := cmd.Flags().GetBool("public")
-			data, err := getWithPublicFallback(c, entity, args[0], forcePublic)
+			data, err := getWithPublicFallback(c, entity, id, forcePublic)
 			if err != nil {
 				return err
 			}
@@ -566,9 +599,13 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 			}
 			if len(body) == 0 {
-				return fmt.Errorf("no fields specified; pass at least one flag to update")
+				return validationError("no fields specified; pass at least one flag to update")
 			}
-			data, err := c.Put(entity.Endpoint+"/"+args[0], body)
+			id, err := validateID(args[0])
+			if err != nil {
+				return err
+			}
+			data, err := c.Put(entity.Endpoint+"/"+id, body)
 			if err != nil {
 				return err
 			}
@@ -605,12 +642,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					return parseErr
 				}
 				if len(idList) == 0 {
-					return fmt.Errorf("--ids requires at least one ID")
+					return validationError("--ids requires at least one ID")
 				}
 
 				force, _ := cmd.Flags().GetBool("force")
 				if !force && !confirmPrompt("Delete %d %s?", len(idList), entity.Plural) {
-					fmt.Println("Cancelled.")
+					fmt.Fprintln(os.Stderr, "Cancelled.")
 					return nil
 				}
 
@@ -631,15 +668,19 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				return nil
 			}
 
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %s %s?", entity.Name, args[0]) {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-			if err := c.Delete(entity.Endpoint + "/" + args[0]); err != nil {
+			id, err := validateID(args[0])
+			if err != nil {
 				return err
 			}
-			output.Success("%s %s deleted.", capitalize(entity.Name), args[0])
+			force, _ := cmd.Flags().GetBool("force")
+			if !force && !confirmPrompt("Delete %s %s?", entity.Name, id) {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
+			if err := c.Delete(entity.Endpoint + "/" + id); err != nil {
+				return err
+			}
+			output.Success("%s %s deleted.", capitalize(entity.Name), id)
 			return nil
 		},
 	}

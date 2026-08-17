@@ -150,12 +150,12 @@ var conversionDeleteCmd = &cobra.Command{
 				return parseErr
 			}
 			if len(idList) == 0 {
-				return fmt.Errorf("--ids requires at least one ID")
+				return validationError("--ids requires at least one ID")
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
 			if !force && !confirmPrompt("Delete %d conversions?", len(idList)) {
-				fmt.Println("Cancelled.")
+				fmt.Fprintln(os.Stderr, "Cancelled.")
 				return nil
 			}
 
@@ -176,15 +176,19 @@ var conversionDeleteCmd = &cobra.Command{
 			return nil
 		}
 
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete conversion %s?", args[0]) {
-			fmt.Println("Cancelled.")
-			return nil
-		}
-		if err := c.Delete("conversions/" + args[0]); err != nil {
+		id, err := validateID(args[0])
+		if err != nil {
 			return err
 		}
-		output.Success("Conversion %s deleted.", args[0])
+		force, _ := cmd.Flags().GetBool("force")
+		if !force && !confirmPrompt("Delete conversion %s?", id) {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+		if err := c.Delete("conversions/" + id); err != nil {
+			return err
+		}
+		output.Success("Conversion %s deleted.", id)
 		return nil
 	},
 }
