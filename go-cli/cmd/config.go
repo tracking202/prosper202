@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"strings"
 
 	"p202/internal/api"
@@ -11,6 +15,7 @@ import (
 	"p202/internal/output"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var configCmd = &cobra.Command{
@@ -45,15 +50,41 @@ var configSetURLCmd = &cobra.Command{
 }
 
 var configSetKeyCmd = &cobra.Command{
-	Use:   "set-key <api-key>",
-	Short: "Set the API key",
-	Args:  cobra.ExactArgs(1),
+	Use:   "set-key [api-key]",
+	Short: "Set the API key (omit the argument to be prompted without echoing)",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
-		apiKey := strings.TrimSpace(args[0])
+		var apiKey string
+		if len(args) == 1 {
+			apiKey = strings.TrimSpace(args[0])
+		} else {
+			// An API key is a bearer credential — at least as sensitive as the
+			// password that `user create` already reads with term.ReadPassword.
+			// Prompting keeps it out of shell history and ps output.
+			//
+			// term.ReadPassword needs a real terminal, so when stdin is piped
+			// (echo "$KEY" | p202 config set-key, or CI) fall back to a plain
+			// read instead of failing with "inappropriate ioctl for device".
+			if term.IsTerminal(int(os.Stdin.Fd())) {
+				fmt.Fprint(os.Stderr, "API key (hidden): ")
+				keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Fprintln(os.Stderr)
+				if err != nil {
+					return fmt.Errorf("reading API key: %w", err)
+				}
+				apiKey = strings.TrimSpace(string(keyBytes))
+			} else {
+				line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+				if err != nil && !errors.Is(err, io.EOF) {
+					return fmt.Errorf("reading API key: %w", err)
+				}
+				apiKey = strings.TrimSpace(line)
+			}
+		}
 		if err := validateAPIKey(apiKey); err != nil {
 			return err
 		}

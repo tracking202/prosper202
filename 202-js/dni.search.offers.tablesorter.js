@@ -48,7 +48,14 @@ $(function() {
               $('table.tablesorter').find('tbody').html(rows);
               $('span#inProgress').hide();
               $('span#inProgressFooter').hide();
-              $('h4.modal-title').html(network+'<span id="inProgress" style="display:none"> Processing... <img src="/202-img/loader-small.gif"></span>');
+              // Set the network name as TEXT: it comes from the remote DNI
+              // network's API, so interpolating it into .html() made a hostile
+              // or compromised upstream name execute here. (The same values are
+              // escaped server-side in 202-account/api-integrations.php.) The
+              // spinner markup is a static literal and is appended after.
+              $('h4.modal-title')
+                .text(network == null ? '' : String(network))
+                .append('<span id="inProgress" style="display:none"> Processing... <img src="/202-img/loader-small.gif"></span>');
               $('table.tablesorter').css('opacity', '1');
               $('[data-toggle="tooltip"]').tooltip();
               return [total];
