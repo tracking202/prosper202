@@ -3,12 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 
 	"p202/internal/api"
-	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -131,65 +128,13 @@ var conversionCreateCmd = &cobra.Command{
 var conversionDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a conversion",
-	Args: func(cmd *cobra.Command, args []string) error {
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			return cobra.MaximumNArgs(0)(cmd, args)
-		}
-		return cobra.ExactArgs(1)(cmd, args)
-	},
+	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			idList, parseErr := parseIDList(idsFlag)
-			if parseErr != nil {
-				return parseErr
-			}
-			if len(idList) == 0 {
-				return validationError("--ids requires at least one ID")
-			}
-
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %d conversions?", len(idList)) {
-				fmt.Fprintln(os.Stderr, "Cancelled.")
-				return nil
-			}
-
-			deleted := 0
-			failed := 0
-			for _, id := range idList {
-				if err := c.Delete("conversions/" + id); err != nil {
-					failed++
-					fmt.Fprintf(os.Stderr, "Failed to delete conversion %s: %v\n", id, err)
-					continue
-				}
-				deleted++
-			}
-			output.Success("Deleted %d of %d conversions.", deleted, len(idList))
-			if failed > 0 {
-				return partialFailureError("failed to delete %d conversions", failed)
-			}
-			return nil
-		}
-
-		id, err := validateID(args[0])
-		if err != nil {
-			return err
-		}
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete conversion %s?", id) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
-		}
-		if err := c.Delete("conversions/" + id); err != nil {
-			return err
-		}
-		output.Success("Conversion %s deleted.", id)
-		return nil
+		return runBulkOrSingleDelete(cmd, args, deleteSpec{
+			urlFor: func(id string) string { return "conversions/" + id },
+			noun:   "conversion",
+			plural: "conversions",
+		})
 	},
 }
 

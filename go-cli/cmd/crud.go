@@ -95,25 +95,58 @@ func isNotFoundErr(err error) bool {
 	return false
 }
 
-// deleteArgsValidator allows zero positional args when --ids is set, else one.
-func deleteArgsValidator(cmd *cobra.Command, args []string) error {
-	if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
-		return cobra.MaximumNArgs(0)(cmd, args)
+// deleteArgsValidatorN returns a cobra Args validator for delete commands whose
+// deletable id is preceded by `base` fixed positional args (0 for flat
+// resources, 1 for nested ones like rotator rules): with --ids set the id list
+// replaces the positional id, so exactly `base` args are allowed; otherwise
+// base+1.
+func deleteArgsValidatorN(base int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
+			return cobra.ExactArgs(base)(cmd, args)
+		}
+		return cobra.ExactArgs(base+1)(cmd, args)
 	}
-	return cobra.ExactArgs(1)(cmd, args)
 }
 
-// bulkOrSingleDelete deletes one id (positional) or many (--ids), honoring
-// --force, against endpoint/<id>. Shared so every delete has the same bulk
-// semantics. noun is used in confirmation and summary messages.
+// deleteArgsValidator allows zero positional args when --ids is set, else one.
+var deleteArgsValidator = deleteArgsValidatorN(0)
+
+// deleteSpec describes what varies between the CLI's delete commands: the URL
+// for one id, and the wording. Everything else — id validation, the --ids bulk
+// path, confirmation, partial-failure accounting, which stream each message
+// goes to — is shared in runBulkOrSingleDelete. These used to be five
+// hand-rolled copies, and the copies are exactly where the mechanics drifted
+// (prompts on stdout, unvalidated ids); the wording is the only part that was
+// ever meant to differ.
+type deleteSpec struct {
+	urlFor      func(id string) string // request path for one id
+	noun        string                 // singular, e.g. "rotator"
+	plural      string                 // bulk prompts and summaries, e.g. "rotators"
+	cascadeOne  string                 // single-confirm suffix, e.g. " and all its rules"
+	cascadeMany string                 // bulk-confirm suffix, e.g. " and all their rules"
+	context     string                 // parent-resource suffix, e.g. " from rotator 7"
+}
+
+// bulkOrSingleDelete is the flat-resource convenience wrapper around
+// runBulkOrSingleDelete for callers with no special wording.
 func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
+	return runBulkOrSingleDelete(cmd, cmd.Flags().Args(), deleteSpec{
+		urlFor: func(id string) string { return endpoint + "/" + id },
+		noun:   noun,
+		plural: noun + "s",
+	})
+}
+
+// runBulkOrSingleDelete deletes one id (from args) or many (--ids), honoring
+// --force. Prompts and cancellations go to stderr so piped stdout stays data.
+func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) error {
 	c, err := api.NewFromConfig()
 	if err != nil {
 		return err
 	}
 	force, _ := cmd.Flags().GetBool("force")
 	idsFlag, _ := cmd.Flags().GetString("ids")
-	args := cmd.Flags().Args()
 
 	if strings.TrimSpace(idsFlag) != "" {
 		ids, perr := parseIDList(idsFlag)
@@ -121,24 +154,24 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 			return perr
 		}
 		if len(ids) == 0 {
-			return fmt.Errorf("--ids requires at least one ID")
+			return validationError("--ids requires at least one ID")
 		}
-		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
+		if !force && !confirmPrompt("Delete %d %s%s%s?", len(ids), spec.plural, spec.cascadeMany, spec.context) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
 		deleted, failed := 0, 0
 		for _, id := range ids {
-			if err := c.Delete(endpoint + "/" + id); err != nil {
+			if err := c.Delete(spec.urlFor(id)); err != nil {
 				failed++
-				fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", noun, id, err)
+				fmt.Fprintf(os.Stderr, "Failed to delete %s %s%s: %v\n", spec.noun, id, spec.context, err)
 				continue
 			}
 			deleted++
 		}
-		output.Success("Deleted %d of %d %ss.", deleted, len(ids), noun)
+		output.Success("Deleted %d of %d %s%s.", deleted, len(ids), spec.plural, spec.context)
 		if failed > 0 {
-			return partialFailureError("failed to delete %d %ss", failed, noun)
+			return partialFailureError("failed to delete %d %s", failed, spec.plural)
 		}
 		return nil
 	}
@@ -150,14 +183,14 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 	if err != nil {
 		return err
 	}
-	if !force && !confirmPrompt("Delete %s %s?", noun, id) {
+	if !force && !confirmPrompt("Delete %s %s%s%s?", spec.noun, id, spec.cascadeOne, spec.context) {
 		fmt.Fprintln(os.Stderr, "Cancelled.")
 		return nil
 	}
-	if err := c.Delete(endpoint + "/" + id); err != nil {
+	if err := c.Delete(spec.urlFor(id)); err != nil {
 		return err
 	}
-	output.Success("%s %s deleted.", capitalize(noun), id)
+	output.Success("%s %s deleted%s.", capitalize(spec.noun), id, spec.context)
 	return nil
 }
 
@@ -621,67 +654,15 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	deleteCmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: fmt.Sprintf("Delete a %s", entity.Name),
-		Args: func(cmd *cobra.Command, args []string) error {
-			idsFlag, _ := cmd.Flags().GetString("ids")
-			if strings.TrimSpace(idsFlag) != "" {
-				return cobra.MaximumNArgs(0)(cmd, args)
-			}
-			return cobra.ExactArgs(1)(cmd, args)
-		},
+		Args:  deleteArgsValidator,
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("delete", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
-			idsFlag, _ := cmd.Flags().GetString("ids")
-			if strings.TrimSpace(idsFlag) != "" {
-				idList, parseErr := parseIDList(idsFlag)
-				if parseErr != nil {
-					return parseErr
-				}
-				if len(idList) == 0 {
-					return validationError("--ids requires at least one ID")
-				}
-
-				force, _ := cmd.Flags().GetBool("force")
-				if !force && !confirmPrompt("Delete %d %s?", len(idList), entity.Plural) {
-					fmt.Fprintln(os.Stderr, "Cancelled.")
-					return nil
-				}
-
-				deleted := 0
-				failed := 0
-				for _, id := range idList {
-					if err := c.Delete(entity.Endpoint + "/" + id); err != nil {
-						failed++
-						fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", entity.Name, id, err)
-						continue
-					}
-					deleted++
-				}
-				output.Success("Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
-				if failed > 0 {
-					return partialFailureError("failed to delete %d %s", failed, entity.Plural)
-				}
-				return nil
-			}
-
-			id, err := validateID(args[0])
-			if err != nil {
-				return err
-			}
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %s %s?", entity.Name, id) {
-				fmt.Fprintln(os.Stderr, "Cancelled.")
-				return nil
-			}
-			if err := c.Delete(entity.Endpoint + "/" + id); err != nil {
-				return err
-			}
-			output.Success("%s %s deleted.", capitalize(entity.Name), id)
-			return nil
+			return runBulkOrSingleDelete(cmd, args, deleteSpec{
+				urlFor: func(id string) string { return entity.Endpoint + "/" + id },
+				noun:   entity.Name,
+				plural: entity.Plural,
+			})
 		},
 	}
 	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")

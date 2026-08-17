@@ -3,11 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"p202/internal/api"
-	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -134,65 +132,15 @@ var rotatorUpdateCmd = &cobra.Command{
 var rotatorDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a redirector/rotator and all its routing rules",
-	Args: func(cmd *cobra.Command, args []string) error {
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			return cobra.MaximumNArgs(0)(cmd, args)
-		}
-		return cobra.ExactArgs(1)(cmd, args)
-	},
+	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			idList, parseErr := parseIDList(idsFlag)
-			if parseErr != nil {
-				return parseErr
-			}
-			if len(idList) == 0 {
-				return validationError("--ids requires at least one ID")
-			}
-
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %d rotators and all their rules?", len(idList)) {
-				fmt.Fprintln(os.Stderr, "Cancelled.")
-				return nil
-			}
-
-			deleted := 0
-			failed := 0
-			for _, id := range idList {
-				if err := c.Delete("rotators/" + id); err != nil {
-					failed++
-					fmt.Fprintf(os.Stderr, "Failed to delete rotator %s: %v\n", id, err)
-					continue
-				}
-				deleted++
-			}
-			output.Success("Deleted %d of %d rotators.", deleted, len(idList))
-			if failed > 0 {
-				return partialFailureError("failed to delete %d rotators", failed)
-			}
-			return nil
-		}
-
-		id, err := validateID(args[0])
-		if err != nil {
-			return err
-		}
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete rotator %s and all its rules?", id) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
-		}
-		if err := c.Delete("rotators/" + id); err != nil {
-			return err
-		}
-		output.Success("Rotator %s deleted.", id)
-		return nil
+		return runBulkOrSingleDelete(cmd, args, deleteSpec{
+			urlFor:      func(id string) string { return "rotators/" + id },
+			noun:        "rotator",
+			plural:      "rotators",
+			cascadeOne:  " and all its rules",
+			cascadeMany: " and all their rules",
+		})
 	},
 }
 
@@ -252,72 +200,18 @@ var rotatorRuleCreateCmd = &cobra.Command{
 var rotatorRuleDeleteCmd = &cobra.Command{
 	Use:   "rule-delete <rotator_id> <rule_id>",
 	Short: "Delete a routing rule from a redirector/rotator",
-	Args: func(cmd *cobra.Command, args []string) error {
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			return cobra.ExactArgs(1)(cmd, args)
-		}
-		return cobra.ExactArgs(2)(cmd, args)
-	},
+	Args:  deleteArgsValidatorN(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			idList, parseErr := parseIDList(idsFlag)
-			if parseErr != nil {
-				return parseErr
-			}
-			if len(idList) == 0 {
-				return validationError("--ids requires at least one rule ID")
-			}
-			rotatorID, err := validateID(args[0])
-			if err != nil {
-				return err
-			}
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %d rules from rotator %s?", len(idList), rotatorID) {
-				fmt.Fprintln(os.Stderr, "Cancelled.")
-				return nil
-			}
-
-			deleted := 0
-			failed := 0
-			for _, ruleID := range idList {
-				if err := c.Delete("rotators/" + rotatorID + "/rules/" + ruleID); err != nil {
-					failed++
-					fmt.Fprintf(os.Stderr, "Failed to delete rule %s from rotator %s: %v\n", ruleID, rotatorID, err)
-					continue
-				}
-				deleted++
-			}
-			output.Success("Deleted %d of %d rules from rotator %s.", deleted, len(idList), rotatorID)
-			if failed > 0 {
-				return partialFailureError("failed to delete %d rules", failed)
-			}
-			return nil
-		}
-
 		rotatorID, err := validateID(args[0])
 		if err != nil {
 			return err
 		}
-		ruleID, err := validateID(args[1])
-		if err != nil {
-			return err
-		}
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete rule %s from rotator %s?", ruleID, rotatorID) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
-		}
-		if err := c.Delete("rotators/" + rotatorID + "/rules/" + ruleID); err != nil {
-			return err
-		}
-		output.Success("Rule %s deleted from rotator %s.", ruleID, rotatorID)
-		return nil
+		return runBulkOrSingleDelete(cmd, args[1:], deleteSpec{
+			urlFor:  func(id string) string { return "rotators/" + rotatorID + "/rules/" + id },
+			noun:    "rule",
+			plural:  "rules",
+			context: " from rotator " + rotatorID,
+		})
 	},
 }
 

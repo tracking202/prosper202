@@ -143,3 +143,56 @@ func TestConfirmationPromptDoesNotWriteToStdout(t *testing.T) {
 		t.Fatalf("prompt missing from stderr: %q", stderr)
 	}
 }
+
+// The delete commands now share one runner and differ only in a wording spec.
+// Pin the user-visible strings so a spec edit can't silently change the UX the
+// old hand-rolled copies had.
+func TestDeleteWordingIsPreserved(t *testing.T) {
+	cases := []struct {
+		name       string
+		args       []string
+		wantStderr string
+	}{
+		{"rotator single confirm keeps cascade warning",
+			[]string{"rotator", "delete", "7"},
+			"Delete rotator 7 and all its rules?"},
+		{"rotator bulk confirm keeps cascade warning",
+			[]string{"rotator", "delete", "--ids", "7,8"},
+			"Delete 2 rotators and all their rules?"},
+		{"rule single confirm names the parent rotator",
+			[]string{"rotator", "rule-delete", "7", "9"},
+			"Delete rule 9 from rotator 7?"},
+		{"rule bulk confirm names the parent rotator",
+			[]string{"rotator", "rule-delete", "7", "--ids", "9,11"},
+			"Delete 2 rules from rotator 7?"},
+		{"conversion single success",
+			[]string{"conversion", "delete", "7", "--force"},
+			"Conversion 7 deleted."},
+		{"rule single success names the parent rotator",
+			[]string{"rotator", "rule-delete", "7", "9", "--force"},
+			"Rule 9 deleted from rotator 7."},
+		{"rule bulk summary names the parent rotator",
+			[]string{"rotator", "rule-delete", "7", "--ids", "9,11", "--force"},
+			"Deleted 2 of 2 rules from rotator 7."},
+		{"campaign bulk summary uses the entity plural",
+			[]string{"campaign", "delete", "--ids", "7,8", "--force"},
+			"Deleted 2 of 2 campaigns"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			setTestHome(t, home)
+			srv := newRecordingServer(t)
+			writeTestConfig(t, home, srv.URL, "test-api-key-1234")
+
+			_, stderr, err := executeCommand(tc.args...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(stderr, tc.wantStderr) {
+				t.Fatalf("stderr = %q, want it to contain %q", stderr, tc.wantStderr)
+			}
+		})
+	}
+}
