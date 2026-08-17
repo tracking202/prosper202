@@ -356,6 +356,7 @@ var rotatorCheckCmd = &cobra.Command{
 			return err
 		}
 		var datas []map[string]interface{}
+		var fetchFailures []map[string]interface{}
 		if len(args) == 1 {
 			raw, err := c.Get("rotators/"+args[0], nil)
 			if err != nil {
@@ -382,19 +383,35 @@ var rotatorCheckCmd = &cobra.Command{
 			for _, r := range resp.Data {
 				full, err := c.Get(fmt.Sprintf("rotators/%v", normalizeID(r["id"])), nil)
 				if err != nil {
+					// This command gates deploys, so a rotator whose detail
+					// fetch failed must count as a failure — silently skipping
+					// it let a broken rotator ride an exit code 0.
+					fetchFailures = append(fetchFailures, map[string]interface{}{
+						"id":     normalizeID(r["id"]),
+						"name":   r["name"],
+						"status": "ERROR",
+						"reason": fmt.Sprintf("could not fetch rotator: %v", err),
+					})
 					continue
 				}
 				var fr struct {
 					Data map[string]interface{} `json:"data"`
 				}
-				if json.Unmarshal(full, &fr) == nil {
-					datas = append(datas, fr.Data)
+				if err := json.Unmarshal(full, &fr); err != nil {
+					fetchFailures = append(fetchFailures, map[string]interface{}{
+						"id":     normalizeID(r["id"]),
+						"name":   r["name"],
+						"status": "ERROR",
+						"reason": fmt.Sprintf("could not parse rotator: %v", err),
+					})
+					continue
 				}
+				datas = append(datas, fr.Data)
 			}
 		}
 
-		rows := make([]map[string]interface{}, 0, len(datas))
-		failed := 0
+		rows := make([]map[string]interface{}, 0, len(datas)+len(fetchFailures))
+		failed := len(fetchFailures)
 		for _, d := range datas {
 			issues := rotatorIssues(d)
 			status := "OK"
@@ -409,6 +426,7 @@ var rotatorCheckCmd = &cobra.Command{
 				"reason": strings.Join(issues, "; "),
 			})
 		}
+		rows = append(rows, fetchFailures...)
 		render(rowsToJSON(rows))
 		if failed > 0 {
 			return partialFailureError("%d rotator(s) have configuration issues", failed)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -208,18 +209,23 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		ConfidenceLevel: confidence,
 	}
 
-	// Optionally fetch weekpart data for seasonal adjustment.
+	// Optionally fetch weekpart data for seasonal adjustment. The user asked
+	// for it explicitly, so falling back to an unadjusted forecast must be said
+	// out loud — and the output metadata must report what actually happened,
+	// not what was requested.
 	if seasonal {
 		weekpartParams := collectForecastFilters(cmd)
 		weekpartParams["period"] = history
 		wpData, wpErr := c.Get("reports/weekpart", weekpartParams)
-		if wpErr == nil {
-			weights := parseWeekpartWeights(wpData, metric)
-			if weights != nil {
-				cfg.SeasonalWeights = weights
-			}
+		if wpErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: --seasonal requested but weekpart data could not be fetched (%v); forecast is unadjusted.\n", wpErr)
+		} else if weights := parseWeekpartWeights(wpData, metric); weights != nil {
+			cfg.SeasonalWeights = weights
+		} else {
+			fmt.Fprintln(os.Stderr, "Warning: --seasonal requested but weekpart data yielded no usable weights; forecast is unadjusted.")
 		}
 	}
+	seasonalApplied := cfg.SeasonalWeights != nil
 
 	// ── Event-aware forecasting pipeline ──────────────────────────────
 	var allEvents []forecast.Event
@@ -288,7 +294,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	}
 
 	// Render output.
-	output, err := buildForecastOutput(result, metric, seasonal, useEvents || eventTag != "", futureEvents, learnedImpacts)
+	output, err := buildForecastOutput(result, metric, seasonalApplied, useEvents || eventTag != "", futureEvents, learnedImpacts)
 	if err != nil {
 		return err
 	}
@@ -485,7 +491,9 @@ func parseWeekpartWeights(data []byte, metric string) forecast.SeasonalWeights {
 }
 
 // buildForecastOutput constructs the JSON output for rendering.
-func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, eventsActive bool, futureEvents []forecast.Event, impacts map[string]forecast.LearnedImpact) ([]byte, error) {
+// seasonalApplied reports whether weights actually modulated the predictions —
+// not merely whether --seasonal was passed.
+func buildForecastOutput(result *forecast.Result, metric string, seasonalApplied bool, eventsActive bool, futureEvents []forecast.Event, impacts map[string]forecast.LearnedImpact) ([]byte, error) {
 	predictions := make([]map[string]interface{}, len(result.Predictions))
 	for i, p := range result.Predictions {
 		row := map[string]interface{}{
@@ -518,7 +526,7 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, 
 		"data_points_used": result.DataPoints,
 		"trend_per_period": roundTo(result.Trend, 4),
 		"trend_pct":        roundTo(result.TrendPct, 2),
-		"seasonal":         seasonal,
+		"seasonal":         seasonalApplied,
 		"events_active":    eventsActive,
 	}
 	if result.MAE > 0 {
