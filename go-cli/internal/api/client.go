@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"p202/internal/config"
@@ -18,13 +20,26 @@ const maxResponseSize = 10 << 20 // 10 MB
 
 type Client struct {
 	rootURL string
-	baseURL string
 	apiKey  string
 	http    *http.Client
 
+	// mu guards every field below it. A Client is shared across goroutines
+	// (cmd/crud.go fans bulk tracker-URL fetches over a worker pool with one
+	// client; cmd/shell.go keeps a long-lived one), and ensureCapabilities()
+	// lazily rewrites baseURL after version negotiation while in-flight
+	// requests are reading it — an unsynchronized read/write pair.
+	mu                 sync.Mutex
+	baseURL            string
 	capabilities       map[string]interface{}
 	capabilitiesLoaded bool
 	capabilitiesErr    error
+}
+
+// currentBaseURL returns the negotiated base URL under the lock.
+func (c *Client) currentBaseURL() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.baseURL
 }
 
 type APIError struct {
@@ -177,10 +192,13 @@ func (c *Client) SupportsCapability(path ...string) bool {
 
 func (c *Client) Capability(path ...string) (interface{}, bool) {
 	c.ensureCapabilities()
+	c.mu.Lock()
+	caps := c.capabilities
+	c.mu.Unlock()
 	if len(path) == 0 {
-		return c.capabilities, len(c.capabilities) > 0
+		return caps, len(caps) > 0
 	}
-	var current interface{} = c.capabilities
+	var current interface{} = caps
 	for _, key := range path {
 		obj, ok := current.(map[string]interface{})
 		if !ok {
@@ -200,16 +218,25 @@ func (c *Client) Capability(path ...string) (interface{}, bool) {
 // does not grant this capability" from "the capabilities could not be fetched".
 func (c *Client) CapabilitiesError() error {
 	c.ensureCapabilities()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.capabilitiesErr
 }
 
+// ensureCapabilities loads capabilities at most once. It holds mu for the whole
+// negotiate-and-load sequence so concurrent callers see either the pre- or the
+// post-negotiation baseURL, never a torn read, and only one of them performs
+// the network round-trips.
 func (c *Client) ensureCapabilities() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.capabilitiesLoaded {
 		return
 	}
 	c.capabilitiesLoaded = true
 
-	c.negotiateVersion()
+	c.negotiateVersionLocked()
 
 	req, err := http.NewRequest("GET", c.baseURL+"/capabilities", nil)
 	if err != nil {
@@ -250,7 +277,14 @@ func (c *Client) ensureCapabilities() {
 	c.capabilities = decoded
 }
 
-func (c *Client) negotiateVersion() {
+// apiVersionPattern constrains the version segment the SERVER hands back. It is
+// interpolated straight into every subsequent request path, so anything other
+// than digits (a traversal like "3/../../admin", a query string, a stray space)
+// must not be accepted from a remote response.
+var apiVersionPattern = regexp.MustCompile(`^[0-9]{1,4}$`)
+
+// negotiateVersionLocked must be called with c.mu held.
+func (c *Client) negotiateVersionLocked() {
 	req, err := http.NewRequest("GET", c.rootURL+"/api/versions", nil)
 	if err != nil {
 		return
@@ -288,7 +322,9 @@ func (c *Client) negotiateVersion() {
 	}
 
 	preferred = strings.TrimPrefix(strings.ToLower(preferred), "v")
-	if preferred == "" {
+	if !apiVersionPattern.MatchString(preferred) {
+		// Keep the compiled-in default rather than trusting a malformed or
+		// hostile version string from the server.
 		return
 	}
 	c.baseURL = c.rootURL + "/api/v" + preferred
@@ -312,7 +348,10 @@ func (c *Client) Delete(path string) error {
 }
 
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {
-	u := c.baseURL + "/" + strings.TrimLeft(path, "/")
+	// Read once under the lock: version negotiation can rewrite baseURL from
+	// another goroutine, and the URL and the version header below must agree.
+	baseURL := c.currentBaseURL()
+	u := baseURL + "/" + strings.TrimLeft(path, "/")
 
 	if len(params) > 0 {
 		v := url.Values{}
@@ -340,8 +379,8 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
-	if idx := strings.LastIndex(c.baseURL, "/api/v"); idx != -1 {
-		req.Header.Set("X-P202-API-Version", c.baseURL[idx+5:])
+	if idx := strings.LastIndex(baseURL, "/api/v"); idx != -1 {
+		req.Header.Set("X-P202-API-Version", baseURL[idx+5:])
 	}
 
 	resp, err := c.http.Do(req)

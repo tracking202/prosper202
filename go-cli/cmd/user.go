@@ -370,13 +370,23 @@ var userAPIKeyRotateCmd = &cobra.Command{
 
 		configUpdated := false
 		configUpdateSkipped := false
+		configProfile := ""
 		if updateConfig {
 			cfg, err := configpkg.Load()
 			if err != nil {
 				return err
 			}
-			if cfg.APIKey == oldAPIKey || forceConfigUpdate {
-				cfg.APIKey = newAPIKey
+			// Compare and write through the resolved profile. This used to read
+			// the legacy top-level cfg.APIKey, which is empty for every
+			// profile-based config, so the match never fired and --update-config
+			// was a no-op unless --force-config-update was also passed.
+			p, resolvedName, err := cfg.EnsureProfile(profileName)
+			if err != nil {
+				return err
+			}
+			configProfile = resolvedName
+			if p.APIKey == oldAPIKey || forceConfigUpdate {
+				p.APIKey = newAPIKey
 				if err := cfg.Save(); err != nil {
 					return err
 				}
@@ -393,6 +403,7 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			"old_key_kept":          keepOld || !deletedOld,
 			"config_updated":        configUpdated,
 			"config_update_skipped": configUpdateSkipped,
+			"config_profile":        configProfile,
 		}
 		encoded, _ := json.Marshal(out)
 		render(encoded)

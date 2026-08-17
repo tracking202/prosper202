@@ -519,8 +519,8 @@ func TestTrimLongDecimal(t *testing.T) {
 	cases := map[string]string{
 		"0.288613861":   "0.2886",
 		"-54.807953180": "-54.808",
-		"2.20":          "2.20",   // <=4 decimals untouched
-		"90008":         "90008",  // integer untouched
+		"2.20":          "2.20",  // <=4 decimals untouched
+		"90008":         "90008", // integer untouched
 		"Bing - Search": "Bing - Search",
 	}
 	for in, want := range cases {

@@ -2,12 +2,16 @@ package syncstate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"p202/internal/atomicfile"
 	configpkg "p202/internal/config"
 	syncdata "p202/internal/sync"
 )
@@ -93,44 +97,113 @@ func SaveManifestAtomic(manifest *Manifest) error {
 		return fmt.Errorf("creating sync state dir: %w", err)
 	}
 
-	path := ManifestPath(manifest.Source, manifest.Target)
-	tmpPath := path + ".tmp"
-
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding manifest: %w", err)
 	}
 	data = append(data, '\n')
 
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return fmt.Errorf("writing temp manifest: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("renaming manifest: %w", err)
+	// The manifest decides what the next incremental sync skips, so a truncated
+	// one would make the CLI silently re-create or skip records. The previous
+	// write-then-rename left its temp file behind whenever the rename failed and
+	// never flushed before renaming.
+	if err := atomicfile.Write(ManifestPath(manifest.Source, manifest.Target), data, 0600); err != nil {
+		return fmt.Errorf("writing manifest: %w", err)
 	}
 	return nil
 }
 
+// ErrLockHeld reports that another live process holds the sync lock.
+var ErrLockHeld = errors.New("sync lock is already held")
+
+// AcquireLock takes the exclusive sync lock for a profile pair and returns the
+// release function.
+//
+// The lock is a kernel-held file lock (flock on unix, LockFileEx on Windows),
+// not the mere existence of the lock file. That distinction is the fix for a
+// permanent wedge: the previous implementation used O_CREATE|O_EXCL, so a sync
+// killed mid-run (SIGKILL, crash, power loss) left the file behind and every
+// later sync for that pair failed forever — and the pid it recorded, the one
+// piece of data that could have diagnosed it, was never read by anything. The
+// OS drops a kernel lock when the holding process dies, so a leftover lock file
+// is now harmless. It is deliberately not unlinked on release: unlinking a
+// flock'd path lets a waiter hold a lock on an already-unlinked inode while a
+// third process locks the freshly created one, and both would think they won.
 func AcquireLock(source, target string) (func(), error) {
 	if err := os.MkdirAll(Dir(), 0700); err != nil {
 		return nil, fmt.Errorf("creating sync state dir: %w", err)
 	}
 	path := LockPath(source, target)
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+
+	file, err := acquireLockFile(path)
 	if err != nil {
-		if os.IsExist(err) {
-			return nil, fmt.Errorf("sync lock is already held for %s -> %s", source, target)
+		if errors.Is(err, ErrLockHeld) {
+			holder := readLockHolder(path)
+			if holder.pid > 0 {
+				return nil, fmt.Errorf("%w for %s -> %s by pid %d (since %s); wait for it to finish",
+					ErrLockHeld, source, target, holder.pid, holder.since)
+			}
+			return nil, fmt.Errorf("%w for %s -> %s", ErrLockHeld, source, target)
 		}
 		return nil, fmt.Errorf("creating lock file: %w", err)
 	}
 
-	_, _ = file.WriteString(fmt.Sprintf("pid=%d time=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339)))
-
-	release := func() {
-		_ = file.Close()
-		_ = os.Remove(path)
+	// Record the holder for the contention message above. Truncate first: the
+	// file survives across runs, so a shorter pid line must not leave a previous
+	// holder's trailing bytes behind.
+	if err := writeLockHolder(file); err != nil {
+		releaseLockFile(file)
+		return nil, fmt.Errorf("writing lock file: %w", err)
 	}
-	return release, nil
+
+	return func() { releaseLockFile(file) }, nil
+}
+
+func writeLockHolder(file *os.File) error {
+	if err := file.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	line := fmt.Sprintf("pid=%d time=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))
+	if _, err := file.WriteString(line); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+type lockHolder struct {
+	pid   int
+	since string
+}
+
+// readLockHolder parses the "pid=N time=T" line written by AcquireLock. It is
+// purely informational — the kernel lock, not this content, decides ownership —
+// so an unreadable or malformed file just yields an unidentified holder.
+func readLockHolder(path string) lockHolder {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return lockHolder{}
+	}
+	holder := lockHolder{since: "unknown"}
+	for _, field := range strings.Fields(strings.TrimSpace(string(data))) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "pid":
+			if pid, err := strconv.Atoi(value); err == nil && pid > 0 {
+				holder.pid = pid
+			}
+		case "time":
+			if value != "" {
+				holder.since = value
+			}
+		}
+	}
+	return holder
 }
 
 func (m *Manifest) SetMapping(entity, sourceID, targetID, sourceName, sourceHash string, at time.Time) {

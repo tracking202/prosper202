@@ -719,10 +719,10 @@ func init() {
 			},
 		},
 		{
-			Name:     "tracker",
-			Plural:   "trackers (tracking links that tie a traffic source to a campaign and landing page)",
-			Endpoint: "trackers",
-			IDField:  "tracker_id",
+			Name:          "tracker",
+			Plural:        "trackers (tracking links that tie a traffic source to a campaign and landing page)",
+			Endpoint:      "trackers",
+			IDField:       "tracker_id",
 			PublicIDField: "tracker_id_public",
 			Fields: []crudField{
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},

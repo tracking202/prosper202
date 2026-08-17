@@ -474,7 +474,7 @@ func renderTableCSV(items []interface{}, opts Opts) {
 		}
 		record := make([]string, len(keys))
 		for i, k := range keys {
-			record[i] = formatValue(obj[k])
+			record[i] = formatValueExact(obj[k])
 		}
 		if err := writer.Write(record); err != nil {
 			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
@@ -500,7 +500,7 @@ func renderObjectCSV(obj map[string]interface{}) {
 		return
 	}
 	for _, k := range keys {
-		if err := writer.Write([]string{k, formatValue(obj[k])}); err != nil {
+		if err := writer.Write([]string{k, formatValueExact(obj[k])}); err != nil {
 			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
 			return
 		}
@@ -511,7 +511,21 @@ func renderObjectCSV(obj map[string]interface{}) {
 	}
 }
 
+// formatValue renders a value for human display, rounding floats to 2 decimals.
 func formatValue(v interface{}) string {
+	return formatScalar(v, false)
+}
+
+// formatValueExact renders a value without lossy rounding, for machine-facing
+// output. The API sends computed metrics (roi, epc, margin) as JSON numbers
+// rather than strings, so rounding them here truncated exported data: a --csv
+// export of 0.288613861 came out as 0.29, and the caller had no way to tell it
+// had lost precision.
+func formatValueExact(v interface{}) string {
+	return formatScalar(v, true)
+}
+
+func formatScalar(v interface{}, exact bool) string {
 	if v == nil {
 		return ""
 	}
@@ -520,7 +534,10 @@ func formatValue(v interface{}) string {
 		return val
 	case float64:
 		if val == float64(int64(val)) {
-			return fmt.Sprintf("%d", int64(val))
+			return strconv.FormatInt(int64(val), 10)
+		}
+		if exact {
+			return strconv.FormatFloat(val, 'f', -1, 64)
 		}
 		return fmt.Sprintf("%.2f", val)
 	case bool:

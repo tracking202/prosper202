@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"p202/internal/atomicfile"
 )
 
 const defaultProfileName = "default"
@@ -58,13 +60,12 @@ func Load() (*Config, error) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
-	c.migrateLegacy()
+	c.normalize()
 	return &c, nil
 }
 
 func (c *Config) Save() error {
-	c.migrateLegacy()
-	c.mergeLegacyIntoProfile()
+	c.normalize()
 
 	dir := Dir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -77,7 +78,12 @@ func (c *Config) Save() error {
 		return fmt.Errorf("encoding config: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(Path(), data, 0600); err != nil {
+
+	// This file holds a bearer credential, so it is written all-or-nothing and
+	// its mode is enforced on every write — os.WriteFile's mode argument applies
+	// only when it creates the file, so a config that already existed as 0644
+	// would have kept those permissions forever.
+	if err := atomicfile.Write(Path(), data, 0600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 	return nil
@@ -180,7 +186,7 @@ func (c *Config) ProfileNames() []string {
 }
 
 func (c *Config) EnsureProfile(name string) (*Profile, string, error) {
-	c.migrateLegacy()
+	c.normalize()
 
 	target := strings.TrimSpace(name)
 	if target == "" {
@@ -215,6 +221,11 @@ func (c *Config) ResolveGroup(tag string) []string {
 	}
 	out := make([]string, 0)
 	for name, p := range c.Profiles {
+		// `"profiles":{"x":null}` unmarshals to a nil entry. Every other
+		// accessor guards against it; ranging p.Tags here panicked.
+		if p == nil {
+			continue
+		}
 		for _, t := range p.Tags {
 			if strings.ToLower(strings.TrimSpace(t)) == normalized {
 				out = append(out, name)
@@ -271,28 +282,50 @@ func getProfileOverride() string {
 	return strings.TrimSpace(profileOverride)
 }
 
-func (c *Config) migrateLegacy() {
-	if len(c.Profiles) > 0 {
-		return
-	}
-	if c.URL == "" && c.APIKey == "" && len(c.Defaults) == 0 {
+// normalize folds the legacy V1 top-level url/api_key/defaults into the
+// profiles map and then clears them.
+//
+// Consuming them exactly once is what makes later writes stick. Previously the
+// fields survived migration and Save() re-applied them over the active profile
+// on every write, so on any config upgraded from V1 `config set-key` and
+// `config set-url` silently reverted to the old value — the credential the user
+// just typed was discarded and the stale one written back.
+func (c *Config) normalize() {
+	if len(c.Profiles) == 0 {
+		if c.URL == "" && c.APIKey == "" && len(c.Defaults) == 0 {
+			return
+		}
+		c.Profiles = map[string]*Profile{
+			defaultProfileName: {
+				URL:      c.URL,
+				APIKey:   c.APIKey,
+				Defaults: cloneDefaults(c.Defaults),
+			},
+		}
+		if strings.TrimSpace(c.ActiveProfile) == "" {
+			c.ActiveProfile = defaultProfileName
+		}
+		c.clearLegacy()
 		return
 	}
 
-	c.Profiles = map[string]*Profile{
-		defaultProfileName: {
-			URL:      c.URL,
-			APIKey:   c.APIKey,
-			Defaults: cloneDefaults(c.Defaults),
-		},
-	}
-	if strings.TrimSpace(c.ActiveProfile) == "" {
-		c.ActiveProfile = defaultProfileName
-	}
+	// Profiles already exist, so a hand-edited or partially-upgraded file may
+	// carry both shapes. Fold the legacy half into the active profile once.
+	c.mergeLegacyIntoProfile()
+	c.clearLegacy()
+}
+
+func (c *Config) clearLegacy() {
+	c.URL = ""
+	c.APIKey = ""
+	c.Defaults = nil
 }
 
 func (c *Config) mergeLegacyIntoProfile() {
 	if len(c.Profiles) == 0 {
+		return
+	}
+	if c.URL == "" && c.APIKey == "" && len(c.Defaults) == 0 {
 		return
 	}
 
@@ -300,12 +333,18 @@ func (c *Config) mergeLegacyIntoProfile() {
 	if targetName == "" {
 		targetName = defaultProfileName
 	}
-	target, ok := c.Profiles[targetName]
-	if !ok {
-		target = c.Profiles[defaultProfileName]
-	}
+	// Create the target when active_profile names a profile the map does not
+	// contain (a hand-edited file). Returning early instead would let normalize()
+	// clear the legacy fields with nothing to clear them into, silently dropping
+	// the only credential such a config has. Merging into an arbitrary other
+	// profile would be worse — it would move a credential somewhere unasked.
+	target := c.Profiles[targetName]
 	if target == nil {
-		return
+		target = &Profile{}
+		c.Profiles[targetName] = target
+	}
+	if strings.TrimSpace(c.ActiveProfile) == "" {
+		c.ActiveProfile = targetName
 	}
 
 	if c.URL != "" {
@@ -319,29 +358,21 @@ func (c *Config) mergeLegacyIntoProfile() {
 	}
 }
 
+// cloneForSave builds the on-disk payload. Callers reach it only through
+// Save(), which normalizes first, so the legacy V1 fields are always empty by
+// this point and are never written back — the file is V2-only going forward.
 func (c *Config) cloneForSave() *Config {
 	out := &Config{
-		URL:           c.URL,
-		APIKey:        c.APIKey,
-		Defaults:      cloneDefaults(c.Defaults),
 		ActiveProfile: strings.TrimSpace(c.ActiveProfile),
 		Profiles:      cloneProfiles(c.Profiles),
 	}
 
-	if len(out.Profiles) > 0 {
-		if out.ActiveProfile == "" {
-			if _, ok := out.Profiles[defaultProfileName]; ok {
-				out.ActiveProfile = defaultProfileName
-			} else {
-				names := profileNames(out.Profiles)
-				if len(names) > 0 {
-					out.ActiveProfile = names[0]
-				}
-			}
+	if len(out.Profiles) > 0 && out.ActiveProfile == "" {
+		if _, ok := out.Profiles[defaultProfileName]; ok {
+			out.ActiveProfile = defaultProfileName
+		} else if names := profileNames(out.Profiles); len(names) > 0 {
+			out.ActiveProfile = names[0]
 		}
-		out.URL = ""
-		out.APIKey = ""
-		out.Defaults = nil
 	}
 
 	return out
@@ -349,7 +380,7 @@ func (c *Config) cloneForSave() *Config {
 
 func (c *Config) ensureWritableProfile() (*Profile, string) {
 	if len(c.Profiles) == 0 {
-		c.migrateLegacy()
+		c.normalize()
 	}
 	if len(c.Profiles) == 0 {
 		c.Profiles = map[string]*Profile{}
@@ -376,7 +407,7 @@ func (c *Config) ensureWritableProfile() (*Profile, string) {
 }
 
 func (c *Config) resolveProfile(name string) (*Profile, string, error) {
-	c.migrateLegacy()
+	c.normalize()
 
 	target := strings.TrimSpace(name)
 	if target == "" {
@@ -387,13 +418,8 @@ func (c *Config) resolveProfile(name string) (*Profile, string, error) {
 	}
 
 	if len(c.Profiles) == 0 {
-		if c.URL != "" || c.APIKey != "" || len(c.Defaults) > 0 {
-			return &Profile{
-				URL:      c.URL,
-				APIKey:   c.APIKey,
-				Defaults: cloneDefaults(c.Defaults),
-			}, target, nil
-		}
+		// normalize() has already folded any legacy fields into a profile, so an
+		// empty map here means a genuinely unconfigured CLI.
 		if target == defaultProfileName {
 			return &Profile{}, target, nil
 		}
