@@ -266,6 +266,74 @@ class AUTH
         }
 
         self::$sessionHeartbeatRefreshed = true;
+
+        // Persist the account holder's EU status, looked up from the client IP
+        // (no session flag carries this — it must be computed here). Only a
+        // definitive lookup is persisted so an unknown result never flattens a
+        // previously known value. Tracking must never break login: guard the
+        // connection and swallow failures.
+        try {
+            require_once __DIR__ . '/Messaging/ConsentPolicy.class.php';
+            $db = $GLOBALS['db'] ?? null;
+            if ($db instanceof \mysqli && !empty($_SESSION['user_id'])) {
+                $is_eu = self::detect_client_is_eu();
+                if ($is_eu !== null && !ConsentPolicy::rememberGeo($db, (int) $_SESSION['user_id'], $is_eu)) {
+                    error_log('[ConsentPolicy] rememberGeo at login failed for user ' . (int) $_SESSION['user_id']);
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[ConsentPolicy] rememberGeo at login failed: ' . $e->getMessage());
+        }
+
+        // Essential-tier lifecycle event (spec §7.3): login always flows, no
+        // consent gate. Analytics resolves $db/$_SESSION (established above),
+        // never throws, and logs + swallows its own failures — a tracking
+        // problem must never break login.
+        try {
+            require_once __DIR__ . '/Messaging/Analytics.class.php';
+            \Analytics::event('login', [], 'essential');
+        } catch (\Throwable $e) {
+            error_log('[Analytics] login event failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Whether the current request's client IP is inside the European Union,
+     * per the bundled GeoLite2 database. Uses the GeoIp2 reader directly:
+     * getGeoData() lives in connect2.php, which the UI/login bootstrap
+     * (connect.php) never includes, so it does not exist on this path.
+     * Returns true/false only when the lookup succeeded and resolved a
+     * country; null when geo data is unavailable or inconclusive so callers
+     * can skip persisting instead of overwriting a known value.
+     */
+    private static function detect_client_is_eu(): ?bool
+    {
+        if (!class_exists(\GeoIp2\Database\Reader::class)) {
+            return null;
+        }
+
+        $mmdb = __DIR__ . '/geo/GeoLite2-City.mmdb';
+        if (!is_readable($mmdb)) {
+            return null;
+        }
+
+        $reader = null;
+        try {
+            $reader = new \GeoIp2\Database\Reader($mmdb);
+            $record = $reader->city(self::client_ip());
+            // Only trust the EU flag when the country actually resolved;
+            // isInEuropeanUnion defaults to false on absent data.
+            if (($record->country->isoCode ?? null) === null) {
+                return null;
+            }
+            return (bool) $record->country->isInEuropeanUnion;
+        } catch (\Throwable) {
+            return null; // Private/unroutable IP, bad DB, etc. → inconclusive.
+        } finally {
+            if ($reader !== null) {
+                $reader->close();
+            }
+        }
     }
 
     /**

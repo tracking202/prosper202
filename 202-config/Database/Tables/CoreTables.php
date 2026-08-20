@@ -176,6 +176,8 @@ final class CoreTables
         );
     }
 
+    // 202_messaging_events: queued behavioural events; `tier` marks
+    // essential (always sent) vs analytics (consent-gated) events.
     public static function messagingEvents(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -187,6 +189,7 @@ final class CoreTables
                 `metadata` json DEFAULT NULL,
                 `occurred_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 `client_token` varchar(64) NOT NULL,
+                `tier` enum('essential','analytics') NOT NULL DEFAULT 'analytics',
                 `delivery_status` enum('pending','sent','failed') NOT NULL DEFAULT 'pending',
                 `sync_attempts` int(11) NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),

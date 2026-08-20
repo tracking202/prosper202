@@ -88,6 +88,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			} else {
 				if ($slack)
 					$slack->push('traffic_source_created', ['name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
+
+				// Milestone event on create only (edits must not emit *_added).
+				// Analytics tier → self-gates on consent; failures log + swallow.
+				require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
+				Analytics::event('traffic_source_added', [], 'analytics');
 			}
 
 			tagUserByNetwork($user_row['install_hash'], 'traffic-sources', $_POST['ppc_network_name']);
