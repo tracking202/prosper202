@@ -1120,3 +1120,43 @@ func TestForecastDerivedMetricWithSeasonalStaysDirect(t *testing.T) {
 		t.Errorf("meta.seasonal = %v, want true", meta["seasonal"])
 	}
 }
+
+func TestForecastSeasonalMonthlyRequiresDayInterval(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:9", "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=clicks", "--seasonal-monthly", "--interval=week")
+	if err == nil || !strings.Contains(err.Error(), "--seasonal-monthly requires --interval day") {
+		t.Errorf("expected interval validation error, got %v", err)
+	}
+}
+
+func TestForecastSeasonalReportsApplied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		if strings.HasSuffix(r.URL.Path, "/reports/weekpart") {
+			w.Write([]byte(makeWeekpartResponse("total_clicks")))
+			return
+		}
+		w.Write([]byte(makeTimeseriesResponse(30, "total_clicks")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=clicks", "--horizon=5", "--seasonal", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if _, ok := meta["seasonal_applied"]; !ok {
+		t.Errorf("expected seasonal_applied in meta, got %v", meta)
+	}
+}

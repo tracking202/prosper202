@@ -1,6 +1,7 @@
 package forecast
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -101,6 +102,145 @@ func weekdayFromAPIIndex(idx int) (time.Weekday, bool) {
 		return 0, false
 	}
 	return time.Weekday((idx + 1) % 7), true
+}
+
+// seasonalShrinkK is the shrinkage constant for seasonal multipliers: a
+// profile slot with n samples keeps n/(n+k) of its deviation from 1.0, so
+// two Mondays of data no longer produce a 1.9x Monday multiplier.
+const seasonalShrinkK = 4.0
+
+// shrinkMultiplier pulls a raw multiplier toward 1.0 by n/(n+k).
+func shrinkMultiplier(raw float64, n int) float64 {
+	factor := float64(n) / (float64(n) + seasonalShrinkK)
+	return 1 + (raw-1)*factor
+}
+
+// WeekdayCounts counts how many observations fall on each weekday.
+func WeekdayCounts(s Series) map[time.Weekday]int {
+	counts := map[time.Weekday]int{}
+	for _, p := range s {
+		counts[p.T.Weekday()]++
+	}
+	return counts
+}
+
+// ShrinkWeekdayWeights returns a copy of weights with each multiplier
+// shrunk toward 1.0 by n/(n+k), where n is that weekday's sample count.
+// Days absent from counts are treated as unobserved (full shrinkage to 1.0
+// would leave the hint meaningless, so they keep no weight at all).
+func ShrinkWeekdayWeights(weights SeasonalWeights, counts map[time.Weekday]int) SeasonalWeights {
+	if len(weights) == 0 {
+		return weights
+	}
+	out := make(SeasonalWeights, len(weights))
+	for dow, w := range weights {
+		out[dow] = shrinkMultiplier(w, counts[dow])
+	}
+	return out
+}
+
+// BuildHourlyWeights derives hour-of-day multipliers from an hourly series:
+// each hour's mean over the overall mean, shrunk toward 1.0 by sample count.
+// Returns nil when the series has no positive mean or covers fewer than two
+// distinct hours.
+func BuildHourlyWeights(s Series) map[int]float64 {
+	return buildSlotWeights(s, func(t time.Time) int { return t.Hour() })
+}
+
+// BuildMonthDayWeights derives day-of-month multipliers (1–31) from a daily
+// series — affiliate budgets and payouts often reset monthly. Same
+// multiplier-table pattern and shrinkage as the other profiles.
+func BuildMonthDayWeights(s Series) map[int]float64 {
+	return buildSlotWeights(s, func(t time.Time) int { return t.Day() })
+}
+
+// buildSlotWeights groups observations into integer slots, computes each
+// slot's mean over the overall mean, and shrinks by sample count.
+func buildSlotWeights(s Series, slot func(time.Time) int) map[int]float64 {
+	if len(s) == 0 {
+		return nil
+	}
+	sums := map[int]float64{}
+	counts := map[int]int{}
+	total := 0.0
+	for _, p := range s {
+		k := slot(p.T)
+		sums[k] += p.V
+		counts[k]++
+		total += p.V
+	}
+	if len(counts) < 2 {
+		return nil
+	}
+	mean := total / float64(len(s))
+	if mean == 0 {
+		return nil
+	}
+	weights := make(map[int]float64, len(sums))
+	for k, sum := range sums {
+		raw := (sum / float64(counts[k])) / mean
+		weights[k] = shrinkMultiplier(raw, counts[k])
+	}
+	return weights
+}
+
+// seasonalGateThreshold is the minimum detrended autocorrelation at the
+// seasonal lag for profile weights to be applied; below it the apparent
+// seasonality is noise and adjusting would only add error.
+const seasonalGateThreshold = 0.3
+
+// seasonalLagAutocorrelation measures autocorrelation at a calendar lag on
+// linearly detrended values: observations exactly `lag` apart are paired by
+// timestamp (so masked-day gaps don't misalign pairs), and the linear trend
+// is removed first so a trending series doesn't fake seasonal structure.
+// Returns 0 when there are too few pairs or no variance.
+func seasonalLagAutocorrelation(s Series, lag time.Duration) float64 {
+	if len(s) < 8 {
+		return 0
+	}
+
+	// Detrend: OLS on hours-since-start.
+	base := s[0].T
+	n := float64(len(s))
+	sumX, sumY, sumXY, sumXX := 0.0, 0.0, 0.0, 0.0
+	for _, p := range s {
+		x := p.T.Sub(base).Hours()
+		sumX += x
+		sumY += p.V
+		sumXY += x * p.V
+		sumXX += x * x
+	}
+	denom := n*sumXX - sumX*sumX
+	slope, intercept := 0.0, sumY/n
+	if math.Abs(denom) > 1e-12 {
+		slope = (n*sumXY - sumX*sumY) / denom
+		intercept = (sumY - slope*sumX) / n
+	}
+
+	resid := make(map[time.Time]float64, len(s))
+	variance := 0.0
+	for _, p := range s {
+		e := p.V - (intercept + slope*p.T.Sub(base).Hours())
+		resid[p.T] = e
+		variance += e * e
+	}
+	variance /= n
+	if variance <= 0 {
+		return 0
+	}
+
+	cov := 0.0
+	pairs := 0
+	for _, p := range s {
+		if other, ok := resid[p.T.Add(lag)]; ok {
+			cov += resid[p.T] * other
+			pairs++
+		}
+	}
+	if pairs < 4 {
+		return 0
+	}
+	return (cov / float64(pairs)) / variance
 }
 
 // extractFloat tries to pull a float64 from an interface{} value,

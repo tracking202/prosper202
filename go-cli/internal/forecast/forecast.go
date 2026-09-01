@@ -96,6 +96,15 @@ type Result struct {
 	// (composed from driver forecasts) or "direct" (the metric's own series
 	// forecast directly). Empty for plain Run results.
 	Composition string `json:"composition,omitempty"`
+	// LevelShiftAt is the timestamp of the first observation after a
+	// detected level shift (offer paused, traffic source added). When set,
+	// pre-shift history was truncated or re-leveled before fitting.
+	LevelShiftAt string `json:"level_shift_at,omitempty"`
+	// SeasonalApplied reports whether any supplied seasonal profile
+	// actually adjusted the predictions: weekday and hourly weights are
+	// gated on detrended autocorrelation at the seasonal lag, so weights
+	// built from a series with no real weekly/daily structure are ignored.
+	SeasonalApplied bool `json:"seasonal_applied,omitempty"`
 }
 
 // SeasonalWeights maps day-of-week (time.Weekday) to a multiplier.
@@ -116,6 +125,21 @@ type Config struct {
 	// cost, income). Prediction values, bounds, and quantiles are clipped
 	// at zero.
 	NonNegative bool
+
+	// HourlyWeights maps hour-of-day (0-23) to a multiplier, for hourly
+	// forecasts. Like SeasonalWeights it is gated on detrended
+	// autocorrelation at the daily lag before being applied.
+	HourlyWeights map[int]float64
+
+	// MonthDayWeights maps day-of-month (1-31) to a multiplier — affiliate
+	// budgets and payouts often reset monthly. Applied without a gate: the
+	// profile is an explicit opt-in.
+	MonthDayWeights map[int]float64
+
+	// LogTransform fits count-like non-negative series on log1p scale and
+	// inverts on output, making multiplicative behavior additive and
+	// stabilizing variance. Ignored when the series has negative values.
+	LogTransform bool
 
 	// Anchor, when set, is the timestamp predictions step forward from
 	// instead of the series' last point. Used when training data has been
@@ -210,20 +234,65 @@ func Run(series Series, cfg Config) (*Result, error) {
 		method = MethodEnsemble
 	}
 
+	// The original-scale mean anchors the trend percentage regardless of
+	// transforms and truncation below.
+	originalMean := seriesMean(series)
+
+	// Optional log1p transform: fit multiplicative count series on log
+	// scale, invert on output. Skipped when negative values make the
+	// transform undefined.
+	work := series
+	logApplied := false
+	if cfg.LogTransform && seriesAllNonNegative(work) {
+		work = log1pSeries(work)
+		logApplied = true
+	} else {
+		cfg.LogTransform = false // downstream error stats stay untransformed
+	}
+
+	// Level-shift handling: fit on the current regime, not a blend of
+	// regimes. Post-shift history is used alone when long enough; otherwise
+	// older observations are re-leveled to the new regime.
+	levelShiftAt := ""
+	if idx, delta := detectLevelShift(work); idx > 0 {
+		levelShiftAt = formatShiftTime(work[idx].T, cfg.Interval)
+		work = applyLevelShift(work, idx, delta, cfg.Interval)
+	}
+
 	var core forecastCore
 	var err error
 	if method == MethodEnsemble {
-		core, err = computeEnsemble(series, cfg)
+		core, err = computeEnsemble(work, cfg)
 	} else {
-		core, err = computeSingle(series, cfg, method, nil)
+		core, err = computeSingle(work, cfg, method, nil)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	// Apply seasonal adjustment if weights are provided.
-	if len(cfg.SeasonalWeights) > 0 {
+	if logApplied {
+		invertLogPredictions(core.preds)
+		core.trend = predictionTrend(core.preds, series)
+	}
+
+	// Apply seasonal profiles. Weekday and hourly weights are gated on
+	// detrended autocorrelation at their lag so spurious profiles (built
+	// from noise) don't degrade the forecast; day-of-month weights are an
+	// explicit opt-in and apply as supplied.
+	seasonalApplied := false
+	if len(cfg.SeasonalWeights) > 0 &&
+		seasonalLagAutocorrelation(work, 7*24*time.Hour) >= seasonalGateThreshold {
 		core.preds = applySeasonalWeights(core.preds, cfg.SeasonalWeights)
+		seasonalApplied = true
+	}
+	if len(cfg.HourlyWeights) > 0 && cfg.Interval == IntervalHour &&
+		seasonalLagAutocorrelation(work, 24*time.Hour) >= seasonalGateThreshold {
+		core.preds = applyHourlyWeights(core.preds, cfg.HourlyWeights)
+		seasonalApplied = true
+	}
+	if len(cfg.MonthDayWeights) > 0 {
+		core.preds = applyMonthDayWeights(core.preds, cfg.MonthDayWeights)
+		seasonalApplied = true
 	}
 
 	if cfg.NonNegative {
@@ -232,26 +301,70 @@ func Run(series Series, cfg Config) (*Result, error) {
 
 	// Compute trend percentage.
 	trendPct := 0.0
-	if len(series) > 0 {
-		mean := seriesMean(series)
-		if mean != 0 {
-			trendPct = (core.trend / mean) * 100
-		}
+	if originalMean != 0 {
+		trendPct = (core.trend / originalMean) * 100
 	}
 
 	return &Result{
-		Method:      core.method,
-		Metric:      cfg.Metric,
-		Horizon:     cfg.Horizon,
-		Interval:    cfg.Interval,
-		Predictions: core.preds,
-		Trend:       core.trend,
-		TrendPct:    trendPct,
-		MAE:         core.mae,
-		RMSE:        core.rmse,
-		DataPoints:  len(series),
-		Weights:     core.weights,
+		Method:          core.method,
+		Metric:          cfg.Metric,
+		Horizon:         cfg.Horizon,
+		Interval:        cfg.Interval,
+		Predictions:     core.preds,
+		Trend:           core.trend,
+		TrendPct:        trendPct,
+		MAE:             core.mae,
+		RMSE:            core.rmse,
+		DataPoints:      len(series),
+		Weights:         core.weights,
+		LevelShiftAt:    levelShiftAt,
+		SeasonalApplied: seasonalApplied,
 	}, nil
+}
+
+// seriesAllNonNegative reports whether every value is >= 0.
+func seriesAllNonNegative(s Series) bool {
+	for _, p := range s {
+		if p.V < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// log1pSeries returns a copy of the series with values on log1p scale.
+func log1pSeries(s Series) Series {
+	out := make(Series, len(s))
+	for i, p := range s {
+		out[i] = Point{T: p.T, V: math.Log1p(p.V)}
+	}
+	return out
+}
+
+// invertLogPredictions maps predictions fitted on log1p scale back to the
+// original scale. expm1 is monotone, so bound and quantile order is kept.
+func invertLogPredictions(preds []Prediction) {
+	for i := range preds {
+		preds[i].Value = math.Expm1(preds[i].Value)
+		preds[i].LowerBound = math.Expm1(preds[i].LowerBound)
+		preds[i].UpperBound = math.Expm1(preds[i].UpperBound)
+		for name, v := range preds[i].Quantiles {
+			preds[i].Quantiles[name] = math.Expm1(v)
+		}
+	}
+}
+
+// predictionTrend estimates the per-period trend from the forecast path on
+// the original scale (used when the model's own trend lives in log space).
+func predictionTrend(preds []Prediction, original Series) float64 {
+	switch {
+	case len(preds) > 1:
+		return (preds[len(preds)-1].Value - preds[0].Value) / float64(len(preds)-1)
+	case len(preds) == 1 && len(original) > 0:
+		return preds[0].Value - original[len(original)-1].V
+	default:
+		return 0
+	}
 }
 
 // forecastCore is a computed forecast before the shared post-processing
@@ -603,7 +716,12 @@ func backtest(s Series, cfg Config, method Method) (mae, rmse float64) {
 	sumAbsErr := 0.0
 	sumSqErr := 0.0
 	for i := 0; i < n; i++ {
-		diff := test[i].V - preds[i].Value
+		actual, pred := test[i].V, preds[i].Value
+		if cfg.LogTransform {
+			// Values arrive on log1p scale; report errors on the original.
+			actual, pred = math.Expm1(actual), math.Expm1(pred)
+		}
+		diff := actual - pred
 		sumAbsErr += math.Abs(diff)
 		sumSqErr += diff * diff
 	}
@@ -684,6 +802,26 @@ func applySeasonalWeights(preds []Prediction, weights SeasonalWeights) []Predict
 	for i := range preds {
 		dow := preds[i].T.Weekday()
 		if w, ok := weights[dow]; ok {
+			scalePrediction(&preds[i], w)
+		}
+	}
+	return preds
+}
+
+// applyHourlyWeights adjusts prediction values by hour-of-day multipliers.
+func applyHourlyWeights(preds []Prediction, weights map[int]float64) []Prediction {
+	for i := range preds {
+		if w, ok := weights[preds[i].T.Hour()]; ok {
+			scalePrediction(&preds[i], w)
+		}
+	}
+	return preds
+}
+
+// applyMonthDayWeights adjusts prediction values by day-of-month multipliers.
+func applyMonthDayWeights(preds []Prediction, weights map[int]float64) []Prediction {
+	for i := range preds {
+		if w, ok := weights[preds[i].T.Day()]; ok {
 			scalePrediction(&preds[i], w)
 		}
 	}

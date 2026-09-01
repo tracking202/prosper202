@@ -1,0 +1,352 @@
+package forecast
+
+import (
+	"math"
+	"math/rand"
+	"testing"
+	"time"
+)
+
+func TestShrinkMultiplier(t *testing.T) {
+	tests := []struct {
+		raw  float64
+		n    int
+		want float64
+	}{
+		{1.9, 2, 1.3},    // 1 + 0.9 * 2/6: two samples barely move the needle
+		{1.9, 96, 1.864}, // 1 + 0.9 * 96/100: plenty of data keeps the signal
+		{1.0, 0, 1.0},
+		{0.4, 4, 0.7}, // 1 - 0.6 * 4/8
+	}
+	for _, tc := range tests {
+		got := shrinkMultiplier(tc.raw, tc.n)
+		if math.Abs(got-tc.want) > 0.001 {
+			t.Errorf("shrinkMultiplier(%v, %d) = %.4f, want %.4f", tc.raw, tc.n, got, tc.want)
+		}
+	}
+}
+
+func TestShrinkWeekdayWeights(t *testing.T) {
+	weights := SeasonalWeights{time.Monday: 1.9, time.Friday: 0.5}
+	counts := map[time.Weekday]int{time.Monday: 2, time.Friday: 12}
+	shrunk := ShrinkWeekdayWeights(weights, counts)
+	if math.Abs(shrunk[time.Monday]-1.3) > 0.001 {
+		t.Errorf("Monday shrunk to %.3f, want 1.3 (2 samples)", shrunk[time.Monday])
+	}
+	if math.Abs(shrunk[time.Friday]-0.625) > 0.001 {
+		t.Errorf("Friday shrunk to %.3f, want 0.625 (12 samples)", shrunk[time.Friday])
+	}
+	// Input untouched.
+	if weights[time.Monday] != 1.9 {
+		t.Error("ShrinkWeekdayWeights modified its input")
+	}
+}
+
+func TestWeekdayCounts(t *testing.T) {
+	s := makeSeries(15, func(i int) float64 { return 1 }) // 2026-01-01 is a Thursday
+	counts := WeekdayCounts(s)
+	total := 0
+	for _, n := range counts {
+		total += n
+	}
+	if total != 15 {
+		t.Errorf("counts sum to %d, want 15", total)
+	}
+	if counts[time.Thursday] != 3 { // Jan 1, 8, 15
+		t.Errorf("Thursday count = %d, want 3", counts[time.Thursday])
+	}
+}
+
+func TestBuildHourlyWeights(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := make(Series, 0, 240)
+	for i := 0; i < 240; i++ { // 10 days of hourly data
+		t := base.Add(time.Duration(i) * time.Hour)
+		v := 100.0
+		if t.Hour() == 12 {
+			v = 200 // lunchtime spike
+		}
+		s = append(s, Point{T: t, V: v})
+	}
+	weights := BuildHourlyWeights(s)
+	if weights == nil {
+		t.Fatal("expected non-nil hourly weights")
+	}
+	if weights[12] < 1.3 {
+		t.Errorf("hour-12 weight = %.3f, want clearly above 1 (spike hour)", weights[12])
+	}
+	if weights[3] > 1.0 {
+		t.Errorf("hour-3 weight = %.3f, want below 1", weights[3])
+	}
+}
+
+func TestBuildMonthDayWeights(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := make(Series, 0, 90)
+	for i := 0; i < 90; i++ {
+		t := base.AddDate(0, 0, i)
+		v := 100.0
+		if t.Day() == 1 {
+			v = 300 // budget reset spike
+		}
+		s = append(s, Point{T: t, V: v})
+	}
+	weights := BuildMonthDayWeights(s)
+	if weights == nil {
+		t.Fatal("expected non-nil month-day weights")
+	}
+	if weights[1] < 1.5 {
+		t.Errorf("day-1 weight = %.3f, want clearly above 1", weights[1])
+	}
+}
+
+func TestSeasonalLagAutocorrelation(t *testing.T) {
+	weekly := []float64{0.6, 1.1, 1.3, 1.2, 1.1, 1.0, 0.7}
+	strong := makeSeries(56, func(i int) float64 { return 100 * weekly[i%7] })
+	if ac := seasonalLagAutocorrelation(strong, 7*24*time.Hour); ac < 0.8 {
+		t.Errorf("weekly series lag-7 autocorr = %.3f, want > 0.8", ac)
+	}
+
+	rng := rand.New(rand.NewSource(71))
+	flat := makeSeries(56, func(i int) float64 { return 100 + rng.NormFloat64()*10 })
+	if ac := seasonalLagAutocorrelation(flat, 7*24*time.Hour); math.Abs(ac) > 0.3 {
+		t.Errorf("flat series lag-7 autocorr = %.3f, want near 0", ac)
+	}
+
+	// A strong trend must not fake weekly structure (detrended first).
+	trend := makeSeries(56, func(i int) float64 { return 100 + 10*float64(i) })
+	if ac := seasonalLagAutocorrelation(trend, 7*24*time.Hour); ac > 0.5 {
+		t.Errorf("pure trend lag-7 autocorr = %.3f, want low after detrending", ac)
+	}
+}
+
+func TestDetectLevelShift(t *testing.T) {
+	rng := rand.New(rand.NewSource(73))
+	shifted := makeSeries(60, func(i int) float64 {
+		lvl := 100.0
+		if i >= 30 {
+			lvl = 170
+		}
+		return lvl + rng.NormFloat64()*8
+	})
+	idx, delta := detectLevelShift(shifted)
+	if idx < 25 || idx > 35 {
+		t.Fatalf("shift detected at index %d, want near 30", idx)
+	}
+	if delta < 30 {
+		t.Errorf("shift delta = %.1f, want strongly positive", delta)
+	}
+
+	rng2 := rand.New(rand.NewSource(74))
+	flat := makeSeries(60, func(i int) float64 { return 100 + rng2.NormFloat64()*8 })
+	if idx, _ := detectLevelShift(flat); idx >= 0 {
+		t.Errorf("false-positive shift at index %d on flat series", idx)
+	}
+
+	// A steady trend is not a level shift.
+	rng3 := rand.New(rand.NewSource(75))
+	trend := makeSeries(60, func(i int) float64 { return 100 + 3*float64(i) + rng3.NormFloat64()*8 })
+	if idx, _ := detectLevelShift(trend); idx >= 0 {
+		t.Errorf("false-positive shift at index %d on trending series", idx)
+	}
+}
+
+func TestRun_LevelShiftForecastsNewLevel(t *testing.T) {
+	// Level shift halfway through: forecasts must land near the NEW level
+	// (~170), not between the regimes (~135) as unweighted history implies.
+	rng := rand.New(rand.NewSource(77))
+	s := makeSeries(90, func(i int) float64 {
+		lvl := 100.0
+		if i >= 45 {
+			lvl = 170
+		}
+		return lvl + rng.NormFloat64()*8
+	})
+
+	result, err := Run(s, Config{Method: MethodAuto, Horizon: 7, Interval: IntervalDay})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.LevelShiftAt == "" {
+		t.Error("expected level_shift_at to be recorded")
+	}
+	for i, p := range result.Predictions {
+		if p.Value < 150 || p.Value > 190 {
+			t.Errorf("prediction[%d] = %.1f, want near the new level (~170)", i, p.Value)
+		}
+	}
+}
+
+func TestRun_LevelShiftShortPostSegmentRelevels(t *testing.T) {
+	// Shift near the end (8 post-shift points, below the 14-point truncation
+	// bar): pre-shift history is re-leveled so forecasts still track the new
+	// regime.
+	rng := rand.New(rand.NewSource(79))
+	s := makeSeries(50, func(i int) float64 {
+		lvl := 100.0
+		if i >= 42 {
+			lvl = 180
+		}
+		return lvl + rng.NormFloat64()*6
+	})
+
+	result, err := Run(s, Config{Method: MethodAuto, Horizon: 5, Interval: IntervalDay})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.LevelShiftAt == "" {
+		t.Error("expected level_shift_at to be recorded")
+	}
+	for i, p := range result.Predictions {
+		if p.Value < 155 {
+			t.Errorf("prediction[%d] = %.1f, want near the new level (~180), not dragged down by old history", i, p.Value)
+		}
+	}
+}
+
+func TestRun_NoLevelShiftFieldOnStableSeries(t *testing.T) {
+	rng := rand.New(rand.NewSource(83))
+	s := makeSeries(60, func(i int) float64 { return 100 + rng.NormFloat64()*10 })
+	result, err := Run(s, Config{Method: MethodSMA, Horizon: 5, Interval: IntervalDay})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.LevelShiftAt != "" {
+		t.Errorf("unexpected level_shift_at %q on stable series", result.LevelShiftAt)
+	}
+}
+
+func TestRun_LogTransformTracksMultiplicativeGrowth(t *testing.T) {
+	// Clean 3%-per-day growth: on log scale this is exactly linear, so the
+	// transformed linear forecast continues the compounding — while the
+	// untransformed fit undershoots badly at the far horizon.
+	s := makeSeries(60, func(i int) float64 { return 50 * math.Pow(1.03, float64(i)) })
+	want := 50 * math.Pow(1.03, 69) // 10 steps past the end
+
+	logRes, err := Run(s, Config{Method: MethodLinear, Horizon: 10, Interval: IntervalDay,
+		NonNegative: true, LogTransform: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := logRes.Predictions[9].Value
+	if math.Abs(got-want)/want > 0.02 {
+		t.Errorf("log-scale forecast = %.1f, want ~%.1f (exact compounding)", got, want)
+	}
+
+	rawRes, err := Run(s, Config{Method: MethodLinear, Horizon: 10, Interval: IntervalDay,
+		NonNegative: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rawGot := rawRes.Predictions[9].Value
+	if math.Abs(rawGot-want)/want < math.Abs(got-want)/want {
+		t.Errorf("expected log transform to beat raw fit: log err %.3f vs raw err %.3f",
+			math.Abs(got-want)/want, math.Abs(rawGot-want)/want)
+	}
+
+	// Positive trend reported on the original scale.
+	if logRes.Trend <= 0 {
+		t.Errorf("trend = %.3f, want positive on growing series", logRes.Trend)
+	}
+	// Error metrics are on the original scale: a clean exponential fit on
+	// log scale has tiny original-scale errors, far below the raw fit's.
+	if logRes.RMSE > rawRes.RMSE {
+		t.Errorf("log-fit RMSE %.3f should not exceed raw-fit RMSE %.3f", logRes.RMSE, rawRes.RMSE)
+	}
+}
+
+func TestRun_LogTransformSkippedOnNegativeValues(t *testing.T) {
+	s := makeSeries(30, func(i int) float64 { return float64(i) - 10 }) // crosses zero
+	result, err := Run(s, Config{Method: MethodLinear, Horizon: 3, Interval: IntervalDay, LogTransform: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The untransformed linear fit continues the line into positive values.
+	if math.Abs(result.Predictions[0].Value-20) > 0.5 {
+		t.Errorf("prediction = %.2f, want ~20 (transform skipped, plain linear)", result.Predictions[0].Value)
+	}
+}
+
+func TestRun_HourlyWeightsAppliedWithDailyPattern(t *testing.T) {
+	// Hourly series with a strong repeating daily pattern: hour weights
+	// pass the lag-24 gate and modulate the forecast.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := make(Series, 0, 240)
+	pattern := func(h int) float64 {
+		if h == 12 {
+			return 2.0
+		}
+		return 1.0
+	}
+	for i := 0; i < 240; i++ {
+		ts := base.Add(time.Duration(i) * time.Hour)
+		s = append(s, Point{T: ts, V: 100 * pattern(ts.Hour())})
+	}
+	weights := BuildHourlyWeights(s)
+
+	result, err := Run(s, Config{
+		Method:        MethodSMA,
+		Horizon:       24,
+		Interval:      IntervalHour,
+		HourlyWeights: weights,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.SeasonalApplied {
+		t.Fatal("expected hourly weights to be applied")
+	}
+	var noon, offPeak float64
+	for _, p := range result.Predictions {
+		if p.T.Hour() == 12 {
+			noon = p.Value
+		} else if p.T.Hour() == 3 {
+			offPeak = p.Value
+		}
+	}
+	if noon <= offPeak {
+		t.Errorf("noon prediction %.1f not above off-peak %.1f despite daily pattern", noon, offPeak)
+	}
+}
+
+func TestRun_MonthDayWeightsApplied(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := make(Series, 90)
+	for i := range s {
+		ts := base.AddDate(0, 0, i)
+		v := 100.0
+		if ts.Day() == 1 {
+			v = 300
+		}
+		s[i] = Point{T: ts, V: v}
+	}
+	weights := BuildMonthDayWeights(s)
+
+	// Horizon long enough to cross the next month boundary (from Mar 31).
+	result, err := Run(s, Config{
+		Method:          MethodSMA,
+		Horizon:         5,
+		Interval:        IntervalDay,
+		MonthDayWeights: weights,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.SeasonalApplied {
+		t.Fatal("expected month-day weights to be applied")
+	}
+	var first, other float64
+	for _, p := range result.Predictions {
+		if p.T.Day() == 1 {
+			first = p.Value
+		} else if other == 0 {
+			other = p.Value
+		}
+	}
+	if first == 0 {
+		t.Fatal("horizon did not cross a month boundary")
+	}
+	if first <= other {
+		t.Errorf("day-1 prediction %.1f not above other days %.1f", first, other)
+	}
+}

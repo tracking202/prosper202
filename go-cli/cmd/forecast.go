@@ -36,6 +36,14 @@ var forecastSignedMetrics = map[string]bool{
 	"roi":       true,
 }
 
+// forecastCountMetrics are count-like series fitted on log1p scale, which
+// makes multiplicative growth additive and stabilizes variance.
+var forecastCountMetrics = map[string]bool{
+	"total_clicks":         true,
+	"total_click_throughs": true,
+	"total_leads":          true,
+}
+
 // forecastCoreMetrics are the metrics RunCoherent consumes and produces.
 var forecastCoreMetrics = []string{
 	forecast.MetricClicks, forecast.MetricLeads, forecast.MetricIncome,
@@ -192,6 +200,11 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		// systematically skew the totals.
 		return validationError("--seasonal requires --interval day or hour")
 	}
+	seasonalMonthly, _ := cmd.Flags().GetBool("seasonal-monthly")
+	if seasonalMonthly && interval != "day" {
+		// Day-of-month profiles only make sense on daily buckets.
+		return validationError("--seasonal-monthly requires --interval day")
+	}
 	useEvents, _ := cmd.Flags().GetBool("events")
 	eventTag, _ := cmd.Flags().GetString("event-tag")
 	if (useEvents || eventTag != "") && interval != "day" {
@@ -199,11 +212,11 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		// granularity; other intervals would silently produce wrong adjustments.
 		return validationError("--events and --event-tag require --interval day")
 	}
-	if allMetrics && (seasonal || useEvents || eventTag != "") {
+	if allMetrics && (seasonal || seasonalMonthly || useEvents || eventTag != "") {
 		// Seasonal and event adjustment layers operate on a single metric's
 		// series; combining them with the coherent multi-metric path would
 		// silently skip them for the derived metrics.
-		return validationError("--all-metrics cannot be combined with --seasonal, --events, or --event-tag")
+		return validationError("--all-metrics cannot be combined with --seasonal, --seasonal-monthly, --events, or --event-tag")
 	}
 	confidence, _ := cmd.Flags().GetFloat64("confidence")
 	if confidence <= 0 || confidence >= 1 {
@@ -236,6 +249,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		SMAWindow:       smaWindow,
 		ConfidenceLevel: confidence,
 		NonNegative:     !forecastSignedMetrics[metric],
+		LogTransform:    forecastCountMetrics[metric],
 	}
 
 	// ── Coherent multi-metric forecasting ─────────────────────────────
@@ -270,7 +284,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	// ratio decomposition so it stays consistent with what the clicks
 	// forecast implies. Any failure — missing companion metrics in the
 	// response, too-sparse drivers upstream — falls back to the direct path.
-	if forecastDerivedMetrics[metric] && !seasonal && !useEvents && eventTag == "" {
+	if forecastDerivedMetrics[metric] && !seasonal && !seasonalMonthly && !useEvents && eventTag == "" {
 		if coherentSeries, csErr := parseTimeseriesMulti(data, forecastCoreMetrics); csErr == nil {
 			if results, rcErr := forecast.RunCoherent(coherentSeries, cfg); rcErr == nil {
 				if result := results[metric]; result != nil {
@@ -288,7 +302,12 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Optionally fetch weekpart data for seasonal adjustment.
+	// Optionally fetch weekpart data for seasonal adjustment. Weekday
+	// multipliers are shrunk toward 1.0 by each weekday's sample count in
+	// the fetched series, so a thin history can't produce extreme weights;
+	// hourly forecasts additionally get an hour-of-day profile built from
+	// the series itself. The forecast engine gates both profiles on
+	// detrended autocorrelation before applying them.
 	if seasonal {
 		weekpartParams := collectForecastFilters(cmd)
 		weekpartParams["period"] = history
@@ -296,9 +315,15 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		if wpErr == nil {
 			weights := parseWeekpartWeights(wpData, metric)
 			if weights != nil {
-				cfg.SeasonalWeights = weights
+				cfg.SeasonalWeights = forecast.ShrinkWeekdayWeights(weights, forecast.WeekdayCounts(series))
 			}
 		}
+		if interval == "hour" {
+			cfg.HourlyWeights = forecast.BuildHourlyWeights(series)
+		}
+	}
+	if seasonalMonthly {
+		cfg.MonthDayWeights = forecast.BuildMonthDayWeights(series)
 	}
 
 	// ── Event-aware forecasting pipeline ──────────────────────────────
@@ -610,9 +635,17 @@ func buildAllMetricsOutput(results map[string]*forecast.Result) ([]byte, error) 
 	}
 
 	compositions := map[string]interface{}{}
+	levelShifts := map[string]interface{}{}
 	for _, m := range forecastCoreMetrics {
-		if res := results[m]; res != nil && res.Composition != "" {
+		res := results[m]
+		if res == nil {
+			continue
+		}
+		if res.Composition != "" {
 			compositions[m] = res.Composition
+		}
+		if res.LevelShiftAt != "" {
+			levelShifts[m] = res.LevelShiftAt
 		}
 	}
 
@@ -622,6 +655,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result) ([]byte, error) 
 		"interval":         string(clicks.Interval),
 		"data_points_used": clicks.DataPoints,
 		"composition":      compositions,
+	}
+	if len(levelShifts) > 0 {
+		meta["level_shifts"] = levelShifts
 	}
 	if len(clicks.Weights) > 0 {
 		weights := make(map[string]interface{}, len(clicks.Weights))
@@ -710,6 +746,12 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, 
 	}
 	if result.Composition != "" {
 		meta["composition"] = result.Composition
+	}
+	if result.LevelShiftAt != "" {
+		meta["level_shift_at"] = result.LevelShiftAt
+	}
+	if seasonal {
+		meta["seasonal_applied"] = result.SeasonalApplied
 	}
 	if result.MAE > 0 {
 		meta["mae"] = roundTo(result.MAE, 2)
@@ -1014,7 +1056,8 @@ func init() {
 	forecastCmd.Flags().String("days", "", "Alias of --history")
 	forecastCmd.Flags().Int("window", 0, "SMA/WMA window size (0 = auto-select)")
 	forecastCmd.Flags().Bool("all-metrics", false, "Forecast clicks, leads, income, cost, and net together via ratio decomposition (coherent output)")
-	forecastCmd.Flags().Bool("seasonal", false, "Apply day-of-week seasonal adjustment from weekpart data")
+	forecastCmd.Flags().Bool("seasonal", false, "Apply day-of-week seasonal adjustment from weekpart data (hour interval also gets an hour-of-day profile)")
+	forecastCmd.Flags().Bool("seasonal-monthly", false, "Apply day-of-month seasonal adjustment learned from the fetched series (requires --interval day)")
 	forecastCmd.Flags().Float64("confidence", 0.95, "Confidence level for prediction bounds (0.80, 0.90, 0.95, 0.99)")
 	forecastCmd.Flags().Bool("events", false, "Enable event-aware forecasting using stored forecast events")
 	forecastCmd.Flags().String("event-tag", "", "Filter forecast events by tag (comma-separated, e.g. us-holidays,promos)")

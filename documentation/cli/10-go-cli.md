@@ -197,9 +197,20 @@ all rolling cut points. Metrics that cannot go negative (clicks, leads, cost,
 income, rates) have bounds clipped at zero; very short histories (fewer than
 ~9 points) fall back to symmetric Gaussian bounds without quantile columns.
 
-With `--seasonal`, predictions are modulated by day-of-week weights derived from
-weekpart report data (requires `--interval day` or `hour`). Event-aware
-forecasting (`--events`, `--event-tag`) folds in stored [forecast
+With `--seasonal`, predictions are modulated by day-of-week weights derived
+from weekpart report data (requires `--interval day` or `hour`); hourly
+forecasts also get an hour-of-day profile learned from the series, and
+`--seasonal-monthly` (day interval) adds day-of-month weights for monthly
+budget/payout resets. Profile multipliers are shrunk toward 1.0 when a slot
+has few samples, and weekday/hourly profiles only apply when the series
+actually shows structure at that lag (detrended autocorrelation ≥ 0.3) —
+the meta's `seasonal_applied` reports the outcome. Count metrics (clicks,
+click-throughs, leads) are fitted on log1p scale and inverted on output, so
+multiplicative growth extrapolates correctly. When a level shift is detected
+(offer paused, traffic source added), the model fits the new regime —
+truncating or re-leveling pre-shift history — and reports the boundary in
+the meta as `level_shift_at`. Event-aware forecasting (`--events`,
+`--event-tag`) folds in stored [forecast
 events](../api/18-forecast-events.md) and requires `--interval day`:
 
 ```bash

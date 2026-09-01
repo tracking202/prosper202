@@ -72,6 +72,19 @@ type evalRow struct {
 // methods evaluated on identical cuts.
 type rollingEval struct {
 	rows []evalRow
+	// invert maps stored values back to the original scale for reported
+	// error statistics when the series was fitted under a transform (log1p).
+	// Conformal residuals deliberately stay on the model scale — quantiles
+	// are computed there and inverted with the predictions.
+	invert func(float64) float64
+}
+
+// errDiff returns actual − predicted on the reporting scale.
+func (e *rollingEval) errDiff(actual, pred float64) float64 {
+	if e.invert != nil {
+		return e.invert(actual) - e.invert(pred)
+	}
+	return actual - pred
 }
 
 // runRollingBacktest refits each method on training prefixes s[:c] for cut
@@ -96,6 +109,9 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 	}
 
 	eval := &rollingEval{}
+	if cfg.LogTransform {
+		eval.invert = math.Expm1
+	}
 	for c := len(s) - 1; c >= lowestCut; c-- {
 		steps := len(s) - c
 		if steps > horizon {
@@ -161,7 +177,7 @@ func (e *rollingEval) errorStats(m Method) (mae, rmse float64, n int) {
 		if !ok {
 			continue
 		}
-		diff := r.actual - pred
+		diff := e.errDiff(r.actual, pred)
 		sumAbs += math.Abs(diff)
 		sumSq += diff * diff
 		n++
@@ -270,7 +286,7 @@ func (e *rollingEval) ensembleErrorStats(weights map[Method]float64, members []M
 		if !ok {
 			continue
 		}
-		diff := r.actual - pred
+		diff := e.errDiff(r.actual, pred)
 		sumAbs += math.Abs(diff)
 		sumSq += diff * diff
 		n++
