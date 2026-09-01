@@ -164,6 +164,17 @@ p202 forecast --metric clicks --history last90 --method linear
 p202 forecast --metric profit --horizon 14 --method auto --seasonal
 ```
 
+Prediction bounds come from rolling-origin conformal prediction: the model is
+re-fit at up to 50 cut points stepping back from the end of the history, and
+held-out errors are bucketed by horizon step. `lower_bound`/`upper_bound` are
+the empirical P10/P90 of those errors (an 80% interval; `--confidence` below
+0.65 switches to P25/P75, a 50% interval), so bounds are asymmetric when the
+errors are. Each prediction also carries `p25`/`p50`/`p75` columns (`p50` is
+the bias-corrected median path). Reported `mae`/`rmse` are averages across
+all rolling cut points. Metrics that cannot go negative (clicks, leads, cost,
+income, rates) have bounds clipped at zero; very short histories (fewer than
+~9 points) fall back to symmetric Gaussian bounds without quantile columns.
+
 With `--seasonal`, predictions are modulated by day-of-week weights derived from
 weekpart report data (requires `--interval day` or `hour`). Event-aware
 forecasting (`--events`, `--event-tag`) folds in stored [forecast

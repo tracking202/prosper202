@@ -36,8 +36,6 @@ func holtWintersForecast(s Series, cfg Config) ([]Prediction, float64, error) {
 		preds[i] = Prediction{T: t, Value: val}
 	}
 
-	stddev := residualStdDev(s, MethodHoltWinters, cfg)
-	addBounds(preds, stddev, cfg.ConfidenceLevel, offset)
 	return preds, trend, nil
 }
 

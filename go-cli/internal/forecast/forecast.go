@@ -57,11 +57,20 @@ type Point struct {
 type Series []Point
 
 // Prediction is a single forecasted value with confidence bounds.
+//
+// Bounds come from rolling-origin conformal prediction: empirical quantiles
+// of held-out residuals bucketed by horizon step. LowerBound/UpperBound carry
+// the quantile pair nearest the configured confidence level (P10/P90 for the
+// default levels — an 80% interval) and are asymmetric by nature. Quantiles
+// holds the full set ("p10", "p25", "p50", "p75", "p90"); it is empty when
+// the series is too short for a rolling backtest, in which case bounds fall
+// back to symmetric Gaussian estimates.
 type Prediction struct {
-	T          time.Time `json:"time"`
-	Value      float64   `json:"value"`
-	LowerBound float64   `json:"lower_bound"`
-	UpperBound float64   `json:"upper_bound"`
+	T          time.Time          `json:"time"`
+	Value      float64            `json:"value"`
+	LowerBound float64            `json:"lower_bound"`
+	UpperBound float64            `json:"upper_bound"`
+	Quantiles  map[string]float64 `json:"quantiles,omitempty"`
 }
 
 // Result holds the complete output of a forecast run.
@@ -91,6 +100,11 @@ type Config struct {
 	SMAWindow       int
 	SeasonalWeights SeasonalWeights
 	ConfidenceLevel float64 // 0.0-1.0, default 0.95
+
+	// NonNegative marks metrics that cannot go below zero (clicks, leads,
+	// cost, income). Prediction values, bounds, and quantiles are clipped
+	// at zero.
+	NonNegative bool
 
 	// Anchor, when set, is the timestamp predictions step forward from
 	// instead of the series' last point. Used when training data has been
@@ -180,28 +194,36 @@ func Run(series Series, cfg Config) (*Result, error) {
 	}
 
 	method := cfg.Method
+	var eval *rollingEval
 	if method == "" || method == MethodAuto {
-		method = selectBestMethod(series, cfg)
+		candidates := autoCandidates(series)
+		eval = runRollingBacktest(series, cfg, candidates)
+		method = selectByRollingRMSE(eval, candidates, series, cfg)
 	}
 
-	var predictions []Prediction
-	var trend float64
-	var err error
-
-	switch method {
-	case MethodLinear:
-		predictions, trend, err = linearForecast(series, cfg)
-	case MethodSMA:
-		predictions, trend, err = smaForecast(series, cfg)
-	case MethodWMA:
-		predictions, trend, err = wmaForecast(series, cfg)
-	case MethodHoltWinters:
-		predictions, trend, err = holtWintersForecast(series, cfg)
-	default:
-		return nil, fmt.Errorf("unknown method %q", method)
-	}
+	predictions, trend, err := methodForecast(method, series, cfg)
 	if err != nil {
 		return nil, err
+	}
+
+	// Attach bounds via rolling-origin conformal prediction. When auto-
+	// selection already ran the rolling backtest, reuse it.
+	if eval == nil {
+		eval = runRollingBacktest(series, cfg, []Method{method})
+	}
+	offset := anchorOffset(series, cfg)
+	byStep := eval.residualsByStep(method)
+	mae, rmse := eval.errorStats(method)
+	if totalResiduals(byStep) >= minTotalResiduals {
+		sq := stepQuantiles(byStep, offset+cfg.Horizon)
+		applyConformalBounds(predictions, sq, cfg, offset)
+	} else {
+		// Series too short for a rolling backtest: symmetric Gaussian
+		// bounds from a single-holdout residual estimate, and single-split
+		// accuracy metrics.
+		stddev := residualStdDev(series, method, cfg)
+		addBounds(predictions, stddev, cfg.ConfidenceLevel, offset)
+		mae, rmse = backtest(series, cfg, method)
 	}
 
 	// Apply seasonal adjustment if weights are provided.
@@ -209,8 +231,9 @@ func Run(series Series, cfg Config) (*Result, error) {
 		predictions = applySeasonalWeights(predictions, cfg.SeasonalWeights)
 	}
 
-	// Compute accuracy metrics via leave-last-out backtest.
-	mae, rmse := backtest(series, cfg, method)
+	if cfg.NonNegative {
+		clipNonNegative(predictions)
+	}
 
 	// Compute trend percentage.
 	trendPct := 0.0
@@ -273,7 +296,8 @@ func seriesStdDev(s Series) float64 {
 	return math.Sqrt(sumSq / float64(len(s)))
 }
 
-// residualStdDev computes std dev of forecast residuals over the last holdout points.
+// residualStdDev computes std dev of forecast residuals over the last holdout
+// points. Fallback bound estimate for series too short for a rolling backtest.
 func residualStdDev(s Series, method Method, cfg Config) float64 {
 	holdout := len(s) / 5
 	if holdout < 2 {
@@ -291,20 +315,7 @@ func residualStdDev(s Series, method Method, cfg Config) float64 {
 	testCfg.SeasonalWeights = nil
 	testCfg.Anchor = time.Time{}
 
-	var preds []Prediction
-	var err error
-	switch method {
-	case MethodLinear:
-		preds, _, err = linearForecast(train, testCfg)
-	case MethodSMA:
-		preds, _, err = smaForecast(train, testCfg)
-	case MethodWMA:
-		preds, _, err = wmaForecast(train, testCfg)
-	case MethodHoltWinters:
-		preds, _, err = holtWintersForecast(train, testCfg)
-	default:
-		return seriesStdDev(s)
-	}
+	preds, _, err := methodForecast(method, train, testCfg)
 	if err != nil || len(preds) == 0 {
 		return seriesStdDev(s)
 	}
@@ -338,7 +349,8 @@ func zScore(confidence float64) float64 {
 	}
 }
 
-// addBounds applies confidence interval bounds to predictions. offset is the
+// addBounds applies symmetric Gaussian confidence bounds to predictions.
+// Fallback for series too short for conformal bounds. offset is the
 // number of steps the first prediction lies beyond the series' last point in
 // excess of one (see anchorOffset); it widens bounds across anchor gaps.
 func addBounds(preds []Prediction, stddev, confidence float64, offset int) {
@@ -383,7 +395,8 @@ func intervalSteps(from, to time.Time, interval Interval) float64 {
 	}
 }
 
-// backtest splits data into train/test and measures forecast accuracy.
+// backtest splits data into a single train/test split and measures forecast
+// accuracy. Fallback for series too short for a rolling backtest.
 func backtest(s Series, cfg Config, method Method) (mae, rmse float64) {
 	holdout := len(s) / 5
 	if holdout < 2 {
@@ -401,20 +414,7 @@ func backtest(s Series, cfg Config, method Method) (mae, rmse float64) {
 	testCfg.SeasonalWeights = nil
 	testCfg.Anchor = time.Time{}
 
-	var preds []Prediction
-	var err error
-	switch method {
-	case MethodLinear:
-		preds, _, err = linearForecast(train, testCfg)
-	case MethodSMA:
-		preds, _, err = smaForecast(train, testCfg)
-	case MethodWMA:
-		preds, _, err = wmaForecast(train, testCfg)
-	case MethodHoltWinters:
-		preds, _, err = holtWintersForecast(train, testCfg)
-	default:
-		return 0, 0
-	}
+	preds, _, err := methodForecast(method, train, testCfg)
 	if err != nil || len(preds) == 0 {
 		return 0, 0
 	}
@@ -437,17 +437,47 @@ func backtest(s Series, cfg Config, method Method) (mae, rmse float64) {
 	return mae, rmse
 }
 
-// selectBestMethod runs all methods via backtest and picks lowest RMSE.
-func selectBestMethod(s Series, cfg Config) Method {
+// autoCandidates lists the methods auto-selection considers for a series.
+// Holt-Winters needs enough history to stabilize its level/trend estimates.
+func autoCandidates(s Series) []Method {
 	candidates := []Method{MethodLinear, MethodSMA, MethodWMA}
 	if len(s) >= 14 {
 		candidates = append(candidates, MethodHoltWinters)
 	}
+	return candidates
+}
 
+// selectByRollingRMSE picks the candidate with the lowest rolling-backtest
+// RMSE. Averaging errors across many cut points makes the choice stable
+// run-to-run, unlike a single train/test split. When the series is too short
+// for any rolling cut, it falls back to the single-split selection.
+func selectByRollingRMSE(eval *rollingEval, candidates []Method, s Series, cfg Config) Method {
+	best := MethodLinear
+	bestRMSE := math.MaxFloat64
+	found := false
+	for _, m := range candidates {
+		_, rmse := eval.errorStats(m)
+		// RMSE=0 means the method produced no rolling predictions, not a
+		// perfect fit. Skip these candidates.
+		if rmse > 0 && rmse < bestRMSE {
+			bestRMSE = rmse
+			best = m
+			found = true
+		}
+	}
+	if !found {
+		return selectBestMethod(s, cfg)
+	}
+	return best
+}
+
+// selectBestMethod runs all methods via single-split backtest and picks the
+// lowest RMSE. Fallback for series too short for the rolling backtest.
+func selectBestMethod(s Series, cfg Config) Method {
 	best := MethodLinear
 	bestRMSE := math.MaxFloat64
 
-	for _, m := range candidates {
+	for _, m := range autoCandidates(s) {
 		_, rmse := backtest(s, cfg, m)
 		// RMSE=0 means backtest couldn't run (too few points for holdout),
 		// not a perfect fit. Skip these candidates.
@@ -460,17 +490,49 @@ func selectBestMethod(s Series, cfg Config) Method {
 	return best
 }
 
+// scalePrediction multiplies a prediction's value, bounds, and quantiles by
+// mult, restoring ordering afterwards: a negative multiplier inverts bound
+// and quantile order.
+func scalePrediction(p *Prediction, mult float64) {
+	p.Value *= mult
+	p.LowerBound *= mult
+	p.UpperBound *= mult
+	if p.LowerBound > p.UpperBound {
+		p.LowerBound, p.UpperBound = p.UpperBound, p.LowerBound
+	}
+	if len(p.Quantiles) == 0 {
+		return
+	}
+	for name := range p.Quantiles {
+		p.Quantiles[name] *= mult
+	}
+	normalizeQuantileOrder(p.Quantiles)
+}
+
+// normalizeQuantileOrder re-sorts quantile values so p10 ≤ p25 ≤ ... ≤ p90
+// after a transformation that may have inverted them. Only complete quantile
+// sets are reordered.
+func normalizeQuantileOrder(qs map[string]float64) {
+	vals := make([]float64, 0, len(quantileLevels))
+	for _, lv := range quantileLevels {
+		v, ok := qs[lv.name]
+		if !ok {
+			return
+		}
+		vals = append(vals, v)
+	}
+	sort.Float64s(vals)
+	for i, lv := range quantileLevels {
+		qs[lv.name] = vals[i]
+	}
+}
+
 // applySeasonalWeights adjusts prediction values by day-of-week multipliers.
 func applySeasonalWeights(preds []Prediction, weights SeasonalWeights) []Prediction {
 	for i := range preds {
 		dow := preds[i].T.Weekday()
 		if w, ok := weights[dow]; ok {
-			preds[i].Value *= w
-			preds[i].LowerBound *= w
-			preds[i].UpperBound *= w
-			if preds[i].LowerBound > preds[i].UpperBound {
-				preds[i].LowerBound, preds[i].UpperBound = preds[i].UpperBound, preds[i].LowerBound
-			}
+			scalePrediction(&preds[i], w)
 		}
 	}
 	return preds

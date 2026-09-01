@@ -198,7 +198,8 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		return validationError("not enough data points (%d) for forecasting — need at least 3. Try a longer --history period", len(series))
 	}
 
-	// Build forecast config.
+	// Build forecast config. Metrics that cannot go negative (counts,
+	// amounts, rates) get zero-clipped bounds and quantiles.
 	cfg := forecast.Config{
 		Method:          method,
 		Horizon:         horizon,
@@ -206,6 +207,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		Metric:          metric,
 		SMAWindow:       smaWindow,
 		ConfidenceLevel: confidence,
+		NonNegative:     !forecastSignedMetrics[metric],
 	}
 
 	// Optionally fetch weekpart data for seasonal adjustment.
@@ -495,6 +497,17 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, 
 			"upper_bound": roundTo(p.UpperBound, 2),
 		}
 
+		// Conformal runs carry the full quantile set; expose the inner
+		// quantiles (p10/p90 already surface as lower/upper at the default
+		// confidence). Users can trim columns with --fields.
+		if len(p.Quantiles) > 0 {
+			for _, q := range []string{"p25", "p50", "p75"} {
+				if v, ok := p.Quantiles[q]; ok {
+					row[q] = roundTo(v, 2)
+				}
+			}
+		}
+
 		// Add trend indicator for first row.
 		if i == 0 {
 			if result.TrendPct > 0 {
@@ -579,7 +592,9 @@ func formatPredictionTime(t time.Time, interval forecast.Interval) string {
 	}
 }
 
-// clampNonNegative floors prediction values and bounds at zero.
+// clampNonNegative floors prediction values, bounds, and quantiles at zero.
+// The forecast package already clips NonNegative runs; this re-clamps after
+// event adjustments, which can push values back below zero.
 func clampNonNegative(preds []forecast.Prediction) {
 	for i := range preds {
 		if preds[i].Value < 0 {
@@ -590,6 +605,11 @@ func clampNonNegative(preds []forecast.Prediction) {
 		}
 		if preds[i].UpperBound < 0 {
 			preds[i].UpperBound = 0
+		}
+		for name, v := range preds[i].Quantiles {
+			if v < 0 {
+				preds[i].Quantiles[name] = 0
+			}
 		}
 	}
 }
