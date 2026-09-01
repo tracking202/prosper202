@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -926,5 +927,196 @@ func TestRoundTo(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("roundTo(%.5f, %d) = %.5f, want %.5f", tc.v, tc.n, got, tc.want)
 		}
+	}
+}
+
+// makeCoherentTimeseriesResponse builds a timeseries response carrying all
+// core metrics with consistent identities: leads = clicks*0.1, cost =
+// clicks*2, income = leads*50, net = income - cost.
+func makeCoherentTimeseriesResponse(n int) string {
+	buckets := make([]map[string]interface{}, n)
+	for i := 0; i < n; i++ {
+		clicks := 100.0 + float64(i)*5
+		leads := clicks * 0.1
+		cost := clicks * 2
+		income := leads * 50
+		buckets[i] = map[string]interface{}{
+			"bucket_start": 1704067200 + i*86400,
+			"total_clicks": clicks,
+			"total_leads":  leads,
+			"total_cost":   cost,
+			"total_income": income,
+			"total_net":    income - cost,
+		}
+	}
+	data, _ := json.Marshal(map[string]interface{}{"data": buckets})
+	return string(data)
+}
+
+func TestForecastAllMetricsCoherent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeCoherentTimeseriesResponse(40)))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v\nGot: %s", err, stdout)
+	}
+	data, ok := output["data"].([]interface{})
+	if !ok || len(data) != 5 {
+		t.Fatalf("expected 5 prediction rows, got: %s", stdout)
+	}
+	row, ok := data[0].(map[string]interface{})
+	if !ok {
+		t.Fatal("row is not an object")
+	}
+	for _, col := range []string{"date", "total_clicks", "total_leads", "total_income",
+		"total_cost", "total_net", "total_clicks_lower", "total_net_upper"} {
+		if _, ok := row[col]; !ok {
+			t.Errorf("row missing column %q", col)
+		}
+	}
+	// Net identity holds in the rendered output (within rounding).
+	income := row["total_income"].(float64)
+	cost := row["total_cost"].(float64)
+	net := row["total_net"].(float64)
+	if math.Abs(net-(income-cost)) > 0.02 {
+		t.Errorf("net %v != income-cost %v in output", net, income-cost)
+	}
+
+	meta, ok := output["meta"].(map[string]interface{})
+	if !ok {
+		t.Fatal("output missing meta")
+	}
+	comps, ok := meta["composition"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("meta missing composition map: %v", meta)
+	}
+	if comps["total_clicks"] != "direct" {
+		t.Errorf("clicks composition = %v, want direct", comps["total_clicks"])
+	}
+	if comps["total_leads"] != "derived" {
+		t.Errorf("leads composition = %v, want derived", comps["total_leads"])
+	}
+}
+
+func TestForecastAllMetricsRejectsMetricAndSeasonal(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:9", "test-key")
+
+	if _, _, err := executeCommand("forecast", "--all-metrics", "--metric=clicks"); err == nil ||
+		!strings.Contains(err.Error(), "--all-metrics") {
+		t.Errorf("expected --all-metrics/--metric conflict error, got %v", err)
+	}
+	if _, _, err := executeCommand("forecast", "--all-metrics", "--seasonal"); err == nil ||
+		!strings.Contains(err.Error(), "--all-metrics") {
+		t.Errorf("expected --all-metrics/--seasonal conflict error, got %v", err)
+	}
+	if _, _, err := executeCommand("forecast", "--all-metrics", "--events"); err == nil ||
+		!strings.Contains(err.Error(), "--all-metrics") {
+		t.Errorf("expected --all-metrics/--events conflict error, got %v", err)
+	}
+}
+
+func TestForecastDerivedMetricUsesComposition(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeCoherentTimeseriesResponse(40)))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=leads", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["composition"] != "derived" {
+		t.Errorf("meta.composition = %v, want derived", meta["composition"])
+	}
+	if meta["metric"] != "total_leads" {
+		t.Errorf("meta.metric = %v, want total_leads", meta["metric"])
+	}
+}
+
+func TestForecastDerivedMetricFallsBackWithoutCompanions(t *testing.T) {
+	// Response carries only the requested metric: composition is impossible
+	// and the direct path must serve the forecast without a composition tag.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(30, "total_leads")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=leads", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if _, ok := meta["composition"]; ok {
+		t.Errorf("expected no composition tag on direct fallback, got %v", meta["composition"])
+	}
+	data := output["data"].([]interface{})
+	if len(data) != 5 {
+		t.Errorf("expected 5 predictions, got %d", len(data))
+	}
+}
+
+func TestForecastDerivedMetricWithSeasonalStaysDirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		if strings.HasSuffix(r.URL.Path, "/reports/weekpart") {
+			w.Write([]byte(makeWeekpartResponse("total_leads")))
+			return
+		}
+		w.Write([]byte(makeCoherentTimeseriesResponse(40)))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=leads", "--horizon=5", "--seasonal", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if _, ok := meta["composition"]; ok {
+		t.Errorf("expected direct path with --seasonal, got composition %v", meta["composition"])
+	}
+	if meta["seasonal"] != true {
+		t.Errorf("meta.seasonal = %v, want true", meta["seasonal"])
 	}
 }

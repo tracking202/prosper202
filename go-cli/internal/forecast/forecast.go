@@ -92,6 +92,10 @@ type Result struct {
 	// Weights reports each member method's share of an ensemble forecast
 	// (summing to 1); empty for single-method runs.
 	Weights map[string]float64 `json:"weights,omitempty"`
+	// Composition reports how a RunCoherent result was produced: "derived"
+	// (composed from driver forecasts) or "direct" (the metric's own series
+	// forecast directly). Empty for plain Run results.
+	Composition string `json:"composition,omitempty"`
 }
 
 // SeasonalWeights maps day-of-week (time.Weekday) to a multiplier.

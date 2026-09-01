@@ -166,7 +166,25 @@ clearly trail the best, and reports each member's share in the output meta
 p202 forecast --metric revenue --horizon 7
 p202 forecast --metric clicks --history last90 --method linear
 p202 forecast --metric profit --horizon 14 --method auto --seasonal
+p202 forecast --all-metrics --horizon 7
 ```
+
+Derived metrics (leads, income, cost, net) requested on their own are
+forecast by ratio decomposition: clicks and the linking rates (conversion
+rate, average CPC, average payout) are forecast as drivers and the totals
+composed from them, so `leads = clicks × conv_rate`, `income = leads ×
+avg_payout`, and `net = income − cost` hold exactly across the output. The
+meta reports `composition: derived`, or `direct` when a driver is defined on
+too few days (under ~70% of buckets) and the metric's own series is forecast
+instead. `--all-metrics` forecasts clicks, leads, income, cost, and net
+together this way in one table (one row per date with `<metric>`,
+`<metric>_lower`, `<metric>_upper` columns); it cannot be combined with
+`--metric`, `--seasonal`, or `--events`, and `--seasonal`/`--events` on a
+single derived metric keep the direct path since those layers operate on the
+metric's own series. Composed band endpoints combine conservatively
+(worst-case dependence between factors), so derived bands can over-cover
+slightly; derived rows carry no `mae`/`rmse` since rolling errors are only
+measured for directly fitted series.
 
 Prediction bounds come from rolling-origin conformal prediction: the model is
 re-fit at up to 50 cut points stepping back from the end of the history, and
