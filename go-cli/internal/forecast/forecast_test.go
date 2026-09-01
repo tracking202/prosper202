@@ -414,8 +414,8 @@ func TestZScore(t *testing.T) {
 
 func TestValidMethods(t *testing.T) {
 	methods := ValidMethods()
-	if len(methods) != 5 {
-		t.Errorf("expected 5 valid methods, got %d", len(methods))
+	if len(methods) != 6 {
+		t.Errorf("expected 6 valid methods, got %d", len(methods))
 	}
 }
 

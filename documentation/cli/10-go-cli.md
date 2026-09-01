@@ -155,8 +155,12 @@ Aliases: `--group-by lp` -> `landing_page`, `--sort conversions` -> `total_leads
 ## Forecasting
 
 Project any tracked metric forward from historical time-series data. Supports
-linear regression, simple and weighted moving averages, Holt-Winters
-exponential smoothing, and automatic method selection via backtesting.
+linear regression, simple and weighted moving averages, damped-trend
+Holt-Winters exponential smoothing, and an ensemble — the default (`--method
+auto` is an alias for `ensemble`) — that averages the methods weighted by
+their recency-discounted rolling-backtest accuracy, drops members that
+clearly trail the best, and reports each member's share in the output meta
+(`weights`).
 
 ```bash
 p202 forecast --metric revenue --horizon 7

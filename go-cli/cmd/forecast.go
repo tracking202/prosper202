@@ -54,8 +54,9 @@ var forecastCmd = &cobra.Command{
 
 Fetches historical time-series data from your Prosper202 instance and projects
 it forward using the selected algorithm. Supports linear regression, simple
-and weighted moving averages, Holt-Winters exponential smoothing, and automatic
-method selection that picks the best fit via backtesting.
+and weighted moving averages, damped-trend Holt-Winters exponential smoothing,
+and an ensemble (the default, alias "auto") that combines the methods weighted
+by rolling-backtest accuracy and reports each member's share.
 
 With --seasonal, predictions are modulated by day-of-week weights derived from
 weekpart report data to account for weekly patterns (e.g., "Tuesdays always
@@ -538,6 +539,13 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, 
 		meta["mae"] = roundTo(result.MAE, 2)
 		meta["rmse"] = roundTo(result.RMSE, 2)
 	}
+	if len(result.Weights) > 0 {
+		weights := make(map[string]interface{}, len(result.Weights))
+		for m, w := range result.Weights {
+			weights[m] = roundTo(w, 3)
+		}
+		meta["weights"] = weights
+	}
 
 	if eventsActive && len(futureEvents) > 0 {
 		names := make([]string, 0, len(futureEvents))
@@ -822,7 +830,7 @@ func filterEventsByTag(events []forecast.Event, tagFilter string) []forecast.Eve
 
 func init() {
 	forecastCmd.Flags().StringP("metric", "m", "", "Metric to forecast (clicks, revenue, profit, roi, epc, conv_rate, cost, conversions, cpa)")
-	forecastCmd.Flags().String("method", "auto", "Forecasting method: auto, linear, sma, wma, holtwinters")
+	forecastCmd.Flags().String("method", "auto", "Forecasting method: auto (ensemble), ensemble, linear, sma, wma, holtwinters")
 	forecastCmd.Flags().IntP("horizon", "n", 7, "Number of periods to forecast forward")
 	forecastCmd.Flags().StringP("interval", "i", "day", "Forecast granularity: hour, day, week, month")
 	forecastCmd.Flags().String("history", "last90", "Historical data period: today, yesterday, last7, last30, last90 (aliases: --period, --days)")

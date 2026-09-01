@@ -34,7 +34,11 @@ const (
 	MethodSMA         Method = "sma"
 	MethodWMA         Method = "wma"
 	MethodHoltWinters Method = "holtwinters"
-	MethodAuto        Method = "auto"
+	// MethodEnsemble combines all applicable methods as a weighted average,
+	// weighted by inverse squared recency-discounted rolling-backtest RMSE
+	// (see ensembleWeights). MethodAuto is an alias for it.
+	MethodEnsemble Method = "ensemble"
+	MethodAuto     Method = "auto"
 )
 
 // Interval defines the time granularity of forecasted points.
@@ -85,6 +89,9 @@ type Result struct {
 	MAE         float64      `json:"mae"`
 	RMSE        float64      `json:"rmse"`
 	DataPoints  int          `json:"data_points_used"`
+	// Weights reports each member method's share of an ensemble forecast
+	// (summing to 1); empty for single-method runs.
+	Weights map[string]float64 `json:"weights,omitempty"`
 }
 
 // SeasonalWeights maps day-of-week (time.Weekday) to a multiplier.
@@ -155,6 +162,7 @@ func ValidMethods() []string {
 		string(MethodSMA),
 		string(MethodWMA),
 		string(MethodHoltWinters),
+		string(MethodEnsemble),
 		string(MethodAuto),
 	}
 }
@@ -194,26 +202,79 @@ func Run(series Series, cfg Config) (*Result, error) {
 	}
 
 	method := cfg.Method
-	var eval *rollingEval
 	if method == "" || method == MethodAuto {
-		candidates := autoCandidates(series)
-		eval = runRollingBacktest(series, cfg, candidates)
-		method = selectByRollingRMSE(eval, candidates, series, cfg)
+		method = MethodEnsemble
 	}
 
-	predictions, trend, err := methodForecast(method, series, cfg)
+	var core forecastCore
+	var err error
+	if method == MethodEnsemble {
+		core, err = computeEnsemble(series, cfg)
+	} else {
+		core, err = computeSingle(series, cfg, method, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	// Attach bounds via rolling-origin conformal prediction. When auto-
-	// selection already ran the rolling backtest, reuse it.
+	// Apply seasonal adjustment if weights are provided.
+	if len(cfg.SeasonalWeights) > 0 {
+		core.preds = applySeasonalWeights(core.preds, cfg.SeasonalWeights)
+	}
+
+	if cfg.NonNegative {
+		clipNonNegative(core.preds)
+	}
+
+	// Compute trend percentage.
+	trendPct := 0.0
+	if len(series) > 0 {
+		mean := seriesMean(series)
+		if mean != 0 {
+			trendPct = (core.trend / mean) * 100
+		}
+	}
+
+	return &Result{
+		Method:      core.method,
+		Metric:      cfg.Metric,
+		Horizon:     cfg.Horizon,
+		Interval:    cfg.Interval,
+		Predictions: core.preds,
+		Trend:       core.trend,
+		TrendPct:    trendPct,
+		MAE:         core.mae,
+		RMSE:        core.rmse,
+		DataPoints:  len(series),
+		Weights:     core.weights,
+	}, nil
+}
+
+// forecastCore is a computed forecast before the shared post-processing
+// (seasonal adjustment, zero clipping, trend percentage) in Run.
+type forecastCore struct {
+	method    Method
+	preds     []Prediction
+	trend     float64
+	mae, rmse float64
+	weights   map[string]float64 // ensemble only
+}
+
+// computeSingle produces a single-method forecast with conformal bounds.
+// eval may carry a rolling backtest that already covers the method; pass nil
+// to have one run here.
+func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) (forecastCore, error) {
+	predictions, trend, err := methodForecast(method, series, cfg)
+	if err != nil {
+		return forecastCore{}, err
+	}
+
 	if eval == nil {
 		eval = runRollingBacktest(series, cfg, []Method{method})
 	}
 	offset := anchorOffset(series, cfg)
 	byStep := eval.residualsByStep(method)
-	mae, rmse := eval.errorStats(method)
+	mae, rmse, _ := eval.errorStats(method)
 	if totalResiduals(byStep) >= minTotalResiduals {
 		sq := stepQuantiles(byStep, offset+cfg.Horizon)
 		applyConformalBounds(predictions, sq, cfg, offset)
@@ -226,36 +287,147 @@ func Run(series Series, cfg Config) (*Result, error) {
 		mae, rmse = backtest(series, cfg, method)
 	}
 
-	// Apply seasonal adjustment if weights are provided.
-	if len(cfg.SeasonalWeights) > 0 {
-		predictions = applySeasonalWeights(predictions, cfg.SeasonalWeights)
+	return forecastCore{
+		method: method,
+		preds:  predictions,
+		trend:  trend,
+		mae:    mae,
+		rmse:   rmse,
+	}, nil
+}
+
+// computeEnsemble produces the ensemble forecast: a weighted average of all
+// applicable methods' point forecasts, weighted and pruned by their
+// recency-discounted rolling-backtest RMSE (see ensembleWeights).
+// Conformal bounds are computed on the ensemble's own rolling
+// residuals, so the band reflects the combined forecaster that is actually
+// deployed. When the series is too short for any rolling cut, it falls back
+// to the best single method by single-split backtest.
+func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
+	candidates := autoCandidates(series)
+	eval := runRollingBacktest(series, cfg, candidates)
+	weights := ensembleWeights(eval, candidates)
+	if len(weights) == 0 {
+		return computeSingle(series, cfg, selectBestMethod(series, cfg), eval)
 	}
 
-	if cfg.NonNegative {
-		clipNonNegative(predictions)
+	// Fit each member on the full series. A member that fails to fit here
+	// (despite backtesting) is dropped and weights renormalize.
+	memberPreds := map[Method][]Prediction{}
+	memberTrend := map[Method]float64{}
+	members := make([]Method, 0, len(weights))
+	for _, m := range candidates {
+		if _, ok := weights[m]; !ok {
+			continue
+		}
+		preds, tr, err := methodForecast(m, series, cfg)
+		if err != nil || len(preds) != cfg.Horizon {
+			delete(weights, m)
+			continue
+		}
+		memberPreds[m] = preds
+		memberTrend[m] = tr
+		members = append(members, m)
+	}
+	if len(members) == 0 {
+		return computeSingle(series, cfg, selectBestMethod(series, cfg), eval)
+	}
+	normalizeWeights(weights, members)
+
+	// Combine point forecasts and trends.
+	combined := make([]Prediction, cfg.Horizon)
+	for i := 0; i < cfg.Horizon; i++ {
+		combined[i].T = memberPreds[members[0]][i].T
+		v := 0.0
+		for _, m := range members {
+			v += weights[m] * memberPreds[m][i].Value
+		}
+		combined[i].Value = v
+	}
+	trend := 0.0
+	for _, m := range members {
+		trend += weights[m] * memberTrend[m]
 	}
 
-	// Compute trend percentage.
-	trendPct := 0.0
-	if len(series) > 0 {
-		mean := seriesMean(series)
-		if mean != 0 {
-			trendPct = (trend / mean) * 100
+	// Conformal bounds on the ensemble's rolling residuals.
+	offset := anchorOffset(series, cfg)
+	byStep := eval.ensembleResidualsByStep(weights, members)
+	mae, rmse := eval.ensembleErrorStats(weights, members)
+	if totalResiduals(byStep) >= minTotalResiduals {
+		sq := stepQuantiles(byStep, offset+cfg.Horizon)
+		applyConformalBounds(combined, sq, cfg, offset)
+	} else {
+		stddev := seriesStdDev(series)
+		addBounds(combined, stddev, cfg.ConfidenceLevel, offset)
+	}
+
+	named := make(map[string]float64, len(weights))
+	for _, m := range members {
+		named[string(m)] = weights[m]
+	}
+
+	return forecastCore{
+		method:  MethodEnsemble,
+		preds:   combined,
+		trend:   trend,
+		mae:     mae,
+		rmse:    rmse,
+		weights: named,
+	}, nil
+}
+
+// ensembleDropFactor excludes members whose recency-weighted rolling RMSE
+// exceeds this multiple of the best member's: a clearly-worse method only
+// adds noise to the mix. The tight factor keeps the ensemble concentrated on
+// near-best methods — a stabilized selection with hedging between equals —
+// which measured better out of sample than softer mixes.
+const ensembleDropFactor = 1.15
+
+// ensembleWeights derives member weights from the recency-weighted
+// rolling-backtest RMSE: w ∝ 1/(rmse + ε)², dropping methods whose RMSE
+// exceeds ensembleDropFactor times the best. Returns nil when no candidate
+// produced rolling predictions.
+func ensembleWeights(eval *rollingEval, candidates []Method) map[Method]float64 {
+	const eps = 1e-9
+	rmses := eval.recencyRMSE(candidates)
+	if len(rmses) == 0 {
+		return nil
+	}
+	best := math.MaxFloat64
+	for _, rmse := range rmses {
+		if rmse < best {
+			best = rmse
 		}
 	}
+	weights := map[Method]float64{}
+	for _, m := range candidates {
+		rmse, ok := rmses[m]
+		if !ok || rmse > ensembleDropFactor*best {
+			continue
+		}
+		// Inverse-MSE (Bates–Granger) weighting on the recency-discounted
+		// error, so the mix concentrates on methods that are accurate in the
+		// current regime.
+		weights[m] = 1 / ((rmse + eps) * (rmse + eps))
+	}
+	return weights
+}
 
-	return &Result{
-		Method:      method,
-		Metric:      cfg.Metric,
-		Horizon:     cfg.Horizon,
-		Interval:    cfg.Interval,
-		Predictions: predictions,
-		Trend:       trend,
-		TrendPct:    trendPct,
-		MAE:         mae,
-		RMSE:        rmse,
-		DataPoints:  len(series),
-	}, nil
+// normalizeWeights scales the members' weights to sum to 1.
+func normalizeWeights(weights map[Method]float64, members []Method) {
+	sum := 0.0
+	for _, m := range members {
+		sum += weights[m]
+	}
+	if sum <= 0 {
+		for _, m := range members {
+			weights[m] = 1 / float64(len(members))
+		}
+		return
+	}
+	for _, m := range members {
+		weights[m] /= sum
+	}
 }
 
 // defaultSMAWindow picks a reasonable SMA window based on series length.
@@ -445,30 +617,6 @@ func autoCandidates(s Series) []Method {
 		candidates = append(candidates, MethodHoltWinters)
 	}
 	return candidates
-}
-
-// selectByRollingRMSE picks the candidate with the lowest rolling-backtest
-// RMSE. Averaging errors across many cut points makes the choice stable
-// run-to-run, unlike a single train/test split. When the series is too short
-// for any rolling cut, it falls back to the single-split selection.
-func selectByRollingRMSE(eval *rollingEval, candidates []Method, s Series, cfg Config) Method {
-	best := MethodLinear
-	bestRMSE := math.MaxFloat64
-	found := false
-	for _, m := range candidates {
-		_, rmse := eval.errorStats(m)
-		// RMSE=0 means the method produced no rolling predictions, not a
-		// perfect fit. Skip these candidates.
-		if rmse > 0 && rmse < bestRMSE {
-			bestRMSE = rmse
-			best = m
-			found = true
-		}
-	}
-	if !found {
-		return selectBestMethod(s, cfg)
-	}
-	return best
 }
 
 // selectBestMethod runs all methods via single-split backtest and picks the

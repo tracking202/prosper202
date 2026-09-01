@@ -62,6 +62,7 @@ func methodForecast(m Method, s Series, cfg Config) ([]Prediction, float64, erro
 // evalRow is one (cut point, horizon step) observation from the rolling
 // backtest: the held-out actual and each method's prediction for it.
 type evalRow struct {
+	cut    int // training prefix length c the prediction was made from
 	step   int // 1-based horizon step
 	actual float64
 	preds  map[Method]float64
@@ -134,6 +135,7 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 				idx, exists := rowIdx[h]
 				if !exists {
 					eval.rows = append(eval.rows, evalRow{
+						cut:    c,
 						step:   h,
 						actual: s[i].V,
 						preds:  map[Method]float64{},
@@ -148,11 +150,12 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 	return eval
 }
 
-// errorStats returns MAE and RMSE for a method across all rolling-backtest
-// rows it produced predictions for. Returns (0, 0) when it produced none.
-func (e *rollingEval) errorStats(m Method) (mae, rmse float64) {
+// errorStats returns MAE and RMSE for a method across the n rolling-backtest
+// rows it produced predictions for. n == 0 (with zero errors) means the
+// method produced no rolling predictions at all — an RMSE of 0 with n > 0 is
+// a genuinely perfect fit, so callers must branch on n, not on the RMSE.
+func (e *rollingEval) errorStats(m Method) (mae, rmse float64, n int) {
 	sumAbs, sumSq := 0.0, 0.0
-	n := 0
 	for _, r := range e.rows {
 		pred, ok := r.preds[m]
 		if !ok {
@@ -164,9 +167,9 @@ func (e *rollingEval) errorStats(m Method) (mae, rmse float64) {
 		n++
 	}
 	if n == 0 {
-		return 0, 0
+		return 0, 0, 0
 	}
-	return sumAbs / float64(n), math.Sqrt(sumSq / float64(n))
+	return sumAbs / float64(n), math.Sqrt(sumSq / float64(n)), n
 }
 
 // residualsByStep buckets a method's residuals (actual − predicted) by
@@ -181,6 +184,101 @@ func (e *rollingEval) residualsByStep(m Method) map[int][]float64 {
 		out[r.step] = append(out[r.step], r.actual-pred)
 	}
 	return out
+}
+
+// recencyDecay discounts rolling-backtest errors per cut point of age when
+// scoring methods for ensemble weights: a cut k points older than the newest
+// counts decay^k. This makes weights track each method's skill in the
+// current regime rather than its average over all history.
+const recencyDecay = 0.85
+
+// recencyRMSE returns each method's recency-weighted rolling RMSE and, per
+// method, whether it produced any rolling predictions at all. maxCut is the
+// newest cut in the eval (0 when there are no rows).
+func (e *rollingEval) recencyRMSE(candidates []Method) map[Method]float64 {
+	maxCut := 0
+	for _, r := range e.rows {
+		if r.cut > maxCut {
+			maxCut = r.cut
+		}
+	}
+	out := map[Method]float64{}
+	for _, m := range candidates {
+		sumW, sumSq := 0.0, 0.0
+		n := 0
+		for _, r := range e.rows {
+			pred, ok := r.preds[m]
+			if !ok {
+				continue
+			}
+			w := math.Pow(recencyDecay, float64(maxCut-r.cut))
+			diff := r.actual - pred
+			sumSq += w * diff * diff
+			sumW += w
+			n++
+		}
+		if n == 0 || sumW <= 0 {
+			continue
+		}
+		out[m] = math.Sqrt(sumSq / sumW)
+	}
+	return out
+}
+
+// ensembleCombine returns the weighted-average prediction for a row over the
+// member methods that predicted it, renormalizing weights over the available
+// members. Returns false when none of the members predicted the row.
+func ensembleCombine(r evalRow, weights map[Method]float64, members []Method) (float64, bool) {
+	sumW, sumV := 0.0, 0.0
+	for _, m := range members {
+		pred, ok := r.preds[m]
+		if !ok {
+			continue
+		}
+		w := weights[m]
+		sumW += w
+		sumV += w * pred
+	}
+	if sumW <= 0 {
+		return 0, false
+	}
+	return sumV / sumW, true
+}
+
+// ensembleResidualsByStep buckets the weighted ensemble's residuals by
+// horizon step, so conformal bounds reflect the combined forecaster that is
+// actually deployed rather than any single member.
+func (e *rollingEval) ensembleResidualsByStep(weights map[Method]float64, members []Method) map[int][]float64 {
+	out := map[int][]float64{}
+	for _, r := range e.rows {
+		pred, ok := ensembleCombine(r, weights, members)
+		if !ok {
+			continue
+		}
+		out[r.step] = append(out[r.step], r.actual-pred)
+	}
+	return out
+}
+
+// ensembleErrorStats returns MAE and RMSE of the weighted ensemble across all
+// rolling-backtest rows.
+func (e *rollingEval) ensembleErrorStats(weights map[Method]float64, members []Method) (mae, rmse float64) {
+	sumAbs, sumSq := 0.0, 0.0
+	n := 0
+	for _, r := range e.rows {
+		pred, ok := ensembleCombine(r, weights, members)
+		if !ok {
+			continue
+		}
+		diff := r.actual - pred
+		sumAbs += math.Abs(diff)
+		sumSq += diff * diff
+		n++
+	}
+	if n == 0 {
+		return 0, 0
+	}
+	return sumAbs / float64(n), math.Sqrt(sumSq / float64(n))
 }
 
 // totalResiduals counts residuals across all steps.
