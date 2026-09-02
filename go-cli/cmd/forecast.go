@@ -95,6 +95,13 @@ so leads = clicks x conv_rate, income = leads x avg_payout, and net =
 income - cost hold exactly; --all-metrics forecasts all core metrics
 together this way.
 
+Bounds are empirical quantiles from a rolling backtest (meta "bounds" names
+the pair, e.g. p05-p95 (90%)); short histories fall back to Gaussian bounds
+(meta "bounds_source"). Short outlier runs such as a tracking outage are
+masked from fitting and listed in meta "anomalies_masked"; a detected level
+shift is reported as "level_shift_at" and the new regime is fitted. Use
+--no-anomaly-mask / --no-level-shift to fit the history exactly as-is.
+
 Examples:
   p202 forecast --metric revenue --horizon 7
   p202 forecast --metric clicks --history last90 --method linear
@@ -103,7 +110,8 @@ Examples:
   p202 forecast --metric conv_rate --history last30 --interval week --horizon 4
   p202 forecast --metric revenue --aff_campaign_id 5 --horizon 7
   p202 forecast --metric revenue --events --horizon 14
-  p202 forecast --metric clicks --events --event-tag us-holidays`,
+  p202 forecast --metric clicks --events --event-tag us-holidays
+  p202 forecast --metric clicks --no-anomaly-mask --json`,
 	Aliases: []string{"predict"},
 	RunE:    runForecast,
 }

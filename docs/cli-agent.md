@@ -8,6 +8,7 @@ This document describes how to use the `p202` CLI from an AI agent, automation s
 2. **Always use `--force` on deletes** -- Interactive confirmation prompts will hang a non-interactive process.
 3. **Never rely on table column order** -- Use `--json` and parse the response fields by name.
 4. **Do not rely on interactive password prompts** -- In non-interactive runs, pass the password explicitly: `--user_pass "thepassword"`.
+5. **On failure, read the hint** -- Every error carries a category, exit code, and (almost always) a `hint` naming the next action. Follow it instead of guessing at flags. See [Error handling](#error-handling).
 
 ## Setup
 
@@ -83,28 +84,44 @@ Void operations print a plain-text success message to stdout. There is no JSON b
 
 ### Error
 
-Errors are printed to stderr and the process exits with code 1. The error message contains the API's error text or the HTTP status code.
+On failure nothing is written to stdout. With `--json` (or `--ndjson`) stderr carries exactly one JSON envelope:
+
+```json
+{"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
+```
+
+| Field | Present | Use it for |
+|-------|---------|------------|
+| `category` | always | Branching: `validation`, `auth`, `network`, `server`, `partial_failure` |
+| `message` | always | What failed (includes the API's own text when there is one) |
+| `hint` | when there is a next step | **Do this before retrying.** It names the command that produces the right value, the flag to change, or the order to follow |
+| `exit_code` | always | Same value the process exits with |
+| `command` | always | The command that ran, e.g. `p202 rotator create` |
+| `http_status` | API errors | The server's status code |
+| `field_errors` | 422 responses | `{field: message}` from the server; fix these fields and retry |
+
+Without `--json` the same information is two text lines: `Error [category]: message` and, when available, `Hint: ...`.
 
 ## Error handling
 
-| Exit code | Category | Meaning |
-|-----------|----------|---------|
-| 0 | | Success |
-| 1 | validation | Bad input, missing flags, invalid arguments |
-| 2 | auth | Authentication or authorization failure (401/403) |
-| 3 | network | Connection timeout, DNS failure, unreachable server |
-| 4 | server | API returned a 5xx error |
-| 5 | partial_failure | Bulk operation completed with some failures |
+| Exit code | Category | Meaning | Typical hint |
+|-----------|----------|---------|--------------|
+| 0 | | Success | |
+| 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth | Lists valid values, or `Run <command> --help` |
+| 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config get` / `p202 config set-key` |
+| 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
+| 4 | server | API returned a 5xx error | Retry after a wait; `p202 system health` |
+| 5 | partial_failure | Bulk operation completed with some failures | stderr lists the failed items |
 
-When parsing errors programmatically, check the exit code first. If non-zero, the stderr output contains the error description in the format `Error [category]: message`.
+Decision procedure for an agent:
 
-The API may return structured errors with field-level detail:
+1. Exit code 0: parse stdout as JSON.
+2. Otherwise read the envelope on stderr. If `hint` is present, it is the intended next action: follow it, then retry. Do not guess at flags.
+3. `category: auth` and `network` are environment problems, not input problems; do not vary the command, fix the configuration the hint names.
+4. `category: server`: safe to retry read-only commands (list, get, report, forecast) after a short wait; do not retry creates blindly (see Idempotency).
+5. `field_errors`: change exactly those fields.
 
-```
-Error [validation]: Validation failed
-  aff_campaign_name: required
-  aff_campaign_url: required
-```
+Exit codes are stable across error wrapping: a 401 surfaced as "fetching historical data: API error (401)" still exits 2.
 
 For bulk operations (`--ids`), exit code 5 indicates partial failure. The stdout summary shows `Deleted N of M <entity>.` and stderr lists individual failures.
 
@@ -202,6 +219,20 @@ p202 rotator rule-create "$ROTATOR_ID" \
 ```
 
 JSON fields (`--criteria_json`, `--redirects_json`, `--weighting_config`) are validated locally before the API call. Malformed JSON produces an immediate error.
+
+### Forecast next week and flag today as normal or anomalous
+
+```bash
+# 1. Forecast the metric; note lower_bound/upper_bound per date.
+p202 forecast --metric clicks --horizon 7 --json
+# 2. Today's actual, same filters.
+p202 report timeseries --interval day --period today --json
+# 3. Compare: today's total_clicks outside [lower_bound, upper_bound] for today's date
+#    means the day is outside the 90% band. If meta.anomalies_masked lists recent
+#    dates, the model already treated them as an outage/spike.
+```
+
+Use `--all-metrics` when you need clicks, leads, income, cost, and net that agree with each other (budget or revenue projections).
 
 ### Check system health
 
@@ -375,6 +406,36 @@ p202 report daypart    [-s sort_col] [--sort_dir ASC|DESC] [-p period] [filters.
 p202 report weekpart   [-s sort_col] [--sort_dir ASC|DESC] [-p period] [filters...] [--json]
 ```
 
+### Forecasting
+
+```
+p202 forecast --metric M   [-n horizon] [-i hour|day|week|month] [--history P]
+                           [--method auto|ensemble|linear|sma|wma|holtwinters]
+                           [--confidence 0.5|0.8|0.9] [--seasonal] [--seasonal-monthly]
+                           [--events] [--event-tag T1,T2] [--no-level-shift]
+                           [--no-anomaly-mask] [--anomaly-sigma N] [--anomaly-cycles N]
+                           [filters...] [--json]
+p202 forecast --all-metrics [-n horizon] [-i interval] [--history P] [filters...] [--json]
+```
+
+Metrics: `clicks`, `leads` (alias `conversions`), `revenue` (alias `income`), `cost`, `profit` (alias `net`), `epc`, `avg_cpc`, `conv_rate`, `roi`, `cpa`. `--all-metrics` returns clicks, leads, income, cost, and net in one row per date with the identities `leads = clicks × conv_rate` and `net = income − cost` holding exactly.
+
+Output rows carry the point forecast, `lower_bound`/`upper_bound` (the band `--confidence` selects; the meta's `bounds` names it), and the remaining quantile columns `p05`…`p95`. Read the meta before trusting a forecast:
+
+| Meta key | Meaning |
+|----------|---------|
+| `method`, `weights` | Method used; ensemble member shares |
+| `bounds`, `bounds_source` | Which quantile pair the band is; `conformal` (backtested) vs `gaussian` (history too short) |
+| `mae`, `rmse` | The forecaster's typical error on this series (rolling backtest) |
+| `data_points_used` | Points actually fitted after masking and level-shift truncation |
+| `anomalies_masked` | Dates excluded as transients (outage/spike) |
+| `level_shift_at` | First period of a detected new regime |
+| `composition`, `composition_fallback` | For derived metrics: `derived` (composed from drivers) or `direct`, and why |
+| `seasonal_applied`, `seasonal_profiles` | Whether a requested seasonal profile actually applied |
+| `buckets_rejected` | Response rows the parser could not use |
+
+Anomaly check for alerting: an observed value below `lower_bound` (or above `upper_bound`) of the band forecast for that date is outside the band's nominal coverage (90% at the default confidence). Full guide with worked examples: `documentation/cli/11-forecasting.md`.
+
 Report filter flags (all optional): `--aff_campaign_id`, `--ppc_account_id`, `--aff_network_id`, `--ppc_network_id`, `--landing_page_id`, `--country_id`.
 
 `dashboard` defaults `period=today` if omitted.
@@ -526,6 +587,7 @@ For tighter control, define separate tools per operation category:
 - `p202_update` -- Update a resource
 - `p202_delete` -- Delete a resource (always include --force)
 - `p202_report` -- Generate reports
+- `p202_forecast` -- Forecast a metric or all core metrics (read-only)
 - `p202_system` -- System diagnostics
 
 ### System prompt snippet
@@ -543,6 +605,8 @@ Rules:
 - Pagination: check pagination.total vs offset+limit to determine if more pages exist
 - The health endpoint (p202 system health) does not require authentication
 - All other endpoints require a valid API key configured via p202 config set-key
+- On a non-zero exit, read the JSON error envelope on stderr and follow its "hint" before retrying; category auth/network means fix configuration, not the command
+- p202 forecast is read-only and safe to retry; check meta.bounds_source, anomalies_masked, and level_shift_at before acting on a forecast
 ```
 
 ## Idempotency and safety
@@ -555,5 +619,6 @@ Rules:
 | delete | Yes | First call deletes, subsequent calls return 404 |
 | config set-url/set-key | Yes | Overwrites stored value |
 | report | Yes | None (read-only) |
+| forecast | Yes | None (read-only; deterministic for the same history) |
 
 For agents that may retry on failure: list, get, update, delete, and report commands are safe to retry. Create commands are not -- a retry may produce duplicates.

@@ -551,6 +551,34 @@ p202 report weekpart --sort roi --sort_dir DESC --country_id 223
 | `-s, --sort`    | day_of_week  | Sort by: day_of_week, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa |
 | `--sort_dir`    | ASC          | Sort direction: ASC or DESC |
 
+## Forecasting
+
+`p202 forecast` projects any tracked metric forward from its history, entirely on the client, with calibrated prediction bands. Full guide with worked examples: [documentation/cli/11-forecasting.md](../documentation/cli/11-forecasting.md).
+
+```bash
+p202 forecast --metric revenue --horizon 7
+p202 forecast --metric clicks --interval hour --horizon 24
+p202 forecast --all-metrics --horizon 14 --json
+p202 forecast --metric profit --seasonal --events
+```
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--metric`, `-m` | required unless `--all-metrics` | clicks, leads/conversions, revenue/income, cost, profit/net, epc, avg_cpc, conv_rate, roi, cpa |
+| `--all-metrics` | off | Clicks, leads, income, cost, net together, kept consistent (`net = income − cost`, `leads = clicks × conv_rate`) |
+| `--horizon`, `-n` | 7 | Periods to forecast (max 365) |
+| `--interval`, `-i` | day | hour, day, week, month |
+| `--history` | last90 (last30 hourly) | Training window |
+| `--method` | auto | auto/ensemble, linear, sma, wma, holtwinters |
+| `--confidence` | 0.95 | Band selection: <0.65 → p25–p75 (50%), <0.85 → p10–p90 (80%), else p05–p95 (90%) |
+| `--seasonal` | off | Weekday profile (plus hour-of-day for hourly), applied only when the data repeats at that lag |
+| `--seasonal-monthly` | off | Day-of-month profile (day interval, non-negative metrics) |
+| `--events`, `--event-tag` | off | Fold in stored forecast events (day interval) |
+| `--no-level-shift` | off | Do not fit only the newest regime after a detected level shift |
+| `--no-anomaly-mask`, `--anomaly-sigma`, `--anomaly-cycles` | off / 5 / 4 | Transient (outage/spike) masking controls |
+
+Each row carries the point forecast, `lower_bound`/`upper_bound`, and quantile columns; the meta reports the method and ensemble `weights`, `bounds`/`bounds_source`, rolling `mae`/`rmse`, `data_points_used`, `anomalies_masked`, `level_shift_at`, `composition`, and `seasonal_applied`. Forecasts are read-only and deterministic for the same history.
+
 ## Rotators
 
 ### List/get/create/update/delete rotators
@@ -874,7 +902,20 @@ p202 report daypart --period last30 --csv
 | 4    | server   | API returned a 5xx error |
 | 5    | partial_failure | Bulk operation completed with some failures |
 
-Error messages are printed to stderr in the format `Error [category]: message` when a category is available. Scripts can use the exit code to differentiate failure types without parsing error text.
+Errors go to stderr; stdout stays empty on failure. In human mode:
+
+```
+Error [auth]: fetching historical data: API error (401): invalid api key
+Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
+```
+
+With `--json` or `--ndjson` the same failure is one JSON envelope:
+
+```json
+{"error":{"category":"auth","message":"...","hint":"...","exit_code":2,"command":"p202 forecast","http_status":401}}
+```
+
+`field_errors` is added for 422 responses. Exit codes hold through error wrapping, and nearly every error carries a `hint` naming the next step (the command that yields the right value, the flag to change, or the order to follow); validation errors without a specific hint point at `<command> --help`. See the agent guide's [Error handling](cli-agent.md#error-handling) for the decision procedure.
 
 ## Telemetry
 
