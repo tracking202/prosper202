@@ -223,6 +223,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		confidence = 0.95
 	}
 	noLevelShift, _ := cmd.Flags().GetBool("no-level-shift")
+	noAnomalyMask, _ := cmd.Flags().GetBool("no-anomaly-mask")
 	if seasonalMonthly && forecastSignedMetrics[metric] {
 		// Multiplicative day-of-month profiles are undefined for metrics
 		// that cross zero (a near-zero mean yields unbounded multipliers).
@@ -248,15 +249,16 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	// Build forecast config. Metrics that cannot go negative (counts,
 	// amounts, rates) get zero-clipped bounds and quantiles.
 	cfg := forecast.Config{
-		Method:            method,
-		Horizon:           horizon,
-		Interval:          forecast.Interval(interval),
-		Metric:            metric,
-		SMAWindow:         smaWindow,
-		ConfidenceLevel:   confidence,
-		NonNegative:       !forecastSignedMetrics[metric],
-		LogTransform:      forecastCountMetrics[metric],
-		DisableLevelShift: noLevelShift,
+		Method:             method,
+		Horizon:            horizon,
+		Interval:           forecast.Interval(interval),
+		Metric:             metric,
+		SMAWindow:          smaWindow,
+		ConfidenceLevel:    confidence,
+		NonNegative:        !forecastSignedMetrics[metric],
+		LogTransform:       forecastCountMetrics[metric],
+		DisableLevelShift:  noLevelShift,
+		DisableAnomalyMask: noAnomalyMask,
 	}
 
 	// ── Coherent multi-metric forecasting ─────────────────────────────
@@ -646,6 +648,7 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 
 	compositions := map[string]interface{}{}
 	levelShifts := map[string]interface{}{}
+	anomalies := map[string]interface{}{}
 	for _, m := range forecastCoreMetrics {
 		res := results[m]
 		if res == nil {
@@ -656,6 +659,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 		}
 		if res.LevelShiftAt != "" {
 			levelShifts[m] = res.LevelShiftAt
+		}
+		if len(res.AnomaliesMasked) > 0 {
+			anomalies[m] = res.AnomaliesMasked
 		}
 	}
 
@@ -668,6 +674,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 	}
 	if len(levelShifts) > 0 {
 		meta["level_shifts"] = levelShifts
+	}
+	if len(anomalies) > 0 {
+		meta["anomalies_masked"] = anomalies
 	}
 	if len(clicks.Weights) > 0 {
 		meta["weights"] = roundWeights(clicks.Weights)
@@ -787,6 +796,9 @@ func buildForecastOutput(result *forecast.Result, metric string, opts forecastOu
 	}
 	if result.LevelShiftAt != "" {
 		meta["level_shift_at"] = result.LevelShiftAt
+	}
+	if len(result.AnomaliesMasked) > 0 {
+		meta["anomalies_masked"] = result.AnomaliesMasked
 	}
 	if seasonal {
 		meta["seasonal_applied"] = result.SeasonalApplied
@@ -1086,6 +1098,7 @@ func init() {
 	forecastCmd.Flags().Bool("seasonal-monthly", false, "Apply day-of-month seasonal adjustment learned from the fetched series (requires --interval day)")
 	forecastCmd.Flags().Float64("confidence", 0.95, "Confidence level for prediction bounds; snaps to the nearest band: 0.50 (p25-p75), 0.80 (p10-p90), or 0.90 (p05-p95, also used for 0.95/0.99)")
 	forecastCmd.Flags().Bool("no-level-shift", false, "Disable level-shift detection (fit the full history as-is)")
+	forecastCmd.Flags().Bool("no-anomaly-mask", false, "Disable transient masking (fit short outlier runs such as tracking outages as data)")
 	forecastCmd.Flags().Bool("events", false, "Enable event-aware forecasting using stored forecast events")
 	forecastCmd.Flags().String("event-tag", "", "Filter forecast events by tag (comma-separated, e.g. us-holidays,promos)")
 

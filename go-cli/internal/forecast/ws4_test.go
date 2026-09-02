@@ -379,6 +379,9 @@ func TestDetectLevelShift_IgnoresEndOfHistoryBurst(t *testing.T) {
 			if ls := detectLevelShift(s); ls != nil {
 				t.Fatalf("burst misread as level shift at index %d", ls.idx)
 			}
+			// Through Run the burst is masked as a transient (not a shift),
+			// so even the log-scale ensemble forecasts the established level
+			// and predictions start after the burst, not inside it.
 			for _, logT := range []bool{false, true} {
 				in := make(Series, len(s))
 				copy(in, s)
@@ -389,18 +392,15 @@ func TestDetectLevelShift_IgnoresEndOfHistoryBurst(t *testing.T) {
 				if r.LevelShiftAt != "" {
 					t.Errorf("logTransform=%v: level_shift_at = %q, want none", logT, r.LevelShiftAt)
 				}
-				if r.DataPoints != 60 {
-					t.Errorf("logTransform=%v: data points = %d, want 60 (history rewritten)", logT, r.DataPoints)
+				if len(r.AnomaliesMasked) != 2 || r.DataPoints != 58 {
+					t.Errorf("logTransform=%v: masked %v, data points %d; want the 2 burst days masked", logT, r.AnomaliesMasked, r.DataPoints)
 				}
-			}
-			// On the natural scale the moving averages absorb a 2-day
-			// burst; the forecast stays near the established level.
-			r, err := Run(s, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay, NonNegative: true})
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if v := r.Predictions[0].Value; v < 350 || v > 800 {
-				t.Errorf("prediction = %.1f, want near the 500 level (burst rewrote history)", v)
+				if v := r.Predictions[0].Value; v < 400 || v > 620 {
+					t.Errorf("logTransform=%v: prediction = %.1f, want near the 500 level", logT, v)
+				}
+				if want := s[len(s)-1].T.AddDate(0, 0, 1); !r.Predictions[0].T.Equal(want) {
+					t.Errorf("logTransform=%v: first prediction at %v, want %v (after the masked tail)", logT, r.Predictions[0].T, want)
+				}
 			}
 		})
 	}
@@ -525,5 +525,86 @@ func TestAnchorOffset_CalendarMonths(t *testing.T) {
 	}
 	if got := anchorOffset(s, Config{Interval: IntervalMonth, Anchor: base.AddDate(0, 5, 0)}); got != 2 {
 		t.Errorf("two-month offset = %d, want 2", got)
+	}
+}
+
+func TestDetectTransients_RespectsSeriesOwnPattern(t *testing.T) {
+	// Closed on Sundays: zeros every week are this series' normal and must
+	// not be masked.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	closedSunday := makeSeries(56, func(i int) float64 {
+		if base.AddDate(0, 0, i).Weekday() == time.Sunday {
+			return 0
+		}
+		return 200
+	})
+	if idx := detectTransients(closedSunday, IntervalDay); len(idx) != 0 {
+		t.Errorf("weekly closures masked as anomalies: %v", idx)
+	}
+
+	// Low-volume tracker: zeros are within its normal spread.
+	rng := rand.New(rand.NewSource(5))
+	low := makeSeries(60, func(i int) float64 { return math.Floor(rng.ExpFloat64() * 3) })
+	if idx := detectTransients(low, IntervalDay); len(idx) != 0 {
+		t.Errorf("low-volume zeros masked as anomalies: %v", idx)
+	}
+
+	// A zero Tuesday in a 500-a-day series is a transient; so is a spike.
+	rng2 := rand.New(rand.NewSource(6))
+	outage := makeSeries(60, func(i int) float64 {
+		switch i {
+		case 30:
+			return 0
+		case 45:
+			return 3000
+		}
+		return 500 + rng2.NormFloat64()*20
+	})
+	idx := detectTransients(outage, IntervalDay)
+	if len(idx) != 2 || idx[0] != 30 || idx[1] != 45 {
+		t.Errorf("transients = %v, want [30 45]", idx)
+	}
+
+	// A run as long as a regime change is left to the level-shift detector.
+	rng3 := rand.New(rand.NewSource(7))
+	paused := makeSeries(60, func(i int) float64 {
+		if i >= 54 {
+			return 0
+		}
+		return 500 + rng3.NormFloat64()*20
+	})
+	if idx := detectTransients(paused, IntervalDay); len(idx) != 0 {
+		t.Errorf("6-day run masked as transient: %v", idx)
+	}
+}
+
+func TestRun_DisableAnomalyMask(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	s := makeSeries(60, func(i int) float64 {
+		if i >= 58 {
+			return 0
+		}
+		return 500 + rng.NormFloat64()*20
+	})
+	r, err := Run(s, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay, NonNegative: true, DisableAnomalyMask: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.AnomaliesMasked) != 0 || r.DataPoints != 60 {
+		t.Errorf("masking ran despite DisableAnomalyMask: %v, %d points", r.AnomaliesMasked, r.DataPoints)
+	}
+	// Signed metrics are never masked.
+	profit := makeSeries(60, func(i int) float64 {
+		if i == 30 {
+			return -900
+		}
+		return 100 + rng.NormFloat64()*10
+	})
+	r, err = Run(profit, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.AnomaliesMasked) != 0 {
+		t.Errorf("signed metric masked: %v", r.AnomaliesMasked)
 	}
 }

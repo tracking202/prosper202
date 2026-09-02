@@ -223,10 +223,17 @@ multiplicative growth extrapolates correctly. When a level shift is detected
 (offer paused, traffic source added), the model fits the new regime —
 truncating or re-leveling pre-shift history — and reports the boundary in
 the meta as `level_shift_at`; `data_points_used` then counts the points
-actually fitted. A transient burst at the end of the history (a two-day
-tracking outage, a promo spike) is not treated as a shift; if the detector
-still misreads a known transient, `--no-level-shift` fits the full history
-as-is. Event-aware forecasting (`--events`,
+actually fitted. A transient burst (a two-day tracking outage, an untagged
+promo spike) is not a shift: short outlier runs that are abnormal *for this
+series at that point of its cycle* (compared with the same weekday or hour
+in the surrounding weeks, so a business closed on Sundays or a low-volume
+tracker is never affected) are masked from fitting and listed in the meta
+as `anomalies_masked`, keeping the bands at the healthy level so the
+alerting layer still flags the outage. Runs of five or more points are a
+regime change and go to the shift detector instead. `--no-anomaly-mask`
+fits every point as data, and `--no-level-shift` fits the full history
+as-is if the detector misreads a known transient; tagging known outages and
+promos as events remains the explicit override for both. Event-aware forecasting (`--events`,
 `--event-tag`) folds in stored [forecast
 events](../api/18-forecast-events.md) and requires `--interval day`:
 

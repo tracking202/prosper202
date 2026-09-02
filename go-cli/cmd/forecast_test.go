@@ -1284,3 +1284,49 @@ func TestForecastSeasonalMonthlyReportsApplied(t *testing.T) {
 		t.Errorf("meta.seasonal_profiles = %v, want [monthday]", meta["seasonal_profiles"])
 	}
 }
+
+func TestForecastReportsMaskedAnomaliesAndOptOut(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buckets := make([]map[string]interface{}, 60)
+		for i := 0; i < 60; i++ {
+			v := 500.0 + float64(i%3)
+			if i == 40 {
+				v = 0 // tracking outage
+			}
+			buckets[i] = map[string]interface{}{"bucket_start": 1704067200 + i*86400, "total_income": v}
+		}
+		data, _ := json.Marshal(map[string]interface{}{"data": buckets})
+		w.WriteHeader(200)
+		w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=revenue", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	masked, _ := meta["anomalies_masked"].([]interface{})
+	if len(masked) != 1 {
+		t.Errorf("meta.anomalies_masked = %v, want one masked day", meta["anomalies_masked"])
+	}
+
+	stdout, _, err = executeCommand("forecast", "--metric=revenue", "--horizon=3", "--no-anomaly-mask", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if _, ok := output["meta"].(map[string]interface{})["anomalies_masked"]; ok {
+		t.Error("--no-anomaly-mask still masked points")
+	}
+}

@@ -100,6 +100,11 @@ type Result struct {
 	// detected level shift (offer paused, traffic source added). When set,
 	// pre-shift history was truncated or re-leveled before fitting.
 	LevelShiftAt string `json:"level_shift_at,omitempty"`
+	// AnomaliesMasked lists the timestamps of transient outliers (short
+	// runs abnormal for this series at that point of its cycle) that were
+	// excluded from fitting. The alerting layer should still compare the
+	// observed values on those dates against the bands.
+	AnomaliesMasked []string `json:"anomalies_masked,omitempty"`
 	// SeasonalApplied reports whether any supplied seasonal profile
 	// actually adjusted the predictions: weekday and hourly weights are
 	// gated on detrended autocorrelation at the seasonal lag, so weights
@@ -160,6 +165,12 @@ type Config struct {
 	// history is always fitted as-is. Useful when the detector misreads a
 	// known transient (an untagged outage or promo) as a regime change.
 	DisableLevelShift bool
+
+	// DisableAnomalyMask turns off transient masking (see anomaly.go), so
+	// short outlier runs — a tracking outage, an untagged spike — are fitted
+	// as data rather than looked through. Masking applies to NonNegative
+	// series only; signed metrics can legitimately swing.
+	DisableAnomalyMask bool
 
 	// relevel carries a detected level shift handled by re-leveling; every
 	// fit reads its training data through trainingView so backtest folds
@@ -266,6 +277,23 @@ func Run(series Series, cfg Config) (*Result, error) {
 		cfg.LogTransform = false // downstream error stats stay untransformed
 	}
 
+	// Transient masking: short outlier runs are excluded from fitting and
+	// reported. When the series' last observations are masked, predictions
+	// must still start after them, so the anchor moves to the true end.
+	var anomalies []string
+	if cfg.NonNegative && !cfg.DisableAnomalyMask {
+		if idx := detectTransients(work, cfg.Interval); len(idx) > 0 {
+			for _, i := range idx {
+				anomalies = append(anomalies, formatShiftTime(work[i].T, cfg.Interval))
+			}
+			last := work[len(work)-1].T
+			work = maskIndices(work, idx)
+			if cfg.Anchor.IsZero() || cfg.Anchor.Before(last) {
+				cfg.Anchor = last
+			}
+		}
+	}
+
 	// Seasonal gates measure the full (pre-truncation) history: a shift
 	// that leaves only a short recent window must not erase evidence of a
 	// weekly pattern the longer history carries.
@@ -355,6 +383,7 @@ func Run(series Series, cfg Config) (*Result, error) {
 		Weights:          core.weights,
 		Composition:      "",
 		LevelShiftAt:     levelShiftAt,
+		AnomaliesMasked:  anomalies,
 		SeasonalApplied:  len(profiles) > 0,
 		SeasonalProfiles: profiles,
 		BoundsSource:     core.boundsSource,
