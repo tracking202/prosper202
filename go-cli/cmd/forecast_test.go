@@ -1434,10 +1434,14 @@ func TestForecastAllMetricsReportsBoundsSourcePerMetric(t *testing.T) {
 			t.Errorf("data_points_used[%s] = %v, want a positive count", m, counts[m])
 		}
 	}
-	// This fixture has exact identities, so rolling errors are zero and
-	// the maps are omitted; the noisy all-metrics test covers presence.
-	if _, present := meta["mae"]; present {
-		t.Errorf("mae map should be omitted when every rolling error is zero, got %v", meta["mae"])
+	maes, ok := meta["mae"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected per-metric mae map in meta, got %v", meta["mae"])
+	}
+	for _, m := range forecastCoreMetrics {
+		if _, present := maes[m]; !present {
+			t.Errorf("mae map missing %s", m)
+		}
 	}
 	for _, m := range forecastCoreMetrics {
 		// Derived metrics are backtested as compositions, so with 40 points
