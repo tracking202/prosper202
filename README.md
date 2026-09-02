@@ -320,27 +320,82 @@ bin/p202 rotator:create --name "My Rotator"
 
 ### Go CLI (`go-cli/`)
 
-Cross-platform Go CLI with `--json` output for scripting and agent consumption.
-Failures are categorized with distinct exit codes and carry a recovery hint;
-under `--json` they arrive as a structured envelope on stderr (see
-[Errors](documentation/cli/10-go-cli.md#errors)).
+A single static binary for humans and AI agents. Every command has a table
+view for people and `--json` / `--csv` / `--ndjson` for scripts. Full
+reference: [Go CLI (p202)](documentation/cli/10-go-cli.md).
+
+**1. Set up once**
 
 ```bash
-cd go-cli
-make build
-
+cd go-cli && make build
 ./p202 config set-url https://your-server
 ./p202 config set-key <api-key>
-./p202 campaign list --json
-./p202 sync all
-./p202 forecast --all-metrics --horizon 14 --json
+./p202 config test            # verifies URL + key against the instance
 ```
 
-The CLI includes a dependency-free forecasting engine: calibrated prediction
-bands from rolling backtests, an accuracy-weighted ensemble, coherent
-clicks/leads/income/cost/net forecasts, seasonal profiles, level-shift
-handling, and masking of transient outages and spikes. See the
-[Forecasting Guide](documentation/cli/11-forecasting.md) for worked examples.
+**2. Use it**
+
+```bash
+./p202 campaign list --json                 # any entity: list / get / create / update / delete
+./p202 report summary --period last7
+./p202 forecast --metric revenue --horizon 7
+./p202 sync all --from prod --to staging    # replicate between instances
+```
+
+**3. Built for agents**
+
+Agents need to know, from a failure alone, what to do next. So:
+
+- **Exit codes mean something:** `1` bad input, `2` auth, `3` network,
+  `4` server error, `5` partial failure, and they hold through error
+  wrapping.
+- **Every error carries a recovery hint.** In human mode:
+
+  ```text
+  Error [auth]: fetching historical data: API error (401): invalid api key
+  Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
+  ```
+
+- **Under `--json` the error is a structured envelope on stderr** (stdout
+  stays empty), so nothing has to be parsed from prose:
+
+  ```json
+  {"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
+  ```
+
+  Details and the hint sources: [Errors](documentation/cli/10-go-cli.md#errors).
+
+**4. Forecasting**
+
+`p202 forecast` projects any metric forward from its history, locally, with
+no extra dependencies. Ask for one metric or all core metrics at once:
+
+```bash
+./p202 forecast --metric clicks --horizon 3 --json
+```
+
+```json
+{
+  "data": [
+    { "date": "2026-07-31", "total_clicks": 497.94, "lower_bound": 329.14, "upper_bound": 635.98, "p50": 557.68 }
+  ],
+  "meta": {
+    "method": "ensemble", "weights": { "linear": 0.305, "sma": 0.37, "wma": 0.325 },
+    "bounds": "p05-p95 (90%)", "anomalies_masked": ["2026-07-25", "2026-07-26"], "rmse": 95.67
+  }
+}
+```
+
+What the output is telling you: an ensemble of three methods produced the
+point forecast; the band is the empirical 90% range from rolling backtests
+(not a normal-distribution guess); two days were recognised as a tracking
+outage and excluded from fitting; and the model's typical error on this
+series has been about 96 clicks. Beyond that, the engine keeps
+`leads = clicks × conv_rate` and `net = income − cost` exact across
+`--all-metrics`, applies weekday/hourly profiles only when the data really
+repeats, and fits the new level after a detected shift. Each of these is
+walked through with real output in the
+[Forecasting Guide](documentation/cli/11-forecasting.md).
 
 ## Development Setup
 
