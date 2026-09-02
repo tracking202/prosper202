@@ -130,7 +130,14 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 		eval.invert = math.Expm1
 	}
 	for c := len(s) - 1; c >= lowestCut; c-- {
-		steps := len(s) - c
+		train := trainingView(s, cfg, c)
+		trainEnd := train[len(train)-1].T
+
+		// This cut's horizon is the calendar distance to the farthest
+		// held-out point (masked gaps make it exceed the observation
+		// count), capped at the configured horizon, so residuals around a
+		// gap are kept rather than rejected as out of range.
+		steps := calendarSteps(trainEnd, s[len(s)-1].T, cfg.Interval)
 		if steps > horizon {
 			steps = horizon
 		}
@@ -140,20 +147,10 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 		testCfg.SeasonalWeights = nil
 		testCfg.Anchor = time.Time{}
 
-		train := trainingView(s, cfg, c)
-		trainEnd := train[len(train)-1].T
-
 		// Map each held-out point to its horizon step by calendar distance.
 		// Rows are created lazily so methods share the same row set.
 		rowIdx := map[int]int{} // step -> index into eval.rows (this cut only)
-		stepFor := func(t time.Time) (int, bool) {
-			exact := intervalSteps(trainEnd, t, cfg.Interval)
-			h := int(math.Round(exact))
-			if math.Abs(exact-float64(h)) > 0.01 || h < 1 || h > steps {
-				return 0, false
-			}
-			return h, true
-		}
+		stepFor := func(t time.Time) (int, bool) { return stepIndex(trainEnd, t, cfg.Interval, steps) }
 
 		for _, m := range methods {
 			// Respect each method's minimum history: a fit the deployed
@@ -167,6 +164,7 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 			if err != nil || len(preds) == 0 {
 				continue
 			}
+			applyProfile(preds, cfg)
 			for i := c; i < len(s); i++ {
 				h, ok := stepFor(s[i].T)
 				if !ok || h > len(preds) {

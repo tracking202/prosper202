@@ -1421,11 +1421,19 @@ func TestForecastAllMetricsReportsBoundsSourcePerMetric(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected per-metric bounds_source map in meta, got %v", meta["bounds_source"])
 	}
+	labels, ok := meta["bounds"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected per-metric bounds map in meta, got %v", meta["bounds"])
+	}
 	for _, m := range forecastCoreMetrics {
 		// Derived metrics are backtested as compositions, so with 40 points
-		// every metric's band is conformal — none is a "composed" fallback.
+		// every metric's band is conformal — none is a "composed" fallback —
+		// and each names the quantile pair its lower/upper columns carry.
 		if sources[m] != forecast.BoundsConformal {
 			t.Errorf("bounds_source[%s] = %v, want conformal", m, sources[m])
+		}
+		if labels[m] != "p05-p95 (90%)" {
+			t.Errorf("bounds[%s] = %v, want p05-p95 (90%%)", m, labels[m])
 		}
 	}
 

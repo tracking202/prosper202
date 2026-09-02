@@ -299,7 +299,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 			return withHint(validationError("coherent forecast failed: %v", rcErr),
 				"One of the core metrics has too little history to compose from. Use a longer --history, or forecast the metric you need on its own with --metric (it falls back to a direct forecast automatically).")
 		}
-		output, boErr := buildAllMetricsOutput(results, rejected)
+		output, boErr := buildAllMetricsOutput(results, rejected, confidence)
 		if boErr != nil {
 			return boErr
 		}
@@ -659,10 +659,27 @@ func parsedMetricNames(parsed map[string]forecast.Series) []string {
 	return names
 }
 
+// boundsLabel names the band a result's lower/upper pair represents, so a
+// consumer never has to know the invocation to interpret it: conformal
+// bands snap to the nearest emitted quantile pair (say which, so the
+// requested --confidence is not mistaken for it); composed bands pair the
+// operands' endpoints at worst case, valid but with no single nominal
+// coverage to claim. Gaussian bands carry no label.
+func boundsLabel(source string, confidence float64) string {
+	lowerName, upperName, coverage := forecast.BoundLevels(confidence)
+	switch source {
+	case forecast.BoundsConformal:
+		return fmt.Sprintf("%s-%s (%.0f%%)", lowerName, upperName, coverage*100)
+	case forecast.BoundsComposed:
+		return fmt.Sprintf("%s-%s (composed from operand bands, not calibrated)", lowerName, upperName)
+	}
+	return ""
+}
+
 // buildAllMetricsOutput renders the coherent multi-metric forecast: one row
 // per date with value/lower/upper columns for each core metric, plus a meta
 // block reporting each metric's composition.
-func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([]byte, error) {
+func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, confidence float64) ([]byte, error) {
 	clicks := results[forecast.MetricClicks]
 	if clicks == nil || len(clicks.Predictions) == 0 {
 		return nil, fmt.Errorf("coherent forecast returned no click predictions")
@@ -688,6 +705,7 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 
 	compositions := map[string]interface{}{}
 	boundsSources := map[string]interface{}{}
+	boundsLabels := map[string]interface{}{}
 	levelShifts := map[string]interface{}{}
 	anomalies := map[string]interface{}{}
 	for _, m := range forecastCoreMetrics {
@@ -700,6 +718,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 		}
 		if res.BoundsSource != "" {
 			boundsSources[m] = res.BoundsSource
+		}
+		if label := boundsLabel(res.BoundsSource, confidence); label != "" {
+			boundsLabels[m] = label
 		}
 		if res.LevelShiftAt != "" {
 			levelShifts[m] = res.LevelShiftAt
@@ -718,6 +739,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 	}
 	if len(boundsSources) > 0 {
 		meta["bounds_source"] = boundsSources
+	}
+	if len(boundsLabels) > 0 {
+		meta["bounds"] = boundsLabels
 	}
 	if len(levelShifts) > 0 {
 		meta["level_shifts"] = levelShifts
@@ -785,7 +809,7 @@ func roundWeights(weights map[string]float64) map[string]interface{} {
 // buildForecastOutput constructs the JSON output for rendering.
 func buildForecastOutput(result *forecast.Result, metric string, opts forecastOutputOpts) ([]byte, error) {
 	seasonal, eventsActive, futureEvents, impacts := opts.seasonal, opts.eventsActive, opts.futureEvents, opts.impacts
-	lowerName, upperName, coverage := forecast.BoundLevels(opts.confidence)
+	lowerName, upperName, _ := forecast.BoundLevels(opts.confidence)
 	predictions := make([]map[string]interface{}, len(result.Predictions))
 	for i, p := range result.Predictions {
 		row := map[string]interface{}{
@@ -856,15 +880,8 @@ func buildForecastOutput(result *forecast.Result, metric string, opts forecastOu
 	if result.BoundsSource != "" {
 		meta["bounds_source"] = result.BoundsSource
 	}
-	switch result.BoundsSource {
-	case forecast.BoundsConformal:
-		// Conformal bands snap to the nearest emitted quantile pair; say
-		// which one so the requested --confidence is not mistaken for it.
-		meta["bounds"] = fmt.Sprintf("%s-%s (%.0f%%)", lowerName, upperName, coverage*100)
-	case forecast.BoundsComposed:
-		// Operand bands paired at worst case: valid, but with no single
-		// nominal coverage to claim.
-		meta["bounds"] = fmt.Sprintf("%s-%s (composed from operand bands, not calibrated)", lowerName, upperName)
+	if label := boundsLabel(result.BoundsSource, opts.confidence); label != "" {
+		meta["bounds"] = label
 	}
 	if opts.rejected > 0 {
 		meta["buckets_rejected"] = opts.rejected

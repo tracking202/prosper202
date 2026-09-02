@@ -203,6 +203,13 @@ type Config struct {
 	// masked (e.g. event days removed) so predictions still start after
 	// the last real observation rather than inside masked history.
 	Anchor time.Time
+
+	// profile returns the seasonal multiplier for a prediction timestamp
+	// (weekday × hourly × day-of-month, over the profiles Run decided to
+	// apply). Set by Run, never by callers. It is applied to the deployed
+	// fit and inside every backtest fold before bounds are attached, so
+	// bands and errors describe the seasonally adjusted forecaster.
+	profile func(t time.Time) float64
 }
 
 // anchorTime returns the reference point predictions step forward from.
@@ -268,6 +275,7 @@ func withDefaults(cfg Config) Config {
 	if cfg.ConfidenceLevel <= 0 || cfg.ConfidenceLevel >= 1 {
 		cfg.ConfidenceLevel = 0.95
 	}
+	cfg.profile = nil
 	return cfg
 }
 
@@ -348,6 +356,41 @@ func Run(series Series, cfg Config) (*Result, error) {
 		cfg.SMAWindow = defaultSMAWindow(len(work))
 	}
 
+	// Decide the seasonal profiles now, before fitting, so they scale the
+	// deployed fit and every backtest fold alike and the bands calibrate
+	// the forecaster that is actually emitted. Weekday and hourly weights
+	// are gated on detrended autocorrelation at their lag so spurious
+	// profiles (built from noise) don't degrade the forecast; when the
+	// history is too short to measure that lag there is no evidence against
+	// the profile and it applies as supplied. Day-of-month weights are an
+	// explicit opt-in and apply as supplied.
+	var profiles []string
+	var scalers []func(time.Time) float64
+	if len(cfg.SeasonalWeights) > 0 && seasonalGateAllows(gateSeries, 7*24*time.Hour) {
+		weekday := cfg.SeasonalWeights
+		scalers = append(scalers, func(t time.Time) float64 { return weekdayWeight(weekday, t.Weekday()) })
+		profiles = append(profiles, "weekday")
+	}
+	if len(cfg.HourlyWeights) > 0 && cfg.Interval == IntervalHour && seasonalGateAllows(gateSeries, 24*time.Hour) {
+		hourly := cfg.HourlyWeights
+		scalers = append(scalers, func(t time.Time) float64 { return slotWeight(hourly, t.Hour()) })
+		profiles = append(profiles, "hourly")
+	}
+	if len(cfg.MonthDayWeights) > 0 {
+		monthDay := cfg.MonthDayWeights
+		scalers = append(scalers, func(t time.Time) float64 { return slotWeight(monthDay, t.Day()) })
+		profiles = append(profiles, "monthday")
+	}
+	if len(scalers) > 0 {
+		cfg.profile = func(t time.Time) float64 {
+			f := 1.0
+			for _, scale := range scalers {
+				f *= scale(t)
+			}
+			return f
+		}
+	}
+
 	var core forecastCore
 	var err error
 	if method == MethodEnsemble {
@@ -385,26 +428,6 @@ func Run(series Series, cfg Config) (*Result, error) {
 			}
 			rolling[rollingKey{trainEnd: r.trainEnd, target: r.t}] = pred
 		}
-	}
-
-	// Apply seasonal profiles. Weekday and hourly weights are gated on
-	// detrended autocorrelation at their lag so spurious profiles (built
-	// from noise) don't degrade the forecast; when the history is too short
-	// to measure that lag there is no evidence against the profile and it
-	// applies as supplied. Day-of-month weights are an explicit opt-in and
-	// apply as supplied.
-	var profiles []string
-	if len(cfg.SeasonalWeights) > 0 && seasonalGateAllows(gateSeries, 7*24*time.Hour) {
-		core.preds = applySeasonalWeights(core.preds, cfg.SeasonalWeights)
-		profiles = append(profiles, "weekday")
-	}
-	if len(cfg.HourlyWeights) > 0 && cfg.Interval == IntervalHour && seasonalGateAllows(gateSeries, 24*time.Hour) {
-		core.preds = applyHourlyWeights(core.preds, cfg.HourlyWeights)
-		profiles = append(profiles, "hourly")
-	}
-	if len(cfg.MonthDayWeights) > 0 {
-		core.preds = applyMonthDayWeights(core.preds, cfg.MonthDayWeights)
-		profiles = append(profiles, "monthday")
 	}
 
 	if cfg.NonNegative {
@@ -516,6 +539,7 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 	if err != nil {
 		return forecastCore{}, err
 	}
+	applyProfile(predictions, cfg)
 
 	if eval == nil {
 		eval = runRollingBacktest(series, cfg, []Method{method})
@@ -582,6 +606,7 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 			delete(weights, m)
 			continue
 		}
+		applyProfile(preds, cfg)
 		memberPreds[m] = preds
 		memberTrend[m] = tr
 		members = append(members, m)
@@ -772,10 +797,14 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 
 	c := len(s) - holdout
 	train := trainingView(s, cfg, c)
+	trainEnd := train[len(train)-1].T
 	test := s[c:]
 
+	// Held-out points are matched to prediction steps by calendar distance
+	// (masked gaps make it exceed the observation count), so the horizon
+	// reaches the farthest held-out point.
 	testCfg := cfg
-	testCfg.Horizon = holdout
+	testCfg.Horizon = calendarSteps(trainEnd, test[len(test)-1].T, cfg.Interval)
 	testCfg.SeasonalWeights = nil
 	testCfg.Anchor = time.Time{}
 
@@ -783,14 +812,16 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 	if err != nil || len(preds) == 0 {
 		return seriesStdDev(s), 0, 0
 	}
+	applyProfile(preds, cfg)
 
-	n := len(preds)
-	if n > len(test) {
-		n = len(test)
-	}
+	n := 0
 	sumSqModel, sumAbs, sumSq := 0.0, 0.0, 0.0
-	for i := 0; i < n; i++ {
-		actual, pred := test[i].V, preds[i].Value
+	for _, p := range test {
+		h, ok := stepIndex(trainEnd, p.T, cfg.Interval, len(preds))
+		if !ok {
+			continue
+		}
+		actual, pred := p.V, preds[h-1].Value
 		modelDiff := actual - pred
 		sumSqModel += modelDiff * modelDiff
 		if cfg.LogTransform {
@@ -800,9 +831,35 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 		diff := actual - pred
 		sumAbs += math.Abs(diff)
 		sumSq += diff * diff
+		n++
+	}
+	if n == 0 {
+		return seriesStdDev(s), 0, 0
 	}
 	fn := float64(n)
 	return math.Sqrt(sumSqModel / fn), sumAbs / fn, math.Sqrt(sumSq / fn)
+}
+
+// calendarSteps returns the number of whole interval steps from from to to,
+// at least 1.
+func calendarSteps(from, to time.Time, interval Interval) int {
+	steps := int(math.Round(intervalSteps(from, to, interval)))
+	if steps < 1 {
+		return 1
+	}
+	return steps
+}
+
+// stepIndex maps a held-out timestamp to its 1-based horizon step from
+// trainEnd; ok is false when it is not a whole step away or lies beyond
+// maxStep.
+func stepIndex(trainEnd, t time.Time, interval Interval, maxStep int) (int, bool) {
+	exact := intervalSteps(trainEnd, t, interval)
+	h := int(math.Round(exact))
+	if math.Abs(exact-float64(h)) > 0.01 || h < 1 || h > maxStep {
+		return 0, false
+	}
+	return h, true
 }
 
 // zScore returns the z-score for a given confidence level (two-tailed).
@@ -934,33 +991,46 @@ func normalizeQuantileOrder(qs map[string]float64) {
 	}
 }
 
-// applySeasonalWeights adjusts prediction values by day-of-week multipliers.
-func applySeasonalWeights(preds []Prediction, weights SeasonalWeights) []Prediction {
-	for i := range preds {
-		dow := preds[i].T.Weekday()
-		if w, ok := weights[dow]; ok {
-			scalePrediction(&preds[i], w)
-		}
+// weekdayWeight returns the multiplier a weekday profile defines for d, or
+// 1 when the day is absent.
+func weekdayWeight(weights SeasonalWeights, d time.Weekday) float64 {
+	if w, ok := weights[d]; ok {
+		return w
 	}
-	return preds
+	return 1
 }
 
-// applyHourlyWeights adjusts prediction values by hour-of-day multipliers.
-func applyHourlyWeights(preds []Prediction, weights map[int]float64) []Prediction {
-	for i := range preds {
-		if w, ok := weights[preds[i].T.Hour()]; ok {
-			scalePrediction(&preds[i], w)
-		}
+// slotWeight returns the multiplier an integer-slot profile defines for
+// slot, or 1 when the slot is absent.
+func slotWeight(weights map[int]float64, slot int) float64 {
+	if w, ok := weights[slot]; ok {
+		return w
 	}
-	return preds
+	return 1
 }
 
-// applyMonthDayWeights adjusts prediction values by day-of-month multipliers.
-func applyMonthDayWeights(preds []Prediction, weights map[int]float64) []Prediction {
+// applyProfile scales point predictions by the seasonal profile for their
+// timestamps. A profile is multiplicative on the reporting scale, so under
+// the log1p transform it is applied through the transform (a model-scale
+// value whose reporting value is not positive is left alone: scaling it is
+// meaningless and the output clip zeroes it anyway). Bounds and quantiles
+// are attached afterwards, so they calibrate the adjusted forecaster; the
+// same call runs inside every backtest fold.
+func applyProfile(preds []Prediction, cfg Config) {
+	if cfg.profile == nil {
+		return
+	}
 	for i := range preds {
-		if w, ok := weights[preds[i].T.Day()]; ok {
-			scalePrediction(&preds[i], w)
+		w := cfg.profile(preds[i].T)
+		if w == 1 {
+			continue
+		}
+		if !cfg.LogTransform {
+			preds[i].Value *= w
+			continue
+		}
+		if v := math.Expm1(preds[i].Value); v > 0 {
+			preds[i].Value = math.Log1p(v * w)
 		}
 	}
-	return preds
 }

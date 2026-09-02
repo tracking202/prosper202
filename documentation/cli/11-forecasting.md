@@ -40,8 +40,8 @@ metric, `Run` does the following, in this order:
 | 3. Transient masking | Short outlier runs that are abnormal *for this series at that point of its week* are removed from fitting. Section 7. | `anomalies_masked` |
 | 4. Level-shift handling | If the series changed level (offer paused, new source), the model fits the new regime. Section 6. | `level_shift_at`, `data_points_used` |
 | 5. Fit | The chosen method, or the ensemble of all of them. Section 3. | `method`, `weights` |
-| 6. Bounds | Rolling-origin backtest residuals become empirical prediction bands. Section 4. | `lower_bound`, `upper_bound`, `p05`…`p95`, `bounds`, `bounds_source`, `mae`, `rmse` |
-| 7. Seasonal profiles | Weekday / hourly / day-of-month multipliers, if requested and supported by the data. Section 8. | `seasonal_applied`, `seasonal_profiles` |
+| 6. Seasonal profiles | Weekday / hourly / day-of-month multipliers, if requested and supported by the data, applied inside the fit and inside every backtest fold. Section 8. | `seasonal_applied`, `seasonal_profiles` |
+| 7. Bounds | Rolling-origin backtest residuals of the forecaster as emitted (profiles included) become empirical prediction bands. Section 4. | `lower_bound`, `upper_bound`, `p05`…`p95`, `bounds`, `bounds_source`, `mae`, `rmse` |
 | 8. Events | Calendar events scale the affected days. Section 9. | `events_in_horizon` |
 | 9. Clip | Metrics that cannot go negative are floored at zero. | |
 
@@ -75,7 +75,7 @@ shapes the weights that predict it.
 "meta": {
   "method": "ensemble",
   "weights": { "linear": 0.305, "sma": 0.37, "wma": 0.325 },
-  "mae": 84.85, "rmse": 95.67, ...
+  "mae": 84.58, "rmse": 96.17, ...
 }
 ```
 
@@ -123,21 +123,21 @@ row:
 {
   "date": "2026-07-31",
   "total_clicks": 497.94,
-  "lower_bound": 329.14, "upper_bound": 635.98,
-  "p10": 355.86, "p25": 402.65, "p50": 557.68, "p75": 590.94, "p90": 633.31
+  "lower_bound": 318.64, "upper_bound": 640.12,
+  "p10": 355.99, "p25": 402.73, "p50": 554.77, "p75": 587.52, "p90": 626.25
 }
 ```
 
 and with `--confidence 0.5`:
 
 ```json
-{ "date": "2026-07-31", "total_clicks": 497.94, "lower_bound": 402.65, "upper_bound": 590.94, "p50": 557.68 }
+{ "date": "2026-07-31", "total_clicks": 497.94, "lower_bound": 402.73, "upper_bound": 587.52, "p50": 554.77 }
 ```
 
 Reading it:
 
 - `total_clicks` (497.94) is the point forecast: the ensemble's value.
-- `p50` (557.68) is the **bias-corrected median**: the point forecast plus
+- `p50` (554.77) is the **bias-corrected median**: the point forecast plus
   the median of the model's recent errors. When it sits far from the point
   forecast, as here, the model has been systematically off in that
   direction lately. In this example the series has a strong weekday pattern
@@ -204,17 +204,21 @@ p202 forecast --all-metrics --horizon 3 --json
   "data": [
     {
       "date": "2026-07-31",
-      "total_clicks": 497.94, "total_clicks_lower": 329.14, "total_clicks_upper": 635.98,
-      "total_leads":   39.72, "total_leads_lower":   26.11, "total_leads_upper":   52.91,
-      "total_cost":   212.28, "total_cost_lower":   140.25, "total_cost_upper":   273.93,
-      "total_income": 382.93, "total_income_lower": 228.15, "total_income_upper": 512.24,
-      "total_net":    170.65, "total_net_lower":    85.44, "total_net_upper":    263.3
+      "total_clicks": 497.94, "total_clicks_lower": 318.64, "total_clicks_upper": 640.12,
+      "total_leads":   39.72, "total_leads_lower":   25.03, "total_leads_upper":   52.92,
+      "total_cost":   212.28, "total_cost_lower":   139.95, "total_cost_upper":   273.95,
+      "total_income": 382.93, "total_income_lower": 223.68, "total_income_upper": 512.31,
+      "total_net":    170.65, "total_net_lower":    83.6,  "total_net_upper":    263.25
     }
   ],
   "meta": {
     "composition": {
       "total_clicks": "direct", "total_leads": "derived", "total_cost": "derived",
       "total_income": "derived", "total_net": "derived"
+    },
+    "bounds": {
+      "total_clicks": "p05-p95 (90%)", "total_leads": "p05-p95 (90%)", "total_cost": "p05-p95 (90%)",
+      "total_income": "p05-p95 (90%)", "total_net": "p05-p95 (90%)"
     },
     "bounds_source": {
       "total_clicks": "conformal", "total_leads": "conformal", "total_cost": "conformal",
@@ -245,9 +249,10 @@ observed derived value, and turns those residuals into the derived metric's
 own empirical quantiles, band, `mae`, and `rmse`. `total_net_lower` above is
 therefore a calibrated 90% floor for net in its own right (the worst-corner
 pairing of the income and cost bands would have put it below −100), and
-`bounds_source` reports `conformal` per metric.
+`bounds` and `bounds_source` name each metric's band and how it was made,
+so a consumer of the payload never needs to know the invocation.
 
-Measured on the rolling suite, composed p05–p95 bands now cover 87–96% of
+Measured on the rolling suite, composed p05–p95 bands now cover 88–97% of
 held-out values against the 90% nominal, matching direct forecasts of the
 same metrics; the worst-corner pairing covered 94–100%, too wide to be a
 useful alerting threshold.
@@ -270,7 +275,7 @@ composition automatically and returns just that metric:
 ```json
 "meta": {
   "metric": "total_leads", "composition": "derived",
-  "bounds": "p05-p95 (90%)", "bounds_source": "conformal", "mae": 6.97, "rmse": 8.22,
+  "bounds": "p05-p95 (90%)", "bounds_source": "conformal", "mae": 7.01, "rmse": 8.31,
   "anomalies_masked": ["2026-07-25", "2026-07-26"], ...
 }
 ```
@@ -321,7 +326,7 @@ about a shift before the data could reveal it.
 ~1,900/day twenty days before the end:
 
 ```json
-"data": [ { "date": "2026-08-30", "total_income": 1915.71, "lower_bound": 1862.58, "upper_bound": 2043.2, "p50": 1905.15 } ],
+"data": [ { "date": "2026-08-30", "total_income": 1915.71, "lower_bound": 1845.49, "upper_bound": 2043.2, "p50": 1904.14 } ],
 "meta": {
   "level_shift_at": "2026-08-10",
   "data_points_used": 20,
@@ -369,15 +374,15 @@ That definition is what makes it safe across very different funnels:
 2026-07-25/26. Default run:
 
 ```json
-"data": [ { "date": "2026-07-31", "total_clicks": 497.94, "lower_bound": 329.14, "upper_bound": 635.98 } ],
-"meta": { "anomalies_masked": ["2026-07-25", "2026-07-26"], "data_points_used": 58, "rmse": 95.67, ... }
+"data": [ { "date": "2026-07-31", "total_clicks": 497.94, "lower_bound": 318.64, "upper_bound": 640.12 } ],
+"meta": { "anomalies_masked": ["2026-07-25", "2026-07-26"], "data_points_used": 58, "rmse": 96.17, ... }
 ```
 
 The same run with `--no-anomaly-mask`:
 
 ```json
-"data": [ { "date": "2026-07-31", "total_clicks": 206.22, "lower_bound": 0, "upper_bound": 652.42 } ],
-"meta": { "data_points_used": 60, "rmse": 160.09, ... }
+"data": [ { "date": "2026-07-31", "total_clicks": 206.22, "lower_bound": 1.64, "upper_bound": 817.87 } ],
+"meta": { "data_points_used": 60, "rmse": 174.81, ... }
 ```
 
 Reading it: with the outage treated as data, the forecast collapses to 206
@@ -421,23 +426,29 @@ the mean), then two safeguards apply:
    ignored, and `seasonal_applied: false` says so. A history too short to
    measure the lag (under 8 points or 4 weekly pairs) applies the profile
    as supplied.
+3. **Calibration.** The profile is applied inside the model, in the
+   deployed fit and in every backtest fold, so `mae`/`rmse` and the bands
+   describe the seasonally adjusted forecast you receive, not the flat one
+   it was built from.
 
 **Worked example.** The clicks series with `--seasonal --horizon 7`:
 
 ```json
 "data": [
-  { "date": "2026-07-31", "total_clicks": 498.08 },   // Friday
-  { "date": "2026-08-01", "total_clicks": 398.5 },    // Saturday
-  { "date": "2026-08-02", "total_clicks": 415.15 },   // Sunday
-  { "date": "2026-08-03", "total_clicks": 532.73 },   // Monday
-  { "date": "2026-08-04", "total_clicks": 567.29 }    // Tuesday
+  { "date": "2026-07-31", "total_clicks": 497.93 },   // Friday
+  { "date": "2026-08-01", "total_clicks": 398.39 },   // Saturday
+  { "date": "2026-08-02", "total_clicks": 415.03 },   // Sunday
+  { "date": "2026-08-03", "total_clicks": 532.57 },   // Monday
+  { "date": "2026-08-04", "total_clicks": 567.12 }    // Tuesday
 ],
-"meta": { "seasonal": true, "seasonal_applied": true, "seasonal_profiles": ["weekday"], "rmse": 90.96, ... }
+"meta": { "seasonal": true, "seasonal_applied": true, "seasonal_profiles": ["weekday"], "rmse": 38.36, ... }
 ```
 
 Compare with the unseasonal run's flat 498/day: the weekend now dips and the
 week's peak lands on Tuesday, matching the history, and the rolling error
-falls from 95.67 to 90.96.
+falls from 96.17 to 38.36: the flat ensemble was missing the weekly swing
+by ~96 clicks a day, and the adjusted forecaster, measured as such, is
+within ~38.
 
 ### Hourly profile (`--seasonal` with `--interval hour`)
 

@@ -718,3 +718,80 @@ func TestTrainingView_TruncatesInsidePrefix(t *testing.T) {
 		t.Errorf("view has %d points starting %v, want 25 starting %v", len(view), view[0].T, s[20].T)
 	}
 }
+
+func TestRun_SeasonalProfileCalibratesAdjustedForecaster(t *testing.T) {
+	// A perfectly weekly series with the matching weekday profile: the
+	// adjusted forecaster is near exact, so the rolling error and the band
+	// must describe it (small), not the flat forecaster it was built from.
+	// Without the profile the same series has a large rolling error.
+	factors := map[time.Weekday]float64{time.Monday: 1.5, time.Tuesday: 0.6, time.Saturday: 0.7}
+	base := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) // a Monday
+	s := makeSeries(56, func(i int) float64 {
+		if f, ok := factors[base.AddDate(0, 0, i).Weekday()]; ok {
+			return 100 * f
+		}
+		return 100
+	})
+	// makeSeries starts 2026-01-01; rebuild on the Monday base so the
+	// factors line up with the timestamps.
+	for i := range s {
+		s[i].T = base.AddDate(0, 0, i)
+	}
+	weights := SeasonalWeights{}
+	mean := 0.0
+	for _, p := range s[:7] {
+		mean += p.V / 7
+	}
+	for d := time.Sunday; d <= time.Saturday; d++ {
+		f := 1.0
+		if v, ok := factors[d]; ok {
+			f = v
+		}
+		weights[d] = 100 * f / mean
+	}
+
+	cfg := Config{Method: MethodSMA, SMAWindow: 7, Horizon: 7, Interval: IntervalDay, SeasonalWeights: weights}
+	with, err := Run(s, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cfg.SeasonalWeights = nil
+	without, err := Run(s, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !with.SeasonalApplied {
+		t.Fatal("expected the weekday profile to apply")
+	}
+	if with.RMSE > 1 || with.RMSE*10 > without.RMSE {
+		t.Errorf("rolling rmse with profile %.2f vs without %.2f: errors must describe the adjusted forecaster", with.RMSE, without.RMSE)
+	}
+	for i, p := range with.Predictions {
+		if width := p.UpperBound - p.LowerBound; width > 5 {
+			t.Errorf("step %d: band width %.2f; bands must calibrate the adjusted forecaster (near exact here)", i, width)
+		}
+	}
+}
+
+func TestRollingBacktest_HorizonByCalendarDistance(t *testing.T) {
+	// The last retained point sits two days after the one before it (a
+	// masked gap). The cut ending just before the gap has one held-out
+	// observation but a two-step calendar horizon: the residual must be
+	// recorded at step 2, not rejected because only one point remained.
+	s := makeSeries(20, func(i int) float64 { return 100 })
+	s[19].T = s[18].T.AddDate(0, 0, 2)
+	eval := runRollingBacktest(s, Config{Horizon: 3, Interval: IntervalDay, ConfidenceLevel: 0.95}, []Method{MethodSMA})
+	c := len(s) - 1
+	found := false
+	for _, r := range eval.rows {
+		if r.cut == c && r.step == 2 && r.t.Equal(s[c].T) {
+			found = true
+		}
+		if r.cut == c && r.step == 1 {
+			t.Errorf("cut %d has a step-1 row, but no point lies one day after its training end", c)
+		}
+	}
+	if !found {
+		t.Errorf("cut %d: no step-2 residual for the point across the gap", c)
+	}
+}
