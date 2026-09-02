@@ -479,7 +479,7 @@ under `--json` it arrives as a structured envelope on stderr (see
 response did not contain:
 
 ```json
-{"error":{"category":"validation","message":"no valid data points found for metric \"epc\"","hint":"The response carried values for total_clicks but not \"epc\". Pick one of those with --metric, or widen --history.","exit_code":1,"command":"p202 forecast"}}
+{"error":{"category":"validation","message":"no valid data points found for metric \"epc\" (response carried: total_clicks)","hint":"Pick one of the metrics the response carried with --metric, or widen --history.","exit_code":1,"command":"p202 forecast"}}
 ```
 
 The symptoms below are the ones that produce *successful* runs whose output

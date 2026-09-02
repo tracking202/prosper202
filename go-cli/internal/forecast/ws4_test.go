@@ -27,14 +27,24 @@ func TestShrinkMultiplier(t *testing.T) {
 }
 
 func TestShrinkWeekdayWeights(t *testing.T) {
-	weights := SeasonalWeights{time.Monday: 1.9, time.Friday: 0.5}
-	counts := map[time.Weekday]int{time.Monday: 2, time.Friday: 12}
+	weights := SeasonalWeights{time.Monday: 1.9, time.Friday: 0.5, time.Sunday: 0.2, time.Saturday: 1.4}
+	counts := map[time.Weekday]int{time.Monday: 2, time.Friday: 12, time.Saturday: 0}
 	shrunk := ShrinkWeekdayWeights(weights, counts)
 	if math.Abs(shrunk[time.Monday]-1.3) > 0.001 {
 		t.Errorf("Monday shrunk to %.3f, want 1.3 (2 samples)", shrunk[time.Monday])
 	}
 	if math.Abs(shrunk[time.Friday]-0.625) > 0.001 {
 		t.Errorf("Friday shrunk to %.3f, want 0.625 (12 samples)", shrunk[time.Friday])
+	}
+	// Unobserved weekdays (missing from counts, or counted zero) are dropped
+	// rather than carried as a meaningless 1.0.
+	for _, dow := range []time.Weekday{time.Sunday, time.Saturday} {
+		if _, ok := shrunk[dow]; ok {
+			t.Errorf("%s has no observations but kept weight %.3f", dow, shrunk[dow])
+		}
+	}
+	if len(shrunk) != 2 {
+		t.Errorf("shrunk has %d entries, want 2", len(shrunk))
 	}
 	// Input untouched.
 	if weights[time.Monday] != 1.9 {

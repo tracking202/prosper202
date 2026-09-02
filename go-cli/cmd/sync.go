@@ -495,7 +495,7 @@ func selectedSyncEntities(entity string) ([]string, error) {
 		return append([]string(nil), syncDependencyOrder...), nil
 	}
 	if _, ok := portableEntities[entity]; !ok {
-		return nil, validationError("unsupported entity %q", entity).WithHint("Supported entities: all, %s", strings.Join(sortedPortableEntities(), ", "))
+		return nil, validationError("unsupported entity %q (supported: all, %s)", entity, strings.Join(sortedPortableEntities(), ", ")).WithHint("Pass one of those as the first argument; `all` syncs every entity in dependency order.")
 	}
 	return []string{entity}, nil
 }

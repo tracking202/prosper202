@@ -314,8 +314,8 @@ func runForecast(cmd *cobra.Command, args []string) error {
 			return validationError("no valid data points found for metric %q", metric).
 				WithHint("No bucket in the response carried a numeric %q value. Check `p202 report timeseries --period %s` with the same filters to see which metrics the API returns for this window.", metric, history)
 		}
-		return validationError("no valid data points found for metric %q", metric).
-			WithHint("The response carried values for %s but not %q. Pick one of those with --metric, or widen --history.", strings.Join(available, ", "), metric)
+		return validationError("no valid data points found for metric %q (response carried: %s)", metric, strings.Join(available, ", ")).
+			WithHint("Pick one of the metrics the response carried with --metric, or widen --history.")
 	}
 	if len(series) < 3 {
 		return validationError("not enough data points (%d) for forecasting — need at least 3", len(series)).

@@ -50,7 +50,7 @@ var exportCmd = &cobra.Command{
 		} else {
 			endpoint, ok := portableEntities[target]
 			if !ok {
-				return validationError("unsupported entity %q", target).WithHint("Supported entities: all, %s", strings.Join(sortedPortableEntities(), ", "))
+				return validationError("unsupported entity %q (supported: all, %s)", target, strings.Join(sortedPortableEntities(), ", ")).WithHint("Pass one of those as the first argument; `all` exports every entity.")
 			}
 			rows, err := fetchAllRows(c, endpoint)
 			if err != nil {

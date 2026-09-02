@@ -30,7 +30,7 @@ var dataImportCmd = &cobra.Command{
 		entity := args[0]
 		endpoint, ok := portableEntities[entity]
 		if !ok {
-			return validationError("unsupported entity %q", entity).WithHint("Supported entities: %s", strings.Join(sortedPortableEntities(), ", "))
+			return validationError("unsupported entity %q (supported: %s)", entity, strings.Join(sortedPortableEntities(), ", ")).WithHint("Pass one of those as the first argument, e.g. `p202 import campaigns campaigns.json`.")
 		}
 
 		raw, err := os.ReadFile(args[1])

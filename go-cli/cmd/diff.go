@@ -39,11 +39,11 @@ var diffCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target := strings.TrimSpace(args[0])
 		if target == "" {
-			return validationError("entity is required").WithHint("Pass an entity to compare, or `all`: %s", strings.Join(sortedPortableEntities(), ", "))
+			return validationError("entity is required (one of: all, %s)", strings.Join(sortedPortableEntities(), ", ")).WithHint("Pass the entity as the first argument, e.g. `p202 diff campaigns --from prod --to staging`; `all` compares every entity.")
 		}
 		if target != "all" {
 			if _, ok := portableEntities[target]; !ok {
-				return validationError("unsupported entity %q", target).WithHint("Supported entities: all, %s", strings.Join(sortedPortableEntities(), ", "))
+				return validationError("unsupported entity %q (supported: all, %s)", target, strings.Join(sortedPortableEntities(), ", ")).WithHint("Pass one of those as the first argument; `all` compares every entity.")
 			}
 		}
 

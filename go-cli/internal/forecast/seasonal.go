@@ -125,15 +125,20 @@ func WeekdayCounts(s Series) map[time.Weekday]int {
 
 // ShrinkWeekdayWeights returns a copy of weights with each multiplier
 // shrunk toward 1.0 by n/(n+k), where n is that weekday's sample count.
-// Days absent from counts are treated as unobserved (full shrinkage to 1.0
-// would leave the hint meaningless, so they keep no weight at all).
+// Weekdays with no observations (absent from counts, or counted zero) are
+// dropped: the history offers no evidence for them, and a fully shrunk 1.0
+// multiplier would be a no-op carried around as if it were a profile.
 func ShrinkWeekdayWeights(weights SeasonalWeights, counts map[time.Weekday]int) SeasonalWeights {
 	if len(weights) == 0 {
 		return weights
 	}
 	out := make(SeasonalWeights, len(weights))
 	for dow, w := range weights {
-		out[dow] = shrinkMultiplier(w, counts[dow])
+		n := counts[dow]
+		if n <= 0 {
+			continue
+		}
+		out[dow] = shrinkMultiplier(w, n)
 	}
 	return out
 }

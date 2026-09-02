@@ -1346,7 +1346,7 @@ func TestForecastAnomalyKnobsValidated(t *testing.T) {
 	}
 }
 
-func TestForecastMissingMetricHintListsAvailable(t *testing.T) {
+func TestForecastMissingMetricListsAvailable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte(makeTimeseriesResponse(30, "total_clicks")))
@@ -1361,9 +1361,13 @@ func TestForecastMissingMetricHintListsAvailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when the metric is absent from the response")
 	}
-	hint := hintFor(err)
-	if !strings.Contains(hint, "total_clicks") || !strings.Contains(hint, "--metric") {
-		t.Errorf("hint should list the available metrics and the flag to change, got %q", hint)
+	// The list of valid values lives in the message (visible even when the
+	// hint is ignored); the hint names the flag to change.
+	if !strings.Contains(err.Error(), "response carried: total_clicks") {
+		t.Errorf("message should list the metrics the response carried, got %q", err.Error())
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "--metric") {
+		t.Errorf("hint should name the flag to change, got %q", hint)
 	}
 	if exitCodeForError(err) != ExitValidation {
 		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)

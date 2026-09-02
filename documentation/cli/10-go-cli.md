@@ -239,14 +239,16 @@ an agent reads structured fields instead of parsing prose:
 | `http_status` | API errors | The server's status code |
 | `field_errors` | 422 responses | Per-field messages from the server |
 
-Hints come from three sources, in order of precedence: a hint attached by
-the command itself (for example, the metrics the response *did* contain
-when the requested one is missing, or the dependency order to sync first
-when a foreign key cannot be resolved); a generic hint for the failure
-class (401/403 key check, 404 use `list` for ids, 409 update instead of
-create, 429 back off, 5xx retry then `p202 system health`, network check the
-URL and `p202 config test`); and for any remaining validation error, a
-pointer to `<command> --help`.
+Lists of valid values (supported entities, the metrics a response did
+contain) sit in the message itself, so they are visible even when the hint
+is ignored; the hint carries the next action. Hints come from three sources,
+in order of precedence: a hint attached by the command itself (for example,
+which flag to change when the requested metric is missing, or the dependency
+order to sync first when a foreign key cannot be resolved); a generic hint
+for the failure class (401/403 key check, 404 use `list` for ids, 409 update
+instead of create, 429 back off, 5xx retry then `p202 system health`,
+network check the URL and `p202 config test`); and for any remaining
+validation error, a pointer to `<command> --help`.
 
 ### Exit Codes
 
