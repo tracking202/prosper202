@@ -232,6 +232,8 @@ p202 forecast --all-metrics --horizon 3 --json
     "data_points_used": {
       "total_clicks": 58, "total_leads": 58, "total_cost": 58, "total_income": 58, "total_net": 58
     },
+    "mae":  { "total_clicks": 84.58, "total_leads": 7.01, "total_cost": 38.39, "total_income": 65.16, "total_net": 39.22 },
+    "rmse": { "total_clicks": 96.17, "total_leads": 8.31, "total_cost": 44.3, "total_income": 77.75, "total_net": 49.06 },
     "weights": { "linear": 0.305, "sma": 0.37, "wma": 0.325 }, ...
   }
 }
@@ -504,7 +506,7 @@ mask catch what you did not.
 | Key | Meaning |
 | --- | --- |
 | `method`, `weights` | Method used; ensemble member shares (sum to 1) |
-| `mae`, `rmse` | Rolling-backtest errors on the metric's scale (for derived metrics, of the composed forecast) |
+| `mae`, `rmse` | Rolling-backtest errors on the metric's scale (for derived metrics, of the composed forecast); per metric under `--all-metrics` |
 | `bounds`, `bounds_source` | Band in use (`p05-p95 (90%)` …); `conformal` (rolling residuals, for derived metrics of the composition itself), `gaussian` (short history), or `composed` (derived metric with too few paired rolling predictions: worst-corner pairing of the drivers' bands, not calibrated). Per metric under `--all-metrics` |
 | `data_points_used` | Points actually fitted (after masking and level-shift truncation); for a derived metric, the fewest any of its drivers was fitted on |
 | `buckets_rejected` | Response rows the parser could not use |
