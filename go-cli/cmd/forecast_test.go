@@ -1524,3 +1524,93 @@ func TestForecastAllMetricsReportsErrorsPerMetric(t *testing.T) {
 		}
 	}
 }
+
+func TestForecastRejectedBucketsCountRowsOnce(t *testing.T) {
+	// One row with two non-numeric inputs counts once; a row whose only bad
+	// field is total_net, which coherent forecasting does not consume,
+	// counts zero.
+	buckets := []map[string]interface{}{}
+	for i := 0; i < 30; i++ {
+		clicks := 100.0 + float64(i)
+		buckets = append(buckets, map[string]interface{}{
+			"bucket_start": 1704067200 + i*86400,
+			"total_clicks": clicks, "total_leads": clicks * 0.1, "total_cost": clicks * 2,
+			"total_income": clicks * 5, "total_net": clicks * 3,
+		})
+	}
+	buckets = append(buckets, map[string]interface{}{
+		"bucket_start": 1704067200 + 30*86400,
+		"total_clicks": "bad", "total_leads": "bad", "total_cost": 260.0, "total_income": 650.0, "total_net": 390.0,
+	})
+	buckets = append(buckets, map[string]interface{}{
+		"bucket_start": 1704067200 + 31*86400,
+		"total_clicks": 131.0, "total_leads": 13.1, "total_cost": 262.0, "total_income": 655.0, "total_net": "bad",
+	})
+	body, _ := json.Marshal(map[string]interface{}{"data": buckets})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["buckets_rejected"] != 1.0 {
+		t.Errorf("buckets_rejected = %v, want 1 (one bad row, counted once; a bad net-only row not at all)", meta["buckets_rejected"])
+	}
+}
+
+func TestForecastAllMetricsReportsZeroErrors(t *testing.T) {
+	// A constant, exactly coherent history is forecast perfectly: the
+	// rolling errors are a measured zero and must be reported as such, not
+	// dropped as if no backtest had run.
+	buckets := make([]map[string]interface{}, 40)
+	for i := range buckets {
+		buckets[i] = map[string]interface{}{
+			"bucket_start": 1704067200 + i*86400,
+			"total_clicks": 200.0, "total_leads": 20.0, "total_cost": 300.0,
+			"total_income": 900.0, "total_net": 600.0,
+		}
+	}
+	body, _ := json.Marshal(map[string]interface{}{"data": buckets})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	maes, ok := meta["mae"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected mae map even when every error is zero, got %v", meta["mae"])
+	}
+	for _, m := range forecastCoreMetrics {
+		v, present := maes[m].(float64)
+		if !present || v != 0 {
+			t.Errorf("mae[%s] = %v, want a reported 0", m, maes[m])
+		}
+	}
+}

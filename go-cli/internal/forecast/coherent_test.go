@@ -579,3 +579,60 @@ func TestUnionSorted(t *testing.T) {
 		t.Error("union of nothing should be nil (omitted from JSON)")
 	}
 }
+
+func TestComposedOffset_UsesStalestOperand(t *testing.T) {
+	day := func(d int) time.Time { return time.Date(2026, 3, d, 0, 0, 0, 0, time.UTC) }
+	if got := earlierTrainEnd(day(20), day(15)); !got.Equal(day(15)) {
+		t.Errorf("earlierTrainEnd = %v, want %v", got, day(15))
+	}
+	if got := earlierTrainEnd(time.Time{}, day(15)); !got.Equal(day(15)) {
+		t.Errorf("earlierTrainEnd with a zero operand = %v, want %v", got, day(15))
+	}
+	cfg := Config{Interval: IntervalDay, Anchor: day(20)}
+	if got := composedOffset(day(15), cfg); got != 5 {
+		t.Errorf("offset from a driver five days stale = %d, want 5", got)
+	}
+	if got := composedOffset(day(20), cfg); got != 0 {
+		t.Errorf("offset for a current driver = %d, want 0", got)
+	}
+	if got := composedOffset(day(15), Config{Interval: IntervalDay}); got != 0 {
+		t.Errorf("offset without an anchor = %d, want 0", got)
+	}
+}
+
+func TestRunCoherent_StaleDriverSetsCompositionTrainEnd(t *testing.T) {
+	// Leads drop to zero for the last six buckets, so avg_payout
+	// (income ÷ leads) is undefined there and its forecast runs six steps
+	// ahead of its data. Income, composed from it, must calibrate from that
+	// stale training end, not from where the observed income series ends.
+	rng := rand.New(rand.NewSource(31))
+	n := 60
+	series := makeCoherentSeries(n,
+		func(i int) float64 { return 300 + 30*rng.Float64() },
+		func(i int) float64 {
+			if i >= n-6 {
+				return 0
+			}
+			return 0.1 + 0.01*rng.Float64()
+		},
+		constFn(2.0), func(i int) float64 { return 50 + 5*rng.Float64() })
+
+	results, err := RunCoherent(series, Config{Horizon: 5, Interval: IntervalDay})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	income := results[MetricIncome]
+	if income.Composition != CompositionDerived {
+		t.Fatalf("income composition = %q, want derived", income.Composition)
+	}
+	wantEnd := series[MetricLeads][n-7].T // last bucket with leads > 0
+	if !income.trainEnd.Equal(wantEnd) {
+		t.Errorf("income trainEnd = %v, want the payout driver's %v", income.trainEnd, wantEnd)
+	}
+	if !results[MetricClicks].trainEnd.Equal(series[MetricClicks][n-1].T) {
+		t.Errorf("clicks trainEnd = %v, want the series end", results[MetricClicks].trainEnd)
+	}
+	if !income.Backtested() {
+		t.Error("composed income should report a backtest")
+	}
+}

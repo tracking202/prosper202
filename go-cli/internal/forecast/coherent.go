@@ -337,12 +337,15 @@ func finishComposed(a, b *Result, preds []Prediction, metric string, observed Se
 	}
 
 	rolling, byStep, mae, rmse := composeRolling(a, b, observed, cfg.Interval, combine, nonNegative)
+	// The composition is only as current as its stalest driver: a payout
+	// rate undefined for the last few buckets makes the first composed
+	// prediction several steps ahead of that driver's data, so the band
+	// offset is measured from the earlier operand's training end, not from
+	// where the observed derived series happens to end.
+	trainEnd := earlierTrainEnd(a.trainEnd, b.trainEnd)
 	source := BoundsComposed
 	if totalResiduals(byStep) >= minTotalResiduals {
-		offset := 0
-		if len(observed) > 0 {
-			offset = anchorOffset(observed, cfg)
-		}
+		offset := composedOffset(trainEnd, cfg)
 		sq := stepQuantiles(byStep, offset+len(preds))
 		applyConformalBounds(preds, sq, cfg, offset)
 		if nonNegative {
@@ -367,7 +370,39 @@ func finishComposed(a, b *Result, preds []Prediction, metric string, observed Se
 		AnomaliesMasked: unionSorted(a.AnomaliesMasked, b.AnomaliesMasked),
 		BoundsSource:    source,
 		rolling:         rolling,
+		trainEnd:        trainEnd,
+		evaluated:       totalResiduals(byStep) > 0,
 	}
+}
+
+// earlierTrainEnd returns the earlier of two training ends, ignoring a
+// zero value.
+func earlierTrainEnd(a, b time.Time) time.Time {
+	switch {
+	case a.IsZero():
+		return b
+	case b.IsZero():
+		return a
+	case b.Before(a):
+		return b
+	default:
+		return a
+	}
+}
+
+// composedOffset returns how many whole interval steps the shared anchor
+// lies beyond the stalest operand's training end (0 when not ahead): the
+// composed forecast's first prediction is that many steps further out than
+// the data it was built from, so its residual pool is read from that step.
+func composedOffset(trainEnd time.Time, cfg Config) int {
+	if trainEnd.IsZero() || cfg.Anchor.IsZero() || !cfg.Anchor.After(trainEnd) {
+		return 0
+	}
+	steps := int(math.Round(intervalSteps(trainEnd, cfg.Anchor, cfg.Interval)))
+	if steps < 0 {
+		return 0
+	}
+	return steps
 }
 
 // composeRolling pairs the operands' rolling-backtest predictions on shared

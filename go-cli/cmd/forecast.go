@@ -50,6 +50,13 @@ var forecastCoreMetrics = []string{
 	forecast.MetricCost, forecast.MetricNet,
 }
 
+// forecastCoherentInputs are the observed series RunCoherent consumes; net
+// is composed from them, so its own column is only parsed when net is the
+// metric requested (its direct fallback needs it).
+var forecastCoherentInputs = []string{
+	forecast.MetricClicks, forecast.MetricLeads, forecast.MetricIncome, forecast.MetricCost,
+}
+
 // forecastDerivedMetrics are composed from driver forecasts (clicks and
 // rates) when requested individually, keeping them consistent with what a
 // clicks forecast implies.
@@ -285,9 +292,17 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	// metric's own series for the direct path, and the companions for the
 	// coherent path. Buckets or values the parser rejects are counted and
 	// surfaced in the output meta rather than silently dropped.
-	wanted := forecastCoreMetrics
-	if !allMetrics && !forecastDerivedMetrics[metric] && metric != forecast.MetricClicks {
-		wanted = append([]string{metric}, forecastCoreMetrics...)
+	wanted := append([]string(nil), forecastCoherentInputs...)
+	if !allMetrics {
+		inInputs := false
+		for _, m := range wanted {
+			if m == metric {
+				inInputs = true
+			}
+		}
+		if !inInputs {
+			wanted = append(wanted, metric)
+		}
 	}
 	parsed, rejected, err := parseTimeseriesMulti(data, wanted)
 	if err != nil {
@@ -590,9 +605,10 @@ func extractMetricValue(obj map[string]interface{}, metric string) (float64, boo
 
 // parseTimeseriesMulti extracts one forecast.Series per requested metric
 // from a single timeseries response. A bucket whose time cannot be parsed,
-// or a metric value that is present but not numeric, is skipped for that
-// metric and counted in rejected so the caller can surface the loss; a
-// bucket simply lacking a metric is not a rejection.
+// or that carries a present-but-non-numeric value for any requested
+// metric, counts once in rejected (however many fields are bad) so the
+// caller can surface the loss; the bucket's valid metrics are still kept,
+// and a bucket simply lacking a metric is not a rejection.
 func parseTimeseriesMulti(data []byte, metrics []string) (map[string]forecast.Series, int, error) {
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(data, &parsed); err != nil {
@@ -620,16 +636,20 @@ func parseTimeseriesMulti(data []byte, metrics []string) (map[string]forecast.Se
 			rejected++
 			continue
 		}
+		rowRejected := false
 		for _, m := range metrics {
 			if _, present := obj[m]; !present {
 				continue
 			}
 			val, vOk := extractMetricValue(obj, m)
 			if !vOk {
-				rejected++
+				rowRejected = true
 				continue
 			}
 			out[m] = append(out[m], forecast.Point{T: t, V: val})
+		}
+		if rowRejected {
+			rejected++
 		}
 	}
 
@@ -717,7 +737,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, co
 		dataPoints[m] = res.DataPoints
 		// Rolling errors, per metric: compositions are backtested too, so
 		// every metric has its own typical error to judge a forecast by.
-		if res.MAE > 0 {
+		// A measured zero is reported as zero; only "never measured" is
+		// omitted.
+		if res.Backtested() {
 			maes[m] = roundTo(res.MAE, 2)
 			rmses[m] = roundTo(res.RMSE, 2)
 		}
@@ -873,7 +895,7 @@ func buildForecastOutput(result *forecast.Result, metric string, opts forecastOu
 	if opts.rejected > 0 {
 		meta["buckets_rejected"] = opts.rejected
 	}
-	if result.MAE > 0 {
+	if result.Backtested() {
 		meta["mae"] = roundTo(result.MAE, 2)
 		meta["rmse"] = roundTo(result.RMSE, 2)
 	}

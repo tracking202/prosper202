@@ -124,10 +124,26 @@ type Result struct {
 
 	// rolling holds the deployed forecaster's rolling-backtest predictions
 	// on the reporting scale (transform inverted, zero-clipped like the
-	// output, no seasonal profile), keyed by the training window they were
-	// made from and the point they targeted. RunCoherent composes operands'
-	// entries to backtest derived metrics (see finishComposed).
+	// output, with the fold's own seasonal profile), keyed by the training
+	// window they were made from and the point they targeted. RunCoherent
+	// composes operands' entries to backtest derived metrics (see
+	// finishComposed).
 	rolling map[rollingKey]float64
+	// trainEnd is the timestamp of the last point the forecaster was
+	// fitted on (after masking and truncation); for a composed result, the
+	// earlier of its operands'. Predictions anchored later than this are
+	// that many steps further out, which the band offset accounts for.
+	trainEnd time.Time
+	// evaluated reports whether any held-out points scored the forecaster
+	// (rolling backtest or single holdout), so a zero MAE/RMSE can be told
+	// apart from "never measured".
+	evaluated bool
+}
+
+// Backtested reports whether MAE and RMSE were measured on held-out
+// points; when false they are unset, not zero error.
+func (r *Result) Backtested() bool {
+	return r.evaluated
 }
 
 // Bounds sources reported in Result.BoundsSource.
@@ -432,6 +448,8 @@ func Run(series Series, cfg Config) (*Result, error) {
 		SeasonalProfiles: profiles,
 		BoundsSource:     core.boundsSource,
 		rolling:          rolling,
+		trainEnd:         work[len(work)-1].T,
+		evaluated:        core.evaluated,
 	}, nil
 }
 
@@ -502,6 +520,8 @@ type forecastCore struct {
 	// forecaster's view of it (single method or weighted ensemble).
 	eval    *rollingEval
 	predict rowPredictor
+	// evaluated is true when mae/rmse were measured on held-out points.
+	evaluated bool
 }
 
 // computeSingle produces a single-method forecast with conformal bounds.
@@ -521,7 +541,7 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 	offset := anchorOffset(series, cfg)
 	predict := eval.methodPredictor(method)
 	byStep := eval.residualsByStep(predict)
-	mae, rmse, _ := eval.errorStats(predict)
+	mae, rmse, n := eval.errorStats(predict)
 	source := BoundsConformal
 	if totalResiduals(byStep) >= minTotalResiduals {
 		sq := stepQuantiles(byStep, offset+cfg.Horizon)
@@ -531,7 +551,7 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 		// bounds from a single-holdout residual estimate, and single-split
 		// accuracy metrics — one fit serves both.
 		var stddev float64
-		stddev, mae, rmse = holdoutEval(series, cfg, method)
+		stddev, mae, rmse, n = holdoutEval(series, cfg, method)
 		addBounds(predictions, stddev, cfg.ConfidenceLevel, offset)
 		source = BoundsGaussian
 	}
@@ -545,6 +565,7 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 		boundsSource: source,
 		eval:         eval,
 		predict:      predict,
+		evaluated:    n > 0,
 	}, nil
 }
 
@@ -611,7 +632,7 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 	offset := anchorOffset(series, cfg)
 	predict := nestedEnsemblePredictor(eval, candidates)
 	byStep := eval.residualsByStep(predict)
-	mae, rmse, _ := eval.errorStats(predict)
+	mae, rmse, n := eval.errorStats(predict)
 	source := BoundsConformal
 	if totalResiduals(byStep) >= minTotalResiduals {
 		sq := stepQuantiles(byStep, offset+cfg.Horizon)
@@ -637,6 +658,7 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 		boundsSource: source,
 		eval:         eval,
 		predict:      predict,
+		evaluated:    n > 0,
 	}, nil
 }
 
@@ -761,13 +783,13 @@ func seriesStdDev(s Series) float64 {
 // RMSE on the reporting scale. It is the fallback for series too short for
 // a rolling backtest; when even the single split is impossible it returns
 // the series' own standard deviation and zero errors.
-func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64) {
+func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64, n int) {
 	holdout := len(s) / 5
 	if holdout < 2 {
 		holdout = 2
 	}
 	if holdout > len(s)-3 {
-		return seriesStdDev(s), 0, 0
+		return seriesStdDev(s), 0, 0, 0
 	}
 
 	c := len(s) - holdout
@@ -784,12 +806,11 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 
 	preds, _, err := methodForecast(method, train, testCfg)
 	if err != nil || len(preds) == 0 {
-		return seriesStdDev(s), 0, 0
+		return seriesStdDev(s), 0, 0, 0
 	}
 	profile, _ := profileFor(s, cfg, c)
 	applyProfile(preds, profile, cfg.LogTransform)
 
-	n := 0
 	sumSqModel, sumAbs, sumSq := 0.0, 0.0, 0.0
 	for _, p := range test {
 		h, ok := stepIndex(trainEnd, p.T, cfg.Interval, len(preds))
@@ -809,10 +830,10 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 		n++
 	}
 	if n == 0 {
-		return seriesStdDev(s), 0, 0
+		return seriesStdDev(s), 0, 0, 0
 	}
 	fn := float64(n)
-	return math.Sqrt(sumSqModel / fn), sumAbs / fn, math.Sqrt(sumSq / fn)
+	return math.Sqrt(sumSqModel / fn), sumAbs / fn, math.Sqrt(sumSq / fn), n
 }
 
 // calendarSteps returns the number of whole interval steps from from to to,
@@ -917,7 +938,7 @@ func selectBestMethod(s Series, cfg Config) Method {
 	bestRMSE := math.MaxFloat64
 
 	for _, m := range autoCandidates(s) {
-		_, _, rmse := holdoutEval(s, cfg, m)
+		_, _, rmse, _ := holdoutEval(s, cfg, m)
 		// RMSE=0 means backtest couldn't run (too few points for holdout),
 		// not a perfect fit. Skip these candidates.
 		if rmse > 0 && rmse < bestRMSE {
