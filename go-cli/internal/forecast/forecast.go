@@ -64,11 +64,11 @@ type Series []Point
 //
 // Bounds come from rolling-origin conformal prediction: empirical quantiles
 // of held-out residuals bucketed by horizon step. LowerBound/UpperBound carry
-// the quantile pair nearest the configured confidence level (P10/P90 for the
-// default levels — an 80% interval) and are asymmetric by nature. Quantiles
-// holds the full set ("p10", "p25", "p50", "p75", "p90"); it is empty when
-// the series is too short for a rolling backtest, in which case bounds fall
-// back to symmetric Gaussian estimates.
+// the quantile pair nearest the configured confidence level (P05/P95 for the
+// 0.95 default — a 90% interval, see boundPair) and are asymmetric by
+// nature. Quantiles holds the full set ("p05" … "p95"); it is empty when the
+// series is too short for a rolling backtest, in which case bounds fall back
+// to symmetric Gaussian estimates.
 type Prediction struct {
 	T          time.Time          `json:"time"`
 	Value      float64            `json:"value"`
@@ -114,18 +114,36 @@ type Result struct {
 	SeasonalApplied  bool     `json:"seasonal_applied,omitempty"`
 	SeasonalProfiles []string `json:"seasonal_profiles,omitempty"`
 	// BoundsSource reports how bounds were produced: "conformal" (rolling
-	// residual quantiles), "gaussian" (short-series symmetric fallback), or
-	// for RunCoherent derived metrics "mixed" when the composed operands
-	// disagree (the band then has no single nominal level).
+	// residual quantiles — for RunCoherent derived metrics, residuals of the
+	// composed forecast itself), "gaussian" (short-series symmetric
+	// fallback), or "composed" (a derived metric whose operands had too few
+	// paired rolling predictions to recalibrate: its band pairs the
+	// operands' band endpoints at worst-case dependence, which is valid but
+	// carries no single nominal coverage).
 	BoundsSource string `json:"bounds_source,omitempty"`
+
+	// rolling holds the deployed forecaster's rolling-backtest predictions
+	// on the reporting scale (transform inverted, zero-clipped like the
+	// output, no seasonal profile), keyed by the training window they were
+	// made from and the point they targeted. RunCoherent composes operands'
+	// entries to backtest derived metrics (see finishComposed).
+	rolling map[rollingKey]float64
 }
 
 // Bounds sources reported in Result.BoundsSource.
 const (
 	BoundsConformal = "conformal"
 	BoundsGaussian  = "gaussian"
-	BoundsMixed     = "mixed"
+	BoundsComposed  = "composed"
 )
+
+// rollingKey identifies one rolling-backtest prediction by the last training
+// timestamp and the target timestamp. Timestamps are compared as map keys,
+// so operands must share the calendar the report buckets were parsed in
+// (they do: RunCoherent derives every series from the same buckets).
+type rollingKey struct {
+	trainEnd, target time.Time
+}
 
 // SeasonalWeights maps day-of-week (time.Weekday) to a multiplier.
 // A weight of 1.0 means average; 1.2 means 20% above average for that day.
@@ -242,6 +260,23 @@ func ValidIntervals() []string {
 	}
 }
 
+// withDefaults fills the Config fields Run and RunCoherent share defaults
+// for, so composed forecasts use the same horizon, interval, and band pair
+// as the parts they are built from.
+func withDefaults(cfg Config) Config {
+	if cfg.Horizon <= 0 {
+		cfg.Horizon = 7
+	}
+	if cfg.Interval == "" {
+		cfg.Interval = IntervalDay
+	}
+	if cfg.ConfidenceLevel <= 0 || cfg.ConfidenceLevel >= 1 {
+		cfg.ConfidenceLevel = 0.95
+	}
+	cfg.relevel = nil
+	return cfg
+}
+
 // Run executes a forecast on the given series with the provided configuration.
 func Run(series Series, cfg Config) (*Result, error) {
 	if len(series) < 3 {
@@ -253,16 +288,7 @@ func Run(series Series, cfg Config) (*Result, error) {
 		return series[i].T.Before(series[j].T)
 	})
 
-	if cfg.Horizon <= 0 {
-		cfg.Horizon = 7
-	}
-	if cfg.Interval == "" {
-		cfg.Interval = IntervalDay
-	}
-	if cfg.ConfidenceLevel <= 0 || cfg.ConfidenceLevel >= 1 {
-		cfg.ConfidenceLevel = 0.95
-	}
-	cfg.relevel = nil
+	cfg = withDefaults(cfg)
 
 	method := cfg.Method
 	if method == "" || method == MethodAuto {
@@ -347,6 +373,26 @@ func Run(series Series, cfg Config) (*Result, error) {
 		core.trend = math.Expm1(core.trend) * core.preds[0].Value
 	}
 
+	// Keep the deployed forecaster's rolling predictions on the reporting
+	// scale so compositions of this result can be backtested too.
+	var rolling map[rollingKey]float64
+	if core.eval != nil && core.predict != nil {
+		rolling = make(map[rollingKey]float64, len(core.eval.rows))
+		for _, r := range core.eval.rows {
+			pred, ok := core.predict(r)
+			if !ok {
+				continue
+			}
+			if logApplied {
+				pred = math.Expm1(pred)
+			}
+			if cfg.NonNegative && pred < 0 {
+				pred = 0
+			}
+			rolling[rollingKey{trainEnd: r.trainEnd, target: r.t}] = pred
+		}
+	}
+
 	// Apply seasonal profiles. Weekday and hourly weights are gated on
 	// detrended autocorrelation at their lag so spurious profiles (built
 	// from noise) don't degrade the forecast; when the history is too short
@@ -395,6 +441,7 @@ func Run(series Series, cfg Config) (*Result, error) {
 		SeasonalApplied:  len(profiles) > 0,
 		SeasonalProfiles: profiles,
 		BoundsSource:     core.boundsSource,
+		rolling:          rolling,
 	}, nil
 }
 
@@ -461,6 +508,10 @@ type forecastCore struct {
 	mae, rmse    float64
 	weights      map[string]float64 // ensemble only
 	boundsSource string
+	// eval and predict expose the rolling backtest and the deployed
+	// forecaster's view of it (single method or weighted ensemble).
+	eval    *rollingEval
+	predict rowPredictor
 }
 
 // computeSingle produces a single-method forecast with conformal bounds.
@@ -476,8 +527,9 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 		eval = runRollingBacktest(series, cfg, []Method{method})
 	}
 	offset := anchorOffset(series, cfg)
-	byStep := eval.residualsByStep(eval.methodPredictor(method))
-	mae, rmse, _ := eval.errorStats(eval.methodPredictor(method))
+	predict := eval.methodPredictor(method)
+	byStep := eval.residualsByStep(predict)
+	mae, rmse, _ := eval.errorStats(predict)
 	source := BoundsConformal
 	if totalResiduals(byStep) >= minTotalResiduals {
 		sq := stepQuantiles(byStep, offset+cfg.Horizon)
@@ -499,6 +551,8 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 		mae:          mae,
 		rmse:         rmse,
 		boundsSource: source,
+		eval:         eval,
+		predict:      predict,
 	}, nil
 }
 
@@ -583,6 +637,8 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 		rmse:         rmse,
 		weights:      named,
 		boundsSource: source,
+		eval:         eval,
+		predict:      predict,
 	}, nil
 }
 

@@ -1396,3 +1396,55 @@ func TestForecastAPIErrorKeepsAuthExitCodeAndHint(t *testing.T) {
 		t.Errorf("expected key hint, got %q", hintFor(err))
 	}
 }
+
+func TestForecastAllMetricsReportsBoundsSourcePerMetric(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeCoherentTimeseriesResponse(40)))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	sources, ok := meta["bounds_source"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected per-metric bounds_source map in meta, got %v", meta["bounds_source"])
+	}
+	for _, m := range forecastCoreMetrics {
+		// Derived metrics are backtested as compositions, so with 40 points
+		// every metric's band is conformal — none is a "composed" fallback.
+		if sources[m] != forecast.BoundsConformal {
+			t.Errorf("bounds_source[%s] = %v, want conformal", m, sources[m])
+		}
+	}
+
+	// A single derived metric reports the same calibrated band label.
+	stdout, _, err = executeCommand("forecast", "--metric=leads", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta = output["meta"].(map[string]interface{})
+	if meta["composition"] != "derived" {
+		t.Fatalf("composition = %v, want derived", meta["composition"])
+	}
+	if meta["bounds_source"] != forecast.BoundsConformal {
+		t.Errorf("bounds_source = %v, want conformal", meta["bounds_source"])
+	}
+	if meta["bounds"] != "p05-p95 (90%)" {
+		t.Errorf("bounds label = %v, want p05-p95 (90%%)", meta["bounds"])
+	}
+}

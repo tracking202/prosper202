@@ -46,7 +46,8 @@ metric, `Run` does the following, in this order:
 | 9. Clip | Metrics that cannot go negative are floored at zero. | |
 
 `--all-metrics` and derived metrics run this pipeline once per *driver*
-series and then compose the totals (section 5).
+series, compose the totals, and backtest each composition for its own
+bands and errors (section 5).
 
 ---
 
@@ -201,10 +202,10 @@ p202 forecast --all-metrics --horizon 3 --json
     {
       "date": "2026-07-31",
       "total_clicks": 497.94, "total_clicks_lower": 329.14, "total_clicks_upper": 635.98,
-      "total_leads":   39.72, "total_leads_lower":   22.43, "total_leads_upper":   58.95,
-      "total_cost":   212.28, "total_cost_lower":   114.77, "total_cost_upper":   309.5,
-      "total_income": 382.93, "total_income_lower": 197.42, "total_income_upper": 626.7,
-      "total_net":    170.65, "total_net_lower":   -112.08, "total_net_upper":    511.93
+      "total_leads":   39.72, "total_leads_lower":   26.11, "total_leads_upper":   52.91,
+      "total_cost":   212.28, "total_cost_lower":   140.25, "total_cost_upper":   273.93,
+      "total_income": 382.93, "total_income_lower": 228.15, "total_income_upper": 512.24,
+      "total_net":    170.65, "total_net_lower":    85.44, "total_net_upper":    263.3
     }
   ],
   "meta": {
@@ -212,18 +213,51 @@ p202 forecast --all-metrics --horizon 3 --json
       "total_clicks": "direct", "total_leads": "derived", "total_cost": "derived",
       "total_income": "derived", "total_net": "derived"
     },
-    "anomalies_masked": { "total_clicks": ["2026-07-25", "2026-07-26"] },
+    "bounds_source": {
+      "total_clicks": "conformal", "total_leads": "conformal", "total_cost": "conformal",
+      "total_income": "conformal", "total_net": "conformal"
+    },
+    "anomalies_masked": {
+      "total_clicks": ["2026-07-25", "2026-07-26"], "total_leads": ["2026-07-25", "2026-07-26"],
+      "total_cost": ["2026-07-25", "2026-07-26"], "total_income": ["2026-07-25", "2026-07-26"],
+      "total_net": ["2026-07-25", "2026-07-26"]
+    },
     "weights": { "linear": 0.305, "sma": 0.37, "wma": 0.325 }, ...
   }
 }
 ```
 
 Check the identities yourself: 382.93 − 212.28 = 170.65 = `total_net`, and
-39.72 ÷ 497.94 = 0.0798, the forecast conversion rate. Composed band
-endpoints combine conservatively (lower × lower, upper × upper for products;
-`income_lower − cost_upper` for net), which is why `total_net_lower` is
-negative here even though the point forecast is comfortably positive:
-it is the pessimistic corner of both operand bands at once.
+39.72 ÷ 497.94 = 0.0798, the forecast conversion rate.
+
+### Bands on derived metrics are backtested too
+
+Multiplying or subtracting the drivers' band endpoints would not give a band
+of known coverage (two 90% bands jointly cover as little as 80%, and pairing
+their worst corners over-covers instead). So the engine backtests the
+composition itself: at every rolling cut where both drivers made a
+prediction for the same date, it composes those predictions the same way
+(`clicks × conv_rate`, `income − cost`), takes the error against the
+observed derived value, and turns those residuals into the derived metric's
+own empirical quantiles, band, `mae`, and `rmse`. `total_net_lower` above is
+therefore a calibrated 90% floor for net in its own right (the worst-corner
+pairing of the income and cost bands would have put it below −100), and
+`bounds_source` reports `conformal` per metric.
+
+Measured on the rolling suite, composed p05–p95 bands now cover 87–96% of
+held-out values against the 90% nominal, matching direct forecasts of the
+same metrics; the worst-corner pairing covered 94–100%, too wide to be a
+useful alerting threshold.
+
+When a history is too short to pair at least 8 rolling predictions, the
+worst-corner pairing is kept and labelled `"bounds_source": "composed"`
+with `"bounds": "p05-p95 (composed from operand bands, not calibrated)"`;
+treat such a band as valid but wide.
+
+The masked anomalies of every driver are inherited by the metrics built
+from them, which is why the clicks outage above is listed under all five
+metrics: an agent reading only `total_net` still learns which observations
+were excluded.
 
 ### A single derived metric
 
@@ -231,11 +265,16 @@ it is the pessimistic corner of both operand bands at once.
 composition automatically and returns just that metric:
 
 ```json
-"meta": { "metric": "total_leads", "composition": "derived", ... }
+"meta": {
+  "metric": "total_leads", "composition": "derived",
+  "bounds": "p05-p95 (90%)", "bounds_source": "conformal", "mae": 6.97, "rmse": 8.22,
+  "anomalies_masked": ["2026-07-25", "2026-07-26"], ...
+}
 ```
 
-Derived rows carry no `mae`/`rmse`: rolling errors are measured only for
-directly fitted series.
+`mae`/`rmse` are the composed forecast's own rolling errors (leads here,
+not clicks or the conversion rate), and `anomalies_masked` carries the
+drivers' masked dates, as described above.
 
 ### When composition is not possible
 
@@ -440,8 +479,8 @@ mask catch what you did not.
 | Key | Meaning |
 | --- | --- |
 | `method`, `weights` | Method used; ensemble member shares (sum to 1) |
-| `mae`, `rmse` | Rolling-backtest errors on the metric's scale (absent for derived metrics) |
-| `bounds`, `bounds_source` | Band in use (`p05-p95 (90%)` …); `conformal`, `gaussian`, or `mixed` (composed metrics whose operands differ) |
+| `mae`, `rmse` | Rolling-backtest errors on the metric's scale (for derived metrics, of the composed forecast) |
+| `bounds`, `bounds_source` | Band in use (`p05-p95 (90%)` …); `conformal` (rolling residuals, for derived metrics of the composition itself), `gaussian` (short history), or `composed` (derived metric with too few paired rolling predictions: worst-corner pairing of the drivers' bands, not calibrated). Per metric under `--all-metrics` |
 | `data_points_used` | Points actually fitted (after masking and level-shift truncation) |
 | `buckets_rejected` | Response rows the parser could not use |
 | `anomalies_masked` | Dates removed as transients (per metric under `--all-metrics`) |

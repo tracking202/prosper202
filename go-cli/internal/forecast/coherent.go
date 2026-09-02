@@ -2,6 +2,7 @@ package forecast
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"time"
 )
@@ -53,18 +54,19 @@ const coherentSparseThreshold = 0.7
 // The returned map holds results for the four totals plus MetricNet. Each
 // result's Composition field reports "derived" (composed from drivers) or
 // "direct" (fallback when a driver rate is too sparse — e.g. conv_rate
-// undefined on many days). Derived results compose quantiles pairwise
-// (P50 from P50s; band endpoints combine conservatively, assuming
-// worst-case dependence between factors, so composed bands are valid but
-// can over-cover); their MAE/RMSE are zero since rolling errors are only
-// measured for directly fitted series. cfg.Metric, cfg.SeasonalWeights, and
-// cfg.NonNegative are ignored: metric-appropriate values are set per driver.
+// undefined on many days). Derived results are backtested as compositions:
+// their bands, quantiles, and MAE/RMSE come from the composed forecast's
+// own rolling residuals against the observed derived series (see
+// finishComposed), so a derived p05-p95 band is calibrated the same way a
+// direct one is. cfg.Metric, cfg.SeasonalWeights, and cfg.NonNegative are
+// ignored: metric-appropriate values are set per driver.
 func RunCoherent(series map[string]Series, cfg Config) (map[string]*Result, error) {
 	for _, key := range []string{MetricClicks, MetricLeads, MetricIncome, MetricCost} {
 		if len(series[key]) < 3 {
 			return nil, fmt.Errorf("coherent forecast needs at least 3 data points for %s, got %d", key, len(series[key]))
 		}
 	}
+	cfg = withDefaults(cfg)
 
 	// Work on sorted copies: the anchor below reads the last bucket, and
 	// callers (unlike Run's own sort) are not required to pre-sort.
@@ -78,13 +80,18 @@ func RunCoherent(series map[string]Series, cfg Config) (map[string]*Result, erro
 	series = sorted
 
 	clicks := series[MetricClicks]
-	// Anchor every forecast at the clicks series' last bucket so all metrics
-	// share prediction timestamps even when a driver's last defined bucket
-	// is older (anchorOffset bridges the gap).
-	anchor := clicks[len(clicks)-1].T
-	if !cfg.Anchor.IsZero() && cfg.Anchor.After(anchor) {
-		anchor = cfg.Anchor
+	// Anchor every forecast at the latest bucket any input carries (or a
+	// later configured anchor) so all metrics share prediction timestamps
+	// and no forecast starts on a date another metric already observed —
+	// a rejected or missing clicks bucket must not hide the newest leads,
+	// cost, or income data. anchorOffset bridges each part's own gap.
+	anchor := cfg.Anchor
+	for _, key := range []string{MetricClicks, MetricLeads, MetricIncome, MetricCost} {
+		if last := series[key][len(series[key])-1].T; last.After(anchor) {
+			anchor = last
+		}
 	}
+	cfg.Anchor = anchor
 
 	convRate, rateOK := deriveRate(series[MetricLeads], clicks)
 	avgCPC, cpcOK := deriveRate(series[MetricCost], clicks)
@@ -214,12 +221,13 @@ func composeOrDirect(observed Series, cfg Config, metric string, anchor time.Tim
 	return res, nil
 }
 
-// composeProduct multiplies two forecasts per timestep: value×value,
-// P50×P50, and conservatively paired band endpoints (lower×lower,
-// upper×upper — exact under worst-case positive dependence since both
-// factors are non-negative). Quantiles compose only when both operands
-// carry complete sets. Trend statistics are recomputed from the composed
-// path against the observed derived series.
+// composeProduct multiplies two forecasts per timestep: value×value, and,
+// as the starting point finishComposed recalibrates from, P50×P50 with
+// conservatively paired band endpoints (lower×lower, upper×upper — valid
+// under worst-case positive dependence since both factors are
+// non-negative). Quantiles compose only when both operands carry complete
+// sets. Trend statistics are recomputed from the composed path against the
+// observed derived series.
 func composeProduct(a, b *Result, metric string, observed Series, cfg Config) *Result {
 	n := len(a.Predictions)
 	if len(b.Predictions) < n {
@@ -236,12 +244,14 @@ func composeProduct(a, b *Result, metric string, observed Series, cfg Config) *R
 			Quantiles:  composeQuantiles(pa.Quantiles, pb.Quantiles, false),
 		}
 	}
-	return finishComposed(a, b, preds, metric, observed, cfg)
+	return finishComposed(a, b, preds, metric, observed, cfg,
+		func(x, y float64) float64 { return x * y }, true)
 }
 
-// composeDifference subtracts forecast b from forecast a per timestep with
-// conservative band pairing: lower = a.lower − b.upper, upper = a.upper −
-// b.lower. The result can be negative (net profit), so nothing is clipped.
+// composeDifference subtracts forecast b from forecast a per timestep, with
+// conservative band pairing as the starting point: lower = a.lower −
+// b.upper, upper = a.upper − b.lower. The result can be negative (net
+// profit), so nothing is clipped.
 func composeDifference(a, b *Result, metric string, observedA, observedB Series, cfg Config) *Result {
 	n := len(a.Predictions)
 	if len(b.Predictions) < n {
@@ -259,7 +269,8 @@ func composeDifference(a, b *Result, metric string, observedA, observedB Series,
 		}
 	}
 	observed := diffSeries(observedA, observedB)
-	return finishComposed(a, b, preds, metric, observed, cfg)
+	return finishComposed(a, b, preds, metric, observed, cfg,
+		func(x, y float64) float64 { return x - y }, false)
 }
 
 // composeQuantiles pairs two complete quantile sets: for products, level
@@ -292,14 +303,24 @@ func composeQuantiles(qa, qb map[string]float64, difference bool) map[string]flo
 	return out
 }
 
-// finishComposed assembles a derived Result from its two operands: trend
-// statistics come from the composed path (mean step-to-step change)
-// relative to the observed series' mean; rolling error metrics are left
-// zero — they are only measured for directly fitted series. A level shift
-// detected in either operand is reported (the composition inherits it),
-// and BoundsSource is "mixed" when the operands' bounds disagree, since the
-// composed band then has no single nominal level.
-func finishComposed(a, b *Result, preds []Prediction, metric string, observed Series, cfg Config) *Result {
+// finishComposed assembles a derived Result from its two operands and
+// backtests the composition itself. Multiplying or subtracting the
+// operands' band endpoints does not yield a band of known coverage (two
+// marginal 90% intervals jointly cover as little as 80%, and their product
+// under worst-case pairing far more), so the composed point forecast is
+// re-evaluated on the operands' paired rolling predictions: wherever both
+// operands predicted the same target from the same training end, the
+// composed prediction is compared with the observed derived value, and the
+// resulting residuals by horizon step give the composed forecast its own
+// conformal quantiles, band, and MAE/RMSE — the same calibration a direct
+// forecast gets. When too few paired predictions exist, the conservative
+// pairing from the caller stands and BoundsSource says "composed".
+//
+// Trend statistics come from the composed path relative to the observed
+// series' mean; a level shift detected in either operand is reported (the
+// composition inherits it), and masked anomalies are the union of both
+// operands' so the excluded observations stay visible.
+func finishComposed(a, b *Result, preds []Prediction, metric string, observed Series, cfg Config, combine func(x, y float64) float64, nonNegative bool) *Result {
 	trend := predictionTrend(preds, observed)
 	trendPct := 0.0
 	if mean := seriesMean(observed); mean != 0 {
@@ -309,23 +330,108 @@ func finishComposed(a, b *Result, preds []Prediction, metric string, observed Se
 	if shiftAt == "" {
 		shiftAt = b.LevelShiftAt
 	}
-	source := a.BoundsSource
-	if a.BoundsSource != b.BoundsSource {
-		source = BoundsMixed
+
+	rolling, byStep, mae, rmse := composeRolling(a, b, observed, cfg.Interval, combine, nonNegative)
+	source := BoundsComposed
+	if totalResiduals(byStep) >= minTotalResiduals {
+		offset := 0
+		if len(observed) > 0 {
+			offset = anchorOffset(observed, cfg)
+		}
+		sq := stepQuantiles(byStep, offset+len(preds))
+		applyConformalBounds(preds, sq, cfg, offset)
+		if nonNegative {
+			ClipNonNegative(preds)
+		}
+		source = BoundsConformal
 	}
+
 	return &Result{
-		Method:       a.Method,
-		Metric:       metric,
-		Horizon:      a.Horizon,
-		Interval:     a.Interval,
-		Predictions:  preds,
-		Trend:        trend,
-		TrendPct:     trendPct,
-		DataPoints:   len(observed),
-		Composition:  CompositionDerived,
-		LevelShiftAt: shiftAt,
-		BoundsSource: source,
+		Method:          a.Method,
+		Metric:          metric,
+		Horizon:         a.Horizon,
+		Interval:        a.Interval,
+		Predictions:     preds,
+		Trend:           trend,
+		TrendPct:        trendPct,
+		MAE:             mae,
+		RMSE:            rmse,
+		DataPoints:      len(observed),
+		Composition:     CompositionDerived,
+		LevelShiftAt:    shiftAt,
+		AnomaliesMasked: unionSorted(a.AnomaliesMasked, b.AnomaliesMasked),
+		BoundsSource:    source,
+		rolling:         rolling,
 	}
+}
+
+// composeRolling pairs the operands' rolling-backtest predictions on shared
+// (training end, target) keys, composes them, and scores the compositions
+// against the observed derived series: it returns the composed rolling
+// predictions (so further compositions can be backtested too), residuals
+// bucketed by horizon step, and MAE/RMSE over the scored pairs (zero when
+// none exist). Pairs whose target has no observation are kept as rolling
+// predictions but not scored.
+func composeRolling(a, b *Result, observed Series, interval Interval, combine func(x, y float64) float64, nonNegative bool) (rolling map[rollingKey]float64, byStep map[int][]float64, mae, rmse float64) {
+	actualAt := make(map[time.Time]float64, len(observed))
+	for _, p := range observed {
+		actualAt[p.T] = p.V
+	}
+	rolling = make(map[rollingKey]float64, len(a.rolling))
+	byStep = map[int][]float64{}
+	sumAbs, sumSq := 0.0, 0.0
+	n := 0
+	for key, pa := range a.rolling {
+		pb, ok := b.rolling[key]
+		if !ok {
+			continue
+		}
+		pred := combine(pa, pb)
+		if nonNegative && pred < 0 {
+			pred = 0
+		}
+		rolling[key] = pred
+		actual, ok := actualAt[key.target]
+		if !ok {
+			continue
+		}
+		exact := intervalSteps(key.trainEnd, key.target, interval)
+		h := int(math.Round(exact))
+		if math.Abs(exact-float64(h)) > 0.01 || h < 1 {
+			continue
+		}
+		diff := actual - pred
+		byStep[h] = append(byStep[h], diff)
+		sumAbs += math.Abs(diff)
+		sumSq += diff * diff
+		n++
+	}
+	if n > 0 {
+		mae = sumAbs / float64(n)
+		rmse = math.Sqrt(sumSq / float64(n))
+	}
+	return rolling, byStep, mae, rmse
+}
+
+// unionSorted merges two timestamp lists without duplicates, in order (the
+// formatted timestamps sort chronologically).
+func unionSorted(a, b []string) []string {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, s := range list {
+			if _, dup := seen[s]; dup {
+				continue
+			}
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // diffSeries subtracts series b from series a on matching timestamps.

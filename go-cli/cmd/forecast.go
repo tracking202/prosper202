@@ -687,6 +687,7 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 	}
 
 	compositions := map[string]interface{}{}
+	boundsSources := map[string]interface{}{}
 	levelShifts := map[string]interface{}{}
 	anomalies := map[string]interface{}{}
 	for _, m := range forecastCoreMetrics {
@@ -696,6 +697,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 		}
 		if res.Composition != "" {
 			compositions[m] = res.Composition
+		}
+		if res.BoundsSource != "" {
+			boundsSources[m] = res.BoundsSource
 		}
 		if res.LevelShiftAt != "" {
 			levelShifts[m] = res.LevelShiftAt
@@ -711,6 +715,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int) ([
 		"interval":         string(clicks.Interval),
 		"data_points_used": clicks.DataPoints,
 		"composition":      compositions,
+	}
+	if len(boundsSources) > 0 {
+		meta["bounds_source"] = boundsSources
 	}
 	if len(levelShifts) > 0 {
 		meta["level_shifts"] = levelShifts
@@ -849,10 +856,15 @@ func buildForecastOutput(result *forecast.Result, metric string, opts forecastOu
 	if result.BoundsSource != "" {
 		meta["bounds_source"] = result.BoundsSource
 	}
-	if result.BoundsSource == forecast.BoundsConformal {
+	switch result.BoundsSource {
+	case forecast.BoundsConformal:
 		// Conformal bands snap to the nearest emitted quantile pair; say
 		// which one so the requested --confidence is not mistaken for it.
 		meta["bounds"] = fmt.Sprintf("%s-%s (%.0f%%)", lowerName, upperName, coverage*100)
+	case forecast.BoundsComposed:
+		// Operand bands paired at worst case: valid, but with no single
+		// nominal coverage to claim.
+		meta["bounds"] = fmt.Sprintf("%s-%s (composed from operand bands, not calibrated)", lowerName, upperName)
 	}
 	if opts.rejected > 0 {
 		meta["buckets_rejected"] = opts.rejected

@@ -77,10 +77,12 @@ func methodMinPoints(m Method) int {
 // evalRow is one (cut point, horizon step) observation from the rolling
 // backtest: the held-out actual and each method's prediction for it.
 type evalRow struct {
-	cut    int // training prefix length c the prediction was made from
-	step   int // 1-based horizon step
-	actual float64
-	preds  map[Method]float64
+	cut      int       // training prefix length c the prediction was made from
+	trainEnd time.Time // timestamp of the last training point
+	t        time.Time // timestamp of the held-out actual
+	step     int       // 1-based horizon step
+	actual   float64
+	preds    map[Method]float64
 }
 
 // rollingEval aggregates rolling-origin backtest results for one or more
@@ -171,10 +173,12 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 				idx, exists := rowIdx[h]
 				if !exists {
 					eval.rows = append(eval.rows, evalRow{
-						cut:    c,
-						step:   h,
-						actual: s[i].V,
-						preds:  map[Method]float64{},
+						cut:      c,
+						trainEnd: trainEnd,
+						t:        s[i].T,
+						step:     h,
+						actual:   s[i].V,
+						preds:    map[Method]float64{},
 					})
 					idx = len(eval.rows) - 1
 					rowIdx[h] = idx
