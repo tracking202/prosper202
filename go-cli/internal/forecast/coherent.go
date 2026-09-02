@@ -318,8 +318,12 @@ func composeQuantiles(qa, qb map[string]float64, difference bool) map[string]flo
 //
 // Trend statistics come from the composed path relative to the observed
 // series' mean; a level shift detected in either operand is reported (the
-// composition inherits it), and masked anomalies are the union of both
-// operands' so the excluded observations stay visible.
+// composition inherits it); masked anomalies are the union of both
+// operands' so the excluded observations stay visible; and DataPoints is
+// the fewest points either operand was actually fitted on (after masking,
+// truncation, and undefined rate buckets), since the observed derived
+// series itself is never fitted and the composition is only as informed as
+// its thinnest driver.
 func finishComposed(a, b *Result, preds []Prediction, metric string, observed Series, cfg Config, combine func(x, y float64) float64, nonNegative bool) *Result {
 	trend := predictionTrend(preds, observed)
 	trendPct := 0.0
@@ -356,7 +360,7 @@ func finishComposed(a, b *Result, preds []Prediction, metric string, observed Se
 		TrendPct:        trendPct,
 		MAE:             mae,
 		RMSE:            rmse,
-		DataPoints:      len(observed),
+		DataPoints:      minInt(a.DataPoints, b.DataPoints),
 		Composition:     CompositionDerived,
 		LevelShiftAt:    shiftAt,
 		AnomaliesMasked: unionSorted(a.AnomaliesMasked, b.AnomaliesMasked),
@@ -411,6 +415,13 @@ func composeRolling(a, b *Result, observed Series, interval Interval, combine fu
 		rmse = math.Sqrt(sumSq / float64(n))
 	}
 	return rolling, byStep, mae, rmse
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // unionSorted merges two timestamp lists without duplicates, in order (the

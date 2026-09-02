@@ -498,7 +498,7 @@ mask catch what you did not.
 | `method`, `weights` | Method used; ensemble member shares (sum to 1) |
 | `mae`, `rmse` | Rolling-backtest errors on the metric's scale (for derived metrics, of the composed forecast) |
 | `bounds`, `bounds_source` | Band in use (`p05-p95 (90%)` …); `conformal` (rolling residuals, for derived metrics of the composition itself), `gaussian` (short history), or `composed` (derived metric with too few paired rolling predictions: worst-corner pairing of the drivers' bands, not calibrated). Per metric under `--all-metrics` |
-| `data_points_used` | Points actually fitted (after masking and level-shift truncation) |
+| `data_points_used` | Points actually fitted (after masking and level-shift truncation); for a derived metric, the fewest any of its drivers was fitted on |
 | `buckets_rejected` | Response rows the parser could not use |
 | `anomalies_masked` | Dates removed as transients (per metric under `--all-metrics`) |
 | `level_shift_at` (`level_shifts`) | First period of the new regime |

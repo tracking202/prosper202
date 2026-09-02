@@ -533,6 +533,16 @@ func TestRunCoherent_ComposedInheritsAnomalies(t *testing.T) {
 	if len(want) != 2 {
 		t.Fatalf("clicks masked %v, want the two outage days", want)
 	}
+	// The masked clicks series (58 points) is the thinnest driver behind
+	// every composed metric, so none may claim more fitted points than it.
+	if got := results[MetricClicks].DataPoints; got != 58 {
+		t.Fatalf("clicks data points = %d, want 58 (two masked)", got)
+	}
+	for _, metric := range []string{MetricLeads, MetricCost, MetricIncome, MetricNet} {
+		if got := results[metric].DataPoints; got > 58 {
+			t.Errorf("%s: data_points_used = %d overstates the drivers' fitted history (clicks fitted 58)", metric, got)
+		}
+	}
 	for _, metric := range []string{MetricLeads, MetricCost, MetricIncome, MetricNet} {
 		got := results[metric].AnomaliesMasked
 		for _, ts := range want {
