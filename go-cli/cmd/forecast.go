@@ -698,6 +698,8 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, co
 
 	compositions := map[string]interface{}{}
 	dataPoints := map[string]interface{}{}
+	maes := map[string]interface{}{}
+	rmses := map[string]interface{}{}
 	boundsSources := map[string]interface{}{}
 	boundsLabels := map[string]interface{}{}
 	levelShifts := map[string]interface{}{}
@@ -713,6 +715,12 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, co
 		// Per metric: a derived metric reports the fewest points any of
 		// its drivers was fitted on, which can be below the clicks count.
 		dataPoints[m] = res.DataPoints
+		// Rolling errors, per metric: compositions are backtested too, so
+		// every metric has its own typical error to judge a forecast by.
+		if res.MAE > 0 {
+			maes[m] = roundTo(res.MAE, 2)
+			rmses[m] = roundTo(res.RMSE, 2)
+		}
 		if res.BoundsSource != "" {
 			boundsSources[m] = res.BoundsSource
 		}
@@ -733,6 +741,10 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, co
 		"interval":         string(clicks.Interval),
 		"data_points_used": dataPoints,
 		"composition":      compositions,
+	}
+	if len(maes) > 0 {
+		meta["mae"] = maes
+		meta["rmse"] = rmses
 	}
 	if len(boundsSources) > 0 {
 		meta["bounds_source"] = boundsSources

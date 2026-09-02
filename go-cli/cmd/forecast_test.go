@@ -1433,6 +1433,11 @@ func TestForecastAllMetricsReportsBoundsSourcePerMetric(t *testing.T) {
 			t.Errorf("data_points_used[%s] = %v, want a positive count", m, counts[m])
 		}
 	}
+	// This fixture has exact identities, so rolling errors are zero and
+	// the maps are omitted; the noisy all-metrics test covers presence.
+	if _, present := meta["mae"]; present {
+		t.Errorf("mae map should be omitted when every rolling error is zero, got %v", meta["mae"])
+	}
 	for _, m := range forecastCoreMetrics {
 		// Derived metrics are backtested as compositions, so with 40 points
 		// every metric's band is conformal — none is a "composed" fallback —
@@ -1462,5 +1467,55 @@ func TestForecastAllMetricsReportsBoundsSourcePerMetric(t *testing.T) {
 	}
 	if meta["bounds"] != "p05-p95 (90%)" {
 		t.Errorf("bounds label = %v, want p05-p95 (90%%)", meta["bounds"])
+	}
+}
+
+func TestForecastAllMetricsReportsErrorsPerMetric(t *testing.T) {
+	// Noisy but coherent history: every metric, compositions included, is
+	// backtested, so the all-metrics meta carries its own mae/rmse.
+	rng := rand.New(rand.NewSource(11))
+	buckets := make([]map[string]interface{}, 40)
+	for i := range buckets {
+		clicks := 300 + 40*rng.Float64()
+		leads := clicks * (0.08 + 0.02*rng.Float64())
+		cost := clicks * (1.5 + 0.3*rng.Float64())
+		income := leads * (40 + 10*rng.Float64())
+		buckets[i] = map[string]interface{}{
+			"bucket_start": 1704067200 + i*86400,
+			"total_clicks": clicks, "total_leads": leads, "total_cost": cost,
+			"total_income": income, "total_net": income - cost,
+		}
+	}
+	body, _ := json.Marshal(map[string]interface{}{"data": buckets})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	maes, ok := meta["mae"].(map[string]interface{})
+	rmses, ok2 := meta["rmse"].(map[string]interface{})
+	if !ok || !ok2 {
+		t.Fatalf("expected per-metric mae and rmse maps, got mae=%v rmse=%v", meta["mae"], meta["rmse"])
+	}
+	for _, m := range forecastCoreMetrics {
+		mae, _ := maes[m].(float64)
+		rmse, _ := rmses[m].(float64)
+		if mae <= 0 || rmse < mae {
+			t.Errorf("%s: mae=%v rmse=%v, want positive errors with rmse >= mae", m, maes[m], rmses[m])
+		}
 	}
 }
