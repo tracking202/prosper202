@@ -35,11 +35,13 @@ var quantileLevels = []struct {
 	name string
 	q    float64
 }{
+	{"p05", 0.05},
 	{"p10", 0.10},
 	{"p25", 0.25},
 	{"p50", 0.50},
 	{"p75", 0.75},
 	{"p90", 0.90},
+	{"p95", 0.95},
 }
 
 // methodForecast dispatches to the forecaster for m. Forecasters return raw
@@ -57,6 +59,19 @@ func methodForecast(m Method, s Series, cfg Config) ([]Prediction, float64, erro
 	default:
 		return nil, 0, fmt.Errorf("unknown method %q", m)
 	}
+}
+
+// holtWintersMinPoints is the shortest history Holt-Winters is fitted on;
+// its level/trend initialization is unstable below it.
+const holtWintersMinPoints = 14
+
+// methodMinPoints returns the minimum training length a method is fitted
+// on, both for auto-candidacy and for rolling-backtest cuts.
+func methodMinPoints(m Method) int {
+	if m == MethodHoltWinters {
+		return holtWintersMinPoints
+	}
+	return minTrainPoints
 }
 
 // evalRow is one (cut point, horizon step) observation from the rolling
@@ -123,7 +138,7 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 		testCfg.SeasonalWeights = nil
 		testCfg.Anchor = time.Time{}
 
-		train := s[:c]
+		train := trainingView(s, cfg, c)
 		trainEnd := train[len(train)-1].T
 
 		// Map each held-out point to its horizon step by calendar distance.
@@ -139,6 +154,11 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 		}
 
 		for _, m := range methods {
+			// Respect each method's minimum history: a fit the deployed
+			// model would never make must not feed residuals or weights.
+			if c < methodMinPoints(m) {
+				continue
+			}
 			preds, _, err := methodForecast(m, train, testCfg)
 			if err != nil || len(preds) == 0 {
 				continue
@@ -166,14 +186,33 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 	return eval
 }
 
-// errorStats returns MAE and RMSE for a method across the n rolling-backtest
-// rows it produced predictions for. n == 0 (with zero errors) means the
-// method produced no rolling predictions at all — an RMSE of 0 with n > 0 is
-// a genuinely perfect fit, so callers must branch on n, not on the RMSE.
-func (e *rollingEval) errorStats(m Method) (mae, rmse float64, n int) {
+// rowPredictor reads one forecaster's prediction for a backtest row; ok is
+// false when that forecaster produced no prediction for the row.
+type rowPredictor func(r evalRow) (pred float64, ok bool)
+
+// methodPredictor returns the rowPredictor for a single method.
+func (e *rollingEval) methodPredictor(m Method) rowPredictor {
+	return func(r evalRow) (float64, bool) {
+		pred, ok := r.preds[m]
+		return pred, ok
+	}
+}
+
+// ensemblePredictor returns the rowPredictor for a weighted ensemble.
+func ensemblePredictor(weights map[Method]float64, members []Method) rowPredictor {
+	return func(r evalRow) (float64, bool) {
+		return ensembleCombine(r, weights, members)
+	}
+}
+
+// errorStats returns MAE and RMSE for a forecaster across the n rolling-
+// backtest rows it produced predictions for. n == 0 (with zero errors)
+// means it produced no rolling predictions at all — an RMSE of 0 with n > 0
+// is a genuinely perfect fit, so callers must branch on n, not the RMSE.
+func (e *rollingEval) errorStats(predict rowPredictor) (mae, rmse float64, n int) {
 	sumAbs, sumSq := 0.0, 0.0
 	for _, r := range e.rows {
-		pred, ok := r.preds[m]
+		pred, ok := predict(r)
 		if !ok {
 			continue
 		}
@@ -188,12 +227,12 @@ func (e *rollingEval) errorStats(m Method) (mae, rmse float64, n int) {
 	return sumAbs / float64(n), math.Sqrt(sumSq / float64(n)), n
 }
 
-// residualsByStep buckets a method's residuals (actual − predicted) by
-// horizon step.
-func (e *rollingEval) residualsByStep(m Method) map[int][]float64 {
+// residualsByStep buckets a forecaster's residuals (actual − predicted, on
+// the model scale) by horizon step.
+func (e *rollingEval) residualsByStep(predict rowPredictor) map[int][]float64 {
 	out := map[int][]float64{}
 	for _, r := range e.rows {
-		pred, ok := r.preds[m]
+		pred, ok := predict(r)
 		if !ok {
 			continue
 		}
@@ -208,9 +247,9 @@ func (e *rollingEval) residualsByStep(m Method) map[int][]float64 {
 // current regime rather than its average over all history.
 const recencyDecay = 0.85
 
-// recencyRMSE returns each method's recency-weighted rolling RMSE and, per
-// method, whether it produced any rolling predictions at all. maxCut is the
-// newest cut in the eval (0 when there are no rows).
+// recencyRMSE returns each candidate's recency-weighted rolling RMSE (on
+// the model scale, where members are compared); candidates that produced
+// no rolling predictions are absent from the result.
 func (e *rollingEval) recencyRMSE(candidates []Method) map[Method]float64 {
 	maxCut := 0
 	for _, r := range e.rows {
@@ -259,42 +298,6 @@ func ensembleCombine(r evalRow, weights map[Method]float64, members []Method) (f
 		return 0, false
 	}
 	return sumV / sumW, true
-}
-
-// ensembleResidualsByStep buckets the weighted ensemble's residuals by
-// horizon step, so conformal bounds reflect the combined forecaster that is
-// actually deployed rather than any single member.
-func (e *rollingEval) ensembleResidualsByStep(weights map[Method]float64, members []Method) map[int][]float64 {
-	out := map[int][]float64{}
-	for _, r := range e.rows {
-		pred, ok := ensembleCombine(r, weights, members)
-		if !ok {
-			continue
-		}
-		out[r.step] = append(out[r.step], r.actual-pred)
-	}
-	return out
-}
-
-// ensembleErrorStats returns MAE and RMSE of the weighted ensemble across all
-// rolling-backtest rows.
-func (e *rollingEval) ensembleErrorStats(weights map[Method]float64, members []Method) (mae, rmse float64) {
-	sumAbs, sumSq := 0.0, 0.0
-	n := 0
-	for _, r := range e.rows {
-		pred, ok := ensembleCombine(r, weights, members)
-		if !ok {
-			continue
-		}
-		diff := e.errDiff(r.actual, pred)
-		sumAbs += math.Abs(diff)
-		sumSq += diff * diff
-		n++
-	}
-	if n == 0 {
-		return 0, 0
-	}
-	return sumAbs / float64(n), math.Sqrt(sumSq / float64(n))
 }
 
 // totalResiduals counts residuals across all steps.
@@ -430,13 +433,33 @@ func quantileSorted(sorted []float64, q float64) float64 {
 }
 
 // boundPair maps a confidence level to the quantile pair used for
-// LowerBound/UpperBound: the nearest emitted pair. P10/P90 form an 80%
-// interval, P25/P75 a 50% one; levels of 0.65 and above snap to P10/P90.
+// LowerBound/UpperBound — the nearest emitted pair. P25/P75 form a 50%
+// interval, P10/P90 an 80% one, and P05/P95 a 90% one; levels of 0.85 and
+// above (including the 0.95 default and 0.99) snap to P05/P95, the widest
+// band the residual pool supports.
 func boundPair(confidence float64) (lower, upper string) {
-	if confidence < 0.65 {
+	switch {
+	case confidence < 0.65:
 		return "p25", "p75"
+	case confidence < 0.85:
+		return "p10", "p90"
+	default:
+		return "p05", "p95"
 	}
-	return "p10", "p90"
+}
+
+// BoundLevels reports the nominal coverage of the band a confidence level
+// maps to (see boundPair), for documentation and CLI metadata.
+func BoundLevels(confidence float64) (lower, upper string, coverage float64) {
+	lower, upper = boundPair(confidence)
+	switch lower {
+	case "p25":
+		return lower, upper, 0.50
+	case "p10":
+		return lower, upper, 0.80
+	default:
+		return lower, upper, 0.90
+	}
 }
 
 // applyConformalBounds attaches empirical quantiles and bounds to
@@ -470,10 +493,11 @@ func applyConformalBounds(preds []Prediction, sq map[int]map[string]float64, cfg
 	}
 }
 
-// clipNonNegative floors prediction values, bounds, and quantiles at zero.
-// Applied when cfg.NonNegative marks the metric as a count/amount that
-// cannot go below zero (clicks, leads, cost, income).
-func clipNonNegative(preds []Prediction) {
+// ClipNonNegative floors prediction values, bounds, and quantiles at zero.
+// Run applies it when cfg.NonNegative marks the metric as a count/amount
+// that cannot go below zero (clicks, leads, cost, income); callers that
+// scale predictions afterwards (event adjustments) re-apply it.
+func ClipNonNegative(preds []Prediction) {
 	for i := range preds {
 		if preds[i].Value < 0 {
 			preds[i].Value = 0

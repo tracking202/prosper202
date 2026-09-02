@@ -18,7 +18,8 @@ import (
 // forward (the counterfactual level). Run then either truncates the
 // pre-shift history (when the post-shift segment is long enough to model on
 // its own) or re-levels it to the new regime (when it is not, so the old
-// data's shape still helps without dragging the level).
+// data's shape still helps without dragging the level). Re-leveling is
+// applied per training prefix so backtest folds never see held-out data.
 
 const (
 	// levelShiftMinPoints is the shortest series checked for level shifts:
@@ -30,7 +31,7 @@ const (
 	levelShiftBaselineWindow = 7
 	// levelShiftMinSegment keeps the change point away from the series
 	// edges, where segment statistics are unstable.
-	levelShiftMinSegment = 4
+	levelShiftMinSegment = 5
 	// levelShiftCUSUMThreshold is the significance bound for the normalized
 	// CUSUM statistic max|S_j| / (σ√n). The classic 1.36 Kolmogorov bound
 	// assumes independent residuals; trailing-mean one-step residuals are
@@ -43,6 +44,14 @@ const (
 	// pre-shift residual noise, worth acting on: smaller shifts cost less
 	// than discarding or rewriting history does.
 	levelShiftSigmaMultiple = 3.0
+	// levelShiftPostSpreadMultiple bounds the post-shift segment's own
+	// spread relative to pre-shift noise; a transient burst (outage, promo
+	// spike) mixed with normal days blows past it.
+	levelShiftPostSpreadMultiple = 2.0
+	// levelShiftAgreeSigma is how far (in pre-shift sigmas) a post-shift
+	// point must sit beyond the old level to count as agreeing with the
+	// shift; a majority must agree.
+	levelShiftAgreeSigma = 1.5
 )
 
 // minPostShiftPoints returns how many post-shift observations are enough to
@@ -59,15 +68,25 @@ func minPostShiftPoints(interval Interval) int {
 	}
 }
 
+// levelShift describes a detected level change: idx is the first post-shift
+// observation, delta the level jump (post-shift actuals minus the pre-shift
+// linear fit extrapolated forward), and slope/intercept/base that pre-shift
+// fit, kept so the jump can be re-estimated from any prefix of the post-shift
+// data (see relevelPrefix).
+type levelShift struct {
+	idx              int
+	delta            float64
+	slope, intercept float64
+	base             time.Time
+}
+
 // detectLevelShift scans for the strongest level change in the series.
-// It returns the index of the first post-shift observation and the level
-// delta (post-shift actuals minus the pre-shift fit's extrapolation), or
-// (-1, 0) when no shift passes both the CUSUM significance test and the
-// magnitude threshold.
-func detectLevelShift(s Series) (idx int, delta float64) {
+// It returns nil when no shift passes the CUSUM significance test, the
+// magnitude threshold, and the post-segment consistency check.
+func detectLevelShift(s Series) *levelShift {
 	n := len(s)
 	if n < levelShiftMinPoints {
-		return -1, 0
+		return nil
 	}
 
 	// One-step residuals against a trailing-mean baseline.
@@ -86,7 +105,7 @@ func detectLevelShift(s Series) (idx int, delta float64) {
 
 	sigmaR := stddev(resid)
 	if sigmaR <= 0 {
-		return -1, 0
+		return nil
 	}
 	m := mean(resid)
 	maxAbs, cum := 0.0, 0.0
@@ -97,13 +116,13 @@ func detectLevelShift(s Series) (idx int, delta float64) {
 		}
 	}
 	if maxAbs/(sigmaR*math.Sqrt(float64(len(resid)))) < levelShiftCUSUMThreshold {
-		return -1, 0
+		return nil
 	}
 
 	// Locate the change point: the two-segment mean split minimizing SSE.
-	idx = bestMeanSplit(s)
-	if idx < levelShiftMinSegment || n-idx < 2 {
-		return -1, 0
+	idx := bestMeanSplit(s)
+	if idx < levelShiftMinSegment || n-idx < levelShiftMinSegment {
+		return nil
 	}
 
 	// Magnitude: post-shift actuals vs the pre-shift segment's own linear
@@ -111,36 +130,84 @@ func detectLevelShift(s Series) (idx int, delta float64) {
 	pre := s[:idx]
 	slope, intercept := olsFit(pre)
 	base := pre[0].T
-	sum := 0.0
+	postResid := make([]float64, 0, n-idx)
 	for i := idx; i < n; i++ {
-		sum += s[i].V - (intercept + slope*s[i].T.Sub(base).Hours())
+		postResid = append(postResid, s[i].V-(intercept+slope*s[i].T.Sub(base).Hours()))
 	}
-	delta = sum / float64(n-idx)
+	delta := mean(postResid)
 
 	preResid := make([]float64, idx)
 	for i, p := range pre {
 		preResid[i] = p.V - (intercept + slope*p.T.Sub(base).Hours())
 	}
-	if sigmaPre := stddev(preResid); sigmaPre > 0 && math.Abs(delta) < levelShiftSigmaMultiple*sigmaPre {
-		return -1, 0
+	// Noise floor: an exactly-fitted pre-segment (sigma 0) must still
+	// require a non-trivial jump, otherwise a clean trend "shifts" by 0.
+	sigmaPre := stddev(preResid)
+	if sigmaPre <= 0 {
+		sigmaPre = 1e-6 * (math.Abs(mean(seriesValues(pre))) + 1)
 	}
-	return idx, delta
+	if math.Abs(delta) < levelShiftSigmaMultiple*sigmaPre {
+		return nil
+	}
+
+	// Consistency: a genuine regime change moves the whole post segment,
+	// with noise comparable to before. A transient burst (a two-day tracking
+	// outage, a promo spike) at the end of history leaves the post segment
+	// internally inconsistent — its own spread dwarfs the pre-shift noise,
+	// or only a minority of its points actually sit beyond the old level —
+	// and must not rewrite the entire training history.
+	if stddev(postResid) > levelShiftPostSpreadMultiple*sigmaPre {
+		return nil
+	}
+	agree := 0
+	for _, r := range postResid {
+		if (delta > 0 && r > levelShiftAgreeSigma*sigmaPre) || (delta < 0 && r < -levelShiftAgreeSigma*sigmaPre) {
+			agree++
+		}
+	}
+	if agree*2 <= len(postResid) {
+		return nil
+	}
+
+	return &levelShift{idx: idx, delta: delta, slope: slope, intercept: intercept, base: base}
 }
 
-// applyLevelShift returns the training series adjusted for a detected shift
-// at idx: the post-shift segment alone when it is long enough, otherwise a
-// copy with pre-shift values re-leveled by delta so the model sees a
-// shift-free series centered on the new regime. The input is not modified.
-func applyLevelShift(s Series, idx int, delta float64, interval Interval) Series {
-	if len(s)-idx >= minPostShiftPoints(interval) {
-		return s[idx:]
+// truncates reports whether the post-shift segment is long enough to be
+// modeled on its own (so pre-shift history is dropped rather than re-leveled).
+func (ls *levelShift) truncates(n int, interval Interval) bool {
+	return n-ls.idx >= minPostShiftPoints(interval)
+}
+
+// relevelPrefix returns the first c points of s with pre-shift values
+// re-leveled to the new regime, using only the post-shift observations
+// inside the prefix to estimate the jump. A rolling-backtest cut therefore
+// never sees the actuals it holds out (no leakage); a prefix ending before
+// any post-shift point is returned unchanged. The input is not modified.
+func (ls *levelShift) relevelPrefix(s Series, c int) Series {
+	if ls == nil || c <= ls.idx {
+		return s[:c]
 	}
-	out := make(Series, len(s))
-	copy(out, s)
-	for i := 0; i < idx; i++ {
+	sum := 0.0
+	for i := ls.idx; i < c; i++ {
+		sum += s[i].V - (ls.intercept + ls.slope*s[i].T.Sub(ls.base).Hours())
+	}
+	delta := sum / float64(c-ls.idx)
+	out := make(Series, c)
+	copy(out, s[:c])
+	for i := 0; i < ls.idx; i++ {
 		out[i].V += delta
 	}
 	return out
+}
+
+// trainingView returns the series a model should be fitted on for a prefix
+// of length c: the prefix itself, or its re-leveled form when a level shift
+// is being handled by re-leveling (cfg.relevel).
+func trainingView(s Series, cfg Config, c int) Series {
+	if cfg.relevel == nil {
+		return s[:c]
+	}
+	return cfg.relevel.relevelPrefix(s, c)
 }
 
 // formatShiftTime renders a detected shift's timestamp for Result metadata.

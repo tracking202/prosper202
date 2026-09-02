@@ -35,7 +35,10 @@ func TestBoundPair(t *testing.T) {
 		conf         float64
 		lower, upper string
 	}{
-		{0.95, "p10", "p90"},
+		{0.99, "p05", "p95"},
+		{0.95, "p05", "p95"},
+		{0.90, "p05", "p95"},
+		{0.85, "p05", "p95"},
 		{0.80, "p10", "p90"},
 		{0.65, "p10", "p90"},
 		{0.50, "p25", "p75"},
@@ -114,7 +117,7 @@ func TestRun_ConformalQuantilesOrdered(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	order := []string{"p10", "p25", "p50", "p75", "p90"}
+	order := []string{"p05", "p10", "p25", "p50", "p75", "p90", "p95"}
 	for i, p := range result.Predictions {
 		if len(p.Quantiles) == 0 {
 			t.Fatalf("prediction[%d] missing quantiles", i)
@@ -323,20 +326,20 @@ func TestScalePrediction_NegativeMultiplier(t *testing.T) {
 		LowerBound: 80,
 		UpperBound: 120,
 		Quantiles: map[string]float64{
-			"p10": 80, "p25": 90, "p50": 100, "p75": 110, "p90": 120,
+			"p05": 75, "p10": 80, "p25": 90, "p50": 100, "p75": 110, "p90": 120, "p95": 125,
 		},
 	}
 	scalePrediction(&p, -1)
 	if p.LowerBound > p.UpperBound {
 		t.Errorf("bounds inverted after negative scale: %v > %v", p.LowerBound, p.UpperBound)
 	}
-	order := []string{"p10", "p25", "p50", "p75", "p90"}
+	order := []string{"p05", "p10", "p25", "p50", "p75", "p90", "p95"}
 	for j := 1; j < len(order); j++ {
 		if p.Quantiles[order[j-1]] > p.Quantiles[order[j]] {
 			t.Errorf("quantiles out of order after negative scale: %s > %s", order[j-1], order[j])
 		}
 	}
-	if p.Quantiles["p10"] != -120 || p.Quantiles["p90"] != -80 {
+	if p.Quantiles["p05"] != -125 || p.Quantiles["p10"] != -120 || p.Quantiles["p90"] != -80 {
 		t.Errorf("unexpected quantiles after scale: %v", p.Quantiles)
 	}
 }
@@ -366,5 +369,28 @@ func TestRun_MaskedGapResidualAlignment(t *testing.T) {
 		if p.UpperBound-p.LowerBound > 1 {
 			t.Errorf("prediction[%d]: wide bounds (%v..%v) on exact series", i, p.LowerBound, p.UpperBound)
 		}
+	}
+}
+
+func TestRun_ConfidenceWidensBand(t *testing.T) {
+	// Higher confidence must widen the conformal band: 0.50 -> P25/P75,
+	// 0.80 -> P10/P90, 0.95 -> P05/P95 (the widest supported band).
+	rng := rand.New(rand.NewSource(9))
+	s := makeSeries(80, func(i int) float64 { return 100 + rng.NormFloat64()*10 })
+	widths := map[float64]float64{}
+	for _, c := range []float64{0.50, 0.80, 0.95} {
+		in := make(Series, len(s))
+		copy(in, s)
+		r, err := Run(in, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay, ConfidenceLevel: c})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		widths[c] = r.Predictions[0].UpperBound - r.Predictions[0].LowerBound
+		if r.BoundsSource != BoundsConformal {
+			t.Errorf("bounds source = %q, want conformal", r.BoundsSource)
+		}
+	}
+	if !(widths[0.50] < widths[0.80] && widths[0.80] < widths[0.95]) {
+		t.Errorf("band widths not increasing with confidence: %v", widths)
 	}
 }

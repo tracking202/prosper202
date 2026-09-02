@@ -117,7 +117,7 @@ func TestRunCoherent_BoundsAndQuantilesOrdered(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	order := []string{"p10", "p25", "p50", "p75", "p90"}
+	order := []string{"p05", "p10", "p25", "p50", "p75", "p90", "p95"}
 	for key, res := range results {
 		for i, p := range res.Predictions {
 			if p.LowerBound > p.UpperBound {
@@ -260,11 +260,9 @@ func TestCoherentCompositionAccuracy(t *testing.T) {
 
 	wins, total := 0, 0
 	for _, sc := range scenarios {
+		rmse := rollingCompare(t, sc.series, []string{MetricLeads, MetricIncome})
 		for _, metric := range []string{MetricLeads, MetricIncome} {
-			composed, direct, n := rollingCompare(t, sc.series, metric)
-			if n == 0 {
-				t.Fatalf("%s/%s: no evaluations", sc.name, metric)
-			}
+			composed, direct := rmse[metric][0], rmse[metric][1]
 			total++
 			if composed <= direct*1.02 {
 				wins++
@@ -278,11 +276,14 @@ func TestCoherentCompositionAccuracy(t *testing.T) {
 }
 
 // rollingCompare measures rolling RMSE of the composed vs direct forecast of
-// one derived metric over held-out data.
-func rollingCompare(t *testing.T, series map[string]Series, metric string) (composedRMSE, directRMSE float64, n int) {
+// each requested derived metric over held-out data, running RunCoherent once
+// per cut for all of them. The result maps metric -> {composed, direct}.
+func rollingCompare(t *testing.T, series map[string]Series, metrics []string) map[string][2]float64 {
 	t.Helper()
-	full := series[metric]
-	sumSqC, sumSqD := 0.0, 0.0
+	sumSqC := map[string]float64{}
+	sumSqD := map[string]float64{}
+	n := 0
+	full := series[metrics[0]]
 	for c := 30; c < len(full); c += 4 {
 		steps := len(full) - c
 		if steps > 7 {
@@ -298,23 +299,29 @@ func rollingCompare(t *testing.T, series map[string]Series, metric string) (comp
 		if err != nil {
 			t.Fatalf("RunCoherent failed at cut %d: %v", c, err)
 		}
-		directIn := make(Series, c)
-		copy(directIn, full[:c])
-		directRes, err := Run(directIn, Config{Horizon: steps, Interval: IntervalDay, NonNegative: true})
-		if err != nil {
-			t.Fatalf("Run failed at cut %d: %v", c, err)
+		for _, metric := range metrics {
+			directIn := make(Series, c)
+			copy(directIn, series[metric][:c])
+			directRes, err := Run(directIn, Config{Horizon: steps, Interval: IntervalDay, NonNegative: true})
+			if err != nil {
+				t.Fatalf("Run failed at cut %d: %v", c, err)
+			}
+			for i := 0; i < steps; i++ {
+				actual := series[metric][c+i].V
+				dc := actual - results[metric].Predictions[i].Value
+				dd := actual - directRes.Predictions[i].Value
+				sumSqC[metric] += dc * dc
+				sumSqD[metric] += dd * dd
+			}
 		}
-		for i := 0; i < steps; i++ {
-			actual := full[c+i].V
-			dc := actual - results[metric].Predictions[i].Value
-			dd := actual - directRes.Predictions[i].Value
-			sumSqC += dc * dc
-			sumSqD += dd * dd
-			n++
-		}
+		n += steps
 	}
 	if n == 0 {
-		return 0, 0, 0
+		t.Fatal("no rolling evaluations")
 	}
-	return math.Sqrt(sumSqC / float64(n)), math.Sqrt(sumSqD / float64(n)), n
+	out := map[string][2]float64{}
+	for _, metric := range metrics {
+		out[metric] = [2]float64{math.Sqrt(sumSqC[metric] / float64(n)), math.Sqrt(sumSqD[metric] / float64(n))}
+	}
+	return out
 }

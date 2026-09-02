@@ -609,12 +609,12 @@ func TestParseISOWeekRejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestClampNonNegative(t *testing.T) {
+func TestClipNonNegative(t *testing.T) {
 	preds := []forecast.Prediction{
 		{Value: -5, LowerBound: -10, UpperBound: -1},
 		{Value: 3, LowerBound: -2, UpperBound: 8},
 	}
-	clampNonNegative(preds)
+	forecast.ClipNonNegative(preds)
 	if preds[0].Value != 0 || preds[0].LowerBound != 0 || preds[0].UpperBound != 0 {
 		t.Errorf("negative prediction not fully clamped: %+v", preds[0])
 	}
@@ -1080,8 +1080,11 @@ func TestForecastDerivedMetricFallsBackWithoutCompanions(t *testing.T) {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 	meta := output["meta"].(map[string]interface{})
-	if _, ok := meta["composition"]; ok {
-		t.Errorf("expected no composition tag on direct fallback, got %v", meta["composition"])
+	if meta["composition"] != "direct" {
+		t.Errorf("meta.composition = %v, want direct on fallback", meta["composition"])
+	}
+	if _, ok := meta["composition_fallback"]; !ok {
+		t.Errorf("expected composition_fallback reason in meta, got %v", meta)
 	}
 	data := output["data"].([]interface{})
 	if len(data) != 5 {
@@ -1158,5 +1161,126 @@ func TestForecastSeasonalReportsApplied(t *testing.T) {
 	meta := output["meta"].(map[string]interface{})
 	if _, ok := meta["seasonal_applied"]; !ok {
 		t.Errorf("expected seasonal_applied in meta, got %v", meta)
+	}
+}
+
+func TestForecastDerivedFallbackReportsDirectComposition(t *testing.T) {
+	// Companion metrics present but too sparse for RunCoherent (only 2 cost
+	// values): the direct path must still label the output and say why.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buckets := make([]map[string]interface{}, 30)
+		for i := 0; i < 30; i++ {
+			b := map[string]interface{}{
+				"bucket_start": 1704067200 + i*86400,
+				"total_clicks": 100.0 + float64(i),
+				"total_leads":  10.0 + float64(i)/10,
+				"total_income": 500.0,
+			}
+			if i < 2 {
+				b["total_cost"] = 200.0
+			}
+			buckets[i] = b
+		}
+		data, _ := json.Marshal(map[string]interface{}{"data": buckets})
+		w.WriteHeader(200)
+		w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=leads", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["composition"] != "direct" {
+		t.Errorf("meta.composition = %v, want direct", meta["composition"])
+	}
+	if _, ok := meta["composition_fallback"]; !ok {
+		t.Errorf("expected composition_fallback reason in meta, got %v", meta)
+	}
+}
+
+func TestForecastRejectsSeasonalMonthlyForSignedMetric(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:9", "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=profit", "--seasonal-monthly")
+	if err == nil || !strings.Contains(err.Error(), "signed metrics") {
+		t.Errorf("expected signed-metric validation error, got %v", err)
+	}
+}
+
+func TestForecastReportsRejectedBuckets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buckets := make([]map[string]interface{}, 0, 31)
+		for i := 0; i < 30; i++ {
+			buckets = append(buckets, map[string]interface{}{
+				"bucket_start": 1704067200 + i*86400,
+				"total_income": 100.0 + float64(i),
+			})
+		}
+		buckets = append(buckets, map[string]interface{}{"bucket_start": "not-a-time", "total_income": 5.0})
+		data, _ := json.Marshal(map[string]interface{}{"data": buckets})
+		w.WriteHeader(200)
+		w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=revenue", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["buckets_rejected"] != 1.0 {
+		t.Errorf("meta.buckets_rejected = %v, want 1", meta["buckets_rejected"])
+	}
+	if meta["bounds"] == nil {
+		t.Errorf("expected bounds label in meta, got %v", meta)
+	}
+}
+
+func TestForecastSeasonalMonthlyReportsApplied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(60, "total_clicks")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=clicks", "--horizon=5", "--seasonal-monthly", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["seasonal_applied"] != true {
+		t.Errorf("meta.seasonal_applied = %v, want true for --seasonal-monthly", meta["seasonal_applied"])
+	}
+	profiles, _ := meta["seasonal_profiles"].([]interface{})
+	if len(profiles) != 1 || profiles[0] != "monthday" {
+		t.Errorf("meta.seasonal_profiles = %v, want [monthday]", meta["seasonal_profiles"])
 	}
 }

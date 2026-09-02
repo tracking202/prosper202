@@ -179,37 +179,54 @@ too few days (under ~70% of buckets) and the metric's own series is forecast
 instead. `--all-metrics` forecasts clicks, leads, income, cost, and net
 together this way in one table (one row per date with `<metric>`,
 `<metric>_lower`, `<metric>_upper` columns); it cannot be combined with
-`--metric`, `--seasonal`, or `--events`, and `--seasonal`/`--events` on a
-single derived metric keep the direct path since those layers operate on the
-metric's own series. Composed band endpoints combine conservatively
-(worst-case dependence between factors), so derived bands can over-cover
-slightly; derived rows carry no `mae`/`rmse` since rolling errors are only
-measured for directly fitted series.
+`--metric`, `--seasonal`, `--seasonal-monthly`, `--events`, or
+`--event-tag`, and those flags on a single derived metric keep the direct
+path since the layers operate on the metric's own series. When composition
+is impossible (companion metrics missing from the response, or a driver
+too sparse to forecast), the direct path serves the forecast with
+`composition: direct` and a `composition_fallback` reason in the meta.
+Composed band endpoints combine conservatively (worst-case dependence
+between factors), so derived bands can over-cover slightly, and
+`bounds_source` reads `mixed` when the composed operands' bounds came from
+different methods; derived rows carry no `mae`/`rmse` since rolling errors
+are only measured for directly fitted series.
 
 Prediction bounds come from rolling-origin conformal prediction: the model is
 re-fit at up to 50 cut points stepping back from the end of the history, and
 held-out errors are bucketed by horizon step. `lower_bound`/`upper_bound` are
-the empirical P10/P90 of those errors (an 80% interval; `--confidence` below
-0.65 switches to P25/P75, a 50% interval), so bounds are asymmetric when the
-errors are. Each prediction also carries `p25`/`p50`/`p75` columns (`p50` is
-the bias-corrected median path). Reported `mae`/`rmse` are averages across
-all rolling cut points. Metrics that cannot go negative (clicks, leads, cost,
-income, rates) have bounds clipped at zero; very short histories (fewer than
-~9 points) fall back to symmetric Gaussian bounds without quantile columns.
+the empirical quantile pair nearest `--confidence`: P25/P75 for levels under
+0.65 (a 50% band), P10/P90 under 0.85 (80%), and P05/P95 otherwise (90% —
+the widest band the residual pool supports, so the default 0.95 and 0.99
+both get it). The meta's `bounds` names the pair in use, and bounds are
+asymmetric when the errors are. Each prediction also carries the remaining
+quantile columns (`p05`…`p95`; `p50` is the bias-corrected median path).
+Reported `mae`/`rmse` are averages across all rolling cut points. Metrics
+that cannot go negative (clicks, leads, cost, income, rates) have bounds
+clipped at zero. Conformal bounds need at least 8 held-out residuals, which
+takes roughly 12 points at a 4+ step horizon and 16 at `--horizon 1`;
+shorter histories fall back to symmetric Gaussian bounds (which do honor the
+exact confidence level) without quantile columns — the meta's
+`bounds_source` says which applied.
 
 With `--seasonal`, predictions are modulated by day-of-week weights derived
 from weekpart report data (requires `--interval day` or `hour`); hourly
 forecasts also get an hour-of-day profile learned from the series, and
-`--seasonal-monthly` (day interval) adds day-of-month weights for monthly
-budget/payout resets. Profile multipliers are shrunk toward 1.0 when a slot
-has few samples, and weekday/hourly profiles only apply when the series
-actually shows structure at that lag (detrended autocorrelation ≥ 0.3) —
-the meta's `seasonal_applied` reports the outcome. Count metrics (clicks,
+`--seasonal-monthly` (day interval, non-negative metrics only) adds
+day-of-month weights for monthly budget/payout resets. Profile multipliers
+are shrunk toward 1.0 when a slot has few samples, and weekday/hourly
+profiles only apply when the series actually shows structure at that lag
+(detrended autocorrelation ≥ 0.3; a history too short to measure the lag
+applies the profile as supplied) — the meta's `seasonal_applied` and
+`seasonal_profiles` report the outcome. Count metrics (clicks,
 click-throughs, leads) are fitted on log1p scale and inverted on output, so
 multiplicative growth extrapolates correctly. When a level shift is detected
 (offer paused, traffic source added), the model fits the new regime —
 truncating or re-leveling pre-shift history — and reports the boundary in
-the meta as `level_shift_at`. Event-aware forecasting (`--events`,
+the meta as `level_shift_at`; `data_points_used` then counts the points
+actually fitted. A transient burst at the end of the history (a two-day
+tracking outage, a promo spike) is not treated as a shift; if the detector
+still misreads a known transient, `--no-level-shift` fits the full history
+as-is. Event-aware forecasting (`--events`,
 `--event-tag`) folds in stored [forecast
 events](../api/18-forecast-events.md) and requires `--interval day`:
 

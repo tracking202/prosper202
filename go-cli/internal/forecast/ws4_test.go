@@ -103,19 +103,21 @@ func TestBuildMonthDayWeights(t *testing.T) {
 func TestSeasonalLagAutocorrelation(t *testing.T) {
 	weekly := []float64{0.6, 1.1, 1.3, 1.2, 1.1, 1.0, 0.7}
 	strong := makeSeries(56, func(i int) float64 { return 100 * weekly[i%7] })
-	if ac := seasonalLagAutocorrelation(strong, 7*24*time.Hour); ac < 0.8 {
+	if ac, ok := seasonalLagAutocorrelation(strong, 7*24*time.Hour); !ok || ac < 0.8 {
 		t.Errorf("weekly series lag-7 autocorr = %.3f, want > 0.8", ac)
 	}
 
 	rng := rand.New(rand.NewSource(71))
 	flat := makeSeries(56, func(i int) float64 { return 100 + rng.NormFloat64()*10 })
-	if ac := seasonalLagAutocorrelation(flat, 7*24*time.Hour); math.Abs(ac) > 0.3 {
+	if ac, ok := seasonalLagAutocorrelation(flat, 7*24*time.Hour); !ok || math.Abs(ac) > 0.3 {
 		t.Errorf("flat series lag-7 autocorr = %.3f, want near 0", ac)
 	}
 
 	// A strong trend must not fake weekly structure (detrended first).
 	trend := makeSeries(56, func(i int) float64 { return 100 + 10*float64(i) })
-	if ac := seasonalLagAutocorrelation(trend, 7*24*time.Hour); ac > 0.5 {
+	// (An exact line has no residual variance, so the gate reports "not
+	// measurable" rather than a high correlation.)
+	if ac, ok := seasonalLagAutocorrelation(trend, 7*24*time.Hour); ok && ac > 0.5 {
 		t.Errorf("pure trend lag-7 autocorr = %.3f, want low after detrending", ac)
 	}
 }
@@ -129,25 +131,28 @@ func TestDetectLevelShift(t *testing.T) {
 		}
 		return lvl + rng.NormFloat64()*8
 	})
-	idx, delta := detectLevelShift(shifted)
-	if idx < 25 || idx > 35 {
-		t.Fatalf("shift detected at index %d, want near 30", idx)
+	ls := detectLevelShift(shifted)
+	if ls == nil {
+		t.Fatal("no shift detected on a 70-unit step")
 	}
-	if delta < 30 {
-		t.Errorf("shift delta = %.1f, want strongly positive", delta)
+	if ls.idx < 25 || ls.idx > 35 {
+		t.Fatalf("shift detected at index %d, want near 30", ls.idx)
+	}
+	if ls.delta < 30 {
+		t.Errorf("shift delta = %.1f, want strongly positive", ls.delta)
 	}
 
 	rng2 := rand.New(rand.NewSource(74))
 	flat := makeSeries(60, func(i int) float64 { return 100 + rng2.NormFloat64()*8 })
-	if idx, _ := detectLevelShift(flat); idx >= 0 {
-		t.Errorf("false-positive shift at index %d on flat series", idx)
+	if ls := detectLevelShift(flat); ls != nil {
+		t.Errorf("false-positive shift at index %d on flat series", ls.idx)
 	}
 
 	// A steady trend is not a level shift.
 	rng3 := rand.New(rand.NewSource(75))
 	trend := makeSeries(60, func(i int) float64 { return 100 + 3*float64(i) + rng3.NormFloat64()*8 })
-	if idx, _ := detectLevelShift(trend); idx >= 0 {
-		t.Errorf("false-positive shift at index %d on trending series", idx)
+	if ls := detectLevelShift(trend); ls != nil {
+		t.Errorf("false-positive shift at index %d on trending series", ls.idx)
 	}
 }
 
@@ -348,5 +353,177 @@ func TestRun_MonthDayWeightsApplied(t *testing.T) {
 	}
 	if first <= other {
 		t.Errorf("day-1 prediction %.1f not above other days %.1f", first, other)
+	}
+}
+
+func TestDetectLevelShift_IgnoresEndOfHistoryBurst(t *testing.T) {
+	// A 2-day tracking outage (or promo spike) at the end of history is a
+	// transient, not a regime change: the forecast must stay near the
+	// established level and no level_shift_at may be reported.
+	cases := []struct {
+		name string
+		tail float64
+	}{
+		{"outage", 0},
+		{"promo_spike", 2000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rng := rand.New(rand.NewSource(1))
+			s := makeSeries(60, func(i int) float64 {
+				if i >= 58 {
+					return tc.tail
+				}
+				return 500 + rng.NormFloat64()*20
+			})
+			if ls := detectLevelShift(s); ls != nil {
+				t.Fatalf("burst misread as level shift at index %d", ls.idx)
+			}
+			for _, logT := range []bool{false, true} {
+				in := make(Series, len(s))
+				copy(in, s)
+				r, err := Run(in, Config{Method: MethodAuto, Horizon: 3, Interval: IntervalDay, NonNegative: true, LogTransform: logT})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if r.LevelShiftAt != "" {
+					t.Errorf("logTransform=%v: level_shift_at = %q, want none", logT, r.LevelShiftAt)
+				}
+				if r.DataPoints != 60 {
+					t.Errorf("logTransform=%v: data points = %d, want 60 (history rewritten)", logT, r.DataPoints)
+				}
+			}
+			// On the natural scale the moving averages absorb a 2-day
+			// burst; the forecast stays near the established level.
+			r, err := Run(s, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay, NonNegative: true})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if v := r.Predictions[0].Value; v < 350 || v > 800 {
+				t.Errorf("prediction = %.1f, want near the 500 level (burst rewrote history)", v)
+			}
+		})
+	}
+}
+
+func TestRun_DisableLevelShift(t *testing.T) {
+	rng := rand.New(rand.NewSource(77))
+	s := makeSeries(90, func(i int) float64 {
+		lvl := 100.0
+		if i >= 45 {
+			lvl = 170
+		}
+		return lvl + rng.NormFloat64()*8
+	})
+	r, err := Run(s, Config{Method: MethodLinear, Horizon: 3, Interval: IntervalDay, DisableLevelShift: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.LevelShiftAt != "" {
+		t.Errorf("level shift handled despite DisableLevelShift: %q", r.LevelShiftAt)
+	}
+	if r.DataPoints != 90 {
+		t.Errorf("data points = %d, want 90 (no truncation)", r.DataPoints)
+	}
+}
+
+func TestRun_DataPointsReflectTruncation(t *testing.T) {
+	rng := rand.New(rand.NewSource(77))
+	s := makeSeries(90, func(i int) float64 {
+		lvl := 100.0
+		if i >= 45 {
+			lvl = 170
+		}
+		return lvl + rng.NormFloat64()*8
+	})
+	r, err := Run(s, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.LevelShiftAt == "" {
+		t.Fatal("expected a level shift")
+	}
+	if r.DataPoints >= 90 || r.DataPoints < 14 {
+		t.Errorf("data points = %d, want the post-shift count actually fitted", r.DataPoints)
+	}
+}
+
+func TestRelevelPrefix_NoLeakage(t *testing.T) {
+	// The re-leveled prefix must be estimated from post-shift points inside
+	// the prefix only: a prefix ending before the shift is unchanged, and a
+	// prefix with one post-shift point uses just that point's jump.
+	s := makeSeries(30, func(i int) float64 {
+		if i >= 25 {
+			return 300
+		}
+		return 100
+	})
+	ls := &levelShift{idx: 25, slope: 0, intercept: 100, base: s[0].T}
+	pre := ls.relevelPrefix(s, 20)
+	if pre[0].V != 100 {
+		t.Errorf("prefix before the shift was re-leveled to %.1f", pre[0].V)
+	}
+	one := ls.relevelPrefix(s, 26)
+	if math.Abs(one[0].V-300) > 1e-9 {
+		t.Errorf("prefix with one post-shift point re-leveled to %.1f, want 300", one[0].V)
+	}
+	if s[0].V != 100 {
+		t.Error("relevelPrefix modified its input")
+	}
+}
+
+func TestRun_LogTransformKeepsMovingAverageTrend(t *testing.T) {
+	// SMA's trend (avg − prevAvg) must survive the log transform as an
+	// absolute per-period change on the original scale, not collapse to 0.
+	s := makeSeries(40, func(i int) float64 { return 100 + 5*float64(i) })
+	r, err := Run(s, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay, LogTransform: true, NonNegative: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.Trend < 3 || r.Trend > 7 {
+		t.Errorf("SMA trend under log transform = %.3f, want ~5", r.Trend)
+	}
+}
+
+func TestBuildSlotWeights_SignedMetricGetsNoProfile(t *testing.T) {
+	rng := rand.New(rand.NewSource(2))
+	profit := makeSeries(60, func(i int) float64 { return rng.NormFloat64() * 50 })
+	if w := BuildMonthDayWeights(profit); w != nil {
+		t.Errorf("expected no month-day profile for a series with non-positive mean, got %v", w)
+	}
+	// Even a positive-mean series gets no profile once any value is
+	// negative: the metric is signed and the multipliers would be too.
+	mixed := makeSeries(60, func(i int) float64 {
+		if i%30 == 0 {
+			return -50
+		}
+		return 100
+	})
+	if w := BuildMonthDayWeights(mixed); w != nil {
+		t.Errorf("expected no profile for a series with negative values, got %v", w)
+	}
+}
+
+func TestSeasonalGateAllowsShortHistory(t *testing.T) {
+	// Too short to measure the weekly lag: no evidence against the profile,
+	// so supplied weights apply.
+	s := makeSeries(7, func(i int) float64 { return 100 })
+	if !seasonalGateAllows(s, 7*24*time.Hour) {
+		t.Error("gate rejected weights on a history too short to measure")
+	}
+}
+
+func TestAnchorOffset_CalendarMonths(t *testing.T) {
+	base := time.Date(2025, 11, 1, 0, 0, 0, 0, time.UTC)
+	s := Series{}
+	for i := 0; i < 4; i++ { // Nov, Dec, Jan, Feb
+		s = append(s, Point{T: base.AddDate(0, i, 0), V: 100})
+	}
+	// Feb 1 -> Mar 1 is 28 days: exactly one month step, not 0.
+	if got := anchorOffset(s, Config{Interval: IntervalMonth, Anchor: base.AddDate(0, 4, 0)}); got != 1 {
+		t.Errorf("month offset = %d, want 1", got)
+	}
+	if got := anchorOffset(s, Config{Interval: IntervalMonth, Anchor: base.AddDate(0, 5, 0)}); got != 2 {
+		t.Errorf("two-month offset = %d, want 2", got)
 	}
 }

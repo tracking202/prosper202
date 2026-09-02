@@ -7,7 +7,7 @@ package forecast
 //
 // It reports, per series and method, the rolling-backtest RMSE/MAE of Run()'s
 // point forecasts and the empirical coverage of the [LowerBound, UpperBound]
-// band (nominal 80% once conformal bounds land). Used to produce the
+// band (nominal 80% at ConfidenceLevel 0.80). Used to produce the
 // before/after numbers quoted in commit messages; skipped by default so CI
 // stays fast.
 
@@ -17,7 +17,6 @@ import (
 	"math"
 	"math/rand"
 	"testing"
-	"time"
 )
 
 var measureFlag = flag.Bool("measure", false, "run the accuracy measurement suite")
@@ -26,14 +25,7 @@ var measureFlag = flag.Bool("measure", false, "run the accuracy measurement suit
 // seasonal, noisy flat, level shift, short, skewed noise, multiplicative.
 // All generators are deterministic (fixed seeds).
 func suiteSeries() map[string]Series {
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	mk := func(n int, fn func(i int) float64) Series {
-		s := make(Series, n)
-		for i := 0; i < n; i++ {
-			s[i] = Point{T: base.AddDate(0, 0, i), V: fn(i)}
-		}
-		return s
-	}
+	mk := makeSeries
 
 	weekly := []float64{0.7, 1.1, 1.25, 1.2, 1.15, 1.0, 0.6} // Mon..Sun-ish shape
 

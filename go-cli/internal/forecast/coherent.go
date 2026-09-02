@@ -2,6 +2,7 @@ package forecast
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -64,6 +65,17 @@ func RunCoherent(series map[string]Series, cfg Config) (map[string]*Result, erro
 			return nil, fmt.Errorf("coherent forecast needs at least 3 data points for %s, got %d", key, len(series[key]))
 		}
 	}
+
+	// Work on sorted copies: the anchor below reads the last bucket, and
+	// callers (unlike Run's own sort) are not required to pre-sort.
+	sorted := make(map[string]Series, 4)
+	for _, key := range []string{MetricClicks, MetricLeads, MetricIncome, MetricCost} {
+		cp := make(Series, len(series[key]))
+		copy(cp, series[key])
+		sort.Slice(cp, func(i, j int) bool { return cp[i].T.Before(cp[j].T) })
+		sorted[key] = cp
+	}
+	series = sorted
 
 	clicks := series[MetricClicks]
 	// Anchor every forecast at the clicks series' last bucket so all metrics
@@ -224,7 +236,7 @@ func composeProduct(a, b *Result, metric string, observed Series, cfg Config) *R
 			Quantiles:  composeQuantiles(pa.Quantiles, pb.Quantiles, false),
 		}
 	}
-	return finishComposed(a, preds, metric, observed, cfg)
+	return finishComposed(a, b, preds, metric, observed, cfg)
 }
 
 // composeDifference subtracts forecast b from forecast a per timestep with
@@ -247,7 +259,7 @@ func composeDifference(a, b *Result, metric string, observedA, observedB Series,
 		}
 	}
 	observed := diffSeries(observedA, observedB)
-	return finishComposed(a, preds, metric, observed, cfg)
+	return finishComposed(a, b, preds, metric, observed, cfg)
 }
 
 // composeQuantiles pairs two complete quantile sets: for products, level
@@ -258,7 +270,7 @@ func composeQuantiles(qa, qb map[string]float64, difference bool) map[string]flo
 	if len(qa) == 0 || len(qb) == 0 {
 		return nil
 	}
-	mirror := map[string]string{"p10": "p90", "p25": "p75", "p50": "p50", "p75": "p25", "p90": "p10"}
+	mirror := map[string]string{"p05": "p95", "p10": "p90", "p25": "p75", "p50": "p50", "p75": "p25", "p90": "p10", "p95": "p05"}
 	out := make(map[string]float64, len(quantileLevels))
 	for _, lv := range quantileLevels {
 		va, okA := qa[lv.name]
@@ -280,29 +292,39 @@ func composeQuantiles(qa, qb map[string]float64, difference bool) map[string]flo
 	return out
 }
 
-// finishComposed assembles a derived Result: trend statistics come from the
-// composed path (mean step-to-step change) relative to the observed series'
-// mean, and rolling error metrics are left zero — they are only measured
-// for directly fitted series.
-func finishComposed(template *Result, preds []Prediction, metric string, observed Series, cfg Config) *Result {
-	trend := 0.0
-	if len(preds) > 1 {
-		trend = (preds[len(preds)-1].Value - preds[0].Value) / float64(len(preds)-1)
-	}
+// finishComposed assembles a derived Result from its two operands: trend
+// statistics come from the composed path (mean step-to-step change)
+// relative to the observed series' mean; rolling error metrics are left
+// zero — they are only measured for directly fitted series. A level shift
+// detected in either operand is reported (the composition inherits it),
+// and BoundsSource is "mixed" when the operands' bounds disagree, since the
+// composed band then has no single nominal level.
+func finishComposed(a, b *Result, preds []Prediction, metric string, observed Series, cfg Config) *Result {
+	trend := predictionTrend(preds, observed)
 	trendPct := 0.0
 	if mean := seriesMean(observed); mean != 0 {
 		trendPct = (trend / mean) * 100
 	}
+	shiftAt := a.LevelShiftAt
+	if shiftAt == "" {
+		shiftAt = b.LevelShiftAt
+	}
+	source := a.BoundsSource
+	if a.BoundsSource != b.BoundsSource {
+		source = BoundsMixed
+	}
 	return &Result{
-		Method:      template.Method,
-		Metric:      metric,
-		Horizon:     template.Horizon,
-		Interval:    template.Interval,
-		Predictions: preds,
-		Trend:       trend,
-		TrendPct:    trendPct,
-		DataPoints:  len(observed),
-		Composition: CompositionDerived,
+		Method:       a.Method,
+		Metric:       metric,
+		Horizon:      a.Horizon,
+		Interval:     a.Interval,
+		Predictions:  preds,
+		Trend:        trend,
+		TrendPct:     trendPct,
+		DataPoints:   len(observed),
+		Composition:  CompositionDerived,
+		LevelShiftAt: shiftAt,
+		BoundsSource: source,
 	}
 }
 
