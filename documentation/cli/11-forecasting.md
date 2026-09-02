@@ -229,6 +229,9 @@ p202 forecast --all-metrics --horizon 3 --json
       "total_cost": ["2026-07-25", "2026-07-26"], "total_income": ["2026-07-25", "2026-07-26"],
       "total_net": ["2026-07-25", "2026-07-26"]
     },
+    "data_points_used": {
+      "total_clicks": 58, "total_leads": 58, "total_cost": 58, "total_income": 58, "total_net": 58
+    },
     "weights": { "linear": 0.305, "sma": 0.37, "wma": 0.325 }, ...
   }
 }
@@ -413,42 +416,47 @@ any of this runs.
 
 ### Weekday profile (`--seasonal`, day or hour interval)
 
-Weights come from the `reports/weekpart` endpoint (each weekday's total over
-the mean), then two safeguards apply:
+The profile is learned from the fetched history itself (each weekday's mean
+over the overall mean; no separate report call), then three safeguards
+apply:
 
 1. **Shrinkage.** Each multiplier is pulled toward 1.0 by `n / (n + 4)`,
-   where `n` is that weekday's sample count in the fetched history. Two
-   Mondays showing 1.9× become 1.3×; thirteen Mondays keep 1.69×. Thin
-   histories cannot produce extreme weights.
+   where `n` is that weekday's sample count in the history it was estimated
+   from. Two Mondays showing 1.9× become 1.3×; thirteen Mondays keep 1.69×.
+   Thin histories cannot produce extreme weights.
 2. **Gating.** The profile is applied only if the history, after removing
    its trend, actually repeats week over week (lag-7 autocorrelation of at
    least 0.3). Weights built from a series with no weekly structure are
    ignored, and `seasonal_applied: false` says so. A history too short to
    measure the lag (under 8 points or 4 weekly pairs) applies the profile
    as supplied.
-3. **Calibration.** The profile is applied inside the model, in the
-   deployed fit and in every backtest fold, so `mae`/`rmse` and the bands
-   describe the seasonally adjusted forecast you receive, not the flat one
-   it was built from.
+3. **Calibration.** The profile is re-estimated, gate included, from each
+   backtest fold's own history and applied inside the model there, as it is
+   in the deployed fit. `mae`/`rmse` and the bands therefore describe the
+   seasonally adjusted forecast you receive, and no held-out day ever
+   contributes to the multiplier that scales it. Multiplicative profiles
+   need non-negative data, so signed metrics (net, ROI) get none.
 
 **Worked example.** The clicks series with `--seasonal --horizon 7`:
 
 ```json
 "data": [
-  { "date": "2026-07-31", "total_clicks": 497.93 },   // Friday
-  { "date": "2026-08-01", "total_clicks": 398.39 },   // Saturday
-  { "date": "2026-08-02", "total_clicks": 415.03 },   // Sunday
-  { "date": "2026-08-03", "total_clicks": 532.57 },   // Monday
-  { "date": "2026-08-04", "total_clicks": 567.12 }    // Tuesday
+  { "date": "2026-07-31", "total_clicks": 489.91 },   // Friday
+  { "date": "2026-08-01", "total_clicks": 398.54 },   // Saturday
+  { "date": "2026-08-02", "total_clicks": 413.23 },   // Sunday
+  { "date": "2026-08-03", "total_clicks": 532.59 },   // Monday
+  { "date": "2026-08-04", "total_clicks": 556.89 }    // Tuesday
 ],
-"meta": { "seasonal": true, "seasonal_applied": true, "seasonal_profiles": ["weekday"], "rmse": 38.36, ... }
+"meta": { "seasonal": true, "seasonal_applied": true, "seasonal_profiles": ["weekday"], "rmse": 56.09, ... }
 ```
 
 Compare with the unseasonal run's flat 498/day: the weekend now dips and the
 week's peak lands on Tuesday, matching the history, and the rolling error
-falls from 96.17 to 38.36: the flat ensemble was missing the weekly swing
+falls from 96.17 to 56.09: the flat ensemble was missing the weekly swing
 by ~96 clicks a day, and the adjusted forecaster, measured as such, is
-within ~38.
+within ~56. That figure is honest in a specific sense: each backtest fold
+estimated its own profile from the history before it, so no held-out day
+helped shape the multiplier that scaled it.
 
 ### Hourly profile (`--seasonal` with `--interval hour`)
 
@@ -547,8 +555,9 @@ too short for a rolling backtest (section 4). Use a longer `--history`.
 
 **`seasonal_applied` is false although I passed `--seasonal`.** The history
 does not repeat week over week after detrending, so the profile would only
-add error. If you are certain the pattern exists, check the weekpart data
-the profile was built from (`p202 report weekpart`) and the history length.
+add error. If you are certain the pattern exists, eyeball the weekday totals
+(`p202 report weekpart` for the same window) and check the history length;
+a signed metric (net, ROI) never gets a multiplicative profile.
 
 **`p50` is far from the point forecast.** The model has been systematically
 biased on this series recently. Usually a missing seasonal profile

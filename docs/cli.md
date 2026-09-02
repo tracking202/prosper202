@@ -571,7 +571,7 @@ p202 forecast --metric profit --seasonal --events
 | `--history` | last90 (last30 hourly) | Training window |
 | `--method` | auto | auto/ensemble, linear, sma, wma, holtwinters |
 | `--confidence` | 0.95 | Band selection: <0.65 → p25–p75 (50%), <0.85 → p10–p90 (80%), else p05–p95 (90%) |
-| `--seasonal` | off | Weekday profile (plus hour-of-day for hourly), applied only when the data repeats at that lag |
+| `--seasonal` | off | Weekday profile learned from the fetched history (plus hour-of-day for hourly), applied only when the data repeats at that lag |
 | `--seasonal-monthly` | off | Day-of-month profile (day interval, non-negative metrics) |
 | `--events`, `--event-tag` | off | Fold in stored forecast events (day interval) |
 | `--no-level-shift` | off | Do not fit only the newest regime after a detected level shift |

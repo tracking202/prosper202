@@ -144,8 +144,10 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 
 		testCfg := cfg
 		testCfg.Horizon = steps
-		testCfg.SeasonalWeights = nil
 		testCfg.Anchor = time.Time{}
+
+		// This fold's seasonal profile, from its own prefix.
+		profile, _ := profileFor(s, cfg, c)
 
 		// Map each held-out point to its horizon step by calendar distance.
 		// Rows are created lazily so methods share the same row set.
@@ -164,7 +166,7 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 			if err != nil || len(preds) == 0 {
 				continue
 			}
-			applyProfile(preds, cfg)
+			applyProfile(preds, profile, cfg.LogTransform)
 			for i := c; i < len(s); i++ {
 				h, ok := stepFor(s[i].T)
 				if !ok || h > len(preds) {

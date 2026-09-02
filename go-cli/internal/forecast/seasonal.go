@@ -114,33 +114,89 @@ func shrinkMultiplier(raw float64, n int) float64 {
 	return 1 + (raw-1)*factor
 }
 
-// WeekdayCounts counts how many observations fall on each weekday.
-func WeekdayCounts(s Series) map[time.Weekday]int {
-	counts := map[time.Weekday]int{}
-	for _, p := range s {
-		counts[p.T.Weekday()]++
+// buildWeekdayWeights derives weekday multipliers from a series: each
+// weekday's mean over the overall mean, shrunk toward 1.0 by sample count
+// (see buildSlotWeights). Being a function of the training data alone, it
+// is re-estimated inside every backtest fold (see profileFor), which the
+// report-derived BuildWeekdayWeights cannot be.
+func buildWeekdayWeights(s Series) SeasonalWeights {
+	slots := buildSlotWeights(s, func(t time.Time) int { return int(t.Weekday()) })
+	if slots == nil {
+		return nil
 	}
-	return counts
-}
-
-// ShrinkWeekdayWeights returns a copy of weights with each multiplier
-// shrunk toward 1.0 by n/(n+k), where n is that weekday's sample count.
-// Weekdays with no observations (absent from counts, or counted zero) are
-// dropped: the history offers no evidence for them, and a fully shrunk 1.0
-// multiplier would be a no-op carried around as if it were a profile.
-func ShrinkWeekdayWeights(weights SeasonalWeights, counts map[time.Weekday]int) SeasonalWeights {
-	if len(weights) == 0 {
-		return weights
-	}
-	out := make(SeasonalWeights, len(weights))
-	for dow, w := range weights {
-		n := counts[dow]
-		if n <= 0 {
-			continue
-		}
-		out[dow] = shrinkMultiplier(w, n)
+	out := make(SeasonalWeights, len(slots))
+	for k, w := range slots {
+		out[time.Weekday(k)] = w
 	}
 	return out
+}
+
+// profileFor builds the seasonal multiplier the forecaster applies when it
+// is fitted on the first c points of s (the deployed fit passes len(s)),
+// from that prefix alone, and names the profiles that apply. Every
+// data-derived profile and every gate is re-estimated per prefix, so a
+// backtest fold never scales a held-out point by a multiplier that already
+// contains it, and bands and errors describe the profiled forecaster
+// honestly. Explicit SeasonalWeights are applied as supplied (after the
+// weekly gate). Values fitted under log1p are inverted first: profiles are
+// multiplicative on the reporting scale. Returns nil when nothing applies.
+func profileFor(s Series, cfg Config, c int) (func(time.Time) float64, []string) {
+	prefix := s[:c]
+	if cfg.LogTransform {
+		prefix = expm1Series(prefix)
+	}
+	var names []string
+	var scalers []func(time.Time) float64
+
+	weekday := cfg.SeasonalWeights
+	if len(weekday) == 0 && cfg.WeekdayProfile {
+		weekday = buildWeekdayWeights(prefix)
+	}
+	if len(weekday) > 0 && seasonalGateAllows(prefix, 7*24*time.Hour) {
+		w := weekday
+		scalers = append(scalers, func(t time.Time) float64 { return weekdayWeight(w, t.Weekday()) })
+		names = append(names, "weekday")
+	}
+	if cfg.HourlyProfile && cfg.Interval == IntervalHour && seasonalGateAllows(prefix, 24*time.Hour) {
+		if hourly := BuildHourlyWeights(prefix); len(hourly) > 0 {
+			scalers = append(scalers, func(t time.Time) float64 { return slotWeight(hourly, t.Hour()) })
+			names = append(names, "hourly")
+		}
+	}
+	if cfg.MonthDayProfile {
+		if monthDay := BuildMonthDayWeights(prefix); len(monthDay) > 0 {
+			scalers = append(scalers, func(t time.Time) float64 { return slotWeight(monthDay, t.Day()) })
+			names = append(names, "monthday")
+		}
+	}
+	if len(scalers) == 0 {
+		return nil, nil
+	}
+	return func(t time.Time) float64 {
+		f := 1.0
+		for _, scale := range scalers {
+			f *= scale(t)
+		}
+		return f
+	}, names
+}
+
+// weekdayWeight returns the multiplier a weekday profile defines for d, or
+// 1 when the day is absent.
+func weekdayWeight(weights SeasonalWeights, d time.Weekday) float64 {
+	if w, ok := weights[d]; ok {
+		return w
+	}
+	return 1
+}
+
+// slotWeight returns the multiplier an integer-slot profile defines for
+// slot, or 1 when the slot is absent.
+func slotWeight(weights map[int]float64, slot int) float64 {
+	if w, ok := weights[slot]; ok {
+		return w
+	}
+	return 1
 }
 
 // BuildHourlyWeights derives hour-of-day multipliers from an hourly series:

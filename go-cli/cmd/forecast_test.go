@@ -256,7 +256,7 @@ func TestForecastPassesFilters(t *testing.T) {
 	}
 }
 
-func TestForecastWithSeasonalFetchesWeekpart(t *testing.T) {
+func TestForecastSeasonalLearnsFromFetchedHistory(t *testing.T) {
 	requestPaths := []string{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -280,22 +280,21 @@ func TestForecastWithSeasonalFetchesWeekpart(t *testing.T) {
 		t.Fatalf("forecast error: %v", err)
 	}
 
-	// Should have called both timeseries and weekpart.
+	// The weekday profile is learned from the fetched history (per
+	// backtest fold), so only the timeseries report is requested: a
+	// weekpart profile computed over the whole window would leak held-out
+	// days into their own multiplier.
 	foundTimeseries := false
-	foundWeekpart := false
 	for _, p := range requestPaths {
 		if strings.HasSuffix(p, "/reports/timeseries") {
 			foundTimeseries = true
 		}
 		if strings.HasSuffix(p, "/reports/weekpart") {
-			foundWeekpart = true
+			t.Error("--seasonal must not fetch reports/weekpart; the profile comes from the history itself")
 		}
 	}
 	if !foundTimeseries {
 		t.Error("expected call to reports/timeseries")
-	}
-	if !foundWeekpart {
-		t.Error("expected call to reports/weekpart when --seasonal is set")
 	}
 
 	// Meta should reflect seasonal=true.
@@ -1424,6 +1423,15 @@ func TestForecastAllMetricsReportsBoundsSourcePerMetric(t *testing.T) {
 	labels, ok := meta["bounds"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected per-metric bounds map in meta, got %v", meta["bounds"])
+	}
+	counts, ok := meta["data_points_used"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected per-metric data_points_used map in meta, got %v", meta["data_points_used"])
+	}
+	for _, m := range forecastCoreMetrics {
+		if n, _ := counts[m].(float64); n <= 0 {
+			t.Errorf("data_points_used[%s] = %v, want a positive count", m, counts[m])
+		}
 	}
 	for _, m := range forecastCoreMetrics {
 		// Derived metrics are backtested as compositions, so with 40 points

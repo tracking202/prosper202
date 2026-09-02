@@ -151,11 +151,17 @@ type SeasonalWeights map[time.Weekday]float64
 
 // Config controls a forecast run.
 type Config struct {
-	Method          Method
-	Horizon         int
-	Interval        Interval
-	Metric          string
-	SMAWindow       int
+	Method    Method
+	Horizon   int
+	Interval  Interval
+	Metric    string
+	SMAWindow int
+	// SeasonalWeights supplies explicit day-of-week multipliers, applied as
+	// given (after the weekly gate) to the deployed fit and to every
+	// backtest fold alike. Supply weights estimated independently of the
+	// fitted history (a prior period, a business calendar): weights derived
+	// from the history itself would leak held-out values into the folds
+	// that score them — set WeekdayProfile for that instead.
 	SeasonalWeights SeasonalWeights
 	ConfidenceLevel float64 // 0.0-1.0, default 0.95
 
@@ -164,15 +170,20 @@ type Config struct {
 	// at zero.
 	NonNegative bool
 
-	// HourlyWeights maps hour-of-day (0-23) to a multiplier, for hourly
-	// forecasts. Like SeasonalWeights it is gated on detrended
-	// autocorrelation at the daily lag before being applied.
-	HourlyWeights map[int]float64
-
-	// MonthDayWeights maps day-of-month (1-31) to a multiplier — affiliate
-	// budgets and payouts often reset monthly. Applied without a gate: the
-	// profile is an explicit opt-in.
-	MonthDayWeights map[int]float64
+	// WeekdayProfile, HourlyProfile, and MonthDayProfile derive the
+	// corresponding multiplier profile from the training data itself,
+	// re-estimated (with shrinkage) from each training prefix — the
+	// deployed fit and every backtest fold — so bands and errors describe
+	// the profiled forecaster without leaking held-out points into their
+	// own multiplier. The weekday and hourly profiles are gated on
+	// detrended autocorrelation at their lag (measured on the same prefix);
+	// the day-of-month profile is an explicit opt-in with no gate.
+	// HourlyProfile applies to the hour interval only. Multiplicative
+	// profiles need non-negative data: a prefix with negative values gets
+	// none. WeekdayProfile is ignored when SeasonalWeights are supplied.
+	WeekdayProfile  bool
+	HourlyProfile   bool
+	MonthDayProfile bool
 
 	// LogTransform fits count-like non-negative series on log1p scale and
 	// inverts on output, making multiplicative behavior additive and
@@ -203,13 +214,6 @@ type Config struct {
 	// masked (e.g. event days removed) so predictions still start after
 	// the last real observation rather than inside masked history.
 	Anchor time.Time
-
-	// profile returns the seasonal multiplier for a prediction timestamp
-	// (weekday × hourly × day-of-month, over the profiles Run decided to
-	// apply). Set by Run, never by callers. It is applied to the deployed
-	// fit and inside every backtest fold before bounds are attached, so
-	// bands and errors describe the seasonally adjusted forecaster.
-	profile func(t time.Time) float64
 }
 
 // anchorTime returns the reference point predictions step forward from.
@@ -275,7 +279,6 @@ func withDefaults(cfg Config) Config {
 	if cfg.ConfidenceLevel <= 0 || cfg.ConfidenceLevel >= 1 {
 		cfg.ConfidenceLevel = 0.95
 	}
-	cfg.profile = nil
 	return cfg
 }
 
@@ -330,11 +333,6 @@ func Run(series Series, cfg Config) (*Result, error) {
 		}
 	}
 
-	// Seasonal gates measure the full (pre-truncation) history: a shift
-	// that leaves only a short recent window must not erase evidence of a
-	// weekly pattern the longer history carries.
-	gateSeries := work
-
 	// Level-shift handling: fit on the current regime, not a blend of
 	// regimes. Post-shift history is used alone when long enough; otherwise
 	// trainingView re-levels older observations to the new regime. Both the
@@ -356,40 +354,15 @@ func Run(series Series, cfg Config) (*Result, error) {
 		cfg.SMAWindow = defaultSMAWindow(len(work))
 	}
 
-	// Decide the seasonal profiles now, before fitting, so they scale the
-	// deployed fit and every backtest fold alike and the bands calibrate
-	// the forecaster that is actually emitted. Weekday and hourly weights
-	// are gated on detrended autocorrelation at their lag so spurious
-	// profiles (built from noise) don't degrade the forecast; when the
-	// history is too short to measure that lag there is no evidence against
-	// the profile and it applies as supplied. Day-of-month weights are an
-	// explicit opt-in and apply as supplied.
-	var profiles []string
-	var scalers []func(time.Time) float64
-	if len(cfg.SeasonalWeights) > 0 && seasonalGateAllows(gateSeries, 7*24*time.Hour) {
-		weekday := cfg.SeasonalWeights
-		scalers = append(scalers, func(t time.Time) float64 { return weekdayWeight(weekday, t.Weekday()) })
-		profiles = append(profiles, "weekday")
-	}
-	if len(cfg.HourlyWeights) > 0 && cfg.Interval == IntervalHour && seasonalGateAllows(gateSeries, 24*time.Hour) {
-		hourly := cfg.HourlyWeights
-		scalers = append(scalers, func(t time.Time) float64 { return slotWeight(hourly, t.Hour()) })
-		profiles = append(profiles, "hourly")
-	}
-	if len(cfg.MonthDayWeights) > 0 {
-		monthDay := cfg.MonthDayWeights
-		scalers = append(scalers, func(t time.Time) float64 { return slotWeight(monthDay, t.Day()) })
-		profiles = append(profiles, "monthday")
-	}
-	if len(scalers) > 0 {
-		cfg.profile = func(t time.Time) float64 {
-			f := 1.0
-			for _, scale := range scalers {
-				f *= scale(t)
-			}
-			return f
-		}
-	}
+	// Seasonal profiles are estimated from the training data by every fit
+	// (profileFor): the deployed fit here and each backtest fold on its own
+	// prefix, so the bands calibrate the profiled forecaster that is
+	// actually emitted. Weekday and hourly profiles are gated on detrended
+	// autocorrelation at their lag so spurious profiles (built from noise)
+	// don't degrade the forecast; when the history is too short to measure
+	// that lag there is no evidence against the profile and it applies.
+	// The names reported in meta are the deployed fit's.
+	_, profiles := profileFor(work, cfg, len(work))
 
 	var core forecastCore
 	var err error
@@ -539,7 +512,8 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 	if err != nil {
 		return forecastCore{}, err
 	}
-	applyProfile(predictions, cfg)
+	profile, _ := profileFor(series, cfg, len(series))
+	applyProfile(predictions, profile, cfg.LogTransform)
 
 	if eval == nil {
 		eval = runRollingBacktest(series, cfg, []Method{method})
@@ -594,6 +568,7 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 
 	// Fit each member on the full series. A member that fails to fit here
 	// (despite backtesting) is dropped and weights renormalize.
+	profile, _ := profileFor(series, cfg, len(series))
 	memberPreds := map[Method][]Prediction{}
 	memberTrend := map[Method]float64{}
 	members := make([]Method, 0, len(weights))
@@ -606,7 +581,7 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 			delete(weights, m)
 			continue
 		}
-		applyProfile(preds, cfg)
+		applyProfile(preds, profile, cfg.LogTransform)
 		memberPreds[m] = preds
 		memberTrend[m] = tr
 		members = append(members, m)
@@ -805,14 +780,14 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 	// reaches the farthest held-out point.
 	testCfg := cfg
 	testCfg.Horizon = calendarSteps(trainEnd, test[len(test)-1].T, cfg.Interval)
-	testCfg.SeasonalWeights = nil
 	testCfg.Anchor = time.Time{}
 
 	preds, _, err := methodForecast(method, train, testCfg)
 	if err != nil || len(preds) == 0 {
 		return seriesStdDev(s), 0, 0
 	}
-	applyProfile(preds, cfg)
+	profile, _ := profileFor(s, cfg, c)
+	applyProfile(preds, profile, cfg.LogTransform)
 
 	n := 0
 	sumSqModel, sumAbs, sumSq := 0.0, 0.0, 0.0
@@ -991,41 +966,24 @@ func normalizeQuantileOrder(qs map[string]float64) {
 	}
 }
 
-// weekdayWeight returns the multiplier a weekday profile defines for d, or
-// 1 when the day is absent.
-func weekdayWeight(weights SeasonalWeights, d time.Weekday) float64 {
-	if w, ok := weights[d]; ok {
-		return w
-	}
-	return 1
-}
-
-// slotWeight returns the multiplier an integer-slot profile defines for
-// slot, or 1 when the slot is absent.
-func slotWeight(weights map[int]float64, slot int) float64 {
-	if w, ok := weights[slot]; ok {
-		return w
-	}
-	return 1
-}
-
-// applyProfile scales point predictions by the seasonal profile for their
-// timestamps. A profile is multiplicative on the reporting scale, so under
-// the log1p transform it is applied through the transform (a model-scale
-// value whose reporting value is not positive is left alone: scaling it is
-// meaningless and the output clip zeroes it anyway). Bounds and quantiles
-// are attached afterwards, so they calibrate the adjusted forecaster; the
-// same call runs inside every backtest fold.
-func applyProfile(preds []Prediction, cfg Config) {
-	if cfg.profile == nil {
+// applyProfile scales point predictions by a seasonal profile (nil for
+// none) for their timestamps. A profile is multiplicative on the reporting
+// scale, so under the log1p transform it is applied through the transform
+// (a model-scale value whose reporting value is not positive is left alone:
+// scaling it is meaningless and the output clip zeroes it anyway). Bounds
+// and quantiles are attached afterwards, so they calibrate the adjusted
+// forecaster; the same call runs inside every backtest fold with that
+// fold's own profile.
+func applyProfile(preds []Prediction, profile func(time.Time) float64, logScale bool) {
+	if profile == nil {
 		return
 	}
 	for i := range preds {
-		w := cfg.profile(preds[i].T)
+		w := profile(preds[i].T)
 		if w == 1 {
 			continue
 		}
-		if !cfg.LogTransform {
+		if !logScale {
 			preds[i].Value *= w
 			continue
 		}
@@ -1033,4 +991,13 @@ func applyProfile(preds []Prediction, cfg Config) {
 			preds[i].Value = math.Log1p(v * w)
 		}
 	}
+}
+
+// expm1Series maps a log1p-scale series back to the reporting scale.
+func expm1Series(s Series) Series {
+	out := make(Series, len(s))
+	for i, p := range s {
+		out[i] = Point{T: p.T, V: math.Expm1(p.V)}
+	}
+	return out
 }

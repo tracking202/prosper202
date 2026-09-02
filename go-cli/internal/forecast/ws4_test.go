@@ -26,44 +26,66 @@ func TestShrinkMultiplier(t *testing.T) {
 	}
 }
 
-func TestShrinkWeekdayWeights(t *testing.T) {
-	weights := SeasonalWeights{time.Monday: 1.9, time.Friday: 0.5, time.Sunday: 0.2, time.Saturday: 1.4}
-	counts := map[time.Weekday]int{time.Monday: 2, time.Friday: 12, time.Saturday: 0}
-	shrunk := ShrinkWeekdayWeights(weights, counts)
-	if math.Abs(shrunk[time.Monday]-1.3) > 0.001 {
-		t.Errorf("Monday shrunk to %.3f, want 1.3 (2 samples)", shrunk[time.Monday])
-	}
-	if math.Abs(shrunk[time.Friday]-0.625) > 0.001 {
-		t.Errorf("Friday shrunk to %.3f, want 0.625 (12 samples)", shrunk[time.Friday])
-	}
-	// Unobserved weekdays (missing from counts, or counted zero) are dropped
-	// rather than carried as a meaningless 1.0.
-	for _, dow := range []time.Weekday{time.Sunday, time.Saturday} {
-		if _, ok := shrunk[dow]; ok {
-			t.Errorf("%s has no observations but kept weight %.3f", dow, shrunk[dow])
+func TestBuildWeekdayWeightsFromSeries(t *testing.T) {
+	// Four weeks with Mondays at 2x: the Monday multiplier is the raw 1.75x
+	// (2 / mean 1.143) shrunk by 4/(4+4); every other day sits below 1.
+	base := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) // a Monday
+	s := make(Series, 28)
+	for i := range s {
+		v := 100.0
+		if i%7 == 0 {
+			v = 200
 		}
+		s[i] = Point{T: base.AddDate(0, 0, i), V: v}
 	}
-	if len(shrunk) != 2 {
-		t.Errorf("shrunk has %d entries, want 2", len(shrunk))
+	weights := buildWeekdayWeights(s)
+	if len(weights) != 7 {
+		t.Fatalf("got %d weekdays, want 7", len(weights))
 	}
-	// Input untouched.
-	if weights[time.Monday] != 1.9 {
-		t.Error("ShrinkWeekdayWeights modified its input")
+	mean := (200 + 6*100) / 7.0
+	wantMonday := 1 + (200/mean-1)*4/(4+4)
+	if math.Abs(weights[time.Monday]-wantMonday) > 1e-9 {
+		t.Errorf("Monday = %.4f, want %.4f (shrunk by 4 samples)", weights[time.Monday], wantMonday)
+	}
+	if weights[time.Tuesday] >= 1 {
+		t.Errorf("Tuesday = %.4f, want below 1", weights[time.Tuesday])
+	}
+	if buildWeekdayWeights(makeSeries(20, func(i int) float64 { return -1 })) != nil {
+		t.Error("a series with negative values must get no multiplicative profile")
 	}
 }
 
-func TestWeekdayCounts(t *testing.T) {
-	s := makeSeries(15, func(i int) float64 { return 1 }) // 2026-01-01 is a Thursday
-	counts := WeekdayCounts(s)
-	total := 0
-	for _, n := range counts {
-		total += n
+func TestProfileFor_EstimatesFromPrefixOnly(t *testing.T) {
+	// A weekly series (Mondays at 2x) whose final Monday spikes to 5x:
+	// the profile for the prefix that excludes that point must not know
+	// about it, so the fold holding that Monday out scales it by the
+	// multiplier four ordinary Mondays support (1.75 raw, 1.375 shrunk),
+	// while the full-history profile reflects the spike.
+	base := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) // a Monday
+	s := make(Series, 29)
+	for i := range s {
+		v := 100.0
+		if i%7 == 0 {
+			v = 200
+		}
+		s[i] = Point{T: base.AddDate(0, 0, i), V: v}
 	}
-	if total != 15 {
-		t.Errorf("counts sum to %d, want 15", total)
+	s[28].V = 500 // Monday of week 5
+	cfg := Config{Interval: IntervalDay, WeekdayProfile: true}
+
+	full, names := profileFor(s, cfg, len(s))
+	if full == nil || len(names) != 1 || names[0] != "weekday" {
+		t.Fatalf("full-history profile nil=%v names=%v, want a weekday profile", full == nil, names)
 	}
-	if counts[time.Thursday] != 3 { // Jan 1, 8, 15
-		t.Errorf("Thursday count = %d, want 3", counts[time.Thursday])
+	if full(s[28].T) <= 1.5 {
+		t.Errorf("full-history Monday multiplier %.3f should reflect the spike", full(s[28].T))
+	}
+	prefix, _ := profileFor(s, cfg, 28)
+	if prefix == nil {
+		t.Fatal("prefix profile missing: four weeks of a weekly pattern should pass the gate")
+	}
+	if got := prefix(s[28].T); math.Abs(got-1.375) > 1e-9 {
+		t.Errorf("prefix profile scales the held-out Monday by %.3f, want 1.375; the spike leaked into its own multiplier", got)
 	}
 }
 
@@ -297,13 +319,11 @@ func TestRun_HourlyWeightsAppliedWithDailyPattern(t *testing.T) {
 		ts := base.Add(time.Duration(i) * time.Hour)
 		s = append(s, Point{T: ts, V: 100 * pattern(ts.Hour())})
 	}
-	weights := BuildHourlyWeights(s)
-
 	result, err := Run(s, Config{
 		Method:        MethodSMA,
 		Horizon:       24,
 		Interval:      IntervalHour,
-		HourlyWeights: weights,
+		HourlyProfile: true,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -335,14 +355,12 @@ func TestRun_MonthDayWeightsApplied(t *testing.T) {
 		}
 		s[i] = Point{T: ts, V: v}
 	}
-	weights := BuildMonthDayWeights(s)
-
 	// Horizon long enough to cross the next month boundary (from Mar 31).
 	result, err := Run(s, Config{
 		Method:          MethodSMA,
 		Horizon:         5,
 		Interval:        IntervalDay,
-		MonthDayWeights: weights,
+		MonthDayProfile: true,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

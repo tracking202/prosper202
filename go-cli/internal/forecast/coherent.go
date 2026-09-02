@@ -190,8 +190,9 @@ func runCoherentPart(s Series, cfg Config, metric string, anchor time.Time) (*Re
 	partCfg.Metric = metric
 	partCfg.NonNegative = true
 	partCfg.SeasonalWeights = nil
-	partCfg.HourlyWeights = nil
-	partCfg.MonthDayWeights = nil
+	partCfg.WeekdayProfile = false
+	partCfg.HourlyProfile = false
+	partCfg.MonthDayProfile = false
 	// Counts get the log1p treatment (multiplicative growth becomes
 	// additive); rates and per-unit amounts stay on their natural scale.
 	partCfg.LogTransform = metric == MetricClicks || metric == MetricLeads

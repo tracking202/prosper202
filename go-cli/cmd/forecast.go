@@ -82,9 +82,10 @@ and weighted moving averages, damped-trend Holt-Winters exponential smoothing,
 and an ensemble (the default, alias "auto") that combines the methods weighted
 by rolling-backtest accuracy and reports each member's share.
 
-With --seasonal, predictions are modulated by day-of-week weights derived from
-weekpart report data to account for weekly patterns (e.g., "Tuesdays always
-convert better"). Seasonal adjustment requires --interval day or hour.
+With --seasonal, predictions are modulated by a day-of-week profile learned
+from the fetched history itself (re-estimated inside every backtest fold, so
+the bands describe the profiled forecast) to account for weekly patterns
+(e.g., "Tuesdays always convert better"). Requires --interval day or hour.
 
 Event-aware forecasting (--events, --event-tag) uses stored calendar events and
 requires --interval day.
@@ -351,28 +352,20 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Optionally fetch weekpart data for seasonal adjustment. Weekday
-	// multipliers are shrunk toward 1.0 by each weekday's sample count in
-	// the fetched series, so a thin history can't produce extreme weights;
-	// hourly forecasts additionally get an hour-of-day profile built from
-	// the series itself. The forecast engine gates both profiles on
-	// detrended autocorrelation before applying them.
+	// Seasonal profiles are learned from the fetched history inside the
+	// engine, re-estimated from each backtest fold's own prefix (with
+	// shrinkage by sample count and an autocorrelation gate), so the bands
+	// and errors describe the profiled forecast without a held-out day
+	// ever contributing to its own multiplier. Hourly forecasts get an
+	// hour-of-day profile in addition to the weekday one.
 	if seasonal {
-		weekpartParams := collectForecastFilters(cmd)
-		weekpartParams["period"] = history
-		wpData, wpErr := c.Get("reports/weekpart", weekpartParams)
-		if wpErr == nil {
-			weights := parseWeekpartWeights(wpData, metric)
-			if weights != nil {
-				cfg.SeasonalWeights = forecast.ShrinkWeekdayWeights(weights, forecast.WeekdayCounts(series))
-			}
-		}
+		cfg.WeekdayProfile = true
 		if interval == "hour" && !forecastSignedMetrics[metric] {
-			cfg.HourlyWeights = forecast.BuildHourlyWeights(series)
+			cfg.HourlyProfile = true
 		}
 	}
 	if seasonalMonthly {
-		cfg.MonthDayWeights = forecast.BuildMonthDayWeights(series)
+		cfg.MonthDayProfile = true
 	}
 
 	// ── Event-aware forecasting pipeline ──────────────────────────────
@@ -704,6 +697,7 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, co
 	}
 
 	compositions := map[string]interface{}{}
+	dataPoints := map[string]interface{}{}
 	boundsSources := map[string]interface{}{}
 	boundsLabels := map[string]interface{}{}
 	levelShifts := map[string]interface{}{}
@@ -716,6 +710,9 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, co
 		if res.Composition != "" {
 			compositions[m] = res.Composition
 		}
+		// Per metric: a derived metric reports the fewest points any of
+		// its drivers was fitted on, which can be below the clicks count.
+		dataPoints[m] = res.DataPoints
 		if res.BoundsSource != "" {
 			boundsSources[m] = res.BoundsSource
 		}
@@ -734,7 +731,7 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, co
 		"method":           string(clicks.Method),
 		"horizon":          clicks.Horizon,
 		"interval":         string(clicks.Interval),
-		"data_points_used": clicks.DataPoints,
+		"data_points_used": dataPoints,
 		"composition":      compositions,
 	}
 	if len(boundsSources) > 0 {
@@ -761,28 +758,6 @@ func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, co
 		return nil, fmt.Errorf("marshalling forecast output: %w", err)
 	}
 	return payload, nil
-}
-
-// parseWeekpartWeights extracts seasonal weights from the weekpart API response.
-func parseWeekpartWeights(data []byte, metric string) forecast.SeasonalWeights {
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil
-	}
-
-	rawItems, ok := parsed["data"].([]interface{})
-	if !ok {
-		return nil
-	}
-
-	rows := make([]map[string]interface{}, 0, len(rawItems))
-	for _, raw := range rawItems {
-		if obj, ok := raw.(map[string]interface{}); ok {
-			rows = append(rows, obj)
-		}
-	}
-
-	return forecast.BuildWeekdayWeights(rows, metric)
 }
 
 // forecastOutputOpts carries the run context buildForecastOutput reports in
@@ -1163,7 +1138,7 @@ func init() {
 	forecastCmd.Flags().String("days", "", "Alias of --history")
 	forecastCmd.Flags().Int("window", 0, "SMA/WMA window size (0 = auto-select)")
 	forecastCmd.Flags().Bool("all-metrics", false, "Forecast clicks, leads, income, cost, and net together via ratio decomposition (coherent output)")
-	forecastCmd.Flags().Bool("seasonal", false, "Apply day-of-week seasonal adjustment from weekpart data (hour interval also gets an hour-of-day profile)")
+	forecastCmd.Flags().Bool("seasonal", false, "Apply a day-of-week profile learned from the fetched history (hour interval also gets an hour-of-day profile)")
 	forecastCmd.Flags().Bool("seasonal-monthly", false, "Apply day-of-month seasonal adjustment learned from the fetched series (requires --interval day)")
 	forecastCmd.Flags().Float64("confidence", 0.95, "Confidence level for prediction bounds; snaps to the nearest band: 0.50 (p25-p75), 0.80 (p10-p90), or 0.90 (p05-p95, also used for 0.95/0.99)")
 	forecastCmd.Flags().Bool("no-level-shift", false, "Disable level-shift detection (fit the full history as-is)")
