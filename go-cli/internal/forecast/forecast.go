@@ -34,7 +34,11 @@ const (
 	MethodSMA         Method = "sma"
 	MethodWMA         Method = "wma"
 	MethodHoltWinters Method = "holtwinters"
-	MethodAuto        Method = "auto"
+	// MethodEnsemble combines all applicable methods as a weighted average,
+	// weighted by inverse squared recency-discounted rolling-backtest RMSE
+	// (see ensembleWeights). MethodAuto is an alias for it.
+	MethodEnsemble Method = "ensemble"
+	MethodAuto     Method = "auto"
 )
 
 // Interval defines the time granularity of forecasted points.
@@ -57,11 +61,20 @@ type Point struct {
 type Series []Point
 
 // Prediction is a single forecasted value with confidence bounds.
+//
+// Bounds come from rolling-origin conformal prediction: empirical quantiles
+// of held-out residuals bucketed by horizon step. LowerBound/UpperBound carry
+// the quantile pair nearest the configured confidence level (P05/P95 for the
+// 0.95 default — a 90% interval, see boundPair) and are asymmetric by
+// nature. Quantiles holds the full set ("p05" … "p95"); it is empty when the
+// series is too short for a rolling backtest, in which case bounds fall back
+// to symmetric Gaussian estimates.
 type Prediction struct {
-	T          time.Time `json:"time"`
-	Value      float64   `json:"value"`
-	LowerBound float64   `json:"lower_bound"`
-	UpperBound float64   `json:"upper_bound"`
+	T          time.Time          `json:"time"`
+	Value      float64            `json:"value"`
+	LowerBound float64            `json:"lower_bound"`
+	UpperBound float64            `json:"upper_bound"`
+	Quantiles  map[string]float64 `json:"quantiles,omitempty"`
 }
 
 // Result holds the complete output of a forecast run.
@@ -76,6 +89,76 @@ type Result struct {
 	MAE         float64      `json:"mae"`
 	RMSE        float64      `json:"rmse"`
 	DataPoints  int          `json:"data_points_used"`
+	// Weights reports each member method's share of an ensemble forecast
+	// (summing to 1); empty for single-method runs.
+	Weights map[string]float64 `json:"weights,omitempty"`
+	// Composition reports how a RunCoherent result was produced: "derived"
+	// (composed from driver forecasts) or "direct" (the metric's own series
+	// forecast directly). Empty for plain Run results.
+	Composition string `json:"composition,omitempty"`
+	// LevelShiftAt is the timestamp of the first observation after a
+	// detected level shift (offer paused, traffic source added). When set,
+	// pre-shift history was truncated or re-leveled before fitting.
+	LevelShiftAt string `json:"level_shift_at,omitempty"`
+	// AnomaliesMasked lists the timestamps of transient outliers (short
+	// runs abnormal for this series at that point of its cycle) that were
+	// excluded from fitting. The alerting layer should still compare the
+	// observed values on those dates against the bands.
+	AnomaliesMasked []string `json:"anomalies_masked,omitempty"`
+	// SeasonalApplied reports whether any supplied seasonal profile
+	// actually adjusted the predictions: weekday and hourly weights are
+	// gated on detrended autocorrelation at the seasonal lag, so weights
+	// built from a series with no real weekly/daily structure are ignored.
+	// SeasonalProfiles names the profiles that applied ("weekday",
+	// "hourly", "monthday").
+	SeasonalApplied  bool     `json:"seasonal_applied,omitempty"`
+	SeasonalProfiles []string `json:"seasonal_profiles,omitempty"`
+	// BoundsSource reports how bounds were produced: "conformal" (rolling
+	// residual quantiles — for RunCoherent derived metrics, residuals of the
+	// composed forecast itself), "gaussian" (short-series symmetric
+	// fallback), or "composed" (a derived metric whose operands had too few
+	// paired rolling predictions to recalibrate: its band pairs the
+	// operands' band endpoints at worst-case dependence, which is valid but
+	// carries no single nominal coverage).
+	BoundsSource string `json:"bounds_source,omitempty"`
+
+	// rolling holds the deployed forecaster's rolling-backtest predictions
+	// on the reporting scale (transform inverted, zero-clipped like the
+	// output, with the fold's own seasonal profile), keyed by the training
+	// window they were made from and the point they targeted. RunCoherent
+	// composes operands' entries to backtest derived metrics (see
+	// finishComposed).
+	rolling map[rollingKey]float64
+	// trainEnd is the timestamp of the last point the forecaster was
+	// fitted on (after masking and truncation); for a composed result, the
+	// earlier of its operands'. Predictions anchored later than this are
+	// that many steps further out, which the band offset accounts for.
+	trainEnd time.Time
+	// evaluated reports whether any held-out points scored the forecaster
+	// (rolling backtest or single holdout), so a zero MAE/RMSE can be told
+	// apart from "never measured".
+	evaluated bool
+}
+
+// Backtested reports whether MAE and RMSE were measured on held-out
+// points; when false they are unset, not zero error.
+func (r *Result) Backtested() bool {
+	return r.evaluated
+}
+
+// Bounds sources reported in Result.BoundsSource.
+const (
+	BoundsConformal = "conformal"
+	BoundsGaussian  = "gaussian"
+	BoundsComposed  = "composed"
+)
+
+// rollingKey identifies one rolling-backtest prediction by the last training
+// timestamp and the target timestamp. Timestamps are compared as map keys,
+// so operands must share the calendar the report buckets were parsed in
+// (they do: RunCoherent derives every series from the same buckets).
+type rollingKey struct {
+	trainEnd, target time.Time
 }
 
 // SeasonalWeights maps day-of-week (time.Weekday) to a multiplier.
@@ -84,19 +167,76 @@ type SeasonalWeights map[time.Weekday]float64
 
 // Config controls a forecast run.
 type Config struct {
-	Method          Method
-	Horizon         int
-	Interval        Interval
-	Metric          string
-	SMAWindow       int
+	Method    Method
+	Horizon   int
+	Interval  Interval
+	Metric    string
+	SMAWindow int
+	// SeasonalWeights supplies explicit day-of-week multipliers, applied as
+	// given (after the weekly gate) to the deployed fit and to every
+	// backtest fold alike. Supply weights estimated independently of the
+	// fitted history (a prior period, a business calendar): weights derived
+	// from the history itself would leak held-out values into the folds
+	// that score them — set WeekdayProfile for that instead.
 	SeasonalWeights SeasonalWeights
 	ConfidenceLevel float64 // 0.0-1.0, default 0.95
+
+	// NonNegative marks metrics that cannot go below zero (clicks, leads,
+	// cost, income). Prediction values, bounds, and quantiles are clipped
+	// at zero.
+	NonNegative bool
+
+	// WeekdayProfile, HourlyProfile, and MonthDayProfile derive the
+	// corresponding multiplier profile from the training data itself,
+	// re-estimated (with shrinkage) from each training prefix — the
+	// deployed fit and every backtest fold — so bands and errors describe
+	// the profiled forecaster without leaking held-out points into their
+	// own multiplier. The weekday and hourly profiles are gated on
+	// detrended autocorrelation at their lag (measured on the same prefix);
+	// the day-of-month profile is an explicit opt-in with no gate.
+	// HourlyProfile applies to the hour interval only. Multiplicative
+	// profiles need non-negative data: a prefix with negative values gets
+	// none. WeekdayProfile is ignored when SeasonalWeights are supplied.
+	WeekdayProfile  bool
+	HourlyProfile   bool
+	MonthDayProfile bool
+
+	// LogTransform fits count-like non-negative series on log1p scale and
+	// inverts on output, making multiplicative behavior additive and
+	// stabilizing variance. Ignored when the series has negative values.
+	LogTransform bool
+
+	// DisableLevelShift turns off level-shift detection, so the full
+	// history is always fitted as-is. Useful when the detector misreads a
+	// known transient (an untagged outage or promo) as a regime change.
+	DisableLevelShift bool
+
+	// DisableAnomalyMask turns off transient masking (see anomaly.go), so
+	// short outlier runs — a tracking outage, an untagged spike — are fitted
+	// as data rather than looked through. Masking applies to NonNegative
+	// series only; signed metrics can legitimately swing.
+	DisableAnomalyMask bool
+
+	// AnomalySigma is the deviation, in robust sigma units, beyond which a
+	// point counts as a transient (default DefaultAnomalySigma); lower it
+	// to mask more aggressively, raise it to mask only extreme departures.
+	// AnomalyCycles is how many seasonal cycles on each side supply the
+	// same-weekday/hour reference values (default DefaultAnomalyCycles).
+	AnomalySigma  float64
+	AnomalyCycles int
 
 	// Anchor, when set, is the timestamp predictions step forward from
 	// instead of the series' last point. Used when training data has been
 	// masked (e.g. event days removed) so predictions still start after
 	// the last real observation rather than inside masked history.
 	Anchor time.Time
+
+	// excluded holds the timestamps Run's full-series transient detection
+	// masked. They are kept out of the residual pool (outages and spikes
+	// are not what the bands describe; the alerting layer judges them
+	// against the bands separately) — training data is masked per prefix
+	// by trainingView instead. Set by Run, never by callers.
+	excluded map[time.Time]bool
 }
 
 // anchorTime returns the reference point predictions step forward from.
@@ -110,7 +250,8 @@ func anchorTime(s Series, cfg Config) time.Time {
 // anchorOffset returns how many whole interval steps cfg.Anchor lies beyond
 // the series' last point (0 when Anchor is unset or not ahead). Trend models
 // must advance their projection by this many steps so values line up with
-// the anchored timestamps.
+// the anchored timestamps. Steps are counted on the calendar (whole months
+// for the month interval), since RunCoherent anchors at every interval.
 func anchorOffset(s Series, cfg Config) int {
 	if cfg.Anchor.IsZero() {
 		return 0
@@ -119,19 +260,11 @@ func anchorOffset(s Series, cfg Config) int {
 	if !cfg.Anchor.After(last) {
 		return 0
 	}
-	d := cfg.Anchor.Sub(last)
-	var step time.Duration
-	switch cfg.Interval {
-	case IntervalHour:
-		step = time.Hour
-	case IntervalWeek:
-		step = 7 * 24 * time.Hour
-	case IntervalMonth:
-		step = 30 * 24 * time.Hour // approximate; Anchor is only set for day interval
-	default:
-		step = 24 * time.Hour
+	steps := int(math.Round(intervalSteps(last, cfg.Anchor, cfg.Interval)))
+	if steps < 0 {
+		return 0
 	}
-	return int(d / step)
+	return steps
 }
 
 // ValidMethods returns all supported method names.
@@ -141,6 +274,7 @@ func ValidMethods() []string {
 		string(MethodSMA),
 		string(MethodWMA),
 		string(MethodHoltWinters),
+		string(MethodEnsemble),
 		string(MethodAuto),
 	}
 }
@@ -155,6 +289,23 @@ func ValidIntervals() []string {
 	}
 }
 
+// withDefaults fills the Config fields Run and RunCoherent share defaults
+// for, so composed forecasts use the same horizon, interval, and band pair
+// as the parts they are built from.
+func withDefaults(cfg Config) Config {
+	if cfg.Horizon <= 0 {
+		cfg.Horizon = 7
+	}
+	if cfg.Interval == "" {
+		cfg.Interval = IntervalDay
+	}
+	if cfg.ConfidenceLevel <= 0 || cfg.ConfidenceLevel >= 1 {
+		cfg.ConfidenceLevel = 0.95
+	}
+	cfg.excluded = nil
+	return cfg
+}
+
 // Run executes a forecast on the given series with the provided configuration.
 func Run(series Series, cfg Config) (*Result, error) {
 	if len(series) < 3 {
@@ -166,73 +317,466 @@ func Run(series Series, cfg Config) (*Result, error) {
 		return series[i].T.Before(series[j].T)
 	})
 
-	if cfg.Horizon <= 0 {
-		cfg.Horizon = 7
-	}
-	if cfg.Interval == "" {
-		cfg.Interval = IntervalDay
-	}
-	if cfg.ConfidenceLevel <= 0 || cfg.ConfidenceLevel >= 1 {
-		cfg.ConfidenceLevel = 0.95
-	}
-	if cfg.SMAWindow <= 0 {
-		cfg.SMAWindow = defaultSMAWindow(len(series))
-	}
+	cfg = withDefaults(cfg)
 
 	method := cfg.Method
 	if method == "" || method == MethodAuto {
-		method = selectBestMethod(series, cfg)
+		method = MethodEnsemble
 	}
 
-	var predictions []Prediction
-	var trend float64
-	var err error
+	// The original-scale mean anchors the trend percentage regardless of
+	// transforms and truncation below.
+	originalMean := seriesMean(series)
 
-	switch method {
-	case MethodLinear:
-		predictions, trend, err = linearForecast(series, cfg)
-	case MethodSMA:
-		predictions, trend, err = smaForecast(series, cfg)
-	case MethodWMA:
-		predictions, trend, err = wmaForecast(series, cfg)
-	case MethodHoltWinters:
-		predictions, trend, err = holtWintersForecast(series, cfg)
-	default:
-		return nil, fmt.Errorf("unknown method %q", method)
+	// Optional log1p transform: fit multiplicative count series on log
+	// scale, invert on output. Skipped when negative values make the
+	// transform undefined.
+	work := series
+	logApplied := false
+	if cfg.LogTransform && seriesAllNonNegative(work) {
+		work = log1pSeries(work)
+		logApplied = true
+	} else {
+		cfg.LogTransform = false // downstream error stats stay untransformed
+	}
+
+	// Transient masking. Detection on the full series feeds the report
+	// (AnomaliesMasked), keeps the masked dates out of the residual pool
+	// (outages and spikes are not what the bands describe; the alerting
+	// layer judges those dates against the bands separately), and moves
+	// the anchor past a masked tail. Training data is masked per prefix
+	// instead (trainingView): the deployed fit and every backtest fold
+	// re-detect from their own history, so no fold trains on a prefix
+	// edited with knowledge of what came after it.
+	var anomalies []string
+	if cfg.NonNegative && !cfg.DisableAnomalyMask {
+		if idx := detectTransients(work, cfg.Interval, logApplied, cfg.AnomalySigma, cfg.AnomalyCycles); len(idx) > 0 {
+			cfg.excluded = make(map[time.Time]bool, len(idx))
+			for _, i := range idx {
+				anomalies = append(anomalies, formatShiftTime(work[i].T, cfg.Interval))
+				cfg.excluded[work[i].T] = true
+			}
+			last := work[len(work)-1].T
+			if cfg.Anchor.IsZero() || cfg.Anchor.Before(last) {
+				cfg.Anchor = last
+			}
+		}
+	}
+
+	// Level-shift handling: fit on the current regime, not a blend of
+	// regimes. Post-shift history is used alone when long enough; otherwise
+	// trainingView re-levels older observations to the new regime. Both the
+	// deployed fit and every backtest prefix run their own detection
+	// (trainingView), so this full-series pass (on the masked series) only
+	// reports the shift and trims the evaluation window to the new regime.
+	levelShiftAt := ""
+	if !cfg.DisableLevelShift {
+		masked := withoutTimes(work, cfg.excluded)
+		if ls := detectLevelShift(masked); ls != nil {
+			levelShiftAt = formatShiftTime(masked[ls.idx].T, cfg.Interval)
+			if ls.truncates(len(masked), cfg.Interval) {
+				work = fromTime(work, masked[ls.idx].T)
+			}
+		}
+	}
+
+	// The deployed training view (masked and level-shift handled from the
+	// full history): window and data-point count describe the data
+	// actually modeled.
+	deployed := trainingView(work, cfg, len(work))
+	if len(deployed) == 0 {
+		deployed = work
+	}
+	if cfg.SMAWindow <= 0 {
+		cfg.SMAWindow = defaultSMAWindow(len(deployed))
+	}
+
+	// Seasonal profiles are estimated from the training data by every fit
+	// (profileFor): the deployed fit here and each backtest fold on its own
+	// prefix, so the bands calibrate the profiled forecaster that is
+	// actually emitted. Weekday and hourly profiles are gated on detrended
+	// autocorrelation at their lag so spurious profiles (built from noise)
+	// don't degrade the forecast; when the history is too short to measure
+	// that lag there is no evidence against the profile and it applies.
+	// The names reported in meta are the deployed fit's.
+	_, profiles := profileFor(deployed, cfg)
+
+	var core forecastCore
+	var err error
+	if method == MethodEnsemble {
+		core, err = computeEnsemble(work, cfg)
+	} else {
+		core, err = computeSingle(work, cfg, method, nil)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	// Apply seasonal adjustment if weights are provided.
-	if len(cfg.SeasonalWeights) > 0 {
-		predictions = applySeasonalWeights(predictions, cfg.SeasonalWeights)
+	if logApplied {
+		invertLogPredictions(core.preds)
+		// The model's trend is a per-period change on log scale, i.e. a
+		// multiplicative rate; express it as an absolute change at the
+		// first forecast level so every method keeps its own semantics.
+		core.trend = math.Expm1(core.trend) * core.preds[0].Value
 	}
 
-	// Compute accuracy metrics via leave-last-out backtest.
-	mae, rmse := backtest(series, cfg, method)
-
-	// Compute trend percentage.
-	trendPct := 0.0
-	if len(series) > 0 {
-		mean := seriesMean(series)
-		if mean != 0 {
-			trendPct = (trend / mean) * 100
+	// Keep the deployed forecaster's rolling predictions on the reporting
+	// scale so compositions of this result can be backtested too.
+	var rolling map[rollingKey]float64
+	if core.eval != nil && core.predict != nil {
+		rolling = make(map[rollingKey]float64, len(core.eval.rows))
+		for _, r := range core.eval.rows {
+			pred, ok := core.predict(r)
+			if !ok {
+				continue
+			}
+			if logApplied {
+				pred = math.Expm1(pred)
+			}
+			if cfg.NonNegative && pred < 0 {
+				pred = 0
+			}
+			rolling[rollingKey{trainEnd: r.trainEnd, target: r.t}] = pred
 		}
 	}
 
+	if cfg.NonNegative {
+		ClipNonNegative(core.preds)
+	}
+
+	// Compute trend percentage.
+	trendPct := 0.0
+	if originalMean != 0 {
+		trendPct = (core.trend / originalMean) * 100
+	}
+
 	return &Result{
-		Method:      method,
-		Metric:      cfg.Metric,
-		Horizon:     cfg.Horizon,
-		Interval:    cfg.Interval,
-		Predictions: predictions,
-		Trend:       trend,
-		TrendPct:    trendPct,
-		MAE:         mae,
-		RMSE:        rmse,
-		DataPoints:  len(series),
+		Method:           core.method,
+		Metric:           cfg.Metric,
+		Horizon:          cfg.Horizon,
+		Interval:         cfg.Interval,
+		Predictions:      core.preds,
+		Trend:            core.trend,
+		TrendPct:         trendPct,
+		MAE:              core.mae,
+		RMSE:             core.rmse,
+		DataPoints:       len(deployed),
+		Weights:          core.weights,
+		Composition:      "",
+		LevelShiftAt:     levelShiftAt,
+		AnomaliesMasked:  anomalies,
+		SeasonalApplied:  len(profiles) > 0,
+		SeasonalProfiles: profiles,
+		BoundsSource:     core.boundsSource,
+		rolling:          rolling,
+		trainEnd:         deployed[len(deployed)-1].T,
+		evaluated:        core.evaluated,
 	}, nil
+}
+
+// seasonalGateAllows reports whether a seasonal profile at the given lag
+// may be applied: yes when the detrended autocorrelation at that lag clears
+// the threshold, and also when the history is too short to measure it (no
+// evidence against the profile).
+func seasonalGateAllows(s Series, lag time.Duration) bool {
+	ac, ok := seasonalLagAutocorrelation(s, lag)
+	return !ok || ac >= seasonalGateThreshold
+}
+
+// seriesAllNonNegative reports whether every value is >= 0.
+func seriesAllNonNegative(s Series) bool {
+	for _, p := range s {
+		if p.V < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// log1pSeries returns a copy of the series with values on log1p scale.
+func log1pSeries(s Series) Series {
+	out := make(Series, len(s))
+	for i, p := range s {
+		out[i] = Point{T: p.T, V: math.Log1p(p.V)}
+	}
+	return out
+}
+
+// invertLogPredictions maps predictions fitted on log1p scale back to the
+// original scale. expm1 is monotone, so bound and quantile order is kept.
+func invertLogPredictions(preds []Prediction) {
+	for i := range preds {
+		preds[i].Value = math.Expm1(preds[i].Value)
+		preds[i].LowerBound = math.Expm1(preds[i].LowerBound)
+		preds[i].UpperBound = math.Expm1(preds[i].UpperBound)
+		for name, v := range preds[i].Quantiles {
+			preds[i].Quantiles[name] = math.Expm1(v)
+		}
+	}
+}
+
+// predictionTrend estimates the per-period trend from a forecast path
+// (used for composed metrics, which have no model of their own).
+func predictionTrend(preds []Prediction, original Series) float64 {
+	switch {
+	case len(preds) > 1:
+		return (preds[len(preds)-1].Value - preds[0].Value) / float64(len(preds)-1)
+	case len(preds) == 1 && len(original) > 0:
+		return preds[0].Value - original[len(original)-1].V
+	default:
+		return 0
+	}
+}
+
+// forecastCore is a computed forecast before the shared post-processing
+// (seasonal adjustment, zero clipping, trend percentage) in Run.
+type forecastCore struct {
+	method       Method
+	preds        []Prediction
+	trend        float64
+	mae, rmse    float64
+	weights      map[string]float64 // ensemble only
+	boundsSource string
+	// eval and predict expose the rolling backtest and the deployed
+	// forecaster's view of it (single method or weighted ensemble).
+	eval    *rollingEval
+	predict rowPredictor
+	// evaluated is true when mae/rmse were measured on held-out points.
+	evaluated bool
+}
+
+// computeSingle produces a single-method forecast with conformal bounds.
+// eval may carry a rolling backtest that already covers the method; pass nil
+// to have one run here.
+func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) (forecastCore, error) {
+	train := trainingView(series, cfg, len(series))
+	if len(train) == 0 {
+		train = series
+	}
+	predictions, trend, err := methodForecast(method, train, cfg)
+	if err != nil {
+		return forecastCore{}, err
+	}
+	profile, _ := profileFor(train, cfg)
+	applyProfile(predictions, profile, cfg.LogTransform)
+	clipPointPredictions(predictions, cfg)
+
+	if eval == nil {
+		eval = runRollingBacktest(series, cfg, []Method{method})
+	}
+	// Steps are counted from the fitted data's end: a masked tail puts
+	// the anchor several steps beyond it.
+	offset := anchorOffset(train, cfg)
+	predict := eval.methodPredictor(method)
+	byStep := eval.residualsByStep(predict)
+	mae, rmse, n := eval.errorStats(predict)
+	source := BoundsConformal
+	if totalResiduals(byStep) >= minTotalResiduals {
+		sq := stepQuantiles(byStep, offset+cfg.Horizon)
+		applyConformalBounds(predictions, sq, cfg, offset)
+	} else {
+		// Series too short for a rolling backtest: symmetric Gaussian
+		// bounds from a single-holdout residual estimate, and single-split
+		// accuracy metrics — one fit serves both.
+		var stddev float64
+		stddev, mae, rmse, n = holdoutEval(series, cfg, method)
+		addBounds(predictions, stddev, cfg.ConfidenceLevel, offset)
+		source = BoundsGaussian
+	}
+
+	return forecastCore{
+		method:       method,
+		preds:        predictions,
+		trend:        trend,
+		mae:          mae,
+		rmse:         rmse,
+		boundsSource: source,
+		eval:         eval,
+		predict:      predict,
+		evaluated:    n > 0,
+	}, nil
+}
+
+// computeEnsemble produces the ensemble forecast: a weighted average of all
+// applicable methods' point forecasts, weighted and pruned by their
+// recency-discounted rolling-backtest RMSE (see ensembleWeights).
+// Conformal bounds and error statistics come from the ensemble procedure's
+// own rolling residuals, evaluated out of sample: each backtest row is
+// predicted with weights derived only from rows observed before it (see
+// nestedEnsemblePredictor), so the band reflects the combined forecaster
+// that is actually deployed without letting a row's own actual shape the
+// weights that predict it. When the series is too short for any rolling
+// cut, it falls back to the best single method by single-split backtest.
+func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
+	candidates := autoCandidates(series)
+	eval := runRollingBacktest(series, cfg, candidates)
+	weights := ensembleWeights(eval, candidates, nil)
+	if len(weights) == 0 {
+		return computeSingle(series, cfg, selectBestMethod(series, cfg), eval)
+	}
+
+	// Fit each member on the full series. A member that fails to fit here
+	// (despite backtesting) is dropped and weights renormalize.
+	train := trainingView(series, cfg, len(series))
+	if len(train) == 0 {
+		train = series
+	}
+	profile, _ := profileFor(train, cfg)
+	memberPreds := map[Method][]Prediction{}
+	memberTrend := map[Method]float64{}
+	members := make([]Method, 0, len(weights))
+	for _, m := range candidates {
+		if _, ok := weights[m]; !ok {
+			continue
+		}
+		preds, tr, err := methodForecast(m, train, cfg)
+		if err != nil || len(preds) != cfg.Horizon {
+			delete(weights, m)
+			continue
+		}
+		applyProfile(preds, profile, cfg.LogTransform)
+		clipPointPredictions(preds, cfg)
+		memberPreds[m] = preds
+		memberTrend[m] = tr
+		members = append(members, m)
+	}
+	if len(members) == 0 {
+		return computeSingle(series, cfg, selectBestMethod(series, cfg), eval)
+	}
+	normalizeWeights(weights, members)
+
+	// Combine point forecasts and trends.
+	combined := make([]Prediction, cfg.Horizon)
+	for i := 0; i < cfg.Horizon; i++ {
+		combined[i].T = memberPreds[members[0]][i].T
+		v := 0.0
+		for _, m := range members {
+			v += weights[m] * memberPreds[m][i].Value
+		}
+		combined[i].Value = v
+	}
+	trend := 0.0
+	for _, m := range members {
+		trend += weights[m] * memberTrend[m]
+	}
+
+	// Conformal bounds on the ensemble procedure's out-of-sample rolling
+	// residuals; steps counted from the fitted data's end.
+	offset := anchorOffset(train, cfg)
+	predict := nestedEnsemblePredictor(eval, candidates)
+	byStep := eval.residualsByStep(predict)
+	mae, rmse, n := eval.errorStats(predict)
+	source := BoundsConformal
+	if totalResiduals(byStep) >= minTotalResiduals {
+		sq := stepQuantiles(byStep, offset+cfg.Horizon)
+		applyConformalBounds(combined, sq, cfg, offset)
+	} else {
+		stddev := seriesStdDev(series)
+		addBounds(combined, stddev, cfg.ConfidenceLevel, offset)
+		source = BoundsGaussian
+	}
+
+	named := make(map[string]float64, len(weights))
+	for _, m := range members {
+		named[string(m)] = weights[m]
+	}
+
+	return forecastCore{
+		method:       MethodEnsemble,
+		preds:        combined,
+		trend:        trend,
+		mae:          mae,
+		rmse:         rmse,
+		weights:      named,
+		boundsSource: source,
+		eval:         eval,
+		predict:      predict,
+		evaluated:    n > 0,
+	}, nil
+}
+
+// ensembleDropFactor excludes members whose recency-weighted rolling RMSE
+// exceeds this multiple of the best member's: a clearly-worse method only
+// adds noise to the mix. The tight factor keeps the ensemble concentrated on
+// near-best methods — a stabilized selection with hedging between equals —
+// which measured better out of sample than softer mixes.
+const ensembleDropFactor = 1.15
+
+// ensembleWeights derives member weights from the recency-weighted
+// rolling-backtest RMSE: w ∝ 1/(rmse + ε)², dropping methods whose RMSE
+// exceeds ensembleDropFactor times the best. include, when non-nil,
+// restricts the rows the RMSE is measured on. Returns nil when no candidate
+// produced rolling predictions on those rows.
+func ensembleWeights(eval *rollingEval, candidates []Method, include func(evalRow) bool) map[Method]float64 {
+	const eps = 1e-9
+	rmses := eval.recencyRMSE(candidates, include)
+	if len(rmses) == 0 {
+		return nil
+	}
+	best := math.MaxFloat64
+	for _, rmse := range rmses {
+		if rmse < best {
+			best = rmse
+		}
+	}
+	weights := map[Method]float64{}
+	for _, m := range candidates {
+		rmse, ok := rmses[m]
+		if !ok || rmse > ensembleDropFactor*best {
+			continue
+		}
+		// Inverse-MSE (Bates–Granger) weighting on the recency-discounted
+		// error, so the mix concentrates on methods that are accurate in the
+		// current regime.
+		weights[m] = 1 / ((rmse + eps) * (rmse + eps))
+	}
+	return weights
+}
+
+// nestedEnsemblePredictor evaluates the ensemble procedure out of sample.
+// Deriving weights from the rolling rows and then scoring those same rows
+// with them would let each residual's own actual influence the weights that
+// produced it, flattering MAE/RMSE and narrowing the band below its
+// nominal coverage, most visibly when the pruning decision hinges on a few
+// rows. Instead a row from cut c is predicted with weights derived only
+// from rows whose targets were observed by that cut's training end, which
+// is what the procedure would have had at the time. The earliest cut, with
+// no history to weight from, uses equal weights over the members that
+// predicted it. Weights are cached per cut.
+func nestedEnsemblePredictor(e *rollingEval, candidates []Method) rowPredictor {
+	cache := map[int]map[Method]float64{}
+	return func(r evalRow) (float64, bool) {
+		w, ok := cache[r.cut]
+		if !ok {
+			trainEnd := r.trainEnd
+			w = ensembleWeights(e, candidates, func(o evalRow) bool { return !o.t.After(trainEnd) })
+			if len(w) == 0 {
+				w = make(map[Method]float64, len(candidates))
+				for _, m := range candidates {
+					w[m] = 1
+				}
+			}
+			cache[r.cut] = w
+		}
+		return ensembleCombine(r, w, candidates)
+	}
+}
+
+// normalizeWeights scales the members' weights to sum to 1.
+func normalizeWeights(weights map[Method]float64, members []Method) {
+	sum := 0.0
+	for _, m := range members {
+		sum += weights[m]
+	}
+	if sum <= 0 {
+		for _, m := range members {
+			weights[m] = 1 / float64(len(members))
+		}
+		return
+	}
+	for _, m := range members {
+		weights[m] /= sum
+	}
 }
 
 // defaultSMAWindow picks a reasonable SMA window based on series length.
@@ -247,78 +791,137 @@ func defaultSMAWindow(n int) int {
 	return w
 }
 
+// seriesValues extracts the values of a series.
+func seriesValues(s Series) []float64 {
+	out := make([]float64, len(s))
+	for i, p := range s {
+		out[i] = p.V
+	}
+	return out
+}
+
 // seriesMean returns the arithmetic mean of all values.
 func seriesMean(s Series) float64 {
-	if len(s) == 0 {
-		return 0
-	}
-	sum := 0.0
-	for _, p := range s {
-		sum += p.V
-	}
-	return sum / float64(len(s))
+	return mean(seriesValues(s))
 }
 
 // seriesStdDev returns the population standard deviation.
 func seriesStdDev(s Series) float64 {
-	if len(s) < 2 {
-		return 0
-	}
-	mean := seriesMean(s)
-	sumSq := 0.0
-	for _, p := range s {
-		diff := p.V - mean
-		sumSq += diff * diff
-	}
-	return math.Sqrt(sumSq / float64(len(s)))
+	return stddev(seriesValues(s))
 }
 
-// residualStdDev computes std dev of forecast residuals over the last holdout points.
-func residualStdDev(s Series, method Method, cfg Config) float64 {
+// holdoutEval fits the method once on a single train/test split (the last
+// fifth of the series, minimum 2 points) and returns the residual standard
+// deviation on the model scale (for Gaussian fallback bounds) plus MAE and
+// RMSE on the reporting scale. It is the fallback for series too short for
+// a rolling backtest; when even the single split is impossible it returns
+// the series' own standard deviation and zero errors.
+func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64, n int) {
 	holdout := len(s) / 5
 	if holdout < 2 {
 		holdout = 2
 	}
 	if holdout > len(s)-3 {
-		return seriesStdDev(s)
+		return seriesStdDev(s), 0, 0, 0
 	}
 
-	train := s[:len(s)-holdout]
-	test := s[len(s)-holdout:]
+	c := len(s) - holdout
+	train := trainingView(s, cfg, c)
+	if len(train) == 0 {
+		return seriesStdDev(s), 0, 0, 0
+	}
+	trainEnd := train[len(train)-1].T
+	test := s[c:]
 
+	// Held-out points are matched to prediction steps by calendar distance
+	// (masked gaps make it exceed the observation count), so the horizon
+	// reaches the farthest held-out point.
 	testCfg := cfg
-	testCfg.Horizon = holdout
-	testCfg.SeasonalWeights = nil
+	testCfg.Horizon = calendarSteps(trainEnd, test[len(test)-1].T, cfg.Interval)
 	testCfg.Anchor = time.Time{}
 
-	var preds []Prediction
-	var err error
-	switch method {
-	case MethodLinear:
-		preds, _, err = linearForecast(train, testCfg)
-	case MethodSMA:
-		preds, _, err = smaForecast(train, testCfg)
-	case MethodWMA:
-		preds, _, err = wmaForecast(train, testCfg)
-	case MethodHoltWinters:
-		preds, _, err = holtWintersForecast(train, testCfg)
-	default:
-		return seriesStdDev(s)
-	}
+	preds, _, err := methodForecast(method, train, testCfg)
 	if err != nil || len(preds) == 0 {
-		return seriesStdDev(s)
+		return seriesStdDev(s), 0, 0, 0
 	}
+	profile, _ := profileFor(train, cfg)
+	applyProfile(preds, profile, cfg.LogTransform)
+	clipPointPredictions(preds, cfg)
 
-	n := len(preds)
-	if n > len(test) {
-		n = len(test)
-	}
-	sumSq := 0.0
-	for i := 0; i < n; i++ {
-		diff := test[i].V - preds[i].Value
+	sumSqModel, sumAbs, sumSq := 0.0, 0.0, 0.0
+	for _, p := range test {
+		if cfg.excluded[p.T] {
+			continue
+		}
+		h, ok := stepIndex(trainEnd, p.T, cfg.Interval, len(preds))
+		if !ok {
+			continue
+		}
+		actual, pred := p.V, preds[h-1].Value
+		modelDiff := actual - pred
+		sumSqModel += modelDiff * modelDiff
+		if cfg.LogTransform {
+			// Values are on log1p scale; report errors on the original.
+			actual, pred = math.Expm1(actual), math.Expm1(pred)
+		}
+		diff := actual - pred
+		sumAbs += math.Abs(diff)
 		sumSq += diff * diff
+		n++
 	}
-	return math.Sqrt(sumSq / float64(n))
+	if n == 0 {
+		return seriesStdDev(s), 0, 0, 0
+	}
+	fn := float64(n)
+	return math.Sqrt(sumSqModel / fn), sumAbs / fn, math.Sqrt(sumSq / fn), n
+}
+
+// withoutTimes returns s without the points whose timestamps are in
+// excluded (s itself when excluded is empty).
+func withoutTimes(s Series, excluded map[time.Time]bool) Series {
+	if len(excluded) == 0 {
+		return s
+	}
+	out := make(Series, 0, len(s))
+	for _, p := range s {
+		if !excluded[p.T] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// fromTime returns the suffix of s starting at the first point at or after
+// t.
+func fromTime(s Series, t time.Time) Series {
+	for i, p := range s {
+		if !p.T.Before(t) {
+			return s[i:]
+		}
+	}
+	return s[len(s):]
+}
+
+// calendarSteps returns the number of whole interval steps from from to to,
+// at least 1.
+func calendarSteps(from, to time.Time, interval Interval) int {
+	steps := int(math.Round(intervalSteps(from, to, interval)))
+	if steps < 1 {
+		return 1
+	}
+	return steps
+}
+
+// stepIndex maps a held-out timestamp to its 1-based horizon step from
+// trainEnd; ok is false when it is not a whole step away or lies beyond
+// maxStep.
+func stepIndex(trainEnd, t time.Time, interval Interval, maxStep int) (int, bool) {
+	exact := intervalSteps(trainEnd, t, interval)
+	h := int(math.Round(exact))
+	if math.Abs(exact-float64(h)) > 0.01 || h < 1 || h > maxStep {
+		return 0, false
+	}
+	return h, true
 }
 
 // zScore returns the z-score for a given confidence level (two-tailed).
@@ -338,7 +941,8 @@ func zScore(confidence float64) float64 {
 	}
 }
 
-// addBounds applies confidence interval bounds to predictions. offset is the
+// addBounds applies symmetric Gaussian confidence bounds to predictions.
+// Fallback for series too short for conformal bounds. offset is the
 // number of steps the first prediction lies beyond the series' last point in
 // excess of one (see anchorOffset); it widens bounds across anchor gaps.
 func addBounds(preds []Prediction, stddev, confidence float64, offset int) {
@@ -383,72 +987,24 @@ func intervalSteps(from, to time.Time, interval Interval) float64 {
 	}
 }
 
-// backtest splits data into train/test and measures forecast accuracy.
-func backtest(s Series, cfg Config, method Method) (mae, rmse float64) {
-	holdout := len(s) / 5
-	if holdout < 2 {
-		holdout = 2
-	}
-	if holdout > len(s)-3 {
-		return 0, 0
-	}
-
-	train := s[:len(s)-holdout]
-	test := s[len(s)-holdout:]
-
-	testCfg := cfg
-	testCfg.Horizon = holdout
-	testCfg.SeasonalWeights = nil
-	testCfg.Anchor = time.Time{}
-
-	var preds []Prediction
-	var err error
-	switch method {
-	case MethodLinear:
-		preds, _, err = linearForecast(train, testCfg)
-	case MethodSMA:
-		preds, _, err = smaForecast(train, testCfg)
-	case MethodWMA:
-		preds, _, err = wmaForecast(train, testCfg)
-	case MethodHoltWinters:
-		preds, _, err = holtWintersForecast(train, testCfg)
-	default:
-		return 0, 0
-	}
-	if err != nil || len(preds) == 0 {
-		return 0, 0
-	}
-
-	n := len(preds)
-	if n > len(test) {
-		n = len(test)
-	}
-
-	sumAbsErr := 0.0
-	sumSqErr := 0.0
-	for i := 0; i < n; i++ {
-		diff := test[i].V - preds[i].Value
-		sumAbsErr += math.Abs(diff)
-		sumSqErr += diff * diff
-	}
-
-	mae = sumAbsErr / float64(n)
-	rmse = math.Sqrt(sumSqErr / float64(n))
-	return mae, rmse
-}
-
-// selectBestMethod runs all methods via backtest and picks lowest RMSE.
-func selectBestMethod(s Series, cfg Config) Method {
+// autoCandidates lists the methods auto-selection considers for a series.
+// Holt-Winters needs enough history to stabilize its level/trend estimates.
+func autoCandidates(s Series) []Method {
 	candidates := []Method{MethodLinear, MethodSMA, MethodWMA}
-	if len(s) >= 14 {
+	if len(s) >= holtWintersMinPoints {
 		candidates = append(candidates, MethodHoltWinters)
 	}
+	return candidates
+}
 
+// selectBestMethod runs all methods via single-split backtest and picks the
+// lowest RMSE. Fallback for series too short for the rolling backtest.
+func selectBestMethod(s Series, cfg Config) Method {
 	best := MethodLinear
 	bestRMSE := math.MaxFloat64
 
-	for _, m := range candidates {
-		_, rmse := backtest(s, cfg, m)
+	for _, m := range autoCandidates(s) {
+		_, _, rmse, _ := holdoutEval(s, cfg, m)
 		// RMSE=0 means backtest couldn't run (too few points for holdout),
 		// not a perfect fit. Skip these candidates.
 		if rmse > 0 && rmse < bestRMSE {
@@ -460,18 +1016,94 @@ func selectBestMethod(s Series, cfg Config) Method {
 	return best
 }
 
-// applySeasonalWeights adjusts prediction values by day-of-week multipliers.
-func applySeasonalWeights(preds []Prediction, weights SeasonalWeights) []Prediction {
+// scalePrediction multiplies a prediction's value, bounds, and quantiles by
+// mult, restoring ordering afterwards: a negative multiplier inverts bound
+// and quantile order.
+func scalePrediction(p *Prediction, mult float64) {
+	p.Value *= mult
+	p.LowerBound *= mult
+	p.UpperBound *= mult
+	if p.LowerBound > p.UpperBound {
+		p.LowerBound, p.UpperBound = p.UpperBound, p.LowerBound
+	}
+	if len(p.Quantiles) == 0 {
+		return
+	}
+	for name := range p.Quantiles {
+		p.Quantiles[name] *= mult
+	}
+	normalizeQuantileOrder(p.Quantiles)
+}
+
+// normalizeQuantileOrder re-sorts quantile values so p10 ≤ p25 ≤ ... ≤ p90
+// after a transformation that may have inverted them. Only complete quantile
+// sets are reordered.
+func normalizeQuantileOrder(qs map[string]float64) {
+	vals := make([]float64, 0, len(quantileLevels))
+	for _, lv := range quantileLevels {
+		v, ok := qs[lv.name]
+		if !ok {
+			return
+		}
+		vals = append(vals, v)
+	}
+	sort.Float64s(vals)
+	for i, lv := range quantileLevels {
+		qs[lv.name] = vals[i]
+	}
+}
+
+// applyProfile scales point predictions by a seasonal profile (nil for
+// none) for their timestamps. A profile is multiplicative on the reporting
+// scale, so under the log1p transform it is applied through the transform
+// (a model-scale value whose reporting value is not positive is left alone:
+// scaling it is meaningless and the output clip zeroes it anyway). Bounds
+// and quantiles are attached afterwards, so they calibrate the adjusted
+// forecaster; the same call runs inside every backtest fold with that
+// fold's own profile.
+func applyProfile(preds []Prediction, profile func(time.Time) float64, logScale bool) {
+	if profile == nil {
+		return
+	}
 	for i := range preds {
-		dow := preds[i].T.Weekday()
-		if w, ok := weights[dow]; ok {
+		w := profile(preds[i].T)
+		if w == 1 {
+			continue
+		}
+		if !logScale {
 			preds[i].Value *= w
-			preds[i].LowerBound *= w
-			preds[i].UpperBound *= w
-			if preds[i].LowerBound > preds[i].UpperBound {
-				preds[i].LowerBound, preds[i].UpperBound = preds[i].UpperBound, preds[i].LowerBound
-			}
+			continue
+		}
+		if v := math.Expm1(preds[i].Value); v > 0 {
+			preds[i].Value = math.Log1p(v * w)
 		}
 	}
-	return preds
+}
+
+// clipPointPredictions floors point predictions at zero for non-negative
+// metrics. Zero is a fixed point of log1p, so the floor is the same on the
+// model scale. It runs on the deployed fit, every backtest fold, and the
+// holdout before residuals and bounds are computed, so the forecaster that
+// is calibrated is the clipped one the output shows: a fold projecting
+// below a zero tail scores the zero it would have emitted, not a negative
+// number nobody sees. Bounds and quantiles are floored separately at
+// output (ClipNonNegative).
+func clipPointPredictions(preds []Prediction, cfg Config) {
+	if !cfg.NonNegative {
+		return
+	}
+	for i := range preds {
+		if preds[i].Value < 0 {
+			preds[i].Value = 0
+		}
+	}
+}
+
+// expm1Series maps a log1p-scale series back to the reporting scale.
+func expm1Series(s Series) Series {
+	out := make(Series, len(s))
+	for i, p := range s {
+		out[i] = Point{T: p.T, V: math.Expm1(p.V)}
+	}
+	return out
 }

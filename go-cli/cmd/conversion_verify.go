@@ -84,7 +84,7 @@ var conversionSimulateCmd = &cobra.Command{
 			} `json:"data"`
 		}
 		if json.Unmarshal(urlData, &resp) != nil || resp.Data.DirectURL == "" {
-			return validationError("tracker has no resolvable link")
+			return validationError("tracker has no resolvable link").WithHint("Check the tracker with `p202 tracker get <id>`; it needs a landing page or redirect URL before it can be verified.")
 		}
 		link := resp.Data.DirectURL
 		if !strings.HasPrefix(link, "http") {
@@ -98,13 +98,13 @@ var conversionSimulateCmd = &cobra.Command{
 		}
 		clickRes, err := probeClient().Get(link + sep + "t202kw=simulate")
 		if err != nil {
-			return fmt.Errorf("click request failed: %w", err)
+			return withHint(fmt.Errorf("click request failed: %w", err), "The tracking link itself could not be fetched; check that the configured URL is reachable from here and that the tracker is active.")
 		}
 		loc := clickRes.Header.Get("Location")
 		clickRes.Body.Close()
 		m := subidRe.FindStringSubmatch(loc)
 		if m == nil {
-			return fmt.Errorf("could not parse a subid from the redirect (%q) — the link may be misconfigured", loc)
+			return withHint(fmt.Errorf("could not parse a subid from the redirect (%q)", loc), "The tracking link did not redirect with a subid; open `p202 tracker get <id>` and confirm the landing page/redirect is configured and BlazerCache is current.")
 		}
 		subid := m[1]
 
@@ -112,7 +112,7 @@ var conversionSimulateCmd = &cobra.Command{
 		pbURL := fmt.Sprintf("%s/tracking202/static/gpb.php?amount=%s&subid=%s", base, payout, subid)
 		pbRes, err := (&http.Client{Timeout: 15 * time.Second}).Get(pbURL)
 		if err != nil {
-			return fmt.Errorf("postback request failed: %w", err)
+			return withHint(fmt.Errorf("postback request failed: %w", err), "The postback URL could not be fetched; check the server URL and that the postback endpoint (tracking202/static/gpb.php) is reachable.")
 		}
 		body, _ := io.ReadAll(pbRes.Body)
 		pbRes.Body.Close()

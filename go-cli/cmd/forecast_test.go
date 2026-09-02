@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -255,7 +257,7 @@ func TestForecastPassesFilters(t *testing.T) {
 	}
 }
 
-func TestForecastWithSeasonalFetchesWeekpart(t *testing.T) {
+func TestForecastSeasonalLearnsFromFetchedHistory(t *testing.T) {
 	requestPaths := []string{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -279,22 +281,21 @@ func TestForecastWithSeasonalFetchesWeekpart(t *testing.T) {
 		t.Fatalf("forecast error: %v", err)
 	}
 
-	// Should have called both timeseries and weekpart.
+	// The weekday profile is learned from the fetched history (per
+	// backtest fold), so only the timeseries report is requested: a
+	// weekpart profile computed over the whole window would leak held-out
+	// days into their own multiplier.
 	foundTimeseries := false
-	foundWeekpart := false
 	for _, p := range requestPaths {
 		if strings.HasSuffix(p, "/reports/timeseries") {
 			foundTimeseries = true
 		}
 		if strings.HasSuffix(p, "/reports/weekpart") {
-			foundWeekpart = true
+			t.Error("--seasonal must not fetch reports/weekpart; the profile comes from the history itself")
 		}
 	}
 	if !foundTimeseries {
 		t.Error("expected call to reports/timeseries")
-	}
-	if !foundWeekpart {
-		t.Error("expected call to reports/weekpart when --seasonal is set")
 	}
 
 	// Meta should reflect seasonal=true.
@@ -608,12 +609,12 @@ func TestParseISOWeekRejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestClampNonNegative(t *testing.T) {
+func TestClipNonNegative(t *testing.T) {
 	preds := []forecast.Prediction{
 		{Value: -5, LowerBound: -10, UpperBound: -1},
 		{Value: 3, LowerBound: -2, UpperBound: 8},
 	}
-	clampNonNegative(preds)
+	forecast.ClipNonNegative(preds)
 	if preds[0].Value != 0 || preds[0].LowerBound != 0 || preds[0].UpperBound != 0 {
 		t.Errorf("negative prediction not fully clamped: %+v", preds[0])
 	}
@@ -925,6 +926,691 @@ func TestRoundTo(t *testing.T) {
 		got := roundTo(tc.v, tc.n)
 		if got != tc.want {
 			t.Errorf("roundTo(%.5f, %d) = %.5f, want %.5f", tc.v, tc.n, got, tc.want)
+		}
+	}
+}
+
+// makeCoherentTimeseriesResponse builds a timeseries response carrying all
+// core metrics with consistent identities: leads = clicks*0.1, cost =
+// clicks*2, income = leads*50, net = income - cost.
+func makeCoherentTimeseriesResponse(n int) string {
+	buckets := make([]map[string]interface{}, n)
+	for i := 0; i < n; i++ {
+		clicks := 100.0 + float64(i)*5
+		leads := clicks * 0.1
+		cost := clicks * 2
+		income := leads * 50
+		buckets[i] = map[string]interface{}{
+			"bucket_start": 1704067200 + i*86400,
+			"total_clicks": clicks,
+			"total_leads":  leads,
+			"total_cost":   cost,
+			"total_income": income,
+			"total_net":    income - cost,
+		}
+	}
+	data, _ := json.Marshal(map[string]interface{}{"data": buckets})
+	return string(data)
+}
+
+func TestForecastAllMetricsCoherent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeCoherentTimeseriesResponse(40)))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v\nGot: %s", err, stdout)
+	}
+	data, ok := output["data"].([]interface{})
+	if !ok || len(data) != 5 {
+		t.Fatalf("expected 5 prediction rows, got: %s", stdout)
+	}
+	row, ok := data[0].(map[string]interface{})
+	if !ok {
+		t.Fatal("row is not an object")
+	}
+	for _, col := range []string{"date", "total_clicks", "total_leads", "total_income",
+		"total_cost", "total_net", "total_clicks_lower", "total_net_upper"} {
+		if _, ok := row[col]; !ok {
+			t.Errorf("row missing column %q", col)
+		}
+	}
+	// Net identity holds in the rendered output (within rounding).
+	income := row["total_income"].(float64)
+	cost := row["total_cost"].(float64)
+	net := row["total_net"].(float64)
+	if math.Abs(net-(income-cost)) > 0.02 {
+		t.Errorf("net %v != income-cost %v in output", net, income-cost)
+	}
+
+	meta, ok := output["meta"].(map[string]interface{})
+	if !ok {
+		t.Fatal("output missing meta")
+	}
+	comps, ok := meta["composition"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("meta missing composition map: %v", meta)
+	}
+	if comps["total_clicks"] != "direct" {
+		t.Errorf("clicks composition = %v, want direct", comps["total_clicks"])
+	}
+	if comps["total_leads"] != "derived" {
+		t.Errorf("leads composition = %v, want derived", comps["total_leads"])
+	}
+}
+
+func TestForecastAllMetricsRejectsMetricAndSeasonal(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:9", "test-key")
+
+	if _, _, err := executeCommand("forecast", "--all-metrics", "--metric=clicks"); err == nil ||
+		!strings.Contains(err.Error(), "--all-metrics") {
+		t.Errorf("expected --all-metrics/--metric conflict error, got %v", err)
+	}
+	if _, _, err := executeCommand("forecast", "--all-metrics", "--seasonal"); err == nil ||
+		!strings.Contains(err.Error(), "--all-metrics") {
+		t.Errorf("expected --all-metrics/--seasonal conflict error, got %v", err)
+	}
+	if _, _, err := executeCommand("forecast", "--all-metrics", "--events"); err == nil ||
+		!strings.Contains(err.Error(), "--all-metrics") {
+		t.Errorf("expected --all-metrics/--events conflict error, got %v", err)
+	}
+}
+
+func TestForecastDerivedMetricUsesComposition(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeCoherentTimeseriesResponse(40)))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=leads", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["composition"] != "derived" {
+		t.Errorf("meta.composition = %v, want derived", meta["composition"])
+	}
+	if meta["metric"] != "total_leads" {
+		t.Errorf("meta.metric = %v, want total_leads", meta["metric"])
+	}
+}
+
+func TestForecastDerivedMetricFallsBackWithoutCompanions(t *testing.T) {
+	// Response carries only the requested metric: composition is impossible
+	// and the direct path must serve the forecast without a composition tag.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(30, "total_leads")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=leads", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["composition"] != "direct" {
+		t.Errorf("meta.composition = %v, want direct on fallback", meta["composition"])
+	}
+	if _, ok := meta["composition_fallback"]; !ok {
+		t.Errorf("expected composition_fallback reason in meta, got %v", meta)
+	}
+	data := output["data"].([]interface{})
+	if len(data) != 5 {
+		t.Errorf("expected 5 predictions, got %d", len(data))
+	}
+}
+
+func TestForecastDerivedMetricWithSeasonalStaysDirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		if strings.HasSuffix(r.URL.Path, "/reports/weekpart") {
+			w.Write([]byte(makeWeekpartResponse("total_leads")))
+			return
+		}
+		w.Write([]byte(makeCoherentTimeseriesResponse(40)))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=leads", "--horizon=5", "--seasonal", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if _, ok := meta["composition"]; ok {
+		t.Errorf("expected direct path with --seasonal, got composition %v", meta["composition"])
+	}
+	if meta["seasonal"] != true {
+		t.Errorf("meta.seasonal = %v, want true", meta["seasonal"])
+	}
+}
+
+func TestForecastSeasonalMonthlyRequiresDayInterval(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:9", "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=clicks", "--seasonal-monthly", "--interval=week")
+	if err == nil || !strings.Contains(err.Error(), "--seasonal-monthly requires --interval day") {
+		t.Errorf("expected interval validation error, got %v", err)
+	}
+}
+
+func TestForecastSeasonalReportsApplied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		if strings.HasSuffix(r.URL.Path, "/reports/weekpart") {
+			w.Write([]byte(makeWeekpartResponse("total_clicks")))
+			return
+		}
+		w.Write([]byte(makeTimeseriesResponse(30, "total_clicks")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=clicks", "--horizon=5", "--seasonal", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if _, ok := meta["seasonal_applied"]; !ok {
+		t.Errorf("expected seasonal_applied in meta, got %v", meta)
+	}
+}
+
+func TestForecastDerivedFallbackReportsDirectComposition(t *testing.T) {
+	// Companion metrics present but too sparse for RunCoherent (only 2 cost
+	// values): the direct path must still label the output and say why.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buckets := make([]map[string]interface{}, 30)
+		for i := 0; i < 30; i++ {
+			b := map[string]interface{}{
+				"bucket_start": 1704067200 + i*86400,
+				"total_clicks": 100.0 + float64(i),
+				"total_leads":  10.0 + float64(i)/10,
+				"total_income": 500.0,
+			}
+			if i < 2 {
+				b["total_cost"] = 200.0
+			}
+			buckets[i] = b
+		}
+		data, _ := json.Marshal(map[string]interface{}{"data": buckets})
+		w.WriteHeader(200)
+		w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=leads", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["composition"] != "direct" {
+		t.Errorf("meta.composition = %v, want direct", meta["composition"])
+	}
+	if _, ok := meta["composition_fallback"]; !ok {
+		t.Errorf("expected composition_fallback reason in meta, got %v", meta)
+	}
+}
+
+func TestForecastRejectsSeasonalMonthlyForSignedMetric(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:9", "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=profit", "--seasonal-monthly")
+	if err == nil || !strings.Contains(err.Error(), "signed metrics") {
+		t.Errorf("expected signed-metric validation error, got %v", err)
+	}
+}
+
+func TestForecastReportsRejectedBuckets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buckets := make([]map[string]interface{}, 0, 31)
+		for i := 0; i < 30; i++ {
+			buckets = append(buckets, map[string]interface{}{
+				"bucket_start": 1704067200 + i*86400,
+				"total_income": 100.0 + float64(i),
+			})
+		}
+		buckets = append(buckets, map[string]interface{}{"bucket_start": "not-a-time", "total_income": 5.0})
+		data, _ := json.Marshal(map[string]interface{}{"data": buckets})
+		w.WriteHeader(200)
+		w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=revenue", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["buckets_rejected"] != 1.0 {
+		t.Errorf("meta.buckets_rejected = %v, want 1", meta["buckets_rejected"])
+	}
+	if meta["bounds"] == nil {
+		t.Errorf("expected bounds label in meta, got %v", meta)
+	}
+}
+
+func TestForecastSeasonalMonthlyReportsApplied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(60, "total_clicks")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=clicks", "--horizon=5", "--seasonal-monthly", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["seasonal_applied"] != true {
+		t.Errorf("meta.seasonal_applied = %v, want true for --seasonal-monthly", meta["seasonal_applied"])
+	}
+	profiles, _ := meta["seasonal_profiles"].([]interface{})
+	if len(profiles) != 1 || profiles[0] != "monthday" {
+		t.Errorf("meta.seasonal_profiles = %v, want [monthday]", meta["seasonal_profiles"])
+	}
+}
+
+func TestForecastReportsMaskedAnomaliesAndOptOut(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buckets := make([]map[string]interface{}, 60)
+		for i := 0; i < 60; i++ {
+			v := 500.0 + float64(i%3)
+			if i == 40 {
+				v = 0 // tracking outage
+			}
+			buckets[i] = map[string]interface{}{"bucket_start": 1704067200 + i*86400, "total_income": v}
+		}
+		data, _ := json.Marshal(map[string]interface{}{"data": buckets})
+		w.WriteHeader(200)
+		w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--metric=revenue", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	masked, _ := meta["anomalies_masked"].([]interface{})
+	if len(masked) != 1 {
+		t.Errorf("meta.anomalies_masked = %v, want one masked day", meta["anomalies_masked"])
+	}
+
+	stdout, _, err = executeCommand("forecast", "--metric=revenue", "--horizon=3", "--no-anomaly-mask", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if _, ok := output["meta"].(map[string]interface{})["anomalies_masked"]; ok {
+		t.Error("--no-anomaly-mask still masked points")
+	}
+}
+
+func TestForecastAnomalyKnobsValidated(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:9", "test-key")
+
+	if _, _, err := executeCommand("forecast", "--metric=clicks", "--anomaly-sigma=0"); err == nil ||
+		!strings.Contains(err.Error(), "--anomaly-sigma") {
+		t.Errorf("expected --anomaly-sigma validation error, got %v", err)
+	}
+	if _, _, err := executeCommand("forecast", "--metric=clicks", "--anomaly-cycles=0"); err == nil ||
+		!strings.Contains(err.Error(), "--anomaly-cycles") {
+		t.Errorf("expected --anomaly-cycles validation error, got %v", err)
+	}
+}
+
+func TestForecastMissingMetricListsAvailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(30, "total_clicks")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=epc")
+	if err == nil {
+		t.Fatal("expected error when the metric is absent from the response")
+	}
+	// The list of valid values lives in the message (visible even when the
+	// hint is ignored); the hint names the flag to change.
+	if !strings.Contains(err.Error(), "response carried: total_clicks") {
+		t.Errorf("message should list the metrics the response carried, got %q", err.Error())
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "--metric") {
+		t.Errorf("hint should name the flag to change, got %q", hint)
+	}
+	if exitCodeForError(err) != ExitValidation {
+		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
+	}
+}
+
+func TestForecastAPIErrorKeepsAuthExitCodeAndHint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"message":"invalid api key"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "bad-key-123")
+
+	_, _, err := executeCommand("forecast", "--metric=clicks")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := exitCodeForError(err); got != ExitAuth {
+		t.Errorf("exit code = %d, want %d (auth) despite wrapping", got, ExitAuth)
+	}
+	if !strings.Contains(hintFor(err), "config set-key") {
+		t.Errorf("expected key hint, got %q", hintFor(err))
+	}
+}
+
+func TestForecastAllMetricsReportsBoundsSourcePerMetric(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeCoherentTimeseriesResponse(40)))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	sources, ok := meta["bounds_source"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected per-metric bounds_source map in meta, got %v", meta["bounds_source"])
+	}
+	labels, ok := meta["bounds"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected per-metric bounds map in meta, got %v", meta["bounds"])
+	}
+	counts, ok := meta["data_points_used"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected per-metric data_points_used map in meta, got %v", meta["data_points_used"])
+	}
+	for _, m := range forecastCoreMetrics {
+		if n, _ := counts[m].(float64); n <= 0 {
+			t.Errorf("data_points_used[%s] = %v, want a positive count", m, counts[m])
+		}
+	}
+	maes, ok := meta["mae"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected per-metric mae map in meta, got %v", meta["mae"])
+	}
+	for _, m := range forecastCoreMetrics {
+		if _, present := maes[m]; !present {
+			t.Errorf("mae map missing %s", m)
+		}
+	}
+	for _, m := range forecastCoreMetrics {
+		// Derived metrics are backtested as compositions, so with 40 points
+		// every metric's band is conformal — none is a "composed" fallback —
+		// and each names the quantile pair its lower/upper columns carry.
+		if sources[m] != forecast.BoundsConformal {
+			t.Errorf("bounds_source[%s] = %v, want conformal", m, sources[m])
+		}
+		if labels[m] != "p05-p95 (90%)" {
+			t.Errorf("bounds[%s] = %v, want p05-p95 (90%%)", m, labels[m])
+		}
+	}
+
+	// A single derived metric reports the same calibrated band label.
+	stdout, _, err = executeCommand("forecast", "--metric=leads", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta = output["meta"].(map[string]interface{})
+	if meta["composition"] != "derived" {
+		t.Fatalf("composition = %v, want derived", meta["composition"])
+	}
+	if meta["bounds_source"] != forecast.BoundsConformal {
+		t.Errorf("bounds_source = %v, want conformal", meta["bounds_source"])
+	}
+	if meta["bounds"] != "p05-p95 (90%)" {
+		t.Errorf("bounds label = %v, want p05-p95 (90%%)", meta["bounds"])
+	}
+}
+
+func TestForecastAllMetricsReportsErrorsPerMetric(t *testing.T) {
+	// Noisy but coherent history: every metric, compositions included, is
+	// backtested, so the all-metrics meta carries its own mae/rmse.
+	rng := rand.New(rand.NewSource(11))
+	buckets := make([]map[string]interface{}, 40)
+	for i := range buckets {
+		clicks := 300 + 40*rng.Float64()
+		leads := clicks * (0.08 + 0.02*rng.Float64())
+		cost := clicks * (1.5 + 0.3*rng.Float64())
+		income := leads * (40 + 10*rng.Float64())
+		buckets[i] = map[string]interface{}{
+			"bucket_start": 1704067200 + i*86400,
+			"total_clicks": clicks, "total_leads": leads, "total_cost": cost,
+			"total_income": income, "total_net": income - cost,
+		}
+	}
+	body, _ := json.Marshal(map[string]interface{}{"data": buckets})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=5", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	maes, ok := meta["mae"].(map[string]interface{})
+	rmses, ok2 := meta["rmse"].(map[string]interface{})
+	if !ok || !ok2 {
+		t.Fatalf("expected per-metric mae and rmse maps, got mae=%v rmse=%v", meta["mae"], meta["rmse"])
+	}
+	for _, m := range forecastCoreMetrics {
+		mae, _ := maes[m].(float64)
+		rmse, _ := rmses[m].(float64)
+		if mae <= 0 || rmse < mae {
+			t.Errorf("%s: mae=%v rmse=%v, want positive errors with rmse >= mae", m, maes[m], rmses[m])
+		}
+	}
+}
+
+func TestForecastRejectedBucketsCountRowsOnce(t *testing.T) {
+	// One row with two non-numeric inputs counts once; a row whose only bad
+	// field is total_net, which coherent forecasting does not consume,
+	// counts zero.
+	buckets := []map[string]interface{}{}
+	for i := 0; i < 30; i++ {
+		clicks := 100.0 + float64(i)
+		buckets = append(buckets, map[string]interface{}{
+			"bucket_start": 1704067200 + i*86400,
+			"total_clicks": clicks, "total_leads": clicks * 0.1, "total_cost": clicks * 2,
+			"total_income": clicks * 5, "total_net": clicks * 3,
+		})
+	}
+	buckets = append(buckets, map[string]interface{}{
+		"bucket_start": 1704067200 + 30*86400,
+		"total_clicks": "bad", "total_leads": "bad", "total_cost": 260.0, "total_income": 650.0, "total_net": 390.0,
+	})
+	buckets = append(buckets, map[string]interface{}{
+		"bucket_start": 1704067200 + 31*86400,
+		"total_clicks": 131.0, "total_leads": 13.1, "total_cost": 262.0, "total_income": 655.0, "total_net": "bad",
+	})
+	body, _ := json.Marshal(map[string]interface{}{"data": buckets})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	if meta["buckets_rejected"] != 1.0 {
+		t.Errorf("buckets_rejected = %v, want 1 (one bad row, counted once; a bad net-only row not at all)", meta["buckets_rejected"])
+	}
+}
+
+func TestForecastAllMetricsReportsZeroErrors(t *testing.T) {
+	// A constant, exactly coherent history is forecast perfectly: the
+	// rolling errors are a measured zero and must be reported as such, not
+	// dropped as if no backtest had run.
+	buckets := make([]map[string]interface{}, 40)
+	for i := range buckets {
+		buckets[i] = map[string]interface{}{
+			"bucket_start": 1704067200 + i*86400,
+			"total_clicks": 200.0, "total_leads": 20.0, "total_cost": 300.0,
+			"total_income": 900.0, "total_net": 600.0,
+		}
+	}
+	body, _ := json.Marshal(map[string]interface{}{"data": buckets})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("forecast", "--all-metrics", "--horizon=3", "--json")
+	if err != nil {
+		t.Fatalf("forecast error: %v", err)
+	}
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	meta := output["meta"].(map[string]interface{})
+	maes, ok := meta["mae"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected mae map even when every error is zero, got %v", meta["mae"])
+	}
+	for _, m := range forecastCoreMetrics {
+		v, present := maes[m].(float64)
+		if !present || v != 0 {
+			t.Errorf("mae[%s] = %v, want a reported 0", m, maes[m])
 		}
 	}
 }

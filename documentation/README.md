@@ -51,6 +51,7 @@
 ### CLI Reference
 
 - [Go CLI (p202)](cli/10-go-cli.md) — cross-platform binary with multi-profile, sync, and diff
+- [Forecasting Guide](cli/11-forecasting.md) — how `p202 forecast` works, with worked examples: bands, ensemble, coherent metrics, seasonality, level shifts, transient masking
 
 A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 list` to see its commands); it does not yet have a dedicated reference page here.
 

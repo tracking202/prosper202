@@ -47,6 +47,15 @@ To ensure code quality and functionality:
    composer install
    ```
 
+## Go CLI (`go-cli/`)
+
+The `p202` Go CLI is the intended interface for agents operating a Prosper202 instance.
+
+* **Using it as an agent**: read `docs/cli-agent.md` (JSON output shapes, the error envelope and its `hint` field, exit codes, workflows, tool-use schema hints). Always pass `--json`.
+* **Forecasting**: `documentation/cli/11-forecasting.md` explains `p202 forecast` end to end with real outputs (bands, ensemble, coherent metrics, seasonality, level shifts, transient masking).
+* **Changing the CLI**: follow the error contract in `CLAUDE.md` ("Go CLI errors must be agent-actionable"): categorized validation errors, `%w` wrapping, a hint on every error that leaves a choice, centralized printing, and tests on exit code and hint. Keep `documentation/cli/10-go-cli.md` ("Errors") and `docs/cli-agent.md` in sync with any change to that contract.
+* **Validation**: `cd go-cli && go vet ./... && go test ./...` (the forecast package's acceptance suites take ~20s; `-short` skips them).
+
 ## Agent Interaction Guidelines
 
 * **Context Exploration**: Review relevant files in `202-*` directories and configuration files before making changes.

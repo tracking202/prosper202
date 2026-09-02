@@ -84,7 +84,7 @@ func runShell(cmd *cobra.Command, args []string) error {
 func verifyShellAccess() error {
 	client, err := api.NewFromConfig()
 	if err != nil {
-		return fmt.Errorf("shell requires a configured API key: %w", err)
+		return withHint(fmt.Errorf("shell requires a configured API key: %w", err), "Run `p202 config set-url <url>` and `p202 config set-key <key>` first.")
 	}
 
 	if !client.SupportsCapability("shell") {
@@ -92,7 +92,7 @@ func verifyShellAccess() error {
 		if capErr := client.CapabilitiesError(); capErr != nil {
 			return fmt.Errorf("could not verify shell access: %w", capErr)
 		}
-		return fmt.Errorf("shell access is not enabled for this API key. Contact support to upgrade your plan")
+		return validationError("shell access is not enabled for this API key").WithHint("Contact support to enable shell access, or run commands directly (`p202 <command>`) instead of the shell.")
 	}
 	return nil
 }
@@ -387,7 +387,7 @@ Batch mode (for AI agents):
 func switchProfile(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", fmt.Errorf("profile name is required")
+		return "", validationError("profile name is required")
 	}
 
 	cfg, err := configpkg.Load()
@@ -395,7 +395,7 @@ func switchProfile(name string) (string, error) {
 		return "", err
 	}
 	if _, exists := cfg.Profiles[name]; !exists {
-		return "", fmt.Errorf("profile %q not found. available: %s", name, strings.Join(cfg.ProfileNames(), ", "))
+		return "", validationError("profile %q not found. available: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 	}
 
 	// Shell access is granted per API key, so switching profiles must pass
@@ -434,7 +434,7 @@ func executeShellCommand(line string) ([]byte, error) {
 
 	// Prevent recursive shell invocation
 	if tokens[0] == "shell" {
-		return nil, fmt.Errorf("cannot run shell from within shell")
+		return nil, validationError("cannot run shell from within shell")
 	}
 
 	// Save session-level state. Cobra retains parsed flag values and their

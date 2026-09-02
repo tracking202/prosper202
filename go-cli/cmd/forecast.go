@@ -36,6 +36,37 @@ var forecastSignedMetrics = map[string]bool{
 	"roi":       true,
 }
 
+// forecastCountMetrics are count-like series fitted on log1p scale, which
+// makes multiplicative growth additive and stabilizes variance.
+var forecastCountMetrics = map[string]bool{
+	"total_clicks":         true,
+	"total_click_throughs": true,
+	"total_leads":          true,
+}
+
+// forecastCoreMetrics are the metrics RunCoherent consumes and produces.
+var forecastCoreMetrics = []string{
+	forecast.MetricClicks, forecast.MetricLeads, forecast.MetricIncome,
+	forecast.MetricCost, forecast.MetricNet,
+}
+
+// forecastCoherentInputs are the observed series RunCoherent consumes; net
+// is composed from them, so its own column is only parsed when net is the
+// metric requested (its direct fallback needs it).
+var forecastCoherentInputs = []string{
+	forecast.MetricClicks, forecast.MetricLeads, forecast.MetricIncome, forecast.MetricCost,
+}
+
+// forecastDerivedMetrics are composed from driver forecasts (clicks and
+// rates) when requested individually, keeping them consistent with what a
+// clicks forecast implies.
+var forecastDerivedMetrics = map[string]bool{
+	forecast.MetricLeads:  true,
+	forecast.MetricIncome: true,
+	forecast.MetricCost:   true,
+	forecast.MetricNet:    true,
+}
+
 var forecastMetricAliases = map[string]string{
 	"clicks":      "total_clicks",
 	"conversions": "total_leads",
@@ -54,39 +85,63 @@ var forecastCmd = &cobra.Command{
 
 Fetches historical time-series data from your Prosper202 instance and projects
 it forward using the selected algorithm. Supports linear regression, simple
-and weighted moving averages, Holt-Winters exponential smoothing, and automatic
-method selection that picks the best fit via backtesting.
+and weighted moving averages, damped-trend Holt-Winters exponential smoothing,
+and an ensemble (the default, alias "auto") that combines the methods weighted
+by rolling-backtest accuracy and reports each member's share.
 
-With --seasonal, predictions are modulated by day-of-week weights derived from
-weekpart report data to account for weekly patterns (e.g., "Tuesdays always
-convert better"). Seasonal adjustment requires --interval day or hour.
+With --seasonal, predictions are modulated by a day-of-week profile learned
+from the fetched history itself (re-estimated inside every backtest fold, so
+the bands describe the profiled forecast) to account for weekly patterns
+(e.g., "Tuesdays always convert better"). Requires --interval day or hour.
 
 Event-aware forecasting (--events, --event-tag) uses stored calendar events and
 requires --interval day.
+
+Derived metrics (leads, income, cost, net) requested without --seasonal or
+--events are composed from driver forecasts (clicks and the linking rates),
+so leads = clicks x conv_rate, income = leads x avg_payout, and net =
+income - cost hold exactly; --all-metrics forecasts all core metrics
+together this way.
+
+Bounds are empirical quantiles from a rolling backtest (meta "bounds" names
+the pair, e.g. p05-p95 (90%)); short histories fall back to Gaussian bounds
+(meta "bounds_source"). Short outlier runs such as a tracking outage are
+masked from fitting and listed in meta "anomalies_masked"; a detected level
+shift is reported as "level_shift_at" and the new regime is fitted. Use
+--no-anomaly-mask / --no-level-shift to fit the history exactly as-is.
 
 Examples:
   p202 forecast --metric revenue --horizon 7
   p202 forecast --metric clicks --history last90 --method linear
   p202 forecast --metric profit --horizon 14 --method auto --seasonal
+  p202 forecast --all-metrics --horizon 7
   p202 forecast --metric conv_rate --history last30 --interval week --horizon 4
   p202 forecast --metric revenue --aff_campaign_id 5 --horizon 7
   p202 forecast --metric revenue --events --horizon 14
-  p202 forecast --metric clicks --events --event-tag us-holidays`,
+  p202 forecast --metric clicks --events --event-tag us-holidays
+  p202 forecast --metric clicks --no-anomaly-mask --json`,
 	Aliases: []string{"predict"},
 	RunE:    runForecast,
 }
 
 func runForecast(cmd *cobra.Command, args []string) error {
+	allMetrics, _ := cmd.Flags().GetBool("all-metrics")
 	metric, _ := cmd.Flags().GetString("metric")
 	metric = strings.ToLower(strings.TrimSpace(metric))
-	if metric == "" {
-		return validationError("--metric is required. Choose from: %s", forecastMetricList())
-	}
-	if mapped, ok := forecastMetricAliases[metric]; ok {
-		metric = mapped
-	}
-	if !forecastAllowedMetrics[metric] {
-		return validationError("unsupported metric %q. Choose from: %s", metric, forecastMetricList())
+	if allMetrics {
+		if metric != "" {
+			return validationError("--all-metrics forecasts the core metrics together and cannot be combined with --metric")
+		}
+	} else {
+		if metric == "" {
+			return validationError("--metric is required. Choose from: %s", forecastMetricList())
+		}
+		if mapped, ok := forecastMetricAliases[metric]; ok {
+			metric = mapped
+		}
+		if !forecastAllowedMetrics[metric] {
+			return validationError("unsupported metric %q. Choose from: %s", metric, forecastMetricList())
+		}
 	}
 
 	methodStr, _ := cmd.Flags().GetString("method")
@@ -161,6 +216,11 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		// systematically skew the totals.
 		return validationError("--seasonal requires --interval day or hour")
 	}
+	seasonalMonthly, _ := cmd.Flags().GetBool("seasonal-monthly")
+	if seasonalMonthly && interval != "day" {
+		// Day-of-month profiles only make sense on daily buckets.
+		return validationError("--seasonal-monthly requires --interval day")
+	}
 	useEvents, _ := cmd.Flags().GetBool("events")
 	eventTag, _ := cmd.Flags().GetString("event-tag")
 	if (useEvents || eventTag != "") && interval != "day" {
@@ -168,9 +228,30 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		// granularity; other intervals would silently produce wrong adjustments.
 		return validationError("--events and --event-tag require --interval day")
 	}
+	if allMetrics && (seasonal || seasonalMonthly || useEvents || eventTag != "") {
+		// Seasonal and event adjustment layers operate on a single metric's
+		// series; combining them with the coherent multi-metric path would
+		// silently skip them for the derived metrics.
+		return validationError("--all-metrics cannot be combined with --seasonal, --seasonal-monthly, --events, or --event-tag")
+	}
 	confidence, _ := cmd.Flags().GetFloat64("confidence")
 	if confidence <= 0 || confidence >= 1 {
 		confidence = 0.95
+	}
+	noLevelShift, _ := cmd.Flags().GetBool("no-level-shift")
+	noAnomalyMask, _ := cmd.Flags().GetBool("no-anomaly-mask")
+	anomalySigma, _ := cmd.Flags().GetFloat64("anomaly-sigma")
+	if anomalySigma <= 0 {
+		return validationError("--anomaly-sigma must be positive (default %.0f)", forecast.DefaultAnomalySigma)
+	}
+	anomalyCycles, _ := cmd.Flags().GetInt("anomaly-cycles")
+	if anomalyCycles < 1 {
+		return validationError("--anomaly-cycles must be at least 1 (default %d)", forecast.DefaultAnomalyCycles)
+	}
+	if seasonalMonthly && forecastSignedMetrics[metric] {
+		// Multiplicative day-of-month profiles are undefined for metrics
+		// that cross zero (a near-zero mean yields unbounded multipliers).
+		return validationError("--seasonal-monthly is not supported for signed metrics (%s); it needs a non-negative metric", metric)
 	}
 
 	// Build API client.
@@ -189,36 +270,117 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetching historical data: %w", err)
 	}
 
-	series, err := parseTimeseries(data, metric)
-	if err != nil {
-		return err
-	}
-
-	if len(series) < 3 {
-		return validationError("not enough data points (%d) for forecasting — need at least 3. Try a longer --history period", len(series))
-	}
-
-	// Build forecast config.
+	// Build forecast config. Metrics that cannot go negative (counts,
+	// amounts, rates) get zero-clipped bounds and quantiles.
 	cfg := forecast.Config{
-		Method:          method,
-		Horizon:         horizon,
-		Interval:        forecast.Interval(interval),
-		Metric:          metric,
-		SMAWindow:       smaWindow,
-		ConfidenceLevel: confidence,
+		Method:             method,
+		Horizon:            horizon,
+		Interval:           forecast.Interval(interval),
+		Metric:             metric,
+		SMAWindow:          smaWindow,
+		ConfidenceLevel:    confidence,
+		NonNegative:        !forecastSignedMetrics[metric],
+		LogTransform:       forecastCountMetrics[metric],
+		DisableLevelShift:  noLevelShift,
+		DisableAnomalyMask: noAnomalyMask,
+		AnomalySigma:       anomalySigma,
+		AnomalyCycles:      anomalyCycles,
 	}
 
-	// Optionally fetch weekpart data for seasonal adjustment.
-	if seasonal {
-		weekpartParams := collectForecastFilters(cmd)
-		weekpartParams["period"] = history
-		wpData, wpErr := c.Get("reports/weekpart", weekpartParams)
-		if wpErr == nil {
-			weights := parseWeekpartWeights(wpData, metric)
-			if weights != nil {
-				cfg.SeasonalWeights = weights
+	// ── Coherent multi-metric forecasting ─────────────────────────────
+	// Parse every core metric from the single response: the requested
+	// metric's own series for the direct path, and the companions for the
+	// coherent path. Buckets or values the parser rejects are counted and
+	// surfaced in the output meta rather than silently dropped.
+	wanted := append([]string(nil), forecastCoherentInputs...)
+	if !allMetrics {
+		inInputs := false
+		for _, m := range wanted {
+			if m == metric {
+				inInputs = true
 			}
 		}
+		if !inInputs {
+			wanted = append(wanted, metric)
+		}
+	}
+	parsed, rejected, err := parseTimeseriesMulti(data, wanted)
+	if err != nil {
+		return withHint(err, "The timeseries request returned nothing usable for --history %s with these filters. Check the window and entity filters with `p202 report timeseries --period %s` (same filters), then retry.", history, history)
+	}
+
+	if allMetrics {
+		results, rcErr := forecast.RunCoherent(parsed, cfg)
+		if rcErr != nil {
+			return withHint(validationError("coherent forecast failed: %v", rcErr),
+				"One of the core metrics has too little history to compose from. Use a longer --history, or forecast the metric you need on its own with --metric (it falls back to a direct forecast automatically).")
+		}
+		output, boErr := buildAllMetricsOutput(results, rejected, confidence)
+		if boErr != nil {
+			return boErr
+		}
+		render(output)
+		return nil
+	}
+
+	series := parsed[metric]
+	if len(series) == 0 {
+		available := parsedMetricNames(parsed)
+		if len(available) == 0 {
+			return validationError("no valid data points found for metric %q", metric).
+				WithHint("No bucket in the response carried a numeric %q value. Check `p202 report timeseries --period %s` with the same filters to see which metrics the API returns for this window.", metric, history)
+		}
+		return validationError("no valid data points found for metric %q (response carried: %s)", metric, strings.Join(available, ", ")).
+			WithHint("Pick one of the metrics the response carried with --metric, or widen --history.")
+	}
+	if len(series) < 3 {
+		return validationError("not enough data points (%d) for forecasting — need at least 3", len(series)).
+			WithHint("Use a longer --history (e.g. last30 or last90) or a finer --interval; rolling backtests and conformal bands need ~12 points, so aim for at least that.")
+	}
+
+	// A derived metric requested on its own (without seasonal or event
+	// layers, which operate on the metric's own series) is forecast via
+	// ratio decomposition so it stays consistent with what the clicks
+	// forecast implies. When that is impossible — companion metrics missing
+	// from the response, too-sparse drivers upstream — the direct path
+	// serves the forecast and the meta records why composition was skipped.
+	coherentFallback := ""
+	if forecastDerivedMetrics[metric] && !seasonal && !seasonalMonthly && !useEvents && eventTag == "" {
+		results, rcErr := forecast.RunCoherent(parsed, cfg)
+		if rcErr == nil && results[metric] != nil {
+			result := results[metric]
+			if !forecastSignedMetrics[metric] {
+				forecast.ClipNonNegative(result.Predictions)
+			}
+			output, boErr := buildForecastOutput(result, metric, forecastOutputOpts{
+				confidence: confidence, rejected: rejected,
+			})
+			if boErr != nil {
+				return boErr
+			}
+			render(output)
+			return nil
+		}
+		coherentFallback = "composition unavailable"
+		if rcErr != nil {
+			coherentFallback = rcErr.Error()
+		}
+	}
+
+	// Seasonal profiles are learned from the fetched history inside the
+	// engine, re-estimated from each backtest fold's own prefix (with
+	// shrinkage by sample count and an autocorrelation gate), so the bands
+	// and errors describe the profiled forecast without a held-out day
+	// ever contributing to its own multiplier. Hourly forecasts get an
+	// hour-of-day profile in addition to the weekday one.
+	if seasonal {
+		cfg.WeekdayProfile = true
+		if interval == "hour" && !forecastSignedMetrics[metric] {
+			cfg.HourlyProfile = true
+		}
+	}
+	if seasonalMonthly {
+		cfg.MonthDayProfile = true
 	}
 
 	// ── Event-aware forecasting pipeline ──────────────────────────────
@@ -253,7 +415,8 @@ func runForecast(cmd *cobra.Command, args []string) error {
 				// Mask event days from training data for clean baseline fitting.
 				series = forecast.MaskEventDays(series, pastEvents)
 				if len(series) < 3 {
-					return validationError("after masking event days, only %d data points remain — need at least 3", len(series))
+					return validationError("after masking event days, only %d data points remain — need at least 3", len(series)).
+						WithHint("The event windows cover most of the history. Use a longer --history, narrow the events with --event-tag, or shorten lead/lag days on the events.")
 				}
 
 				// Masking may drop the most recent observations, but predictions
@@ -273,7 +436,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	// Run the baseline forecast on clean data.
 	result, err := forecast.Run(series, cfg)
 	if err != nil {
-		return fmt.Errorf("forecast failed: %w", err)
+		return withHint(fmt.Errorf("forecast failed: %w", err), "Use a longer --history or a coarser --interval so more points are available.")
 	}
 
 	// Apply event adjustments to predictions.
@@ -284,11 +447,24 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	// Trending methods can project below zero on declining series; clamp
 	// metrics that cannot be negative (clicks, income, rates) at zero.
 	if !forecastSignedMetrics[metric] {
-		clampNonNegative(result.Predictions)
+		forecast.ClipNonNegative(result.Predictions)
+	}
+	if coherentFallback != "" {
+		// The docs promise a composition label on every derived-metric
+		// forecast; a direct fallback is labeled as such with its reason.
+		result.Composition = forecast.CompositionDirect
 	}
 
 	// Render output.
-	output, err := buildForecastOutput(result, metric, seasonal, useEvents || eventTag != "", futureEvents, learnedImpacts)
+	output, err := buildForecastOutput(result, metric, forecastOutputOpts{
+		seasonal:     seasonal || seasonalMonthly,
+		eventsActive: useEvents || eventTag != "",
+		futureEvents: futureEvents,
+		impacts:      learnedImpacts,
+		confidence:   confidence,
+		rejected:     rejected,
+		fallbackNote: coherentFallback,
+	})
 	if err != nil {
 		return err
 	}
@@ -308,52 +484,17 @@ func collectForecastFilters(cmd *cobra.Command) map[string]string {
 	return params
 }
 
-// parseTimeseries extracts a forecast.Series from the API timeseries response.
+// parseTimeseries extracts a forecast.Series for one metric from the API
+// timeseries response (a thin wrapper over parseTimeseriesMulti).
 func parseTimeseries(data []byte, metric string) (forecast.Series, error) {
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil, fmt.Errorf("invalid timeseries response: %w", err)
+	parsed, _, err := parseTimeseriesMulti(data, []string{metric})
+	if err != nil {
+		return nil, err
 	}
-
-	rawItems, ok := parsed["data"].([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("timeseries response missing data array")
-	}
-
-	if len(rawItems) == 0 {
-		return nil, fmt.Errorf("timeseries returned empty data")
-	}
-
-	series := make(forecast.Series, 0, len(rawItems))
-	for _, raw := range rawItems {
-		obj, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		t, tErr := parseBucketTime(obj)
-		if tErr != nil {
-			continue
-		}
-
-		val, vOk := extractMetricValue(obj, metric)
-		if !vOk {
-			continue
-		}
-
-		series = append(series, forecast.Point{T: t, V: val})
-	}
-
-	if len(series) == 0 {
+	if len(parsed[metric]) == 0 {
 		return nil, fmt.Errorf("no valid data points found for metric %q", metric)
 	}
-
-	// Sort by time.
-	sort.Slice(series, func(i, j int) bool {
-		return series[i].T.Before(series[j].T)
-	})
-
-	return series, nil
+	return parsed[metric], nil
 }
 
 // parseBucketTime extracts a time from a timeseries bucket.
@@ -462,30 +603,222 @@ func extractMetricValue(obj map[string]interface{}, metric string) (float64, boo
 	}
 }
 
-// parseWeekpartWeights extracts seasonal weights from the weekpart API response.
-func parseWeekpartWeights(data []byte, metric string) forecast.SeasonalWeights {
+// parseTimeseriesMulti extracts one forecast.Series per requested metric
+// from a single timeseries response. A bucket whose time cannot be parsed,
+// or that carries a present-but-non-numeric value for any requested
+// metric, counts once in rejected (however many fields are bad) so the
+// caller can surface the loss; the bucket's valid metrics are still kept,
+// and a bucket simply lacking a metric is not a rejection.
+func parseTimeseriesMulti(data []byte, metrics []string) (map[string]forecast.Series, int, error) {
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil
+		return nil, 0, fmt.Errorf("invalid timeseries response: %w", err)
 	}
 
 	rawItems, ok := parsed["data"].([]interface{})
 	if !ok {
-		return nil
+		return nil, 0, fmt.Errorf("timeseries response missing data array")
+	}
+	if len(rawItems) == 0 {
+		return nil, 0, fmt.Errorf("timeseries returned empty data")
 	}
 
-	rows := make([]map[string]interface{}, 0, len(rawItems))
+	rejected := 0
+	out := make(map[string]forecast.Series, len(metrics))
 	for _, raw := range rawItems {
-		if obj, ok := raw.(map[string]interface{}); ok {
-			rows = append(rows, obj)
+		obj, ok := raw.(map[string]interface{})
+		if !ok {
+			rejected++
+			continue
+		}
+		t, tErr := parseBucketTime(obj)
+		if tErr != nil {
+			rejected++
+			continue
+		}
+		rowRejected := false
+		for _, m := range metrics {
+			if _, present := obj[m]; !present {
+				continue
+			}
+			val, vOk := extractMetricValue(obj, m)
+			if !vOk {
+				rowRejected = true
+				continue
+			}
+			out[m] = append(out[m], forecast.Point{T: t, V: val})
+		}
+		if rowRejected {
+			rejected++
 		}
 	}
 
-	return forecast.BuildWeekdayWeights(rows, metric)
+	for _, m := range metrics {
+		sort.Slice(out[m], func(i, j int) bool { return out[m][i].T.Before(out[m][j].T) })
+	}
+	return out, rejected, nil
+}
+
+// parsedMetricNames lists the metrics a parsed response carried values for,
+// sorted, for error hints.
+func parsedMetricNames(parsed map[string]forecast.Series) []string {
+	names := make([]string, 0, len(parsed))
+	for m, s := range parsed {
+		if len(s) > 0 {
+			names = append(names, m)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// boundsLabel names the band a result's lower/upper pair represents, so a
+// consumer never has to know the invocation to interpret it: conformal
+// bands snap to the nearest emitted quantile pair (say which, so the
+// requested --confidence is not mistaken for it); composed bands pair the
+// operands' endpoints at worst case, valid but with no single nominal
+// coverage to claim. Gaussian bands carry no label.
+func boundsLabel(source string, confidence float64) string {
+	lowerName, upperName, coverage := forecast.BoundLevels(confidence)
+	switch source {
+	case forecast.BoundsConformal:
+		return fmt.Sprintf("%s-%s (%.0f%%)", lowerName, upperName, coverage*100)
+	case forecast.BoundsComposed:
+		return fmt.Sprintf("%s-%s (composed from operand bands, not calibrated)", lowerName, upperName)
+	}
+	return ""
+}
+
+// buildAllMetricsOutput renders the coherent multi-metric forecast: one row
+// per date with value/lower/upper columns for each core metric, plus a meta
+// block reporting each metric's composition.
+func buildAllMetricsOutput(results map[string]*forecast.Result, rejected int, confidence float64) ([]byte, error) {
+	clicks := results[forecast.MetricClicks]
+	if clicks == nil || len(clicks.Predictions) == 0 {
+		return nil, fmt.Errorf("coherent forecast returned no click predictions")
+	}
+
+	rows := make([]map[string]interface{}, len(clicks.Predictions))
+	for i := range clicks.Predictions {
+		row := map[string]interface{}{
+			"date": formatPredictionTime(clicks.Predictions[i].T, clicks.Interval),
+		}
+		for _, m := range forecastCoreMetrics {
+			res := results[m]
+			if res == nil || i >= len(res.Predictions) {
+				continue
+			}
+			p := res.Predictions[i]
+			row[m] = roundTo(p.Value, 2)
+			row[m+"_lower"] = roundTo(p.LowerBound, 2)
+			row[m+"_upper"] = roundTo(p.UpperBound, 2)
+		}
+		rows[i] = row
+	}
+
+	compositions := map[string]interface{}{}
+	dataPoints := map[string]interface{}{}
+	maes := map[string]interface{}{}
+	rmses := map[string]interface{}{}
+	boundsSources := map[string]interface{}{}
+	boundsLabels := map[string]interface{}{}
+	levelShifts := map[string]interface{}{}
+	anomalies := map[string]interface{}{}
+	for _, m := range forecastCoreMetrics {
+		res := results[m]
+		if res == nil {
+			continue
+		}
+		if res.Composition != "" {
+			compositions[m] = res.Composition
+		}
+		// Per metric: a derived metric reports the fewest points any of
+		// its drivers was fitted on, which can be below the clicks count.
+		dataPoints[m] = res.DataPoints
+		// Rolling errors, per metric: compositions are backtested too, so
+		// every metric has its own typical error to judge a forecast by.
+		// A measured zero is reported as zero; only "never measured" is
+		// omitted.
+		if res.Backtested() {
+			maes[m] = roundTo(res.MAE, 2)
+			rmses[m] = roundTo(res.RMSE, 2)
+		}
+		if res.BoundsSource != "" {
+			boundsSources[m] = res.BoundsSource
+		}
+		if label := boundsLabel(res.BoundsSource, confidence); label != "" {
+			boundsLabels[m] = label
+		}
+		if res.LevelShiftAt != "" {
+			levelShifts[m] = res.LevelShiftAt
+		}
+		if len(res.AnomaliesMasked) > 0 {
+			anomalies[m] = res.AnomaliesMasked
+		}
+	}
+
+	meta := map[string]interface{}{
+		"method":           string(clicks.Method),
+		"horizon":          clicks.Horizon,
+		"interval":         string(clicks.Interval),
+		"data_points_used": dataPoints,
+		"composition":      compositions,
+	}
+	if len(maes) > 0 {
+		meta["mae"] = maes
+		meta["rmse"] = rmses
+	}
+	if len(boundsSources) > 0 {
+		meta["bounds_source"] = boundsSources
+	}
+	if len(boundsLabels) > 0 {
+		meta["bounds"] = boundsLabels
+	}
+	if len(levelShifts) > 0 {
+		meta["level_shifts"] = levelShifts
+	}
+	if len(anomalies) > 0 {
+		meta["anomalies_masked"] = anomalies
+	}
+	if len(clicks.Weights) > 0 {
+		meta["weights"] = roundWeights(clicks.Weights)
+	}
+	if rejected > 0 {
+		meta["buckets_rejected"] = rejected
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{"data": rows, "meta": meta})
+	if err != nil {
+		return nil, fmt.Errorf("marshalling forecast output: %w", err)
+	}
+	return payload, nil
+}
+
+// forecastOutputOpts carries the run context buildForecastOutput reports in
+// the output meta.
+type forecastOutputOpts struct {
+	seasonal     bool // any seasonal profile requested
+	eventsActive bool
+	futureEvents []forecast.Event
+	impacts      map[string]forecast.LearnedImpact
+	confidence   float64
+	rejected     int    // response buckets/values the parser rejected
+	fallbackNote string // why a derived metric was forecast directly
+}
+
+// roundWeights rounds ensemble member weights for display.
+func roundWeights(weights map[string]float64) map[string]interface{} {
+	out := make(map[string]interface{}, len(weights))
+	for m, w := range weights {
+		out[m] = roundTo(w, 3)
+	}
+	return out
 }
 
 // buildForecastOutput constructs the JSON output for rendering.
-func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, eventsActive bool, futureEvents []forecast.Event, impacts map[string]forecast.LearnedImpact) ([]byte, error) {
+func buildForecastOutput(result *forecast.Result, metric string, opts forecastOutputOpts) ([]byte, error) {
+	seasonal, eventsActive, futureEvents, impacts := opts.seasonal, opts.eventsActive, opts.futureEvents, opts.impacts
+	lowerName, upperName, _ := forecast.BoundLevels(opts.confidence)
 	predictions := make([]map[string]interface{}, len(result.Predictions))
 	for i, p := range result.Predictions {
 		row := map[string]interface{}{
@@ -493,6 +826,20 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, 
 			metric:        roundTo(p.Value, 2),
 			"lower_bound": roundTo(p.LowerBound, 2),
 			"upper_bound": roundTo(p.UpperBound, 2),
+		}
+
+		// Conformal runs carry the full quantile set; expose every quantile
+		// except the pair already shown as lower/upper. Users can trim
+		// columns with --fields.
+		if len(p.Quantiles) > 0 {
+			for _, q := range []string{"p05", "p10", "p25", "p50", "p75", "p90", "p95"} {
+				if q == lowerName || q == upperName {
+					continue
+				}
+				if v, ok := p.Quantiles[q]; ok {
+					row[q] = roundTo(v, 2)
+				}
+			}
 		}
 
 		// Add trend indicator for first row.
@@ -521,9 +868,39 @@ func buildForecastOutput(result *forecast.Result, metric string, seasonal bool, 
 		"seasonal":         seasonal,
 		"events_active":    eventsActive,
 	}
-	if result.MAE > 0 {
+	if result.Composition != "" {
+		meta["composition"] = result.Composition
+	}
+	if opts.fallbackNote != "" {
+		meta["composition_fallback"] = opts.fallbackNote
+	}
+	if result.LevelShiftAt != "" {
+		meta["level_shift_at"] = result.LevelShiftAt
+	}
+	if len(result.AnomaliesMasked) > 0 {
+		meta["anomalies_masked"] = result.AnomaliesMasked
+	}
+	if seasonal {
+		meta["seasonal_applied"] = result.SeasonalApplied
+		if len(result.SeasonalProfiles) > 0 {
+			meta["seasonal_profiles"] = result.SeasonalProfiles
+		}
+	}
+	if result.BoundsSource != "" {
+		meta["bounds_source"] = result.BoundsSource
+	}
+	if label := boundsLabel(result.BoundsSource, opts.confidence); label != "" {
+		meta["bounds"] = label
+	}
+	if opts.rejected > 0 {
+		meta["buckets_rejected"] = opts.rejected
+	}
+	if result.Backtested() {
 		meta["mae"] = roundTo(result.MAE, 2)
 		meta["rmse"] = roundTo(result.RMSE, 2)
+	}
+	if len(result.Weights) > 0 {
+		meta["weights"] = roundWeights(result.Weights)
 	}
 
 	if eventsActive && len(futureEvents) > 0 {
@@ -579,21 +956,6 @@ func formatPredictionTime(t time.Time, interval forecast.Interval) string {
 	}
 }
 
-// clampNonNegative floors prediction values and bounds at zero.
-func clampNonNegative(preds []forecast.Prediction) {
-	for i := range preds {
-		if preds[i].Value < 0 {
-			preds[i].Value = 0
-		}
-		if preds[i].LowerBound < 0 {
-			preds[i].LowerBound = 0
-		}
-		if preds[i].UpperBound < 0 {
-			preds[i].UpperBound = 0
-		}
-	}
-}
-
 // roundTo rounds a float to n decimal places.
 func roundTo(v float64, n int) float64 {
 	pow := 1.0
@@ -627,7 +989,7 @@ func fetchAllForecastEvents(c *api.Client) ([]forecast.Event, error) {
 	for page := 0; page < maxForecastEventPages; page++ {
 		data, err := c.Get("forecast-events", params)
 		if err != nil {
-			return nil, fmt.Errorf("fetching forecast events: %w", err)
+			return nil, withHint(fmt.Errorf("fetching forecast events: %w", err), "Events come from the forecast-events endpoint; run `p202 forecast-event list` to confirm it works, or drop --events/--event-tag to forecast without the calendar.")
 		}
 
 		events, err := parseForecastEvents(data)
@@ -802,15 +1164,21 @@ func filterEventsByTag(events []forecast.Event, tagFilter string) []forecast.Eve
 
 func init() {
 	forecastCmd.Flags().StringP("metric", "m", "", "Metric to forecast (clicks, revenue, profit, roi, epc, conv_rate, cost, conversions, cpa)")
-	forecastCmd.Flags().String("method", "auto", "Forecasting method: auto, linear, sma, wma, holtwinters")
+	forecastCmd.Flags().String("method", "auto", "Forecasting method: auto (ensemble), ensemble, linear, sma, wma, holtwinters")
 	forecastCmd.Flags().IntP("horizon", "n", 7, "Number of periods to forecast forward")
 	forecastCmd.Flags().StringP("interval", "i", "day", "Forecast granularity: hour, day, week, month")
 	forecastCmd.Flags().String("history", "last90", "Historical data period: today, yesterday, last7, last30, last90 (aliases: --period, --days)")
 	forecastCmd.Flags().String("period", "", "Alias of --history")
 	forecastCmd.Flags().String("days", "", "Alias of --history")
 	forecastCmd.Flags().Int("window", 0, "SMA/WMA window size (0 = auto-select)")
-	forecastCmd.Flags().Bool("seasonal", false, "Apply day-of-week seasonal adjustment from weekpart data")
-	forecastCmd.Flags().Float64("confidence", 0.95, "Confidence level for prediction bounds (0.80, 0.90, 0.95, 0.99)")
+	forecastCmd.Flags().Bool("all-metrics", false, "Forecast clicks, leads, income, cost, and net together via ratio decomposition (coherent output)")
+	forecastCmd.Flags().Bool("seasonal", false, "Apply a day-of-week profile learned from the fetched history (hour interval also gets an hour-of-day profile)")
+	forecastCmd.Flags().Bool("seasonal-monthly", false, "Apply day-of-month seasonal adjustment learned from the fetched series (requires --interval day)")
+	forecastCmd.Flags().Float64("confidence", 0.95, "Confidence level for prediction bounds; snaps to the nearest band: 0.50 (p25-p75), 0.80 (p10-p90), or 0.90 (p05-p95, also used for 0.95/0.99)")
+	forecastCmd.Flags().Bool("no-level-shift", false, "Disable level-shift detection (fit the full history as-is)")
+	forecastCmd.Flags().Bool("no-anomaly-mask", false, "Disable transient masking (fit short outlier runs such as tracking outages as data)")
+	forecastCmd.Flags().Float64("anomaly-sigma", forecast.DefaultAnomalySigma, "Transient-masking threshold in robust sigma units (lower masks more aggressively)")
+	forecastCmd.Flags().Int("anomaly-cycles", forecast.DefaultAnomalyCycles, "Seasonal cycles on each side used as same-weekday/hour references for transient masking")
 	forecastCmd.Flags().Bool("events", false, "Enable event-aware forecasting using stored forecast events")
 	forecastCmd.Flags().String("event-tag", "", "Filter forecast events by tag (comma-separated, e.g. us-holidays,promos)")
 

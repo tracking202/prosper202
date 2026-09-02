@@ -154,25 +154,40 @@ Aliases: `--group-by lp` -> `landing_page`, `--sort conversions` -> `total_leads
 
 ## Forecasting
 
-Project any tracked metric forward from historical time-series data. Supports
-linear regression, simple and weighted moving averages, Holt-Winters
-exponential smoothing, and automatic method selection via backtesting.
+Project any tracked metric forward from historical time-series data, with
+calibrated prediction bands, an accuracy-weighted ensemble of methods,
+coherent multi-metric output, seasonal profiles, level-shift handling, and
+transient (outage/spike) masking. The full guide with worked examples is
+[Forecasting Guide](11-forecasting.md).
 
 ```bash
 p202 forecast --metric revenue --horizon 7
 p202 forecast --metric clicks --history last90 --method linear
-p202 forecast --metric profit --horizon 14 --method auto --seasonal
+p202 forecast --metric profit --horizon 14 --seasonal --events
+p202 forecast --all-metrics --horizon 7 --json
 ```
 
-With `--seasonal`, predictions are modulated by day-of-week weights derived from
-weekpart report data (requires `--interval day` or `hour`). Event-aware
-forecasting (`--events`, `--event-tag`) folds in stored [forecast
-events](../api/18-forecast-events.md) and requires `--interval day`:
+Key behaviors, each detailed in the guide:
 
-```bash
-p202 forecast --metric revenue --events --horizon 14
-p202 forecast --metric clicks --events --event-tag us-holidays
-```
+- **Bands** (`lower_bound`/`upper_bound`, plus `p05`…`p95` columns) come from
+  rolling-origin conformal prediction; `--confidence` snaps to a 50%, 80%,
+  or 90% band and the meta's `bounds` names the one in use. Histories under
+  ~12 points fall back to Gaussian bands (`bounds_source`).
+- **`--method auto`** is an ensemble weighted by recent rolling accuracy;
+  the meta's `weights` shows each member's share.
+- **Derived metrics** (leads, income, cost, net, or `--all-metrics`) are
+  composed from driver forecasts so `net = income − cost` and
+  `leads = clicks × conv_rate` hold exactly (`composition` in meta).
+- **`--seasonal`** applies shrunk weekday (and hourly) profiles only when
+  the series repeats at that lag (`seasonal_applied`); `--seasonal-monthly`
+  adds a day-of-month profile for non-negative metrics.
+- **Level shifts** are detected and the new regime fitted
+  (`level_shift_at`; `--no-level-shift` to disable). **Transients** such as a
+  two-day tracking outage are masked from fitting and listed in
+  `anomalies_masked` (`--no-anomaly-mask`, `--anomaly-sigma`,
+  `--anomaly-cycles`).
+- **`--events` / `--event-tag`** fold in stored
+  [forecast events](../api/18-forecast-events.md) (day interval only).
 
 ## Bulk Operations
 
@@ -192,7 +207,52 @@ p202 config get-default report.period
 p202 config unset-default report.period
 ```
 
-## Exit Codes
+## Errors
+
+Every failure is reported on **stderr** with a category, the message, and,
+whenever there is a concrete next step, a recovery hint, including failures
+the CLI raises before running the command (a wrong argument count, an
+unknown subcommand). Stdout stays empty on failure, so a script never
+confuses an error for data. Exit codes follow
+the category (table below) and survive wrapping: "fetching historical data:
+API error (401)" still exits 2.
+
+Human mode:
+
+```text
+Error [auth]: fetching historical data: API error (401): invalid api key
+Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
+```
+
+With `--json` or `--ndjson` the same failure is a single JSON envelope, so
+an agent reads structured fields instead of parsing prose:
+
+```json
+{"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
+```
+
+| Field | Always | Meaning |
+| --- | --- | --- |
+| `category` | yes | `validation`, `auth`, `network`, `server`, or `partial_failure` |
+| `message` | yes | What failed |
+| `exit_code` | yes | The process exit code (table below) |
+| `command` | yes | The command that ran, e.g. `p202 rotator create` |
+| `hint` | when known | The recovery step to take next |
+| `http_status` | API errors | The server's status code |
+| `field_errors` | 422 responses | Per-field messages from the server |
+
+Lists of valid values (supported entities, the metrics a response did
+contain) sit in the message itself, so they are visible even when the hint
+is ignored; the hint carries the next action. Hints come from three sources,
+in order of precedence: a hint attached by the command itself (for example,
+which flag to change when the requested metric is missing, or the dependency
+order to sync first when a foreign key cannot be resolved); a generic hint
+for the failure class (401/403 key check, 404 use `list` for ids, 409 update
+instead of create, 429 back off, 5xx retry then `p202 system health`,
+network check the URL and `p202 config test`); and for any remaining
+validation error, a pointer to `<command> --help`.
+
+### Exit Codes
 
 | Code | Meaning |
 | ---- | ------- |

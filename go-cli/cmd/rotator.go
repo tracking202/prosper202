@@ -87,7 +87,7 @@ var rotatorCreateCmd = &cobra.Command{
 		}
 		name, _ := cmd.Flags().GetString("name")
 		if name == "" {
-			return fmt.Errorf("required flag --name is missing")
+			return validationError("required flag --name is missing")
 		}
 		body := map[string]interface{}{"name": name}
 		for _, f := range []string{"default_url", "default_campaign", "default_lp"} {
@@ -120,7 +120,7 @@ var rotatorUpdateCmd = &cobra.Command{
 			}
 		}
 		if len(body) == 0 {
-			return fmt.Errorf("no fields specified; pass at least one flag to update")
+			return validationError("no fields specified; pass at least one flag to update")
 		}
 		data, err := c.Put("rotators/"+args[0], body)
 		if err != nil {
@@ -153,7 +153,7 @@ var rotatorDeleteCmd = &cobra.Command{
 				return parseErr
 			}
 			if len(idList) == 0 {
-				return fmt.Errorf("--ids requires at least one ID")
+				return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
@@ -203,7 +203,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		}
 		ruleName, _ := cmd.Flags().GetString("rule_name")
 		if ruleName == "" {
-			return fmt.Errorf("required flag --rule_name is missing")
+			return validationError("required flag --rule_name is missing")
 		}
 		body := map[string]interface{}{
 			"rule_name": ruleName,
@@ -214,7 +214,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("criteria_json"); v != "" {
 			var criteria interface{}
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
-				return fmt.Errorf("invalid --criteria_json: %w", err)
+				return withHint(fmt.Errorf("invalid --criteria_json: %w", err), "Pass a JSON object; `p202 rotator criteria-values` shows accepted keys and values. Quote it so the shell keeps it intact.")
 			}
 			body["criteria"] = criteria
 		} else if code, _ := cmd.Flags().GetString("country"); code != "" {
@@ -222,14 +222,14 @@ var rotatorRuleCreateCmd = &cobra.Command{
 			// never has to know the exact "Name(CC)" value string.
 			value := countryCriteriaValue(code)
 			if value == "" {
-				return validationError("unknown country code %q (see `rotator criteria-values --search ...`); or use --criteria_json", code)
+				return validationError("unknown country code %q", code).WithHint("Find codes with `p202 rotator criteria-values --search <name>`, or pass raw criteria via --criteria_json.")
 			}
 			body["criteria"] = []map[string]string{{"type": "country", "statement": "is", "value": value}}
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
-				return fmt.Errorf("invalid --redirects_json: %w", err)
+				return withHint(fmt.Errorf("invalid --redirects_json: %w", err), "Pass a JSON array of {url, weight} objects; quote it so the shell keeps it intact.")
 			}
 			body["redirects"] = redirects
 		} else if camp, _ := cmd.Flags().GetString("redirect-campaign"); camp != "" {
@@ -267,7 +267,7 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 				return parseErr
 			}
 			if len(idList) == 0 {
-				return fmt.Errorf("--ids requires at least one rule ID")
+				return validationError("--ids requires at least one rule ID").WithHint("Comma-separate rule ids, e.g. --ids 3,4 (find them with `p202 rotator rules <rotator_id>`).")
 			}
 			rotatorID := args[0]
 			force, _ := cmd.Flags().GetBool("force")
@@ -338,7 +338,7 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		}
 		ruleID = strings.TrimSpace(ruleID)
 		if ruleID == "" {
-			return fmt.Errorf("rule id is required (pass it as the second argument or via --rule_id)")
+			return validationError("rule id is required (pass it as the second argument or via --rule_id)").WithHint("`p202 rotator rules <rotator_id>` lists rule ids.")
 		}
 
 		body := map[string]interface{}{}
@@ -354,19 +354,19 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("criteria_json"); v != "" {
 			var criteria interface{}
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
-				return fmt.Errorf("invalid --criteria_json: %w", err)
+				return withHint(fmt.Errorf("invalid --criteria_json: %w", err), "Pass a JSON object; `p202 rotator criteria-values` shows accepted keys and values. Quote it so the shell keeps it intact.")
 			}
 			body["criteria"] = criteria
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
-				return fmt.Errorf("invalid --redirects_json: %w", err)
+				return withHint(fmt.Errorf("invalid --redirects_json: %w", err), "Pass a JSON array of {url, weight} objects; quote it so the shell keeps it intact.")
 			}
 			body["redirects"] = redirects
 		}
 		if len(body) == 0 {
-			return fmt.Errorf("no fields specified; pass at least one flag to update")
+			return validationError("no fields specified; pass at least one flag to update")
 		}
 
 		data, err := c.Put("rotators/"+args[0]+"/rules/"+ruleID, body)

@@ -122,7 +122,7 @@ var configTestCmd = &cobra.Command{
 		}
 		data, err := c.Get("system/health", nil)
 		if err != nil {
-			return fmt.Errorf("connection failed: %w", err)
+			return withHint(fmt.Errorf("connection failed: %w", err), "Check `p202 config get` (URL and key), that the instance is reachable, and that the key is valid in the Prosper202 UI under API keys.")
 		}
 		if !jsonOutput {
 			fmt.Println("Connection successful!")
@@ -140,10 +140,10 @@ var configSetDefaultCmd = &cobra.Command{
 		key := strings.TrimSpace(args[0])
 		value := strings.TrimSpace(args[1])
 		if value == "" {
-			return fmt.Errorf("default value cannot be empty")
+			return validationError("default value cannot be empty")
 		}
 		if !isSupportedDefaultKey(key) {
-			return fmt.Errorf("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
+			return validationError("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
 		}
 
 		cfg, err := config.Load()
@@ -180,11 +180,11 @@ var configGetDefaultCmd = &cobra.Command{
 		if len(args) == 1 {
 			key := strings.TrimSpace(args[0])
 			if !isSupportedDefaultKey(key) {
-				return fmt.Errorf("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
+				return validationError("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
 			}
 			value := p.GetDefault(key)
 			if value == "" {
-				return fmt.Errorf("default %q is not set", key)
+				return validationError("default %q is not set", key).WithHint("Set it with `p202 config set-default %s <value>`.", key)
 			}
 			payload, _ := json.Marshal(map[string]interface{}{
 				"data": map[string]string{
@@ -215,7 +215,7 @@ var configUnsetDefaultCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := strings.TrimSpace(args[0])
 		if !isSupportedDefaultKey(key) {
-			return fmt.Errorf("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
+			return validationError("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
 		}
 
 		cfg, err := config.Load()
@@ -227,7 +227,7 @@ var configUnsetDefaultCmd = &cobra.Command{
 			return err
 		}
 		if !p.DeleteDefault(key) {
-			return fmt.Errorf("default %q is not set", key)
+			return validationError("default %q is not set", key).WithHint("Set it with `p202 config set-default %s <value>`.", key)
 		}
 		if err := cfg.Save(); err != nil {
 			return err
@@ -246,27 +246,27 @@ func init() {
 func normalizeBaseURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", fmt.Errorf("URL is required")
+		return "", validationError("URL is required").WithHint("Example: `p202 config set-url https://tracking.example.com`.")
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed == nil {
-		return "", fmt.Errorf("URL must be a valid http(s) URL")
+		return "", validationError("URL must be a valid http(s) URL").WithHint("Example: `p202 config set-url https://tracking.example.com`.")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("URL must use http or https")
+		return "", validationError("URL must use http or https").WithHint("Example: `p202 config set-url https://tracking.example.com`.")
 	}
 	if parsed.Host == "" {
-		return "", fmt.Errorf("URL must include a host")
+		return "", validationError("URL must include a host").WithHint("Example: `p202 config set-url https://tracking.example.com`.")
 	}
 	return strings.TrimRight(trimmed, "/"), nil
 }
 
 func validateAPIKey(key string) error {
 	if len(key) < 8 {
-		return fmt.Errorf("API key must be at least 8 characters")
+		return validationError("API key must be at least 8 characters").WithHint("Create or copy a key in the Prosper202 UI (API keys), then `p202 config set-key <key>`.")
 	}
 	if strings.ContainsAny(key, " \t\r\n") {
-		return fmt.Errorf("API key must not contain whitespace")
+		return validationError("API key must not contain whitespace").WithHint("Paste the key exactly as shown in the Prosper202 UI; quote it if your shell splits it.")
 	}
 	return nil
 }

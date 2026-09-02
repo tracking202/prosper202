@@ -102,11 +102,11 @@ var conversionCreateCmd = &cobra.Command{
 			clickIDStr, _ = cmd.Flags().GetString("click_id_public")
 		}
 		if clickIDStr == "" {
-			return fmt.Errorf("required flag --click_id (or --click_id_public) is missing")
+			return validationError("required flag --click_id (or --click_id_public) is missing")
 		}
 		clickID, err := strconv.Atoi(clickIDStr)
 		if err != nil {
-			return fmt.Errorf("--click_id must be an integer: %s", clickIDStr)
+			return validationError("--click_id must be an integer: %s", clickIDStr).WithHint("Use the internal click id from `p202 click list`, or pass the public id via --click_id_public.")
 		}
 		body := map[string]interface{}{
 			"click_id": clickID,
@@ -150,7 +150,7 @@ var conversionDeleteCmd = &cobra.Command{
 				return parseErr
 			}
 			if len(idList) == 0 {
-				return fmt.Errorf("--ids requires at least one ID")
+				return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
 			}
 
 			force, _ := cmd.Flags().GetBool("force")

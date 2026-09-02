@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"fmt"
 	"p202/internal/api"
 	"strconv"
 
@@ -57,14 +56,14 @@ var clickListCmd = &cobra.Command{
 		if pageStr, _ := cmd.Flags().GetString("page"); pageStr != "" {
 			page, err := strconv.Atoi(pageStr)
 			if err != nil || page <= 0 {
-				return fmt.Errorf("--page must be a positive integer")
+				return validationError("--page must be a positive integer")
 			}
 			if _, hasOffset := params["offset"]; !hasOffset {
 				limit := 50
 				if limitStr, hasLimit := params["limit"]; hasLimit {
 					parsedLimit, err := strconv.Atoi(limitStr)
 					if err != nil || parsedLimit <= 0 {
-						return fmt.Errorf("--limit must be a positive integer when --page is used")
+						return validationError("--limit must be a positive integer when --page is used")
 					}
 					limit = parsedLimit
 				}

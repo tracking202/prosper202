@@ -100,7 +100,7 @@ var syncStatusCmd = &cobra.Command{
 		fromProfile := firstFlag(cmd, "from", "source")
 		toProfile := firstFlag(cmd, "to", "target")
 		if fromProfile == "" || toProfile == "" {
-			return fmt.Errorf("--from and --to are required")
+			return validationError("--from and --to are required").WithHint("Pass profile names, e.g. --from prod --to staging; `p202 config list-profiles` shows them.")
 		}
 		if handled, err := tryServerSyncRead("sync/status", fromProfile, toProfile); err != nil {
 			return err
@@ -182,7 +182,7 @@ var syncHistoryCmd = &cobra.Command{
 		fromProfile := firstFlag(cmd, "from", "source")
 		toProfile := firstFlag(cmd, "to", "target")
 		if fromProfile == "" || toProfile == "" {
-			return fmt.Errorf("--from and --to are required")
+			return validationError("--from and --to are required").WithHint("Pass profile names, e.g. --from prod --to staging; `p202 config list-profiles` shows them.")
 		}
 		if handled, err := tryServerSyncRead("sync/history", fromProfile, toProfile); err != nil {
 			return err
@@ -476,7 +476,7 @@ func readSyncFlags(cmd *cobra.Command) (syncOptions, string, string, error) {
 	fromProfile := firstFlag(cmd, "from", "source")
 	toProfile := firstFlag(cmd, "to", "target")
 	if fromProfile == "" || toProfile == "" {
-		return syncOptions{}, "", "", fmt.Errorf("--from and --to are required")
+		return syncOptions{}, "", "", validationError("--from and --to are required").WithHint("Pass profile names, e.g. --from prod --to staging; `p202 config list-profiles` shows them.")
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -495,7 +495,7 @@ func selectedSyncEntities(entity string) ([]string, error) {
 		return append([]string(nil), syncDependencyOrder...), nil
 	}
 	if _, ok := portableEntities[entity]; !ok {
-		return nil, fmt.Errorf("unsupported entity %q", entity)
+		return nil, validationError("unsupported entity %q (supported: all, %s)", entity, strings.Join(sortedPortableEntities(), ", ")).WithHint("Pass one of those as the first argument; `all` syncs every entity in dependency order.")
 	}
 	return []string{entity}, nil
 }
@@ -523,12 +523,12 @@ func buildSyncPayload(entity string, sourceRow map[string]interface{}, sourceLoo
 
 		sourceNatural := referenceNaturalByEntity(refEntity, rawSourceID, sourceLookups)
 		if sourceNatural == "" {
-			return nil, fmt.Errorf("unresolvable source foreign key %s=%s (entity %s)", fkField, rawSourceID, entity)
+			return nil, withHint(fmt.Errorf("unresolvable source foreign key %s=%s (entity %s)", fkField, rawSourceID, entity), "The source record references a %s that does not exist on the source; fix or remove the dangling reference there, or sync with --skip-errors to leave that record out.", fkField)
 		}
 
 		targetID := referenceIDByNatural(refEntity, sourceNatural, targetLookups)
 		if targetID == "" {
-			return nil, fmt.Errorf("unresolvable target foreign key %s via %s=%s", fkField, refEntity, sourceNatural)
+			return nil, withHint(fmt.Errorf("unresolvable target foreign key %s via %s=%s", fkField, refEntity, sourceNatural), "The target has no %s matching the source's; sync that entity first (dependency order: aff-network/ppc-network -> ppc-account -> campaign -> landing-page -> text-ad -> rotator -> tracker) or run `p202 sync all`.", refEntity)
 		}
 
 		payload[fkField] = parseNumericOrString(targetID)

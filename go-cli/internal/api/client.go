@@ -88,11 +88,24 @@ func ErrorCategory(err error) string {
 	return ""
 }
 
+// Hinted is implemented by errors that carry their own recovery hint.
+type Hinted interface {
+	HintText() string
+}
+
 // HintFor returns an actionable recovery hint for an error, or "" when there is
 // nothing useful to add. It augments — never replaces — the error message.
+// An explicit hint attached to the error wins; otherwise the HTTP status or
+// request failure kind selects a generic one.
 func HintFor(err error) string {
 	if err == nil {
 		return ""
+	}
+	var hinted Hinted
+	if errors.As(err, &hinted) {
+		if h := strings.TrimSpace(hinted.HintText()); h != "" {
+			return h
+		}
 	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
@@ -101,15 +114,26 @@ func HintFor(err error) string {
 			return "Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
+		case apiErr.Status == 409:
+			return "A matching record already exists. Run the matching `... list` to find it, then `... update` it instead of creating."
 		case apiErr.Status == 422 && len(apiErr.FieldErrors) > 0:
 			return "Fix the field(s) listed above and retry."
+		case apiErr.Status == 400 || apiErr.Status == 422:
+			return "The server rejected the request values; fix what the message names and retry (`--help` lists the flags)."
+		case apiErr.Status == 429:
+			return "Rate limited. Wait and retry with backoff; reduce --concurrency for bulk operations."
+		case apiErr.Status >= 500:
+			return "Server-side failure. Retry after a short wait; if it persists, run `p202 system health` and check the server logs."
 		}
 		return ""
 	}
 	var reqErr *RequestError
 	if errors.As(err, &reqErr) {
-		if reqErr.Kind == "network" {
-			return "Check the server URL (`p202 config get`) and that the instance is reachable."
+		switch reqErr.Kind {
+		case "network":
+			return "Check the server URL (`p202 config get`) and that the instance is reachable; run `p202 config test` to verify the connection."
+		case "validation":
+			return "The request could not be built from the given values; check them and retry."
 		}
 	}
 	return ""
