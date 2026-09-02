@@ -73,14 +73,14 @@ func TestProfileFor_EstimatesFromPrefixOnly(t *testing.T) {
 	s[28].V = 500 // Monday of week 5
 	cfg := Config{Interval: IntervalDay, WeekdayProfile: true}
 
-	full, names := profileFor(s, cfg, len(s))
+	full, names := profileFor(s, cfg)
 	if full == nil || len(names) != 1 || names[0] != "weekday" {
 		t.Fatalf("full-history profile nil=%v names=%v, want a weekday profile", full == nil, names)
 	}
 	if full(s[28].T) <= 1.5 {
 		t.Errorf("full-history Monday multiplier %.3f should reflect the spike", full(s[28].T))
 	}
-	prefix, _ := profileFor(s, cfg, 28)
+	prefix, _ := profileFor(s[:28], cfg)
 	if prefix == nil {
 		t.Fatal("prefix profile missing: four weeks of a weekly pattern should pass the gate")
 	}

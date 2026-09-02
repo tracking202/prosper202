@@ -131,6 +131,9 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 	}
 	for c := len(s) - 1; c >= lowestCut; c-- {
 		train := trainingView(s, cfg, c)
+		if len(train) == 0 {
+			continue
+		}
 		trainEnd := train[len(train)-1].T
 
 		// This cut's horizon is the calendar distance to the farthest
@@ -146,8 +149,8 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 		testCfg.Horizon = steps
 		testCfg.Anchor = time.Time{}
 
-		// This fold's seasonal profile, from its own prefix.
-		profile, _ := profileFor(s, cfg, c)
+		// This fold's seasonal profile, from its own training view.
+		profile, _ := profileFor(train, cfg)
 
 		// Map each held-out point to its horizon step by calendar distance.
 		// Rows are created lazily so methods share the same row set.
@@ -169,6 +172,10 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 			applyProfile(preds, profile, cfg.LogTransform)
 			clipPointPredictions(preds, cfg)
 			for i := c; i < len(s); i++ {
+				// Masked transients are not scored (see Config.excluded).
+				if cfg.excluded[s[i].T] {
+					continue
+				}
 				h, ok := stepFor(s[i].T)
 				if !ok || h > len(preds) {
 					continue

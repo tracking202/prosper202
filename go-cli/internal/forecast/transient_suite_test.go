@@ -192,3 +192,49 @@ func TestTransientMaskingHelpsAndDoesNoHarm(t *testing.T) {
 		}
 	}
 }
+
+func TestTrainingView_MasksTransientsPerPrefix(t *testing.T) {
+	// A one-day spike at index 40 in a flat series. A prefix's training
+	// view must depend on that prefix alone (adding later points never
+	// changes it), the deployed view drops the spike, the prefix ending
+	// before the spike is untouched, and the spike's date is never scored.
+	rng := rand.New(rand.NewSource(8))
+	s := makeSeries(60, func(i int) float64 {
+		if i == 40 {
+			return 3000
+		}
+		return 500 + rng.NormFloat64()*20
+	})
+	cfg := withDefaults(Config{Interval: IntervalDay, NonNegative: true})
+	for _, c := range []int{30, 40, 41, 45, 60} {
+		whole := trainingView(s, cfg, c)
+		alone := trainingView(s[:c], cfg, c)
+		if len(whole) != len(alone) {
+			t.Fatalf("prefix %d: view from the full series has %d points, from the prefix alone %d", c, len(whole), len(alone))
+		}
+		for i := range whole {
+			if !whole[i].T.Equal(alone[i].T) || whole[i].V != alone[i].V {
+				t.Fatalf("prefix %d: view differs at %d depending on data after the prefix", c, i)
+			}
+		}
+	}
+	if got := len(trainingView(s, cfg, 60)); got != 59 {
+		t.Errorf("deployed view has %d points, want 59 (spike masked)", got)
+	}
+	if got := len(trainingView(s, cfg, 40)); got != 40 {
+		t.Errorf("prefix before the spike has %d points, want 40 (nothing to mask)", got)
+	}
+
+	res, err := Run(s, Config{Interval: IntervalDay, NonNegative: true, Method: MethodSMA, Horizon: 5})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.AnomaliesMasked) != 1 || res.DataPoints != 59 {
+		t.Errorf("anomalies %v, data points %d; want the spike reported and 59 fitted", res.AnomaliesMasked, res.DataPoints)
+	}
+	for k := range res.rolling {
+		if k.target.Equal(s[40].T) {
+			t.Fatal("a masked transient was scored as a held-out actual")
+		}
+	}
+}

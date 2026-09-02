@@ -203,27 +203,35 @@ func (ls *levelShift) relevelPrefix(s Series, c int) Series {
 }
 
 // trainingView returns the series a model should be fitted on for a prefix
-// of length c, applying the same level-shift handling the deployed forecast
-// gets, detected on the prefix alone. A backtest fold therefore never knows
-// about a shift its own history could not yet reveal: a fold ending on the
-// first post-shift point trains on the unmodified prefix, exactly as the
+// of length c, applying the same data preparation the deployed forecast
+// gets, decided from the prefix alone: transient masking (short outlier
+// runs removed, for non-negative metrics unless disabled) and then
+// level-shift handling. A backtest fold therefore never trains on a
+// prefix edited with knowledge of what came after it — a fold ending on
+// the first post-shift point trains on the unmodified prefix, and a point
+// that only later data reveals as a transient stays in — exactly as the
 // deployed model would have at that time, so rolling residuals and
-// ensemble weights are not flattered around the regime change. A shift
-// whose post segment is long enough to model on its own truncates the
-// prefix; a shorter one re-levels the older history to the new regime.
+// ensemble weights are not flattered around outages or regime changes. A
+// shift whose post segment is long enough to model on its own truncates
+// the prefix; a shorter one re-levels the older history to the new regime.
 func trainingView(s Series, cfg Config, c int) Series {
 	prefix := s[:c]
-	if cfg.DisableLevelShift {
+	if cfg.NonNegative && !cfg.DisableAnomalyMask {
+		if idx := detectTransients(prefix, cfg.Interval, cfg.LogTransform, cfg.AnomalySigma, cfg.AnomalyCycles); len(idx) > 0 {
+			prefix = maskIndices(prefix, idx)
+		}
+	}
+	if cfg.DisableLevelShift || len(prefix) == 0 {
 		return prefix
 	}
 	ls := detectLevelShift(prefix)
 	if ls == nil {
 		return prefix
 	}
-	if ls.truncates(c, cfg.Interval) {
+	if ls.truncates(len(prefix), cfg.Interval) {
 		return prefix[ls.idx:]
 	}
-	return ls.relevelPrefix(s, c)
+	return ls.relevelPrefix(prefix, len(prefix))
 }
 
 // formatShiftTime renders a detected shift's timestamp for Result metadata.

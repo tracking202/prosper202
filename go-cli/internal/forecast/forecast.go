@@ -230,6 +230,13 @@ type Config struct {
 	// masked (e.g. event days removed) so predictions still start after
 	// the last real observation rather than inside masked history.
 	Anchor time.Time
+
+	// excluded holds the timestamps Run's full-series transient detection
+	// masked. They are kept out of the residual pool (outages and spikes
+	// are not what the bands describe; the alerting layer judges them
+	// against the bands separately) — training data is masked per prefix
+	// by trainingView instead. Set by Run, never by callers.
+	excluded map[time.Time]bool
 }
 
 // anchorTime returns the reference point predictions step forward from.
@@ -295,6 +302,7 @@ func withDefaults(cfg Config) Config {
 	if cfg.ConfidenceLevel <= 0 || cfg.ConfidenceLevel >= 1 {
 		cfg.ConfidenceLevel = 0.95
 	}
+	cfg.excluded = nil
 	return cfg
 }
 
@@ -332,17 +340,23 @@ func Run(series Series, cfg Config) (*Result, error) {
 		cfg.LogTransform = false // downstream error stats stay untransformed
 	}
 
-	// Transient masking: short outlier runs are excluded from fitting and
-	// reported. When the series' last observations are masked, predictions
-	// must still start after them, so the anchor moves to the true end.
+	// Transient masking. Detection on the full series feeds the report
+	// (AnomaliesMasked), keeps the masked dates out of the residual pool
+	// (outages and spikes are not what the bands describe; the alerting
+	// layer judges those dates against the bands separately), and moves
+	// the anchor past a masked tail. Training data is masked per prefix
+	// instead (trainingView): the deployed fit and every backtest fold
+	// re-detect from their own history, so no fold trains on a prefix
+	// edited with knowledge of what came after it.
 	var anomalies []string
 	if cfg.NonNegative && !cfg.DisableAnomalyMask {
 		if idx := detectTransients(work, cfg.Interval, logApplied, cfg.AnomalySigma, cfg.AnomalyCycles); len(idx) > 0 {
+			cfg.excluded = make(map[time.Time]bool, len(idx))
 			for _, i := range idx {
 				anomalies = append(anomalies, formatShiftTime(work[i].T, cfg.Interval))
+				cfg.excluded[work[i].T] = true
 			}
 			last := work[len(work)-1].T
-			work = maskIndices(work, idx)
 			if cfg.Anchor.IsZero() || cfg.Anchor.Before(last) {
 				cfg.Anchor = last
 			}
@@ -353,21 +367,28 @@ func Run(series Series, cfg Config) (*Result, error) {
 	// regimes. Post-shift history is used alone when long enough; otherwise
 	// trainingView re-levels older observations to the new regime. Both the
 	// deployed fit and every backtest prefix run their own detection
-	// (trainingView), so this full-series pass only reports the shift and
-	// trims the data the run describes.
+	// (trainingView), so this full-series pass (on the masked series) only
+	// reports the shift and trims the evaluation window to the new regime.
 	levelShiftAt := ""
 	if !cfg.DisableLevelShift {
-		if ls := detectLevelShift(work); ls != nil {
-			levelShiftAt = formatShiftTime(work[ls.idx].T, cfg.Interval)
-			if ls.truncates(len(work), cfg.Interval) {
-				work = work[ls.idx:]
+		masked := withoutTimes(work, cfg.excluded)
+		if ls := detectLevelShift(masked); ls != nil {
+			levelShiftAt = formatShiftTime(masked[ls.idx].T, cfg.Interval)
+			if ls.truncates(len(masked), cfg.Interval) {
+				work = fromTime(work, masked[ls.idx].T)
 			}
 		}
 	}
 
-	// Window and data-point count describe the data actually modeled.
+	// The deployed training view (masked and level-shift handled from the
+	// full history): window and data-point count describe the data
+	// actually modeled.
+	deployed := trainingView(work, cfg, len(work))
+	if len(deployed) == 0 {
+		deployed = work
+	}
 	if cfg.SMAWindow <= 0 {
-		cfg.SMAWindow = defaultSMAWindow(len(work))
+		cfg.SMAWindow = defaultSMAWindow(len(deployed))
 	}
 
 	// Seasonal profiles are estimated from the training data by every fit
@@ -378,7 +399,7 @@ func Run(series Series, cfg Config) (*Result, error) {
 	// don't degrade the forecast; when the history is too short to measure
 	// that lag there is no evidence against the profile and it applies.
 	// The names reported in meta are the deployed fit's.
-	_, profiles := profileFor(work, cfg, len(work))
+	_, profiles := profileFor(deployed, cfg)
 
 	var core forecastCore
 	var err error
@@ -439,7 +460,7 @@ func Run(series Series, cfg Config) (*Result, error) {
 		TrendPct:         trendPct,
 		MAE:              core.mae,
 		RMSE:             core.rmse,
-		DataPoints:       len(work),
+		DataPoints:       len(deployed),
 		Weights:          core.weights,
 		Composition:      "",
 		LevelShiftAt:     levelShiftAt,
@@ -448,7 +469,7 @@ func Run(series Series, cfg Config) (*Result, error) {
 		SeasonalProfiles: profiles,
 		BoundsSource:     core.boundsSource,
 		rolling:          rolling,
-		trainEnd:         work[len(work)-1].T,
+		trainEnd:         deployed[len(deployed)-1].T,
 		evaluated:        core.evaluated,
 	}, nil
 }
@@ -528,18 +549,24 @@ type forecastCore struct {
 // eval may carry a rolling backtest that already covers the method; pass nil
 // to have one run here.
 func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) (forecastCore, error) {
-	predictions, trend, err := methodForecast(method, trainingView(series, cfg, len(series)), cfg)
+	train := trainingView(series, cfg, len(series))
+	if len(train) == 0 {
+		train = series
+	}
+	predictions, trend, err := methodForecast(method, train, cfg)
 	if err != nil {
 		return forecastCore{}, err
 	}
-	profile, _ := profileFor(series, cfg, len(series))
+	profile, _ := profileFor(train, cfg)
 	applyProfile(predictions, profile, cfg.LogTransform)
 	clipPointPredictions(predictions, cfg)
 
 	if eval == nil {
 		eval = runRollingBacktest(series, cfg, []Method{method})
 	}
-	offset := anchorOffset(series, cfg)
+	// Steps are counted from the fitted data's end: a masked tail puts
+	// the anchor several steps beyond it.
+	offset := anchorOffset(train, cfg)
 	predict := eval.methodPredictor(method)
 	byStep := eval.residualsByStep(predict)
 	mae, rmse, n := eval.errorStats(predict)
@@ -590,7 +617,11 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 
 	// Fit each member on the full series. A member that fails to fit here
 	// (despite backtesting) is dropped and weights renormalize.
-	profile, _ := profileFor(series, cfg, len(series))
+	train := trainingView(series, cfg, len(series))
+	if len(train) == 0 {
+		train = series
+	}
+	profile, _ := profileFor(train, cfg)
 	memberPreds := map[Method][]Prediction{}
 	memberTrend := map[Method]float64{}
 	members := make([]Method, 0, len(weights))
@@ -598,7 +629,7 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 		if _, ok := weights[m]; !ok {
 			continue
 		}
-		preds, tr, err := methodForecast(m, trainingView(series, cfg, len(series)), cfg)
+		preds, tr, err := methodForecast(m, train, cfg)
 		if err != nil || len(preds) != cfg.Horizon {
 			delete(weights, m)
 			continue
@@ -630,8 +661,8 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 	}
 
 	// Conformal bounds on the ensemble procedure's out-of-sample rolling
-	// residuals.
-	offset := anchorOffset(series, cfg)
+	// residuals; steps counted from the fitted data's end.
+	offset := anchorOffset(train, cfg)
 	predict := nestedEnsemblePredictor(eval, candidates)
 	byStep := eval.residualsByStep(predict)
 	mae, rmse, n := eval.errorStats(predict)
@@ -796,6 +827,9 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 
 	c := len(s) - holdout
 	train := trainingView(s, cfg, c)
+	if len(train) == 0 {
+		return seriesStdDev(s), 0, 0, 0
+	}
 	trainEnd := train[len(train)-1].T
 	test := s[c:]
 
@@ -810,12 +844,15 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 	if err != nil || len(preds) == 0 {
 		return seriesStdDev(s), 0, 0, 0
 	}
-	profile, _ := profileFor(s, cfg, c)
+	profile, _ := profileFor(train, cfg)
 	applyProfile(preds, profile, cfg.LogTransform)
 	clipPointPredictions(preds, cfg)
 
 	sumSqModel, sumAbs, sumSq := 0.0, 0.0, 0.0
 	for _, p := range test {
+		if cfg.excluded[p.T] {
+			continue
+		}
 		h, ok := stepIndex(trainEnd, p.T, cfg.Interval, len(preds))
 		if !ok {
 			continue
@@ -837,6 +874,32 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 	}
 	fn := float64(n)
 	return math.Sqrt(sumSqModel / fn), sumAbs / fn, math.Sqrt(sumSq / fn), n
+}
+
+// withoutTimes returns s without the points whose timestamps are in
+// excluded (s itself when excluded is empty).
+func withoutTimes(s Series, excluded map[time.Time]bool) Series {
+	if len(excluded) == 0 {
+		return s
+	}
+	out := make(Series, 0, len(s))
+	for _, p := range s {
+		if !excluded[p.T] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// fromTime returns the suffix of s starting at the first point at or after
+// t.
+func fromTime(s Series, t time.Time) Series {
+	for i, p := range s {
+		if !p.T.Before(t) {
+			return s[i:]
+		}
+	}
+	return s[len(s):]
 }
 
 // calendarSteps returns the number of whole interval steps from from to to,

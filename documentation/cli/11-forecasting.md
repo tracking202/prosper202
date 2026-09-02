@@ -37,7 +37,7 @@ metric, `Run` does the following, in this order:
 | --- | --- | --- |
 | 1. Parse | Reads every bucket from the API response. Buckets with an unparseable time or a non-numeric value are dropped and counted. | `buckets_rejected` in meta |
 | 2. Log transform | Count metrics (clicks, click-throughs, leads) are fitted on `log1p` scale and inverted on output, so 3%-a-day growth is a straight line, not a curve. | (silent; trends are reported on the original scale) |
-| 3. Transient masking | Short outlier runs that are abnormal *for this series at that point of its week* are removed from fitting. Section 7. | `anomalies_masked` |
+| 3. Transient masking | Short outlier runs that are abnormal *for this series at that point of its week* are removed from fitting, decided afresh inside every backtest fold from that fold's own history. Section 7. | `anomalies_masked` |
 | 4. Level-shift handling | If the series changed level (offer paused, new source), the model fits the new regime. Section 6. | `level_shift_at`, `data_points_used` |
 | 5. Fit | The chosen method, or the ensemble of all of them. Section 3. | `method`, `weights` |
 | 6. Seasonal profiles | Weekday / hourly / day-of-month multipliers, if requested and supported by the data, applied inside the fit and inside every backtest fold. Section 8. | `seasonal_applied`, `seasonal_profiles` |
@@ -364,6 +364,14 @@ units of this series' own noise, and the point must also be at least halved
 or doubled relative to that reference. Only runs shorter than five points
 are masked; a longer run is a regime change and goes to the level-shift
 detector instead. Masking applies to non-negative metrics only.
+
+Like level shifts and seasonal profiles, masking is decided per training
+view: the deployed fit masks from the full history, and each backtest fold
+re-runs the detector on its own prefix, so no fold trains on data edited
+with knowledge of what came after it. The dates reported in
+`anomalies_masked` come from the full history; they are never scored as
+held-out actuals, because the bands describe normal days and the alerting
+layer judges an outage or spike against them separately.
 
 That definition is what makes it safe across very different funnels:
 

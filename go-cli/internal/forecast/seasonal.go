@@ -132,16 +132,17 @@ func buildWeekdayWeights(s Series) SeasonalWeights {
 }
 
 // profileFor builds the seasonal multiplier the forecaster applies when it
-// is fitted on the first c points of s (the deployed fit passes len(s)),
-// from that prefix alone, and names the profiles that apply. Every
-// data-derived profile and every gate is re-estimated per prefix, so a
-// backtest fold never scales a held-out point by a multiplier that already
-// contains it, and bands and errors describe the profiled forecaster
-// honestly. Explicit SeasonalWeights are applied as supplied (after the
-// weekly gate). Values fitted under log1p are inverted first: profiles are
-// multiplicative on the reporting scale. Returns nil when nothing applies.
-func profileFor(s Series, cfg Config, c int) (func(time.Time) float64, []string) {
-	prefix := s[:c]
+// is fitted on the training view train (a backtest prefix, or the deployed
+// fit's full history), from that data alone, and names the profiles that
+// apply. Every data-derived profile and every gate is re-estimated per
+// training view, so a backtest fold never scales a held-out point by a
+// multiplier that already contains it, and bands and errors describe the
+// profiled forecaster honestly. Explicit SeasonalWeights are applied as
+// supplied (after the weekly gate). Values fitted under log1p are inverted
+// first: profiles are multiplicative on the reporting scale. Returns nil
+// when nothing applies.
+func profileFor(train Series, cfg Config) (func(time.Time) float64, []string) {
+	prefix := train
 	if cfg.LogTransform {
 		prefix = expm1Series(prefix)
 	}
