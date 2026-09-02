@@ -36,6 +36,11 @@ const (
 	DefaultAnomalySigma = 5.0
 	// madToSigma converts a median absolute deviation to a normal sigma.
 	madToSigma = 1.4826
+	// anomalyMinFactor is the magnitude floor: however tight the series'
+	// noise, a point is a transient only if it is at least this factor
+	// below or above its reference (halved or doubled), measured on
+	// value+1 so zeros are handled. A 15% dip is never a transient.
+	anomalyMinFactor = 2.0
 )
 
 // anomalyCycle returns the seasonal cycle used for same-slot references, or
@@ -51,12 +56,13 @@ func anomalyCycle(interval Interval) time.Duration {
 	}
 }
 
-// detectTransients returns the indices of short anomalous runs in s (on
-// whatever scale s is expressed in), sorted ascending. sigma is the
+// detectTransients returns the indices of short anomalous runs in s,
+// sorted ascending. logScale says whether s is on log1p scale (so the
+// magnitude floor can be applied as a log difference) or raw. sigma is the
 // deviation threshold in robust sigma units and cycles the number of
 // seasonal cycles on each side used for same-slot references; non-positive
 // values take the defaults.
-func detectTransients(s Series, interval Interval, sigma float64, cycles int) []int {
+func detectTransients(s Series, interval Interval, logScale bool, sigma float64, cycles int) []int {
 	n := len(s)
 	if n < anomalyMinPoints {
 		return nil
@@ -76,6 +82,7 @@ func detectTransients(s Series, interval Interval, sigma float64, cycles int) []
 	// Reference level per point: median of same-slot values in the
 	// surrounding cycles, else median of the nearest neighbors.
 	resid := make([]float64, n)
+	ref := make([]float64, n)
 	for i, p := range s {
 		var refs []float64
 		if cycle > 0 {
@@ -97,7 +104,8 @@ func detectTransients(s Series, interval Interval, sigma float64, cycles int) []
 				refs = append(refs, s[j].V)
 			}
 		}
-		resid[i] = p.V - median(refs)
+		ref[i] = median(refs)
+		resid[i] = p.V - ref[i]
 	}
 
 	abs := make([]float64, n)
@@ -111,9 +119,21 @@ func detectTransients(s Series, interval Interval, sigma float64, cycles int) []
 		scale = 1e-6 * (math.Abs(mean(seriesValues(s))) + 1)
 	}
 
+	minLogDiff := math.Log(anomalyMinFactor)
 	flagged := make([]bool, n)
 	for i, r := range resid {
-		flagged[i] = math.Abs(r) > sigma*scale
+		if math.Abs(r) <= sigma*scale {
+			continue
+		}
+		// Magnitude floor on the original scale, expressed as a log1p
+		// difference either directly or via the (value+1)/(reference+1)
+		// ratio.
+		logDiff := math.Abs(r)
+		if !logScale {
+			v, rf := math.Max(s[i].V, 0), math.Max(ref[i], 0)
+			logDiff = math.Abs(math.Log1p(v) - math.Log1p(rf))
+		}
+		flagged[i] = logDiff >= minLogDiff
 	}
 
 	// Keep only runs shorter than a regime change.

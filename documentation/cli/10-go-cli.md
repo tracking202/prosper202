@@ -227,7 +227,8 @@ actually fitted. A transient burst (a two-day tracking outage, an untagged
 promo spike) is not a shift: short outlier runs that are abnormal *for this
 series at that point of its cycle* (compared with the same weekday or hour
 in the surrounding weeks, so a business closed on Sundays or a low-volume
-tracker is never affected) are masked from fitting and listed in the meta
+tracker is never affected) and at least halved or doubled relative to that
+reference are masked from fitting and listed in the meta
 as `anomalies_masked`, keeping the bands at the healthy level so the
 alerting layer still flags the outage. Runs of five or more points are a
 regime change and go to the shift detector instead. `--no-anomaly-mask`

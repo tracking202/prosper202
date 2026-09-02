@@ -290,7 +290,7 @@ func Run(series Series, cfg Config) (*Result, error) {
 	// must still start after them, so the anchor moves to the true end.
 	var anomalies []string
 	if cfg.NonNegative && !cfg.DisableAnomalyMask {
-		if idx := detectTransients(work, cfg.Interval, cfg.AnomalySigma, cfg.AnomalyCycles); len(idx) > 0 {
+		if idx := detectTransients(work, cfg.Interval, logApplied, cfg.AnomalySigma, cfg.AnomalyCycles); len(idx) > 0 {
 			for _, i := range idx {
 				anomalies = append(anomalies, formatShiftTime(work[i].T, cfg.Interval))
 			}
