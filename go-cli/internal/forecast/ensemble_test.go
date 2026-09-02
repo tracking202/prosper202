@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+	"time"
 )
 
 func TestDampedSum(t *testing.T) {
@@ -245,5 +246,43 @@ func TestEnsembleBeatsWinnerTakeAll(t *testing.T) {
 	}
 	if wins < 6 { // 6 of 8 = 75%
 		t.Errorf("ensemble beat winner-take-all selection on only %d/8 series, want >= 6", wins)
+	}
+}
+
+func TestNestedEnsemblePredictor_UsesOnlyPriorRows(t *testing.T) {
+	// Method A is exact on everything observed up to day 12 and useless
+	// afterwards; method B the reverse. Weights derived from all rows would
+	// favor B for the day-13 rows. Out-of-sample evaluation of the cut
+	// whose training ends on day 12 may only use rows observed by then, so
+	// it must weight A (B is pruned by the drop factor) and predict day 13
+	// with A alone. The earliest cut has no prior rows and falls back to
+	// equal weights.
+	day := func(d int) time.Time { return time.Date(2026, 1, d, 0, 0, 0, 0, time.UTC) }
+	row := func(cut, target int, actual, a, b float64) evalRow {
+		return evalRow{cut: cut, trainEnd: day(cut), t: day(target), step: target - cut, actual: actual,
+			preds: map[Method]float64{MethodLinear: a, MethodSMA: b}}
+	}
+	eval := &rollingEval{rows: []evalRow{
+		row(10, 11, 100, 100, 130), // A exact, B off by 30
+		row(10, 12, 100, 100, 130),
+		row(11, 12, 100, 100, 130),
+		row(11, 13, 200, 100, 200), // day 13: B exact, A off by 100
+		row(12, 13, 200, 100, 200),
+	}}
+	candidates := []Method{MethodLinear, MethodSMA}
+	predict := nestedEnsemblePredictor(eval, candidates)
+
+	got, ok := predict(eval.rows[4]) // cut 12 → day 13
+	if !ok || math.Abs(got-100) > 1e-9 {
+		t.Errorf("cut-12 prediction = %.3f (ok=%v), want 100: weights must come from rows observed by day 12 only", got, ok)
+	}
+	first, ok := predict(eval.rows[0]) // cut 10: no prior rows → equal weights
+	if !ok || math.Abs(first-115) > 1e-9 {
+		t.Errorf("earliest-cut prediction = %.3f (ok=%v), want 115 (equal weights)", first, ok)
+	}
+	// Sanity: full-data weights would indeed have leaned on B for day 13.
+	full := ensembleWeights(eval, candidates, nil)
+	if full[MethodSMA] <= full[MethodLinear] {
+		t.Errorf("full-data weights %v should favor B, otherwise this test proves nothing", full)
 	}
 }

@@ -158,7 +158,9 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 		for _, m := range methods {
 			// Respect each method's minimum history: a fit the deployed
 			// model would never make must not feed residuals or weights.
-			if c < methodMinPoints(m) {
+			// (The view can be shorter than c after a level-shift
+			// truncation inside the prefix.)
+			if len(train) < methodMinPoints(m) {
 				continue
 			}
 			preds, _, err := methodForecast(m, train, testCfg)
@@ -199,13 +201,6 @@ func (e *rollingEval) methodPredictor(m Method) rowPredictor {
 	return func(r evalRow) (float64, bool) {
 		pred, ok := r.preds[m]
 		return pred, ok
-	}
-}
-
-// ensemblePredictor returns the rowPredictor for a weighted ensemble.
-func ensemblePredictor(weights map[Method]float64, members []Method) rowPredictor {
-	return func(r evalRow) (float64, bool) {
-		return ensembleCombine(r, weights, members)
 	}
 }
 
@@ -252,11 +247,15 @@ func (e *rollingEval) residualsByStep(predict rowPredictor) map[int][]float64 {
 const recencyDecay = 0.85
 
 // recencyRMSE returns each candidate's recency-weighted rolling RMSE (on
-// the model scale, where members are compared); candidates that produced
-// no rolling predictions are absent from the result.
-func (e *rollingEval) recencyRMSE(candidates []Method) map[Method]float64 {
+// the model scale, where members are compared) over the rows include
+// accepts (all rows when include is nil); candidates that produced no
+// rolling predictions on those rows are absent from the result.
+func (e *rollingEval) recencyRMSE(candidates []Method, include func(evalRow) bool) map[Method]float64 {
 	maxCut := 0
 	for _, r := range e.rows {
+		if include != nil && !include(r) {
+			continue
+		}
 		if r.cut > maxCut {
 			maxCut = r.cut
 		}
@@ -266,6 +265,9 @@ func (e *rollingEval) recencyRMSE(candidates []Method) map[Method]float64 {
 		sumW, sumSq := 0.0, 0.0
 		n := 0
 		for _, r := range e.rows {
+			if include != nil && !include(r) {
+				continue
+			}
 			pred, ok := r.preds[m]
 			if !ok {
 				continue

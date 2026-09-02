@@ -210,8 +210,10 @@ p202 config unset-default report.period
 ## Errors
 
 Every failure is reported on **stderr** with a category, the message, and,
-whenever there is a concrete next step, a recovery hint. Stdout stays empty
-on failure, so a script never confuses an error for data. Exit codes follow
+whenever there is a concrete next step, a recovery hint, including failures
+the CLI raises before running the command (a wrong argument count, an
+unknown subcommand). Stdout stays empty on failure, so a script never
+confuses an error for data. Exit codes follow
 the category (table below) and survive wrapping: "fetching historical data:
 API error (401)" still exits 2.
 

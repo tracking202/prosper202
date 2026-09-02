@@ -117,3 +117,64 @@ func TestPrintError_JSONVsText(t *testing.T) {
 		t.Errorf("text output = %q", out)
 	}
 }
+
+func TestRecoverCommandContext(t *testing.T) {
+	oldPath, oldJSON, oldND := activeCommandPath, jsonOutput, ndjsonOutput
+	defer func() { activeCommandPath, jsonOutput, ndjsonOutput = oldPath, oldJSON, oldND }()
+
+	activeCommandPath, jsonOutput, ndjsonOutput = "", false, false
+	recoverCommandContext([]string{"campaign", "get", "--json"})
+	if activeCommandPath != "p202 campaign get" {
+		t.Errorf("command path = %q, want p202 campaign get", activeCommandPath)
+	}
+	if !jsonOutput {
+		t.Error("--json should select the JSON envelope even when Cobra never parsed flags")
+	}
+
+	activeCommandPath, jsonOutput, ndjsonOutput = "", false, false
+	recoverCommandContext([]string{"bogus", "--ndjson"})
+	if activeCommandPath != "p202" {
+		t.Errorf("unknown command path = %q, want p202", activeCommandPath)
+	}
+	if !ndjsonOutput {
+		t.Error("--ndjson should select the JSON envelope")
+	}
+
+	// Flags after "--" belong to the wrapped command (exec), not to p202.
+	activeCommandPath, jsonOutput, ndjsonOutput = "", false, false
+	recoverCommandContext([]string{"exec", "--all-profiles", "--", "campaign", "list", "--json"})
+	if activeCommandPath != "p202 exec" || jsonOutput {
+		t.Errorf("exec: path %q json=%v, want p202 exec and json=false", activeCommandPath, jsonOutput)
+	}
+
+	// A path recorded by PersistentPreRunE is kept.
+	activeCommandPath = "p202 forecast"
+	recoverCommandContext([]string{"campaign"})
+	if activeCommandPath != "p202 forecast" {
+		t.Errorf("recorded path overwritten: %q", activeCommandPath)
+	}
+}
+
+func TestArgCountErrorNamesCommandInEnvelope(t *testing.T) {
+	// Cobra rejects a missing positional argument before PersistentPreRunE
+	// runs; the envelope must still carry the command and the --help hint.
+	old := activeCommandPath
+	defer func() { activeCommandPath = old }()
+	activeCommandPath = ""
+
+	_, _, err := executeCommand("campaign", "get")
+	if err == nil {
+		t.Fatal("expected an argument-count error")
+	}
+	recoverCommandContext([]string{"campaign", "get"})
+	env := errorEnvelope(err)["error"].(map[string]interface{})
+	if env["command"] != "p202 campaign get" {
+		t.Errorf("command = %v, want p202 campaign get", env["command"])
+	}
+	if hint, _ := env["hint"].(string); !strings.Contains(hint, "p202 campaign get --help") {
+		t.Errorf("hint = %q, want a pointer to `p202 campaign get --help`", hint)
+	}
+	if env["exit_code"] != ExitValidation {
+		t.Errorf("exit_code = %v, want %d", env["exit_code"], ExitValidation)
+	}
+}

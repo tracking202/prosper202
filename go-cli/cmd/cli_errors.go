@@ -127,7 +127,8 @@ func exitCodeForError(err error) int {
 }
 
 // activeCommandPath is the full path ("p202 forecast") of the command that
-// ran, recorded by the root PersistentPreRun so error output can name it.
+// ran, recorded by the root PersistentPreRun so error output can name it;
+// recoverCommandContext fills it in when Cobra fails before that runs.
 var activeCommandPath string
 
 // errorEnvelope builds the machine-readable error record emitted on stderr

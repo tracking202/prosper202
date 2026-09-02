@@ -198,11 +198,6 @@ type Config struct {
 	AnomalySigma  float64
 	AnomalyCycles int
 
-	// relevel carries a detected level shift handled by re-leveling; every
-	// fit reads its training data through trainingView so backtest folds
-	// re-level from their own prefix only. Set by Run.
-	relevel *levelShift
-
 	// Anchor, when set, is the timestamp predictions step forward from
 	// instead of the series' last point. Used when training data has been
 	// masked (e.g. event days removed) so predictions still start after
@@ -273,7 +268,6 @@ func withDefaults(cfg Config) Config {
 	if cfg.ConfidenceLevel <= 0 || cfg.ConfidenceLevel >= 1 {
 		cfg.ConfidenceLevel = 0.95
 	}
-	cfg.relevel = nil
 	return cfg
 }
 
@@ -335,16 +329,16 @@ func Run(series Series, cfg Config) (*Result, error) {
 
 	// Level-shift handling: fit on the current regime, not a blend of
 	// regimes. Post-shift history is used alone when long enough; otherwise
-	// older observations are re-leveled to the new regime, per training
-	// prefix so backtest folds never see their held-out points.
+	// trainingView re-levels older observations to the new regime. Both the
+	// deployed fit and every backtest prefix run their own detection
+	// (trainingView), so this full-series pass only reports the shift and
+	// trims the data the run describes.
 	levelShiftAt := ""
 	if !cfg.DisableLevelShift {
 		if ls := detectLevelShift(work); ls != nil {
 			levelShiftAt = formatShiftTime(work[ls.idx].T, cfg.Interval)
 			if ls.truncates(len(work), cfg.Interval) {
 				work = work[ls.idx:]
-			} else {
-				cfg.relevel = ls
 			}
 		}
 	}
@@ -559,14 +553,17 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 // computeEnsemble produces the ensemble forecast: a weighted average of all
 // applicable methods' point forecasts, weighted and pruned by their
 // recency-discounted rolling-backtest RMSE (see ensembleWeights).
-// Conformal bounds are computed on the ensemble's own rolling
-// residuals, so the band reflects the combined forecaster that is actually
-// deployed. When the series is too short for any rolling cut, it falls back
-// to the best single method by single-split backtest.
+// Conformal bounds and error statistics come from the ensemble procedure's
+// own rolling residuals, evaluated out of sample: each backtest row is
+// predicted with weights derived only from rows observed before it (see
+// nestedEnsemblePredictor), so the band reflects the combined forecaster
+// that is actually deployed without letting a row's own actual shape the
+// weights that predict it. When the series is too short for any rolling
+// cut, it falls back to the best single method by single-split backtest.
 func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 	candidates := autoCandidates(series)
 	eval := runRollingBacktest(series, cfg, candidates)
-	weights := ensembleWeights(eval, candidates)
+	weights := ensembleWeights(eval, candidates, nil)
 	if len(weights) == 0 {
 		return computeSingle(series, cfg, selectBestMethod(series, cfg), eval)
 	}
@@ -609,9 +606,10 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 		trend += weights[m] * memberTrend[m]
 	}
 
-	// Conformal bounds on the ensemble's rolling residuals.
+	// Conformal bounds on the ensemble procedure's out-of-sample rolling
+	// residuals.
 	offset := anchorOffset(series, cfg)
-	predict := ensemblePredictor(weights, members)
+	predict := nestedEnsemblePredictor(eval, candidates)
 	byStep := eval.residualsByStep(predict)
 	mae, rmse, _ := eval.errorStats(predict)
 	source := BoundsConformal
@@ -651,11 +649,12 @@ const ensembleDropFactor = 1.15
 
 // ensembleWeights derives member weights from the recency-weighted
 // rolling-backtest RMSE: w ∝ 1/(rmse + ε)², dropping methods whose RMSE
-// exceeds ensembleDropFactor times the best. Returns nil when no candidate
-// produced rolling predictions.
-func ensembleWeights(eval *rollingEval, candidates []Method) map[Method]float64 {
+// exceeds ensembleDropFactor times the best. include, when non-nil,
+// restricts the rows the RMSE is measured on. Returns nil when no candidate
+// produced rolling predictions on those rows.
+func ensembleWeights(eval *rollingEval, candidates []Method, include func(evalRow) bool) map[Method]float64 {
 	const eps = 1e-9
-	rmses := eval.recencyRMSE(candidates)
+	rmses := eval.recencyRMSE(candidates, include)
 	if len(rmses) == 0 {
 		return nil
 	}
@@ -677,6 +676,35 @@ func ensembleWeights(eval *rollingEval, candidates []Method) map[Method]float64 
 		weights[m] = 1 / ((rmse + eps) * (rmse + eps))
 	}
 	return weights
+}
+
+// nestedEnsemblePredictor evaluates the ensemble procedure out of sample.
+// Deriving weights from the rolling rows and then scoring those same rows
+// with them would let each residual's own actual influence the weights that
+// produced it, flattering MAE/RMSE and narrowing the band below its
+// nominal coverage, most visibly when the pruning decision hinges on a few
+// rows. Instead a row from cut c is predicted with weights derived only
+// from rows whose targets were observed by that cut's training end, which
+// is what the procedure would have had at the time. The earliest cut, with
+// no history to weight from, uses equal weights over the members that
+// predicted it. Weights are cached per cut.
+func nestedEnsemblePredictor(e *rollingEval, candidates []Method) rowPredictor {
+	cache := map[int]map[Method]float64{}
+	return func(r evalRow) (float64, bool) {
+		w, ok := cache[r.cut]
+		if !ok {
+			trainEnd := r.trainEnd
+			w = ensembleWeights(e, candidates, func(o evalRow) bool { return !o.t.After(trainEnd) })
+			if len(w) == 0 {
+				w = make(map[Method]float64, len(candidates))
+				for _, m := range candidates {
+					w[m] = 1
+				}
+			}
+			cache[r.cut] = w
+		}
+		return ensembleCombine(r, w, candidates)
+	}
 }
 
 // normalizeWeights scales the members' weights to sum to 1.

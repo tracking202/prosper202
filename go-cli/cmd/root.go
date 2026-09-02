@@ -59,8 +59,38 @@ func Execute() {
 	rootCmd.Long = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
 		"Designed for both human operators and AI agents." + buildAliasHelp()
 	if err := rootCmd.Execute(); err != nil {
+		recoverCommandContext(os.Args[1:])
 		printError(os.Stderr, err)
 		os.Exit(exitCodeForError(err))
+	}
+}
+
+// recoverCommandContext fills in what Cobra never got to set when it
+// rejected the invocation before PersistentPreRunE ran (a wrong argument
+// count, an unknown subcommand): the command path the error output names
+// and hints with, and the output-mode flags that select the JSON envelope.
+// Both are recovered from the raw arguments so an agent still receives a
+// structured, hinted error for the most common mistakes.
+func recoverCommandContext(args []string) {
+	if activeCommandPath == "" {
+		if cmd, _, err := rootCmd.Find(args); err == nil && cmd != nil {
+			activeCommandPath = cmd.CommandPath()
+		} else {
+			activeCommandPath = rootCmd.CommandPath()
+		}
+	}
+	if jsonOutput || ndjsonOutput {
+		return
+	}
+	for _, a := range args {
+		switch a {
+		case "--":
+			return
+		case "--json":
+			jsonOutput = true
+		case "--ndjson":
+			ndjsonOutput = true
+		}
 	}
 }
 

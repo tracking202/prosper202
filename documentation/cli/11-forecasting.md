@@ -64,7 +64,10 @@ bands and errors (section 5).
 The ensemble weights each member by how well it has *recently* forecast this
 series in a rolling backtest (inverse squared error, older cuts discounted
 0.85 per point of age), and drops any member that trails the best by more
-than 15%. Weights are reported so you can see who contributed.
+than 15%. Weights are reported so you can see who contributed. Bands and
+`mae`/`rmse` are measured out of sample: each backtest fold's ensemble uses
+weights derived only from the folds before it, so a fold's own error never
+shapes the weights that predict it.
 
 **Worked example.** Sixty days of clicks with a weekly pattern:
 
@@ -308,8 +311,11 @@ transient burst, and then:
 - if the post-shift segment is long enough to model alone (14 daily points,
   48 hourly), fits only that segment;
 - otherwise re-levels older history to the new regime so its shape still
-  helps without dragging the level. Re-leveling is applied per backtest
-  fold, so bands never see the points they are holding out.
+  helps without dragging the level.
+
+Detection and handling run again inside every backtest fold on that fold's
+own history, so bands never see the points they hold out and never know
+about a shift before the data could reveal it.
 
 **Worked example.** Ninety days of revenue at ~1,200/day that jumped to
 ~1,900/day twenty days before the end:

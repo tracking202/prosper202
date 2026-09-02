@@ -662,3 +662,59 @@ func TestDetectTransients_ThresholdIsTunable(t *testing.T) {
 		t.Errorf("AnomalyCycles 2 masked %v, want the one dip", r.AnomaliesMasked)
 	}
 }
+
+func TestTrainingView_DetectsLevelShiftPerPrefix(t *testing.T) {
+	// A shift eight points before the end is handled by re-leveling on the
+	// full series, but a backtest prefix must only know what its own
+	// history reveals: a prefix ending on the first post-shift point, or
+	// before the shift, trains on unmodified data.
+	rng := rand.New(rand.NewSource(5))
+	s := makeSeries(60, func(i int) float64 {
+		lvl := 100.0
+		if i >= 52 {
+			lvl = 180
+		}
+		return lvl + rng.NormFloat64()*4
+	})
+	cfg := Config{Interval: IntervalDay}
+
+	full := trainingView(s, cfg, 60)
+	if len(full) != 60 {
+		t.Fatalf("full view has %d points, want 60 (re-leveled, not truncated)", len(full))
+	}
+	if math.Abs(full[0].V-s[0].V) < 40 {
+		t.Errorf("full view first point %.1f ≈ original %.1f; expected re-leveling to the new regime", full[0].V, s[0].V)
+	}
+	for _, c := range []int{50, 53} {
+		view := trainingView(s, cfg, c)
+		if len(view) != c {
+			t.Fatalf("prefix %d: view has %d points", c, len(view))
+		}
+		for i := range view {
+			if view[i].V != s[i].V {
+				t.Fatalf("prefix %d was modified at %d (%.2f vs %.2f): fold knows about a shift its history cannot reveal", c, i, view[i].V, s[i].V)
+			}
+		}
+	}
+	if disabled := trainingView(s, Config{Interval: IntervalDay, DisableLevelShift: true}, 60); disabled[0].V != s[0].V {
+		t.Error("DisableLevelShift should leave the training view untouched")
+	}
+}
+
+func TestTrainingView_TruncatesInsidePrefix(t *testing.T) {
+	// A shift with a long post segment truncates: a prefix that already
+	// holds 25 post-shift points trains on those alone, as the deployed
+	// model would have.
+	rng := rand.New(rand.NewSource(6))
+	s := makeSeries(60, func(i int) float64 {
+		lvl := 100.0
+		if i >= 20 {
+			lvl = 170
+		}
+		return lvl + rng.NormFloat64()*5
+	})
+	view := trainingView(s, Config{Interval: IntervalDay}, 45)
+	if len(view) != 25 || !view[0].T.Equal(s[20].T) {
+		t.Errorf("view has %d points starting %v, want 25 starting %v", len(view), view[0].T, s[20].T)
+	}
+}

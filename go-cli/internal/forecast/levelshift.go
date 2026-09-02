@@ -15,11 +15,13 @@ import (
 // residuals that the CUSUM accumulates. Once a shift is confirmed, its
 // location is the two-segment mean split minimizing SSE, and its magnitude
 // is measured against the pre-shift segment's own linear fit extrapolated
-// forward (the counterfactual level). Run then either truncates the
-// pre-shift history (when the post-shift segment is long enough to model on
-// its own) or re-levels it to the new regime (when it is not, so the old
-// data's shape still helps without dragging the level). Re-leveling is
-// applied per training prefix so backtest folds never see held-out data.
+// forward (the counterfactual level). The forecast is then fitted either
+// on the post-shift history alone (when that segment is long enough to
+// model on its own) or on all history re-leveled to the new regime (when
+// it is not, so the old data's shape still helps without dragging the
+// level). Detection and handling run per training prefix (trainingView),
+// so backtest folds neither see held-out data nor know of a shift before
+// their own history reveals it.
 
 const (
 	// levelShiftMinPoints is the shortest series checked for level shifts:
@@ -201,13 +203,27 @@ func (ls *levelShift) relevelPrefix(s Series, c int) Series {
 }
 
 // trainingView returns the series a model should be fitted on for a prefix
-// of length c: the prefix itself, or its re-leveled form when a level shift
-// is being handled by re-leveling (cfg.relevel).
+// of length c, applying the same level-shift handling the deployed forecast
+// gets, detected on the prefix alone. A backtest fold therefore never knows
+// about a shift its own history could not yet reveal: a fold ending on the
+// first post-shift point trains on the unmodified prefix, exactly as the
+// deployed model would have at that time, so rolling residuals and
+// ensemble weights are not flattered around the regime change. A shift
+// whose post segment is long enough to model on its own truncates the
+// prefix; a shorter one re-levels the older history to the new regime.
 func trainingView(s Series, cfg Config, c int) Series {
-	if cfg.relevel == nil {
-		return s[:c]
+	prefix := s[:c]
+	if cfg.DisableLevelShift {
+		return prefix
 	}
-	return cfg.relevel.relevelPrefix(s, c)
+	ls := detectLevelShift(prefix)
+	if ls == nil {
+		return prefix
+	}
+	if ls.truncates(c, cfg.Interval) {
+		return prefix[ls.idx:]
+	}
+	return ls.relevelPrefix(s, c)
 }
 
 // formatShiftTime renders a detected shift's timestamp for Result metadata.
