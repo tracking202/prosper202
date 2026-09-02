@@ -167,6 +167,7 @@ func runRollingBacktest(s Series, cfg Config, methods []Method) *rollingEval {
 				continue
 			}
 			applyProfile(preds, profile, cfg.LogTransform)
+			clipPointPredictions(preds, cfg)
 			for i := c; i < len(s); i++ {
 				h, ok := stepFor(s[i].T)
 				if !ok || h > len(preds) {

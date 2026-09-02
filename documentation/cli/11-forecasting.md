@@ -43,7 +43,7 @@ metric, `Run` does the following, in this order:
 | 6. Seasonal profiles | Weekday / hourly / day-of-month multipliers, if requested and supported by the data, applied inside the fit and inside every backtest fold. Section 8. | `seasonal_applied`, `seasonal_profiles` |
 | 7. Bounds | Rolling-origin backtest residuals of the forecaster as emitted (profiles included) become empirical prediction bands. Section 4. | `lower_bound`, `upper_bound`, `p05`…`p95`, `bounds`, `bounds_source`, `mae`, `rmse` |
 | 8. Events | Calendar events scale the affected days. Section 9. | `events_in_horizon` |
-| 9. Clip | Metrics that cannot go negative are floored at zero. | |
+| 9. Clip | Metrics that cannot go negative are floored at zero: point forecasts inside the fit and every backtest fold (so errors and bands describe the clipped forecast you receive), bands and quantiles at output. | |
 
 `--all-metrics` and derived metrics run this pipeline once per *driver*
 series, compose the totals, and backtest each composition for its own

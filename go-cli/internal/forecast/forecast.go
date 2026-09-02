@@ -534,6 +534,7 @@ func computeSingle(series Series, cfg Config, method Method, eval *rollingEval) 
 	}
 	profile, _ := profileFor(series, cfg, len(series))
 	applyProfile(predictions, profile, cfg.LogTransform)
+	clipPointPredictions(predictions, cfg)
 
 	if eval == nil {
 		eval = runRollingBacktest(series, cfg, []Method{method})
@@ -603,6 +604,7 @@ func computeEnsemble(series Series, cfg Config) (forecastCore, error) {
 			continue
 		}
 		applyProfile(preds, profile, cfg.LogTransform)
+		clipPointPredictions(preds, cfg)
 		memberPreds[m] = preds
 		memberTrend[m] = tr
 		members = append(members, m)
@@ -810,6 +812,7 @@ func holdoutEval(s Series, cfg Config, method Method) (stddev, mae, rmse float64
 	}
 	profile, _ := profileFor(s, cfg, c)
 	applyProfile(preds, profile, cfg.LogTransform)
+	clipPointPredictions(preds, cfg)
 
 	sumSqModel, sumAbs, sumSq := 0.0, 0.0, 0.0
 	for _, p := range test {
@@ -1010,6 +1013,25 @@ func applyProfile(preds []Prediction, profile func(time.Time) float64, logScale 
 		}
 		if v := math.Expm1(preds[i].Value); v > 0 {
 			preds[i].Value = math.Log1p(v * w)
+		}
+	}
+}
+
+// clipPointPredictions floors point predictions at zero for non-negative
+// metrics. Zero is a fixed point of log1p, so the floor is the same on the
+// model scale. It runs on the deployed fit, every backtest fold, and the
+// holdout before residuals and bounds are computed, so the forecaster that
+// is calibrated is the clipped one the output shows: a fold projecting
+// below a zero tail scores the zero it would have emitted, not a negative
+// number nobody sees. Bounds and quantiles are floored separately at
+// output (ClipNonNegative).
+func clipPointPredictions(preds []Prediction, cfg Config) {
+	if !cfg.NonNegative {
+		return
+	}
+	for i := range preds {
+		if preds[i].Value < 0 {
+			preds[i].Value = 0
 		}
 	}
 }

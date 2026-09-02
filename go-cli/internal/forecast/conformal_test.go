@@ -394,3 +394,43 @@ func TestRun_ConfidenceWidensBand(t *testing.T) {
 		t.Errorf("band widths not increasing with confidence: %v", widths)
 	}
 }
+
+func TestNonNegative_FoldsScoreTheClippedForecast(t *testing.T) {
+	// A series that declines linearly and then sits at zero: a linear fold
+	// projects below zero across the tail, but the emitted forecast is
+	// floored at zero. The rolling errors must describe that floored
+	// forecaster, so they are far smaller than the raw model's.
+	s := makeSeries(40, func(i int) float64 {
+		if v := 100 - 5*float64(i); v > 0 {
+			return v
+		}
+		return 0
+	})
+	cfg := Config{Method: MethodLinear, Horizon: 5, Interval: IntervalDay}
+	raw, err := Run(s, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cfg.NonNegative = true
+	clipped, err := Run(s, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !clipped.Backtested() || !raw.Backtested() {
+		t.Fatal("both runs should be backtested")
+	}
+	t.Logf("rolling mae: raw %.2f, clipped %.2f", raw.MAE, clipped.MAE)
+	if clipped.MAE >= raw.MAE {
+		t.Errorf("clipped forecaster mae %.2f should be below the raw model's %.2f", clipped.MAE, raw.MAE)
+	}
+	for i, p := range clipped.Predictions {
+		if p.Value != 0 || p.LowerBound != 0 {
+			t.Errorf("step %d: value %.2f lower %.2f, want 0 for a zero tail", i, p.Value, p.LowerBound)
+		}
+	}
+	for _, v := range clipped.rolling {
+		if v < 0 {
+			t.Fatalf("rolling prediction %.2f below zero for a non-negative metric", v)
+		}
+	}
+}
