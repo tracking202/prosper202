@@ -1330,3 +1330,18 @@ func TestForecastReportsMaskedAnomaliesAndOptOut(t *testing.T) {
 		t.Error("--no-anomaly-mask still masked points")
 	}
 }
+
+func TestForecastAnomalyKnobsValidated(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://localhost:9", "test-key")
+
+	if _, _, err := executeCommand("forecast", "--metric=clicks", "--anomaly-sigma=0"); err == nil ||
+		!strings.Contains(err.Error(), "--anomaly-sigma") {
+		t.Errorf("expected --anomaly-sigma validation error, got %v", err)
+	}
+	if _, _, err := executeCommand("forecast", "--metric=clicks", "--anomaly-cycles=0"); err == nil ||
+		!strings.Contains(err.Error(), "--anomaly-cycles") {
+		t.Errorf("expected --anomaly-cycles validation error, got %v", err)
+	}
+}

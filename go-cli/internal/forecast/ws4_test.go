@@ -538,14 +538,14 @@ func TestDetectTransients_RespectsSeriesOwnPattern(t *testing.T) {
 		}
 		return 200
 	})
-	if idx := detectTransients(closedSunday, IntervalDay); len(idx) != 0 {
+	if idx := detectTransients(closedSunday, IntervalDay, 0, 0); len(idx) != 0 {
 		t.Errorf("weekly closures masked as anomalies: %v", idx)
 	}
 
 	// Low-volume tracker: zeros are within its normal spread.
 	rng := rand.New(rand.NewSource(5))
 	low := makeSeries(60, func(i int) float64 { return math.Floor(rng.ExpFloat64() * 3) })
-	if idx := detectTransients(low, IntervalDay); len(idx) != 0 {
+	if idx := detectTransients(low, IntervalDay, 0, 0); len(idx) != 0 {
 		t.Errorf("low-volume zeros masked as anomalies: %v", idx)
 	}
 
@@ -560,7 +560,7 @@ func TestDetectTransients_RespectsSeriesOwnPattern(t *testing.T) {
 		}
 		return 500 + rng2.NormFloat64()*20
 	})
-	idx := detectTransients(outage, IntervalDay)
+	idx := detectTransients(outage, IntervalDay, 0, 0)
 	if len(idx) != 2 || idx[0] != 30 || idx[1] != 45 {
 		t.Errorf("transients = %v, want [30 45]", idx)
 	}
@@ -573,7 +573,7 @@ func TestDetectTransients_RespectsSeriesOwnPattern(t *testing.T) {
 		}
 		return 500 + rng3.NormFloat64()*20
 	})
-	if idx := detectTransients(paused, IntervalDay); len(idx) != 0 {
+	if idx := detectTransients(paused, IntervalDay, 0, 0); len(idx) != 0 {
 		t.Errorf("6-day run masked as transient: %v", idx)
 	}
 }
@@ -606,5 +606,38 @@ func TestRun_DisableAnomalyMask(t *testing.T) {
 	}
 	if len(r.AnomaliesMasked) != 0 {
 		t.Errorf("signed metric masked: %v", r.AnomaliesMasked)
+	}
+}
+
+func TestDetectTransients_ThresholdIsTunable(t *testing.T) {
+	// A 40% dip on a tight series is ~15 robust sigmas: masked at the
+	// default 5, still masked at 10, left alone at 25.
+	rng := rand.New(rand.NewSource(8))
+	s := makeSeries(60, func(i int) float64 {
+		if i == 30 {
+			return 300
+		}
+		return 500 + rng.NormFloat64()*10
+	})
+	if idx := detectTransients(s, IntervalDay, 0, 0); len(idx) != 1 {
+		t.Errorf("default sigma: transients = %v, want [30]", idx)
+	}
+	if idx := detectTransients(s, IntervalDay, 25, 0); len(idx) != 0 {
+		t.Errorf("sigma 25: transients = %v, want none", idx)
+	}
+	// Config threads the knobs through Run.
+	r, err := Run(s, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay, NonNegative: true, AnomalySigma: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.AnomaliesMasked) != 0 {
+		t.Errorf("AnomalySigma 25 still masked %v", r.AnomaliesMasked)
+	}
+	r, err = Run(s, Config{Method: MethodSMA, Horizon: 3, Interval: IntervalDay, NonNegative: true, AnomalyCycles: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.AnomaliesMasked) != 1 {
+		t.Errorf("AnomalyCycles 2 masked %v, want the one dip", r.AnomaliesMasked)
 	}
 }

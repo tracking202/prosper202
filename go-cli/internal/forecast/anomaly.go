@@ -24,15 +24,16 @@ import (
 const (
 	// anomalyMinPoints is the shortest series checked for transients.
 	anomalyMinPoints = 20
-	// anomalyCycles is how many cycles on each side supply same-slot
-	// reference values.
-	anomalyCycles = 4
+	// DefaultAnomalyCycles is how many cycles on each side supply same-slot
+	// reference values (Config.AnomalyCycles overrides).
+	DefaultAnomalyCycles = 4
 	// anomalyMinRefs is the minimum same-slot references a point needs to
 	// be judged; with fewer, the rolling median of neighbors is used.
 	anomalyMinRefs = 3
-	// anomalyThreshold is the deviation, in robust sigma units (MAD scaled
-	// to the normal), beyond which a point is a transient.
-	anomalyThreshold = 5.0
+	// DefaultAnomalySigma is the deviation, in robust sigma units (MAD
+	// scaled to the normal), beyond which a point is a transient
+	// (Config.AnomalySigma overrides).
+	DefaultAnomalySigma = 5.0
 	// madToSigma converts a median absolute deviation to a normal sigma.
 	madToSigma = 1.4826
 )
@@ -51,11 +52,20 @@ func anomalyCycle(interval Interval) time.Duration {
 }
 
 // detectTransients returns the indices of short anomalous runs in s (on
-// whatever scale s is expressed in), sorted ascending.
-func detectTransients(s Series, interval Interval) []int {
+// whatever scale s is expressed in), sorted ascending. sigma is the
+// deviation threshold in robust sigma units and cycles the number of
+// seasonal cycles on each side used for same-slot references; non-positive
+// values take the defaults.
+func detectTransients(s Series, interval Interval, sigma float64, cycles int) []int {
 	n := len(s)
 	if n < anomalyMinPoints {
 		return nil
+	}
+	if sigma <= 0 {
+		sigma = DefaultAnomalySigma
+	}
+	if cycles <= 0 {
+		cycles = DefaultAnomalyCycles
 	}
 	byTime := make(map[time.Time]float64, n)
 	for _, p := range s {
@@ -69,7 +79,7 @@ func detectTransients(s Series, interval Interval) []int {
 	for i, p := range s {
 		var refs []float64
 		if cycle > 0 {
-			for k := -anomalyCycles; k <= anomalyCycles; k++ {
+			for k := -cycles; k <= cycles; k++ {
 				if k == 0 {
 					continue
 				}
@@ -94,16 +104,16 @@ func detectTransients(s Series, interval Interval) []int {
 	for i, r := range resid {
 		abs[i] = math.Abs(r)
 	}
-	sigma := madToSigma * median(abs)
-	if sigma <= 0 {
+	scale := madToSigma * median(abs)
+	if scale <= 0 {
 		// A series with no typical deviation (e.g. constant): use a small
 		// floor so only genuine departures stand out.
-		sigma = 1e-6 * (math.Abs(mean(seriesValues(s))) + 1)
+		scale = 1e-6 * (math.Abs(mean(seriesValues(s))) + 1)
 	}
 
 	flagged := make([]bool, n)
 	for i, r := range resid {
-		flagged[i] = math.Abs(r) > anomalyThreshold*sigma
+		flagged[i] = math.Abs(r) > sigma*scale
 	}
 
 	// Keep only runs shorter than a regime change.

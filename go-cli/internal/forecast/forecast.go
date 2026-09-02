@@ -172,6 +172,14 @@ type Config struct {
 	// series only; signed metrics can legitimately swing.
 	DisableAnomalyMask bool
 
+	// AnomalySigma is the deviation, in robust sigma units, beyond which a
+	// point counts as a transient (default DefaultAnomalySigma); lower it
+	// to mask more aggressively, raise it to mask only extreme departures.
+	// AnomalyCycles is how many seasonal cycles on each side supply the
+	// same-weekday/hour reference values (default DefaultAnomalyCycles).
+	AnomalySigma  float64
+	AnomalyCycles int
+
 	// relevel carries a detected level shift handled by re-leveling; every
 	// fit reads its training data through trainingView so backtest folds
 	// re-level from their own prefix only. Set by Run.
@@ -282,7 +290,7 @@ func Run(series Series, cfg Config) (*Result, error) {
 	// must still start after them, so the anchor moves to the true end.
 	var anomalies []string
 	if cfg.NonNegative && !cfg.DisableAnomalyMask {
-		if idx := detectTransients(work, cfg.Interval); len(idx) > 0 {
+		if idx := detectTransients(work, cfg.Interval, cfg.AnomalySigma, cfg.AnomalyCycles); len(idx) > 0 {
 			for _, i := range idx {
 				anomalies = append(anomalies, formatShiftTime(work[i].T, cfg.Interval))
 			}

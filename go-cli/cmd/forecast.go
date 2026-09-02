@@ -224,6 +224,14 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	}
 	noLevelShift, _ := cmd.Flags().GetBool("no-level-shift")
 	noAnomalyMask, _ := cmd.Flags().GetBool("no-anomaly-mask")
+	anomalySigma, _ := cmd.Flags().GetFloat64("anomaly-sigma")
+	if anomalySigma <= 0 {
+		return validationError("--anomaly-sigma must be positive (default %.0f)", forecast.DefaultAnomalySigma)
+	}
+	anomalyCycles, _ := cmd.Flags().GetInt("anomaly-cycles")
+	if anomalyCycles < 1 {
+		return validationError("--anomaly-cycles must be at least 1 (default %d)", forecast.DefaultAnomalyCycles)
+	}
 	if seasonalMonthly && forecastSignedMetrics[metric] {
 		// Multiplicative day-of-month profiles are undefined for metrics
 		// that cross zero (a near-zero mean yields unbounded multipliers).
@@ -259,6 +267,8 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		LogTransform:       forecastCountMetrics[metric],
 		DisableLevelShift:  noLevelShift,
 		DisableAnomalyMask: noAnomalyMask,
+		AnomalySigma:       anomalySigma,
+		AnomalyCycles:      anomalyCycles,
 	}
 
 	// ── Coherent multi-metric forecasting ─────────────────────────────
@@ -1099,6 +1109,8 @@ func init() {
 	forecastCmd.Flags().Float64("confidence", 0.95, "Confidence level for prediction bounds; snaps to the nearest band: 0.50 (p25-p75), 0.80 (p10-p90), or 0.90 (p05-p95, also used for 0.95/0.99)")
 	forecastCmd.Flags().Bool("no-level-shift", false, "Disable level-shift detection (fit the full history as-is)")
 	forecastCmd.Flags().Bool("no-anomaly-mask", false, "Disable transient masking (fit short outlier runs such as tracking outages as data)")
+	forecastCmd.Flags().Float64("anomaly-sigma", forecast.DefaultAnomalySigma, "Transient-masking threshold in robust sigma units (lower masks more aggressively)")
+	forecastCmd.Flags().Int("anomaly-cycles", forecast.DefaultAnomalyCycles, "Seasonal cycles on each side used as same-weekday/hour references for transient masking")
 	forecastCmd.Flags().Bool("events", false, "Enable event-aware forecasting using stored forecast events")
 	forecastCmd.Flags().String("event-tag", "", "Filter forecast events by tag (comma-separated, e.g. us-holidays,promos)")
 

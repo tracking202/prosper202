@@ -231,8 +231,10 @@ tracker is never affected) are masked from fitting and listed in the meta
 as `anomalies_masked`, keeping the bands at the healthy level so the
 alerting layer still flags the outage. Runs of five or more points are a
 regime change and go to the shift detector instead. `--no-anomaly-mask`
-fits every point as data, and `--no-level-shift` fits the full history
-as-is if the detector misreads a known transient; tagging known outages and
+fits every point as data, `--anomaly-sigma` (default 5) and
+`--anomaly-cycles` (default 4) tune how far a point must deviate and how
+many surrounding weeks supply its reference, and `--no-level-shift` fits
+the full history as-is if the detector misreads a known transient; tagging known outages and
 promos as events remains the explicit override for both. Event-aware forecasting (`--events`,
 `--event-tag`) folds in stored [forecast
 events](../api/18-forecast-events.md) and requires `--interval day`:
