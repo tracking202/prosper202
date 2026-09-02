@@ -411,7 +411,7 @@ p202 report weekpart   [-s sort_col] [--sort_dir ASC|DESC] [-p period] [filters.
 ```
 p202 forecast --metric M   [-n horizon] [-i hour|day|week|month] [--history P]
                            [--method auto|ensemble|linear|sma|wma|holtwinters]
-                           [--confidence 0.5|0.8|0.9] [--seasonal] [--seasonal-monthly]
+                           [--confidence 0.0-1.0] [--seasonal] [--seasonal-monthly]
                            [--events] [--event-tag T1,T2] [--no-level-shift]
                            [--no-anomaly-mask] [--anomaly-sigma N] [--anomaly-cycles N]
                            [filters...] [--json]
@@ -420,7 +420,7 @@ p202 forecast --all-metrics [-n horizon] [-i interval] [--history P] [filters...
 
 Metrics: `clicks`, `leads` (alias `conversions`), `revenue` (alias `income`), `cost`, `profit` (alias `net`), `epc`, `avg_cpc`, `conv_rate`, `roi`, `cpa`. `--all-metrics` returns clicks, leads, income, cost, and net in one row per date with the identities `leads = clicks × conv_rate` and `net = income − cost` holding exactly.
 
-Output rows carry the point forecast, `lower_bound`/`upper_bound` (the band `--confidence` selects; the meta's `bounds` names it), and the remaining quantile columns `p05`…`p95`. Read the meta before trusting a forecast:
+Output rows carry the point forecast, `lower_bound`/`upper_bound` (the band `--confidence` selects; the meta's `bounds` names it), and the remaining quantile columns `p05`…`p95`. `--confidence` takes any level (default 0.95) and snaps to the nearest emitted band: below 0.65 → p25–p75 (50%), below 0.85 → p10–p90 (80%), otherwise p05–p95 (90%); read `bounds` for the one delivered. Read the meta before trusting a forecast:
 
 | Meta key | Meaning |
 |----------|---------|
