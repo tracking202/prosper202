@@ -1345,3 +1345,50 @@ func TestForecastAnomalyKnobsValidated(t *testing.T) {
 		t.Errorf("expected --anomaly-cycles validation error, got %v", err)
 	}
 }
+
+func TestForecastMissingMetricHintListsAvailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(makeTimeseriesResponse(30, "total_clicks")))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("forecast", "--metric=epc")
+	if err == nil {
+		t.Fatal("expected error when the metric is absent from the response")
+	}
+	hint := hintFor(err)
+	if !strings.Contains(hint, "total_clicks") || !strings.Contains(hint, "--metric") {
+		t.Errorf("hint should list the available metrics and the flag to change, got %q", hint)
+	}
+	if exitCodeForError(err) != ExitValidation {
+		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
+	}
+}
+
+func TestForecastAPIErrorKeepsAuthExitCodeAndHint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"message":"invalid api key"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "bad-key-123")
+
+	_, _, err := executeCommand("forecast", "--metric=clicks")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := exitCodeForError(err); got != ExitAuth {
+		t.Errorf("exit code = %d, want %d (auth) despite wrapping", got, ExitAuth)
+	}
+	if !strings.Contains(hintFor(err), "config set-key") {
+		t.Errorf("expected key hint, got %q", hintFor(err))
+	}
+}

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -58,7 +57,7 @@ var analyticsCmd = &cobra.Command{
 	Short: "Query performance stats grouped by campaign, traffic source, country, etc. (shorthand for report breakdown)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !envFlagEnabled("CLI_ENABLE_ANALYTICS_SHORTHAND", true) {
-			return fmt.Errorf("analytics shorthand is disabled (set CLI_ENABLE_ANALYTICS_SHORTHAND=1 to enable)")
+			return validationError("analytics shorthand is disabled").WithHint("Set CLI_ENABLE_ANALYTICS_SHORTHAND=1 in the environment, or use `p202 report breakdown` directly.")
 		}
 
 		c, err := api.NewFromConfig()
@@ -69,7 +68,7 @@ var analyticsCmd = &cobra.Command{
 		groupBy, _ := cmd.Flags().GetString("group-by")
 		groupBy = strings.ToLower(strings.TrimSpace(groupBy))
 		if groupBy == "" {
-			return validationError("--group-by is required")
+			return validationError("--group-by is required").WithHint("Example: --group-by country (aliases: lp for landing_page).")
 		}
 		if mapped, ok := analyticsGroupByAliases[groupBy]; ok {
 			groupBy = mapped

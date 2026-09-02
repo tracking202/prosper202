@@ -71,10 +71,10 @@ var attrModelCreateCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("model_name")
 		mtype, _ := cmd.Flags().GetString("model_type")
 		if name == "" {
-			return fmt.Errorf("required flag --model_name is missing")
+			return validationError("required flag --model_name is missing")
 		}
 		if mtype == "" {
-			return fmt.Errorf("required flag --model_type is missing")
+			return validationError("required flag --model_type is missing")
 		}
 		body := map[string]interface{}{
 			"model_name": name,
@@ -83,7 +83,7 @@ var attrModelCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("weighting_config"); v != "" {
 			var parsed interface{}
 			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
-				return fmt.Errorf("invalid --weighting_config JSON: %w", err)
+				return withHint(fmt.Errorf("invalid --weighting_config JSON: %w", err), "Pass a JSON object, e.g. --weighting_config '{\"first\":0.4,\"last\":0.6}'; quote it so the shell keeps it intact.")
 			}
 			body["weighting_config"] = parsed
 		}
@@ -120,12 +120,12 @@ var attrModelUpdateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("weighting_config"); v != "" {
 			var parsed interface{}
 			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
-				return fmt.Errorf("invalid --weighting_config JSON: %w", err)
+				return withHint(fmt.Errorf("invalid --weighting_config JSON: %w", err), "Pass a JSON object, e.g. --weighting_config '{\"first\":0.4,\"last\":0.6}'; quote it so the shell keeps it intact.")
 			}
 			body["weighting_config"] = parsed
 		}
 		if len(body) == 0 {
-			return fmt.Errorf("no fields specified; pass at least one flag to update")
+			return validationError("no fields specified; pass at least one flag to update")
 		}
 		data, err := c.Put("attribution/models/"+args[0], body)
 		if err != nil {

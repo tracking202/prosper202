@@ -50,7 +50,7 @@ var exportCmd = &cobra.Command{
 		} else {
 			endpoint, ok := portableEntities[target]
 			if !ok {
-				return fmt.Errorf("unsupported entity %q", target)
+				return validationError("unsupported entity %q", target).WithHint("Supported entities: all, %s", strings.Join(sortedPortableEntities(), ", "))
 			}
 			rows, err := fetchAllRows(c, endpoint)
 			if err != nil {
@@ -140,7 +140,7 @@ func fetchAllRowsWithParams(c *api.Client, endpoint string, baseParams map[strin
 			step = pg.limit
 		}
 		if step <= 0 {
-			return nil, fmt.Errorf("pagination stalled for %s: invalid page size at offset %d", endpoint, offset)
+			return nil, withHint(fmt.Errorf("pagination stalled for %s: invalid page size at offset %d", endpoint, offset), "The server returned an unusable page; retry, and if it persists check the API version with `p202 system version` and the server logs.")
 		}
 
 		if pg.hasTotal && len(all) >= pg.total {
@@ -152,7 +152,7 @@ func fetchAllRowsWithParams(c *api.Client, endpoint string, baseParams map[strin
 		}
 
 		if added == 0 {
-			return nil, fmt.Errorf("pagination stalled for %s: page at offset %d contained no new rows", endpoint, offset)
+			return nil, withHint(fmt.Errorf("pagination stalled for %s: page at offset %d contained no new rows", endpoint, offset), "The server keeps returning the same page; retry, and if it persists check the API version with `p202 system version` and the server logs.")
 		}
 
 		reportedOffset := offset
@@ -161,7 +161,7 @@ func fetchAllRowsWithParams(c *api.Client, endpoint string, baseParams map[strin
 		}
 		nextOffset := reportedOffset + step
 		if nextOffset <= offset {
-			return nil, fmt.Errorf("pagination stalled for %s: next offset %d did not advance from %d", endpoint, nextOffset, offset)
+			return nil, withHint(fmt.Errorf("pagination stalled for %s: next offset %d did not advance from %d", endpoint, nextOffset, offset), "The server's pagination cursor did not advance; retry, and if it persists check the API version with `p202 system version` and the server logs.")
 		}
 
 		offset = nextOffset

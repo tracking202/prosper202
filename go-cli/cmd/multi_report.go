@@ -39,7 +39,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 		selectedModes++
 	}
 	if selectedModes > 1 {
-		return nil, fmt.Errorf("use only one of --all-profiles, --profiles, or --group")
+		return nil, validationError("use only one of --all-profiles, --profiles, or --group")
 	}
 	if selectedModes == 0 {
 		return nil, nil
@@ -57,7 +57,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 	if allProfiles {
 		names := cfg.ProfileNames()
 		if len(names) == 0 {
-			return nil, fmt.Errorf("no profiles configured")
+			return nil, validationError("no profiles configured").WithHint("Add one with `p202 config add-profile <name> --url <url> --key <key>`.")
 		}
 		return names, nil
 	}
@@ -65,7 +65,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 	if groupTag != "" {
 		matches := cfg.ResolveGroup(groupTag)
 		if len(matches) == 0 {
-			return nil, fmt.Errorf("no profiles found for group %q", groupTag)
+			return nil, validationError("no profiles found for group %q", groupTag).WithHint("Tag profiles with `p202 config tag-profile <profile> %s`; `p202 config list-profiles` shows current tags.", groupTag)
 		}
 		return matches, nil
 	}
@@ -79,13 +79,13 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 			continue
 		}
 		if !available[name] {
-			return nil, fmt.Errorf("profile %q not found", name)
+			return nil, validationError("profile %q not found", name).WithHint("`p202 config list-profiles` shows configured profiles; add one with `p202 config add-profile <name> --url <url> --key <key>`.")
 		}
 		seen[name] = true
 		profiles = append(profiles, name)
 	}
 	if len(profiles) == 0 {
-		return nil, fmt.Errorf("--profiles requires at least one valid profile name")
+		return nil, validationError("--profiles requires at least one valid profile name").WithHint("Comma-separate names from `p202 config list-profiles`, e.g. --profiles prod,staging.")
 	}
 	sort.Strings(profiles)
 	return profiles, nil

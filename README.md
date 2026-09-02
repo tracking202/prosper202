@@ -321,6 +321,9 @@ bin/p202 rotator:create --name "My Rotator"
 ### Go CLI (`go-cli/`)
 
 Cross-platform Go CLI with `--json` output for scripting and agent consumption.
+Failures are categorized with distinct exit codes and carry a recovery hint;
+under `--json` they arrive as a structured envelope on stderr (see
+[Errors](documentation/cli/10-go-cli.md#errors)).
 
 ```bash
 cd go-cli

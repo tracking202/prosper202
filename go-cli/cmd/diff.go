@@ -39,18 +39,18 @@ var diffCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target := strings.TrimSpace(args[0])
 		if target == "" {
-			return fmt.Errorf("entity is required")
+			return validationError("entity is required").WithHint("Pass an entity to compare, or `all`: %s", strings.Join(sortedPortableEntities(), ", "))
 		}
 		if target != "all" {
 			if _, ok := portableEntities[target]; !ok {
-				return fmt.Errorf("unsupported entity %q", target)
+				return validationError("unsupported entity %q", target).WithHint("Supported entities: all, %s", strings.Join(sortedPortableEntities(), ", "))
 			}
 		}
 
 		fromProfile := firstFlag(cmd, "from", "source")
 		toProfile := firstFlag(cmd, "to", "target")
 		if fromProfile == "" || toProfile == "" {
-			return fmt.Errorf("--from and --to are required")
+			return validationError("--from and --to are required").WithHint("Pass profile names, e.g. --from prod --to staging; `p202 config list-profiles` shows them.")
 		}
 
 		fromClient, err := api.NewFromProfile(fromProfile)

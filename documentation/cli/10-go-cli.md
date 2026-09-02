@@ -207,7 +207,48 @@ p202 config get-default report.period
 p202 config unset-default report.period
 ```
 
-## Exit Codes
+## Errors
+
+Every failure is reported on **stderr** with a category, the message, and,
+whenever there is a concrete next step, a recovery hint. Stdout stays empty
+on failure, so a script never confuses an error for data. Exit codes follow
+the category (table below) and survive wrapping: "fetching historical data:
+API error (401)" still exits 2.
+
+Human mode:
+
+```text
+Error [auth]: fetching historical data: API error (401): invalid api key
+Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
+```
+
+With `--json` or `--ndjson` the same failure is a single JSON envelope, so
+an agent reads structured fields instead of parsing prose:
+
+```json
+{"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
+```
+
+| Field | Always | Meaning |
+| --- | --- | --- |
+| `category` | yes | `validation`, `auth`, `network`, `server`, or `partial_failure` |
+| `message` | yes | What failed |
+| `exit_code` | yes | The process exit code (table below) |
+| `command` | yes | The command that ran, e.g. `p202 rotator create` |
+| `hint` | when known | The recovery step to take next |
+| `http_status` | API errors | The server's status code |
+| `field_errors` | 422 responses | Per-field messages from the server |
+
+Hints come from three sources, in order of precedence: a hint attached by
+the command itself (for example, the metrics the response *did* contain
+when the requested one is missing, or the dependency order to sync first
+when a foreign key cannot be resolved); a generic hint for the failure
+class (401/403 key check, 404 use `list` for ids, 409 update instead of
+create, 429 back off, 5xx retry then `p202 system health`, network check the
+URL and `p202 config test`); and for any remaining validation error, a
+pointer to `<command> --help`.
+
+### Exit Codes
 
 | Code | Meaning |
 | ---- | ------- |

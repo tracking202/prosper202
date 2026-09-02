@@ -253,7 +253,7 @@ var trackerTestCmd = &cobra.Command{
 		}
 		link := resp.Data.DirectURL
 		if link == "" {
-			return validationError("tracker has no resolvable link")
+			return validationError("tracker has no resolvable link").WithHint("Check the tracker with `p202 tracker get <id>`; it needs a landing page or redirect URL before it can be verified.")
 		}
 		if !strings.HasPrefix(link, "http") {
 			scheme := "http"

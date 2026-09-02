@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"p202/internal/api"
 
@@ -29,7 +30,7 @@ var dataImportCmd = &cobra.Command{
 		entity := args[0]
 		endpoint, ok := portableEntities[entity]
 		if !ok {
-			return fmt.Errorf("unsupported entity %q", entity)
+			return validationError("unsupported entity %q", entity).WithHint("Supported entities: %s", strings.Join(sortedPortableEntities(), ", "))
 		}
 
 		raw, err := os.ReadFile(args[1])
@@ -97,16 +98,16 @@ func parseImportRecords(raw []byte) ([]map[string]interface{}, error) {
 
 	var obj map[string]interface{}
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, fmt.Errorf("invalid import file JSON: %w", err)
+		return nil, withHint(fmt.Errorf("invalid import file JSON: %w", err), "The file must be JSON as written by `p202 export <entity> --output <file>`: an array of records, or an object with a `data` array.")
 	}
 
 	rawData, ok := obj["data"]
 	if !ok {
-		return nil, fmt.Errorf("import file must be a JSON array or object with data array")
+		return nil, validationError("import file must be a JSON array or object with data array").WithHint("Produce it with `p202 export <entity> --output <file>`, or wrap your records as {\"data\": [...]}.")
 	}
 	items, ok := rawData.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("import file data field must be an array")
+		return nil, validationError("import file data field must be an array").WithHint("Produce it with `p202 export <entity> --output <file>`, or wrap your records as {\"data\": [...]}.")
 	}
 	out := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {

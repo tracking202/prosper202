@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -23,16 +26,17 @@ var profileName string
 var groupName string
 
 var rootCmd = &cobra.Command{
-	Use:           "p202",
-	Short:         "Prosper202 CLI",
+	Use:   "p202",
+	Short: "Prosper202 CLI",
 	Long: "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
-		"Designed for both human operators and AI agents.",  // alias list appended dynamically in Execute()
+		"Designed for both human operators and AI agents.", // alias list appended dynamically in Execute()
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		activeCommandPath = cmd.CommandPath()
 		configpkg.SetActiveOverride(profileName)
 		if jsonOutput && csvOutput {
-			return fmt.Errorf("--json and --csv cannot be used together")
+			return validationError("--json and --csv cannot be used together").WithHint("Pick one output mode.")
 		}
 		return nil
 	},
@@ -55,15 +59,35 @@ func Execute() {
 	rootCmd.Long = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
 		"Designed for both human operators and AI agents." + buildAliasHelp()
 	if err := rootCmd.Execute(); err != nil {
-		if category := api.ErrorCategory(err); category != "" {
-			fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", category, err)
-		} else {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-		}
-		if hint := api.HintFor(err); hint != "" {
-			fmt.Fprintf(os.Stderr, "Hint: %s\n", hint)
-		}
+		printError(os.Stderr, err)
 		os.Exit(exitCodeForError(err))
+	}
+}
+
+// printError writes the failure to w. Under --json/--ndjson it is a single
+// JSON envelope ({"error": {category, message, hint, exit_code, command,
+// http_status, field_errors}}) so agents never parse prose; otherwise a
+// human-readable "Error [category]: ..." line followed by a "Hint:" line
+// when there is a recovery step to suggest.
+func printError(w io.Writer, err error) {
+	if jsonOutput || ndjsonOutput {
+		// No HTML escaping: hints contain "<key>"-style placeholders that
+		// agents should see verbatim.
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if mErr := enc.Encode(errorEnvelope(err)); mErr == nil {
+			w.Write(buf.Bytes())
+			return
+		}
+	}
+	if category := api.ErrorCategory(err); category != "" {
+		fmt.Fprintf(w, "Error [%s]: %v\n", category, err)
+	} else {
+		fmt.Fprintln(w, "Error:", err)
+	}
+	if hint := hintFor(err); hint != "" {
+		fmt.Fprintf(w, "Hint: %s\n", hint)
 	}
 }
 

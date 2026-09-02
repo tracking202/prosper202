@@ -473,6 +473,19 @@ mask catch what you did not.
 
 ## 11. Troubleshooting
 
+Every failure carries a category, exit code, and usually a recovery hint;
+under `--json` it arrives as a structured envelope on stderr (see
+[Errors](10-go-cli.md#errors)). For example, asking for a metric the
+response did not contain:
+
+```json
+{"error":{"category":"validation","message":"no valid data points found for metric \"epc\"","hint":"The response carried values for total_clicks but not \"epc\". Pick one of those with --metric, or widen --history.","exit_code":1,"command":"p202 forecast"}}
+```
+
+The symptoms below are the ones that produce *successful* runs whose output
+needs interpreting.
+
+
 **No `p05`…`p95` columns and `bounds_source` is `gaussian`.** The history is
 too short for a rolling backtest (section 4). Use a longer `--history`.
 

@@ -121,7 +121,7 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 			return perr
 		}
 		if len(ids) == 0 {
-			return fmt.Errorf("--ids requires at least one ID")
+			return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
 		}
 		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
@@ -144,7 +144,7 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 	}
 
 	if len(args) != 1 {
-		return fmt.Errorf("provide a single id or use --ids")
+		return validationError("provide a single id or use --ids").WithHint("Pass one id as the argument, or several with --ids 12,13,14.")
 	}
 	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
 		fmt.Fprintln(os.Stderr, "Cancelled.")
@@ -245,7 +245,7 @@ func parseDataArray(data []byte) ([]map[string]interface{}, error) {
 	}
 	rawItems, ok := parsed["data"].([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("response did not include a data array")
+		return nil, withHint(fmt.Errorf("response did not include a data array"), "The server returned an unexpected shape; check the API version with `p202 system version` and that the URL points at the API root.")
 	}
 	items := make([]map[string]interface{}, 0, len(rawItems))
 	for _, raw := range rawItems {
@@ -300,7 +300,7 @@ func parseIDList(raw string) ([]string, error) {
 			continue
 		}
 		if _, err := strconv.Atoi(id); err != nil {
-			return nil, fmt.Errorf("invalid ID %q: must be a numeric value", id)
+			return nil, validationError("invalid ID %q: must be a numeric value", id).WithHint("Use the internal numeric id from the matching `... list`; public ids from tracking links need --public where supported.")
 		}
 		seen[id] = true
 		out = append(out, id)
@@ -415,7 +415,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			allRows, _ := cmd.Flags().GetBool("all")
 			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
 			if resolveNames && !envFlagEnabled("CLI_ENABLE_RESOLVE_NAMES", true) {
-				return fmt.Errorf("--resolve-names is disabled (set CLI_ENABLE_RESOLVE_NAMES=1 to enable)")
+				return validationError("--resolve-names is disabled").WithHint("Set CLI_ENABLE_RESOLVE_NAMES=1 in the environment to enable it, or drop the flag.")
 			}
 
 			if allRows {
@@ -532,7 +532,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			}
 			for _, f := range entity.Fields {
 				if f.Required && body[f.Name] == "" {
-					return fmt.Errorf("required flag --%s is missing", f.Name)
+					return validationError("required flag --%s is missing", f.Name)
 				}
 			}
 			data, err := c.Post(entity.Endpoint, body)
@@ -566,7 +566,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 			}
 			if len(body) == 0 {
-				return fmt.Errorf("no fields specified; pass at least one flag to update")
+				return validationError("no fields specified; pass at least one flag to update")
 			}
 			data, err := c.Put(entity.Endpoint+"/"+args[0], body)
 			if err != nil {
@@ -605,7 +605,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					return parseErr
 				}
 				if len(idList) == 0 {
-					return fmt.Errorf("--ids requires at least one ID")
+					return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
 				}
 
 				force, _ := cmd.Flags().GetBool("force")
@@ -719,10 +719,10 @@ func init() {
 			},
 		},
 		{
-			Name:     "tracker",
-			Plural:   "trackers (tracking links that tie a traffic source to a campaign and landing page)",
-			Endpoint: "trackers",
-			IDField:  "tracker_id",
+			Name:          "tracker",
+			Plural:        "trackers (tracking links that tie a traffic source to a campaign and landing page)",
+			Endpoint:      "trackers",
+			IDField:       "tracker_id",
 			PublicIDField: "tracker_id_public",
 			Fields: []crudField{
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
@@ -899,7 +899,7 @@ func init() {
 				}
 				for _, f := range trackerEntity.Fields {
 					if f.Required && body[f.Name] == "" {
-						return fmt.Errorf("required flag --%s is missing", f.Name)
+						return validationError("required flag --%s is missing", f.Name)
 					}
 				}
 
@@ -978,7 +978,7 @@ func init() {
 
 				concurrency, _ := cmd.Flags().GetInt("concurrency")
 				if concurrency < 1 {
-					return fmt.Errorf("--concurrency must be at least 1")
+					return validationError("--concurrency must be at least 1")
 				}
 				if concurrency > len(trackers) {
 					concurrency = len(trackers)

@@ -282,13 +282,14 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	}
 	parsed, rejected, err := parseTimeseriesMulti(data, wanted)
 	if err != nil {
-		return err
+		return withHint(err, "The timeseries request returned nothing usable for --history %s with these filters. Check the window and entity filters with `p202 report timeseries --period %s` (same filters), then retry.", history, history)
 	}
 
 	if allMetrics {
 		results, rcErr := forecast.RunCoherent(parsed, cfg)
 		if rcErr != nil {
-			return fmt.Errorf("coherent forecast failed: %w", rcErr)
+			return withHint(validationError("coherent forecast failed: %v", rcErr),
+				"One of the core metrics has too little history to compose from. Use a longer --history, or forecast the metric you need on its own with --metric (it falls back to a direct forecast automatically).")
 		}
 		output, boErr := buildAllMetricsOutput(results, rejected)
 		if boErr != nil {
@@ -300,10 +301,17 @@ func runForecast(cmd *cobra.Command, args []string) error {
 
 	series := parsed[metric]
 	if len(series) == 0 {
-		return fmt.Errorf("no valid data points found for metric %q", metric)
+		available := parsedMetricNames(parsed)
+		if len(available) == 0 {
+			return validationError("no valid data points found for metric %q", metric).
+				WithHint("No bucket in the response carried a numeric %q value. Check `p202 report timeseries --period %s` with the same filters to see which metrics the API returns for this window.", metric, history)
+		}
+		return validationError("no valid data points found for metric %q", metric).
+			WithHint("The response carried values for %s but not %q. Pick one of those with --metric, or widen --history.", strings.Join(available, ", "), metric)
 	}
 	if len(series) < 3 {
-		return validationError("not enough data points (%d) for forecasting — need at least 3. Try a longer --history period", len(series))
+		return validationError("not enough data points (%d) for forecasting — need at least 3", len(series)).
+			WithHint("Use a longer --history (e.g. last30 or last90) or a finer --interval; rolling backtests and conformal bands need ~12 points, so aim for at least that.")
 	}
 
 	// A derived metric requested on its own (without seasonal or event
@@ -391,7 +399,8 @@ func runForecast(cmd *cobra.Command, args []string) error {
 				// Mask event days from training data for clean baseline fitting.
 				series = forecast.MaskEventDays(series, pastEvents)
 				if len(series) < 3 {
-					return validationError("after masking event days, only %d data points remain — need at least 3", len(series))
+					return validationError("after masking event days, only %d data points remain — need at least 3", len(series)).
+						WithHint("The event windows cover most of the history. Use a longer --history, narrow the events with --event-tag, or shorten lead/lag days on the events.")
 				}
 
 				// Masking may drop the most recent observations, but predictions
@@ -411,7 +420,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	// Run the baseline forecast on clean data.
 	result, err := forecast.Run(series, cfg)
 	if err != nil {
-		return fmt.Errorf("forecast failed: %w", err)
+		return withHint(fmt.Errorf("forecast failed: %w", err), "Use a longer --history or a coarser --interval so more points are available.")
 	}
 
 	// Apply event adjustments to predictions.
@@ -627,6 +636,19 @@ func parseTimeseriesMulti(data []byte, metrics []string) (map[string]forecast.Se
 		sort.Slice(out[m], func(i, j int) bool { return out[m][i].T.Before(out[m][j].T) })
 	}
 	return out, rejected, nil
+}
+
+// parsedMetricNames lists the metrics a parsed response carried values for,
+// sorted, for error hints.
+func parsedMetricNames(parsed map[string]forecast.Series) []string {
+	names := make([]string, 0, len(parsed))
+	for m, s := range parsed {
+		if len(s) > 0 {
+			names = append(names, m)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // buildAllMetricsOutput renders the coherent multi-metric forecast: one row
@@ -921,7 +943,7 @@ func fetchAllForecastEvents(c *api.Client) ([]forecast.Event, error) {
 	for page := 0; page < maxForecastEventPages; page++ {
 		data, err := c.Get("forecast-events", params)
 		if err != nil {
-			return nil, fmt.Errorf("fetching forecast events: %w", err)
+			return nil, withHint(fmt.Errorf("fetching forecast events: %w", err), "Events come from the forecast-events endpoint; run `p202 forecast-event list` to confirm it works, or drop --events/--event-tag to forecast without the calendar.")
 		}
 
 		events, err := parseForecastEvents(data)
