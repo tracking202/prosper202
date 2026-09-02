@@ -22,6 +22,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Deep Linking** — Boost conversion rates by deep linking directly into apps, reducing friction for users.
 - **Team Access** — Full role-based authentication with no limit on users and no per-seat costs.
 - **API & CLI Tools** — Full REST API and CLI tools designed for both human developers and AI agents. Automate campaign management, pull reports, and integrate with your existing tools. CLI-first design works seamlessly with AI coding agents like Claude Code, Codex, and OpenClaw.
+- **Forecasting** — `p202 forecast` projects any metric forward with calibrated bands, coherent multi-metric output, seasonality, and anomaly handling ([guide](documentation/cli/11-forecasting.md))
 
 ## Requirements
 
@@ -329,7 +330,14 @@ make build
 ./p202 config set-key <api-key>
 ./p202 campaign list --json
 ./p202 sync all
+./p202 forecast --all-metrics --horizon 14 --json
 ```
+
+The CLI includes a dependency-free forecasting engine: calibrated prediction
+bands from rolling backtests, an accuracy-weighted ensemble, coherent
+clicks/leads/income/cost/net forecasts, seasonal profiles, level-shift
+handling, and masking of transient outages and spikes. See the
+[Forecasting Guide](documentation/cli/11-forecasting.md) for worked examples.
 
 ## Development Setup
 

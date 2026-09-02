@@ -154,96 +154,40 @@ Aliases: `--group-by lp` -> `landing_page`, `--sort conversions` -> `total_leads
 
 ## Forecasting
 
-Project any tracked metric forward from historical time-series data. Supports
-linear regression, simple and weighted moving averages, damped-trend
-Holt-Winters exponential smoothing, and an ensemble — the default (`--method
-auto` is an alias for `ensemble`) — that averages the methods weighted by
-their recency-discounted rolling-backtest accuracy, drops members that
-clearly trail the best, and reports each member's share in the output meta
-(`weights`).
+Project any tracked metric forward from historical time-series data, with
+calibrated prediction bands, an accuracy-weighted ensemble of methods,
+coherent multi-metric output, seasonal profiles, level-shift handling, and
+transient (outage/spike) masking. The full guide with worked examples is
+[Forecasting Guide](11-forecasting.md).
 
 ```bash
 p202 forecast --metric revenue --horizon 7
 p202 forecast --metric clicks --history last90 --method linear
-p202 forecast --metric profit --horizon 14 --method auto --seasonal
-p202 forecast --all-metrics --horizon 7
+p202 forecast --metric profit --horizon 14 --seasonal --events
+p202 forecast --all-metrics --horizon 7 --json
 ```
 
-Derived metrics (leads, income, cost, net) requested on their own are
-forecast by ratio decomposition: clicks and the linking rates (conversion
-rate, average CPC, average payout) are forecast as drivers and the totals
-composed from them, so `leads = clicks × conv_rate`, `income = leads ×
-avg_payout`, and `net = income − cost` hold exactly across the output. The
-meta reports `composition: derived`, or `direct` when a driver is defined on
-too few days (under ~70% of buckets) and the metric's own series is forecast
-instead. `--all-metrics` forecasts clicks, leads, income, cost, and net
-together this way in one table (one row per date with `<metric>`,
-`<metric>_lower`, `<metric>_upper` columns); it cannot be combined with
-`--metric`, `--seasonal`, `--seasonal-monthly`, `--events`, or
-`--event-tag`, and those flags on a single derived metric keep the direct
-path since the layers operate on the metric's own series. When composition
-is impossible (companion metrics missing from the response, or a driver
-too sparse to forecast), the direct path serves the forecast with
-`composition: direct` and a `composition_fallback` reason in the meta.
-Composed band endpoints combine conservatively (worst-case dependence
-between factors), so derived bands can over-cover slightly, and
-`bounds_source` reads `mixed` when the composed operands' bounds came from
-different methods; derived rows carry no `mae`/`rmse` since rolling errors
-are only measured for directly fitted series.
+Key behaviors, each detailed in the guide:
 
-Prediction bounds come from rolling-origin conformal prediction: the model is
-re-fit at up to 50 cut points stepping back from the end of the history, and
-held-out errors are bucketed by horizon step. `lower_bound`/`upper_bound` are
-the empirical quantile pair nearest `--confidence`: P25/P75 for levels under
-0.65 (a 50% band), P10/P90 under 0.85 (80%), and P05/P95 otherwise (90% —
-the widest band the residual pool supports, so the default 0.95 and 0.99
-both get it). The meta's `bounds` names the pair in use, and bounds are
-asymmetric when the errors are. Each prediction also carries the remaining
-quantile columns (`p05`…`p95`; `p50` is the bias-corrected median path).
-Reported `mae`/`rmse` are averages across all rolling cut points. Metrics
-that cannot go negative (clicks, leads, cost, income, rates) have bounds
-clipped at zero. Conformal bounds need at least 8 held-out residuals, which
-takes roughly 12 points at a 4+ step horizon and 16 at `--horizon 1`;
-shorter histories fall back to symmetric Gaussian bounds (which do honor the
-exact confidence level) without quantile columns — the meta's
-`bounds_source` says which applied.
-
-With `--seasonal`, predictions are modulated by day-of-week weights derived
-from weekpart report data (requires `--interval day` or `hour`); hourly
-forecasts also get an hour-of-day profile learned from the series, and
-`--seasonal-monthly` (day interval, non-negative metrics only) adds
-day-of-month weights for monthly budget/payout resets. Profile multipliers
-are shrunk toward 1.0 when a slot has few samples, and weekday/hourly
-profiles only apply when the series actually shows structure at that lag
-(detrended autocorrelation ≥ 0.3; a history too short to measure the lag
-applies the profile as supplied) — the meta's `seasonal_applied` and
-`seasonal_profiles` report the outcome. Count metrics (clicks,
-click-throughs, leads) are fitted on log1p scale and inverted on output, so
-multiplicative growth extrapolates correctly. When a level shift is detected
-(offer paused, traffic source added), the model fits the new regime —
-truncating or re-leveling pre-shift history — and reports the boundary in
-the meta as `level_shift_at`; `data_points_used` then counts the points
-actually fitted. A transient burst (a two-day tracking outage, an untagged
-promo spike) is not a shift: short outlier runs that are abnormal *for this
-series at that point of its cycle* (compared with the same weekday or hour
-in the surrounding weeks, so a business closed on Sundays or a low-volume
-tracker is never affected) and at least halved or doubled relative to that
-reference are masked from fitting and listed in the meta
-as `anomalies_masked`, keeping the bands at the healthy level so the
-alerting layer still flags the outage. Runs of five or more points are a
-regime change and go to the shift detector instead. `--no-anomaly-mask`
-fits every point as data, `--anomaly-sigma` (default 5) and
-`--anomaly-cycles` (default 4) tune how far a point must deviate and how
-many surrounding weeks supply its reference, and `--no-level-shift` fits
-the full history as-is if the detector misreads a known transient; tagging known outages and
-promos as events remains the explicit override for both. Event-aware forecasting (`--events`,
-`--event-tag`) folds in stored [forecast
-events](../api/18-forecast-events.md) and requires `--interval day`:
-
-```bash
-p202 forecast --metric revenue --events --horizon 14
-p202 forecast --metric clicks --events --event-tag us-holidays
-```
+- **Bands** (`lower_bound`/`upper_bound`, plus `p05`…`p95` columns) come from
+  rolling-origin conformal prediction; `--confidence` snaps to a 50%, 80%,
+  or 90% band and the meta's `bounds` names the one in use. Histories under
+  ~12 points fall back to Gaussian bands (`bounds_source`).
+- **`--method auto`** is an ensemble weighted by recent rolling accuracy;
+  the meta's `weights` shows each member's share.
+- **Derived metrics** (leads, income, cost, net, or `--all-metrics`) are
+  composed from driver forecasts so `net = income − cost` and
+  `leads = clicks × conv_rate` hold exactly (`composition` in meta).
+- **`--seasonal`** applies shrunk weekday (and hourly) profiles only when
+  the series repeats at that lag (`seasonal_applied`); `--seasonal-monthly`
+  adds a day-of-month profile for non-negative metrics.
+- **Level shifts** are detected and the new regime fitted
+  (`level_shift_at`; `--no-level-shift` to disable). **Transients** such as a
+  two-day tracking outage are masked from fitting and listed in
+  `anomalies_masked` (`--no-anomaly-mask`, `--anomaly-sigma`,
+  `--anomaly-cycles`).
+- **`--events` / `--event-tag`** fold in stored
+  [forecast events](../api/18-forecast-events.md) (day interval only).
 
 ## Bulk Operations
 
