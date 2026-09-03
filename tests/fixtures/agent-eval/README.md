@@ -112,13 +112,9 @@ Exit code 5 fails the job; results and the server log upload as artifacts.
 Dispatch the workflow manually with `agent_cmd` (and optionally
 `judge_cmd`) to point the same pipeline at a real agent.
 
-Rubric lines are graded by `ci/claude-judge.sh` — headless Claude Code with
-every tool disabled (pure text in, verdict out), authenticated by the same
-`CLAUDE_CODE_OAUTH_TOKEN` secret the repository's claude-code-action
-workflows use. When the secret is absent (fork PRs never receive secrets)
-rubric cases report `needs_judge`, which does not fail the job — the
-deterministic graders still gate fully. An explicit `judge_cmd` dispatch
-input overrides the built-in judge.
+Rubric lines are graded only when a `judge_cmd` is supplied on dispatch;
+otherwise those cases report `needs_judge`, which does not fail the job —
+the deterministic graders gate fully on their own.
 
 ## Cleaning up
 

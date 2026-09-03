@@ -6,14 +6,9 @@ name: Agent Evals
 # job. By default the deterministic reference agent plays the agent, so this
 # gates the whole pipeline (installer, fixture, runner, grading) with no
 # model dependency; dispatch the workflow with your own agent_cmd/judge_cmd
-# to evaluate a real agent.
-#
-# Rubric judging: when the CLAUDE_CODE_OAUTH_TOKEN secret is available (the
-# same one the claude-code-action workflows use) and no judge_cmd input is
-# given, the job installs headless Claude Code and grades rubrics with
-# ci/claude-judge.sh. Runs without the secret — fork PRs never receive
-# secrets — degrade to needs_judge on rubric lines, which does not fail the
-# job; the deterministic graders still gate fully.
+# to evaluate a real agent. Rubric lines are graded only when a judge_cmd
+# is dispatched; otherwise they report needs_judge, which does not fail the
+# job — the deterministic graders gate fully on their own.
 
 on:
   pull_request:
@@ -155,18 +150,10 @@ jobs:
         env:
           AGENT_CMD: ${{ github.event.inputs.agent_cmd }}
           JUDGE_CMD: ${{ github.event.inputs.judge_cmd }}
-          # Also visible to the agent/judge commands this step spawns; empty
-          # on fork PRs, which is fine — the judge is skipped there.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -o pipefail
           if [ -z "$AGENT_CMD" ]; then
             AGENT_CMD="$GITHUB_WORKSPACE/tests/fixtures/agent-eval/reference-agent.sh"
-          fi
-          if [ -z "$JUDGE_CMD" ] && [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-            echo "Judging rubrics with headless Claude Code (ci/claude-judge.sh)"
-            npm install -g @anthropic-ai/claude-code
-            JUDGE_CMD="$GITHUB_WORKSPACE/tests/fixtures/agent-eval/ci/claude-judge.sh"
           fi
           JUDGE_ARGS=()
           if [ -n "$JUDGE_CMD" ]; then
