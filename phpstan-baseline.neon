@@ -1,0 +1,133 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
+			identifier: prosper202.directStmtCall
+			count: 37
+			path: '202-config/Messaging/MessagingService.class.php'
+
+		-
+			message: '#^Direct \$stmt\-\>execute\(\) bypasses Connection\:\:execute\(\) checked execution\. Use \$this\-\>conn\-\>execute\(\$stmt\) instead\. \(CLAUDE\.md \#1\)$#'
+			identifier: prosper202.directStmtCall
+			count: 37
+			path: '202-config/Messaging/MessagingService.class.php'
+
+		-
+			message: '#^Static method INDEXES\:\:insert_ip\(\) invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/class-dataengine.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_c1_id\(\) invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-indexes.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_c2_id\(\) invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-indexes.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_c3_id\(\) invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-indexes.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_c4_id\(\) invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-indexes.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_city_id\(\) invoked with 2 parameters, 3 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-indexes.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_country_id\(\) invoked with 2 parameters, 3 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-indexes.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_isp_id\(\) invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-indexes.php'
+
+		-
+			message: '#^Static method INDEXES\:\:get_site_domain_id\(\) invoked with 1 parameter, 2 required\.$#'
+			identifier: arguments.count
+			count: 1
+			path: '202-config/functions-indexes.php'
+
+		-
+			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
+			identifier: prosper202.directStmtCall
+			count: 7
+			path: '202-config/install.php'
+
+		-
+			message: '#^Direct \$stmt\-\>execute\(\) bypasses Connection\:\:execute\(\) checked execution\. Use \$this\-\>conn\-\>execute\(\$stmt\) instead\. \(CLAUDE\.md \#1\)$#'
+			identifier: prosper202.directStmtCall
+			count: 7
+			path: '202-config/install.php'
+
+		-
+			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
+			identifier: prosper202.directStmtCall
+			count: 2
+			path: '202-config/migrations/run_ltv_migration.php'
+
+		-
+			message: '#^Direct \$stmt\-\>execute\(\) bypasses Connection\:\:execute\(\) checked execution\. Use \$this\-\>conn\-\>execute\(\$stmt\) instead\. \(CLAUDE\.md \#1\)$#'
+			identifier: prosper202.directStmtCall
+			count: 2
+			path: '202-config/migrations/run_ltv_migration.php'
+
+		-
+			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
+			identifier: prosper202.directStmtCall
+			count: 3
+			path: '202-cronjobs/attribution-rebuild.php'
+
+		-
+			message: '#^Direct \$stmt\-\>execute\(\) bypasses Connection\:\:execute\(\) checked execution\. Use \$this\-\>conn\-\>execute\(\$stmt\) instead\. \(CLAUDE\.md \#1\)$#'
+			identifier: prosper202.directStmtCall
+			count: 3
+			path: '202-cronjobs/attribution-rebuild.php'
+
+		-
+			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
+			identifier: prosper202.directStmtCall
+			count: 3
+			path: '202-cronjobs/backfill-conversion-journeys.php'
+
+		-
+			message: '#^Direct \$stmt\-\>execute\(\) bypasses Connection\:\:execute\(\) checked execution\. Use \$this\-\>conn\-\>execute\(\$stmt\) instead\. \(CLAUDE\.md \#1\)$#'
+			identifier: prosper202.directStmtCall
+			count: 2
+			path: '202-cronjobs/backfill-conversion-journeys.php'
+
+		-
+			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
+			identifier: prosper202.directStmtCall
+			count: 5
+			path: '202-cronjobs/ltv_maintenance.php'
+
+		-
+			message: '#^Direct \$stmt\-\>execute\(\) bypasses Connection\:\:execute\(\) checked execution\. Use \$this\-\>conn\-\>execute\(\$stmt\) instead\. \(CLAUDE\.md \#1\)$#'
+			identifier: prosper202.directStmtCall
+			count: 5
+			path: '202-cronjobs/ltv_maintenance.php'
+
+		-
+			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
+			identifier: prosper202.directStmtCall
+			count: 1
+			path: api/v3/Controllers/CapabilitiesController.php

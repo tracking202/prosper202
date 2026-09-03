@@ -75,7 +75,11 @@ func (r *Runner) Run(cases []Case) ([]Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating shim directory: %w", err)
 	}
-	defer os.RemoveAll(shimDir)
+	defer func() {
+		if rmErr := os.RemoveAll(shimDir); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not remove shim dir %s: %v\n", shimDir, rmErr)
+		}
+	}()
 	if err := os.WriteFile(filepath.Join(shimDir, "p202"), []byte(shimScript), 0o700); err != nil {
 		return nil, fmt.Errorf("writing p202 shim: %w", err)
 	}

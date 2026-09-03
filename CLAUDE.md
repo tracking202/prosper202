@@ -38,7 +38,10 @@ reference, or evaluation-order semantics must be **executed** before it is
 relied on — a ten-line `php -r` scratch script settles it in under a minute.
 Never assert the mechanism in a comment on the strength of reading a
 signature one level up: the comment then reads as verified fact to every
-later reviewer, including yourself.
+later reviewer, including yourself. This specific shape is now enforced by
+`ForbidArrowFnByRefCaptureRule`; when adding a rule for a pattern on this
+list, put it in `202-config/PHPStan/Rules/` and register it in
+`phpstan.neon.dist` — a rule that is not registered never runs.
 
 ### 9. Tests that mock the seam under test
 When the new code *is* the wiring — a dispatcher, an adapter, a callback
@@ -154,9 +157,21 @@ Check here before burning time on tooling failures.
   (headless web installer; prints the REST API key) and seed with
   `tests/fixtures/agent-eval/seed.sh`. Reports stay empty until the
   dataengine cron runs — the seeder triggers `202-cronjobs/dej.php` itself.
-- **phpstan needs `vendor/bin/` and a `phpstan.neon`** (gitignored), so it
-  generally cannot run in these sandboxes — say so rather than implying it
-  passed.
+- **phpstan is now configured and runs in CI** (`phpstan.neon.dist` +
+  `phpstan-baseline.neon`, job `phpstan` in `.github/workflows/php-lint.yml`).
+  In a sandbox where `composer install` failed there is no `vendor/bin/`, but
+  the official phar works: download
+  `https://github.com/phpstan/phpstan/releases/download/<version>/phpstan.phar`
+  and run `php phpstan.phar analyse -c phpstan.neon.dist --no-progress`.
+  Expect ~6 `class.notFound` errors for `cli/` on a partial vendor — PHPStan
+  discovers symbols through composer's package metadata, so a package cloned
+  into `vendor/` by hand is invisible to it even after patching the
+  autoloader. Add `scanDirectories: [vendor/<pkg>]` in a scratch config that
+  `includes:` the dist file to confirm a clean run; do not commit that.
+- **`go test`, `go vet` and golangci-lint run in CI** via
+  `.github/workflows/go-cli.yml`; `go-cli/.golangci.yml` scopes the linters to
+  dropped errors rather than style. Run `golangci-lint run ./...` from
+  `go-cli/` before pushing.
 
 ## Review discipline
 - Review every file individually. Batch scanning causes context overload and misses real bugs.

@@ -109,7 +109,8 @@ func printError(w io.Writer, err error) {
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)
 		if mErr := enc.Encode(errorEnvelope(err)); mErr == nil {
-			w.Write(buf.Bytes())
+			// Nothing to report a failed write to: this IS the error path.
+			_, _ = w.Write(buf.Bytes())
 			return
 		}
 	}

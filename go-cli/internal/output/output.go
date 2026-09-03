@@ -84,7 +84,7 @@ func RenderWith(data []byte, opts Opts) {
 
 	var parsed interface{}
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		os.Stdout.Write(data)
+		_, _ = os.Stdout.Write(data)
 		fmt.Println()
 		return
 	}
@@ -114,13 +114,14 @@ func renderJSON(data []byte) {
 		pretty, err := json.MarshalIndent(parsed, "", "  ")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
-			os.Stdout.Write(data)
+			// A closed stdout (piping to `head`) is not actionable here.
+			_, _ = os.Stdout.Write(data)
 			return
 		}
 		fmt.Println(string(pretty))
 		return
 	}
-	os.Stdout.Write(data)
+	_, _ = os.Stdout.Write(data)
 	fmt.Println()
 }
 
@@ -297,7 +298,8 @@ func renderTable(items []interface{}, opts Opts) {
 		}
 		fmt.Fprintln(w, strings.Join(vals, "\t"))
 	}
-	w.Flush()
+	// Flushing a table to a closed stdout is not actionable.
+	_ = w.Flush()
 }
 
 // trimLongDecimal shortens noisy long-decimal numeric strings (e.g. the API's
@@ -397,7 +399,8 @@ func renderObject(obj map[string]interface{}) {
 	for _, k := range keys {
 		fmt.Fprintf(w, "%s:\t%s\n", k, terminalCell(formatValue(obj[k])))
 	}
-	w.Flush()
+	// Flushing a table to a closed stdout is not actionable.
+	_ = w.Flush()
 }
 
 // renderPagination writes the page summary and the truncation warning to
@@ -474,7 +477,7 @@ func numericValue(raw interface{}) (float64, bool) {
 func renderCSVData(data []byte, opts Opts) {
 	var parsed interface{}
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		os.Stdout.Write(data)
+		_, _ = os.Stdout.Write(data)
 		if len(data) == 0 || data[len(data)-1] != '\n' {
 			fmt.Println()
 		}
@@ -492,7 +495,7 @@ func renderCSVData(data []byte, opts Opts) {
 			renderObjectCSV(v)
 		}
 	default:
-		os.Stdout.Write(data)
+		_, _ = os.Stdout.Write(data)
 		if len(data) == 0 || data[len(data)-1] != '\n' {
 			fmt.Println()
 		}

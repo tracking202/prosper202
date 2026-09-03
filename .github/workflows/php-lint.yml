@@ -62,3 +62,48 @@ jobs:
       - name: Fail when lint errors detected
         if: ${{ steps.php_lint.outputs.exit_code != '0' }}
         run: exit 1
+
+  # Runs the repo's custom rules — one per numbered entry in CLAUDE.md's
+  # "Error patterns to avoid". Without this job those rules exist in the tree
+  # and never execute, which is how a staged-write dispatcher that captured
+  # the wrong payload shipped past review.
+  phpstan:
+    name: PHPStan (custom rules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          # See php-unit.yml for why the procedural `memcache` extension is disabled.
+          extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Configure Composer authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            composer config -g github-oauth.github.com "${GITHUB_TOKEN}"
+          fi
+
+      - name: Install PHP dependencies
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        # Dev dependencies bring PHPStan itself; runtime packages let it
+        # resolve symbols instead of reporting them as missing.
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse -c phpstan.neon.dist --no-progress --error-format=github
