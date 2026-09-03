@@ -276,8 +276,15 @@ final readonly class Auth
 
     public function isAdmin(): bool
     {
+        // Role 1, "Super user", is the account the installer creates and
+        // outranks Admin in the legacy permission system (see
+        // 202-account/user-management.php, which forbids assigning it).
+        // Without it here, every fresh install's owner is locked out of the
+        // admin-gated v3 endpoints.
         return in_array('admin', $this->roles, true)
-            || in_array('administrator', $this->roles, true);
+            || in_array('administrator', $this->roles, true)
+            || in_array('super user', $this->roles, true)
+            || in_array('superuser', $this->roles, true);
     }
 
     public function requireAdmin(): void

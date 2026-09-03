@@ -685,7 +685,28 @@ class ServerStateStore
             return trim($env);
         }
 
-        return rtrim((string)sys_get_temp_dir(), '/') . '/p202-api-v3-state';
+        // The temp dir is machine-wide, so the default is scoped by instance
+        // identity (DB host + name): without this, two instances served on
+        // one host would share idempotency replays, staged changes, sync
+        // jobs, and rate-limit buckets across databases. Deployments that
+        // want a specific location (e.g. a persistent volume) set
+        // P202_SERVER_STATE_DIR explicitly, which wins above.
+        global $dbname, $dbhost;
+        $legacy = rtrim((string)sys_get_temp_dir(), '/') . '/p202-api-v3-state';
+        if (!is_string($dbname) || trim($dbname) === '') {
+            return $legacy; // no instance identity in scope (e.g. isolated tooling)
+        }
+        $identity = (is_string($dbhost) ? $dbhost : '') . '|' . $dbname;
+        $scoped = $legacy . '-' . substr(sha1($identity), 0, 12);
+
+        // One-time adoption of the pre-scoping directory so in-flight sync
+        // jobs and staged changes survive the upgrade. On a host that really
+        // does run several instances, the first one upgraded adopts the
+        // shared history — no worse than the sharing that preceded it.
+        if (!is_dir($scoped) && is_dir($legacy)) {
+            @rename($legacy, $scoped);
+        }
+        return $scoped;
     }
 
     private function idempotencyPath(string $scope): string

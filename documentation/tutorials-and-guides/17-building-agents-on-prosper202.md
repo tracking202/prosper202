@@ -262,7 +262,11 @@ carries the case shape, authoring rules, and grading method, and
 command, the runner captures every `p202` call it makes through a PATH
 shim, re-reads instance state, and grades deterministically (an optional
 judge command grades rubrics). A starter suite lives in
-[`tests/fixtures/agent-eval/cases/`](../../tests/fixtures/agent-eval/cases/smoke.json).
+[`tests/fixtures/agent-eval/cases/`](../../tests/fixtures/agent-eval/cases/smoke.json),
+and the `Agent Evals` CI workflow runs it on every relevant pull request —
+throwaway instance, headless install, seeded fixture, deterministic
+reference agent — with a `workflow_dispatch` hook for pointing the same
+pipeline at a real agent.
 
 ## What the platform enforces
 

@@ -102,6 +102,23 @@ Check here before burning time on tooling failures.
 - **Go commands must run from `go-cli/`** (`cd go-cli && go vet ./... && go
   test ./...`); the repo root is not a Go module. The forecast package's
   acceptance suites take ~40s; `-short` skips them.
+- **Click endpoints 500 on a partial vendor/**: `ua-parser/uap-php` is a
+  runtime dependency of the tracking path (`tracking202/redirect/*.php` →
+  `PLATFORMS::parseUserAgentInfo`), and the failed composer install leaves
+  its directory empty. Fix locally: `git clone --depth 1 --branch v3.10.0
+  https://github.com/ua-parser/uap-php <scratch>` then copy into
+  `vendor/ua-parser/uap-php/`, and add the `UAParser\` PSR-4 mapping to
+  BOTH `vendor/composer/autoload_psr4.php` and `autoload_static.php`
+  (`dump-autoload` won't pick it up — the package is missing from
+  installed.json, and the static map takes precedence). The tag ships
+  `resources/regexes.php`, so full composer installs (CI) need none of
+  this.
+- **A live local instance is achievable end to end**: install
+  `mariadb-server` via apt, start `mariadbd --user=mysql` manually, create
+  a DB/user, then run `tests/fixtures/agent-eval/ci/install-instance.sh`
+  (headless web installer; prints the REST API key) and seed with
+  `tests/fixtures/agent-eval/seed.sh`. Reports stay empty until the
+  dataengine cron runs — the seeder triggers `202-cronjobs/dej.php` itself.
 - **phpstan needs `vendor/bin/` and a `phpstan.neon`** (gitignored), so it
   generally cannot run in these sandboxes — say so rather than implying it
   passed.

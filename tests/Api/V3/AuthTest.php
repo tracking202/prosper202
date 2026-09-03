@@ -415,6 +415,18 @@ final class AuthTest extends TestCase
         $auth->requireScope('campaigns:write');
     }
 
+    public function testSuperUserRoleCountsAsAdmin(): void
+    {
+        // The installer grants role 1, "Super user" — the install owner must
+        // pass the v3 admin gates.
+        $db = $this->createMysqliMock([
+            '202_api_keys' => ['user_id' => 1],
+            '202_user_role' => [['role_name' => 'Super user']],
+        ]);
+        $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+        $this->assertTrue($auth->isAdmin());
+    }
+
     public function testIsValidScopeTokenGrammar(): void
     {
         $this->assertTrue(Auth::isValidScopeToken('*'));

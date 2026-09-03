@@ -1,0 +1,174 @@
+name: Agent Evals
+
+# Behavioral snapshot evals for an AI agent operating a Prosper202 instance:
+# stand up a throwaway instance (real web installer, driven headlessly), seed
+# the deterministic fixture, and run `p202 eval run` — exit code 5 fails the
+# job. By default the deterministic reference agent plays the agent, so this
+# gates the whole pipeline (installer, fixture, runner, grading) with no
+# model dependency; dispatch the workflow with your own agent_cmd/judge_cmd
+# to evaluate a real agent.
+
+on:
+  pull_request:
+    paths:
+      - 'go-cli/**'
+      - 'api/**'
+      - '202-config/**'
+      - 'tracking202/**'
+      - 'tests/fixtures/agent-eval/**'
+      - '.github/workflows/agent-evals.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'go-cli/**'
+      - 'api/**'
+      - '202-config/**'
+      - 'tracking202/**'
+      - 'tests/fixtures/agent-eval/**'
+      - '.github/workflows/agent-evals.yml'
+  workflow_dispatch:
+    inputs:
+      agent_cmd:
+        description: >-
+          Shell command for the agent under test (reads $P202_EVAL_ASK,
+          drives the `p202` on PATH, prints its reply). Defaults to the
+          deterministic reference agent.
+        required: false
+        default: ''
+      judge_cmd:
+        description: >-
+          Optional rubric judge (JSON on stdin, PASS/FAIL verdict line on
+          stdout). Without it, rubric cases report needs_judge.
+        required: false
+        default: ''
+
+jobs:
+  agent-evals:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: prosper202
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      # Keep the instance's server-side state (idempotency, staged changes)
+      # inside the job workspace.
+      P202_SERVER_STATE_DIR: ${{ runner.temp }}/p202-state
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          # See php-unit.yml for why the procedural `memcache` extension is disabled.
+          extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'   # matches go-cli/go.mod
+          cache-dependency-path: go-cli/go.sum
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Configure Composer authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            composer config -g github-oauth.github.com "${GITHUB_TOKEN}"
+          fi
+
+      - name: Install PHP dependencies
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: composer install --prefer-dist --no-interaction --no-progress --no-dev
+
+      - name: Build the p202 CLI
+        working-directory: go-cli
+        run: go build -o p202 .
+
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
+              echo "MySQL is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready in time" >&2
+          exit 1
+
+      - name: Install a throwaway instance (headless web installer)
+        id: install
+        env:
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: '3306'
+          P202_DB_NAME: prosper202
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_HTTP_PORT: '8000'
+          P202_EVAL_RUNTIME_DIR: ${{ runner.temp }}/p202-eval
+        run: |
+          mkdir -p "$P202_EVAL_RUNTIME_DIR"
+          KEY=$(tests/fixtures/agent-eval/ci/install-instance.sh)
+          echo "::add-mask::$KEY"
+          echo "P202_EVAL_API_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Configure the CLI
+        run: |
+          go-cli/p202 config set-url http://127.0.0.1:8000
+          go-cli/p202 config set-key "$P202_EVAL_API_KEY"
+          go-cli/p202 config test --json
+
+      - name: Seed the eval fixture
+        run: P202_BIN=go-cli/p202 tests/fixtures/agent-eval/seed.sh
+
+      - name: Run the eval suite
+        env:
+          AGENT_CMD: ${{ github.event.inputs.agent_cmd }}
+          JUDGE_CMD: ${{ github.event.inputs.judge_cmd }}
+        run: |
+          set -o pipefail
+          if [ -z "$AGENT_CMD" ]; then
+            AGENT_CMD="$GITHUB_WORKSPACE/tests/fixtures/agent-eval/reference-agent.sh"
+          fi
+          JUDGE_ARGS=()
+          if [ -n "$JUDGE_CMD" ]; then
+            JUDGE_ARGS=(--judge-cmd "$JUDGE_CMD")
+          fi
+          go-cli/p202 eval run \
+            --cases tests/fixtures/agent-eval/cases/ \
+            --agent-cmd "$AGENT_CMD" \
+            "${JUDGE_ARGS[@]}" \
+            --json | tee eval-results.json
+
+      - name: Upload results and server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-results
+          path: |
+            eval-results.json
+            ${{ runner.temp }}/p202-eval/php-server.log
+          if-no-files-found: ignore
