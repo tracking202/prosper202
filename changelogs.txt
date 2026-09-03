@@ -6,7 +6,7 @@ Version 1.9.75
 -- New: Idempotency-Key support on single-entity creates (campaigns, trackers, conversions, rotators and rules, attribution models and exports, users) — a retried create replays the recorded response instead of duplicating
 -- New: Delete dry-run — `?dry_run=1` on the API and `--dry-run` on every CLI delete previews the record and cascade counts without deleting; endpoints without a preview reject the parameter instead of falling through
 -- New: Visitor-authored strings in API responses (keywords, city/region/ISP names, browser/platform/device names) are sanitized at serialization: Unicode normalized, invisible/bidirectional characters and protocol-shaped markup removed, length capped; the CLI also strips terminal escape sequences from table output
--- New: Agent eval fixture and authoring skill — a deterministic, re-runnable seed script under tests/fixtures/agent-eval/ plus the p202-agent-evals skill for writing snapshot eval cases
+-- New: Agent eval fixture, authoring skill, and runner — a deterministic, re-runnable seed script and starter case suite under tests/fixtures/agent-eval/, the p202-agent-evals skill for writing snapshot eval cases, and `p202 eval run` to execute them against any agent (pluggable agent and judge commands, automatic capture of the p202 calls the agent makes, state-diff grading)
 -- Fixed: Deleting a rotator rule now verifies the rule belongs to the rotator before removing its criteria and redirects
 
 Version 1.9.74

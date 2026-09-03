@@ -255,10 +255,14 @@ Prosper202 agent:
 
 Target the guide's density — 50–100 cases per flow you actually ship — and
 grow the suite from real transcripts: every production failure becomes a
-case. The repo ships a `p202-agent-evals` skill
+case. The repo ships both halves: the `p202-agent-evals` skill
 ([`.claude/skills/p202-agent-evals/`](../../.claude/skills/p202-agent-evals/SKILL.md))
-that carries the case shape, authoring rules, and grading method, so a
-coding agent can write and extend the suite against the seeded fixture.
+carries the case shape, authoring rules, and grading method, and
+`p202 eval run` executes the suite — your agent plugs in as a shell
+command, the runner captures every `p202` call it makes through a PATH
+shim, re-reads instance state, and grades deterministically (an optional
+judge command grades rubrics). A starter suite lives in
+[`tests/fixtures/agent-eval/cases/`](../../tests/fixtures/agent-eval/cases/smoke.json).
 
 ## What the platform enforces
 
@@ -272,7 +276,7 @@ in `/capabilities` so clients can feature-detect:
 | Idempotent creates | `Idempotency-Key` on every operator-surface create replays retries (`--idempotency-key` on the CLI) | `features.create_idempotency` |
 | Delete dry-run | `?dry_run=1` / `--dry-run` previews record + cascade counts, fail-closed on unsupported endpoints | `features.delete_dry_run`, [Delete dry-run](../api/00-api-integrations.md#delete-dry-run) |
 | Response sanitization | Visitor-authored strings are NFKC-normalized, stripped of invisible/bidi characters and protocol-shaped markup, and length-capped at serialization; the CLI additionally strips terminal escapes from table output | `features.response_sanitization` |
-| Eval fixture | Deterministic seed script (idempotency-keyed, includes a data-plane injection keyword) + the `p202-agent-evals` skill for authoring cases | [`tests/fixtures/agent-eval/`](../../tests/fixtures/agent-eval/README.md) |
+| Eval fixture + runner | Deterministic seed script (idempotency-keyed, includes a data-plane injection keyword), the `p202-agent-evals` skill for authoring cases, and `p202 eval run` to execute them against any agent command | [`tests/fixtures/agent-eval/`](../../tests/fixtures/agent-eval/README.md) |
 
 Still open, in the guide's terms:
 

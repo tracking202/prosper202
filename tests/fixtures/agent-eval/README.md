@@ -78,6 +78,23 @@ production failure you hit. The `p202-agent-evals` skill
 (`.claude/skills/p202-agent-evals/`) carries the full case shape, authoring
 rules, and grading method.
 
+## Running cases
+
+`cases/smoke.json` is a starter suite in the runner's format. Run it with
+your agent plugged in as a shell command:
+
+```bash
+go-cli/p202 eval run \
+  --cases tests/fixtures/agent-eval/cases/ \
+  --agent-cmd 'your-agent --ask "$P202_EVAL_ASK"' \
+  --json
+```
+
+The runner captures every `p202` command the agent executes (PATH shim),
+re-reads instance state, grades each case's expectations, and exits 5 when
+any case fails. Rubric lines need `--judge-cmd` to grade; without one those
+cases report `needs_judge`. `p202 eval run --help` documents the contract.
+
 ## Cleaning up
 
 Entities are prefixed `EVAL` for easy identification. Preview first, then

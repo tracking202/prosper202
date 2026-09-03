@@ -56,6 +56,7 @@ p202 config show
 | `p202 analytics` | Grouped performance analytics shorthand |
 | `p202 user list` | List users |
 | `p202 change list` | Review staged writes awaiting approval |
+| `p202 eval run` | Run behavioral evals against an agent driving this instance |
 | `p202 system health` | Health check |
 
 All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Four behaviors apply across the board on servers that advertise them in `/capabilities`:
@@ -64,6 +65,8 @@ All entities support standard CRUD operations (`list`, `get`, `create`, `update`
 - every `delete` (including `--ids` bulk and `rotator rule-delete` / `user role remove` / `user apikey delete`) takes `--dry-run` — a read-only preview of the record and cascade counts the delete would remove (`features.delete_dry_run`);
 - the global `--staged` flag turns any write into a recorded proposal with a server-issued change id instead of executing it; `p202 change list|show|apply|discard` reviews and resolves the queue, with the write re-validated at apply time (`features.staged_writes`);
 - `user apikey create` takes `--scope` to mint least-privilege keys (`*`, `read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage` tokens — `read,stage` is the propose-only agent shape), and `user apikey rotate` carries the old key's scope onto the replacement (`features.api_key_scopes`).
+
+For teams shipping an AI agent on top of the CLI, `p202 eval run` executes behavioral snapshot evals: it hands each case's ask to a pluggable agent command, captures every `p202` invocation the agent makes via a PATH shim, re-reads instance state, and grades expectations (commands run, state unchanged/changed, reply contents, optional judged rubric). Cases follow the shape in `.claude/skills/p202-agent-evals/SKILL.md`; a starter suite ships in `tests/fixtures/agent-eval/cases/`. Exit code 0 when clean, 5 (`partial_failure`) when cases fail — results stay on stdout.
 
 ## Multi-Profile Management
 

@@ -114,9 +114,30 @@ Grade three things, in this order:
 
 ## Running
 
-The repo ships no runner; drive the loop with your harness (each case:
-reset or reseed → hand the agent the ask → collect transcript → grade).
+The CLI ships the runner: `p202 eval run`. It performs each case's `setup`,
+hands the `ask` to `--agent-cmd` (stdin and `$P202_EVAL_ASK`), captures
+every `p202` invocation the agent makes via a PATH shim (any agent that
+shells out to `p202` is captured — no adapter), re-reads state, grades, and
+prints results plus a summary (exit 0 clean, exit 5 on failures).
+
+```bash
+go-cli/p202 eval run \
+  --cases tests/fixtures/agent-eval/cases/ \
+  --agent-cmd 'your-agent --ask "$P202_EVAL_ASK"' \
+  --judge-cmd 'claude -p "Read the JSON on stdin. Print exactly one line starting with PASS or FAIL per its rubric."' \
+  --json
+```
+
+The agent command's contract: read the ask, drive the `p202` found on PATH
+(that is the capture shim), print the agent's reply to stdout, exit 0.
+`--judge-cmd` is optional and provider-agnostic: it receives
+`{id, ask, rubric, reply, commands}` as JSON on stdin and must print a line
+starting with `PASS` or `FAIL`; without it, rubric cases report
+`needs_judge` instead of silently passing. Iterate on one case with
+`--only <id>`; gate CI on `--priority critical,high`.
+
+A starter file ships in `tests/fixtures/agent-eval/cases/smoke.json`.
 Reseeding is cheap because `seed.sh` replays on its idempotency keys;
-cases that mutate seeded entities should either restore them (`p202 ... update`)
-or run against a throwaway instance. Report pass rate per priority —
-a `critical` failure blocks; `low` is a backlog item.
+cases that mutate seeded entities should restore them in `cleanup` or run
+against a throwaway instance. Report pass rate per priority — a `critical`
+failure blocks; `low` is a backlog item.
