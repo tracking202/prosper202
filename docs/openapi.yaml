@@ -2125,7 +2125,7 @@ paths:
         Performs the recorded write by re-dispatching it through the real
         route: validation, route authorization, and scope checks re-run
         against current state under the applier's credentials. Requires
-        `staged-changes:write` plus the write scope of the change's area.
+        the write scope of the change's area (for example `campaigns:write`).
         The staged→applied transition is atomic; a concurrent second apply
         gets 409. A failed apply returns the change to staged with the
         error recorded.

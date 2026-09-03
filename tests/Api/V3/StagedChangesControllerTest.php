@@ -9,6 +9,7 @@ use Api\V3\AuthException;
 use Api\V3\Controllers\StagedChangesController;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\ValidationException;
 use Api\V3\Support\ServerStateStore;
 use Tests\TestCase;
 
@@ -211,4 +212,105 @@ final class StagedChangesControllerTest extends TestCase
         $this->expectException(\Api\V3\Exception\ValidationException::class);
         $this->controller($this->authFor(5))->get('not-a-change-id');
     }
+    public function testApplyPassesTheProposerIdToTheDispatcher(): void
+    {
+        // The write must land in the account that proposed it, not the
+        // applier's — an admin approving user 5's create must not create the
+        // row under their own id.
+        $proposer = $this->authFor(5, 'read,stage');
+        $id = $this->controller($proposer)->stage(
+            'POST',
+            '/campaigns',
+            ['aff_campaign_name' => 'Proposed'],
+            null
+        )['data']['change_id'];
+
+        $seen = null;
+        $admin = $this->authFor(1, '*', 'admin');
+        $this->controller($admin)->apply(
+            $id,
+            function (string $m, string $p, array $body, int $proposerId) use (&$seen) {
+                $seen = [$m, $p, $body, $proposerId];
+                return ['data' => ['ok' => true]];
+            }
+        );
+
+        $this->assertSame(
+            ['POST', '/campaigns', ['aff_campaign_name' => 'Proposed'], 5],
+            $seen
+        );
+    }
+
+    public function testStagingRefusesAPayloadCarryingASecret(): void
+    {
+        $ctl = $this->controller($this->authFor(5));
+        $this->expectException(ValidationException::class);
+        $ctl->stage('POST', '/users', [
+            'user_name' => 'x',
+            'user_pass' => 'SuperSecret123!',
+        ], null);
+    }
+
+    public function testStagedRecordNeverPersistsASecretValue(): void
+    {
+        $ctl = $this->controller($this->authFor(5));
+        try {
+            $ctl->stage('POST', '/users', ['user_pass' => 'SuperSecret123!'], null);
+            $this->fail('staging a secret-bearing payload must throw');
+        } catch (ValidationException) {
+            // expected
+        }
+        $onDisk = '';
+        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->tmpDir, \FilesystemIterator::SKIP_DOTS)) as $file) {
+            if ($file->isFile()) {
+                $onDisk .= (string)file_get_contents($file->getPathname());
+            }
+        }
+        $this->assertStringNotContainsString('SuperSecret123!', $onDisk);
+    }
+
+    public function testApplyRejectsAMalformedStoredPayload(): void
+    {
+        $auth = $this->authFor(5);
+        $id = $this->controller($auth)->stage('PUT', '/campaigns/42', ['x' => 1], null)['data']['change_id'];
+        $this->store->updateStagedChange(5, $id, function (array $c): array {
+            $c['payload'] = 'not-an-array';
+            return $c;
+        });
+
+        // Applying an empty body would execute a different write than the
+        // one reviewed, so this must fail rather than dispatch.
+        $this->expectException(ConflictException::class);
+        $this->controller($auth)->apply($id, fn() => $this->fail('must not dispatch a malformed payload'));
+    }
+
+    public function testAStaleApplyingClaimCanBeRecovered(): void
+    {
+        $auth = $this->authFor(5);
+        $id = $this->controller($auth)->stage('POST', '/campaigns', ['a' => 1], null)['data']['change_id'];
+        // Simulate a process killed mid-dispatch: claimed, never resolved.
+        $this->store->updateStagedChange(5, $id, function (array $c): array {
+            $c['status'] = StagedChangesController::STATUS_APPLYING;
+            $c['applying_since'] = time() - (StagedChangesController::STALE_APPLYING_SECONDS + 60);
+            return $c;
+        });
+
+        $out = $this->controller($auth)->apply($id, fn() => ['data' => ['recovered' => true]]);
+        $this->assertSame(StagedChangesController::STATUS_APPLIED, $out['data']['change']['status']);
+    }
+
+    public function testAFreshApplyingClaimIsStillProtected(): void
+    {
+        $auth = $this->authFor(5);
+        $id = $this->controller($auth)->stage('POST', '/campaigns', ['a' => 1], null)['data']['change_id'];
+        $this->store->updateStagedChange(5, $id, function (array $c): array {
+            $c['status'] = StagedChangesController::STATUS_APPLYING;
+            $c['applying_since'] = time();
+            return $c;
+        });
+
+        $this->expectException(ConflictException::class);
+        $this->controller($auth)->apply($id, fn() => $this->fail('a live apply must not be double-dispatched'));
+    }
+
 }

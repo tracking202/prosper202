@@ -276,7 +276,10 @@ function authorize_attribution_request(array $params, string $permission): array
         ];
     }
 
-    $stmt = $connection->prepare('SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1');
+    // SELECT * (as api/v1 and api/v2 functions.php do) so this keeps working
+    // on a schema where the `scope` column has not been added yet: naming
+    // the column would fail the prepare and 500 every request instead.
+    $stmt = $connection->prepare('SELECT * FROM 202_api_keys WHERE api_key = ? LIMIT 1');
     if ($stmt === false) {
         return [
             'status' => 500,
@@ -310,6 +313,21 @@ function authorize_attribution_request(array $params, string $permission): array
             'payload' => [
                 'error' => true,
                 'message' => 'Invalid API key.',
+            ],
+        ];
+    }
+
+    // A v3-scoped key is an attenuated credential. This legacy surface
+    // predates scoping and cannot enforce it, so refuse the key outright
+    // rather than granting more than its scope allows — the same refusal
+    // api/v1/functions.php and api/v2/functions.php apply.
+    $keyScope = strtolower(trim((string) ($row['scope'] ?? '')));
+    if ($keyScope !== '' && $keyScope !== '*') {
+        return [
+            'status' => 403,
+            'payload' => [
+                'error' => true,
+                'message' => 'This API key is scoped and only valid for the v3 API.',
             ],
         ];
     }

@@ -250,6 +250,16 @@ func (r *Runner) shell(command string, env []string, stdin string) (string, stri
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	// Run the command in its own process group and kill the whole group on
+	// timeout. Killing only `sh` leaves grandchildren alive holding the
+	// inherited stdout pipe, and because Stdout is a buffer, Wait blocks on
+	// the copy until EOF — so an agent that backgrounds a child would hang
+	// the run forever despite the timeout. WaitDelay is the backstop for a
+	// process that escapes the group (setsid of its own).
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+	cmd.WaitDelay = 5 * time.Second
+
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("timed out after %s", r.Timeout)

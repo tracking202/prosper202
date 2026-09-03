@@ -704,7 +704,19 @@ class ServerStateStore
         // does run several instances, the first one upgraded adopts the
         // shared history — no worse than the sharing that preceded it.
         if (!is_dir($scoped) && is_dir($legacy)) {
-            @rename($legacy, $scoped);
+            // A failed adoption must not silently strand the old directory's
+            // staged changes, sync jobs, and idempotency records: keep using
+            // the legacy path so in-flight work stays reachable, and say so.
+            if (!@rename($legacy, $scoped)) {
+                error_log(sprintf(
+                    'p202: could not adopt legacy API state dir %s into %s (%s); continuing to use the legacy path. '
+                    . 'Set P202_SERVER_STATE_DIR to choose a location explicitly.',
+                    $legacy,
+                    $scoped,
+                    (error_get_last()['message'] ?? 'unknown error')
+                ));
+                return $legacy;
+            }
         }
         return $scoped;
     }

@@ -369,7 +369,14 @@ class UsersController
         }
         $tokens = array_values(array_unique($tokens));
         if ($tokens === []) {
-            return null;
+            // An explicitly supplied but empty scope is malformed input, not
+            // a request for full access: silently minting a `*` key here
+            // would hand out more privilege than the caller asked for.
+            throw new ValidationException('Invalid scope', [
+                'scope' => 'Scope was supplied but contained no tokens. Pass at least one token '
+                    . '(for example `read`, `read,stage`, or `campaigns:write`), or omit scope '
+                    . 'entirely for a full-access key.',
+            ]);
         }
         return $tokens;
     }

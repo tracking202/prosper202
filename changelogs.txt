@@ -9,6 +9,16 @@ Version 1.9.75
 -- New: Agent eval fixture, authoring skill, and runner — a deterministic, re-runnable seed script and starter case suite under tests/fixtures/agent-eval/, the p202-agent-evals skill for writing snapshot eval cases, and `p202 eval run` to execute them against any agent (pluggable agent and judge commands, automatic capture of the p202 calls the agent makes, state-diff grading)
 -- New: Agent Evals CI workflow — every relevant pull request stands up a throwaway instance (headless web install), seeds the fixture, and runs the eval suite with a deterministic reference agent; dispatch it with your own agent and judge commands to evaluate a real agent
 -- Fixed: Deleting a rotator rule now verifies the rule belongs to the rotator before removing its criteria and redirects
+-- Fixed: Applying a staged change now performs exactly the write that was recorded. Previously the applied write took its body from the apply request instead of the proposal, so staged creates and updates could not be applied at all — and an apply that carried a body wrote those values while the change record still showed the reviewed ones
+-- Fixed: A staged change now applies as the user who proposed it, so an administrator approving someone else's proposal no longer creates the record in their own account
+-- Fixed: Staging a delete no longer discloses the record to a propose-only key: the embedded preview requires read scope for the area, and is omitted when the proposer lacks it
+-- Fixed: Writes carrying a password or other secret are refused for staging rather than recorded — staged changes persist as JSON and are shown to every reviewer
+-- Fixed: Applying a staged change now requires write scope for the area the change touches, as documented, instead of a scope token no key could hold; granular approver keys (for example read,campaigns:write) work again
+-- Fixed: Creating an API key with an explicitly empty scope is rejected instead of silently minting a full-access key, and `p202 user apikey rotate` fails when the old key's scope cannot be determined rather than rotating to full access
+-- Fixed: The legacy attribution endpoints under /api/v2 now refuse v3-scoped API keys, matching the rest of the legacy surface
+-- Fixed: A staged change whose apply was interrupted can be applied or discarded again instead of being stuck; a corrupted stored payload is reported rather than applied as an empty write
+-- Fixed: The v3 API state directory falls back to its previous location, with a log line, when the one-time move cannot be completed
+-- Fixed: `p202 eval run` enforces its timeout on agents that leave background processes running, instead of waiting forever
 -- Fixed: The install owner's "Super user" role now passes the v3 API's admin checks; previously fresh installs were locked out of admin-gated endpoints (user management, system diagnostics, sync)
 -- Fixed: The v3 API's server-side state (idempotency records, staged changes, sync jobs, rate limits) now defaults to a per-instance directory keyed by database identity, so two instances on one host no longer share state; set P202_SERVER_STATE_DIR to choose a location explicitly
 

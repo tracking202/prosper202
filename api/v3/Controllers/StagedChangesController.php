@@ -31,6 +31,25 @@ final class StagedChangesController
 
     public const DEFAULT_TTL_SECONDS = 86400;
 
+    /**
+     * A change claimed for apply is re-claimable after this long. Without it
+     * a process killed mid-dispatch (fatal, execution timeout, worker kill)
+     * strands the change in `applying` forever: apply and discard both
+     * require `staged`, so nothing could move it again.
+     */
+    public const STALE_APPLYING_SECONDS = 900;
+
+    /**
+     * Payload keys whose values are secrets. A staged change is persisted as
+     * JSON and shown to every reviewer, so these must never be recorded;
+     * staging such a write is refused rather than silently redacted, since a
+     * redacted proposal could not be applied faithfully.
+     */
+    private const SECRET_PAYLOAD_KEYS = [
+        'user_pass', 'verify_user_pass', 'password', 'passwd', 'pass',
+        'api_key', 'apikey', 'secret', 'token', 'private_key',
+    ];
+
     public function __construct(
         private readonly ServerStateStore $store,
         private readonly Auth $auth,
@@ -56,6 +75,15 @@ final class StagedChangesController
      */
     public function stage(string $method, string $path, array $payload, ?array $preview): array
     {
+        $secrets = self::secretKeysIn($payload);
+        if ($secrets !== []) {
+            throw new ValidationException('This write cannot be staged because it carries a secret', [
+                'staged' => 'Staged changes are stored as JSON and shown to every reviewer, so '
+                    . implode(', ', $secrets) . ' cannot be recorded. Perform this write directly '
+                    . '(without staged), then stage follow-up changes that carry no secrets.',
+            ]);
+        }
+
         $now = time();
         $change = [
             'change_id' => 'chg_' . bin2hex(random_bytes(12)),
@@ -122,14 +150,18 @@ final class StagedChangesController
      * returns the change to staged with the error recorded, so it can be
      * corrected or discarded rather than silently lost.
      *
-     * @param callable(string, string, array): mixed $dispatch
+     * @param callable(string, string, array, int): mixed $dispatch
+     *        Receives (method, path, recorded payload, proposer user id).
+     *        The write is performed as the proposer so it lands in the
+     *        account that proposed it; authorization still runs against the
+     *        applier inside the dispatched route.
      */
     public function apply(string $changeId, callable $dispatch): array
     {
         $change = $this->requireVisibleChange($changeId);
         $ownerId = (int)$change['created_by'];
 
-        if (($change['status'] ?? '') !== self::STATUS_STAGED) {
+        if (!self::isClaimable($change)) {
             throw new ConflictException(sprintf(
                 "Change %s is %s, not staged — nothing to apply.",
                 $changeId,
@@ -155,24 +187,42 @@ final class StagedChangesController
         // concurrent apply/discard or an expiry crossing between the read
         // above and this claim cannot slip through.
         $claimed = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
-            if (($current['status'] ?? '') !== self::STATUS_STAGED) {
+            if (!self::isClaimable($current)) {
                 return null; // someone else applied or discarded it first
             }
             if (time() > (int)($current['expires_at_epoch'] ?? 0)) {
                 return null;
             }
             $current['status'] = self::STATUS_APPLYING;
+            $current['applying_since'] = time();
             return $current;
         });
         if ($claimed === null) {
             throw new ConflictException("Change $changeId expired or was applied or discarded concurrently.");
         }
 
+        // A stored payload that is not an array means the record is corrupt.
+        // Applying it as an empty body would execute a different write than
+        // the one that was reviewed, so fail loudly instead.
+        $storedPayload = $change['payload'] ?? null;
+        if (!is_array($storedPayload)) {
+            $this->store->updateStagedChange($ownerId, $changeId, function (array $current): array {
+                $current['status'] = self::STATUS_STAGED;
+                $current['last_error'] = 'stored payload is malformed';
+                return $current;
+            });
+            throw new ConflictException(sprintf(
+                'Change %s has a malformed stored payload and cannot be applied — discard it and stage the write again.',
+                $changeId
+            ));
+        }
+
         try {
             $response = $dispatch(
                 (string)$change['method'],
                 (string)$change['path'],
-                is_array($change['payload'] ?? null) ? $change['payload'] : []
+                $storedPayload,
+                $ownerId
             );
         } catch (\Throwable $e) {
             $this->store->updateStagedChange($ownerId, $changeId, function (array $current) use ($e): array {
@@ -210,7 +260,7 @@ final class StagedChangesController
         $ownerId = (int)$change['created_by'];
 
         $updated = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
-            if (($current['status'] ?? '') !== self::STATUS_STAGED) {
+            if (!self::isClaimable($current)) {
                 return null;
             }
             $current['status'] = self::STATUS_DISCARDED;
@@ -257,11 +307,48 @@ final class StagedChangesController
         throw new NotFoundException('Staged change not found');
     }
 
+    /**
+     * Payload keys that name a secret, in the order given. stage() refuses
+     * such writes; present() redacts as defense in depth for records written
+     * by an older build.
+     */
+    /**
+     * A change may be claimed for apply or discard when it is still staged,
+     * or when a previous apply claimed it and died: without the second case
+     * a process killed mid-dispatch strands the change forever, since both
+     * transitions otherwise require `staged`.
+     */
+    private static function isClaimable(array $change): bool
+    {
+        $status = (string)($change['status'] ?? '');
+        if ($status === self::STATUS_STAGED) {
+            return true;
+        }
+        return $status === self::STATUS_APPLYING
+            && time() - (int)($change['applying_since'] ?? 0) > self::STALE_APPLYING_SECONDS;
+    }
+
+    private static function secretKeysIn(array $payload): array
+    {
+        $found = [];
+        foreach (array_keys($payload) as $key) {
+            if (in_array(strtolower(trim((string)$key)), self::SECRET_PAYLOAD_KEYS, true)) {
+                $found[] = (string)$key;
+            }
+        }
+        return $found;
+    }
+
     /** Adds the derived expiry flag; never mutates the stored record. */
     private function present(array $change): array
     {
         $change['expired'] = ($change['status'] ?? '') === self::STATUS_STAGED
             && time() > (int)($change['expires_at_epoch'] ?? 0);
+        if (is_array($change['payload'] ?? null)) {
+            foreach (self::secretKeysIn($change['payload']) as $key) {
+                $change['payload'][$key] = '[redacted]';
+            }
+        }
         return $change;
     }
 }

@@ -361,7 +361,14 @@ var userAPIKeyRotateCmd = &cobra.Command{
 		// fails the rotation rather than silently minting a full-access key.
 		scope, _ := cmd.Flags().GetString("scope")
 		scope = strings.TrimSpace(scope)
-		if scope == "" && len(oldAPIKey) >= 8 {
+		if scope == "" {
+			if len(oldAPIKey) < 8 {
+				// Too short to match a masked prefix, so the old scope
+				// cannot be established — and an unknown scope must never
+				// become full access.
+				return validationError("old API key %q is too short to identify a key", oldAPIKey).
+					WithHint("Pass the full old key, or set --scope explicitly to state the new key's scope.")
+			}
 			listData, lerr := c.Get("users/"+userID+"/api-keys", nil)
 			if lerr != nil {
 				return fmt.Errorf("looking up the old key's scope before rotating: %w", lerr)
@@ -386,7 +393,14 @@ var userAPIKeyRotateCmd = &cobra.Command{
 				return validationError("multiple keys share the prefix %s; cannot infer the old key's scope", prefix).
 					WithHint("Pass --scope explicitly; `p202 user apikey list " + userID + "` shows each key's scope.")
 			}
-			if matches == 1 && carried != "" && carried != "*" {
+			if matches == 0 {
+				// Falling through here would mint an unscoped key: the old
+				// key's scope is unknown, and "unknown" must never resolve
+				// to full access.
+				return validationError("no key for user %s starts with %s; cannot infer the old key's scope", userID, prefix).
+					WithHint("Check the old key value, or pass --scope explicitly; `p202 user apikey list " + userID + "` shows each key's prefix and scope.")
+			}
+			if carried != "" && carried != "*" {
 				scope = carried
 			}
 		}

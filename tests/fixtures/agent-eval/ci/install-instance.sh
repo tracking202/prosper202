@@ -45,11 +45,14 @@ if [ -f 202-config.php ]; then
     log "202-config.php already exists; leaving it in place"
 else
     log "Writing 202-config.php for $DB_USER@$DB_HOST/$DB_NAME"
-    sed -e "s/putyourdbnamehere/$DB_NAME/" \
-        -e "s/usernamehere/$DB_USER/" \
-        -e "s/yourpasswordhere/$DB_PASS/" \
-        -e "s/localhosthere/$DB_HOST:$DB_PORT/" \
-        -e "s/localhostreplica/$DB_HOST:$DB_PORT/" \
+    # Credentials are data, not sed syntax: \, / and & in a replacement
+    # would corrupt the config silently (php -l still passes) or abort sed.
+    esc() { printf '%s' "$1" | sed -e 's/[\\/&]/\\&/g'; }
+    sed -e "s/putyourdbnamehere/$(esc "$DB_NAME")/" \
+        -e "s/usernamehere/$(esc "$DB_USER")/" \
+        -e "s/yourpasswordhere/$(esc "$DB_PASS")/" \
+        -e "s/localhosthere/$(esc "$DB_HOST:$DB_PORT")/" \
+        -e "s/localhostreplica/$(esc "$DB_HOST:$DB_PORT")/" \
         -e "s/localhostmemcache/127.0.0.1/" \
         202-config-sample.php > 202-config.php
     php -l 202-config.php >/dev/null

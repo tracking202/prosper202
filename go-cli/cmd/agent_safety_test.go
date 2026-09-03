@@ -279,6 +279,67 @@ func TestApikeyRotateAmbiguousPrefixDemandsExplicitScope(t *testing.T) {
 	}
 }
 
+func TestApikeyRotateUnknownPrefixRefusesRatherThanMintingFullAccess(t *testing.T) {
+	// A lookup that matches nothing leaves the old key's scope unknown, and
+	// unknown must never resolve to a full-access key.
+	var posted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"zzzzzzzz***********************","scope":"read","created_at":1}]}`))
+			return
+		}
+		if r.Method == "POST" {
+			posted = true
+		}
+		w.WriteHeader(500)
+		w.Write([]byte(`{"message":"rotation should not proceed"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--keep-old")
+	if err == nil {
+		t.Fatal("expected an error when no key matches the prefix")
+	}
+	if exitCodeForError(err) != ExitValidation {
+		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
+	}
+	if posted {
+		t.Error("no key may be minted when the old key's scope cannot be determined")
+	}
+}
+
+func TestApikeyRotateShortOldKeyRefusesRatherThanMintingFullAccess(t *testing.T) {
+	var posted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			posted = true
+		}
+		w.WriteHeader(500)
+		w.Write([]byte(`{"message":"rotation should not proceed"}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("user", "apikey", "rotate", "7", "short", "--keep-old")
+	if err == nil {
+		t.Fatal("expected an error for an old key too short to identify")
+	}
+	if exitCodeForError(err) != ExitValidation {
+		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
+	}
+	if posted {
+		t.Error("no key may be minted when the old key cannot be identified")
+	}
+}
+
 // --- Staged writes ---
 
 func TestGlobalStagedFlagStampsWrites(t *testing.T) {
