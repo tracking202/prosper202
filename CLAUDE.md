@@ -26,6 +26,41 @@ DELETE/204 responses return empty arrays. Rendering an empty array produces no o
 ### 7. bind_param type string mismatches
 When building `bind_param($types, ...)` with many parameters, count types against values one-by-one. Integer timestamps bound as 's' work due to MySQL coercion but indicate sloppy code and can cause subtle issues with strict modes.
 
+### 8. Assumed closure, reference, and capture semantics
+A by-reference `use (&$x)` on an outer closure does **not** propagate into
+arrow functions (`fn() => $x`) defined inside it — arrow functions capture
+by value at definition time. This shipped a staged-write dispatcher that
+swapped `$payload` by reference while every arrow-function route handler
+kept the value captured at route registration, so applying a staged change
+executed the wrong body (and, when the applier sent one, wrote it while the
+audit record still showed the reviewed payload). Any claim about capture,
+reference, or evaluation-order semantics must be **executed** before it is
+relied on — a ten-line `php -r` scratch script settles it in under a minute.
+Never assert the mechanism in a comment on the strength of reading a
+signature one level up: the comment then reads as verified fact to every
+later reviewer, including yourself.
+
+### 9. Tests that mock the seam under test
+When the new code *is* the wiring — a dispatcher, an adapter, a callback
+that re-enters the router — a unit test that injects a fake for that wiring
+proves only the surrounding bookkeeping. The staged-changes tests passed a
+stub dispatch closure and asserted the controller handed it the right
+method, path, and body; it always did. The defect was that the real closure
+could not deliver that body. If the thing you wrote is the seam, exercise
+the real path at least once: an integration test, or a live request against
+a running instance.
+
+### 10. Calling a capability done without an end-to-end pass
+Aggregate green suites are not coverage of the path you just wrote — the
+PHP, Go, and eval suites were all green while nothing exercised staged
+apply. Before reporting a user-facing capability as complete, run it end to
+end the way a user will (see the live-instance recipe under Development
+environment notes; if an instance is already up in the session, there is no
+excuse to skip this), and add a case under
+`tests/fixtures/agent-eval/cases/` when the capability is agent-facing.
+When reporting status, say which paths were actually exercised rather than
+citing suite totals.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -128,6 +163,8 @@ Check here before burning time on tooling failures.
 - Read the file first, then think about what each line does, especially error paths.
 - After writing code, re-read it as a skeptic looking for the failure mode, not as the author expecting it to work.
 - When fixing a pattern (e.g., unchecked execute), grep the entire codebase for every instance — don't fix one and assume the rest are fine.
+- Per-file reading cannot catch a defect that lives in the *relationship* between two files: a handler and its dispatcher can each read correctly while the runtime binding between them is wrong. For cross-file mechanisms, execute the path instead of reading it.
+- Never report work as complete or merge-ready on the strength of tests that don't exercise the new path. State what was actually run and what could not be.
 
 ## Before committing
 - Always perform a full deploy-quality code review of the staged changes before committing. Treat every commit as if it ships to production.
