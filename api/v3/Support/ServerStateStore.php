@@ -44,6 +44,13 @@ class ServerStateStore
         return sha1($json);
     }
 
+    /**
+     * How long a reserveIdempotent() claim blocks a concurrent request with
+     * the same key. Past this a claim is assumed dead (the request that took
+     * it crashed) and may be re-taken, so a failed create cannot wedge a key.
+     */
+    public const IDEMPOTENCY_CLAIM_TTL_SECONDS = 300;
+
     public function getIdempotent(string $scope, string $key): ?array
     {
         $data = $this->readJsonFile($this->idempotencyPath($scope), ['items' => []]);
@@ -52,6 +59,63 @@ class ServerStateStore
             return null;
         }
         return $items[$key]['response'];
+    }
+
+    /**
+     * Atomically decide what a request carrying this Idempotency-Key should
+     * do. getIdempotent()/putIdempotent() are separately locked, so a check
+     * followed by the write left a window in which two concurrent retries
+     * both missed the record and both executed — which is precisely the case
+     * idempotency exists to prevent, since automatic retries usually race a
+     * still-running request rather than following it.
+     *
+     * @return array{state: 'replay'|'in_flight'|'claimed', response: ?array}
+     */
+    public function reserveIdempotent(string $scope, string $key): array
+    {
+        $result = ['state' => 'claimed', 'response' => null];
+        $this->mutateJsonFile(
+            $this->idempotencyPath($scope),
+            ['items' => []],
+            static function (array $data) use ($key, &$result): array {
+                $item = $data['items'][$key] ?? null;
+                if (is_array($item) && isset($item['response']) && is_array($item['response'])) {
+                    $result = ['state' => 'replay', 'response' => $item['response']];
+                    return $data;
+                }
+                $claimedAt = (int)($item['claimed_at'] ?? 0);
+                if (is_array($item) && $claimedAt > 0
+                    && time() - $claimedAt <= self::IDEMPOTENCY_CLAIM_TTL_SECONDS) {
+                    // Another request holds this key and has not finished.
+                    $result = ['state' => 'in_flight', 'response' => null];
+                    return $data;
+                }
+                // Free, or a claim whose request died: take it.
+                $data['items'][$key] = ['stored_at' => time(), 'claimed_at' => time()];
+                return $data;
+            }
+        );
+        return $result;
+    }
+
+    /**
+     * Drop a claim taken by reserveIdempotent() whose operation failed, so
+     * the caller can retry instead of being told a request is in flight
+     * until the claim expires.
+     */
+    public function releaseIdempotent(string $scope, string $key): void
+    {
+        $this->mutateJsonFile(
+            $this->idempotencyPath($scope),
+            ['items' => []],
+            static function (array $data) use ($key): array {
+                $item = $data['items'][$key] ?? null;
+                if (is_array($item) && !isset($item['response'])) {
+                    unset($data['items'][$key]);
+                }
+                return $data;
+            }
+        );
     }
 
     public function putIdempotent(string $scope, string $key, array $response): void

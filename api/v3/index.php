@@ -193,12 +193,29 @@ try {
             }
             $scope = 'create:' . $operation . ':user:' . $actorUserId
                 . ':request:' . ServerStateStore::canonicalHash($requestPayload);
-            $existing = $stateStore->getIdempotent($scope, $key);
-            if (is_array($existing)) {
+            // Claim the key atomically: a plain read-then-write left a
+            // window where two concurrent retries both missed the record and
+            // both created a row.
+            $reservation = $stateStore->reserveIdempotent($scope, $key);
+            if ($reservation['state'] === 'replay') {
+                $existing = $reservation['response'] ?? [];
                 $existing['idempotent_replay'] = true;
                 return $existing;
             }
-            $response = $op();
+            if ($reservation['state'] === 'in_flight') {
+                throw new ConflictException(
+                    'A request with this Idempotency-Key is still in flight; retry once it completes '
+                    . 'to receive the recorded response.'
+                );
+            }
+            try {
+                $response = $op();
+            } catch (\Throwable $e) {
+                // Release the claim so the caller can correct and retry
+                // rather than being told a request is in flight.
+                $stateStore->releaseIdempotent($scope, $key);
+                throw $e;
+            }
             $stateStore->putIdempotent($scope, $key, $response);
             return $response;
         };
@@ -642,6 +659,25 @@ try {
     }
 
     $scopeArea = scopeAreaForPath($path);
+    if ($scopeArea === null && !Auth::isScopeExemptPath($path)) {
+        // Default-deny. The route matched, so it exists; it just has no
+        // scope area. Letting it through would hand every key unchecked
+        // access to a whole route family — the failure mode of a mapping
+        // list maintained separately from the routes themselves.
+        // The 500 handler replaces the message with a generic one, so log
+        // the specifics or the operator sees an unexplained failure.
+        error_log(sprintf(
+            'p202: refusing %s %s — its route family has no API key scope area. '
+            . 'Add it to Auth::KNOWN_SCOPE_AREAS (or Auth::isScopeExemptPath if deliberately unscoped).',
+            $method,
+            $path
+        ));
+        throw new HttpException(
+            'This endpoint is not mapped to an API key scope and cannot be served. '
+            . 'Add its area to Auth::KNOWN_SCOPE_AREAS.',
+            500
+        );
+    }
     if ($scopeArea !== null) {
         $scopeAction = in_array($method, ['GET', 'HEAD'], true) ? 'read' : 'write';
         if ($method === 'POST' && $path === '/sync/plan') {

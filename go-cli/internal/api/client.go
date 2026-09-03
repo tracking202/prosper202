@@ -379,10 +379,43 @@ func (c *Client) DeleteReturning(path string) ([]byte, error) {
 }
 
 // DeletePreview asks the server what a delete would remove without removing
-// it (DELETE with dry_run=1) and returns the preview body. The server fails
-// closed: endpoints without preview support reject rather than deleting.
+// it (DELETE with dry_run=1) and returns the preview body. A server that
+// supports previews fails closed per endpoint: paths without preview support
+// reject rather than deleting. A server too old to know the parameter at all
+// would ignore it and perform the delete, so support is confirmed first.
 func (c *Client) DeletePreview(path string) ([]byte, error) {
+	if err := c.requireFeature("delete_dry_run", "--dry-run",
+		"Upgrade the server to 1.9.75 or later, or omit --dry-run and confirm the delete deliberately."); err != nil {
+		return nil, err
+	}
 	return c.do("DELETE", path, map[string]string{"dry_run": "1"}, nil)
+}
+
+// requireFeature refuses to send a request whose safety depends on server
+// support that is not advertised. These parameters are query parameters: a
+// server that predates the feature ignores the unknown parameter and performs
+// the real write, turning a preview or a proposal into an executed delete.
+// Refusing to send is the only fail-closed option available to the client.
+func (c *Client) requireFeature(flag, flagName, remedy string) error {
+	if c.SupportsCapability("features", flag) {
+		return nil
+	}
+	if err := c.CapabilitiesError(); err != nil {
+		return &RequestError{
+			Kind: "network",
+			Op:   "verify_" + flag + "_support",
+			Err: fmt.Errorf("could not confirm the server supports %s (%w); refusing to send it, "+
+				"because a server without support would perform the write instead", flagName, err),
+		}
+	}
+	return &APIError{
+		Status:   422,
+		Category: "validation",
+		Message: fmt.Sprintf("this server does not support %s (capabilities.features.%s is not set); "+
+			"refusing to send it, because a server without support would perform the write instead",
+			flagName, flag),
+		FieldErrors: map[string]string{flag: remedy},
+	}
 }
 
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {
@@ -399,6 +432,10 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 		// A dry-run preview is a read; staging it would be rejected by the
 		// server's mutual-exclusion check, so an explicit --dry-run wins
 		// over the global --staged mode.
+		if err := c.requireFeature("staged_writes", "--staged",
+			"Upgrade the server to 1.9.75 or later, or drop --staged to perform the write directly."); err != nil {
+			return nil, err
+		}
 		if params == nil {
 			params = map[string]string{}
 		}

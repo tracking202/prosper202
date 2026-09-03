@@ -153,18 +153,36 @@ final readonly class Auth
      */
     public static function scopeAreaForPath(string $path): ?string
     {
-        $segments = explode('/', ltrim($path, '/'));
-        $first = $segments[0] ?? '';
-        if ($first === '' || $first === 'capabilities' || $first === 'versions') {
+        if (self::isScopeExemptPath($path)) {
             return null;
         }
-        if ($first === 'system' && ($segments[1] ?? '') === 'health') {
-            return null; // answered before authentication
-        }
+        $segments = explode('/', ltrim($path, '/'));
+        $first = $segments[0] ?? '';
         if ($first === 'changes' || $first === 'audit') {
             return 'sync';
         }
         return in_array($first, self::KNOWN_SCOPE_AREAS, true) ? $first : null;
+    }
+
+    /**
+     * Whether a path is deliberately outside scope enforcement. Everything
+     * else must map to an area: the dispatcher refuses a matched route whose
+     * family has no mapping rather than letting it through unchecked, so
+     * adding a route family without adding its area fails loudly instead of
+     * silently accepting a read-only or propose-only key for writes.
+     */
+    public static function isScopeExemptPath(string $path): bool
+    {
+        $segments = explode('/', ltrim($path, '/'));
+        $first = $segments[0] ?? '';
+        if ($first === '' || $first === 'capabilities' || $first === 'versions') {
+            // Clients probe these to discover what they may do.
+            return true;
+        }
+        if ($first === 'system' && ($segments[1] ?? '') === 'health') {
+            return true; // answered before authentication
+        }
+        return false;
     }
 
     /**

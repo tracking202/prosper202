@@ -13,12 +13,36 @@ import (
 	"p202/internal/api"
 )
 
+// withCapabilities answers the client's feature probe before delegating to
+// the test's own handler. The client refuses to send --dry-run or --staged
+// to a server that does not advertise support, because such a server would
+// ignore the unknown query parameter and perform the real write; any mock
+// exercising those flags therefore has to advertise them.
+func withCapabilities(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// The probe also negotiates the API version, so absorb both here:
+		// tests that count requests are asserting on the command's own
+		// traffic, not on the client's one-time handshake.
+		if strings.HasSuffix(r.URL.Path, "/capabilities") {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"features":{"delete_dry_run":true,"staged_writes":true,"create_idempotency":true}}}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/versions") {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"current":"v3","supported":["v3"]}}`))
+			return
+		}
+		h(w, r)
+	}
+}
+
 // --- Delete dry-run ---
 
 func TestDeleteDryRunSendsDryRunParamWithoutConfirmation(t *testing.T) {
 	var gotMethod string
 	var gotParams url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotParams = r.URL.Query()
 		w.WriteHeader(200)
@@ -49,7 +73,7 @@ func TestDeleteDryRunSendsDryRunParamWithoutConfirmation(t *testing.T) {
 
 func TestDeleteDryRunBulkIdsPreviewsEach(t *testing.T) {
 	var paths []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
 		w.WriteHeader(200)
 		w.Write([]byte(`{"data":{"dry_run":true,"action":"delete","resource":"trackers","mode":"hard","record":{},"cascade":[]}}`))
@@ -85,7 +109,7 @@ func TestDeleteDryRunBulkIdsPreviewsEach(t *testing.T) {
 
 func TestRotatorRuleDeleteDryRunTargetsRuleEndpoint(t *testing.T) {
 	var gotPath, gotQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
 		w.WriteHeader(200)
@@ -340,11 +364,75 @@ func TestApikeyRotateShortOldKeyRefusesRatherThanMintingFullAccess(t *testing.T)
 	}
 }
 
+func TestDryRunRefusesWhenTheServerDoesNotAdvertiseSupport(t *testing.T) {
+	// A server predating dry-run ignores the unknown query parameter and
+	// performs the delete, so the flag must never reach it.
+	var sawDelete bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/capabilities") {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"features":{}}}`))
+			return
+		}
+		if r.Method == "DELETE" {
+			sawDelete = true
+		}
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("campaign", "delete", "42", "--dry-run")
+	if err == nil {
+		t.Fatal("expected --dry-run to be refused against a server without support")
+	}
+	if sawDelete {
+		t.Fatal("no DELETE may be sent when the server cannot honor dry_run")
+	}
+	if exitCodeForError(err) != ExitValidation {
+		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
+	}
+}
+
+func TestStagedRefusesWhenTheServerDoesNotAdvertiseSupport(t *testing.T) {
+	var sawWrite bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/capabilities") {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"features":{}}}`))
+			return
+		}
+		if r.Method == "POST" {
+			sawWrite = true
+		}
+		w.WriteHeader(201)
+		w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("campaign", "create", "--aff-campaign-name", "X",
+		"--aff-campaign-url", "https://example.com", "--aff-network-id", "1",
+		"--aff-campaign-payout", "1", "--staged")
+	if err == nil {
+		t.Fatal("expected --staged to be refused against a server without support")
+	}
+	if sawWrite {
+		t.Fatal("no write may be sent when the server would execute it instead of staging it")
+	}
+}
+
 // --- Staged writes ---
 
 func TestGlobalStagedFlagStampsWrites(t *testing.T) {
 	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query()
 		w.WriteHeader(202)
 		w.Write([]byte(`{"data":{"change_id":"chg_aabbccddeeff001122334455","status":"staged","method":"POST","path":"/campaigns"}}`))
@@ -372,7 +460,7 @@ func TestGlobalStagedFlagStampsWrites(t *testing.T) {
 func TestStagedDeleteRendersEnvelopeWithoutConfirmation(t *testing.T) {
 	var gotMethod string
 	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotQuery = r.URL.Query()
 		w.WriteHeader(202)
@@ -400,7 +488,7 @@ func TestStagedDeleteRendersEnvelopeWithoutConfirmation(t *testing.T) {
 
 func TestStagedModeDoesNotStampChangeOrDryRunCalls(t *testing.T) {
 	var paths []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.RequestURI())
 		w.WriteHeader(200)
 		w.Write([]byte(`{"data":{"change_id":"chg_aabbccddeeff001122334455","status":"applied"}}`))

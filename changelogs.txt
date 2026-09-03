@@ -19,6 +19,9 @@ Version 1.9.75
 -- Fixed: A staged change whose apply was interrupted can be applied or discarded again instead of being stuck; a corrupted stored payload is reported rather than applied as an empty write
 -- Fixed: The v3 API state directory falls back to its previous location, with a log line, when the one-time move cannot be completed
 -- Fixed: `p202 eval run` enforces its timeout on agents that leave background processes running, instead of waiting forever
+-- Fixed: `--dry-run` and `--staged` are refused when the server does not advertise support for them, instead of being sent as query parameters an older server ignores while performing the real write
+-- Fixed: Concurrent retries carrying the same Idempotency-Key can no longer both create a record; the second is told the first is still in flight
+-- Fixed: A v3 endpoint whose route family has no API key scope area is refused rather than served without a scope check
 -- Fixed: The install owner's "Super user" role now passes the v3 API's admin checks; previously fresh installs were locked out of admin-gated endpoints (user management, system diagnostics, sync)
 -- Fixed: The v3 API's server-side state (idempotency records, staged changes, sync jobs, rate limits) now defaults to a per-instance directory keyed by database identity, so two instances on one host no longer share state; set P202_SERVER_STATE_DIR to choose a location explicitly
 
