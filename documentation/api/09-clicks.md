@@ -25,7 +25,7 @@ Read-only access to click tracking data.
 
 ## List Response Fields
 
-`click_id`, `aff_campaign_id`, `ppc_account_id`, `landing_page_id`, `click_cpc`, `click_payout`, `click_lead`, `click_filtered`, `click_bot`, `click_alp`, `click_time`, `rotator_id`, `rule_id`, `click_id_public`, `click_cloaking`, `click_in`, `click_out`, `keyword_id`, `country_id`, `platform_id`, `browser_id`, `device_id`, plus resolved country, platform, and browser names.
+`click_id`, `aff_campaign_id`, `ppc_account_id`, `landing_page_id`, `click_cpc`, `click_payout`, `click_lead`, `click_filtered`, `click_bot`, `click_alp`, `click_time`, `rotator_id`, `rule_id`, `click_id_public`, `click_cloaking`, `click_in`, `click_out`, `keyword_id`, `country_id`, `platform_id`, `browser_id`, `device_id`, plus resolved country, platform, and browser names. Resolved name fields derive from the visitor (user agent, IP) and are sanitized at serialization: control/bidirectional characters stripped, length capped.
 
 ## Detail Response (Additional Fields)
 

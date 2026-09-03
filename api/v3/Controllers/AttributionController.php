@@ -147,6 +147,58 @@ class AttributionController
         return $this->getModel($id);
     }
 
+    /**
+     * Read-only preview of deleteModel() for `?dry_run=1`: the model plus
+     * the counts of the snapshot/touchpoint/export rows the cascade removes.
+     */
+    public function deleteModelPreview(int $id): array
+    {
+        $model = $this->getModel($id)['data'];
+
+        $snapshots = $this->countRows(
+            'SELECT COUNT(*) AS c FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?',
+            'ii',
+            $id,
+            $this->userId
+        );
+        $touchpoints = $this->countRows(
+            'SELECT COUNT(*) AS c FROM 202_attribution_touchpoints WHERE snapshot_id IN '
+            . '(SELECT snapshot_id FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?)',
+            'ii',
+            $id,
+            $this->userId
+        );
+        $exports = $this->countRows(
+            'SELECT COUNT(*) AS c FROM 202_attribution_exports WHERE model_id = ? AND user_id = ?',
+            'ii',
+            $id,
+            $this->userId
+        );
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'attribution-models',
+            'mode' => 'hard',
+            'record' => $model,
+            'cascade' => [
+                ['resource' => 'attribution-snapshots', 'count' => $snapshots],
+                ['resource' => 'attribution-touchpoints', 'count' => $touchpoints],
+                ['resource' => 'attribution-exports', 'count' => $exports],
+            ],
+        ]];
+    }
+
+    private function countRows(string $sql, string $types, mixed ...$binds): int
+    {
+        $stmt = $this->prepare($sql);
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Count query failed');
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return (int)($row['c'] ?? 0);
+    }
+
     public function deleteModel(int $id): void
     {
         $this->getModel($id);

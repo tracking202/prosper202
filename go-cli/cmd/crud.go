@@ -103,6 +103,71 @@ func deleteArgsValidator(cmd *cobra.Command, args []string) error {
 	return cobra.ExactArgs(1)(cmd, args)
 }
 
+// deleteDryRunFlagDesc is the shared help text for --dry-run on every delete
+// command, so the contract reads identically across the whole CLI.
+const deleteDryRunFlagDesc = "Preview what the delete would remove (record + cascade counts) without deleting"
+
+// registerDeleteFlags attaches the flag set every delete command shares:
+// --force to skip the confirmation prompt, --ids for bulk deletes, and
+// --dry-run to preview instead of delete.
+func registerDeleteFlags(cmd *cobra.Command) {
+	cmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	cmd.Flags().String("ids", "", "Comma-separated IDs to delete in bulk")
+	cmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+}
+
+// registerIdempotencyKeyFlag attaches --idempotency-key to a create command.
+func registerIdempotencyKeyFlag(cmd *cobra.Command) {
+	cmd.Flags().String("idempotency-key", "", "Retry-safe create: the server records the response under this key and replays it on a retry with the same key and payload instead of creating a duplicate")
+}
+
+// renderDeletePreviews fetches the server's dry-run preview for each id and
+// renders them. Previews are read-only, so no confirmation is needed.
+func renderDeletePreviews(c *api.Client, endpoint string, ids []string) error {
+	if len(ids) == 1 {
+		data, err := c.DeletePreview(endpoint + "/" + ids[0])
+		if err != nil {
+			return withDryRunHint(err)
+		}
+		render(data)
+		return nil
+	}
+
+	previews := make([]interface{}, 0, len(ids))
+	failed := 0
+	for _, id := range ids {
+		data, err := c.DeletePreview(endpoint + "/" + id)
+		if err != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to preview delete for %s: %v\n", id, withDryRunHint(err))
+			continue
+		}
+		obj, perr := parseDataObject(data)
+		if perr != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to parse preview for %s: %v\n", id, perr)
+			continue
+		}
+		previews = append(previews, obj)
+	}
+	encoded, _ := json.Marshal(map[string]interface{}{"data": previews})
+	render(encoded)
+	if failed > 0 {
+		return partialFailureError("failed to preview %d of %d deletes", failed, len(ids))
+	}
+	return nil
+}
+
+// withDryRunHint adds the recovery step for servers that predate dry-run
+// support (their 400/422 mentions dry_run) while leaving other errors as-is.
+func withDryRunHint(err error) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && (apiErr.Status == 400 || apiErr.Status == 422) && strings.Contains(strings.ToLower(apiErr.Message), "dry_run") {
+		return withHint(err, "This server or endpoint has no delete preview (`p202 system version`; capabilities lists features.delete_dry_run). Drop --dry-run to perform the delete.")
+	}
+	return err
+}
+
 // bulkOrSingleDelete deletes one id (positional) or many (--ids), honoring
 // --force, against endpoint/<id>. Shared so every delete has the same bulk
 // semantics. noun is used in confirmation and summary messages.
@@ -112,6 +177,7 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 		return err
 	}
 	force, _ := cmd.Flags().GetBool("force")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	idsFlag, _ := cmd.Flags().GetString("ids")
 	args := cmd.Flags().Args()
 
@@ -122,6 +188,9 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 		}
 		if len(ids) == 0 {
 			return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
+		}
+		if dryRun {
+			return renderDeletePreviews(c, endpoint, ids)
 		}
 		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
@@ -145,6 +214,9 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 
 	if len(args) != 1 {
 		return validationError("provide a single id or use --ids").WithHint("Pass one id as the argument, or several with --ids 12,13,14.")
+	}
+	if dryRun {
+		return renderDeletePreviews(c, endpoint, []string{args[0]})
 	}
 	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
 		fmt.Fprintln(os.Stderr, "Cancelled.")
@@ -535,7 +607,8 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					return validationError("required flag --%s is missing", f.Name)
 				}
 			}
-			data, err := c.Post(entity.Endpoint, body)
+			idemKey, _ := cmd.Flags().GetString("idempotency-key")
+			data, err := c.PostIdempotent(entity.Endpoint, body, idemKey)
 			if err != nil {
 				return err
 			}
@@ -546,6 +619,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	for _, f := range entity.Fields {
 		createCmd.Flags().String(f.Name, "", f.Desc)
 	}
+	registerIdempotencyKeyFlag(createCmd)
 
 	// update
 	updateCmd := &cobra.Command{
@@ -598,6 +672,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			idsFlag, _ := cmd.Flags().GetString("ids")
 			if strings.TrimSpace(idsFlag) != "" {
 				idList, parseErr := parseIDList(idsFlag)
@@ -606,6 +681,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 				if len(idList) == 0 {
 					return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
+				}
+
+				if dryRun {
+					return renderDeletePreviews(c, entity.Endpoint, idList)
 				}
 
 				force, _ := cmd.Flags().GetBool("force")
@@ -631,6 +710,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				return nil
 			}
 
+			if dryRun {
+				return renderDeletePreviews(c, entity.Endpoint, []string{args[0]})
+			}
+
 			force, _ := cmd.Flags().GetBool("force")
 			if !force && !confirmPrompt("Delete %s %s?", entity.Name, args[0]) {
 				fmt.Println("Cancelled.")
@@ -643,8 +726,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			return nil
 		},
 	}
-	deleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	deleteCmd.Flags().String("ids", "", "Comma-separated IDs to delete in bulk")
+	registerDeleteFlags(deleteCmd)
 
 	parentCmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 	rootCmd.AddCommand(parentCmd)
@@ -843,7 +925,8 @@ func init() {
 					payload["aff_campaign_name"] = name + " (Clone)"
 				}
 
-				clonedData, err := c.Post("campaigns", payload)
+				idemKey, _ := cmd.Flags().GetString("idempotency-key")
+				clonedData, err := c.PostIdempotent("campaigns", payload, idemKey)
 				if err != nil {
 					return err
 				}
@@ -852,6 +935,7 @@ func init() {
 			},
 		}
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
+		registerIdempotencyKeyFlag(cloneCmd)
 		campaignCmd.AddCommand(cloneCmd)
 	}
 
@@ -903,7 +987,8 @@ func init() {
 					}
 				}
 
-				createdData, err := c.Post("trackers", body)
+				idemKey, _ := cmd.Flags().GetString("idempotency-key")
+				createdData, err := c.PostIdempotent("trackers", body, idemKey)
 				if err != nil {
 					return err
 				}
@@ -937,6 +1022,7 @@ func init() {
 		for _, f := range trackerEntity.Fields {
 			createWithURLCmd.Flags().String(f.Name, "", f.Desc)
 		}
+		registerIdempotencyKeyFlag(createWithURLCmd)
 
 		bulkURLsCmd := &cobra.Command{
 			Use:   "bulk-urls",

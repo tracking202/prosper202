@@ -538,6 +538,24 @@ abstract class Controller
         $this->recordChange('delete', (array)$existing['data']);
     }
 
+    /**
+     * Read-only preview of delete(): the record that would be removed,
+     * without removing it. Backs `?dry_run=1` on DELETE routes. Controllers
+     * whose deletes cascade override this to report the cascade too.
+     */
+    public function deletePreview(int|string $id): array
+    {
+        $existing = $this->get($id);
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => $this->changeEntityName() ?? $this->tableName(),
+            'mode' => $this->deletedColumn() !== null ? 'soft' : 'hard',
+            'record' => $existing['data'],
+            'cascade' => [],
+        ]];
+    }
+
     public function bulkUpsert(array $payload): array
     {
         $idempotencyKey = trim((string)(\Api\V3\RequestContext::header('idempotency-key') ?? ''));

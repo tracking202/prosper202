@@ -48,6 +48,12 @@ API version and feature detection.
       "force_update": true,
       "server_fk_remap": true
     },
+    "features": {
+      "api_key_scopes": true,
+      "create_idempotency": true,
+      "delete_dry_run": true,
+      "response_sanitization": true
+    },
     "limits": {
       "max_bulk_rows": 500,
       "max_job_concurrency": 5,
@@ -74,6 +80,10 @@ API version and feature detection.
 | `api_version` | string | API version this server implements. |
 | `entity_support` | object | Map of entity → object of supported operations. Each value is an object of booleans keyed by `list`, `get`, `create`, `update`, `delete`, and `bulk_upsert`. Entity keys are hyphenated: `aff-networks`, `ppc-networks`, `ppc-accounts`, `campaigns`, `landing-pages`, `text-ads`, `trackers`. |
 | `sync_features` | object | Booleans for supported sync capabilities: `diff`, `sync_plan`, `async_jobs`, `incremental`, `prune`, `force_update`, `server_fk_remap`. |
+| `features.api_key_scopes` | boolean | Scoped API keys can be minted (the `scope` column exists — fresh installs and 1.9.75+). Scope *enforcement* always runs; unscoped keys are full-access. See [API Key Scopes](00-api-integrations.md#api-key-scopes). |
+| `features.create_idempotency` | boolean | `Idempotency-Key` honored on single POST creates across the operator surface (retries replay instead of duplicating). |
+| `features.delete_dry_run` | boolean | `?dry_run=1` on DELETE previews the delete without performing it; unsupported endpoints reject rather than fall through. See [Delete Dry-Run](00-api-integrations.md#delete-dry-run). |
+| `features.response_sanitization` | boolean | Visitor-authored strings (keyword/city/region/ISP/browser/platform/device names) are stripped of control and bidirectional characters and length-capped at serialization. |
 | `limits.max_bulk_rows` | integer | Maximum rows per bulk-upsert request. |
 | `limits.max_job_concurrency` | integer | Maximum concurrent async jobs. |
 | `limits.max_job_events_page` | integer | Maximum job events returned per page. |

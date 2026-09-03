@@ -93,7 +93,8 @@ var attrModelCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("is_default"); v != "" {
 			body["is_default"] = v
 		}
-		data, err := c.Post("attribution/models", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("attribution/models", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -216,7 +217,8 @@ var attrExportScheduleCmd = &cobra.Command{
 				body[f] = v
 			}
 		}
-		data, err := c.Post("attribution/models/"+args[0]+"/exports", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("attribution/models/"+args[0]+"/exports", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -243,6 +245,9 @@ func init() {
 
 	attrModelDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	attrModelDeleteCmd.Flags().String("ids", "", "Comma-separated model IDs to delete in bulk")
+	attrModelDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerIdempotencyKeyFlag(attrModelCreateCmd)
+	registerIdempotencyKeyFlag(attrExportScheduleCmd)
 
 	attrModelCmd.AddCommand(attrModelListCmd, attrModelGetCmd, attrModelCreateCmd, attrModelUpdateCmd, attrModelDeleteCmd)
 

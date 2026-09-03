@@ -173,6 +173,23 @@ class ConversionsController
         return $this->get($convId);
     }
 
+    /**
+     * Read-only preview of delete() for `?dry_run=1`.
+     */
+    public function deletePreview(int $id): array
+    {
+        $existing = $this->get($id);
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'conversions',
+            'mode' => 'soft',
+            'record' => $existing['data'],
+            'cascade' => [],
+            'note' => 'Soft-deletes the conversion, voids its revenue ledger event, and corrects the customer LTV rollups in one transaction.',
+        ]];
+    }
+
     public function delete(int $id): void
     {
         $this->get($id);

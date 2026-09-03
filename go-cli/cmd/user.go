@@ -98,7 +98,8 @@ var userCreateCmd = &cobra.Command{
 				body[f] = v
 			}
 		}
-		data, err := c.Post("users", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("users", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -224,6 +225,9 @@ var userRoleRemoveCmd = &cobra.Command{
 		if roleID == "" {
 			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user roles` lists role ids.")
 		}
+		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+			return renderDeletePreviews(c, "users/"+args[0]+"/roles", []string{roleID})
+		}
 		force, _ := cmd.Flags().GetBool("force")
 		if !force && !confirmPrompt("Remove role %s from user %s?", roleID, args[0]) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
@@ -274,13 +278,22 @@ var userAPIKeyListCmd = &cobra.Command{
 var userAPIKeyCreateCmd = &cobra.Command{
 	Use:   "create <user_id>",
 	Short: "Create an API key for a user",
-	Args:  cobra.ExactArgs(1),
+	Long: "Create an API key. --scope attenuates the key: `read` for a key that can\n" +
+		"never write (reporting agents), `write` for full read/write, or granular\n" +
+		"`<area>:read`/`<area>:write` tokens (comma-separated), e.g.\n" +
+		"`reports:read,forecast-events:read`. Without --scope the key has full\n" +
+		"access (`*`). A scoped key cannot mint a key broader than itself.",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
 		}
-		data, err := c.Post("users/"+args[0]+"/api-keys", nil)
+		var body interface{}
+		if scope, _ := cmd.Flags().GetString("scope"); strings.TrimSpace(scope) != "" {
+			body = map[string]string{"scope": strings.TrimSpace(scope)}
+		}
+		data, err := c.Post("users/"+args[0]+"/api-keys", body)
 		if err != nil {
 			return err
 		}
@@ -297,6 +310,9 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
+		}
+		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+			return renderDeletePreviews(c, "users/"+args[0]+"/api-keys", []string{args[1]})
 		}
 		force, _ := cmd.Flags().GetBool("force")
 		if !force {
@@ -333,7 +349,47 @@ var userAPIKeyRotateCmd = &cobra.Command{
 		updateConfig, _ := cmd.Flags().GetBool("update-config")
 		forceConfigUpdate, _ := cmd.Flags().GetBool("force-config-update")
 
-		createdData, err := c.Post("users/"+userID+"/api-keys", nil)
+		// Rotation must never widen access: without an explicit --scope the
+		// old key's scope is looked up (by its unique 8-char prefix in the
+		// masked listing) and carried onto the new key. A failed lookup
+		// fails the rotation rather than silently minting a full-access key.
+		scope, _ := cmd.Flags().GetString("scope")
+		scope = strings.TrimSpace(scope)
+		if scope == "" && len(oldAPIKey) >= 8 {
+			listData, lerr := c.Get("users/"+userID+"/api-keys", nil)
+			if lerr != nil {
+				return fmt.Errorf("looking up the old key's scope before rotating: %w", lerr)
+			}
+			rows, perr := parseDataArray(listData)
+			if perr != nil {
+				return fmt.Errorf("parsing api-key list while rotating: %w", perr)
+			}
+			prefix := oldAPIKey[:8]
+			matches := 0
+			carried := ""
+			for _, row := range rows {
+				masked, _ := row["api_key"].(string)
+				if strings.HasPrefix(masked, prefix) {
+					matches++
+					if s, ok := row["scope"].(string); ok {
+						carried = s
+					}
+				}
+			}
+			if matches > 1 {
+				return validationError("multiple keys share the prefix %s; cannot infer the old key's scope", prefix).
+					WithHint("Pass --scope explicitly; `p202 user apikey list " + userID + "` shows each key's scope.")
+			}
+			if matches == 1 && carried != "" && carried != "*" {
+				scope = carried
+			}
+		}
+
+		var createBody interface{}
+		if scope != "" && scope != "*" {
+			createBody = map[string]string{"scope": scope}
+		}
+		createdData, err := c.Post("users/"+userID+"/api-keys", createBody)
 		if err != nil {
 			return err
 		}
@@ -386,9 +442,14 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			}
 		}
 
+		newScope := scope
+		if newScope == "" {
+			newScope = "*"
+		}
 		out := map[string]interface{}{
 			"user_id":               userID,
 			"new_api_key":           newAPIKey,
+			"scope":                 newScope,
 			"old_key_deleted":       deletedOld,
 			"old_key_kept":          keepOld || !deletedOld,
 			"config_updated":        configUpdated,
@@ -484,14 +545,20 @@ func init() {
 
 	userDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	userDeleteCmd.Flags().String("ids", "", "Comma-separated user IDs to delete in bulk")
+	userDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerIdempotencyKeyFlag(userCreateCmd)
 
 	// Role flags
 	userRoleAssignCmd.Flags().String("role_id", "", "Role ID (alternative to the second positional arg)")
 	userRoleRemoveCmd.Flags().String("role_id", "", "Role ID (alternative to the second positional arg)")
 	userRoleRemoveCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	userRoleRemoveCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
 
 	// API key flags
 	userAPIKeyDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	userAPIKeyDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	userAPIKeyCreateCmd.Flags().String("scope", "", "Scope for the new key: *, read, write, or comma-separated <area>:read/<area>:write tokens (default: full access)")
+	userAPIKeyRotateCmd.Flags().String("scope", "", "Scope for the replacement key (default: the old key's scope, carried over)")
 	userAPIKeyRotateCmd.Flags().Bool("keep-old", false, "Do not delete the old API key")
 	userAPIKeyRotateCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt when deleting old key")
 	userAPIKeyRotateCmd.Flags().Bool("update-config", false, "Update local ~/.p202/config.json with the new API key")

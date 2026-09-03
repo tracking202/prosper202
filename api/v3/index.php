@@ -156,6 +156,31 @@ try {
     // Controller factories — instantiated lazily by the router handlers.
     $crud = fn(string $class) => new $class($db, $userId);
 
+    // Single-create idempotency: when a POST create carries an
+    // Idempotency-Key header, the response is recorded and replayed on a
+    // retry with the same key and payload, so a retried create cannot
+    // duplicate the row. Mirrors bulkUpsert(): the payload hash is part of
+    // the storage scope (same key + different payload is a fresh create,
+    // not a conflict) and replays carry idempotent_replay: true. API-key
+    // creation is deliberately not wrapped — its response contains the
+    // secret, which must never persist in the server-state store.
+    $idempotent = static function (string $operation, array $requestPayload, callable $op) use ($userId, $stateStore): array {
+        $key = trim((string)(RequestContext::header('idempotency-key') ?? ''));
+        if ($key === '') {
+            return $op();
+        }
+        $scope = 'create:' . $operation . ':user:' . $userId
+            . ':request:' . ServerStateStore::canonicalHash($requestPayload);
+        $existing = $stateStore->getIdempotent($scope, $key);
+        if (is_array($existing)) {
+            $existing['idempotent_replay'] = true;
+            return $existing;
+        }
+        $response = $op();
+        $stateStore->putIdempotent($scope, $key, $response);
+        return $response;
+    };
+
     $router = new Router();
 
     // ── CRUD resources ───────────────────────────────────────────────
@@ -171,11 +196,11 @@ try {
     ];
 
     foreach ($crudMap as $resource => $class) {
-        $router->group("/$resource", function (Router $r) use ($class, $crud, &$queryParams, &$payload) {
+        $router->group("/$resource", function (Router $r) use ($resource, $class, $crud, $idempotent, &$queryParams, &$payload) {
             $r->get('',       fn() => $crud($class)->list($queryParams));
             $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
             $r->get('/{id}',  fn($ctx) => $crud($class)->get((int)$ctx['id']));
-            $r->post('',      fn() => ['_status' => 201] + $crud($class)->create($payload));
+            $r->post('',      fn() => ['_status' => 201] + $idempotent($resource, $payload, fn() => $crud($class)->create($payload)));
             $r->put('/{id}',  fn($ctx) => $crud($class)->update((int)$ctx['id'], $payload));
             $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete((int)$ctx['id'])));
         });
@@ -191,11 +216,11 @@ try {
     $router->get('/clicks/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']));
 
     // ── Conversions ──────────────────────────────────────────────────
-    $router->group('/conversions', function (Router $r) use ($crud, &$queryParams, &$payload) {
+    $router->group('/conversions', function (Router $r) use ($crud, $idempotent, &$queryParams, &$payload) {
         $cls = \Api\V3\Controllers\ConversionsController::class;
         $r->get('',        fn() => $crud($cls)->list($queryParams));
         $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
-        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->create($payload));
+        $r->post('',       fn() => ['_status' => 201] + $idempotent('conversions', $payload, fn() => $crud($cls)->create($payload)));
         $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
     });
 
@@ -333,37 +358,37 @@ try {
     ]);
 
     // ── Rotators ─────────────────────────────────────────────────────
-    $router->group('/rotators', function (Router $r) use ($crud, &$queryParams, &$payload) {
+    $router->group('/rotators', function (Router $r) use ($crud, $idempotent, &$queryParams, &$payload) {
         $cls = \Api\V3\Controllers\RotatorsController::class;
         $r->get('',        fn() => $crud($cls)->list($queryParams));
         $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
-        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->create($payload));
+        $r->post('',       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($cls)->create($payload)));
         $r->put('/{id}',   fn($ctx) => $crud($cls)->update((int)$ctx['id'], $payload));
         $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
 
         // Sub-resource: rules
         $r->get('/{id}/rules',             fn($ctx) => $crud($cls)->listRules((int)$ctx['id']));
-        $r->post('/{id}/rules',            fn($ctx) => $crud($cls)->createRule((int)$ctx['id'], $payload));
+        $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . (int)$ctx['id'] . '/rules', $payload, fn() => $crud($cls)->createRule((int)$ctx['id'], $payload)));
         $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($cls)->updateRule((int)$ctx['id'], (int)$ctx['ruleId'], $payload));
         $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
     });
 
     // ── Attribution ──────────────────────────────────────────────────
-    $router->group('/attribution/models', function (Router $r) use ($crud, &$queryParams, &$payload) {
+    $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, &$queryParams, &$payload) {
         $cls = \Api\V3\Controllers\AttributionController::class;
         $r->get('',        fn() => $crud($cls)->listModels($queryParams));
-        $r->post('',       fn() => ['_status' => 201] + $crud($cls)->createModel($payload));
+        $r->post('',       fn() => ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload)));
         $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel((int)$ctx['id']));
         $r->put('/{id}',   fn($ctx) => $crud($cls)->updateModel((int)$ctx['id'], $payload));
         $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteModel((int)$ctx['id'])));
 
         $r->get('/{id}/snapshots', fn($ctx) => $crud($cls)->listSnapshots((int)$ctx['id'], $queryParams));
         $r->get('/{id}/exports',   fn($ctx) => $crud($cls)->listExports((int)$ctx['id']));
-        $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $crud($cls)->scheduleExport((int)$ctx['id'], $payload));
+        $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $idempotent('attribution/models/' . (int)$ctx['id'] . '/exports', $payload, fn() => $crud($cls)->scheduleExport((int)$ctx['id'], $payload)));
     });
 
     // ── Users (admin-gated writes, self-or-admin for reads) ──────────
-    $router->group('/users', function (Router $r) use ($db, $auth, &$payload) {
+    $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, &$payload) {
         $make = fn() => new \Api\V3\Controllers\UsersController($db);
 
         $r->get('/roles', fn() => $make()->listRoles());
@@ -372,9 +397,9 @@ try {
             $auth->requireAdmin();
             return $make()->list();
         });
-        $r->post('', function () use ($auth, $make, &$payload) {
+        $r->post('', function () use ($auth, $make, $idempotent, &$payload) {
             $auth->requireAdmin();
-            return ['_status' => 201] + $make()->create($payload);
+            return ['_status' => 201] + $idempotent('users', $payload, fn() => $make()->create($payload));
         });
         $r->get('/{id}', function ($ctx) use ($auth, $make) {
             $auth->requireSelfOrAdmin((int)$ctx['id']);
@@ -406,9 +431,9 @@ try {
             $auth->requireSelfOrAdmin((int)$ctx['id']);
             return $make()->listApiKeys((int)$ctx['id']);
         });
-        $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make) {
+        $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, &$payload) {
             $auth->requireSelfOrAdmin((int)$ctx['id']);
-            return ['_status' => 201] + $make()->createApiKey((int)$ctx['id']);
+            return ['_status' => 201] + $make()->createApiKey((int)$ctx['id'], $payload, $auth);
         });
         $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make) {
             $auth->requireSelfOrAdmin((int)$ctx['id']);
@@ -468,6 +493,39 @@ try {
         'auth' => 'Authorization: Bearer <api_key>',
     ]);
 
+    // ── DELETE dry-run previews ─────────────────────────────────────
+    // `?dry_run=1` on a DELETE returns what the delete would remove without
+    // removing anything. Fail-closed by construction: a dry-run DELETE is
+    // only ever dispatched to a handler registered here, and a DELETE with
+    // dry_run set whose path has no preview is rejected — it can never fall
+    // through to the real delete. (LTV deletes have no previews yet, so
+    // they reject.) Auth checks that live inside the main users handlers
+    // are replicated on their previews below; group middleware still runs
+    // from the main match before this router is consulted.
+    $previewRouter = new Router();
+    foreach ($crudMap as $resource => $class) {
+        $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview((int)$ctx['id']));
+    }
+    $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview((int)$ctx['id']));
+    $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
+    $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
+    $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
+    $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
+        $make = fn() => new \Api\V3\Controllers\UsersController($db);
+        $r->delete('/{id}', function ($ctx) use ($auth, $make) {
+            $auth->requireAdmin();
+            return $make()->deletePreview((int)$ctx['id']);
+        });
+        $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make) {
+            $auth->requireSelfOrAdmin((int)$ctx['id']);
+            return $make()->deleteApiKeyPreview((int)$ctx['id'], (string)$ctx['keyId']);
+        });
+        $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make) {
+            $auth->requireAdmin();
+            return $make()->removeRolePreview((int)$ctx['id'], (int)$ctx['roleId']);
+        });
+    });
+
     // ─── Dispatch ────────────────────────────────────────────────────
     $match = $router->match($method, $path);
 
@@ -476,13 +534,44 @@ try {
         exit;
     }
 
+    // Central scope enforcement: every authenticated endpoint requires
+    // `<area>:read` for GET/HEAD and `<area>:write` for anything else, so a
+    // key scoped `read` can never write and a key scoped to one area can
+    // never touch another. Keys without a stored scope parse to `*` and pass
+    // everything, exactly as before scoping existed. `/capabilities` and the
+    // API root stay readable by any valid key — clients probe them to decide
+    // what they can do. Route-level checks (requireAdmin, the ltv/sync
+    // requireScope middleware) still run below; this is the floor, not a
+    // replacement.
+    $scopeArea = scopeAreaForPath($path);
+    if ($scopeArea !== null) {
+        $scopeAction = in_array($method, ['GET', 'HEAD'], true) ? 'read' : 'write';
+        if ($method === 'POST' && $path === '/sync/plan') {
+            // Planning computes a diff without applying it; sync:read keys
+            // could always call it through the group middleware.
+            $scopeAction = 'read';
+        }
+        $auth->requireScope($scopeArea . ':' . $scopeAction);
+    }
+
     // Run middleware stack
     foreach ($match['middleware'] as $mw) {
         $mw();
     }
 
-    // Execute handler
-    $response = ($match['handler'])($match['pathParams']);
+    // Execute handler (or the dry-run preview for a DELETE that asked for one)
+    $dryRun = deleteDryRunRequested($method, $queryParams);
+    if ($dryRun) {
+        $preview = $previewRouter->match('DELETE', $path);
+        if ($preview === null) {
+            throw new ValidationException('dry_run is not supported for this endpoint', [
+                'dry_run' => 'This DELETE has no preview; remove dry_run to perform the delete.',
+            ]);
+        }
+        $response = ($preview['handler'])($preview['pathParams']);
+    } else {
+        $response = ($match['handler'])($match['pathParams']);
+    }
 
     // ─── Send response ───────────────────────────────────────────────
     if ($response === null) {
@@ -516,6 +605,48 @@ function tap(object $obj, callable $fn): null
 {
     $fn($obj);
     return null;
+}
+
+/**
+ * Whether a DELETE request asked for a dry-run preview. The parameter is
+ * strictly validated: an unrecognized value is an error, never a fall-through
+ * to the real delete — a typo like dry_run=tru must not destroy data.
+ */
+function deleteDryRunRequested(string $method, array $queryParams): bool
+{
+    if ($method !== 'DELETE' || !array_key_exists('dry_run', $queryParams)) {
+        return false;
+    }
+    $flag = strtolower(trim((string)$queryParams['dry_run']));
+    if (in_array($flag, ['1', 'true', 'yes', ''], true)) {
+        return true;
+    }
+    if (in_array($flag, ['0', 'false', 'no'], true)) {
+        return false;
+    }
+    throw new ValidationException('Invalid dry_run value', [
+        'dry_run' => "Use dry_run=1 to preview the delete, or omit the parameter to perform it (got '$flag').",
+    ]);
+}
+
+/**
+ * Map a request path to the scope area that governs it, or null for paths
+ * exempt from scope checks (discovery metadata and the pre-auth endpoints).
+ */
+function scopeAreaForPath(string $path): ?string
+{
+    $segments = explode('/', ltrim($path, '/'));
+    $first = $segments[0] ?? '';
+    if ($first === '' || $first === 'capabilities' || $first === 'versions') {
+        return null;
+    }
+    if ($first === 'system' && ($segments[1] ?? '') === 'health') {
+        return null; // answered before authentication
+    }
+    if ($first === 'changes' || $first === 'audit') {
+        return 'sync';
+    }
+    return in_array($first, Auth::KNOWN_SCOPE_AREAS, true) ? $first : null;
 }
 
 function shouldEmitDeprecationNotice(string $path, string $requestedVersion): bool

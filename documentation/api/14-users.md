@@ -91,10 +91,37 @@ Response (full key shown only once):
   "data": {
     "api_key": "p202_a1b2c3d4e5f6g7h8i9j0...",
     "user_id": 1,
+    "scope": "*",
     "created_at": 1709942400
   }
 }
 ```
+
+### Generate a Scoped API Key
+
+Pass `scope` (a comma-separated string or an array of tokens) to attenuate
+the key — see [API Key Scopes](00-api-integrations.md#api-key-scopes) for
+the grammar and enforcement rules. A read-only key for a reporting agent:
+
+```bash
+curl -X POST https://your-domain.com/api/v3/users/1/api-keys \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"scope": "read"}'
+```
+
+Rules enforced at creation:
+
+- Unknown tokens are rejected with `422` (a typo must not mint a key that
+  silently denies everything).
+- A scoped key cannot mint a key broader than itself (`403`), and must name
+  an explicit scope for any key it creates (`422` otherwise) — defaulting to
+  full access would be a silent escalation.
+- On a pre-1.9.75 schema without the `scope` column, requesting a scope
+  returns `409` pointing at the upgrade.
+
+`GET /users/{id}/api-keys` returns each key's `scope` alongside the masked
+key (keys without one show `*`).
 
 ### Assign Admin Role
 

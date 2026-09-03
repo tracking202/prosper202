@@ -3486,6 +3486,9 @@ func TestUserAPIKeyRotateDeletesOldKeyByDefault(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
 		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
 			createPath = r.URL.Path
 			w.WriteHeader(200)
@@ -3526,6 +3529,9 @@ func TestUserAPIKeyRotateKeepOldSkipsDelete(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
 		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
@@ -3557,6 +3563,9 @@ func TestUserAPIKeyRotateKeepOldSkipsDelete(t *testing.T) {
 func TestUserAPIKeyRotateUpdateConfig(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
 		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))

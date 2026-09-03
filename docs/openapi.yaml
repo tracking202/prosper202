@@ -21,6 +21,29 @@ info:
     }
     ```
 
+    ## API Key Scopes
+    A key may carry a scope that attenuates it independently of the owning
+    user's roles: `*` (full, the default), `read`, `write`, or granular
+    `<area>:read` / `<area>:write` tokens (`write` implies `read`). GET/HEAD
+    requires `<area>:read`, everything else `<area>:write`; `/capabilities`
+    and `/versions` stay readable by any valid key. A scoped key cannot
+    create a key broader than itself. Denials are `403` naming the required
+    scope. Advertised via `features.api_key_scopes`.
+
+    ## Idempotent Creates
+    Single POST creates across the operator surface (CRUD entities,
+    conversions, rotators and rules, attribution models and exports, users)
+    honor an optional `Idempotency-Key` header: a retry with the same key
+    and payload replays the recorded response (`idempotent_replay: true`)
+    instead of creating a duplicate. Not honored on API-key creation or the
+    LTV write endpoints. Advertised via `features.create_idempotency`.
+    Bulk-upsert endpoints continue to REQUIRE the header.
+
+    ## Delete Dry-Run
+    Every operator-surface DELETE accepts `dry_run=1` and returns a preview
+    (record, soft/hard mode, cascade counts) without deleting. Fail-closed
+    on unsupported endpoints. Advertised via `features.delete_dry_run`.
+
     ## Errors
     Error responses use a consistent format:
     ```json
@@ -377,11 +400,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Campaigns]
       summary: Delete a campaign
       description: Soft delete (sets aff_campaign_deleted = 1).
       operationId: deleteCampaign
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Campaign deleted
         "404":
@@ -462,11 +489,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Affiliate Networks]
       summary: Delete an affiliate network
       description: Soft delete.
       operationId: deleteAffNetwork
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Network deleted
         "404":
@@ -547,11 +578,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [PPC Networks]
       summary: Delete a PPC network
       description: Soft delete.
       operationId: deletePpcNetwork
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Network deleted
         "404":
@@ -632,11 +667,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [PPC Accounts]
       summary: Delete a PPC account
       description: Soft delete.
       operationId: deletePpcAccount
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Account deleted
         "404":
@@ -717,11 +756,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Trackers]
       summary: Delete a tracker
       description: Hard delete (trackers do not use soft delete).
       operationId: deleteTracker
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Tracker deleted
         "404":
@@ -834,11 +877,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Landing Pages]
       summary: Delete a landing page
       description: Soft delete.
       operationId: deleteLandingPage
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Landing page deleted
         "404":
@@ -919,11 +966,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Text Ads]
       summary: Delete a text ad
       description: Soft delete.
       operationId: deleteTextAd
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Text ad deleted
         "404":
@@ -1070,11 +1121,15 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Conversions]
       summary: Delete a conversion
       description: Soft delete (sets deleted = 1).
       operationId: deleteConversion
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Conversion deleted
         "404":
@@ -1417,11 +1472,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Rotators]
       summary: Delete a rotator
       description: Hard delete. Cascades to all rules, criteria, and redirects.
       operationId: deleteRotator
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Rotator deleted
         "404":
@@ -1479,11 +1538,15 @@ paths:
         schema:
           type: integer
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Rotators]
       summary: Delete a rule
       description: Hard delete. Cascades to criteria and redirects.
       operationId: deleteRotatorRule
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Rule deleted
         "404":
@@ -1576,11 +1639,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Attribution]
       summary: Delete an attribution model
       description: Cascading hard delete. Removes all touchpoints, snapshots, and exports for this model.
       operationId: deleteAttributionModel
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Model deleted
         "404":
@@ -1774,11 +1841,15 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Users]
       summary: Delete a user
       description: Admin only. Soft delete (sets user_deleted = 1).
       operationId: deleteUser
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: User deleted
         "403":
@@ -1820,11 +1891,15 @@ paths:
         schema:
           type: integer
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Users]
       summary: Remove a role from a user
       description: Admin only.
       operationId: removeRole
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: Role removed
         "403":
@@ -1856,6 +1931,9 @@ paths:
                         api_key:
                           type: string
                           description: Masked key (first 8 chars + asterisks)
+                        scope:
+                          type: string
+                          description: The key's scope; `*` for full-access keys
                         created_at:
                           type: integer
         "403":
@@ -1866,7 +1944,29 @@ paths:
       description: |
         Self or admin. Returns the full 64-character hex key. This is the only
         time the full key is visible -- store it securely.
+
+        An optional `scope` attenuates the key (see "API Key Scopes" above).
+        Unknown tokens are rejected with 422; a scoped caller must name an
+        explicit scope no broader than its own (422/403); on a pre-1.9.75
+        schema without the scope column, requesting a scope returns 409.
       operationId: createApiKey
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scope:
+                  description: |
+                    Comma-separated string or array of scope tokens: `*`,
+                    `read`, `write`, or `<area>:read` / `<area>:write`.
+                    Omit for a full-access key.
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
       responses:
         "201":
           description: API key created
@@ -1883,6 +1983,9 @@ paths:
                       api_key:
                         type: string
                         description: Full 64-character hex API key (shown once)
+                      scope:
+                        type: string
+                        description: The stored scope; `*` for full access
                       created_at:
                         type: integer
         "403":
@@ -1898,11 +2001,15 @@ paths:
         schema:
           type: string
     delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
       tags: [Users]
       summary: Delete an API key
       description: Self or admin.
       operationId: deleteApiKey
       responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         "204":
           description: API key deleted
         "403":
@@ -1968,6 +2075,20 @@ components:
   # ─── Shared parameters ──────────────────────────────────────────────
 
   parameters:
+    dryRun:
+      name: dry_run
+      in: query
+      required: false
+      description: |
+        Preview the delete without performing it. With `dry_run=1` the
+        response is `200` with `{data: {dry_run, action, resource, mode,
+        record, cascade}}` instead of `204`. Fail-closed: endpoints without
+        preview support (the LTV deletes) reject the parameter with `422`,
+        and an unrecognized value is a `422` — never a delete. Supported
+        when the capabilities report `features.delete_dry_run`.
+      schema:
+        type: string
+        enum: ["1", "true", "yes", "0", "false", "no"]
     resourceId:
       name: id
       in: path

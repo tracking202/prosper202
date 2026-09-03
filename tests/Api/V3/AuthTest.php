@@ -343,4 +343,107 @@ final class AuthTest extends TestCase
         $this->expectExceptionCode(403);
         $auth->requireScope('sync:write');
     }
+
+    private function authWithScope(string $scope, string $role = 'user'): Auth
+    {
+        $db = $this->createMysqliMock([
+            "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
+            '202_api_keys' => ['user_id' => 5, 'scope' => $scope],
+            '202_user_role' => [['role_name' => $role]],
+        ]);
+
+        return Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+    }
+
+    public function testGlobalReadScopeSatisfiesAreaReadsButNoWrites(): void
+    {
+        $auth = $this->authWithScope('read');
+        $this->assertTrue($auth->hasScope('reports:read'));
+        $this->assertTrue($auth->hasScope('campaigns:read'));
+        $this->assertTrue($auth->hasScope('ltv:read'));
+        $this->assertFalse($auth->hasScope('campaigns:write'));
+        $this->assertFalse($auth->hasScope('sync:write'));
+    }
+
+    public function testGlobalWriteScopeImpliesRead(): void
+    {
+        $auth = $this->authWithScope('write');
+        $this->assertTrue($auth->hasScope('campaigns:write'));
+        $this->assertTrue($auth->hasScope('campaigns:read'));
+        $this->assertTrue($auth->hasScope('reports:read'));
+    }
+
+    public function testAreaWriteImpliesAreaReadOnly(): void
+    {
+        $auth = $this->authWithScope('ltv:write');
+        $this->assertTrue($auth->hasScope('ltv:write'));
+        $this->assertTrue($auth->hasScope('ltv:read'));
+        $this->assertFalse($auth->hasScope('sync:read'));
+        $this->assertFalse($auth->hasScope('reports:read'));
+    }
+
+    public function testScopedKeyAttenuatesAdmin(): void
+    {
+        $auth = $this->authWithScope('reports:read', 'Admin');
+        $this->assertTrue($auth->isAdmin());
+        $this->assertTrue($auth->hasScope('reports:read'));
+        $this->assertFalse($auth->hasScope('campaigns:write'));
+
+        $this->expectException(AuthException::class);
+        $this->expectExceptionCode(403);
+        $auth->requireScope('campaigns:write');
+    }
+
+    public function testUnscopedKeyKeepsFullAccess(): void
+    {
+        // No scope column at all (pre-1.9.75 schema): the key parses to `*`.
+        $db = $this->createMysqliMock([
+            '202_api_keys' => ['user_id' => 5],
+            '202_user_role' => [['role_name' => 'user']],
+        ]);
+        $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+        $this->assertTrue($auth->hasFullScope());
+        $this->assertTrue($auth->hasScope('campaigns:write'));
+        $this->assertTrue($auth->hasScope('sync:write'));
+    }
+
+    public function testRequireScopeErrorNamesTheRequiredScope(): void
+    {
+        $auth = $this->authWithScope('read');
+        $this->expectException(AuthException::class);
+        $this->expectExceptionMessageMatches("/requires 'campaigns:write'/");
+        $auth->requireScope('campaigns:write');
+    }
+
+    public function testIsValidScopeTokenGrammar(): void
+    {
+        $this->assertTrue(Auth::isValidScopeToken('*'));
+        $this->assertTrue(Auth::isValidScopeToken('read'));
+        $this->assertTrue(Auth::isValidScopeToken('write'));
+        $this->assertTrue(Auth::isValidScopeToken('reports:read'));
+        $this->assertTrue(Auth::isValidScopeToken('forecast-events:write'));
+        $this->assertTrue(Auth::isValidScopeToken(' LTV:READ '));
+
+        $this->assertFalse(Auth::isValidScopeToken(''));
+        $this->assertFalse(Auth::isValidScopeToken('reports'));
+        $this->assertFalse(Auth::isValidScopeToken('reports:delete'));
+        $this->assertFalse(Auth::isValidScopeToken('bogus:read'));
+        $this->assertFalse(Auth::isValidScopeToken('a:b:c'));
+    }
+
+    public function testCoversScopeTokenNeverEscalates(): void
+    {
+        $readOnly = $this->authWithScope('read');
+        $this->assertTrue($readOnly->coversScopeToken('read'));
+        $this->assertTrue($readOnly->coversScopeToken('reports:read'));
+        $this->assertFalse($readOnly->coversScopeToken('write'));
+        $this->assertFalse($readOnly->coversScopeToken('reports:write'));
+        $this->assertFalse($readOnly->coversScopeToken('*'));
+
+        $writeKey = $this->authWithScope('write');
+        $this->assertTrue($writeKey->coversScopeToken('read'));
+        $this->assertTrue($writeKey->coversScopeToken('write'));
+        $this->assertTrue($writeKey->coversScopeToken('campaigns:write'));
+        $this->assertFalse($writeKey->coversScopeToken('*'));
+    }
 }

@@ -57,7 +57,11 @@ p202 config show
 | `p202 user list` | List users |
 | `p202 system health` | Health check |
 
-All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable.
+All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Three flags apply across the board on servers that advertise them in `/capabilities`:
+
+- every `create` takes `--idempotency-key <key>` — a retry with the same key and payload replays the recorded response instead of creating a duplicate (`features.create_idempotency`);
+- every `delete` (including `--ids` bulk and `rotator rule-delete` / `user role remove` / `user apikey delete`) takes `--dry-run` — a read-only preview of the record and cascade counts the delete would remove (`features.delete_dry_run`);
+- `user apikey create` takes `--scope` to mint least-privilege keys (`*`, `read`, `write`, or `<area>:read`/`<area>:write` tokens), and `user apikey rotate` carries the old key's scope onto the replacement (`features.api_key_scopes`).
 
 ## Multi-Profile Management
 
@@ -247,8 +251,9 @@ is ignored; the hint carries the next action. Hints come from three sources,
 in order of precedence: a hint attached by the command itself (for example,
 which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
-for the failure class (401/403 key check, 404 use `list` for ids, 409 update
-instead of create, 429 back off, 5xx retry then `p202 system health`,
+for the failure class (401/403 key check — or, when the 403 names a required
+scope, minting a key with `--scope`; 404 use `list` for ids; 409 update
+instead of create; 429 back off; 5xx retry then `p202 system health`;
 network check the URL and `p202 config test`); and for any remaining
 validation error, a pointer to `<command> --help`.
 

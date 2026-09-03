@@ -121,24 +121,123 @@ final readonly class Auth
         return $this->scopes;
     }
 
+    /**
+     * Scope areas the API enforces. One area per top-level route family;
+     * `changes` and `audit` routes fall under `sync`.
+     */
+    public const KNOWN_SCOPE_AREAS = [
+        'campaigns',
+        'aff-networks',
+        'ppc-networks',
+        'ppc-accounts',
+        'trackers',
+        'landing-pages',
+        'text-ads',
+        'forecast-events',
+        'clicks',
+        'conversions',
+        'reports',
+        'ltv',
+        'rotators',
+        'attribution',
+        'users',
+        'system',
+        'sync',
+    ];
+
+    /**
+     * Whether a scope check passes for this key.
+     *
+     * Grammar: `*` (full access), `read` / `write` (all areas), and
+     * `<area>:read` / `<area>:write`. `write` implies `read` at both the
+     * global and the area level. A key's scope attenuates: it limits what
+     * the key can do regardless of the user's roles, so an admin holding an
+     * explicitly scoped key is bound by that scope. Keys with no stored
+     * scope parse to `*` and behave exactly as before scoping existed.
+     */
     public function hasScope(string $scope): bool
     {
         $scope = strtolower(trim($scope));
         if ($scope === '') {
             return true;
         }
-        if ($this->isAdmin()) {
+        if (in_array('*', $this->scopes, true) || in_array($scope, $this->scopes, true)) {
             return true;
         }
-        return in_array('*', $this->scopes, true)
-            || in_array($scope, $this->scopes, true);
+
+        $parts = explode(':', $scope);
+        if (count($parts) !== 2) {
+            return false;
+        }
+        [$area, $action] = $parts;
+        if ($action === 'read') {
+            return in_array('read', $this->scopes, true)
+                || in_array('write', $this->scopes, true)
+                || in_array($area . ':write', $this->scopes, true);
+        }
+        if ($action === 'write') {
+            return in_array('write', $this->scopes, true);
+        }
+        return false;
     }
 
     public function requireScope(string $scope): void
     {
         if (!$this->hasScope($scope)) {
-            throw new AuthException('Insufficient API key scope for this operation.', 403);
+            throw new AuthException(
+                sprintf(
+                    "Insufficient API key scope for this operation: requires '%s' (key has: %s).",
+                    strtolower(trim($scope)),
+                    implode(',', $this->scopes)
+                ),
+                403
+            );
         }
+    }
+
+    /**
+     * Whether this key is allowed to mint a key carrying $token.
+     * A key can never hand out more access than it holds itself.
+     */
+    public function coversScopeToken(string $token): bool
+    {
+        $token = strtolower(trim($token));
+        return match ($token) {
+            '*' => in_array('*', $this->scopes, true),
+            'read' => in_array('*', $this->scopes, true)
+                || in_array('read', $this->scopes, true)
+                || in_array('write', $this->scopes, true),
+            'write' => in_array('*', $this->scopes, true)
+                || in_array('write', $this->scopes, true),
+            default => $this->hasScope($token),
+        };
+    }
+
+    /** Whether this key carries the full-access scope (`*`). */
+    public function hasFullScope(): bool
+    {
+        return in_array('*', $this->scopes, true);
+    }
+
+    /**
+     * Whether $token is a scope this API understands: `*`, `read`, `write`,
+     * or `<area>:read` / `<area>:write` for a known area. Unknown tokens are
+     * rejected at key-creation time so a typo cannot mint a key that silently
+     * denies everything.
+     */
+    public static function isValidScopeToken(string $token): bool
+    {
+        $token = strtolower(trim($token));
+        if (in_array($token, ['*', 'read', 'write'], true)) {
+            return true;
+        }
+        $parts = explode(':', $token);
+        if (count($parts) !== 2) {
+            return false;
+        }
+        [$area, $action] = $parts;
+        return in_array($area, self::KNOWN_SCOPE_AREAS, true)
+            && in_array($action, ['read', 'write'], true);
     }
 
     public function isAdmin(): bool
@@ -161,7 +260,7 @@ final readonly class Auth
         }
     }
 
-    private static function apiKeyScopeColumnExists(\mysqli $db): bool
+    public static function apiKeyScopeColumnExists(\mysqli $db): bool
     {
         $stmt = $db->prepare("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
         if (!$stmt) {
@@ -182,7 +281,7 @@ final readonly class Auth
     }
 
     /** @return string[] */
-    private static function parseScopes(string $raw): array
+    public static function parseScopes(string $raw): array
     {
         $raw = trim($raw);
         if ($raw === '') {

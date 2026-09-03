@@ -110,6 +110,8 @@ func HintFor(err error) string {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		switch {
+		case apiErr.Status == 403 && strings.Contains(strings.ToLower(apiErr.Message), "scope"):
+			return "This key's scope does not cover the operation. Use a key with the needed scope, or mint one: `p202 user apikey create <user_id> --scope write` (scopes: *, read, write, <area>:read, <area>:write)."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
@@ -326,6 +328,19 @@ func (c *Client) Post(path string, body interface{}) ([]byte, error) {
 	return c.do("POST", path, nil, body)
 }
 
+// PostIdempotent sends a create with an Idempotency-Key header. Retrying the
+// same key and payload replays the recorded response (idempotent_replay: true
+// in the body) instead of creating a duplicate. Requires a server whose
+// capabilities report features.create_idempotency; older servers ignore the
+// header and create normally.
+func (c *Client) PostIdempotent(path string, body interface{}, idempotencyKey string) ([]byte, error) {
+	key := strings.TrimSpace(idempotencyKey)
+	if key == "" {
+		return c.Post(path, body)
+	}
+	return c.doWithHeaders("POST", path, nil, body, map[string]string{"Idempotency-Key": key})
+}
+
 func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
 }
@@ -335,7 +350,18 @@ func (c *Client) Delete(path string) error {
 	return err
 }
 
+// DeletePreview asks the server what a delete would remove without removing
+// it (DELETE with dry_run=1) and returns the preview body. The server fails
+// closed: endpoints without preview support reject rather than deleting.
+func (c *Client) DeletePreview(path string) ([]byte, error) {
+	return c.do("DELETE", path, map[string]string{"dry_run": "1"}, nil)
+}
+
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {
+	return c.doWithHeaders(method, path, params, body, nil)
+}
+
+func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, headers map[string]string) ([]byte, error) {
 	u := c.baseURL + "/" + strings.TrimLeft(path, "/")
 
 	if len(params) > 0 {
@@ -366,6 +392,9 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
 	if idx := strings.LastIndex(c.baseURL, "/api/v"); idx != -1 {
 		req.Header.Set("X-P202-API-Version", c.baseURL[idx+5:])
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 
 	resp, err := c.http.Do(req)

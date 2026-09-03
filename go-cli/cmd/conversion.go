@@ -119,7 +119,8 @@ var conversionCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("transaction_id"); v != "" {
 			body["transaction_id"] = v
 		}
-		data, err := c.Post("conversions", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("conversions", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -143,6 +144,7 @@ var conversionDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		idsFlag, _ := cmd.Flags().GetString("ids")
 		if strings.TrimSpace(idsFlag) != "" {
 			idList, parseErr := parseIDList(idsFlag)
@@ -151,6 +153,10 @@ var conversionDeleteCmd = &cobra.Command{
 			}
 			if len(idList) == 0 {
 				return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
+			}
+
+			if dryRun {
+				return renderDeletePreviews(c, "conversions", idList)
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
@@ -174,6 +180,10 @@ var conversionDeleteCmd = &cobra.Command{
 				return partialFailureError("failed to delete %d conversions", failed)
 			}
 			return nil
+		}
+
+		if dryRun {
+			return renderDeletePreviews(c, "conversions", []string{args[0]})
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
@@ -204,9 +214,11 @@ func init() {
 	conversionCreateCmd.Flags().String("payout", "", "Payout amount")
 	conversionCreateCmd.Flags().String("conversion_payout", "", "Legacy alias for --payout")
 	conversionCreateCmd.Flags().String("transaction_id", "", "Transaction ID for deduplication")
+	registerIdempotencyKeyFlag(conversionCreateCmd)
 
 	conversionDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	conversionDeleteCmd.Flags().String("ids", "", "Comma-separated conversion IDs to delete in bulk")
+	conversionDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
 
 	conversionCmd.AddCommand(conversionListCmd, conversionGetCmd, conversionCreateCmd, conversionDeleteCmd)
 	rootCmd.AddCommand(conversionCmd)
