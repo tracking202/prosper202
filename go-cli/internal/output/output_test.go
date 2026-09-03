@@ -519,13 +519,63 @@ func TestTrimLongDecimal(t *testing.T) {
 	cases := map[string]string{
 		"0.288613861":   "0.2886",
 		"-54.807953180": "-54.808",
-		"2.20":          "2.20",   // <=4 decimals untouched
-		"90008":         "90008",  // integer untouched
+		"2.20":          "2.20",  // <=4 decimals untouched
+		"90008":         "90008", // integer untouched
 		"Bing - Search": "Bing - Search",
 	}
 	for in, want := range cases {
 		if got := trimLongDecimal(in); got != want {
 			t.Errorf("trimLongDecimal(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// --- terminal hardening ---
+
+func TestTerminalCellStripsAnsiEscapes(t *testing.T) {
+	got := terminalCell("evil\x1b[2J\x1b[0;31mred")
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("terminalCell left an ESC byte in %q", got)
+	}
+	if !strings.Contains(got, "evil") || !strings.Contains(got, "red") {
+		t.Errorf("visible text should survive, got %q", got)
+	}
+}
+
+func TestTerminalCellDropsInvisibleAndBidi(t *testing.T) {
+	got := terminalCell("safe\u202E\u2066\u200B\uFEFFtext")
+	if got != "safetext" {
+		t.Errorf("terminalCell = %q, want %q", got, "safetext")
+	}
+	// Tag characters spell out invisible ASCII.
+	got = terminalCell("x\U000E0069\U000E0067y")
+	if got != "xy" {
+		t.Errorf("terminalCell = %q, want %q", got, "xy")
+	}
+}
+
+func TestTerminalCellCollapsesControlRunsAndKeepsColumns(t *testing.T) {
+	if got := terminalCell("a\n\t\r\x00b"); got != "a b" {
+		t.Errorf("terminalCell = %q, want %q", got, "a b")
+	}
+	if got := terminalCell("plain keyword 42"); got != "plain keyword 42" {
+		t.Errorf("plain text must pass unchanged, got %q", got)
+	}
+}
+
+func TestTableRenderingSanitizesCellsButJSONStaysRaw(t *testing.T) {
+	payload := []byte("{\"data\":[{\"name\":\"kw\\u001b[2Jboom\",\"total_clicks\":3}]}")
+
+	table := captureStdout(t, func() { RenderWith(payload, Opts{}) })
+	if strings.Contains(table, "\x1b") {
+		t.Errorf("table output contains a raw ESC byte:\n%q", table)
+	}
+	if !strings.Contains(table, "boom") {
+		t.Errorf("visible text should survive in the table:\n%q", table)
+	}
+
+	raw := captureStdout(t, func() { RenderWith(payload, Opts{JSON: true}) })
+	if !strings.Contains(raw, "\\u001b") && !strings.Contains(raw, "\x1b") {
+		t.Errorf("JSON output must keep the raw value for machine consumers:\n%q", raw)
 	}
 }

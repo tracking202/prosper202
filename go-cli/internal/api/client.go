@@ -16,6 +16,25 @@ import (
 
 const maxResponseSize = 10 << 20 // 10 MB
 
+// stagedMode, when set (the root --staged flag), stamps staged=1 onto every
+// mutating request so the server records the write as a proposal (a staged
+// change with a server-issued id) instead of executing it. The
+// /staged-changes endpoints themselves are exempt — applying or discarding a
+// proposal must never itself be staged. Servers advertise support via
+// features.staged_writes; on writes that cannot be staged the server fails
+// closed with a 422 rather than executing.
+var stagedMode = false
+
+// SetStagedMode turns proposal mode on or off for every subsequent request.
+func SetStagedMode(on bool) {
+	stagedMode = on
+}
+
+// StagedMode reports whether proposal mode is on.
+func StagedMode() bool {
+	return stagedMode
+}
+
 type Client struct {
 	rootURL string
 	baseURL string
@@ -118,6 +137,8 @@ func HintFor(err error) string {
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
 		case apiErr.Status == 409:
 			return "A matching record already exists. Run the matching `... list` to find it, then `... update` it instead of creating."
+		case (apiErr.Status == 400 || apiErr.Status == 422) && strings.Contains(strings.ToLower(apiErr.Message), "staged is not supported"):
+			return "This endpoint cannot be staged; drop --staged to run the command directly (capabilities lists features.staged_writes)."
 		case apiErr.Status == 422 && len(apiErr.FieldErrors) > 0:
 			return "Fix the field(s) listed above and retry."
 		case apiErr.Status == 400 || apiErr.Status == 422:
@@ -350,6 +371,13 @@ func (c *Client) Delete(path string) error {
 	return err
 }
 
+// DeleteReturning is Delete keeping the response body — used when the
+// response carries content, e.g. the 202 staged-change envelope under
+// --staged.
+func (c *Client) DeleteReturning(path string) ([]byte, error) {
+	return c.do("DELETE", path, nil, nil)
+}
+
 // DeletePreview asks the server what a delete would remove without removing
 // it (DELETE with dry_run=1) and returns the preview body. The server fails
 // closed: endpoints without preview support reject rather than deleting.
@@ -363,6 +391,19 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 
 func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, headers map[string]string) ([]byte, error) {
 	u := c.baseURL + "/" + strings.TrimLeft(path, "/")
+
+	if stagedMode &&
+		(method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE") &&
+		!strings.HasPrefix(strings.TrimLeft(path, "/"), "staged-changes") &&
+		params["dry_run"] == "" {
+		// A dry-run preview is a read; staging it would be rejected by the
+		// server's mutual-exclusion check, so an explicit --dry-run wins
+		// over the global --staged mode.
+		if params == nil {
+			params = map[string]string{}
+		}
+		params["staged"] = "1"
+	}
 
 	if len(params) > 0 {
 		v := url.Values{}

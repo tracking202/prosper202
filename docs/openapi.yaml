@@ -23,8 +23,9 @@ info:
 
     ## API Key Scopes
     A key may carry a scope that attenuates it independently of the owning
-    user's roles: `*` (full, the default), `read`, `write`, or granular
-    `<area>:read` / `<area>:write` tokens (`write` implies `read`). GET/HEAD
+    user's roles: `*` (full, the default), `read`, `write`, `stage`, or
+    granular `<area>:read` / `<area>:write` / `<area>:stage` tokens
+    (`write` implies `read` and `stage`). GET/HEAD
     requires `<area>:read`, everything else `<area>:write`; `/capabilities`
     and `/versions` stay readable by any valid key. A scoped key cannot
     create a key broader than itself. Denials are `403` naming the required
@@ -43,6 +44,16 @@ info:
     Every operator-surface DELETE accepts `dry_run=1` and returns a preview
     (record, soft/hard mode, cascade counts) without deleting. Fail-closed
     on unsupported endpoints. Advertised via `features.delete_dry_run`.
+
+    ## Staged Writes
+    `staged=1` on an operator-surface write records it as a proposal with a
+    server-issued change id (202) instead of executing it. `/staged-changes`
+    lists, shows, applies, and discards proposals; applying re-dispatches
+    the recorded write so validation and authorization re-run against
+    current state under the applier's credentials. The `stage` scope action
+    mints propose-only keys. Fail-closed on unsupported endpoints;
+    `staged` and `dry_run` are mutually exclusive. Advertised via
+    `features.staged_writes`.
 
     ## Errors
     Error responses use a consistent format:
@@ -2065,6 +2076,80 @@ paths:
 # Components
 # ═══════════════════════════════════════════════════════════════════════
 
+  /staged-changes:
+    get:
+      tags: [StagedChanges]
+      summary: List staged changes
+      description: |
+        Your staged writes, newest first. `status` filters; `all=1` returns
+        every user's changes (admin only). Requires `staged-changes:read`.
+      operationId: listStagedChanges
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [staged, applying, applied, discarded]
+        - name: all
+          in: query
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: Staged changes
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /staged-changes/{changeId}:
+    parameters:
+      - $ref: "#/components/parameters/changeId"
+    get:
+      tags: [StagedChanges]
+      summary: Get one staged change
+      description: Payload and (for deletes) the embedded dry-run preview. Own changes, or any as admin.
+      operationId: getStagedChange
+      responses:
+        "200":
+          description: The staged change
+        "404":
+          description: Not found
+
+  /staged-changes/{changeId}/apply:
+    parameters:
+      - $ref: "#/components/parameters/changeId"
+    post:
+      tags: [StagedChanges]
+      summary: Apply a staged change
+      description: |
+        Performs the recorded write by re-dispatching it through the real
+        route: validation, route authorization, and scope checks re-run
+        against current state under the applier's credentials. Requires
+        `staged-changes:write` plus the write scope of the change's area.
+        The staged→applied transition is atomic; a concurrent second apply
+        gets 409. A failed apply returns the change to staged with the
+        error recorded.
+      operationId: applyStagedChange
+      responses:
+        "200":
+          description: The applied change and the write's result
+        "409":
+          description: Not staged, expired, or applied concurrently
+
+  /staged-changes/{changeId}/discard:
+    parameters:
+      - $ref: "#/components/parameters/changeId"
+    post:
+      tags: [StagedChanges]
+      summary: Discard a staged change
+      description: Ends the proposal without performing it. Requires `staged-changes:stage`.
+      operationId: discardStagedChange
+      responses:
+        "200":
+          description: The discarded change
+        "409":
+          description: Not in the staged state
+
 components:
   securitySchemes:
     BearerAuth:
@@ -2075,6 +2160,14 @@ components:
   # ─── Shared parameters ──────────────────────────────────────────────
 
   parameters:
+    changeId:
+      name: changeId
+      in: path
+      required: true
+      description: A staged-change id (chg_ + 24 hex chars), issued by staging a write
+      schema:
+        type: string
+        pattern: "^chg_[0-9a-f]{24}$"
     dryRun:
       name: dry_run
       in: query

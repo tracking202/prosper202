@@ -431,6 +431,51 @@ final class AuthTest extends TestCase
         $this->assertFalse(Auth::isValidScopeToken('a:b:c'));
     }
 
+    public function testStageScopeIsProposeOnly(): void
+    {
+        // The propose-only agent shape: read everything, stage writes,
+        // perform none.
+        $auth = $this->authWithScope('read,stage');
+        $this->assertTrue($auth->hasScope('campaigns:stage'));
+        $this->assertTrue($auth->hasScope('users:stage'));
+        $this->assertTrue($auth->hasScope('campaigns:read'));
+        $this->assertFalse($auth->hasScope('campaigns:write'));
+        $this->assertFalse($auth->hasScope('staged-changes:write'));
+
+        // stage alone grants neither reads nor writes.
+        $stageOnly = $this->authWithScope('stage');
+        $this->assertTrue($stageOnly->hasScope('campaigns:stage'));
+        $this->assertFalse($stageOnly->hasScope('campaigns:read'));
+        $this->assertFalse($stageOnly->hasScope('campaigns:write'));
+    }
+
+    public function testWriteScopeImpliesStage(): void
+    {
+        $this->assertTrue($this->authWithScope('write')->hasScope('campaigns:stage'));
+        $this->assertTrue($this->authWithScope('campaigns:write')->hasScope('campaigns:stage'));
+        $this->assertFalse($this->authWithScope('campaigns:write')->hasScope('rotators:stage'));
+    }
+
+    public function testStageScopeTokensAreValid(): void
+    {
+        $this->assertTrue(Auth::isValidScopeToken('stage'));
+        $this->assertTrue(Auth::isValidScopeToken('reports:stage'));
+        $this->assertTrue(Auth::isValidScopeToken('staged-changes:read'));
+        $this->assertFalse(Auth::isValidScopeToken('stage:read'));
+    }
+
+    public function testScopeAreaForPathMapsRouteFamilies(): void
+    {
+        $this->assertSame('campaigns', Auth::scopeAreaForPath('/campaigns/42'));
+        $this->assertSame('sync', Auth::scopeAreaForPath('/changes/campaigns'));
+        $this->assertSame('sync', Auth::scopeAreaForPath('/audit/sync-jobs'));
+        $this->assertSame('staged-changes', Auth::scopeAreaForPath('/staged-changes/chg_ab/apply'));
+        $this->assertNull(Auth::scopeAreaForPath('/capabilities'));
+        $this->assertNull(Auth::scopeAreaForPath('/system/health'));
+        $this->assertSame('system', Auth::scopeAreaForPath('/system/version'));
+        $this->assertNull(Auth::scopeAreaForPath('/'));
+    }
+
     public function testCoversScopeTokenNeverEscalates(): void
     {
         $readOnly = $this->authWithScope('read');

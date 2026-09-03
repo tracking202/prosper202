@@ -10,10 +10,27 @@ namespace Api\V3\Support;
  * Keywords, city/region/ISP names, and browser/platform/device names are
  * authored (directly or via derivation) by whoever clicks a tracking link.
  * Anything an AI agent or dashboard renders from those fields is untrusted
- * third-party text, so serialization strips the characters that let a
- * hostile value imitate terminal output, reorder rendered text, or smuggle
- * invisible content, and caps the length so one row cannot flood a context
- * window. The stored value is never modified — this runs on the way out.
+ * third-party text, so serialization strips what lets a hostile value hide
+ * content, imitate protocol markup, or flood a context window:
+ *
+ *  - Unicode is NFKC-normalized (when ext-intl is available) so lookalike
+ *    codepoints cannot dodge the patterns below.
+ *  - Invisible characters are removed: zero-width and joiner characters,
+ *    bidirectional embeddings/overrides/isolates, soft hyphens, variation
+ *    selectors, tag characters (which spell out invisible ASCII), and other
+ *    format controls.
+ *  - C0/C1 control characters (terminal escapes included) become spaces,
+ *    and whitespace runs collapse — these fields are single-line names.
+ *  - Text shaped like model protocol markup — special tokens (`<|...|>`)
+ *    and transcript/tool-call tags — is replaced with `[removed]`, repeated
+ *    to a fixpoint so one marker nested inside another cannot reassemble
+ *    after the inner one goes.
+ *  - Length is capped, with a visible truncation marker.
+ *
+ * The stored value is never modified — this runs on the way out. Character
+ * hygiene is all it promises: instruction-shaped *visible* text passes
+ * through, and the reader's contract (docs/cli-agent.md, "Untrusted data in
+ * responses") is that such text is data to report on, never to act on.
  */
 final class ResponseSanitizer
 {
@@ -23,15 +40,31 @@ final class ResponseSanitizer
     public const TRUNCATION_MARKER = '…[truncated]';
 
     /**
-     * Characters removed outright:
-     *  - C0 controls (incl. NUL/ESC; \t \n \r are replaced by a space first
-     *    so words don't fuse) and DEL
-     *  - C1 controls U+0080–U+009F
-     *  - zero-width and joiner characters U+200B–U+200F, U+FEFF
-     *  - bidirectional embedding/override/isolate controls U+202A–U+202E,
-     *    U+2066–U+2069
+     * Invisible and format characters removed outright. Mirrors the ranges
+     * the commerce-agents reference sanitizer strips: soft hyphen,
+     * zero-width space/joiners + LRM/RLM, line/paragraph separators, bidi
+     * embeddings/overrides, word joiner + invisible operators, bidi
+     * isolates, Arabic letter mark, Mongolian vowel separator, deprecated
+     * format controls, variation selectors (+ supplement), interlinear
+     * annotation controls, BOM, and tag characters.
      */
-    private const STRIP_PATTERN = '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]|[\x{0080}-\x{009F}\x{200B}-\x{200F}\x{FEFF}\x{202A}-\x{202E}\x{2066}-\x{2069}]/u';
+    private const INVISIBLE_PATTERN = '/[\x{00AD}\x{200B}-\x{200F}\x{2028}\x{2029}\x{202A}-\x{202E}\x{2060}-\x{2064}\x{2066}-\x{2069}\x{061C}\x{180E}\x{206A}-\x{206F}\x{FE00}-\x{FE0F}\x{FFF9}-\x{FFFB}\x{FEFF}\x{E0000}-\x{E007F}\x{E0100}-\x{E01EF}]/u';
+
+    /** C0 and C1 controls plus DEL, replaced by spaces (fields are one line). */
+    private const CONTROL_PATTERN = '/[\x00-\x1F\x7F]|[\x{0080}-\x{009F}]/u';
+
+    /**
+     * Model special tokens (`<|...|>`) and transcript/tool-call tag shapes,
+     * optionally namespaced, with bounded attribute lists. Only tag-shaped
+     * text matches; quantifiers are bounded so the pattern stays linear on
+     * hostile input.
+     */
+    private const SPECIAL_TOKEN_PATTERN = '/<[ \t]*\/?[ \t]*(?:'
+        . '(?:[a-z][\w.-]{0,30}:)?(?:transcript|conversation|function_calls|function_results'
+        . '|invoke|tool_use|tool_result|system|human|user|assistant)'
+        . '|[a-z][\w.-]{0,30}:(?:parameter|result)'
+        . ')\b(?:[ \t]+[\w:.-]{1,40}[ \t]*=[ \t]*(?:"[^"]{0,200}"|\'[^\']{0,200}\'|[^\s"\'>]{1,200})){0,8}[ \t]*\/?>'
+        . '|<\|[^|<>\r\n]{1,64}\|>/iu';
 
     public static function cleanVisitorString(?string $value, int $maxLength = self::MAX_FIELD_LENGTH): ?string
     {
@@ -46,11 +79,32 @@ final class ResponseSanitizer
             $value = is_string($converted) ? $converted : '';
         }
 
-        $value = str_replace(["\t", "\n", "\r"], ' ', $value);
-        $stripped = preg_replace(self::STRIP_PATTERN, '', $value);
-        // preg_replace returns null only on engine failure; fail closed to
-        // an empty string rather than passing the raw value through.
-        $value = $stripped ?? '';
+        // NFKC folds lookalikes (fullwidth, compatibility forms) into the
+        // codepoints the patterns below actually name. ext-intl is optional
+        // on older installs; without it the remaining passes still run.
+        if (class_exists(\Normalizer::class)) {
+            $normalized = \Normalizer::normalize($value, \Normalizer::NFKC);
+            if (is_string($normalized)) {
+                $value = $normalized;
+            }
+        }
+
+        $value = self::replaceOrEmpty(self::INVISIBLE_PATTERN, '', $value);
+        $value = self::replaceOrEmpty(self::CONTROL_PATTERN, ' ', $value);
+
+        // Remove protocol-shaped markup to a fixpoint, so a token nested
+        // inside another cannot reassemble once the inner one is gone.
+        // The replacement contains no '<', so each pass strictly shrinks
+        // what can match and the loop terminates.
+        while (true) {
+            $stripped = self::replaceOrEmpty(self::SPECIAL_TOKEN_PATTERN, '[removed]', $value);
+            if ($stripped === $value) {
+                break;
+            }
+            $value = $stripped;
+        }
+
+        $value = trim(self::replaceOrEmpty('/\s+/u', ' ', $value));
 
         if (mb_strlen($value) > $maxLength) {
             $value = mb_substr($value, 0, $maxLength) . self::TRUNCATION_MARKER;
@@ -73,5 +127,14 @@ final class ResponseSanitizer
             }
         }
         return $row;
+    }
+
+    /**
+     * preg_replace returns null only on engine failure; fail closed to an
+     * empty string rather than passing the raw value through.
+     */
+    private static function replaceOrEmpty(string $pattern, string $replacement, string $subject): string
+    {
+        return preg_replace($pattern, $replacement, $subject) ?? '';
     }
 }

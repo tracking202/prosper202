@@ -66,6 +66,46 @@ leaves you unsure what to do next, the error needs a hint. The user-facing
 contract is documented in `documentation/cli/10-go-cli.md` under "Errors";
 keep it in sync.
 
+## Development environment notes (sandboxed/CI sessions)
+
+Findings from working on this repo in network-restricted agent sandboxes.
+Check here before burning time on tooling failures.
+
+- **`composer install` can fail with "Could not authenticate against
+  github.com".** Proxied sandboxes often serve anonymous *git* reads of
+  public GitHub repos but not Composer's authenticated dist downloads
+  (codeload/API). Retrying, `--prefer-source`, and global
+  `preferred-install` overrides do not help when the phar downloads
+  themselves are blocked. Result: `vendor/` ends up partially populated
+  (no `vendor/bin/`, empty `vendor/phpunit/...`).
+- **Workaround that works:** run `composer dump-autoload --dev` (the PSR-4
+  maps in `composer.json` cover `Api\V3\`, `Prosper202\`, `Tests\`, etc.,
+  and most runtime deps usually did land in `vendor/`), then run tests with
+  the standalone PHPUnit 9 phar: download
+  `https://phar.phpunit.de/phpunit-9.phar` (phar.phpunit.de is reachable)
+  and run `php phpunit-9.phar --bootstrap vendor/autoload.php tests/...`.
+  The phar provides PHPUnit's own classes; the project autoloader provides
+  everything else.
+- **Expect ~76 environmental test errors on a partial vendor/:** suites
+  needing Symfony Console (`tests/Cli/*`), Slim
+  (`tests/Attribution/Api/*`), a live DB singleton, or memcache error out
+  with "class not found"-style messages. They are not regressions — run the
+  suites relevant to your change (e.g. `tests/Api tests/User tests/Crud
+  tests/Rotator tests/Conversion tests/Report tests/Upgrade tests/Click
+  tests/Install` all pass without those deps) and say explicitly which
+  suites could not run.
+- **`docs/` matches a gitignore pattern** even though `docs/cli-agent.md`,
+  `docs/cli.md`, and `docs/openapi.yaml` are tracked. `git add docs/<file>`
+  on the tracked files works but prints an "ignored paths" warning (exit
+  1); use `git add -f` or ignore the warning after confirming the files
+  staged with `git status`.
+- **Go commands must run from `go-cli/`** (`cd go-cli && go vet ./... && go
+  test ./...`); the repo root is not a Go module. The forecast package's
+  acceptance suites take ~40s; `-short` skips them.
+- **phpstan needs `vendor/bin/` and a `phpstan.neon`** (gitignored), so it
+  generally cannot run in these sandboxes — say so rather than implying it
+  passed.
+
 ## Review discipline
 - Review every file individually. Batch scanning causes context overload and misses real bugs.
 - Read the file first, then think about what each line does, especially error paths.

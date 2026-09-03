@@ -228,6 +228,9 @@ var userRoleRemoveCmd = &cobra.Command{
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 			return renderDeletePreviews(c, "users/"+args[0]+"/roles", []string{roleID})
 		}
+		if api.StagedMode() {
+			return stageDeletes(c, "users/"+args[0]+"/roles", []string{roleID})
+		}
 		force, _ := cmd.Flags().GetBool("force")
 		if !force && !confirmPrompt("Remove role %s from user %s?", roleID, args[0]) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
@@ -313,6 +316,9 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 			return renderDeletePreviews(c, "users/"+args[0]+"/api-keys", []string{args[1]})
+		}
+		if api.StagedMode() {
+			return stageDeletes(c, "users/"+args[0]+"/api-keys", []string{args[1]})
 		}
 		force, _ := cmd.Flags().GetBool("force")
 		if !force {

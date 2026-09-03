@@ -55,13 +55,15 @@ p202 config show
 | `p202 dashboard` | Overview of clicks, conversions, revenue, cost, profit, ROI |
 | `p202 analytics` | Grouped performance analytics shorthand |
 | `p202 user list` | List users |
+| `p202 change list` | Review staged writes awaiting approval |
 | `p202 system health` | Health check |
 
-All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Three flags apply across the board on servers that advertise them in `/capabilities`:
+All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Four behaviors apply across the board on servers that advertise them in `/capabilities`:
 
 - every `create` takes `--idempotency-key <key>` — a retry with the same key and payload replays the recorded response instead of creating a duplicate (`features.create_idempotency`);
 - every `delete` (including `--ids` bulk and `rotator rule-delete` / `user role remove` / `user apikey delete`) takes `--dry-run` — a read-only preview of the record and cascade counts the delete would remove (`features.delete_dry_run`);
-- `user apikey create` takes `--scope` to mint least-privilege keys (`*`, `read`, `write`, or `<area>:read`/`<area>:write` tokens), and `user apikey rotate` carries the old key's scope onto the replacement (`features.api_key_scopes`).
+- the global `--staged` flag turns any write into a recorded proposal with a server-issued change id instead of executing it; `p202 change list|show|apply|discard` reviews and resolves the queue, with the write re-validated at apply time (`features.staged_writes`);
+- `user apikey create` takes `--scope` to mint least-privilege keys (`*`, `read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage` tokens — `read,stage` is the propose-only agent shape), and `user apikey rotate` carries the old key's scope onto the replacement (`features.api_key_scopes`).
 
 ## Multi-Profile Management
 

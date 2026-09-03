@@ -279,7 +279,158 @@ func TestApikeyRotateAmbiguousPrefixDemandsExplicitScope(t *testing.T) {
 	}
 }
 
+// --- Staged writes ---
+
+func TestGlobalStagedFlagStampsWrites(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.WriteHeader(202)
+		w.Write([]byte(`{"data":{"change_id":"chg_aabbccddeeff001122334455","status":"staged","method":"POST","path":"/campaigns"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("campaign", "create",
+		"--aff_campaign_name", "A", "--aff_campaign_url", "https://x.example",
+		"--staged", "--json")
+	if err != nil {
+		t.Fatalf("campaign create --staged error: %v", err)
+	}
+	if got := gotQuery.Get("staged"); got != "1" {
+		t.Errorf("staged param = %q, want %q", got, "1")
+	}
+	if !strings.Contains(stdout, "chg_aabbccddeeff001122334455") {
+		t.Errorf("stdout should render the staged-change envelope, got:\n%s", stdout)
+	}
+}
+
+func TestStagedDeleteRendersEnvelopeWithoutConfirmation(t *testing.T) {
+	var gotMethod string
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotQuery = r.URL.Query()
+		w.WriteHeader(202)
+		w.Write([]byte(`{"data":{"change_id":"chg_aabbccddeeff001122334455","status":"staged","method":"DELETE","path":"/campaigns/42"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	// No --force: staging is a proposal, not a deletion, so it must not
+	// prompt (a prompt would read empty stdin, cancel, and never call out).
+	stdout, _, err := executeCommand("campaign", "delete", "42", "--staged")
+	if err != nil {
+		t.Fatalf("campaign delete --staged error: %v", err)
+	}
+	if gotMethod != "DELETE" || gotQuery.Get("staged") != "1" {
+		t.Errorf("expected DELETE with staged=1, got %s %v", gotMethod, gotQuery)
+	}
+	if !strings.Contains(stdout, "chg_") {
+		t.Errorf("stdout should render the staged-change envelope, got:\n%s", stdout)
+	}
+}
+
+func TestStagedModeDoesNotStampChangeOrDryRunCalls(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.RequestURI())
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"change_id":"chg_aabbccddeeff001122334455","status":"applied"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	// Applying under global --staged must not stage the apply itself.
+	if _, _, err := executeCommand("change", "apply", "chg_aabbccddeeff001122334455", "--force", "--staged"); err != nil {
+		t.Fatalf("change apply error: %v", err)
+	}
+	// An explicit --dry-run preview under global --staged stays a preview.
+	if _, _, err := executeCommand("campaign", "delete", "42", "--dry-run", "--staged"); err != nil {
+		t.Fatalf("campaign delete --dry-run --staged error: %v", err)
+	}
+
+	for _, p := range paths {
+		if strings.Contains(p, "staged-changes") && strings.Contains(p, "staged=1") {
+			t.Errorf("staged-changes call must not carry staged=1: %s", p)
+		}
+		if strings.Contains(p, "dry_run=1") && strings.Contains(p, "staged=1") {
+			t.Errorf("dry-run preview must not also be staged: %s", p)
+		}
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 requests, got %d: %v", len(paths), paths)
+	}
+}
+
+func TestChangeListPassesFilters(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	if _, _, err := executeCommand("change", "list", "--status", "staged", "--all"); err != nil {
+		t.Fatalf("change list error: %v", err)
+	}
+	if gotPath != "/api/v3/staged-changes" {
+		t.Errorf("path = %q, want /api/v3/staged-changes", gotPath)
+	}
+	if gotQuery.Get("status") != "staged" || gotQuery.Get("all") != "1" {
+		t.Errorf("query = %v, want status=staged and all=1", gotQuery)
+	}
+}
+
+func TestChangeApplyForceSkipsTheFetchAndPosts(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"change":{"change_id":"chg_aabbccddeeff001122334455","status":"applied"},"result":null}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("change", "apply", "chg_aabbccddeeff001122334455", "--force", "--json")
+	if err != nil {
+		t.Fatalf("change apply --force error: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "POST /api/v3/staged-changes/chg_aabbccddeeff001122334455/apply" {
+		t.Errorf("requests = %v, want a single POST to .../apply", paths)
+	}
+	if !strings.Contains(stdout, "applied") {
+		t.Errorf("stdout should show the applied change, got:\n%s", stdout)
+	}
+}
+
 // --- Hints and exit codes for the new failure classes ---
+
+func TestHintForStagedUnsupportedEndpoint(t *testing.T) {
+	err := &api.APIError{Status: 422, Message: "staged is not supported for this endpoint"}
+	if hint := hintFor(err); !strings.Contains(hint, "--staged") {
+		t.Errorf("hint should tell the agent to drop --staged, got %q", hint)
+	}
+}
 
 func TestHintForScopeDenied403(t *testing.T) {
 	err := &api.APIError{Status: 403, Message: "Insufficient API key scope for this operation: requires 'campaigns:write' (key has: read)."}

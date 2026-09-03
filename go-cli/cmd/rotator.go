@@ -161,6 +161,9 @@ var rotatorDeleteCmd = &cobra.Command{
 			if dryRun {
 				return renderDeletePreviews(c, "rotators", idList)
 			}
+			if api.StagedMode() {
+				return stageDeletes(c, "rotators", idList)
+			}
 
 			force, _ := cmd.Flags().GetBool("force")
 			if !force && !confirmPrompt("Delete %d rotators and all their rules?", len(idList)) {
@@ -187,6 +190,9 @@ var rotatorDeleteCmd = &cobra.Command{
 
 		if dryRun {
 			return renderDeletePreviews(c, "rotators", []string{args[0]})
+		}
+		if api.StagedMode() {
+			return stageDeletes(c, "rotators", []string{args[0]})
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
@@ -285,6 +291,9 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 			if dryRun {
 				return renderDeletePreviews(c, "rotators/"+rotatorID+"/rules", idList)
 			}
+			if api.StagedMode() {
+				return stageDeletes(c, "rotators/"+rotatorID+"/rules", idList)
+			}
 			force, _ := cmd.Flags().GetBool("force")
 			if !force {
 				fmt.Printf("Delete %d rules from rotator %s? [y/N] ", len(idList), rotatorID)
@@ -316,6 +325,9 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 
 		if dryRun {
 			return renderDeletePreviews(c, "rotators/"+args[0]+"/rules", []string{args[1]})
+		}
+		if api.StagedMode() {
+			return stageDeletes(c, "rotators/"+args[0]+"/rules", []string{args[1]})
 		}
 
 		force, _ := cmd.Flags().GetBool("force")

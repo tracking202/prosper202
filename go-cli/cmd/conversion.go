@@ -158,6 +158,9 @@ var conversionDeleteCmd = &cobra.Command{
 			if dryRun {
 				return renderDeletePreviews(c, "conversions", idList)
 			}
+			if api.StagedMode() {
+				return stageDeletes(c, "conversions", idList)
+			}
 
 			force, _ := cmd.Flags().GetBool("force")
 			if !force && !confirmPrompt("Delete %d conversions?", len(idList)) {
@@ -184,6 +187,9 @@ var conversionDeleteCmd = &cobra.Command{
 
 		if dryRun {
 			return renderDeletePreviews(c, "conversions", []string{args[0]})
+		}
+		if api.StagedMode() {
+			return stageDeletes(c, "conversions", []string{args[0]})
 		}
 
 		force, _ := cmd.Flags().GetBool("force")

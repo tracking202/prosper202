@@ -233,6 +233,128 @@ class ServerStateStore
         ];
     }
 
+    // ─── Staged writes ───────────────────────────────────────────────
+    // A staged write is a recorded operator-surface mutation awaiting
+    // approval: the model (or any caller) proposes, a person applies. One
+    // file per staging user; resolved entries stay as the audit trail and
+    // are pruned oldest-first past the retention cap.
+
+    public function stageWriteChange(int $userId, array $change): void
+    {
+        $changeId = (string)($change['change_id'] ?? '');
+        if ($changeId === '') {
+            throw new DatabaseException('Staged change missing change_id');
+        }
+        $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $change): array {
+            $state['items'][$changeId] = $change;
+
+            $resolved = [];
+            foreach ($state['items'] as $id => $item) {
+                if (($item['status'] ?? '') !== 'staged') {
+                    $resolved[$id] = (int)($item['created_at_epoch'] ?? 0);
+                }
+            }
+            if (count($resolved) > self::DEFAULT_RETENTION) {
+                asort($resolved);
+                $drop = count($resolved) - self::DEFAULT_RETENTION;
+                foreach (array_slice(array_keys($resolved), 0, $drop) as $dropId) {
+                    unset($state['items'][$dropId]);
+                }
+            }
+
+            return $state;
+        });
+    }
+
+    public function getStagedChangeForUser(int $userId, string $changeId): ?array
+    {
+        $state = $this->readJsonFile($this->stagedChangesPath($userId), ['items' => []]);
+        $item = $state['items'][$changeId] ?? null;
+        return is_array($item) ? $item : null;
+    }
+
+    /**
+     * Locate a staged change regardless of which user staged it (admin
+     * access). Scans the per-user files; fine at this store's scale.
+     */
+    public function findStagedChange(string $changeId): ?array
+    {
+        foreach ($this->listStagedChangeFiles() as $path) {
+            $state = $this->readJsonFile($path, ['items' => []]);
+            $item = $state['items'][$changeId] ?? null;
+            if (is_array($item)) {
+                return $item;
+            }
+        }
+        return null;
+    }
+
+    /** @return array<int, array<string, mixed>> newest first */
+    public function listStagedChangesForUser(int $userId): array
+    {
+        $state = $this->readJsonFile($this->stagedChangesPath($userId), ['items' => []]);
+        $items = array_values(array_filter($state['items'] ?? [], 'is_array'));
+        usort($items, static fn(array $a, array $b): int => ((int)($b['created_at_epoch'] ?? 0)) <=> ((int)($a['created_at_epoch'] ?? 0)));
+        return $items;
+    }
+
+    /** @return array<int, array<string, mixed>> newest first, across all users */
+    public function listStagedChangesAllUsers(): array
+    {
+        $items = [];
+        foreach ($this->listStagedChangeFiles() as $path) {
+            $state = $this->readJsonFile($path, ['items' => []]);
+            foreach ($state['items'] ?? [] as $item) {
+                if (is_array($item)) {
+                    $items[] = $item;
+                }
+            }
+        }
+        usort($items, static fn(array $a, array $b): int => ((int)($b['created_at_epoch'] ?? 0)) <=> ((int)($a['created_at_epoch'] ?? 0)));
+        return $items;
+    }
+
+    /**
+     * Atomically transform one staged change under the file lock. The
+     * mutator receives the current record and returns the updated one, or
+     * null to reject the transition (e.g. a status precondition failed).
+     * Returns the updated record, or null when the change is missing or the
+     * mutator rejected — the caller decides which error that is.
+     */
+    public function updateStagedChange(int $userId, string $changeId, callable $mutator): ?array
+    {
+        $result = null;
+        $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $mutator, &$result): array {
+            $item = $state['items'][$changeId] ?? null;
+            if (!is_array($item)) {
+                return $state;
+            }
+            $updated = $mutator($item);
+            if (is_array($updated)) {
+                $state['items'][$changeId] = $updated;
+                $result = $updated;
+            }
+            return $state;
+        });
+        return $result;
+    }
+
+    /** @return string[] */
+    private function listStagedChangeFiles(): array
+    {
+        $dir = $this->dir('staged_changes');
+        if (!is_dir($dir)) {
+            return [];
+        }
+        $files = glob($dir . '/user-*.json');
+        return $files === false ? [] : $files;
+    }
+
+    private function stagedChangesPath(int $userId): string
+    {
+        return $this->dir('staged_changes') . '/user-' . $userId . '.json';
+    }
+
     public function appendAudit(array $record): void
     {
         $path = $this->auditPath();

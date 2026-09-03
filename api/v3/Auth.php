@@ -143,17 +143,43 @@ final readonly class Auth
         'users',
         'system',
         'sync',
+        'staged-changes',
     ];
+
+    /**
+     * Map a request path to the scope area that governs it, or null for paths
+     * exempt from scope checks (discovery metadata and the pre-auth
+     * endpoints). `changes` and `audit` routes fall under `sync`.
+     */
+    public static function scopeAreaForPath(string $path): ?string
+    {
+        $segments = explode('/', ltrim($path, '/'));
+        $first = $segments[0] ?? '';
+        if ($first === '' || $first === 'capabilities' || $first === 'versions') {
+            return null;
+        }
+        if ($first === 'system' && ($segments[1] ?? '') === 'health') {
+            return null; // answered before authentication
+        }
+        if ($first === 'changes' || $first === 'audit') {
+            return 'sync';
+        }
+        return in_array($first, self::KNOWN_SCOPE_AREAS, true) ? $first : null;
+    }
 
     /**
      * Whether a scope check passes for this key.
      *
-     * Grammar: `*` (full access), `read` / `write` (all areas), and
-     * `<area>:read` / `<area>:write`. `write` implies `read` at both the
-     * global and the area level. A key's scope attenuates: it limits what
-     * the key can do regardless of the user's roles, so an admin holding an
-     * explicitly scoped key is bound by that scope. Keys with no stored
-     * scope parse to `*` and behave exactly as before scoping existed.
+     * Grammar: `*` (full access), `read` / `write` / `stage` (all areas),
+     * and `<area>:read` / `<area>:write` / `<area>:stage`. `write` implies
+     * `read` and `stage` at both the global and the area level: a key that
+     * may perform a write may also preview and propose it. `stage` implies
+     * neither read nor write — a `read,stage` key is the propose-only shape
+     * for an agent whose staged writes a person applies. A key's scope
+     * attenuates: it limits what the key can do regardless of the user's
+     * roles, so an admin holding an explicitly scoped key is bound by that
+     * scope. Keys with no stored scope parse to `*` and behave exactly as
+     * before scoping existed.
      */
     public function hasScope(string $scope): bool
     {
@@ -177,6 +203,11 @@ final readonly class Auth
         }
         if ($action === 'write') {
             return in_array('write', $this->scopes, true);
+        }
+        if ($action === 'stage') {
+            return in_array('stage', $this->scopes, true)
+                || in_array('write', $this->scopes, true)
+                || in_array($area . ':write', $this->scopes, true);
         }
         return false;
     }
@@ -209,6 +240,9 @@ final readonly class Auth
                 || in_array('write', $this->scopes, true),
             'write' => in_array('*', $this->scopes, true)
                 || in_array('write', $this->scopes, true),
+            'stage' => in_array('*', $this->scopes, true)
+                || in_array('stage', $this->scopes, true)
+                || in_array('write', $this->scopes, true),
             default => $this->hasScope($token),
         };
     }
@@ -221,14 +255,14 @@ final readonly class Auth
 
     /**
      * Whether $token is a scope this API understands: `*`, `read`, `write`,
-     * or `<area>:read` / `<area>:write` for a known area. Unknown tokens are
-     * rejected at key-creation time so a typo cannot mint a key that silently
-     * denies everything.
+     * `stage`, or `<area>:read` / `<area>:write` / `<area>:stage` for a
+     * known area. Unknown tokens are rejected at key-creation time so a typo
+     * cannot mint a key that silently denies everything.
      */
     public static function isValidScopeToken(string $token): bool
     {
         $token = strtolower(trim($token));
-        if (in_array($token, ['*', 'read', 'write'], true)) {
+        if (in_array($token, ['*', 'read', 'write', 'stage'], true)) {
             return true;
         }
         $parts = explode(':', $token);
@@ -237,7 +271,7 @@ final readonly class Auth
         }
         [$area, $action] = $parts;
         return in_array($area, self::KNOWN_SCOPE_AREAS, true)
-            && in_array($action, ['read', 'write'], true);
+            && in_array($action, ['read', 'write', 'stage'], true);
     }
 
     public function isAdmin(): bool

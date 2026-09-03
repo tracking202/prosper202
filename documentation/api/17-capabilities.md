@@ -52,7 +52,8 @@ API version and feature detection.
       "api_key_scopes": true,
       "create_idempotency": true,
       "delete_dry_run": true,
-      "response_sanitization": true
+      "response_sanitization": true,
+      "staged_writes": true
     },
     "limits": {
       "max_bulk_rows": 500,
@@ -84,6 +85,7 @@ API version and feature detection.
 | `features.create_idempotency` | boolean | `Idempotency-Key` honored on single POST creates across the operator surface (retries replay instead of duplicating). |
 | `features.delete_dry_run` | boolean | `?dry_run=1` on DELETE previews the delete without performing it; unsupported endpoints reject rather than fall through. See [Delete Dry-Run](00-api-integrations.md#delete-dry-run). |
 | `features.response_sanitization` | boolean | Visitor-authored strings (keyword/city/region/ISP/browser/platform/device names) are stripped of control and bidirectional characters and length-capped at serialization. |
+| `features.staged_writes` | boolean | `?staged=1` on an operator-surface write records it as a proposal with a server-issued change id; `/staged-changes` lists, applies, and discards, with validation re-run at apply time. See [Staged Writes](00-api-integrations.md#staged-writes). |
 | `limits.max_bulk_rows` | integer | Maximum rows per bulk-upsert request. |
 | `limits.max_job_concurrency` | integer | Maximum concurrent async jobs. |
 | `limits.max_job_events_page` | integer | Maximum job events returned per page. |

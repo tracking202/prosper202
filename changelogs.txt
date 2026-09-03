@@ -1,11 +1,12 @@
 Release notes
 
 Version 1.9.75
--- New: API key scopes — mint least-privilege keys (read-only, write, or per-area) via the v3 API or `p202 user apikey create --scope`; every v3 route enforces the scope, scoped keys bind admins too, and the legacy v1/v2 APIs refuse scoped keys rather than over-granting
+-- New: Staged writes — run any operator-surface write with `--staged` (or `?staged=1`) to record it as an approval-pending proposal with a server-issued change id instead of executing it; `p202 change list/show/apply/discard` reviews and resolves the queue, and applying re-runs the write against current state under the applier's key
+-- New: API key scopes — mint least-privilege keys (read-only, write, per-area, or propose-only `stage`) via the v3 API or `p202 user apikey create --scope`; every v3 route enforces the scope, scoped keys bind admins too, and the legacy v1/v2 APIs refuse scoped keys rather than over-granting
 -- New: Idempotency-Key support on single-entity creates (campaigns, trackers, conversions, rotators and rules, attribution models and exports, users) — a retried create replays the recorded response instead of duplicating
 -- New: Delete dry-run — `?dry_run=1` on the API and `--dry-run` on every CLI delete previews the record and cascade counts without deleting; endpoints without a preview reject the parameter instead of falling through
--- New: Visitor-authored strings in API responses (keywords, city/region/ISP names, browser/platform/device names) are stripped of control and bidirectional-override characters and length-capped at serialization
--- New: Agent eval fixture — a deterministic, re-runnable seed script and eval-case starter set under tests/fixtures/agent-eval/
+-- New: Visitor-authored strings in API responses (keywords, city/region/ISP names, browser/platform/device names) are sanitized at serialization: Unicode normalized, invisible/bidirectional characters and protocol-shaped markup removed, length capped; the CLI also strips terminal escape sequences from table output
+-- New: Agent eval fixture and authoring skill — a deterministic, re-runnable seed script under tests/fixtures/agent-eval/ plus the p202-agent-evals skill for writing snapshot eval cases
 -- Fixed: Deleting a rotator rule now verifies the rule belongs to the rotator before removing its criteria and redirects
 
 Version 1.9.74

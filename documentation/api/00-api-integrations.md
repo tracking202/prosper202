@@ -35,13 +35,18 @@ Scope grammar (comma-separated tokens):
 | ----- | ------ |
 | `*` | Everything (the default for keys created without a scope). |
 | `read` | Every GET/HEAD endpoint. |
-| `write` | Every endpoint (`write` implies `read`). |
-| `<area>:read` / `<area>:write` | One route family; `<area>:write` implies `<area>:read`. |
+| `write` | Every endpoint (`write` implies `read` and `stage`). |
+| `stage` | Staging writes for approval only (see [Staged Writes](#staged-writes)); implies neither reads nor writes. |
+| `<area>:read` / `<area>:write` / `<area>:stage` | One route family; `<area>:write` implies `<area>:read` and `<area>:stage`. |
+
+`read,stage` is the propose-only shape for an agent: it can read everything
+and stage writes, but a person's key performs them.
 
 Areas: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`,
 `trackers`, `landing-pages`, `text-ads`, `forecast-events`, `clicks`,
 `conversions`, `reports`, `ltv`, `rotators`, `attribution`, `users`,
-`system`, `sync` (the `changes` and `audit` routes fall under `sync`).
+`system`, `sync` (the `changes` and `audit` routes fall under `sync`),
+`staged-changes`.
 
 Enforcement is central: GET/HEAD requires `<area>:read`, everything else
 `<area>:write` (`POST /sync/plan` counts as a read — it computes a diff
@@ -94,6 +99,67 @@ rejects `dry_run` with `422` instead of falling through to the real delete,
 and an unrecognized `dry_run` value (anything other than `1/true/yes` or
 `0/false/no`) is a `422`, never a delete. `features.delete_dry_run` in
 [capabilities](17-capabilities.md) advertises support.
+
+## Staged Writes
+
+The model proposes; a person applies. `?staged=1` on an operator-surface
+write (the CRUD entities, conversions, rotators and rules, attribution
+models and exports, users, roles, preferences — not LTV, not bulk-upsert)
+records the operation as a **staged change** with a server-issued id instead
+of executing it, returning `202`:
+
+```json
+{
+  "data": {
+    "change_id": "chg_9f2c4e1a0b7d653e8a1f0c2d4",
+    "status": "staged",
+    "method": "DELETE",
+    "path": "/campaigns/42",
+    "payload": {},
+    "resource_area": "campaigns",
+    "preview": { "dry_run": true, "record": { "...": "..." }, "cascade": [] },
+    "created_by": 1,
+    "expires_at_epoch": 1767312000
+  }
+}
+```
+
+Staged DELETEs embed their dry-run preview when one is available. The
+lifecycle endpoints:
+
+| Method | Path | Scope | Description |
+| ------ | ---- | ----- | ----------- |
+| `GET` | `/staged-changes` | `staged-changes:read` | Your staged changes (`?status=`, `?all=1` for every user's — admin only) |
+| `GET` | `/staged-changes/{id}` | `staged-changes:read` | One change, payload and preview included |
+| `POST` | `/staged-changes/{id}/apply` | `staged-changes:write` **plus** the write scope of the change's area | Perform the recorded write |
+| `POST` | `/staged-changes/{id}/discard` | `staged-changes:stage` | End the proposal without performing it |
+
+The contract, in the terms of Anthropic's commerce-agents reference:
+
+- **Server-issued ids.** Change ids come only from staging or the list
+  endpoints; malformed ids are rejected before lookup.
+- **Guards re-check at apply.** Applying re-dispatches the recorded write
+  through the real route — validation, route authorization, and scope
+  checks re-run against *current* state and the **applier's** credentials.
+  Staging authorizes nothing: a non-admin can stage a user delete, but only
+  an admin's apply performs it.
+- **Propose-only keys.** Staging a write requires `<area>:stage`, which the
+  `stage` scope grants without any write access — so an agent key can be
+  physically incapable of the write it proposes.
+- **One apply.** The staged→applied transition is atomic; a concurrent
+  second apply gets `409`. A failed apply returns the change to `staged`
+  with `last_error` recorded, so it can be corrected or discarded.
+- **Expiry.** Changes expire (24h by default;
+  `P202_STAGED_CHANGE_TTL_SECONDS` overrides) so a stale proposal cannot
+  fire against a world that moved on. Applied and discarded changes remain
+  listed as the audit trail, actor-stamped.
+- **Fail-closed.** `staged=1` on a write outside the allowlist is a `422`,
+  never a silent immediate write; `staged` and `dry_run` together are a
+  `422`.
+
+`features.staged_writes` in [capabilities](17-capabilities.md) advertises
+support. On the CLI, the global `--staged` flag stages any write command
+and `p202 change list|show|apply|discard` is the approval surface.
 
 ## Standard Response Format
 

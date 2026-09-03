@@ -158,6 +158,45 @@ func renderDeletePreviews(c *api.Client, endpoint string, ids []string) error {
 	return nil
 }
 
+// stageDeletes records each delete as a staged change (global --staged mode)
+// and renders the change envelopes. Staging is a proposal, not a deletion,
+// so no confirmation is asked; the delete happens when someone runs
+// `p202 change apply <change_id>`.
+func stageDeletes(c *api.Client, endpoint string, ids []string) error {
+	if len(ids) == 1 {
+		data, err := c.DeleteReturning(endpoint + "/" + ids[0])
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	}
+
+	changes := make([]interface{}, 0, len(ids))
+	failed := 0
+	for _, id := range ids {
+		data, err := c.DeleteReturning(endpoint + "/" + id)
+		if err != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to stage delete for %s: %v\n", id, err)
+			continue
+		}
+		obj, perr := parseDataObject(data)
+		if perr != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to parse staged change for %s: %v\n", id, perr)
+			continue
+		}
+		changes = append(changes, obj)
+	}
+	encoded, _ := json.Marshal(map[string]interface{}{"data": changes})
+	render(encoded)
+	if failed > 0 {
+		return partialFailureError("failed to stage %d of %d deletes", failed, len(ids))
+	}
+	return nil
+}
+
 // withDryRunHint adds the recovery step for servers that predate dry-run
 // support (their 400/422 mentions dry_run) while leaving other errors as-is.
 func withDryRunHint(err error) error {
@@ -192,6 +231,9 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 		if dryRun {
 			return renderDeletePreviews(c, endpoint, ids)
 		}
+		if api.StagedMode() {
+			return stageDeletes(c, endpoint, ids)
+		}
 		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
@@ -217,6 +259,9 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 	}
 	if dryRun {
 		return renderDeletePreviews(c, endpoint, []string{args[0]})
+	}
+	if api.StagedMode() {
+		return stageDeletes(c, endpoint, []string{args[0]})
 	}
 	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
 		fmt.Fprintln(os.Stderr, "Cancelled.")
@@ -686,6 +731,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				if dryRun {
 					return renderDeletePreviews(c, entity.Endpoint, idList)
 				}
+				if api.StagedMode() {
+					return stageDeletes(c, entity.Endpoint, idList)
+				}
 
 				force, _ := cmd.Flags().GetBool("force")
 				if !force && !confirmPrompt("Delete %d %s?", len(idList), entity.Plural) {
@@ -712,6 +760,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 
 			if dryRun {
 				return renderDeletePreviews(c, entity.Endpoint, []string{args[0]})
+			}
+			if api.StagedMode() {
+				return stageDeletes(c, entity.Endpoint, []string{args[0]})
 			}
 
 			force, _ := cmd.Flags().GetBool("force")

@@ -62,6 +62,13 @@ class CapabilitiesController
                     // control and bidirectional characters and length-capped
                     // at serialization (ResponseSanitizer).
                     'response_sanitization' => true,
+                    // ?staged=1 on an operator-surface write records it as a
+                    // proposal with a server-issued change id instead of
+                    // executing; /staged-changes lists, applies, and
+                    // discards. Applying re-runs the write in full against
+                    // current state and the applier's credentials. The
+                    // `stage` scope action mints propose-only keys.
+                    'staged_writes' => true,
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),

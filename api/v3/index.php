@@ -526,6 +526,80 @@ try {
         });
     });
 
+    // ── Staged writes ───────────────────────────────────────────────
+    // `?staged=1` on an operator-surface write records it as a proposal
+    // (server-issued change id) instead of executing it; a person applies
+    // or discards it through /staged-changes. Fail-closed like dry-run: a
+    // write outside this allowlist rejects the parameter rather than
+    // executing, and applying re-dispatches through the real route so
+    // validation and authorization re-run against current state and the
+    // applier's credentials.
+    $stageableRouter = new Router();
+    $stageable = static fn() => true;
+    foreach ($crudMap as $resource => $class) {
+        $stageableRouter->group("/$resource", function (Router $r) use ($stageable) {
+            $r->post('', $stageable);
+            $r->put('/{id}', $stageable);
+            $r->delete('/{id}', $stageable);
+        });
+    }
+    $stageableRouter->group('/conversions', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->delete('/{id}', $stageable);
+    });
+    $stageableRouter->group('/rotators', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+        $r->post('/{id}/rules', $stageable);
+        $r->put('/{id}/rules/{ruleId}', $stageable);
+        $r->delete('/{id}/rules/{ruleId}', $stageable);
+    });
+    $stageableRouter->group('/attribution/models', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+        $r->post('/{id}/exports', $stageable);
+    });
+    $stageableRouter->group('/users', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+        $r->post('/{id}/roles', $stageable);
+        $r->delete('/{id}/roles/{roleId}', $stageable);
+        $r->delete('/{id}/api-keys/{keyId}', $stageable);
+        $r->put('/{id}/preferences', $stageable);
+    });
+
+    $stagedChanges = fn() => new \Api\V3\Controllers\StagedChangesController($stateStore, $auth);
+
+    $router->group('/staged-changes', function (Router $r) use ($stagedChanges, $router, &$queryParams, &$payload) {
+        $r->get('', fn() => $stagedChanges()->list($queryParams));
+        $r->get('/{id}', fn($ctx) => $stagedChanges()->get((string)$ctx['id']));
+        $r->post('/{id}/discard', fn($ctx) => $stagedChanges()->discard((string)$ctx['id']));
+        $r->post('/{id}/apply', function ($ctx) use ($stagedChanges, $router, &$queryParams, &$payload) {
+            return $stagedChanges()->apply(
+                (string)$ctx['id'],
+                function (string $m, string $p, array $body) use ($router, &$queryParams, &$payload) {
+                    $target = $router->match($m, $p);
+                    if ($target === null) {
+                        throw new ConflictException('The staged operation no longer matches a route on this server.');
+                    }
+                    // Handlers close over $payload/$queryParams by reference;
+                    // swap in the recorded body and a clean query string so
+                    // the write runs exactly as proposed (and cannot itself
+                    // be a dry-run or a staged request).
+                    $payload = $body;
+                    $queryParams = [];
+                    foreach ($target['middleware'] as $mw) {
+                        $mw();
+                    }
+                    return ($target['handler'])($target['pathParams']);
+                }
+            );
+        });
+    });
+
     // ─── Dispatch ────────────────────────────────────────────────────
     $match = $router->match($method, $path);
 
@@ -543,6 +617,14 @@ try {
     // what they can do. Route-level checks (requireAdmin, the ltv/sync
     // requireScope middleware) still run below; this is the floor, not a
     // replacement.
+    $stagedWrite = stagedWriteRequested($method, $queryParams);
+    $dryRun = deleteDryRunRequested($method, $queryParams);
+    if ($stagedWrite && $dryRun) {
+        throw new ValidationException('staged and dry_run are mutually exclusive', [
+            'staged' => 'Use dry_run=1 to preview a delete, or staged=1 to record it for approval — not both.',
+        ]);
+    }
+
     $scopeArea = scopeAreaForPath($path);
     if ($scopeArea !== null) {
         $scopeAction = in_array($method, ['GET', 'HEAD'], true) ? 'read' : 'write';
@@ -551,26 +633,66 @@ try {
             // could always call it through the group middleware.
             $scopeAction = 'read';
         }
+        if ($stagedWrite) {
+            // Staging proposes rather than performs, so a propose-only
+            // (`stage`) key suffices; the write scope is required of the
+            // applier instead.
+            $scopeAction = 'stage';
+        }
+        if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {
+            // Discarding one's own proposal is part of proposing.
+            $scopeAction = 'stage';
+        }
         $auth->requireScope($scopeArea . ':' . $scopeAction);
     }
 
-    // Run middleware stack
-    foreach ($match['middleware'] as $mw) {
-        $mw();
-    }
-
-    // Execute handler (or the dry-run preview for a DELETE that asked for one)
-    $dryRun = deleteDryRunRequested($method, $queryParams);
-    if ($dryRun) {
-        $preview = $previewRouter->match('DELETE', $path);
-        if ($preview === null) {
-            throw new ValidationException('dry_run is not supported for this endpoint', [
-                'dry_run' => 'This DELETE has no preview; remove dry_run to perform the delete.',
+    if ($stagedWrite) {
+        // Record the proposal instead of executing. Fail-closed: a write
+        // outside the stageable allowlist rejects the parameter — it must
+        // never fall through to the immediate write.
+        if ($stageableRouter->match($method, $path) === null) {
+            throw new ValidationException('staged is not supported for this endpoint', [
+                'staged' => 'This write cannot be staged; remove staged to perform it directly.',
             ]);
         }
-        $response = ($preview['handler'])($preview['pathParams']);
+        $stagePreview = null;
+        if ($method === 'DELETE') {
+            $previewMatch = $previewRouter->match('DELETE', $path);
+            if ($previewMatch !== null) {
+                try {
+                    $previewResponse = ($previewMatch['handler'])($previewMatch['pathParams']);
+                    if (is_array($previewResponse)) {
+                        $stagePreview = $previewResponse['data'] ?? null;
+                    }
+                } catch (AuthException) {
+                    // The proposer may lack the preview's authorization (e.g.
+                    // a non-admin staging a user delete for an admin to
+                    // apply); stage without the embedded preview. Not-found
+                    // and validation errors still propagate — a proposal
+                    // that cannot name its target is rejected up front.
+                    $stagePreview = null;
+                }
+            }
+        }
+        $response = ['_status' => 202] + $stagedChanges()->stage($method, $path, $payload, $stagePreview);
     } else {
-        $response = ($match['handler'])($match['pathParams']);
+        // Run middleware stack
+        foreach ($match['middleware'] as $mw) {
+            $mw();
+        }
+
+        // Execute handler (or the dry-run preview for a DELETE that asked for one)
+        if ($dryRun) {
+            $preview = $previewRouter->match('DELETE', $path);
+            if ($preview === null) {
+                throw new ValidationException('dry_run is not supported for this endpoint', [
+                    'dry_run' => 'This DELETE has no preview; remove dry_run to perform the delete.',
+                ]);
+            }
+            $response = ($preview['handler'])($preview['pathParams']);
+        } else {
+            $response = ($match['handler'])($match['pathParams']);
+        }
     }
 
     // ─── Send response ───────────────────────────────────────────────
@@ -635,18 +757,29 @@ function deleteDryRunRequested(string $method, array $queryParams): bool
  */
 function scopeAreaForPath(string $path): ?string
 {
-    $segments = explode('/', ltrim($path, '/'));
-    $first = $segments[0] ?? '';
-    if ($first === '' || $first === 'capabilities' || $first === 'versions') {
-        return null;
+    return Auth::scopeAreaForPath($path);
+}
+
+/**
+ * Whether a mutating request asked to be staged for approval instead of
+ * executed. Same strict validation as dry_run: an unrecognized value is an
+ * error, never a fall-through to the immediate write.
+ */
+function stagedWriteRequested(string $method, array $queryParams): bool
+{
+    if (!in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) || !array_key_exists('staged', $queryParams)) {
+        return false;
     }
-    if ($first === 'system' && ($segments[1] ?? '') === 'health') {
-        return null; // answered before authentication
+    $flag = strtolower(trim((string)$queryParams['staged']));
+    if (in_array($flag, ['1', 'true', 'yes', ''], true)) {
+        return true;
     }
-    if ($first === 'changes' || $first === 'audit') {
-        return 'sync';
+    if (in_array($flag, ['0', 'false', 'no'], true)) {
+        return false;
     }
-    return in_array($first, Auth::KNOWN_SCOPE_AREAS, true) ? $first : null;
+    throw new ValidationException('Invalid staged value', [
+        'staged' => "Use staged=1 to stage the write for approval, or omit the parameter to perform it (got '$flag').",
+    ]);
 }
 
 function shouldEmitDeprecationNotice(string $path, string $requestedVersion): bool

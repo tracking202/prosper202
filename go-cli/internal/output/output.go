@@ -277,7 +277,7 @@ func renderTable(items []interface{}, opts Opts) {
 		width := len([]rune(headers[i]))
 		for _, item := range items {
 			obj, _ := item.(map[string]interface{})
-			cell := truncate(formatValue(obj[k]), opts.Wide)
+			cell := truncate(terminalCell(formatValue(obj[k])), opts.Wide)
 			if n := len([]rune(cell)); n > width {
 				width = n
 			}
@@ -293,7 +293,7 @@ func renderTable(items []interface{}, opts Opts) {
 		}
 		vals := make([]string, len(keys))
 		for i, k := range keys {
-			vals[i] = truncate(trimLongDecimal(formatValue(obj[k])), opts.Wide)
+			vals[i] = truncate(terminalCell(trimLongDecimal(formatValue(obj[k]))), opts.Wide)
 		}
 		fmt.Fprintln(w, strings.Join(vals, "\t"))
 	}
@@ -318,6 +318,63 @@ func trimLongDecimal(s string) string {
 	return strings.TrimRight(out, ".")
 }
 
+// terminalCell makes a value safe to print into a human terminal. Report and
+// click fields carry visitor-authored text (keywords, geo/device names), and
+// a hostile value can smuggle ANSI escape sequences (clear the screen, move
+// the cursor, restyle later output) or invisible/bidi characters that make
+// the rendered table lie about its contents. Control characters (C0, C1,
+// DEL) become spaces; invisible and bidirectional format characters are
+// dropped; whitespace runs collapse so tabwriter columns stay intact. Only
+// the human table/object views go through this — JSON, NDJSON, CSV, and
+// --quiet keep raw values for machine consumers, which must treat them as
+// data anyway (docs/cli-agent.md, "Untrusted data in responses").
+func terminalCell(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	lastSpace := false
+	for _, r := range s {
+		switch {
+		case r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F), // C0, DEL, C1
+			r == '\t', r == '\n', r == '\r':
+			if !lastSpace {
+				b.WriteRune(' ')
+				lastSpace = true
+			}
+		case isInvisibleRune(r):
+			// dropped outright
+		default:
+			b.WriteRune(r)
+			lastSpace = r == ' '
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// isInvisibleRune reports the zero-width, bidirectional, and format
+// characters that hide or reorder rendered text (the same ranges the server
+// strips at serialization; this guards output from servers that predate
+// that, and any field the server does not cover).
+func isInvisibleRune(r rune) bool {
+	switch {
+	case r == 0x00AD, // soft hyphen
+		r >= 0x200B && r <= 0x200F, // zero-width space/joiners, LRM/RLM
+		r == 0x2028, r == 0x2029,   // line/paragraph separators
+		r >= 0x202A && r <= 0x202E,   // bidi embedding/overrides
+		r >= 0x2060 && r <= 0x2064,   // word joiner, invisible operators
+		r >= 0x2066 && r <= 0x2069,   // bidi isolates
+		r == 0x061C,                  // Arabic letter mark
+		r == 0x180E,                  // Mongolian vowel separator
+		r >= 0x206A && r <= 0x206F,   // deprecated format controls
+		r >= 0xFE00 && r <= 0xFE0F,   // variation selectors
+		r >= 0xFFF9 && r <= 0xFFFB,   // interlinear annotation controls
+		r == 0xFEFF,                  // BOM / zero-width no-break space
+		r >= 0xE0000 && r <= 0xE007F, // tag characters (invisible ASCII)
+		r >= 0xE0100 && r <= 0xE01EF: // variation selectors supplement
+		return true
+	}
+	return false
+}
+
 func truncate(s string, wide bool) string {
 	if wide {
 		return s
@@ -338,7 +395,7 @@ func renderObject(obj map[string]interface{}) {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for _, k := range keys {
-		fmt.Fprintf(w, "%s:\t%s\n", k, formatValue(obj[k]))
+		fmt.Fprintf(w, "%s:\t%s\n", k, terminalCell(formatValue(obj[k])))
 	}
 	w.Flush()
 }
