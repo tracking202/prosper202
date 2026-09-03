@@ -74,6 +74,7 @@ A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 l
 - [Advanced Attribution Engine](tutorials-and-guides/14-advanced-attribution-engine.md)
 - [Advanced Attribution Troubleshooting](tutorials-and-guides/15-advanced-attribution-troubleshooting.md)
 - [Advanced Attribution Scaling](tutorials-and-guides/16-advanced-attribution-scaling.md)
+- [Building AI Agents on Prosper202](tutorials-and-guides/17-building-agents-on-prosper202.md)
 - [PPC Tokens](tutorials-and-guides/999-ppc-tokens.md)
 - [Prosper202 Tokens](tutorials-and-guides/999-prosper202-tokens.md)
 - [Dynamic CPC Bids](tutorials-and-guides/999-dynamic-cpc-bids.md)
