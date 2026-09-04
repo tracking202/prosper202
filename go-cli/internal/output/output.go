@@ -344,9 +344,18 @@ func terminalCell(s string) string {
 			}
 		case isInvisibleRune(r):
 			// dropped outright
+		case r == ' ':
+			// Ordinary spaces collapse too. lastSpace was tracked here but
+			// never consulted, so a value padded with hundreds of spaces
+			// passed through at full width and the column-sizing pass below
+			// then squeezed every other column off screen.
+			if !lastSpace {
+				b.WriteRune(' ')
+				lastSpace = true
+			}
 		default:
 			b.WriteRune(r)
-			lastSpace = r == ' '
+			lastSpace = false
 		}
 	}
 	return strings.TrimSpace(b.String())

@@ -319,7 +319,25 @@ final readonly class Auth
         }
     }
 
+    /**
+     * Cached per connection for the life of the process (a function-static;
+     * the class is readonly and cannot hold one). The column cannot appear
+     * or vanish mid-request, and this sits on the authentication path of
+     * every single v3 call — three callers were each paying a round trip for
+     * an answer that never changes.
+     */
     public static function apiKeyScopeColumnExists(\mysqli $db): bool
+    {
+        /** @var array<int, bool> $cache */
+        static $cache = [];
+        $handle = spl_object_id($db);
+        if (!isset($cache[$handle])) {
+            $cache[$handle] = self::probeApiKeyScopeColumn($db);
+        }
+        return $cache[$handle];
+    }
+
+    private static function probeApiKeyScopeColumn(\mysqli $db): bool
     {
         $stmt = $db->prepare("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
         if (!$stmt) {
@@ -338,6 +356,14 @@ final readonly class Auth
         $stmt->close();
         return is_array($row);
     }
+
+    /**
+     * Marker for a scope column that exists but cannot be parsed. It matches
+     * no route (hasScope() needs `<area>:<action>`, and this has no colon),
+     * so such a key authenticates and can then do nothing — and the 403 it
+     * gets names this token, so the corrupt row is findable.
+     */
+    public const MALFORMED_SCOPE = '!unparseable';
 
     /** @return string[] */
     public static function parseScopes(string $raw): array
@@ -368,7 +394,14 @@ final readonly class Auth
         }
 
         if ($scopes === []) {
-            $scopes[] = '*';
+            // Reached only when $raw was non-empty and produced nothing
+            // usable: truncated JSON, `[]`, `[null]`. That is a scope value
+            // nobody can read, and reading it as full access is the one
+            // interpretation that must never happen -- an unreadable
+            // attenuation would silently become no attenuation at all. The
+            // genuinely empty case returned ['*'] above, where it means
+            // "this key predates scopes".
+            return [self::MALFORMED_SCOPE];
         }
         return array_values(array_unique($scopes));
     }

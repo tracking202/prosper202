@@ -278,7 +278,7 @@ class UsersController
             if (!\Api\V3\Auth::isValidScopeToken($token)) {
                 throw new ValidationException('Invalid scope', [
                     'scope' => sprintf(
-                        "Unknown scope token '%s'. Valid: *, read, write, or <area>:read / <area>:write with area one of: %s",
+                        "Unknown scope token '%s'. Valid: *, read, write, stage, or <area>:read / <area>:write / <area>:stage with area one of: %s",
                         $token,
                         implode(', ', \Api\V3\Auth::KNOWN_SCOPE_AREAS)
                     ),

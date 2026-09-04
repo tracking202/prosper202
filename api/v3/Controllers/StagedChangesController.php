@@ -333,6 +333,17 @@ final class StagedChangesController
             $this->failInterrupted($ownerId, $changeId);
         }
 
+        // Rejecting a proposal is available to whoever could have proposed it
+        // and to whoever could apply it: `<area>:stage` is satisfied by a
+        // propose-only `stage` key, a `write` key, and a granular
+        // `<area>:write` approver key alike. Without this the router's
+        // blanket `staged-changes:stage` let an approver apply but not
+        // discard.
+        $area = (string)($change['resource_area'] ?? '');
+        if ($area !== '') {
+            $this->auth->requireScope($area . ':stage');
+        }
+
         $updated = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
             if (!self::isClaimable($current)) {
                 return null;

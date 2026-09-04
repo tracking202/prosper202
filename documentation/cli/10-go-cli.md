@@ -59,7 +59,7 @@ p202 config show
 | `p202 eval run` | Run behavioral evals against an agent driving this instance |
 | `p202 system health` | Health check |
 
-All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Four behaviors apply across the board on servers that advertise them in `/capabilities`:
+All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Five behaviors apply across the board on servers that advertise them in `/capabilities`:
 
 - every `create` takes `--idempotency-key <key>` — a retry with the same key and payload replays the recorded response instead of creating a duplicate (`features.create_idempotency`);
 - every `delete` (including `--ids` bulk and `rotator rule-delete` / `user role remove` / `user apikey delete`) takes `--dry-run` — a read-only preview of the record and cascade counts the delete would remove (`features.delete_dry_run`);

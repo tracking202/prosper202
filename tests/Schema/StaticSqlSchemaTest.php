@@ -36,6 +36,9 @@ final class StaticSqlSchemaTest extends TestCase
 {
     private static ?\mysqli $db = null;
 
+    /** Why setup gave up, so a skip names the real reason. */
+    private static ?string $setupError = null;
+
     public static function setUpBeforeClass(): void
     {
         $host = getenv('P202_TEST_DB_HOST');
@@ -64,7 +67,16 @@ final class StaticSqlSchemaTest extends TestCase
             return;
         }
 
-        $db->query("SET SESSION sql_mode=''");
+        // The schema installs under a relaxed sql_mode. If that cannot be
+        // set, the install may fail in ways that look like SQL-vs-schema
+        // mismatches, which is exactly what this suite is supposed to be
+        // measuring — so leave the connection unset and let every test skip
+        // rather than report misleading failures.
+        if ($db->query("SET SESSION sql_mode=''") === false) {
+            self::$setupError = 'could not relax sql_mode: ' . $db->error;
+            $db->close();
+            return;
+        }
         (new SchemaInstaller($db))->install();
         self::$db = $db;
     }
@@ -131,7 +143,10 @@ final class StaticSqlSchemaTest extends TestCase
     public function testEveryStaticStatementMatchesTheSchema(): void
     {
         if (self::$db === null) {
-            $this->markTestSkipped('Set P202_TEST_DB_HOST to check SQL against a real schema.');
+            $this->markTestSkipped(
+                self::$setupError
+                ?? 'Set P202_TEST_DB_HOST to check SQL against a real schema.'
+            );
         }
 
         $rejected = [];

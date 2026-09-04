@@ -150,7 +150,12 @@ func renderDeletePreviews(c *api.Client, endpoint string, ids []string) error {
 		}
 		previews = append(previews, obj)
 	}
-	encoded, _ := json.Marshal(map[string]interface{}{"data": previews})
+	encoded, err := json.Marshal(map[string]interface{}{"data": previews})
+	if err != nil {
+		// Rendering nil prints nothing, and with failed == 0 the command
+		// would exit 0 having shown the user no previews at all.
+		return fmt.Errorf("encoding delete previews: %w", err)
+	}
 	render(encoded)
 	if failed > 0 {
 		return partialFailureError("failed to preview %d of %d deletes", failed, len(ids))
@@ -189,7 +194,12 @@ func stageDeletes(c *api.Client, endpoint string, ids []string) error {
 		}
 		changes = append(changes, obj)
 	}
-	encoded, _ := json.Marshal(map[string]interface{}{"data": changes})
+	encoded, err := json.Marshal(map[string]interface{}{"data": changes})
+	if err != nil {
+		// The change ids are the only way to apply these proposals; losing
+		// them silently would strand the whole batch.
+		return fmt.Errorf("encoding staged changes: %w", err)
+	}
 	render(encoded)
 	if failed > 0 {
 		return partialFailureError("failed to stage %d of %d deletes", failed, len(ids))

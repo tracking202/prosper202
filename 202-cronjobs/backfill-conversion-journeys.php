@@ -124,15 +124,28 @@ while (true) {
         ));
         exit(1);
     }
+    // get_result() signals failure by returning false, and an unchecked
+    // false is indistinguishable from an empty batch: $rows stays empty, the
+    // loop breaks, and the run reports success having silently skipped every
+    // conversion after this point. Same reason the execute() above is
+    // checked.
     $result = $stmt->get_result();
+    if ($result === false) {
+        $error = $stmt->error;
+        $stmt->close();
+        fwrite(STDERR, sprintf(
+            "Conversion batch fetch returned no result set after conv_id %d: %s\n",
+            $afterConvId,
+            $error
+        ));
+        exit(1);
+    }
 
     $rows = [];
-    if ($result) {
-        while ($row = $result->fetch_assoc()) {
-            $rows[] = $row;
-        }
-        $result->free();
+    while ($row = $result->fetch_assoc()) {
+        $rows[] = $row;
     }
+    $result->free();
 
     $stmt->close();
 

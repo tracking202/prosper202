@@ -503,4 +503,35 @@ final class AuthTest extends TestCase
         $this->assertTrue($writeKey->coversScopeToken('campaigns:write'));
         $this->assertFalse($writeKey->coversScopeToken('*'));
     }
+
+    /**
+     * The fail-open direction. An empty scope column means "this key predates
+     * scopes" and is full access by design; a column that holds something
+     * unreadable does not, and must never be read as no attenuation at all.
+     */
+    public function testAnUnreadableScopeColumnGrantsNothingRatherThanEverything(): void
+    {
+        foreach (['[]', '["reports:read"', '[null]', '[""]'] as $raw) {
+            $scopes = Auth::parseScopes($raw);
+            $this->assertSame([Auth::MALFORMED_SCOPE], $scopes, "raw: $raw");
+            $this->assertNotContains('*', $scopes, "raw: $raw");
+        }
+    }
+
+    public function testAnEmptyScopeColumnIsStillFullAccess(): void
+    {
+        // Legacy keys, and installs whose 202_api_keys has no scope column.
+        $this->assertSame(['*'], Auth::parseScopes(''));
+        $this->assertSame(['*'], Auth::parseScopes('   '));
+    }
+
+    public function testAMalformedScopeSatisfiesNoRoute(): void
+    {
+        // Goes through the real fromRequest() path with a corrupt column.
+        $auth = $this->authWithScope('["reports:read"');
+        foreach (['campaigns:read', 'campaigns:write', 'campaigns:stage', 'reports:read'] as $needed) {
+            $this->assertFalse($auth->hasScope($needed), $needed);
+        }
+        $this->assertFalse($auth->hasFullScope());
+    }
 }

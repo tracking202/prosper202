@@ -42,8 +42,9 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # The forecast acceptance suites take ~40s; -short skips them and they
-      # are covered by the full run below.
+      # Runs everything, forecast acceptance suites included (~40s of the
+      # total). They have a -short guard for local iteration; CI does not use
+      # it, so nothing here is skipped.
       - name: go test
         run: go test ./... -count=1
 

@@ -504,6 +504,33 @@ final class StagedChangesControllerTest extends TestCase
         $this->assertStringContainsString('aff_campaign_name', $stored['last_error']);
     }
 
+    /**
+     * An approval queue an approver can only ever approve is not an approval
+     * queue. The granular approver key the apply path exists to support must
+     * be able to reject a proposal too.
+     */
+    public function testAGranularApproverKeyCanDiscardAsWellAsApply(): void
+    {
+        $proposer = $this->controller($this->authFor(5, 'read,stage'));
+        $id = $proposer->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+
+        $approver = $this->controller($this->authFor(5, 'read,campaigns:write'));
+        $out = $approver->discard($id);
+
+        $this->assertSame(StagedChangesController::STATUS_DISCARDED, $out['data']['status']);
+    }
+
+    public function testDiscardStillRefusesAKeyWithNoAuthorityOverTheArea(): void
+    {
+        $proposer = $this->controller($this->authFor(5, 'read,stage'));
+        $id = $proposer->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+
+        // Read-only over a different area: no claim on this change at all.
+        $outsider = $this->controller($this->authFor(5, 'reports:read'));
+        $this->expectException(AuthException::class);
+        $outsider->discard($id);
+    }
+
     public function testAFreshApplyingClaimIsStillProtected(): void
     {
         $auth = $this->authFor(5);

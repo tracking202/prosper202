@@ -283,7 +283,8 @@ var userAPIKeyCreateCmd = &cobra.Command{
 	Short: "Create an API key for a user",
 	Long: "Create an API key. --scope attenuates the key: `read` for a key that can\n" +
 		"never write (reporting agents), `write` for full read/write, or granular\n" +
-		"`<area>:read`/`<area>:write` tokens (comma-separated), e.g.\n" +
+		"`stage` for a propose-only key, or granular `<area>:read`/`<area>:write`/\n" +
+		"`<area>:stage` tokens (comma-separated), e.g.\n" +
 		"`reports:read,forecast-events:read`. Without --scope the key has full\n" +
 		"access (`*`). A scoped key cannot mint a key broader than itself.",
 	Args: cobra.ExactArgs(1),
@@ -302,7 +303,7 @@ var userAPIKeyCreateCmd = &cobra.Command{
 		// a key is created at all.
 		if cmd.Flags().Changed("scope") && scope == "" {
 			return validationError("--scope was given an empty value").
-				WithHint("Name the scope (`read`, `write`, or `<area>:read`/`<area>:write`, comma-separated), " +
+				WithHint("Name the scope (`read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage`, comma-separated), " +
 					"or omit --scope entirely to mint a full-access key on purpose.")
 		}
 
@@ -602,7 +603,7 @@ func init() {
 	// API key flags
 	userAPIKeyDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	userAPIKeyDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
-	userAPIKeyCreateCmd.Flags().String("scope", "", "Scope for the new key: *, read, write, or comma-separated <area>:read/<area>:write tokens (default: full access)")
+	userAPIKeyCreateCmd.Flags().String("scope", "", "Scope for the new key: *, read, write, stage, or comma-separated <area>:read/<area>:write/<area>:stage tokens (`read,stage` is the propose-only agent shape; default: full access)")
 	userAPIKeyRotateCmd.Flags().String("scope", "", "Scope for the replacement key (default: the old key's scope, carried over)")
 	userAPIKeyRotateCmd.Flags().Bool("keep-old", false, "Do not delete the old API key")
 	userAPIKeyRotateCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt when deleting old key")

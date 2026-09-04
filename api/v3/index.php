@@ -712,8 +712,14 @@ try {
             $scopeAction = 'stage';
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {
-            // Discarding one's own proposal is part of proposing.
-            $scopeAction = 'stage';
+            // Gated on the change's own area, like apply below. Demanding
+            // `staged-changes:stage` here locked the documented granular
+            // approver key (`read,campaigns:write`) out of *rejecting* a
+            // proposal while leaving it able to approve one — an approval
+            // queue that can only be drained by approving. The controller
+            // requires `<area>:stage`, which a proposer's `stage` key and an
+            // approver's `<area>:write` key both satisfy.
+            $scopeArea = null;
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/apply$#', $path) === 1) {
             // Applying is gated on the area the change actually touches —
