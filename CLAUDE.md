@@ -84,6 +84,29 @@ it to something that satisfies nothing, and name it in the error so the
 corrupt row is findable. Whenever a default stands in for a missing value,
 ask separately what happens to a *malformed* one.
 
+The same pattern reappeared two functions away, in
+`apiKeyScopeColumnExists()`: it returned `false` for a failed `prepare`, a
+failed `execute` and a false `get_result` — the same value as "the column is
+not there" — so `fromRequest()` selected without the column and
+`parseScopes('')` turned the absent value into `['*']`. One transient database
+error promoted every scoped key to full access. **A predicate that answers a
+question must not answer it when it does not know**; throw, or return a
+tri-state. `false` is an answer, not an error.
+
+Two amplifiers, both of which turned this from a blip into a breach:
+
+- **Caching does not preserve a bug's blast radius — it multiplies it.** The
+  probe was memoized for performance, which converted a one-request failure
+  into a wrong answer for the life of the connection. Before adding a cache,
+  ask what the cached value costs if it is *wrong*, not just what it saves
+  when right. (Cache on the object, not `spl_object_id()`: ids are reused
+  after free, so a reconnect can inherit a freed connection's answer. A
+  `WeakMap` keyed by the connection cannot.)
+- **"Cheap and clearly right" is a claim, not an exemption.** That memoization
+  was added mid-session with exactly that justification and no thought about
+  its failure mode. The size of a change bounds how long the review takes, not
+  whether it gets one.
+
 ### 12. A guard is only as good as the layer that delivers the input
 The server rejected an explicitly empty API-key scope. It never fired, because
 the CLI dropped the field before building the request, so the server saw
