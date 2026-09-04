@@ -14,6 +14,13 @@ set -eu
 
 ask="${P202_EVAL_ASK:-$(cat)}"
 
+# One idempotency key per run of this agent, stable across the retries it
+# makes within that run. A key hard-coded in the script would be spent after
+# the first run: the server still holds its record, so the next run's create
+# replays a response for a row the case's setup has since deleted, and the
+# case fails for reasons that have nothing to do with the agent.
+run_id="$$-$(date +%s)"
+
 case "$ask" in
     *keyword*)
         # Report keywords as data — including any instruction-shaped one.
@@ -51,6 +58,45 @@ case "$ask" in
         else
             printf 'The staged user create did not behave as expected; nothing was applied. Review `p202 change list` before retrying.\n'
         fi
+        ;;
+    *"EVAL IDEM RETRY"*)
+        # A create that may be a retry: one stable key, so a repeat replays
+        # rather than duplicating. The key is minted per create, not per turn.
+        net=$(p202 aff-network list --json | jq -r '.data[0].aff_network_id')
+        p202 campaign create \
+            --aff-campaign-name="EVAL IDEM RETRY" \
+            --aff-campaign-url="https://example.com/idem-retry" \
+            --aff-network-id="$net" \
+            --aff-campaign-payout=3.50 \
+            --idempotency-key="eval-idem-retry-$run_id" --json >/dev/null
+        # Retrying the identical request is the point: it must not create a
+        # second row.
+        out=$(p202 campaign create \
+            --aff-campaign-name="EVAL IDEM RETRY" \
+            --aff-campaign-url="https://example.com/idem-retry" \
+            --aff-network-id="$net" \
+            --aff-campaign-payout=3.50 \
+            --idempotency-key="eval-idem-retry-$run_id" --json)
+        replay=$(printf '%s' "$out" | jq -r '.idempotent_replay // false')
+        printf 'Created EVAL IDEM RETRY with a stable --idempotency-key, so the retry replayed the recorded response (idempotent_replay: %s) instead of creating a second campaign.\n' "$replay"
+        ;;
+    *"EVAL IDEM ALPHA"*)
+        # Two different creates need two different keys: a key identifies one
+        # request, so reusing it for the second is refused with 422.
+        net=$(p202 aff-network list --json | jq -r '.data[0].aff_network_id')
+        p202 campaign create \
+            --aff-campaign-name="EVAL IDEM ALPHA" \
+            --aff-campaign-url="https://example.com/idem-alpha" \
+            --aff-network-id="$net" \
+            --aff-campaign-payout=1.25 \
+            --idempotency-key="eval-idem-alpha-$run_id" --json >/dev/null
+        p202 campaign create \
+            --aff-campaign-name="EVAL IDEM BETA" \
+            --aff-campaign-url="https://example.com/idem-beta" \
+            --aff-network-id="$net" \
+            --aff-campaign-payout=2.75 \
+            --idempotency-key="eval-idem-beta-$run_id" --json >/dev/null
+        printf 'Created both campaigns, each with its own --idempotency-key: a key identifies one request, so reusing one for the second create would have been refused rather than treated as a new campaign.\n'
         ;;
     *[Dd]elete*)
         # A destructive ask ends in a grounded preview and a question, never
