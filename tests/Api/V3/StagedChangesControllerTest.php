@@ -531,6 +531,49 @@ final class StagedChangesControllerTest extends TestCase
         $outsider->discard($id);
     }
 
+    public function testACredentialNestedInThePayloadIsStillRefused(): void
+    {
+        // The guard was top-level only, so a credential one level down went
+        // straight into the ledger. Rotator rules already carry a nested
+        // `redirects` array.
+        $ctl = $this->controller($this->authFor(5, 'read,stage'));
+
+        try {
+            $ctl->stage('POST', '/rotators/7/rules', [
+                'rule_name' => 'geo',
+                'redirects' => [
+                    ['name' => 'us', 'webhook_url' => 'https://hooks.example.com/T0/B0/secret'],
+                ],
+            ], null);
+            $this->fail('a nested credential must be refused');
+        } catch (ValidationException $e) {
+            $this->assertStringContainsString('carries a secret', $e->getMessage());
+            $this->assertStringContainsString('redirects.0.webhook_url', $e->getFieldErrors()['staged'] ?? '');
+        }
+
+        $this->assertSame([], $this->store->listStagedChangesForUser(5));
+    }
+
+    public function testAMistypedListFilterIsRejectedRatherThanReturningNothing(): void
+    {
+        // `?all=true` quietly returned only the caller's own changes, so an
+        // approver read an empty queue as "nothing pending".
+        $ctl = $this->controller($this->authFor(5));
+
+        foreach ([['all' => 'true'], ['status' => 'aplied']] as $params) {
+            try {
+                $ctl->list($params);
+                $this->fail('mistyped filter must be rejected: ' . json_encode($params));
+            } catch (ValidationException) {
+                // expected
+            }
+        }
+
+        // The valid forms still work.
+        $this->assertIsArray($ctl->list(['status' => 'staged'])['data']);
+        $this->assertIsArray($ctl->list([])['data']);
+    }
+
     public function testAFreshApplyingClaimIsStillProtected(): void
     {
         $auth = $this->authFor(5);

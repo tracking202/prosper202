@@ -104,7 +104,13 @@ var dataImportCmd = &cobra.Command{
 			out["errors"] = errorsOut
 		}
 
-		encoded, _ := json.Marshal(out)
+		encoded, err := json.Marshal(out)
+		if err != nil {
+			// Same reason as the delete paths in crud.go: rendering nil
+			// prints nothing and the command would exit 0, losing the
+			// change_ids that are the only handle on staged proposals.
+			return fmt.Errorf("encoding import summary: %w", err)
+		}
 		render(encoded)
 		return nil
 	},

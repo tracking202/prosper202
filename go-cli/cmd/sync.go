@@ -11,6 +11,7 @@ import (
 
 	"p202/internal/api"
 	"p202/internal/metrics"
+	"p202/internal/output"
 	syncdata "p202/internal/sync"
 	"p202/internal/syncstate"
 
@@ -726,6 +727,11 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	}
 
 	obj, parseErr := parseDataObject(resp)
+	// A failed status poll is not a failed sync: the job already exists on the
+	// server, so returning anything that makes the caller fall back would run
+	// the whole sync a second time. But it must not vanish either — the
+	// rendered response is then the job-creation reply, not its outcome.
+	var pollErr error
 	if parseErr == nil {
 		jobID := scalarString(obj["job_id"])
 		if jobID != "" {
@@ -733,26 +739,36 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				_, _ = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
 				jobResp, getErr := orchestrator.Get("sync/jobs/"+jobID, nil)
 				if getErr != nil {
+					pollErr = getErr
 					break
 				}
 				jobObj, objErr := parseDataObject(jobResp)
 				if objErr != nil {
+					pollErr = objErr
 					break
 				}
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
 					render(jobResp)
 
-					return true, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
+					return true, nil // server-side sync ran; the caller must not fall back
 				}
 				time.Sleep(250 * time.Millisecond)
 			}
 		}
 	}
 
+	if pollErr != nil {
+		output.Success(
+			"Warning: the sync job was created but its status could not be read (%v). "+
+				"The output below is the job as queued, not its result — check `p202 sync status`.",
+			pollErr)
+	}
 	render(resp)
 
-	return true, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
+	// nilerr is right that an error was seen and nil is returned; that is
+	// deliberate here and the warning above says so.
+	return true, nil //nolint:nilerr // the job exists server-side; falling back would run the sync twice
 }
 
 func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
@@ -790,7 +806,7 @@ func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 	}
 	render(resp)
 
-	return true, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
+	return true, nil // server-side sync ran; the caller must not fall back
 }
 
 func init() {

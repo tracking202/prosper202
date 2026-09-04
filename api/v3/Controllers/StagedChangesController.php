@@ -106,6 +106,15 @@ final class StagedChangesController
             if ($parsed >= 60) {
                 return $parsed;
             }
+            // `1h` casts to 0 and `30` is under the floor; both used to fall
+            // through in silence, leaving the operator sure that proposals
+            // expire on their schedule while they actually expire on the
+            // default. Error pattern #4: say the value was rejected.
+            error_log(sprintf(
+                'p202: ignoring P202_STAGED_CHANGE_TTL_SECONDS=%s — expected whole seconds >= 60; using %d.',
+                $raw,
+                self::DEFAULT_TTL_SECONDS
+            ));
         }
         return self::DEFAULT_TTL_SECONDS;
     }
@@ -168,7 +177,18 @@ final class StagedChangesController
 
     public function list(array $params): array
     {
-        $all = strtolower(trim((string)($params['all'] ?? ''))) === '1';
+        // A mistyped filter must not read as "nothing pending". `?all=true`
+        // silently returned only the caller's own changes, so an approver
+        // concluded the queue was empty while other users' proposals sat
+        // unreviewed; `?status=aplied` returned an empty 200. The sibling
+        // dry_run and staged parameters reject a typo for the same reason.
+        $rawAll = trim((string)($params['all'] ?? ''));
+        if ($rawAll !== '' && !in_array(strtolower($rawAll), ['0', '1'], true)) {
+            throw new ValidationException('Invalid all value', [
+                'all' => "Use all=1 to include every user's changes, or omit it (got '$rawAll').",
+            ]);
+        }
+        $all = strtolower($rawAll) === '1';
         if ($all) {
             $this->auth->requireAdmin();
             $items = $this->store->listStagedChangesAllUsers();
@@ -177,6 +197,18 @@ final class StagedChangesController
         }
 
         $status = strtolower(trim((string)($params['status'] ?? '')));
+        $known = [
+            self::STATUS_STAGED,
+            self::STATUS_APPLYING,
+            self::STATUS_APPLIED,
+            self::STATUS_DISCARDED,
+            self::STATUS_APPLY_INTERRUPTED,
+        ];
+        if ($status !== '' && !in_array($status, $known, true)) {
+            throw new ValidationException('Unknown status filter', [
+                'status' => "Valid statuses are " . implode(', ', $known) . " (got '$status').",
+            ]);
+        }
         if ($status !== '') {
             $items = array_values(array_filter(
                 $items,
@@ -449,23 +481,66 @@ final class StagedChangesController
      * such writes; present() redacts as defense in depth for records written
      * by an older build.
      */
+    /** Whether this key name denotes a credential, by exact name or substring. */
+    private static function isSecretKeyName(string $key): bool
+    {
+        $name = strtolower(trim($key));
+        if (in_array($name, self::SECRET_PAYLOAD_KEYS, true)) {
+            return true;
+        }
+        foreach (self::SECRET_KEY_SUBSTRINGS as $needle) {
+            if (str_contains($name, $needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Credential-bearing keys anywhere in the payload, as dotted paths.
+     *
+     * Recursive, not top-level: a nested body (rotator rules carry a
+     * `redirects` array, and any future stageable route may nest) would
+     * otherwise walk straight past the guard and store the credential in the
+     * ledger. ServerStateStore::sanitizeSensitive() already had the recursive
+     * shape; this one did not, which is the whole finding.
+     *
+     * @return string[]
+     */
     private static function secretKeysIn(array $payload): array
     {
         $found = [];
-        foreach (array_keys($payload) as $key) {
-            $name = strtolower(trim((string)$key));
-            if (in_array($name, self::SECRET_PAYLOAD_KEYS, true)) {
-                $found[] = (string)$key;
-                continue;
-            }
-            foreach (self::SECRET_KEY_SUBSTRINGS as $needle) {
-                if (str_contains($name, $needle)) {
-                    $found[] = (string)$key;
-                    break;
+        $walk = static function (array $node, string $prefix) use (&$walk, &$found): void {
+            foreach ($node as $key => $value) {
+                $path = $prefix === '' ? (string)$key : $prefix . '.' . $key;
+                if (self::isSecretKeyName((string)$key)) {
+                    $found[] = $path;
+                }
+                if (is_array($value)) {
+                    $walk($value, $path);
                 }
             }
-        }
+        };
+        $walk($payload, '');
         return $found;
+    }
+
+    /**
+     * A copy with every credential-bearing value replaced, at any depth.
+     * Defense in depth for records written before the guard was recursive.
+     */
+    private static function redactSecrets(array $payload): array
+    {
+        foreach ($payload as $key => $value) {
+            if (self::isSecretKeyName((string)$key)) {
+                $payload[$key] = '[redacted]';
+                continue;
+            }
+            if (is_array($value)) {
+                $payload[$key] = self::redactSecrets($value);
+            }
+        }
+        return $payload;
     }
 
     /**
@@ -489,9 +564,7 @@ final class StagedChangesController
         $change['expired'] = ($change['status'] ?? '') === self::STATUS_STAGED
             && time() > (int)($change['expires_at_epoch'] ?? 0);
         if (is_array($change['payload'] ?? null)) {
-            foreach (self::secretKeysIn($change['payload']) as $key) {
-                $change['payload'][$key] = '[redacted]';
-            }
+            $change['payload'] = self::redactSecrets($change['payload']);
         }
         // Records staged before the path check existed can still hold a live
         // credential in their path. apply() reads the stored record, not this

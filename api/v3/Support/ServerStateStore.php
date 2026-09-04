@@ -375,6 +375,11 @@ class ServerStateStore
             if ($parsed >= 1) {
                 return $parsed;
             }
+            error_log(sprintf(
+                'p202: ignoring P202_STAGED_CHANGE_MAX_PENDING=%s — expected a whole number >= 1; using %d.',
+                $raw,
+                self::DEFAULT_MAX_PENDING_CHANGES
+            ));
         }
         return self::DEFAULT_MAX_PENDING_CHANGES;
     }
@@ -391,7 +396,13 @@ class ServerStateStore
             // cannot both slip past the cap.
             $pending = 0;
             $cutoff = time();
-            foreach ($state['items'] as $item) {
+            // Guarded like listChanges() and listJobEvents(): readJsonFile()
+            // only promises the top level is an array, so a truncated or
+            // hand-edited state file with `"items": null` would TypeError
+            // inside the lock and 500 every stage with no clue why.
+            $items = is_array($state['items'] ?? null) ? $state['items'] : [];
+            $state['items'] = $items;
+            foreach ($items as $item) {
                 if (($item['status'] ?? '') === 'staged'
                     && $cutoff <= (int)($item['expires_at_epoch'] ?? 0)) {
                     $pending++;
@@ -411,6 +422,9 @@ class ServerStateStore
             $now = time();
             $resolved = [];
             foreach ($state['items'] as $id => $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
                 $status = (string)($item['status'] ?? '');
                 // Expired proposals keep the status `staged` but can never be
                 // applied, so counting only terminal records would let them

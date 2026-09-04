@@ -518,6 +518,32 @@ final class AuthTest extends TestCase
         }
     }
 
+    /**
+     * The probe answers one question — is the column there — and every
+     * failure used to answer it "no", which fromRequest() reads as an
+     * install predating scopes and parseScopes('') turns into full access.
+     * A transient database error must refuse, not promote.
+     */
+    public function testAFailedScopeColumnProbeRefusesRatherThanGrantingFullAccess(): void
+    {
+        $db = new class extends \mysqli {
+            public function __construct()
+            {
+            }
+
+            public function prepare(string $query): \mysqli_stmt|false
+            {
+                if (str_contains($query, 'SHOW COLUMNS')) {
+                    return false; // the transient failure
+                }
+                throw new \RuntimeException('must not reach the key lookup: ' . $query);
+            }
+        };
+
+        $this->expectException(AuthException::class);
+        Auth::apiKeyScopeColumnExists($db);
+    }
+
     public function testAnEmptyScopeColumnIsStillFullAccess(): void
     {
         // Legacy keys, and installs whose 202_api_keys has no scope column.

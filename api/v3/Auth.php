@@ -328,29 +328,46 @@ final readonly class Auth
      */
     public static function apiKeyScopeColumnExists(\mysqli $db): bool
     {
-        /** @var array<int, bool> $cache */
-        static $cache = [];
-        $handle = spl_object_id($db);
-        if (!isset($cache[$handle])) {
-            $cache[$handle] = self::probeApiKeyScopeColumn($db);
+        // Keyed by the connection object itself, not spl_object_id(): ids are
+        // reused once an object is freed, so a reconnect in a long-lived
+        // process could inherit a previous connection's answer. WeakMap
+        // entries disappear with the connection.
+        static $cache = null;
+        $cache ??= new \WeakMap();
+        if (!isset($cache[$db])) {
+            // Only a successful probe is cached; a failure throws, so an
+            // error is never memoized as a lasting answer.
+            $cache[$db] = self::probeApiKeyScopeColumn($db);
         }
-        return $cache[$handle];
+        return $cache[$db];
     }
 
+    /**
+     * Whether 202_api_keys has a scope column — and only that.
+     *
+     * Every failure here used to return false, which is the same answer as
+     * "the column is not there". fromRequest() reads that as an install
+     * predating scopes, selects without the column, and parseScopes('')
+     * resolves the missing value to ['*'] — so one transient database error
+     * silently promoted every scoped key to full access. Error pattern #11:
+     * a value that cannot be determined must never resolve to the
+     * most-permissive reading. Failing closed here means throwing, the way
+     * fromRequest() already treats its own query failures.
+     */
     private static function probeApiKeyScopeColumn(\mysqli $db): bool
     {
         $stmt = $db->prepare("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
         if (!$stmt) {
-            return false;
+            throw new AuthException('Authentication unavailable', 500);
         }
         if (!self::execute($stmt)) {
             $stmt->close();
-            return false;
+            throw new AuthException('Authentication unavailable', 500);
         }
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
-            return false;
+            throw new AuthException('Authentication unavailable', 500);
         }
         $row = $result->fetch_assoc();
         $stmt->close();

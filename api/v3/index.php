@@ -73,11 +73,15 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
             Bootstrap::errorResponse('Invalid JSON body', 400);
             exit;
         }
-        if ($payload !== null && !is_array($payload)) {
+        // A body of literal `null` decodes without a JSON error, so it slips
+        // past the check above. Coercing it to [] would run the handler with
+        // no fields — and stage() would record that empty payload as though
+        // it were the reviewed body. Error pattern #4: a malformed body is
+        // rejected, never silently emptied.
+        if (!is_array($payload)) {
             Bootstrap::errorResponse('Invalid JSON body', 400);
             exit;
         }
-        $payload = $payload ?? [];
     }
 }
 

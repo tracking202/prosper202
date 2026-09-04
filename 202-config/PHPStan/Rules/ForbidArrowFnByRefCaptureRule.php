@@ -61,11 +61,24 @@ final class ForbidArrowFnByRefCaptureRule implements Rule
 
         foreach ($finder->findInstanceOf($node->stmts, Node\Expr\ArrowFunction::class) as $arrow) {
             /** @var Node\Expr\ArrowFunction $arrow */
+            // An arrow function's own parameters shadow the outer binding, so
+            // `fn($ctx) => $ctx` is correct however $ctx was captured
+            // outside. Reporting it would fail CI on valid code.
+            $shadowed = [];
+            foreach ($arrow->params as $param) {
+                if ($param->var instanceof Node\Expr\Variable && is_string($param->var->name)) {
+                    $shadowed[$param->var->name] = true;
+                }
+            }
+
             // A nested closure that re-captures by reference is fine — the
             // binding does propagate there — so only arrow functions count.
             foreach ($finder->findInstanceOf([$arrow->expr], Node\Expr\Variable::class) as $variable) {
                 /** @var Node\Expr\Variable $variable */
                 if (!is_string($variable->name) || !isset($byRef[$variable->name])) {
+                    continue;
+                }
+                if (isset($shadowed[$variable->name])) {
                     continue;
                 }
                 $key = $arrow->getStartLine() . ':' . $variable->name;

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"p202/internal/api"
+	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -90,7 +91,10 @@ var changeApplyCmd = &cobra.Command{
 			}
 			summary, _ := obj["summary"].(string)
 			if !confirmPrompt("Apply staged change %s (%s)?", args[0], summary) {
-				fmt.Println("Cancelled.")
+				// stderr, not stdout: the go-cli contract keeps stdout empty
+				// unless it carries data, so a --json caller never parses this
+				// as a result. Every cancel path in crud.go does the same.
+				output.Success("Cancelled; the change is still staged.")
 				return nil
 			}
 		}
