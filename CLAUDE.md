@@ -233,6 +233,50 @@ Check here before burning time on tooling failures.
   dropped errors rather than style. Run `golangci-lint run ./...` from
   `go-cli/` before pushing.
 
+## Closing the loop on mistakes
+
+<learn_from_mistakes>
+
+**A mistake is not finished when it is fixed. It is finished when it cannot
+recur silently.** Every bug found here — by a reviewer, by CI, by a review
+bot, or by yourself — ends in one of three artefacts, chosen in this order:
+
+1. **A machine check, if the pattern is mechanically detectable.** Always
+   prefer this: prose is advisory, a check is not. Two homes exist —
+   - a **PHPStan rule** in `202-config/PHPStan/Rules/`, registered in
+     `phpstan.neon.dist` (see error pattern #8; an unregistered rule never
+     runs), for anything expressible over the syntax tree — capture
+     semantics, `bind_param` arity, forbidden call shapes;
+   - a **structural test** under `tests/`, for anything that is really a
+     question about the codebase rather than one file: `UncheckedExecuteTest`,
+     `DuplicateGlobalClassTest`, `ScopeCoverageTest`,
+     `ApiKeyAuthPathScopeTest`, `StaticSqlSchemaTest` are all this shape —
+     they walk the tree or the schema and assert an invariant holds
+     everywhere.
+2. **An entry in "Error patterns to avoid"** when the pattern needs judgement
+   a checker cannot apply — a fail-open default, a validation stranded behind
+   a layer that discards its input. Write the *failure mode*, not the fix: the
+   next reader needs to recognise the shape in code that looks nothing like
+   the original.
+3. **Both**, when a rule catches the common case but not all of it. The rule
+   is the floor; the entry says what the floor does not cover.
+
+Two obligations that are easy to skip:
+
+- **A regression test is not a substitute for either.** It proves this bug is
+  gone; it does nothing for the next instance of the same shape elsewhere.
+  Grep for every analogous site (error pattern #5) and decide whether a check
+  can cover them all.
+- **Meet the bar for a new check before adding it** — clean against the whole
+  tree first, then exercised against every shape and call form it claims to
+  cover. A rule that fires on correct code gets disabled, and then the pattern
+  is unguarded *and* nobody notices. See "Verify your assumptions" below.
+
+When a mistake is worth recording but fits none of the above — a process
+failure rather than a code one — it belongs in "Verify your assumptions".
+
+</learn_from_mistakes>
+
 ## Verify your assumptions
 
 <verify_assumptions>
