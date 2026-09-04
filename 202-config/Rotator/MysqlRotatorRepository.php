@@ -94,11 +94,22 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
 
     public function create(int $userId, array $data): int
     {
-        // Always derive server-side: public_id is resolved by the unauthenticated
-        // redirect with no user scoping and has no UNIQUE key, so honouring a
-        // caller-supplied value lets one user's rotator collide with another's
-        // within this install and resolve to the wrong record.
-        $publicId = $this->generatePublicId();
+        // public_id is resolved by the unauthenticated redirect with no user
+        // scoping and has no UNIQUE key, so an ALREADY-TAKEN caller value would
+        // resolve to another user's rotator. The hazard is collision, not caller
+        // choice: honour a supplied public_id when it is free, generate one
+        // otherwise. Refusing it outright broke cross-install `p202 sync`, which
+        // matches rotators between installs by public_id.
+        $publicId = 0;
+        if (isset($data['public_id']) && $data['public_id'] !== '') {
+            $requested = (int) $data['public_id'];
+            if ($requested > 0 && $this->publicIdIsFree($requested)) {
+                $publicId = $requested;
+            }
+        }
+        if ($publicId === 0) {
+            $publicId = $this->generatePublicId();
+        }
 
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)'
@@ -339,15 +350,21 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
      * Pick an unused public_id. Best-effort in the absence of a UNIQUE key:
      * removes deliberate collisions, makes random ones vanishingly unlikely.
      */
+    private function publicIdIsFree(int $candidate): bool
+    {
+        $stmt = $this->conn->prepareRead('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$candidate]);
+        $row = $this->conn->fetchOne($stmt);
+        $stmt->close();
+
+        return $row === null;
+    }
+
     private function generatePublicId(): int
     {
         for ($attempt = 0; $attempt < 10; $attempt++) {
             $candidate = random_int(100_000, 9_999_999);
-            $stmt = $this->conn->prepareRead('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
-            $this->conn->bind($stmt, 'i', [$candidate]);
-            $row = $this->conn->fetchOne($stmt);
-            $stmt->close();
-            if ($row === null) {
+            if ($this->publicIdIsFree($candidate)) {
                 return $candidate;
             }
         }

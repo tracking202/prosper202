@@ -29,8 +29,8 @@ class MessagingClient
         // user's email, so refuse to speak cleartext even if MESSAGING_API_URL is
         // misconfigured (mirrors Lpo\PairingClient's guard).
         $configuredUrl = defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging';
-        if (!str_starts_with(strtolower(trim((string) $configuredUrl)), 'https://')) {
-            throw new \RuntimeException('MESSAGING_API_URL must be an https:// URL; refusing to send credentials in cleartext.');
+        if (!self::isSafeTransport((string) $configuredUrl)) {
+            throw new \RuntimeException('MESSAGING_API_URL must be an https:// URL (http:// is allowed only for loopback); refusing to send credentials in cleartext.');
         }
         $this->baseUrl    = $configuredUrl;
         $this->timeout    = 10;
@@ -38,6 +38,38 @@ class MessagingClient
         // central server is slow/unreachable; a healthy server answers on the first
         // try. The cron path tolerates the occasional miss and catches up next run.
         $this->maxRetries = 2;
+    }
+
+    /**
+     * Credentials must not cross a network in cleartext, so https is required —
+     * except against loopback, which never leaves the host. The carve-out exists
+     * because 202-config/Messaging/mock-server.php and the comment at
+     * connect.php:86 both document MESSAGING_API_URL=http://127.0.0.1:8787/messaging
+     * for local development; rejecting it made the repo's own documented setup
+     * throw out of the constructor, which the messaging AJAX endpoints surface as
+     * a bare 500 instead of degrading gracefully.
+     */
+    private static function isSafeTransport(string $url): bool
+    {
+        $url = strtolower(trim($url));
+        if (str_starts_with($url, 'https://')) {
+            return true;
+        }
+        if (!str_starts_with($url, 'http://')) {
+            return false;
+        }
+
+        $host = (string) parse_url($url, PHP_URL_HOST);
+        if ($host === '') {
+            return false;
+        }
+        if ($host === 'localhost' || $host === '::1' || $host === '[::1]') {
+            return true;
+        }
+
+        // 127.0.0.0/8 only — not every RFC1918 address, which does traverse a network.
+        return (bool) filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
+            && str_starts_with($host, '127.');
     }
 
     /**

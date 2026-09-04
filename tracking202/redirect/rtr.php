@@ -598,7 +598,12 @@ if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
 	$click_row1 = $click_result1 ? $click_result1->fetch_assoc() : null;
 
 	if ($click_row1 && !empty($click_row1['click_id'])) {
-		$mysql['click_id'] = $db->real_escape_string((string)$click_row1['click_id']);
+		// Set the bare $click_id too, not just the escaped copy: it is read at
+		// the cloaked click_id_public build and by replaceTrackerPlaceholders for
+		// {clickid}. This reuse path left it undefined, so a cloaked link on the
+		// ?lpr= flow got a malformed public id and an empty {clickid}.
+		$click_id = (int)$click_row1['click_id'];
+		$mysql['click_id'] = $db->real_escape_string((string)$click_id);
 		$keyword = $db->real_escape_string($keyword);
 		$keyword_id = $db->real_escape_string((string)$click_row1['keyword_id']);
 		$mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id);

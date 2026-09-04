@@ -467,14 +467,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 
-if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
-	// CSRF check — this GET deletes a DNI network and marks the linked aff
-	// network deleted; the POST handler validates the token and this must too.
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_GET['token'] ?? ''))) {
+// Deleting is a POST: a GET carrying the CSRF token put that token into browser
+// history, Referer headers and access logs, and it guards every POST mutation in
+// the session.
+if (isset($_POST['delete_dni_network']) && !empty($_POST['delete_dni_network'])) {
+	// CSRF check — this deletes a DNI network and marks the linked aff network
+	// deleted.
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		http_response_code(403);
 		die('Invalid token.');
 	}
-	$mysql['deleteDniNetworkId'] = $db->real_escape_string((string)$_GET['delete_dni_network']);
+	$mysql['deleteDniNetworkId'] = $db->real_escape_string((string)$_POST['delete_dni_network']);
 	$db->query("DELETE FROM 202_dni_networks WHERE id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'");
 	$sql = "UPDATE 202_aff_networks SET aff_network_deleted = '1', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['deleteDniNetworkId'] . "'";
 	$db->query($sql);
@@ -619,7 +622,7 @@ template_top('API Integrations');
 								</td>
 								<td><?php echo substr((string) $dni_row['apiKey'], 0, 12) . "... "; ?><a href="#" class="link showFullDniApikey" data-long="<?php echo htmlspecialchars((string) ($dni_row['apiKey']), ENT_QUOTES, 'UTF-8'); ?>" data-short="<?php echo substr((string) $dni_row['apiKey'], 0, 12); ?>">show</a></td>
 								<td><?php echo $dni_row['affiliateId']; ?></td>
-								<td><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?edit_dni_network=<?php echo $dni_row['id']; ?>" title="Edit"><i class="glyphicon glyphicon-pencil"></i></a> <a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?delete_dni_network=<?php echo urlencode((string) $dni_row['id']); ?>&amp;token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" onClick="return confirm('Delete This DNI Network?')" title="Delete"><i class="glyphicon glyphicon-trash"></i></a></td>
+								<td><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?edit_dni_network=<?php echo $dni_row['id']; ?>" title="Edit"><i class="glyphicon glyphicon-pencil"></i></a> <form method="post" style="display:inline" onsubmit="return confirm('Delete This DNI Network?');"><input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="delete_dni_network" value="<?php echo htmlspecialchars((string) $dni_row['id'], ENT_QUOTES, 'UTF-8'); ?>"><button type="submit" title="Delete" class="btn btn-link" style="padding:0;border:0;vertical-align:baseline"><i class="glyphicon glyphicon-trash"></i></button></form></td>
 							</tr>
 						<?php } ?>
 					</tbody>

@@ -69,7 +69,13 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
 
         // The device catalog is 202_device_models; 202_devices is created by no
         // install path, so every call here was destined for a 1146 on the click
-        // hot path. device_type is NOT NULL with no default, so supply it.
+        // hot path. device_type is NOT NULL with no default, so supply it — and
+        // it must be one of the seeded types (1=Desktop, 2=Mobile, 3=Tablet,
+        // 4=Bot). A 0 joined to no row in 202_device_types and dropped the model
+        // out of every `device_type = N` filter for good, because rows are keyed
+        // on device_name. 1 matches connect2.php's fallback for an unrecognised
+        // device; this interface carries no type, so callers that know it should
+        // go through the detector in connect2.php.
         $stmt = $this->conn->prepareRead(
             'SELECT device_id FROM 202_device_models WHERE device_name = ?'
         );
@@ -81,7 +87,7 @@ final class MysqlDeviceRepository implements DeviceRepositoryInterface
         }
 
         $stmt = $this->conn->prepareWrite(
-            'INSERT INTO 202_device_models SET device_name = ?, device_type = 0'
+            'INSERT INTO 202_device_models SET device_name = ?, device_type = 1'
         );
         $this->conn->bind($stmt, 's', [$name]);
 

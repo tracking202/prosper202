@@ -37,7 +37,11 @@ if (!empty($_GET['edit_user_id'])) {
 	$editing = true;
 }
 
-if (!empty($_GET['delete_user_id'])) {
+// Deleting is a POST: it is a state change, and routing it through GET meant
+// the CSRF token had to ride in the query string, where it lands in browser
+// history, Referer headers and access logs. That token guards every POST
+// mutation in the session, so leaking it is worse than the hole it closed.
+if (!empty($_POST['delete_user_id'])) {
 	$deleting = true;
 }
 
@@ -51,7 +55,7 @@ $user_sql = "SELECT user_id,user_email,user_time_register,user_timezone,install_
 $user_result2 = _mysqli_query($user_sql);
 $user_row2 = $user_result2->fetch_assoc();
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && empty($_POST['delete_user_id'])) {
 	// validate token
 	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		header('location: ' . get_absolute_url() . '202-account/user-management.php');
@@ -274,14 +278,13 @@ $user_result_edit = _mysqli_query($user_sql_edit);
 
 if ($deleting == true) {
 
-	// CSRF check — this GET soft-deletes a user and purges their attribution
-	// data; the POST branch above validates the token and this must too.
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_GET['token'] ?? ''))) {
+	// CSRF check — this soft-deletes a user and purges their attribution data.
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		http_response_code(403);
 		die('Invalid token.');
 	}
 
-	$mysql['user_id'] = $db->real_escape_string(trim(filter_input(INPUT_GET, 'delete_user_id', FILTER_SANITIZE_NUMBER_INT)));
+	$mysql['user_id'] = $db->real_escape_string(trim((string) filter_input(INPUT_POST, 'delete_user_id', FILTER_SANITIZE_NUMBER_INT)));
 
 	if (!$userObj->hasPermission("add_edit_delete_admin")) {
 		header('location: ' . get_absolute_url() . '202-account/user-management.php');
@@ -507,10 +510,10 @@ template_top('User Management'); ?>
 							if (!$userObj->hasPermission("add_edit_delete_admin")) {
 								printf('<li>%s</li>', $html['user_display_name']);
 							} else {
-								printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s&amp;token=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This User?\');">remove</a></li>', $html['user_display_name'], $url['user_id'], $url['user_id'], urlencode((string) ($_SESSION['token'] ?? '')));
+								printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <form method="post" style="display:inline" onsubmit="return confirmAlert(\'Are You Sure You Want To Delete This User?\');"><input type="hidden" name="token" value="%s"><input type="hidden" name="delete_user_id" value="%s"><button type="submit" class="btn btn-link" style="padding:0;border:0;vertical-align:baseline">remove</button></form></li>', $html['user_display_name'], $url['user_id'], htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'), $url['user_id']);
 							}
 						} else {
-							printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <a href="?delete_user_id=%s&amp;token=%s" onclick="return confirmAlert(\'Are You Sure You Want To Delete This User?\');">remove</a></li>', $html['user_display_name'], $url['user_id'], $url['user_id'], urlencode((string) ($_SESSION['token'] ?? '')));
+							printf('<li>%s - <a href="?edit_user_id=%s">edit</a> - <form method="post" style="display:inline" onsubmit="return confirmAlert(\'Are You Sure You Want To Delete This User?\');"><input type="hidden" name="token" value="%s"><input type="hidden" name="delete_user_id" value="%s"><button type="submit" class="btn btn-link" style="padding:0;border:0;vertical-align:baseline">remove</button></form></li>', $html['user_display_name'], $url['user_id'], htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'), $url['user_id']);
 						}
 
 					?>

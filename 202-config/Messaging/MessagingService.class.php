@@ -183,11 +183,14 @@ class MessagingService
                 $newestBody = '';
                 $messages   = $conversation['messages'] ?? [];
                 if (is_array($messages)) {
-                    foreach ($messages as $message) {
+                    // Pass the position within the conversation: it is stable
+                    // across polls and is the only discriminator available to
+                    // the synthetic-id fallback in upsertMessage().
+                    foreach (array_values($messages) as $position => $message) {
                         if (!is_array($message)) {
                             continue;
                         }
-                        $this->upsertMessage($conversationId, $message);
+                        $this->upsertMessage($conversationId, $message, $position);
                         $ts = $this->normalizeDate($message['created_at'] ?? null);
                         if ($ts !== null && ($newestTs === null || $ts > $newestTs)) {
                             $newestTs   = $ts;
@@ -354,7 +357,7 @@ class MessagingService
      *
      * @param array<string,mixed> $m
      */
-    private function upsertMessage(int $conversationId, array $m): void
+    private function upsertMessage(int $conversationId, array $m, int $position = 0): void
     {
         $externalId  = isset($m['external_id']) ? (string) $m['external_id'] : null;
         $clientToken = isset($m['client_token']) ? (string) $m['client_token'] : null;
@@ -391,12 +394,19 @@ class MessagingService
         // derive a stable synthetic id from its content so repeated pulls dedupe via
         // messageExists() below instead of inserting a fresh copy every sync.
         if ($externalId === null) {
-            // Hash only fields that are stable across polls. Using $createdAt
-            // here meant a message with no created_at got a fresh id on every
-            // sync, so messageExists() never matched and the poll inserted a
-            // duplicate row each time (~180/hour with a tab open) — the
+            // Hash only fields that are stable across polls. Using the local
+            // $createdAt here meant a message with no created_at got a fresh id
+            // every sync, so messageExists() never matched and the poll inserted
+            // a duplicate row each time (~180/hour with a tab open) — the
             // UNIQUE (conversation_id, external_id) key could not help.
-            $externalId = 'syn_' . md5($direction . '|' . $author . '|' . ($providedCreatedAt ?? '') . '|' . $body);
+            //
+            // $position is required, not decorative: without it, a message
+            // lacking created_at hashed to direction|author||body alone, so two
+            // genuinely distinct messages with the same author and text (a
+            // repeated "ok") collided and the second was silently dropped as
+            // already-seen. Position is stable across polls and distinguishes
+            // them.
+            $externalId = 'syn_' . md5($direction . '|' . $author . '|' . ($providedCreatedAt ?? '') . '|' . $position . '|' . $body);
         }
 
         // Skip if we already have this message.

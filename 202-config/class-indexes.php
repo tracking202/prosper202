@@ -645,7 +645,7 @@ class INDEXES
         return $platform_id;
     }
 
-    public static function get_device_id($device_name)
+    public static function get_device_id($device_name, $device_type = null)
     {
         $database = DB::getInstance();
         $db = $database->getConnection();
@@ -656,12 +656,21 @@ class INDEXES
 
         $mysql['device_name'] = $db->real_escape_string(trim((string) $device_name));
         // 202_device_models is the real catalog; 202_devices is created by no
-        // install path. device_type is NOT NULL with no default, so supply it.
+        // install path. device_type is NOT NULL with no default, so supply it —
+        // but it must be a real type. 202_device_types seeds only 1=Desktop,
+        // 2=Mobile, 3=Tablet, 4=Bot, so a 0 joined to nothing and dropped the
+        // model out of every `device_type = N` report filter permanently, since
+        // rows here are keyed on device_name. Mirror connect2.php, which resolves
+        // 1-4 and falls back to 1 for an unrecognised device.
+        $type = (int) $device_type;
+        if ($type < 1 || $type > 4) {
+            $type = 1;
+        }
         $device_sql = "SELECT device_id FROM 202_device_models WHERE device_name='" . $mysql['device_name'] . "'";
         $device_result = $db->query($device_sql) or record_mysql_error($device_sql);
 
         if ($device_result->num_rows == 0) {
-            $device_sql = "INSERT INTO 202_device_models SET device_name='" . $mysql['device_name'] . "', device_type='0'";
+            $device_sql = "INSERT INTO 202_device_models SET device_name='" . $mysql['device_name'] . "', device_type='" . $type . "'";
             delay_sql($device_sql);
             $device_id = mysqli_insert_id($db);
         } else {

@@ -100,16 +100,22 @@ class RotatorsController
      * so this is best-effort: it removes deliberate collisions and makes random
      * ones vanishingly unlikely.
      */
+    private function publicIdIsFree(int $candidate): bool
+    {
+        $stmt = $this->prepare('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $candidate);
+        $this->execute($stmt, 'Public id lookup failed');
+        $taken = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $taken === null || $taken === false;
+    }
+
     private function generatePublicId(): int
     {
         for ($attempt = 0; $attempt < 10; $attempt++) {
             $candidate = random_int(100_000, 9_999_999);
-            $stmt = $this->prepare('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
-            $this->bind($stmt, 'i', $candidate);
-            $this->execute($stmt, 'Public id lookup failed');
-            $taken = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-            if (!$taken) {
+            if ($this->publicIdIsFree($candidate)) {
                 return $candidate;
             }
         }
@@ -129,12 +135,27 @@ class RotatorsController
         $defaultLp = (int)($payload['default_lp'] ?? 0);
         // public_id is the handle offrtr.php/rtr.php resolve for ANY visitor with
         // no user scoping, and 202_rotators has no unique key on it — so a
-        // caller-chosen value could collide with another user's rotator in this
-        // install and route that rotator's clicks to the wrong destination (the
-        // lookup is then memcached). A correctness/integrity bug within the
-        // install, not cross-install. Always derive it server-side, and check
-        // for a free value before using it.
-        $publicId = $this->generatePublicId();
+        // caller-chosen value that is ALREADY TAKEN would route another user's
+        // clicks to this rotator (the lookup is then memcached). An integrity
+        // bug within the install, not cross-install.
+        //
+        // The danger is collision, not caller choice, so honour a supplied
+        // public_id when it is free and fall back to a generated one otherwise.
+        // Rejecting it outright broke `p202 sync`: rotators are matched between
+        // installs by public_id, so a server-assigned value meant the target
+        // never matched the source — every run re-created every rotator, and
+        // remapping trackers' rotator_id failed outright with "unresolvable
+        // target foreign key".
+        $publicId = 0;
+        if (isset($payload['public_id']) && $payload['public_id'] !== '') {
+            $requested = (int)$payload['public_id'];
+            if ($requested > 0 && $this->publicIdIsFree($requested)) {
+                $publicId = $requested;
+            }
+        }
+        if ($publicId === 0) {
+            $publicId = $this->generatePublicId();
+        }
 
         $stmt = $this->prepare('INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)');
         $this->bind($stmt, 'iissii', $publicId, $this->userId, $name, $defaultUrl, $defaultCampaign, $defaultLp);
