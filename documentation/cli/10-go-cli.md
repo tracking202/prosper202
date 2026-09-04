@@ -257,10 +257,19 @@ in order of precedence: a hint attached by the command itself (for example,
 which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
 for the failure class (401/403 key check — or, when the 403 names a required
-scope, minting a key with `--scope`; 404 use `list` for ids; 409 update
-instead of create; 429 back off; 5xx retry then `p202 system health`;
-network check the URL and `p202 config test`); and for any remaining
-validation error, a pointer to `<command> --help`.
+scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
+5xx retry then `p202 system health`; network check the URL and `p202 config
+test`); and for any remaining validation error, a pointer to `<command>
+--help`.
+
+A 409 is resolved by cause rather than by status alone, because its causes
+need opposite responses: a still-running idempotent retry says to wait and
+resend the same command; a spent `Idempotency-Key` (its request died without
+recording a response) says to check whether the record exists and use a new
+key only if it does not; an `apply_interrupted` staged change says to check
+whether the write landed and stage it again if not; a staged change in the
+wrong state points at `p202 change show`; and only an actual duplicate gets
+"update it instead of creating".
 
 ### Exit Codes
 

@@ -66,7 +66,7 @@ whether scoped keys can be minted).
 | `Authorization: Bearer <key>` | Request | Required for authenticated endpoints. |
 | `X-P202-API-Version` | Request | Optional version negotiation; defaults to `v3` if omitted. |
 | `X-P202-API-Version-Resolved: v3` | Response | Always present; reports the resolved API version. |
-| `Idempotency-Key: <string>` | Request | Required for bulk-upsert operations. Optional on single POST creates (CRUD entities, conversions, rotators + rules, attribution models + exports, users): a retry with the same key and payload replays the recorded response (`idempotent_replay: true` in the body) instead of creating a duplicate. Not honored on API-key creation (secret responses are never stored) or LTV writes (they have their own upsert/dedup semantics). |
+| `Idempotency-Key: <string>` | Request | Required for bulk-upsert operations. Optional on single POST creates (CRUD entities, conversions, rotators + rules, attribution models + exports, users): a retry with the same key and payload replays the recorded response (`idempotent_replay: true` in the body) instead of creating a duplicate. A retry sent while the first request is still running gets `409`; if the first request died outright without recording a response, whether it created the record is unknown, so the key is spent — later retries get `409` telling you to check state and use a new key rather than risking a duplicate. Not honored on API-key creation (secret responses are never stored) or LTV writes (they have their own upsert/dedup semantics). |
 | `If-Match: <etag>` | Request | Optional optimistic concurrency on updates. |
 
 ## Delete Dry-Run
@@ -158,10 +158,15 @@ The contract, in the terms of Anthropic's commerce-agents reference:
 - **No secrets in the ledger.** A staged change is stored as JSON and shown
   to every reviewer, so a write carrying a credential is refused at staging
   time rather than silently redacted — a redacted proposal could not be
-  applied faithfully. That covers payload keys (`user_pass`, `api_key`,
-  `token`, …) and paths that *are* the credential: `DELETE
-  /users/{id}/api-keys/{key}` addresses the key by its own value, so it
-  cannot be staged. Perform those writes directly.
+  applied faithfully. A payload key counts as a credential when it matches a
+  known name (`user_pass`, `api_key`, `token`, …) *or contains* one of
+  `api_key`, `apikey`, `password`, `passwd`, `secret`, `token`,
+  `private_key`, `webhook`, `credential` — so `ipqs_api_key`,
+  `user_slack_incoming_webhook`, and `webhook_url` are refused too, even
+  though none of them matches a bare name. Paths that *are* the credential
+  are refused on the same grounds: `DELETE /users/{id}/api-keys/{key}`
+  addresses the key by its own value, so it cannot be staged. Perform those
+  writes directly.
 - **Expiry.** Changes expire (24h by default;
   `P202_STAGED_CHANGE_TTL_SECONDS` overrides) so a stale proposal cannot
   fire against a world that moved on. Applied and discarded changes remain

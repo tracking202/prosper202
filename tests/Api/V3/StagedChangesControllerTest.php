@@ -393,6 +393,71 @@ final class StagedChangesControllerTest extends TestCase
         );
     }
 
+    /**
+     * The exact-name secret list missed the credential fields that actually
+     * exist on `202_users_pref`, both writable through the stageable
+     * PUT /users/{id}/preferences.
+     */
+    public function testStagingRefusesCredentialFieldsTheExactNameListMisses(): void
+    {
+        $ctl = $this->controller($this->authFor(5, 'read,stage'));
+
+        foreach ([
+            'ipqs_api_key' => 'ipqs-live-secret',
+            'user_slack_incoming_webhook' => 'https://hooks.slack.com/services/T0/B0/xxxxxxxx',
+            'webhook_url' => 'https://example.com/hook/secret-token',
+        ] as $field => $value) {
+            try {
+                $ctl->stage('PUT', '/users/5/preferences', [$field => $value], null);
+                $this->fail("staging a payload carrying $field must be refused");
+            } catch (ValidationException $e) {
+                $this->assertStringContainsString('carries a secret', $e->getMessage());
+                $this->assertStringContainsString($field, $e->getFieldErrors()['staged'] ?? '');
+            }
+        }
+
+        $this->assertSame([], $this->store->listStagedChangesForUser(5));
+    }
+
+    /**
+     * The false-positive direction. Substring matching is deliberately
+     * broad, so this pins that it does not swallow the ordinary write
+     * surface sitting next to those fields — add a field here when adding
+     * one to a stageable route.
+     */
+    public function testOrdinaryWriteFieldsAreNotMistakenForSecrets(): void
+    {
+        $ctl = $this->controller($this->authFor(5, 'read,stage'));
+
+        $payload = [];
+        foreach ([
+            'user_pref_limit', 'user_pref_time_predefined', 'user_tracking_domain',
+            'user_cpc_or_cpv', 'user_account_currency', 'user_pref_cloak_referer',
+            'user_daily_email', 'chart_time_range', 'aff_campaign_name',
+            'aff_campaign_url', 'aff_campaign_payout', 'aff_network_id',
+            'user_name', 'user_email', 'text_ad_id', 'keyword_id',
+            'rotator_name', 'model_name', 'scope_type', 'requested_format',
+        ] as $field) {
+            $payload[$field] = 'x';
+        }
+
+        $this->assertSame([], $this->invokeSecretKeysIn($payload));
+
+        $out = $ctl->stage('PUT', '/users/5/preferences', [
+            'user_tracking_domain' => 'track.example.com',
+            'user_account_currency' => 'USD',
+        ], null);
+        $this->assertSame(StagedChangesController::STATUS_STAGED, $out['data']['status']);
+    }
+
+    /** @param array<string, mixed> $payload @return string[] */
+    private function invokeSecretKeysIn(array $payload): array
+    {
+        $m = new \ReflectionMethod(StagedChangesController::class, 'secretKeysIn');
+        $m->setAccessible(true);
+        return $m->invoke(null, $payload);
+    }
+
     public function testAFreshApplyingClaimIsStillProtected(): void
     {
         $auth = $this->authFor(5);

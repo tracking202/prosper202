@@ -10,6 +10,15 @@ class ServerStateStore
 {
     private const int DEFAULT_RETENTION = 5000;
 
+    /**
+     * Staged-change statuses that are finished, and so safe to prune once a
+     * user's ledger passes the retention cap. `staged` is awaiting a
+     * decision; `applying` is mid-dispatch, and dropping one loses the
+     * record its own handler is about to write its outcome into. Only
+     * terminal states are prunable.
+     */
+    private const array PRUNABLE_CHANGE_STATUSES = ['applied', 'discarded', 'apply_interrupted'];
+
     private readonly string $baseDir;
 
     public function __construct(?string $baseDir = null)
@@ -69,7 +78,7 @@ class ServerStateStore
      * idempotency exists to prevent, since automatic retries usually race a
      * still-running request rather than following it.
      *
-     * @return array{state: 'replay'|'in_flight'|'claimed', response: ?array}
+     * @return array{state: 'replay'|'in_flight'|'indeterminate'|'claimed', response: ?array}
      */
     public function reserveIdempotent(string $scope, string $key): array
     {
@@ -84,13 +93,23 @@ class ServerStateStore
                     return $data;
                 }
                 $claimedAt = (int)($item['claimed_at'] ?? 0);
-                if (is_array($item) && $claimedAt > 0
-                    && time() - $claimedAt <= self::IDEMPOTENCY_CLAIM_TTL_SECONDS) {
-                    // Another request holds this key and has not finished.
-                    $result = ['state' => 'in_flight', 'response' => null];
+                if (is_array($item) && $claimedAt > 0) {
+                    if (time() - $claimedAt <= self::IDEMPOTENCY_CLAIM_TTL_SECONDS) {
+                        // Another request holds this key and has not finished.
+                        $result = ['state' => 'in_flight', 'response' => null];
+                        return $data;
+                    }
+                    // The claim outlived its holder without recording a
+                    // response. A caller whose operation merely *failed*
+                    // releases the claim (see releaseIdempotent), so getting
+                    // here means the process died outright — possibly after
+                    // its write committed. Re-executing would duplicate the
+                    // record this key exists to prevent, so the claim is kept
+                    // and the state reported as unknown rather than reused.
+                    $result = ['state' => 'indeterminate', 'response' => null];
                     return $data;
                 }
-                // Free, or a claim whose request died: take it.
+                // Free: take it.
                 $data['items'][$key] = ['stored_at' => time(), 'claimed_at' => time()];
                 return $data;
             }
@@ -314,7 +333,7 @@ class ServerStateStore
 
             $resolved = [];
             foreach ($state['items'] as $id => $item) {
-                if (($item['status'] ?? '') !== 'staged') {
+                if (in_array((string)($item['status'] ?? ''), self::PRUNABLE_CHANGE_STATUSES, true)) {
                     $resolved[$id] = (int)($item['created_at_epoch'] ?? 0);
                 }
             }
@@ -772,6 +791,18 @@ class ServerStateStore
             // staged changes, sync jobs, and idempotency records: keep using
             // the legacy path so in-flight work stays reachable, and say so.
             if (!@rename($legacy, $scoped)) {
+                // The likeliest reason a rename fails here is that another
+                // worker racing the same first-request-after-upgrade already
+                // performed it, which is a win, not an error: returning
+                // $legacy would have this worker recreate the old directory
+                // and write state that no later request reads. Re-check the
+                // destination before falling back; clearstatcache keeps the
+                // answer from being served out of anything cached earlier in
+                // the request.
+                clearstatcache(true, $scoped);
+                if (is_dir($scoped)) {
+                    return $scoped;
+                }
                 error_log(sprintf(
                     'p202: could not adopt legacy API state dir %s into %s (%s); continuing to use the legacy path. '
                     . 'Set P202_SERVER_STATE_DIR to choose a location explicitly.',

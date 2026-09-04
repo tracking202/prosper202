@@ -87,4 +87,45 @@ final class IdempotencyReservationTest extends TestCase
         $this->store->reserveIdempotent('scope', 'key-1');
         $this->assertSame('claimed', $this->store->reserveIdempotent('scope', 'key-2')['state']);
     }
+
+    /**
+     * Age a claim past its TTL the way a process death would: the claim is
+     * on record, no response ever followed it.
+     */
+    private function expireClaim(string $scope, string $key): void
+    {
+        $file = null;
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->tmpDir, \FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $candidate) {
+            if ($candidate->isFile() && str_ends_with($candidate->getFilename(), '.json')) {
+                $file = $candidate->getPathname();
+            }
+        }
+        $this->assertNotNull($file, 'expected an idempotency file on disk');
+        $data = json_decode((string)file_get_contents($file), true);
+        $data['items'][$key]['claimed_at'] = time() - (ServerStateStore::IDEMPOTENCY_CLAIM_TTL_SECONDS + 60);
+        file_put_contents($file, json_encode($data));
+    }
+
+    public function testAnExpiredClaimIsIndeterminateRatherThanFree(): void
+    {
+        // A holder that merely failed releases its claim, so an expired one
+        // means the process died outright — possibly after its write
+        // committed. Handing the key back would duplicate the record.
+        $this->store->reserveIdempotent('scope', 'key-1');
+        $this->expireClaim('scope', 'key-1');
+
+        $this->assertSame('indeterminate', $this->store->reserveIdempotent('scope', 'key-1')['state']);
+    }
+
+    public function testAnIndeterminateKeyStaysIndeterminate(): void
+    {
+        $this->store->reserveIdempotent('scope', 'key-1');
+        $this->expireClaim('scope', 'key-1');
+
+        $this->store->reserveIdempotent('scope', 'key-1');
+        // The claim is kept, so every later retry gets the same answer
+        // instead of the second one silently re-executing.
+        $this->assertSame('indeterminate', $this->store->reserveIdempotent('scope', 'key-1')['state']);
+    }
 }

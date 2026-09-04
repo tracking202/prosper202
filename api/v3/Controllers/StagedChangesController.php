@@ -62,6 +62,23 @@ final class StagedChangesController
     ];
 
     /**
+     * Substrings that make a key a credential whatever its prefix. An
+     * exact-name list cannot keep up with the fields that actually exist:
+     * `202_users_pref` alone carries `ipqs_api_key` and
+     * `user_slack_incoming_webhook`, neither of which matches a name above,
+     * and both are writable through the stageable
+     * `PUT /users/{id}/preferences`. Matching wrongly costs only "perform
+     * this write directly", which is the safe direction to fail. The field
+     * names the v3 write surface accepts were checked against this list when
+     * it was written and the only matches were genuine credentials;
+     * StagedChangesControllerTest guards that direction as fields are added.
+     */
+    private const SECRET_KEY_SUBSTRINGS = [
+        'api_key', 'apikey', 'password', 'passwd', 'secret',
+        'token', 'private_key', 'webhook', 'credential',
+    ];
+
+    /**
      * Routes whose *path* carries a secret, mapped to the reason. A staged
      * change stores `path` verbatim and shows it — plus the `summary` built
      * from it — to every reviewer, so a credential in the path would sit in
@@ -408,8 +425,16 @@ final class StagedChangesController
     {
         $found = [];
         foreach (array_keys($payload) as $key) {
-            if (in_array(strtolower(trim((string)$key)), self::SECRET_PAYLOAD_KEYS, true)) {
+            $name = strtolower(trim((string)$key));
+            if (in_array($name, self::SECRET_PAYLOAD_KEYS, true)) {
                 $found[] = (string)$key;
+                continue;
+            }
+            foreach (self::SECRET_KEY_SUBSTRINGS as $needle) {
+                if (str_contains($name, $needle)) {
+                    $found[] = (string)$key;
+                    break;
+                }
             }
         }
         return $found;

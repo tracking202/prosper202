@@ -78,6 +78,33 @@ final class ServerStateStoreDefaultDirTest extends TestCase
         $this->assertNotSame($store->baseDir(), $other->baseDir());
     }
 
+    /**
+     * A rename that fails for a real reason (here the destination exists as
+     * a file, so it can never be a state directory) must keep using the
+     * legacy path, so in-flight staged changes and sync jobs stay reachable.
+     */
+    public function testAGenuinelyFailedAdoptionKeepsUsingTheLegacyDir(): void
+    {
+        $legacy = sys_get_temp_dir() . '/p202-api-v3-state';
+        if (is_dir($legacy) || is_file($legacy)) {
+            $this->markTestSkipped('a real legacy state dir is present on this host; not touching it');
+        }
+        $GLOBALS['dbname'] = 'p202_state_adopt_' . bin2hex(random_bytes(4));
+        $GLOBALS['dbhost'] = 'adopt.host';
+        $scoped = $legacy . '-' . substr(sha1($GLOBALS['dbhost'] . '|' . $GLOBALS['dbname']), 0, 12);
+
+        mkdir($legacy, 0700, true);
+        $this->createdDirs[] = $legacy;
+        file_put_contents($scoped, 'not a directory');
+
+        try {
+            $store = new ServerStateStore();
+            $this->assertSame($legacy, $store->baseDir());
+        } finally {
+            @unlink($scoped);
+        }
+    }
+
     public function testExplicitEnvOverrideWins(): void
     {
         $GLOBALS['dbname'] = 'p202_state_test_env';

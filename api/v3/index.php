@@ -208,6 +208,17 @@ try {
                     . 'to receive the recorded response.'
                 );
             }
+            if ($reservation['state'] === 'indeterminate') {
+                // A previous holder died without recording a response, so
+                // whether it created the record is unknowable. Replaying is
+                // impossible and re-executing could duplicate exactly what
+                // the key exists to prevent, so the key stays spent.
+                throw new ConflictException(
+                    'A previous request with this Idempotency-Key did not finish, so whether it created '
+                    . 'the record is unknown and this key can be neither replayed nor reused. Check '
+                    . 'whether the record exists, then retry with a new Idempotency-Key if it does not.'
+                );
+            }
             try {
                 $response = $op();
             } catch (\Throwable $e) {

@@ -135,6 +135,19 @@ func HintFor(err error) string {
 			return "Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
+		// A 409 has several unrelated causes -- a still-running idempotent
+		// retry, a spent Idempotency-Key, an interrupted apply, a staged
+		// change in the wrong state, an actual duplicate -- and "update it
+		// instead of creating" is wrong advice for all but the last. Match
+		// the specific causes first; the duplicate stays the fallback.
+		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "still in flight"):
+			return "The first request carrying this Idempotency-Key is still running. Wait, then retry the same command to receive its recorded response."
+		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "idempotency-key"):
+			return "That Idempotency-Key is spent and its outcome is unknown. Run the matching `... list` to see whether the record exists, then retry with a new --idempotency-key only if it does not."
+		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "apply_interrupted"):
+			return "The write may or may not have landed. Run the matching `... list` to check, then stage it again if it did not; this change id can no longer be applied or discarded."
+		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "chg_"):
+			return "Only a staged change can be applied or discarded. Run `p202 change show <change_id>` for its current status."
 		case apiErr.Status == 409:
 			return "A matching record already exists. Run the matching `... list` to find it, then `... update` it instead of creating."
 		case (apiErr.Status == 400 || apiErr.Status == 422) && strings.Contains(strings.ToLower(apiErr.Message), "staged is not supported"):
