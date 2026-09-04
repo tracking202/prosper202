@@ -235,6 +235,8 @@ Check here before burning time on tooling failures.
 
 ## Verify your assumptions
 
+<verify_assumptions>
+
 **Before stating something as fact, know how you know it.** Nearly every wrong
 conclusion recorded here came from an assumption that was never checked — not
 from bad code. The failure mode is always the same: something is *inferred*
@@ -305,6 +307,8 @@ where a check quietly fails to check what it appears to.
   (`HOME=$(mktemp -d) go test ./cmd/...`) before pushing anything that touches
   a command which builds a client. Flag validation belongs *before* the
   client is built anyway.
+
+</verify_assumptions>
 
 ## Review discipline
 - Review every file individually. Batch scanning causes context overload and misses real bugs.
