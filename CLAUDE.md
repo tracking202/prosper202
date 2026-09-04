@@ -138,6 +138,26 @@ performed the delete. A flag whose whole purpose is to withhold an action must
 be re-checked at every boundary that rebuilds state; grep for the reset and
 the subprocess spawn, not just the flag definition.
 
+### 15. A discriminator folded into the storage key can never be checked
+An idempotency key exists to make a retry safe. Every one of the three
+call sites hashed the request body into the *scope* — the value the record's
+filename is derived from — so a key reused with a changed body addressed a
+different file, found nothing there, and executed: the exact duplicate the
+key was sent to prevent, and the comments called that "a fresh create, not a
+conflict" as though it were a feature. Whenever the point of a stored value
+is to detect that two requests differ, the thing being compared belongs
+*inside* the record as a fingerprint, never in the key that locates it. The
+general shape: if X is part of the lookup path, no lookup can ever tell you
+that X changed. Ask of any cache, dedup table, or lock name — what
+difference is this supposed to catch, and can it still see it?
+
+Widening a scope has a second-order cost that has to be paid in the same
+change: records that used to be spread across one file per request now share
+one, read and rewritten under a lock on every call. Shard by the same value
+the lookup keys on (here the key itself, so the same key still lands in the
+same file) and bound what a shard retains, or the correctness fix ships a
+latency regression.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -206,6 +226,20 @@ Check here before burning time on tooling failures.
   tests/Rotator tests/Conversion tests/Report tests/Upgrade tests/Click
   tests/Install` all pass without those deps) and say explicitly which
   suites could not run.
+- **The PHP CLI (`bin/p202`) can be made to run on a partial vendor/**, which
+  is the only way to exercise a `cli/Commands/*` change end to end. Symfony
+  Console lands but three of its dependencies come down empty: clone
+  `symfony/service-contracts`, `symfony/deprecation-contracts` and
+  `symfony/string` at the versions in `composer.lock` and copy each into its
+  `vendor/symfony/<pkg>/` directory, then add the `Symfony\Contracts\Service\`
+  and `Symfony\Component\String\` PSR-4 mappings to BOTH
+  `vendor/composer/autoload_psr4.php` and `autoload_static.php` (as with
+  uap-php, `dump-autoload` will not pick them up). `deprecation-contracts`
+  ships its `trigger_deprecation()` as a *files* autoload entry and the
+  partial install generates no `autoload_files.php`, so run the CLI as
+  `php -d auto_prepend_file=vendor/symfony/deprecation-contracts/function.php
+  bin/p202 ...`. The CLI keeps its own config (`config:set-url` /
+  `config:set-key`), not `P202_API_URL`/`P202_API_KEY`.
 - **`docs/` matches a gitignore pattern** even though `docs/cli-agent.md`,
   `docs/cli.md`, and `docs/openapi.yaml` are tracked. `git add docs/<file>`
   on the tracked files works but prints an "ignored paths" warning (exit

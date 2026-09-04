@@ -589,20 +589,16 @@ func init() {
 	userUpdateCmd.Flags().String("user_timezone", "", "Timezone")
 	userUpdateCmd.Flags().String("user_active", "", "1=active, 0=inactive")
 
-	userDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	userDeleteCmd.Flags().String("ids", "", "Comma-separated user IDs to delete in bulk")
-	userDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerDeleteFlags(userDeleteCmd, "user")
 	registerIdempotencyKeyFlag(userCreateCmd)
 
 	// Role flags
 	userRoleAssignCmd.Flags().String("role_id", "", "Role ID (alternative to the second positional arg)")
 	userRoleRemoveCmd.Flags().String("role_id", "", "Role ID (alternative to the second positional arg)")
-	userRoleRemoveCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	userRoleRemoveCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerSingleDeleteFlags(userRoleRemoveCmd)
 
 	// API key flags
-	userAPIKeyDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	userAPIKeyDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerSingleDeleteFlags(userAPIKeyDeleteCmd)
 	userAPIKeyCreateCmd.Flags().String("scope", "", "Scope for the new key: *, read, write, stage, or comma-separated <area>:read/<area>:write/<area>:stage tokens (`read,stage` is the propose-only agent shape; default: full access)")
 	userAPIKeyRotateCmd.Flags().String("scope", "", "Scope for the replacement key (default: the old key's scope, carried over)")
 	userAPIKeyRotateCmd.Flags().Bool("keep-old", false, "Do not delete the old API key")

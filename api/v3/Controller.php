@@ -590,10 +590,24 @@ abstract class Controller
             throw new ValidationException('rows exceeds max size', ['rows' => "Maximum {$maxRows} rows per request"]);
         }
 
-        $requestHash = ServerStateStore::canonicalHash(['rows' => $rows]);
-        $scope = 'bulk-upsert:' . $this->tableName() . ':user:' . $this->userId . ':request:' . $requestHash;
-        $existing = $this->stateStore()->getIdempotent($scope, $idempotencyKey);
-        if (is_array($existing)) {
+        // The target table and the rows are a fingerprint recorded beside
+        // the response, not part of the scope: with them in the scope a key
+        // reused for a changed batch (or a different table) reads a
+        // different file, finds nothing, and re-applies the whole batch —
+        // the duplicate the key was sent to prevent.
+        $requestHash = ServerStateStore::idempotencyFingerprint('bulk-upsert:' . $this->tableName(), ['rows' => $rows]);
+        $scope = ServerStateStore::idempotencyScopeForUser($this->userId);
+        $lookup = $this->stateStore()->lookupIdempotent($scope, $idempotencyKey, $requestHash);
+        if ($lookup['state'] === 'mismatch') {
+            throw new ValidationException(
+                'This Idempotency-Key was already used for a different request. Resend the original '
+                . 'rows to this same endpoint to replay the recorded response, or send a new '
+                . 'Idempotency-Key for a different batch.',
+                ['idempotency_key' => 'Already used for a different request']
+            );
+        }
+        if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
+            $existing = $lookup['response'];
             $existing['idempotent_replay'] = true;
             return $existing;
         }
@@ -656,7 +670,7 @@ abstract class Controller
         $this->stateStore()->incrementMetric('bulk_upsert_updated', (int)$summary['updated']);
         $this->stateStore()->incrementMetric('bulk_upsert_skipped', (int)$summary['skipped']);
         $this->stateStore()->incrementMetric('bulk_upsert_errors', (int)$summary['error']);
-        $this->stateStore()->putIdempotent($scope, $idempotencyKey, $response);
+        $this->stateStore()->putIdempotent($scope, $idempotencyKey, $response, $requestHash);
 
         return $response;
     }

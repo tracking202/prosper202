@@ -3298,7 +3298,16 @@ class UPGRADE
             $result = _upgrade_query($sql);
             if (!($result && mysqli_num_rows($result) > 0)) {
                 $sql = "ALTER TABLE `202_api_keys` ADD COLUMN `scope` text DEFAULT NULL AFTER `api_key`";
-                $result = _upgrade_query($sql);
+                // The version advances below whatever this returns, so a
+                // failure here leaves the install at 1.9.60 without the
+                // column. The 1.9.75 step repairs that; say so here rather
+                // than failing in silence (error pattern #1).
+                if (_upgrade_query($sql) === false) {
+                    error_log(
+                        'Prosper202 upgrade: could not add 202_api_keys.scope during the 1.9.60 step; '
+                        . 'the 1.9.75 step will retry it.'
+                    );
+                }
             }
 
             // Composite indexes for AUTH::is_rate_limited()'s per-login throttle
@@ -3887,10 +3896,17 @@ class UPGRADE
 
             // API key scopes (agent least-privilege): the v3 API enforces
             // read/write scopes per route family and key creation accepts a
-            // scope. Fresh installs get the column from UserTables::apiKeys();
-            // this backfills older installs, matching that definition and
-            // column order. Guarded ALTER so a partial failure retries
-            // cleanly on the next run.
+            // scope. Fresh installs get the column from UserTables::apiKeys(),
+            // and the 1.9.60 step adds it for older ones — so this looks
+            // redundant, and a review flagged it as a no-op.
+            //
+            // It is not. The 1.9.60 step now logs a failed ALTER but still
+            // advances the version regardless of it, so an install whose
+            // ALTER failed (permissions, lock timeout, disk) sits at 1.9.60+
+            // with no scope column. This guarded repeat is the only thing
+            // that repairs that install, and the v3 API's whole scope
+            // enforcement depends on the column existing. Keep it until
+            // 1.9.60 gates its own version bump.
             $check = _upgrade_query("SHOW COLUMNS FROM `202_api_keys` LIKE 'scope'");
             $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
             $scope_ok = $exists || _upgrade_query(

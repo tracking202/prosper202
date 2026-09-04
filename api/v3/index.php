@@ -185,23 +185,34 @@ try {
 
         // Single-create idempotency: when a POST create carries an
         // Idempotency-Key header, the response is recorded and replayed on a
-        // retry with the same key and payload, so a retried create cannot
-        // duplicate the row. Mirrors bulkUpsert(): the payload hash is part of
-        // the storage scope (same key + different payload is a fresh create,
-        // not a conflict) and replays carry idempotent_replay: true. API-key
-        // creation is deliberately not wrapped — its response contains the
-        // secret, which must never persist in the server-state store.
+        // retry with the same key, so a retried create cannot duplicate the
+        // row. Which endpoint was called and what body it carried are a
+        // fingerprint stored beside the record, not part of the storage
+        // scope: reusing a key for anything else is refused (422), where a
+        // scope that varied with the request would have filed it separately
+        // and created a second row — the duplicate the key was sent to
+        // prevent. Replays carry idempotent_replay: true. API-key creation
+        // is deliberately not wrapped — its response contains the secret,
+        // which must never persist in the server-state store.
         $idempotent = static function (string $operation, array $requestPayload, callable $op) use ($actorUserId, $stateStore): array {
             $key = trim((string)(RequestContext::header('idempotency-key') ?? ''));
             if ($key === '') {
                 return $op();
             }
-            $scope = 'create:' . $operation . ':user:' . $actorUserId
-                . ':request:' . ServerStateStore::canonicalHash($requestPayload);
+            $scope = ServerStateStore::idempotencyScopeForUser($actorUserId);
+            $fingerprint = ServerStateStore::idempotencyFingerprint('create:' . $operation, $requestPayload);
             // Claim the key atomically: a plain read-then-write left a
             // window where two concurrent retries both missed the record and
             // both created a row.
-            $reservation = $stateStore->reserveIdempotent($scope, $key);
+            $reservation = $stateStore->reserveIdempotent($scope, $key, $fingerprint);
+            if ($reservation['state'] === 'mismatch') {
+                throw new ValidationException(
+                    'This Idempotency-Key was already used for a different request. Resend the original '
+                    . 'request — same endpoint, same body — to replay its recorded response, or send a '
+                    . 'new Idempotency-Key to create something different.',
+                    ['idempotency_key' => 'Already used for a different request']
+                );
+            }
             if ($reservation['state'] === 'replay') {
                 $existing = $reservation['response'] ?? [];
                 $existing['idempotent_replay'] = true;
@@ -240,7 +251,7 @@ try {
                 $stateStore->releaseIdempotent($scope, $key);
                 throw $e;
             }
-            $stateStore->putIdempotent($scope, $key, $response);
+            $stateStore->putIdempotent($scope, $key, $response, $fingerprint);
             return $response;
         };
 

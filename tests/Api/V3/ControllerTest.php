@@ -582,8 +582,13 @@ final class ControllerTest extends TestCase
         }
     }
 
-    public function testBulkUpsertReplaysOnlyForMatchingRequestPayload(): void
+    public function testBulkUpsertRefusesAKeyReusedForDifferentRows(): void
     {
+        // The row hash used to be part of the storage scope, so a key reused
+        // for a changed batch read a different file, found nothing, and
+        // re-applied the whole batch — the duplicate the key was sent to
+        // prevent. It is now a fingerprint recorded beside the response, and
+        // a changed batch under the same key is refused.
         $stateDir = sys_get_temp_dir() . '/p202-bulk-upsert-state-' . bin2hex(random_bytes(4));
         mkdir($stateDir, 0700, true);
         putenv('P202_SERVER_STATE_DIR=' . $stateDir);
@@ -599,9 +604,18 @@ final class ControllerTest extends TestCase
             $second = $ctrl->bulkUpsert(['rows' => [[]]]);
             $this->assertTrue((bool)$second['idempotent_replay']);
 
-            $third = $ctrl->bulkUpsert(['rows' => [[], []]]);
-            $this->assertFalse((bool)$third['idempotent_replay']);
-            $this->assertSame(2, $third['summary']['skipped']);
+            try {
+                $ctrl->bulkUpsert(['rows' => [[], []]]);
+                $this->fail('expected a reused key with different rows to be refused');
+            } catch (ValidationException $e) {
+                $this->assertArrayHasKey('idempotency_key', $e->getFieldErrors());
+            }
+
+            // A fresh key for the changed batch is the caller's way out.
+            RequestContext::setHeaders(['Idempotency-Key' => 'bulk-request-hash-2']);
+            $fourth = $ctrl->bulkUpsert(['rows' => [[], []]]);
+            $this->assertFalse((bool)$fourth['idempotent_replay']);
+            $this->assertSame(2, $fourth['summary']['skipped']);
         } finally {
             RequestContext::reset();
             putenv('P202_SERVER_STATE_DIR');

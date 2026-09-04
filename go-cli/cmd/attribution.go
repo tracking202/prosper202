@@ -243,9 +243,7 @@ func init() {
 	attrModelUpdateCmd.Flags().String("is_active", "", "1=active, 0=inactive")
 	attrModelUpdateCmd.Flags().String("is_default", "", "1=default, 0=not")
 
-	attrModelDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	attrModelDeleteCmd.Flags().String("ids", "", "Comma-separated model IDs to delete in bulk")
-	attrModelDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerDeleteFlags(attrModelDeleteCmd, "model")
 	registerIdempotencyKeyFlag(attrModelCreateCmd)
 	registerIdempotencyKeyFlag(attrExportScheduleCmd)
 

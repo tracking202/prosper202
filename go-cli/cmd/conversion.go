@@ -222,9 +222,7 @@ func init() {
 	conversionCreateCmd.Flags().String("transaction_id", "", "Transaction ID for deduplication")
 	registerIdempotencyKeyFlag(conversionCreateCmd)
 
-	conversionDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	conversionDeleteCmd.Flags().String("ids", "", "Comma-separated conversion IDs to delete in bulk")
-	conversionDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerDeleteFlags(conversionDeleteCmd, "conversion")
 
 	conversionCmd.AddCommand(conversionListCmd, conversionGetCmd, conversionCreateCmd, conversionDeleteCmd)
 	rootCmd.AddCommand(conversionCmd)

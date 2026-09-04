@@ -426,9 +426,7 @@ func init() {
 	rotatorUpdateCmd.Flags().String("default_campaign", "", "Default campaign ID")
 	rotatorUpdateCmd.Flags().String("default_lp", "", "Default landing page ID")
 
-	rotatorDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	rotatorDeleteCmd.Flags().String("ids", "", "Comma-separated rotator IDs to delete in bulk")
-	rotatorDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerDeleteFlags(rotatorDeleteCmd, "rotator")
 
 	rotatorRuleCreateCmd.Flags().String("rule_name", "", "Rule name (required)")
 	rotatorRuleCreateCmd.Flags().String("splittest", "", "Enable split test (0|1)")
@@ -437,9 +435,7 @@ func init() {
 	rotatorRuleCreateCmd.Flags().String("country", "", "Sugar: ISO country code (e.g. US) -> a country `is` criterion; avoids hand-writing --criteria_json")
 	rotatorRuleCreateCmd.Flags().String("redirect-campaign", "", "Sugar: redirect to this campaign id at full weight; avoids hand-writing --redirects_json")
 
-	rotatorRuleDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	rotatorRuleDeleteCmd.Flags().String("ids", "", "Comma-separated rule IDs to delete in bulk")
-	rotatorRuleDeleteCmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+	registerDeleteFlags(rotatorRuleDeleteCmd, "rule")
 
 	rotatorRuleUpdateCmd.Flags().String("rule_id", "", "Rule ID (alternative to the second positional arg)")
 	rotatorRuleUpdateCmd.Flags().String("rule_name", "", "Rule name")

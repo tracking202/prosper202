@@ -107,12 +107,24 @@ func deleteArgsValidator(cmd *cobra.Command, args []string) error {
 // command, so the contract reads identically across the whole CLI.
 const deleteDryRunFlagDesc = "Preview what the delete would remove (record + cascade counts) without deleting"
 
-// registerDeleteFlags attaches the flag set every delete command shares:
+// registerDeleteFlags attaches the flag set every bulk-capable delete shares:
 // --force to skip the confirmation prompt, --ids for bulk deletes, and
-// --dry-run to preview instead of delete.
-func registerDeleteFlags(cmd *cobra.Command) {
+// --dry-run for a preview. noun names the entity in the --ids help.
+//
+// Every delete command goes through this or registerSingleDeleteFlags —
+// hand-rolling the set is how one of them silently loses --dry-run, which
+// bulkOrSingleDelete reads with GetBool and cannot distinguish from false.
+// DeleteFlagCoverageTest enforces that mechanically.
+func registerDeleteFlags(cmd *cobra.Command, noun string) {
 	cmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	cmd.Flags().String("ids", "", "Comma-separated IDs to delete in bulk")
+	cmd.Flags().String("ids", "", "Comma-separated "+noun+" IDs to delete in bulk")
+	cmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
+}
+
+// registerSingleDeleteFlags is the same contract for a delete addressed by a
+// parent plus one key, which takes no --ids.
+func registerSingleDeleteFlags(cmd *cobra.Command) {
+	cmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 	cmd.Flags().Bool("dry-run", false, deleteDryRunFlagDesc)
 }
 
@@ -804,7 +816,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			return nil
 		},
 	}
-	registerDeleteFlags(deleteCmd)
+	registerDeleteFlags(deleteCmd, entity.Name)
 
 	parentCmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 	rootCmd.AddCommand(parentCmd)
