@@ -168,7 +168,15 @@ class MessagingService
             return;
         }
 
-        $this->db->begin_transaction();
+        // An unchecked begin_transaction() is the worst false return to ignore
+        // here: the loop below would run in autocommit, half a pull would land
+        // permanently, and the rollback in the catch would have nothing to undo
+        // -- while recordSyncSuccess() still advanced the cursor past it.
+        if (!$this->db->begin_transaction()) {
+            error_log('MessagingService: applyPull could not start a transaction');
+            $this->recordSyncError('could not start transaction');
+            return;
+        }
         try {
             foreach ($conversations as $conversation) {
                 if (!is_array($conversation) || empty($conversation['external_id'])) {
@@ -209,7 +217,9 @@ class MessagingService
                 $this->deleteConversations($response['deleted_conversation_ids']);
             }
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new RuntimeException('commit pull failed');
+            }
         } catch (Throwable $e) {
             $this->db->rollback();
             error_log('MessagingService: applyPull failed: ' . $e->getMessage());
@@ -585,7 +595,14 @@ class MessagingService
             return false;
         }
 
-        $this->db->begin_transaction();
+        // See applyPull(): an ignored false here silently downgrades the
+        // reconcile to autocommit, so a later failure leaves the message half
+        // reconciled with no rollback to undo it.
+        if (!$this->db->begin_transaction()) {
+            error_log('MessagingService: pushMessage could not start a transaction');
+            $this->incrementPushAttempts($messageId);
+            return false;
+        }
         try {
             // Adopt the server's canonical conversation identifiers.
             if (isset($response['conversation']) && is_array($response['conversation'])
@@ -615,7 +632,9 @@ class MessagingService
             }
             $stmt->close();
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new RuntimeException('commit push reconcile failed');
+            }
         } catch (Throwable $e) {
             $this->db->rollback();
             error_log('MessagingService: pushMessage reconcile failed: ' . $e->getMessage());

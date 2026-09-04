@@ -23,14 +23,19 @@ final readonly class ExportWebhook
             throw new InvalidArgumentException('Webhook URL cannot be empty.');
         }
 
-        // SSRF guard: this URL is POSTed to by 202-cronjobs/attribution-export.php
-        // on behalf of a user, so an unvalidated value turns the install into a
-        // blind request oracle against its own (or the host's) internal network.
-        try {
-            \Prosper202\Validation\OutboundUrlGuard::assertAllowed($this->url, 'Webhook URL');
-        } catch (\RuntimeException $e) {
-            throw new InvalidArgumentException($e->getMessage(), 0, $e);
-        }
+        // The SSRF guard deliberately does NOT run here. This constructor is
+        // also the row-hydration path (ExportJob::fromDatabaseRow), and
+        // findPending() array_maps every pending row through it: one stored
+        // http:// or non-resolving webhook_url would throw out of the cron's
+        // very first call and strand EVERY pending export, including jobs with
+        // no webhook at all, on every tick. listRecentForModel() would 500 the
+        // export listing for the same reason, and a transient DNS failure did
+        // both. The guard runs where it can fail one request instead of the
+        // batch -- at each write boundary:
+        //   - AttributionService::scheduleSnapshotExport() (api/v2)
+        //   - AttributionController::scheduleExport()      (api/v3)
+        // and again at delivery in 202-cronjobs/attribution-export.php, which
+        // has to re-check anyway because DNS can change in between.
 
         foreach ($this->headers as $key => $value) {
             if (!is_string($key) || $key === '' || !is_string($value)) {

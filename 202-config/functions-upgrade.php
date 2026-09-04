@@ -3072,7 +3072,14 @@ class UPGRADE
             $connection = $database->getConnection();
 
             if ($connection instanceof \mysqli) {
-                $connection->begin_transaction();
+                // Checked: on a false return the ALTERs and the seed UPDATE below
+                // run in autocommit, so the rollback in the catch does nothing and
+                // a failed upgrade leaves 202_attribution_settings half-migrated
+                // while the version row is never advanced -- the next run then
+                // re-applies the same steps against the partially changed schema.
+                if (!$connection->begin_transaction()) {
+                    throw new \RuntimeException('Failed to start the 1.9.57 upgrade transaction: ' . $connection->error);
+                }
 
                 try {
                     $columnChecks = [
@@ -3133,7 +3140,9 @@ class UPGRADE
                         throw new \RuntimeException('Failed to seed attribution setting toggles: ' . $connection->error);
                     }
 
-                    $connection->commit();
+                    if (!$connection->commit()) {
+                        throw new \RuntimeException('Failed to commit the 1.9.57 upgrade: ' . $connection->error);
+                    }
                 } catch (\Throwable $upgradeException) {
                     $connection->rollback();
                     throw $upgradeException;

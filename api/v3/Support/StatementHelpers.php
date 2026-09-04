@@ -44,16 +44,43 @@ trait StatementHelpers
         }
     }
 
+    /**
+     * Open a transaction, or throw.
+     *
+     * begin_transaction() is fallible like every other mysqli call, and a false
+     * return is the worst one to ignore: the body then runs in autocommit,
+     * every statement lands individually, and the rollback in the failure path
+     * has nothing to roll back. The caller is told the operation failed while
+     * half the work is permanently committed -- the exact partial-write hazard
+     * transactions are here to prevent.
+     *
+     * Prefer transaction() where the work fits a closure; this exists for the
+     * call sites that need a bare try/catch around multi-statement bodies.
+     */
+    protected function beginTransaction(): void
+    {
+        if (!$this->db->begin_transaction()) {
+            throw new DatabaseException('Could not start transaction');
+        }
+    }
+
     protected function transaction(callable $fn): mixed
     {
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $result = $fn();
             if (!$this->db->commit()) {
+                // Thrown, not returned: the catch below is what rolls back, so
+                // a failed commit leaves nothing half-applied on a connection
+                // that may be reused.
                 throw new DatabaseException('Transaction commit failed');
             }
             return $result;
         } catch (\Throwable $e) {
+            // rollback()'s own result is deliberately unchecked: $e is the root
+            // cause and must reach the caller. A rollback that also fails has
+            // nothing better to report, and replacing $e with it would hide why
+            // the work was abandoned.
             $this->db->rollback();
             throw $e;
         }

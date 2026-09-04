@@ -352,10 +352,14 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
      */
     private function publicIdIsFree(int $candidate): bool
     {
-        $stmt = $this->conn->prepareRead('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
+        // prepareWrite, not prepareRead: this decides whether an id is free, and
+        // a replica lagging behind the primary can still show a public_id that
+        // has just been taken, handing out a duplicate.
+        // No $stmt->close() here -- Connection::fetchOne() already closes it, and
+        // a second close throws "mysqli_stmt object is already closed" on PHP 8.
+        $stmt = $this->conn->prepareWrite('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'i', [$candidate]);
         $row = $this->conn->fetchOne($stmt);
-        $stmt->close();
 
         return $row === null;
     }
@@ -378,12 +382,18 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
      */
     private function assertRuleBelongsToRotator(int $ruleId, int $rotatorId): void
     {
-        $stmt = $this->conn->prepareRead(
-            'SELECT rotator_id FROM 202_rotator_rules WHERE id = ?'
+        // prepareWrite, not prepareRead: both callers run this inside the write
+        // transaction that is about to delete or update the rule's children, so
+        // reading it from a replica can authorise the write against stale,
+        // pre-transaction state. delete() in this class uses the write
+        // connection with FOR UPDATE for the same reason.
+        // No $stmt->close() here -- Connection::fetchOne() already closes it, and
+        // a second close throws "mysqli_stmt object is already closed" on PHP 8.
+        $stmt = $this->conn->prepareWrite(
+            'SELECT rotator_id FROM 202_rotator_rules WHERE id = ? FOR UPDATE'
         );
         $this->conn->bind($stmt, 'i', [$ruleId]);
         $row = $this->conn->fetchOne($stmt);
-        $stmt->close();
 
         if ($row === null || (int) $row['rotator_id'] !== $rotatorId) {
             throw new RuntimeException("Rule $ruleId not found");

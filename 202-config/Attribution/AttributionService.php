@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 use InvalidArgumentException;
+use RuntimeException;
 use Prosper202\Attribution\Repository\AuditRepositoryInterface;
 use Prosper202\Attribution\Repository\ExportJobRepositoryInterface;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
@@ -22,6 +23,7 @@ use Prosper202\Attribution\ExportJob;
 use Prosper202\Attribution\ExportFormat;
 use Prosper202\Attribution\ExportStatus;
 use Prosper202\Attribution\ExportWebhook;
+use Prosper202\Validation\OutboundUrlGuard;
 
 /**
  * High-level façade for attribution operations consumed by controllers and CLI jobs.
@@ -154,6 +156,20 @@ final readonly class AttributionService
             $webhookPayload = array_filter($payload['webhook'], static fn ($value) => $value !== null && $value !== '');
             if (!empty($webhookPayload)) {
                 $webhook = ExportWebhook::fromArray($webhookPayload);
+                // SSRF guard at the write boundary. This is deliberately here
+                // and not in ExportWebhook's constructor: that constructor is
+                // also ExportJob::fromDatabaseRow()'s hydration path, where
+                // findPending() maps it over every pending row, so a throw there
+                // strands the whole export queue instead of one job. Here there
+                // is a caller to hand the rejection to, and only this request is
+                // affected. api/v3 checks the same thing in
+                // AttributionController::scheduleExport(), which never builds an
+                // ExportWebhook at all.
+                try {
+                    OutboundUrlGuard::assertAllowed($webhook->url, 'webhook.url');
+                } catch (RuntimeException $e) {
+                    throw new InvalidArgumentException($e->getMessage(), 0, $e);
+                }
             }
         }
 

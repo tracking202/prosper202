@@ -242,7 +242,7 @@ class RotatorsController
     {
         $this->get($id);
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?');
             $this->bind($stmt, 'i', $id);
@@ -291,7 +291,7 @@ class RotatorsController
         $splittest = (int)($payload['splittest'] ?? 0);
         $status = (int)($payload['status'] ?? 1);
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare('INSERT INTO 202_rotator_rules (rotator_id, rule_name, splittest, status) VALUES (?, ?, ?, ?)');
             $this->bind($stmt, 'isii', $rotatorId, $ruleName, $splittest, $status);
@@ -404,7 +404,7 @@ class RotatorsController
             throw new ValidationException('No fields to update');
         }
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             if (!empty($setParts)) {
                 $binds[] = $ruleId;
@@ -523,7 +523,7 @@ class RotatorsController
             throw new NotFoundException('Rule not found for rotator');
         }
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
             $this->bind($stmt, 'i', $ruleId);

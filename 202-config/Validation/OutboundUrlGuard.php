@@ -74,6 +74,50 @@ final class OutboundUrlGuard
         return array_values($ips);
     }
 
+    /**
+     * Build the CURLOPT_RESOLVE entry that pins a request to one of the
+     * addresses assertAllowed() approved, so curl does not resolve the host a
+     * second time and pick up a rebound answer.
+     *
+     * Prefers an IPv4 literal because it needs no escaping; an IPv6 address is
+     * bracketed, which is the form curl documents (`example.com:443:[2001:db8::1]`)
+     * and the form a bare `::1` would silently break — the extra colons make the
+     * entry unparseable and curl drops the pin, quietly restoring the
+     * DNS-rebinding hole the pin exists to close.
+     *
+     * @param list<string> $validatedIps the return value of assertAllowed()
+     * @return string|null null when there is nothing safe to pin
+     */
+    public static function curlResolveEntry(string $url, array $validatedIps): ?string
+    {
+        if ($validatedIps === []) {
+            return null;
+        }
+
+        $parts = parse_url($url);
+        if (!is_array($parts) || empty($parts['host'])) {
+            return null;
+        }
+        $host = (string) $parts['host'];
+        $port = (int) ($parts['port'] ?? 443);
+
+        $pinned = null;
+        foreach ($validatedIps as $candidate) {
+            if (filter_var($candidate, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+                $pinned = $candidate;
+                break;
+            }
+        }
+        if ($pinned === null) {
+            $pinned = (string) $validatedIps[0];
+            if (filter_var($pinned, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+                $pinned = '[' . $pinned . ']';
+            }
+        }
+
+        return $host . ':' . $port . ':' . $pinned;
+    }
+
     public static function assertIpAllowed(string $ip, string $label = 'url'): void
     {
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {

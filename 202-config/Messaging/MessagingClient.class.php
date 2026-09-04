@@ -73,6 +73,32 @@ class MessagingClient
     }
 
     /**
+     * The curl protocol allowlist, derived from the same predicate the
+     * constructor enforces: HTTPS always, plus HTTP only for a URL
+     * isSafeTransport() would accept as cleartext — i.e. loopback.
+     *
+     * The two must agree in both directions. Narrower than the transport rule
+     * makes the loopback carve-out dead code: the constructor accepts the
+     * documented mock-server URL and then every request fails with
+     * CURLE_UNSUPPORTED_PROTOCOL. Wider lets a misconfigured MESSAGING_API_URL
+     * carry the install's customer API key over cleartext.
+     *
+     * isSafeTransport() is re-run here rather than assumed. Keying only on the
+     * http:// prefix would be correct today purely because the constructor
+     * throws first — a fail-open that any future caller reaching this method by
+     * another path (or any relaxation of that constructor check) inherits
+     * silently, which is exactly how the mismatch above got in.
+     */
+    private static function allowedCurlProtocols(string $url): int
+    {
+        if (str_starts_with(strtolower(trim($url)), 'http://') && self::isSafeTransport($url)) {
+            return CURLPROTO_HTTPS | CURLPROTO_HTTP;
+        }
+
+        return CURLPROTO_HTTPS;
+    }
+
+    /**
      * Pull all conversations/messages visible to the identified user.
      *
      * @param array       $identity Identity payload (see buildPayload()).
@@ -190,7 +216,10 @@ class MessagingClient
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_USERAGENT      => 'Prosper202-Messaging/1.0',
             CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_PROTOCOLS      => CURLPROTO_HTTPS,
+            // Not a bare CURLPROTO_HTTPS: that disagreed with isSafeTransport()
+            // and broke the documented loopback mock-server setup. See
+            // allowedCurlProtocols().
+            CURLOPT_PROTOCOLS      => self::allowedCurlProtocols($this->baseUrl),
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_HTTPHEADER     => [

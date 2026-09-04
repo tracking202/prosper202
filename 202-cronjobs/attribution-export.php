@@ -286,8 +286,12 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
     }
 
     // Re-validate at dispatch: DNS can change between scheduling and delivery.
+    // Keep the validated addresses -- curl must be pinned to one of them below,
+    // or it resolves the host a second time and a DNS-rebinding record can hand
+    // it an internal address the guard never saw. This is what the guard's
+    // return value is for; 202-cronjobs/ltv_webhooks.php pins the same way.
     try {
-        \Prosper202\Validation\OutboundUrlGuard::assertAllowed($webhook->url, 'webhook_url');
+        $validatedIps = \Prosper202\Validation\OutboundUrlGuard::assertAllowed($webhook->url, 'webhook_url');
     } catch (\RuntimeException $e) {
         error_log('attribution-export: refusing webhook delivery: ' . $e->getMessage());
         return [
@@ -299,6 +303,8 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         ];
     }
 
+    $resolveEntry = \Prosper202\Validation\OutboundUrlGuard::curlResolveEntry($webhook->url, $validatedIps);
+
     $ch = curl_init($webhook->url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
@@ -308,6 +314,10 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
     // Never follow a redirect into a private address, and never leave https.
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
     curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+    // Send to the address the guard actually approved, not whatever DNS says now.
+    if ($resolveEntry !== null) {
+        curl_setopt($ch, CURLOPT_RESOLVE, [$resolveEntry]);
+    }
 
     $response = curl_exec($ch);
     $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE) ?: null;

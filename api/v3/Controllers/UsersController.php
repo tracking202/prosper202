@@ -109,7 +109,7 @@ class UsersController
             $installHash = (string) $hashRow['install_hash'];
         }
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare(
                 'INSERT INTO 202_users (user_fname, user_lname, user_name, user_pass, user_email, user_dash_email, user_timezone, user_time_register, user_active, install_hash, user_hash, user_deleted)
@@ -205,7 +205,7 @@ class UsersController
     public function delete(int $id): void
     {
         $this->get($id);
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?');
             $this->bind($stmt, 'i', $id);

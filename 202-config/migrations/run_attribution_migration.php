@@ -42,7 +42,12 @@ try {
     echo "Found " . count($statements) . " SQL statements to execute...\n";
     
     // Execute each statement
-    $db->begin_transaction();
+    // Checked: an ignored false here runs the statements below in autocommit,
+    // so the rollback in the catch block silently does nothing and a migration
+    // that reports failure has still left the schema half-applied.
+    if (!$db->begin_transaction()) {
+        throw new Exception('Failed to start transaction: ' . $db->error);
+    }
     
     foreach ($statements as $index => $statement) {
         echo "Executing statement " . ($index + 1) . "...\n";
@@ -59,7 +64,9 @@ try {
         }
     }
     
-    $db->commit();
+    if (!$db->commit()) {
+        throw new Exception('Failed to commit migration: ' . $db->error);
+    }
     
     echo "\nMigration completed successfully!\n";
     echo "Attribution models tables have been created.\n";

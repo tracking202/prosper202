@@ -91,14 +91,21 @@ try {
         $dml = [];
     }
 
-    $db->begin_transaction();
+    // Checked: an ignored false here runs the statements below in autocommit,
+    // so the rollback in the catch block silently does nothing and a migration
+    // that reports failure has still left the schema half-applied.
+    if (!$db->begin_transaction()) {
+        throw new Exception('Failed to start transaction: ' . $db->error);
+    }
     $inTransaction = true;
 
     foreach ($dml as $statement) {
         $runStatement($statement);
     }
 
-    $db->commit();
+    if (!$db->commit()) {
+        throw new Exception('Failed to commit migration: ' . $db->error);
+    }
     $inTransaction = false;
 
     echo "\nMigration completed successfully!\n";

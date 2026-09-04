@@ -141,7 +141,15 @@ $html = [];
 		}
 	}
 
-	$db->begin_transaction();
+	// An unchecked begin_transaction() would leave the INSERT and the
+	// tracker_id_public UPDATE below running in autocommit: the rollback() calls
+	// in the two failure paths would silently do nothing and the die() would ship
+	// a half-created tracker.
+	if (!$db->begin_transaction()) {
+		// record_mysql_error() is declared `never` -- it logs mysqli_error($db)
+		// and exits -- so there is no rollback to do and nothing after it runs.
+		record_mysql_error('begin_transaction() for tracker creation');
+	}
 
 	$tracker_sql = "INSERT INTO `202_trackers`
 					SET			`user_id`='".$mysql['user_id']."',
@@ -183,7 +191,13 @@ $html = [];
 		die('Error setting tracker ID');
 	}
 
-	$db->commit();
+	if (!$db->commit()) {
+		// No rollback() first: it would overwrite mysqli_error($db) with its own
+		// result and record_mysql_error() would log the wrong cause. A failed
+		// COMMIT leaves nothing to keep, and the connection closing on exit
+		// discards any transaction still open.
+		record_mysql_error('commit() for tracker creation');
+	}
 
 	$parsed_url = [];
 	if (!empty($landing_page_row['landing_page_url'])) {

@@ -273,7 +273,7 @@ class AttributionController
     {
         $this->getModel($id);
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare('DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?)');
             $this->bind($stmt, 'ii', $id, $this->userId);
@@ -373,6 +373,18 @@ class AttributionController
         $endHour = (int)($payload['end_hour'] ?? time());
         $format = (string)($payload['format'] ?? 'csv');
         $webhookUrl = (string)($payload['webhook_url'] ?? '');
+        // Validate here, at the entry point: this is the only place the caller
+        // can be told their URL is unusable. Storing it unchecked and relying on
+        // a guard further down means the rejection happens in a cron nobody is
+        // watching -- and it used to happen in the row hydration, taking the
+        // whole export queue down with it.
+        if ($webhookUrl !== '') {
+            try {
+                \Prosper202\Validation\OutboundUrlGuard::assertAllowed($webhookUrl, 'webhook_url');
+            } catch (\RuntimeException $e) {
+                throw new ValidationException($e->getMessage(), ['webhook_url' => $e->getMessage()], $e);
+            }
+        }
         $now = time();
         // Must be 'pending': the export cron's claimPending() only selects status='pending',
         // and 'queued' is not a valid ExportStatus enum value (would fatal on hydration).
