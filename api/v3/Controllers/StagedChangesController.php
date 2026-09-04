@@ -29,13 +29,24 @@ final class StagedChangesController
     public const STATUS_APPLIED = 'applied';
     public const STATUS_DISCARDED = 'discarded';
 
+    /**
+     * Terminal state for a change whose apply process died mid-dispatch. The
+     * write may or may not have landed — nothing readable from here can say
+     * which — so the record is closed in that state rather than reopened.
+     */
+    public const STATUS_APPLY_INTERRUPTED = 'apply_interrupted';
+
     public const DEFAULT_TTL_SECONDS = 86400;
 
     /**
-     * A change claimed for apply is re-claimable after this long. Without it
-     * a process killed mid-dispatch (fatal, execution timeout, worker kill)
-     * strands the change in `applying` forever: apply and discard both
-     * require `staged`, so nothing could move it again.
+     * How long a change may sit in `applying` before its claimant counts as
+     * dead. Without a bound, a process killed mid-dispatch (fatal, execution
+     * timeout, worker kill) strands the change in `applying` forever, since
+     * apply and discard both require `staged`. Past this bound the record is
+     * closed as apply_interrupted — never reopened for a second dispatch:
+     * the process may have died *after* its handler committed, so re-running
+     * could duplicate a create, and discarding could record that a write
+     * which actually executed was abandoned.
      */
     public const STALE_APPLYING_SECONDS = 900;
 
@@ -48,6 +59,19 @@ final class StagedChangesController
     private const SECRET_PAYLOAD_KEYS = [
         'user_pass', 'verify_user_pass', 'password', 'passwd', 'pass',
         'api_key', 'apikey', 'secret', 'token', 'private_key',
+    ];
+
+    /**
+     * Routes whose *path* carries a secret, mapped to the reason. A staged
+     * change stores `path` verbatim and shows it — plus the `summary` built
+     * from it — to every reviewer, so a credential in the path would sit in
+     * the state file and in the queue while it is very likely still live.
+     * `202_api_keys` has no surrogate id, so a key delete can only be
+     * addressed by the key itself: this one is refused rather than rewritten.
+     */
+    private const SECRET_PATH_PATTERNS = [
+        '#^/users/\d+/api-keys/.+$#'
+            => 'the API key to delete is itself the last path segment',
     ];
 
     public function __construct(
@@ -81,6 +105,15 @@ final class StagedChangesController
                 'staged' => 'Staged changes are stored as JSON and shown to every reviewer, so '
                     . implode(', ', $secrets) . ' cannot be recorded. Perform this write directly '
                     . '(without staged), then stage follow-up changes that carry no secrets.',
+            ]);
+        }
+
+        $pathSecret = self::secretPathReason($path);
+        if ($pathSecret !== null) {
+            throw new ValidationException('This write cannot be staged because it carries a secret', [
+                'staged' => 'A staged change records the request path and shows it to every reviewer, and '
+                    . $pathSecret . '. Perform this write directly (without staged); the credential would '
+                    . 'otherwise be readable from the change queue while it is still live.',
             ]);
         }
 
@@ -161,6 +194,9 @@ final class StagedChangesController
         $change = $this->requireVisibleChange($changeId);
         $ownerId = (int)$change['created_by'];
 
+        if (self::isStaleApplying($change)) {
+            $this->failInterrupted($ownerId, $changeId);
+        }
         if (!self::isClaimable($change)) {
             throw new ConflictException(sprintf(
                 "Change %s is %s, not staged — nothing to apply.",
@@ -259,6 +295,10 @@ final class StagedChangesController
         $change = $this->requireVisibleChange($changeId);
         $ownerId = (int)$change['created_by'];
 
+        if (self::isStaleApplying($change)) {
+            $this->failInterrupted($ownerId, $changeId);
+        }
+
         $updated = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
             if (!self::isClaimable($current)) {
                 return null;
@@ -308,26 +348,62 @@ final class StagedChangesController
     }
 
     /**
+     * A change may be claimed for apply or discard only while it is still
+     * staged. A stale `applying` record is deliberately *not* claimable —
+     * see failInterrupted().
+     */
+    private static function isClaimable(array $change): bool
+    {
+        return (string)($change['status'] ?? '') === self::STATUS_STAGED;
+    }
+
+    /** A claim whose process is past STALE_APPLYING_SECONDS without resolving. */
+    private static function isStaleApplying(array $change): bool
+    {
+        return (string)($change['status'] ?? '') === self::STATUS_APPLYING
+            && time() - (int)($change['applying_since'] ?? 0) > self::STALE_APPLYING_SECONDS;
+    }
+
+    /**
+     * Close a change whose apply process died mid-dispatch, and refuse the
+     * transition the caller asked for.
+     *
+     * The claim is taken before dispatch and resolved after it, so a process
+     * that dies in between may have committed its write or not — the record
+     * cannot say which. Re-dispatching would duplicate a create that landed;
+     * discarding would file an audit record saying a write that executed was
+     * abandoned. Both are worse than stopping, so the record moves to a
+     * terminal apply_interrupted and the caller is told to check state. That
+     * still frees the ledger: nothing sits in `applying` forever.
+     */
+    private function failInterrupted(int $ownerId, string $changeId): never
+    {
+        // Guarded like every other transition: if the original process
+        // resolved the change between the read and this write, leave it be.
+        $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
+            if (!self::isStaleApplying($current)) {
+                return null;
+            }
+            $current['status'] = self::STATUS_APPLY_INTERRUPTED;
+            $current['interrupted_at'] = gmdate('c');
+            $current['last_error'] = 'the apply process did not finish; whether the write landed is unknown';
+            return $current;
+        });
+
+        throw new ConflictException(sprintf(
+            'Change %s was claimed for apply by a process that never finished, so whether the write landed '
+            . 'is unknown — it is now recorded as %s and can be neither applied nor discarded. Check current '
+            . 'state; if the write did not land, stage it again.',
+            $changeId,
+            self::STATUS_APPLY_INTERRUPTED
+        ));
+    }
+
+    /**
      * Payload keys that name a secret, in the order given. stage() refuses
      * such writes; present() redacts as defense in depth for records written
      * by an older build.
      */
-    /**
-     * A change may be claimed for apply or discard when it is still staged,
-     * or when a previous apply claimed it and died: without the second case
-     * a process killed mid-dispatch strands the change forever, since both
-     * transitions otherwise require `staged`.
-     */
-    private static function isClaimable(array $change): bool
-    {
-        $status = (string)($change['status'] ?? '');
-        if ($status === self::STATUS_STAGED) {
-            return true;
-        }
-        return $status === self::STATUS_APPLYING
-            && time() - (int)($change['applying_since'] ?? 0) > self::STALE_APPLYING_SECONDS;
-    }
-
     private static function secretKeysIn(array $payload): array
     {
         $found = [];
@@ -339,6 +415,21 @@ final class StagedChangesController
         return $found;
     }
 
+    /**
+     * Why this path may not be recorded in a staged change, or null when it
+     * holds no secret. stage() refuses such writes; present() redacts as
+     * defense in depth for records written by an older build.
+     */
+    private static function secretPathReason(string $path): ?string
+    {
+        foreach (self::SECRET_PATH_PATTERNS as $pattern => $reason) {
+            if (preg_match($pattern, $path) === 1) {
+                return $reason;
+            }
+        }
+        return null;
+    }
+
     /** Adds the derived expiry flag; never mutates the stored record. */
     private function present(array $change): array
     {
@@ -347,6 +438,18 @@ final class StagedChangesController
         if (is_array($change['payload'] ?? null)) {
             foreach (self::secretKeysIn($change['payload']) as $key) {
                 $change['payload'][$key] = '[redacted]';
+            }
+        }
+        // Records staged before the path check existed can still hold a live
+        // credential in their path. apply() reads the stored record, not this
+        // one, so redacting here closes the display leak without breaking a
+        // legacy change that is still applicable.
+        $path = (string)($change['path'] ?? '');
+        if ($path !== '' && self::secretPathReason($path) !== null) {
+            $redacted = preg_replace('#/[^/]+$#', '/[redacted]', $path);
+            if (is_string($redacted)) {
+                $change['path'] = $redacted;
+                $change['summary'] = str_replace($path, $redacted, (string)($change['summary'] ?? ''));
             }
         }
         return $change;

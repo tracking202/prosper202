@@ -123,7 +123,7 @@ var changeDiscardCmd = &cobra.Command{
 }
 
 func init() {
-	changeListCmd.Flags().String("status", "", "Filter by status: staged, applied, discarded")
+	changeListCmd.Flags().String("status", "", "Filter by status: staged, applying, applied, discarded, apply_interrupted")
 	changeListCmd.Flags().Bool("all", false, "Every user's changes, not just yours (admin only)")
 	changeApplyCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 

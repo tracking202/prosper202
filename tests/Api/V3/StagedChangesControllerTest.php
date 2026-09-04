@@ -284,19 +284,113 @@ final class StagedChangesControllerTest extends TestCase
         $this->controller($auth)->apply($id, fn() => $this->fail('must not dispatch a malformed payload'));
     }
 
-    public function testAStaleApplyingClaimCanBeRecovered(): void
+    /**
+     * Simulate a process killed mid-dispatch: the claim was taken and never
+     * resolved, so whether the handler committed is unknowable.
+     */
+    private function stageThenStrandInApplying(Auth $auth, string $method = 'POST', string $path = '/campaigns'): string
     {
-        $auth = $this->authFor(5);
-        $id = $this->controller($auth)->stage('POST', '/campaigns', ['a' => 1], null)['data']['change_id'];
-        // Simulate a process killed mid-dispatch: claimed, never resolved.
+        $id = $this->controller($auth)->stage($method, $path, ['a' => 1], null)['data']['change_id'];
         $this->store->updateStagedChange(5, $id, function (array $c): array {
             $c['status'] = StagedChangesController::STATUS_APPLYING;
             $c['applying_since'] = time() - (StagedChangesController::STALE_APPLYING_SECONDS + 60);
             return $c;
         });
+        return $id;
+    }
 
-        $out = $this->controller($auth)->apply($id, fn() => ['data' => ['recovered' => true]]);
-        $this->assertSame(StagedChangesController::STATUS_APPLIED, $out['data']['change']['status']);
+    public function testAStaleApplyingClaimIsNeverRedispatched(): void
+    {
+        $auth = $this->authFor(5);
+        $id = $this->stageThenStrandInApplying($auth);
+
+        // The dead process may have committed its write before dying, so a
+        // second dispatch could duplicate the create. Refuse instead.
+        try {
+            $this->controller($auth)->apply($id, fn() => $this->fail('an interrupted apply must not be re-dispatched'));
+            $this->fail('apply() must refuse a stale applying claim');
+        } catch (ConflictException $e) {
+            $this->assertStringContainsString('never finished', $e->getMessage());
+        }
+
+        $stored = $this->store->getStagedChangeForUser(5, $id);
+        $this->assertSame(StagedChangesController::STATUS_APPLY_INTERRUPTED, $stored['status']);
+        $this->assertNotEmpty($stored['interrupted_at']);
+    }
+
+    public function testAStaleApplyingClaimCannotBeDiscardedEither(): void
+    {
+        $auth = $this->authFor(5);
+        $id = $this->stageThenStrandInApplying($auth);
+
+        // Discarding would file an audit record saying a write that may have
+        // executed was abandoned.
+        $this->expectException(ConflictException::class);
+        try {
+            $this->controller($auth)->discard($id);
+        } finally {
+            $stored = $this->store->getStagedChangeForUser(5, $id);
+            $this->assertSame(StagedChangesController::STATUS_APPLY_INTERRUPTED, $stored['status']);
+        }
+    }
+
+    public function testAnInterruptedChangeStaysTerminal(): void
+    {
+        $auth = $this->authFor(5);
+        $id = $this->stageThenStrandInApplying($auth);
+
+        try {
+            $this->controller($auth)->apply($id, fn() => $this->fail('must not dispatch'));
+        } catch (ConflictException) {
+            // expected; the record is now apply_interrupted
+        }
+
+        // A second attempt gets the ordinary "not staged" conflict — the
+        // record does not cycle back through the interrupted transition.
+        $this->expectException(ConflictException::class);
+        $this->expectExceptionMessageMatches('/is apply_interrupted, not staged/');
+        $this->controller($auth)->apply($id, fn() => $this->fail('must not dispatch'));
+    }
+
+    public function testStagingAnApiKeyDeleteIsRefusedBecauseThePathIsTheKey(): void
+    {
+        $ctl = $this->controller($this->authFor(5, 'read,stage'));
+
+        // The key is the last path segment, and a staged change stores and
+        // displays `path`, so staging would park a live credential in the
+        // queue. 202_api_keys has no surrogate id to substitute.
+        try {
+            $ctl->stage('DELETE', '/users/5/api-keys/live-secret-key-value', [], null);
+            $this->fail('staging an API key delete must be refused');
+        } catch (ValidationException $e) {
+            $this->assertStringContainsString('carries a secret', $e->getMessage());
+        }
+
+        $this->assertSame([], $this->store->listStagedChangesForUser(5));
+    }
+
+    public function testPresentRedactsASecretPathRecordedByAnOlderBuild(): void
+    {
+        $auth = $this->authFor(5);
+        $id = $this->controller($auth)->stage('DELETE', '/campaigns/42', [], null)['data']['change_id'];
+        // Rewrite the record the way a build without the path check wrote it.
+        $this->store->updateStagedChange(5, $id, function (array $c): array {
+            $c['method'] = 'DELETE';
+            $c['path'] = '/users/5/api-keys/live-secret-key-value';
+            $c['summary'] = 'DELETE /users/5/api-keys/live-secret-key-value';
+            return $c;
+        });
+
+        $shown = $this->controller($auth)->get($id)['data'];
+        $this->assertSame('/users/5/api-keys/[redacted]', $shown['path']);
+        $this->assertSame('DELETE /users/5/api-keys/[redacted]', $shown['summary']);
+        $this->assertStringNotContainsString('live-secret-key-value', json_encode($shown));
+
+        // The stored record keeps the key, so such a change stays applicable.
+        $this->assertSame(
+            '/users/5/api-keys/live-secret-key-value',
+            $this->store->getStagedChangeForUser(5, $id)['path']
+        );
     }
 
     public function testAFreshApplyingClaimIsStillProtected(): void

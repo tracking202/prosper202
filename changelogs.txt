@@ -12,11 +12,11 @@ Version 1.9.75
 -- Fixed: Applying a staged change now performs exactly the write that was recorded. Previously the applied write took its body from the apply request instead of the proposal, so staged creates and updates could not be applied at all — and an apply that carried a body wrote those values while the change record still showed the reviewed ones
 -- Fixed: A staged change now applies as the user who proposed it, so an administrator approving someone else's proposal no longer creates the record in their own account
 -- Fixed: Staging a delete no longer discloses the record to a propose-only key: the embedded preview requires read scope for the area, and is omitted when the proposer lacks it
--- Fixed: Writes carrying a password or other secret are refused for staging rather than recorded — staged changes persist as JSON and are shown to every reviewer
+-- Fixed: Writes carrying a password or other secret are refused for staging rather than recorded — staged changes persist as JSON and are shown to every reviewer. This covers deleting an API key, which addresses the key by its own value in the request path
 -- Fixed: Applying a staged change now requires write scope for the area the change touches, as documented, instead of a scope token no key could hold; granular approver keys (for example read,campaigns:write) work again
 -- Fixed: Creating an API key with an explicitly empty scope is rejected instead of silently minting a full-access key, and `p202 user apikey rotate` fails when the old key's scope cannot be determined rather than rotating to full access
 -- Fixed: The legacy attribution endpoints under /api/v2 now refuse v3-scoped API keys, matching the rest of the legacy surface
--- Fixed: A staged change whose apply was interrupted can be applied or discarded again instead of being stuck; a corrupted stored payload is reported rather than applied as an empty write
+-- Fixed: A staged change whose apply process died mid-dispatch is closed as apply_interrupted instead of being stuck in applying forever — it is never silently re-applied, since the interrupted write may already have landed; a corrupted stored payload is reported rather than applied as an empty write
 -- Fixed: The v3 API state directory falls back to its previous location, with a log line, when the one-time move cannot be completed
 -- Fixed: `p202 eval run` enforces its timeout on agents that leave background processes running, instead of waiting forever
 -- Fixed: `--dry-run` and `--staged` are refused when the server does not advertise support for them, instead of being sent as query parameters an older server ignores while performing the real write

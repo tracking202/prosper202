@@ -7,9 +7,10 @@ import (
 
 // TokenizeLine splits a command line into tokens, respecting quoted strings.
 // Single quotes preserve literal content; double quotes allow spaces but no escapes.
-// A quoted empty string ("" or ”) produces an empty token, so flags can be
-// given explicitly empty values. A # at the start of a word begins a comment
-// that runs to the end of the line. Returns an error for unterminated quotes.
+// An empty quoted string -- "" or the single-quoted equivalent -- produces an
+// empty token, so flags can be given explicitly empty values. A # at the start
+// of a word begins a comment that runs to the end of the line. Returns an error
+// for unterminated quotes.
 func TokenizeLine(line string) ([]string, error) {
 	var tokens []string
 	var current strings.Builder
