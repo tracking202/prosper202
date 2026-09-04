@@ -40,20 +40,20 @@ var execCmd = &cobra.Command{
 			return err
 		}
 		if len(profiles) == 0 {
-			return fmt.Errorf("exec requires one of --all-profiles, --profiles, or --group")
+			return validationError("exec requires one of --all-profiles, --profiles, or --group").WithHint("Example: `p202 exec --all-profiles -- campaign list --limit 5`.")
 		}
 
 		subArgs := append([]string(nil), args...)
 		if len(subArgs) == 0 {
-			return fmt.Errorf("exec requires a subcommand after --")
+			return validationError("exec requires a subcommand after --").WithHint("Put the command to run after a literal `--`, e.g. `p202 exec --profiles prod,staging -- report summary --period today`.")
 		}
 		if subArgs[0] == "exec" {
-			return fmt.Errorf("recursive exec invocation is not allowed")
+			return validationError("recursive exec invocation is not allowed").WithHint("Run the inner command directly after `--`; do not nest `exec` inside `exec`.")
 		}
 
 		concurrency, _ := cmd.Flags().GetInt("concurrency")
 		if concurrency < 1 {
-			return fmt.Errorf("--concurrency must be at least 1")
+			return validationError("--concurrency must be at least 1")
 		}
 		if concurrency > len(profiles) {
 			concurrency = len(profiles)

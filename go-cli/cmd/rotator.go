@@ -207,10 +207,11 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 			return err
 		}
 		return runBulkOrSingleDelete(cmd, args[1:], deleteSpec{
-			urlFor:  func(id string) string { return "rotators/" + rotatorID + "/rules/" + id },
-			noun:    "rule",
-			plural:  "rules",
-			context: " from rotator " + rotatorID,
+			urlFor:      func(id string) string { return "rotators/" + rotatorID + "/rules/" + id },
+			noun:        "rule",
+			plural:      "rules",
+			context:     " from rotator " + rotatorID,
+			idsHintText: "Comma-separate rule ids, e.g. --ids 3,4 (find them with `p202 rotator rules <rotator_id>`).",
 		})
 	},
 }

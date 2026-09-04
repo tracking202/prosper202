@@ -36,7 +36,7 @@ var reportCrosstabCmd = &cobra.Command{
 		colDim := resolveDimension(mustString(cmd, "cols"))
 		metric := resolveMetric(mustString(cmd, "metric"))
 		if rowDim == "" || colDim == "" {
-			return validationError("--rows and --cols are required")
+			return validationError("--rows and --cols are required").WithHint("Pass two entity dimensions, e.g. --rows campaign --cols country.")
 		}
 		if metric == "" {
 			metric = "total_net"

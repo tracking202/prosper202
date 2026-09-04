@@ -2,6 +2,7 @@ package forecast
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 	"time"
 )
@@ -307,7 +308,17 @@ func TestRun_TrendPercentage(t *testing.T) {
 }
 
 func TestRun_SeasonalWeights(t *testing.T) {
-	s := makeSeries(14, func(i int) float64 { return 100 })
+	// A genuinely weekly series (Mondays high, Tuesdays low): the lag-7
+	// autocorrelation gate passes and supplied weights modulate predictions.
+	factors := map[time.Weekday]float64{time.Monday: 1.5, time.Tuesday: 0.8}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := makeSeries(28, func(i int) float64 {
+		f, ok := factors[base.AddDate(0, 0, i).Weekday()]
+		if !ok {
+			f = 1.0
+		}
+		return 100 * f
+	})
 
 	weights := SeasonalWeights{
 		time.Monday:  1.5,
@@ -323,15 +334,55 @@ func TestRun_SeasonalWeights(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if !result.SeasonalApplied {
+		t.Fatal("expected seasonal weights to be applied to a weekly series")
+	}
 
-	// Find which predictions fall on Monday/Tuesday and verify they were adjusted.
+	// The SMA base level is the window mean (~104); Monday/Tuesday
+	// predictions must be scaled by their weights relative to other days.
+	var flatVal float64
+	for _, p := range result.Predictions {
+		if _, weighted := factors[p.T.Weekday()]; !weighted {
+			flatVal = p.Value
+		}
+	}
+	if flatVal == 0 {
+		t.Fatal("no unweighted day in horizon")
+	}
 	for _, p := range result.Predictions {
 		dow := p.T.Weekday()
-		if dow == time.Monday && math.Abs(p.Value-150) > 5 {
-			t.Errorf("Monday prediction = %.2f, expected ~150 (100 * 1.5)", p.Value)
+		if dow == time.Monday && math.Abs(p.Value-1.5*flatVal) > 1 {
+			t.Errorf("Monday prediction = %.2f, expected ~%.2f (1.5x)", p.Value, 1.5*flatVal)
 		}
-		if dow == time.Tuesday && math.Abs(p.Value-80) > 5 {
-			t.Errorf("Tuesday prediction = %.2f, expected ~80 (100 * 0.8)", p.Value)
+		if dow == time.Tuesday && math.Abs(p.Value-0.8*flatVal) > 1 {
+			t.Errorf("Tuesday prediction = %.2f, expected ~%.2f (0.8x)", p.Value, 0.8*flatVal)
+		}
+	}
+}
+
+func TestRun_SeasonalWeightsGatedOnFlatSeries(t *testing.T) {
+	// Flat-noise series with no weekly structure: supplied weights must NOT
+	// be applied (the lag-7 autocorrelation gate rejects them).
+	rng := rand.New(rand.NewSource(61))
+	s := makeSeries(28, func(i int) float64 { return 100 + rng.NormFloat64()*10 })
+
+	result, err := Run(s, Config{
+		Method:          MethodSMA,
+		Horizon:         7,
+		Interval:        IntervalDay,
+		SeasonalWeights: SeasonalWeights{time.Monday: 1.5, time.Tuesday: 0.8},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.SeasonalApplied {
+		t.Fatal("seasonal weights applied to a flat series with no weekly structure")
+	}
+	// All predictions share the flat SMA level — no day got scaled.
+	for i := 1; i < len(result.Predictions); i++ {
+		if math.Abs(result.Predictions[i].Value-result.Predictions[0].Value) > 0.01 {
+			t.Errorf("prediction[%d] = %.2f differs from [0] = %.2f: weights leaked through the gate",
+				i, result.Predictions[i].Value, result.Predictions[0].Value)
 		}
 	}
 }
@@ -414,8 +465,8 @@ func TestZScore(t *testing.T) {
 
 func TestValidMethods(t *testing.T) {
 	methods := ValidMethods()
-	if len(methods) != 5 {
-		t.Errorf("expected 5 valid methods, got %d", len(methods))
+	if len(methods) != 6 {
+		t.Errorf("expected 6 valid methods, got %d", len(methods))
 	}
 }
 

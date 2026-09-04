@@ -68,10 +68,10 @@ var userCreateCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("user_name")
 		email, _ := cmd.Flags().GetString("user_email")
 		if name == "" {
-			return fmt.Errorf("required flag --user_name is missing")
+			return validationError("required flag --user_name is missing")
 		}
 		if email == "" {
-			return fmt.Errorf("required flag --user_email is missing")
+			return validationError("required flag --user_email is missing")
 		}
 		body := map[string]interface{}{
 			"user_name":  name,
@@ -89,7 +89,7 @@ var userCreateCmd = &cobra.Command{
 			pass = string(passBytes)
 		}
 		if pass == "" {
-			return fmt.Errorf("password is required")
+			return validationError("password is required").WithHint("Pass --password, or pipe it on stdin when prompted; it is never echoed.")
 		}
 		body["user_pass"] = pass
 
@@ -139,7 +139,7 @@ var userUpdateCmd = &cobra.Command{
 			}
 		}
 		if len(body) == 0 {
-			return fmt.Errorf("no fields specified; pass at least one flag to update")
+			return validationError("no fields specified; pass at least one flag to update")
 		}
 		data, err := c.Put("users/"+args[0], body)
 		if err != nil {
@@ -194,11 +194,11 @@ var userRoleAssignCmd = &cobra.Command{
 		}
 		roleIDStr := roleIDFrom(cmd, args)
 		if roleIDStr == "" {
-			return fmt.Errorf("role id is required (pass it as the second argument or via --role_id)")
+			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user roles` lists role ids.")
 		}
 		roleID, err := strconv.Atoi(roleIDStr)
 		if err != nil {
-			return fmt.Errorf("role_id must be an integer: %s", roleIDStr)
+			return validationError("role_id must be an integer: %s", roleIDStr).WithHint("`p202 user roles` lists role ids.")
 		}
 		data, err := c.Post("users/"+args[0]+"/roles", map[string]interface{}{
 			"role_id": roleID,
@@ -222,7 +222,7 @@ var userRoleRemoveCmd = &cobra.Command{
 		}
 		roleID := roleIDFrom(cmd, args)
 		if roleID == "" {
-			return fmt.Errorf("role id is required (pass it as the second argument or via --role_id)")
+			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user roles` lists role ids.")
 		}
 		force, _ := cmd.Flags().GetBool("force")
 		if !force && !confirmPrompt("Remove role %s from user %s?", roleID, args[0]) {
@@ -461,7 +461,7 @@ var userPrefsUpdateCmd = &cobra.Command{
 			}
 		}
 		if len(body) == 0 {
-			return fmt.Errorf("no preferences specified; pass at least one flag to update")
+			return validationError("no preferences specified; pass at least one flag to update")
 		}
 		data, err := c.Put("users/"+args[0]+"/preferences", body)
 		if err != nil {

@@ -26,6 +26,46 @@ DELETE/204 responses return empty arrays. Rendering an empty array produces no o
 ### 7. bind_param type string mismatches
 When building `bind_param($types, ...)` with many parameters, count types against values one-by-one. Integer timestamps bound as 's' work due to MySQL coercion but indicate sloppy code and can cause subtle issues with strict modes.
 
+## Go CLI errors must be agent-actionable (`go-cli/`)
+
+The CLI is built for AI agents as much as humans. An agent reads a failure
+once and must know what to do next without guessing, so every error path in
+`go-cli/cmd/` follows this contract (plumbing lives in `cmd/cli_errors.go`,
+`cmd/root.go`, and `internal/api/client.go`):
+
+1. **Categorize input errors.** Bad flags, missing values, unsupported
+   names: return `validationError(...)`, never a bare `fmt.Errorf`. The
+   category prints as `Error [validation]:` and sets exit code 1. API
+   failures already carry `auth`/`network`/`server`/`validation` from
+   `api.APIError`/`api.RequestError`.
+2. **Wrap with `%w`, never `%v`.** Exit codes and hints are resolved with
+   `errors.As` through the wrap chain; `fmt.Errorf("fetching: %v", err)`
+   would turn a 401 (exit 2) into a generic exit 1.
+3. **Attach a next step whenever the message alone leaves a choice.**
+   `validationError(...).WithHint("...")` for new errors, `withHint(err,
+   "...")` for wrapped ones. A good hint names the command that produces
+   the right value (`p202 tracker list`), the flag to change, or the
+   ordering to follow. Lists of valid values belong in the message itself.
+   Errors without a specific hint fall back to `Run <command> --help`.
+4. **Add class-wide hints in `api.HintFor`,** not per call site, when a
+   whole failure class has one remedy (401 key check, 404 use `list`, 409
+   update instead of create, 429 back off, 5xx `p202 system health`).
+5. **Never print errors yourself.** Return them; `Execute` prints the
+   `Error [category]: ... / Hint: ...` lines, or under `--json`/`--ndjson`
+   a single `{"error": {category, message, hint, exit_code, command,
+   http_status, field_errors}}` envelope on stderr. Stdout stays empty on
+   failure so scripts never mistake an error for data.
+6. **Test the contract, not just the message.** For a new error path
+   assert `exitCodeForError(err)` and, when a hint was added,
+   `hintFor(err)` (see `cmd/cli_errors_test.go` and the forecast hint
+   tests for the pattern).
+
+When adding a command, run it once with a wrong flag and once against a
+dead URL under `--json` and read the envelopes as an agent would: if either
+leaves you unsure what to do next, the error needs a hint. The user-facing
+contract is documented in `documentation/cli/10-go-cli.md` under "Errors";
+keep it in sync.
+
 ## Review discipline
 - Review every file individually. Batch scanning causes context overload and misses real bugs.
 - Read the file first, then think about what each line does, especially error paths.

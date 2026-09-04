@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -28,7 +27,7 @@ var configTagProfileCmd = &cobra.Command{
 		}
 		profile, exists := cfg.Profiles[name]
 		if !exists || profile == nil {
-			return fmt.Errorf("profile %q not found. available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
+			return validationError("profile %q not found. available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 		}
 
 		tagSet := map[string]bool{}
@@ -73,7 +72,7 @@ var configUntagProfileCmd = &cobra.Command{
 		}
 		profile, exists := cfg.Profiles[name]
 		if !exists || profile == nil {
-			return fmt.Errorf("profile %q not found. available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
+			return validationError("profile %q not found. available profiles: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 		}
 
 		removeSet := map[string]bool{}
@@ -107,7 +106,7 @@ var configUntagProfileCmd = &cobra.Command{
 func normalizeTag(raw string) (string, error) {
 	tag := strings.ToLower(strings.TrimSpace(raw))
 	if tag == "" {
-		return "", fmt.Errorf("tag cannot be empty")
+		return "", validationError("tag cannot be empty")
 	}
 	for _, ch := range tag {
 		if unicode.IsLetter(ch) || unicode.IsDigit(ch) {
@@ -117,7 +116,7 @@ func normalizeTag(raw string) (string, error) {
 		case ':', '-', '_', '.':
 			continue
 		default:
-			return "", fmt.Errorf("invalid tag %q: only letters, digits, and : - _ . are allowed", raw)
+			return "", validationError("invalid tag %q: only letters, digits, and : - _ . are allowed", raw).WithHint("Example tags: env:production, region-eu, team_a.")
 		}
 	}
 	return tag, nil

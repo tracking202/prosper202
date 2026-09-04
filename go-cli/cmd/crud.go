@@ -126,6 +126,17 @@ type deleteSpec struct {
 	cascadeOne  string                 // single-confirm suffix, e.g. " and all its rules"
 	cascadeMany string                 // bulk-confirm suffix, e.g. " and all their rules"
 	context     string                 // parent-resource suffix, e.g. " from rotator 7"
+	// idsHintText overrides the --ids recovery hint for commands whose ids are
+	// not discoverable via a plain `<entity> list` (rotator rules, for example).
+	idsHintText string
+}
+
+// idsHint returns the recovery hint shown when --ids resolves to nothing.
+func (s deleteSpec) idsHint() string {
+	if s.idsHintText != "" {
+		return s.idsHintText
+	}
+	return "Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`)."
 }
 
 // bulkOrSingleDelete is the flat-resource convenience wrapper around
@@ -154,7 +165,7 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 			return perr
 		}
 		if len(ids) == 0 {
-			return validationError("--ids requires at least one ID")
+			return validationError("--ids requires at least one ID").WithHint(spec.idsHint())
 		}
 		if !force && !confirmPrompt("Delete %d %s%s%s?", len(ids), spec.plural, spec.cascadeMany, spec.context) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
@@ -177,7 +188,7 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 	}
 
 	if len(args) != 1 {
-		return validationError("provide a single id or use --ids")
+		return validationError("provide a single id or use --ids").WithHint("Pass one id as the argument, or several with --ids 12,13,14.")
 	}
 	id, err := validateID(args[0])
 	if err != nil {
@@ -282,7 +293,7 @@ func parseDataArray(data []byte) ([]map[string]interface{}, error) {
 	}
 	rawItems, ok := parsed["data"].([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("response did not include a data array")
+		return nil, withHint(fmt.Errorf("response did not include a data array"), "The server returned an unexpected shape; check the API version with `p202 system version` and that the URL points at the API root.")
 	}
 	items := make([]map[string]interface{}, 0, len(rawItems))
 	for _, raw := range rawItems {
@@ -362,7 +373,7 @@ func parseIDList(raw string) ([]string, error) {
 			continue
 		}
 		if _, err := strconv.Atoi(id); err != nil {
-			return nil, fmt.Errorf("invalid ID %q: must be a numeric value", id)
+			return nil, validationError("invalid ID %q: must be a numeric value", id).WithHint("Use the internal numeric id from the matching `... list`; public ids from tracking links need --public where supported.")
 		}
 		seen[id] = true
 		out = append(out, id)
@@ -477,7 +488,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			allRows, _ := cmd.Flags().GetBool("all")
 			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
 			if resolveNames && !envFlagEnabled("CLI_ENABLE_RESOLVE_NAMES", true) {
-				return fmt.Errorf("--resolve-names is disabled (set CLI_ENABLE_RESOLVE_NAMES=1 to enable)")
+				return validationError("--resolve-names is disabled").WithHint("Set CLI_ENABLE_RESOLVE_NAMES=1 in the environment to enable it, or drop the flag.")
 			}
 
 			if allRows {
@@ -598,7 +609,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			}
 			for _, f := range entity.Fields {
 				if f.Required && body[f.Name] == "" {
-					return fmt.Errorf("required flag --%s is missing", f.Name)
+					return validationError("required flag --%s is missing", f.Name)
 				}
 			}
 			data, err := c.Post(entity.Endpoint, body)
@@ -921,7 +932,7 @@ func init() {
 				}
 				for _, f := range trackerEntity.Fields {
 					if f.Required && body[f.Name] == "" {
-						return fmt.Errorf("required flag --%s is missing", f.Name)
+						return validationError("required flag --%s is missing", f.Name)
 					}
 				}
 
@@ -1000,7 +1011,7 @@ func init() {
 
 				concurrency, _ := cmd.Flags().GetInt("concurrency")
 				if concurrency < 1 {
-					return fmt.Errorf("--concurrency must be at least 1")
+					return validationError("--concurrency must be at least 1")
 				}
 				if concurrency > len(trackers) {
 					concurrency = len(trackers)
